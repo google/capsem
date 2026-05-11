@@ -321,17 +321,6 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "name": "App",
         "description": "Application settings",
         "collapsed": False,
-        "auto_update": {
-            "name": "Auto-check for updates",
-            "description": "Check for new Capsem versions on launch",
-            "type": "bool",
-            "default": True,
-        },
-        "check_update": {
-            "name": "Check for updates",
-            "description": "Manually check if a new version is available",
-            "action": "check_update",
-        },
     }
 
     # -- ai (from TOML configs) --
@@ -844,8 +833,8 @@ def generate_mock_ts(
         "//",
         "// Regenerate: just run (or just test)",
         "",
-        "import type { ResolvedSetting, SettingsNode, McpServerInfo,"
-        " McpToolInfo, McpPolicyInfo } from './types';",
+        "import type { ResolvedSetting, SettingsNode } from './types/settings';",
+        "import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from './types';",
         "",
         "// Helper: creates a mock setting with sensible defaults for empty fields.",
         "function ms(overrides: Partial<ResolvedSetting> & {"

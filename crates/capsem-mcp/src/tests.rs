@@ -629,8 +629,23 @@ fn inspect_schema_has_all_tables() {
         "mcp_calls",
         "fs_events",
         "snapshot_events",
+        "dns_events",
+        "policy_hook_events",
+        "audit_events",
     ] {
         assert!(schema.contains(table), "Missing table in schema: {table}");
+    }
+}
+
+#[test]
+fn timeline_tool_schema_exposes_policy_v2_layers() {
+    let schema = schemars::schema_for!(TimelineMcpParams);
+    let text = serde_json::to_string(&schema).unwrap();
+    for expected in ["traceId", "exec,mcp,net,dns,hook,audit,snapshot,fs,model"] {
+        assert!(
+            text.contains(expected),
+            "timeline schema should mention {expected}: {text}"
+        );
     }
 }
 

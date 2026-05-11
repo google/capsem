@@ -128,21 +128,6 @@
       {/if}
       <PresetSection />
     </div>
-  {:else if a.action === ActionKind.CheckUpdate}
-    <div class="flex items-center justify-between py-3">
-      <div>
-        <span class="text-sm font-medium text-foreground">{a.name}</span>
-        {#if a.description}
-          <p class="text-xs text-muted-foreground-1 mt-0.5">{a.description}</p>
-        {/if}
-      </div>
-      <button
-        type="button"
-        class="py-2 px-4 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
-      >
-        Check now
-      </button>
-    </div>
   {/if}
 {/snippet}
 

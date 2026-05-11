@@ -86,7 +86,16 @@ INSTALL_DIR = CAPSEM_DIR / "bin"
 ASSETS_DIR = CAPSEM_DIR / "assets"
 RUN_DIR = CAPSEM_DIR / "run"
 
-BINARIES = ["capsem", "capsem-service", "capsem-process", "capsem-mcp", "capsem-gateway", "capsem-tray"]
+BINARIES = [
+    "capsem",
+    "capsem-service",
+    "capsem-process",
+    "capsem-mcp",
+    "capsem-mcp-aggregator",
+    "capsem-mcp-builtin",
+    "capsem-gateway",
+    "capsem-tray",
+]
 DEFAULT_TIMEOUT = 30
 
 

@@ -6,13 +6,31 @@ pytestmark = pytest.mark.session_lifecycle
 
 # Expected columns per table (from capsem-logger schema)
 EXPECTED_SCHEMAS = {
-    "net_events": ["domain", "decision", "method", "status_code", "bytes_received", "duration_ms"],
-    "model_calls": ["provider", "model", "duration_ms"],
-    "tool_calls": ["tool_name", "origin"],
-    "tool_responses": ["call_id", "is_error"],
-    "mcp_calls": ["method", "decision"],
-    "fs_events": ["action", "path"],
-    "snapshot_events": ["origin", "slot"],
+    "net_events": [
+        "domain", "decision", "method", "status_code", "bytes_received",
+        "duration_ms", "policy_mode", "policy_action", "policy_rule",
+        "policy_reason", "trace_id",
+    ],
+    "dns_events": [
+        "qname", "rcode", "decision", "matched_rule", "policy_mode",
+        "policy_action", "policy_rule", "policy_reason", "trace_id",
+    ],
+    "model_calls": ["provider", "model", "duration_ms", "trace_id"],
+    "tool_calls": ["tool_name", "origin", "mcp_call_id", "trace_id"],
+    "tool_responses": ["call_id", "is_error", "trace_id"],
+    "mcp_calls": [
+        "method", "decision", "policy_mode", "policy_action",
+        "policy_rule", "policy_reason", "trace_id",
+    ],
+    "exec_events": ["exec_id", "command", "exit_code", "source", "mcp_call_id", "trace_id"],
+    "fs_events": ["action", "path", "trace_id"],
+    "snapshot_events": ["origin", "slot", "trace_id"],
+    "audit_events": ["pid", "exe", "argv", "audit_id", "exec_event_id", "trace_id"],
+    "policy_hook_events": [
+        "endpoint_id", "spec_version", "spec_hash", "decision_id",
+        "callback", "decision", "rule_id", "status", "fallback",
+        "audit_tags", "trace_id", "session_id",
+    ],
 }
 
 

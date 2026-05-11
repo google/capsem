@@ -47,25 +47,26 @@ class TestSettingsTree:
     def test_save_settings_round_trips(self, client):
         """POST /settings toggles a bool and GET reflects the new value.
 
-        `app.auto_update` is a baseline bool (default: true). Flipping it
-        to false and re-reading proves write-through works against the
+        `security.web.allow_read` is a baseline bool (default: false).
+        Flipping it to true and re-reading proves write-through works against the
         isolated CAPSEM_HOME user.toml. Leaves it flipped -- teardown drops
         the tmpdir with the rest of the isolated home.
         """
-        before = _find_setting_value(client.get("/settings")["tree"], "app.auto_update")
-        assert before is True, f"default expected true, got {before}"
+        setting_id = "security.web.allow_read"
+        before = _find_setting_value(client.get("/settings")["tree"], setting_id)
+        assert before is False, f"default expected false, got {before}"
 
-        saved = client.post("/settings", {"app.auto_update": False})
+        saved = client.post("/settings", {setting_id: True})
         assert saved is not None, "POST /settings returned no body"
         # Response mirrors GET: tree + issues + presets.
         assert "tree" in saved and "issues" in saved and "presets" in saved
 
-        after = _find_setting_value(saved["tree"], "app.auto_update")
-        assert after is False, f"save did not apply: {after}"
+        after = _find_setting_value(saved["tree"], setting_id)
+        assert after is True, f"save did not apply: {after}"
 
         # Fresh GET confirms persistence.
-        refetched = _find_setting_value(client.get("/settings")["tree"], "app.auto_update")
-        assert refetched is False
+        refetched = _find_setting_value(client.get("/settings")["tree"], setting_id)
+        assert refetched is True
 
     def test_save_settings_rejects_unknown_key(self, client):
         """Batch update is atomic -- any unknown key fails the whole batch."""

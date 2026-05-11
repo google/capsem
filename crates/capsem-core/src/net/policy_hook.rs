@@ -6,14 +6,16 @@
 //! call this from MCP/HTTP/DNS/model hooks without duplicating the hardening.
 
 use std::future::Future;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use capsem_logger::events::PolicyHookEvent;
 use capsem_logger::writer::{DbWriter, WriteOp};
+use futures::StreamExt;
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 use crate::net::policy_hook_spec::{
@@ -70,7 +72,10 @@ pub struct PolicyHookEndpointConfig {
     pub body_cap_bytes: usize,
     #[serde(default = "default_allow_insecure_localhost")]
     pub allow_insecure_localhost: bool,
-    #[serde(default = "default_fail_closed_decision")]
+    #[serde(
+        default = "default_fail_closed_decision",
+        deserialize_with = "deserialize_fail_closed_decision"
+    )]
     pub fail_closed_decision: HookDecision,
 }
 
@@ -88,6 +93,26 @@ fn default_allow_insecure_localhost() -> bool {
 
 fn default_fail_closed_decision() -> HookDecision {
     HookDecision::Block
+}
+
+fn sanitized_fail_closed_decision(decision: HookDecision) -> HookDecision {
+    match decision {
+        HookDecision::Block | HookDecision::Ask => decision,
+        HookDecision::Allow | HookDecision::Rewrite => HookDecision::Block,
+    }
+}
+
+fn deserialize_fail_closed_decision<'de, D>(deserializer: D) -> Result<HookDecision, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let decision = HookDecision::deserialize(deserializer)?;
+    match decision {
+        HookDecision::Block | HookDecision::Ask => Ok(decision),
+        HookDecision::Allow | HookDecision::Rewrite => Err(serde::de::Error::custom(
+            "fail_closed_decision must be block or ask",
+        )),
+    }
 }
 
 impl PolicyHookEndpoint {
@@ -111,7 +136,7 @@ impl PolicyHookEndpoint {
             timeout_ms: config.timeout_ms,
             body_cap_bytes: config.body_cap_bytes,
             allow_insecure_localhost: config.allow_insecure_localhost,
-            fail_closed_decision: config.fail_closed_decision,
+            fail_closed_decision: sanitized_fail_closed_decision(config.fail_closed_decision),
         }
     }
 
@@ -124,8 +149,9 @@ impl PolicyHookEndpoint {
         request: &HookDecisionRequest,
         error: &PolicyHookError,
     ) -> HookDecisionResponse {
+        let decision = sanitized_fail_closed_decision(self.fail_closed_decision);
         HookDecisionResponse {
-            decision: self.fail_closed_decision,
+            decision,
             decision_id: Some(request.decision_id.clone()),
             rule_id: Some(format!("hook.{}.fail_closed", self.id)),
             priority: None,
@@ -205,6 +231,9 @@ impl PolicyHookClient {
         if request.spec_version != POLICY_HOOK_SPEC_VERSION {
             return Err(PolicyHookError::SpecVersion(request.spec_version.clone()));
         }
+        request
+            .validate_semantics()
+            .map_err(PolicyHookError::Schema)?;
 
         let url = validate_endpoint(endpoint)?;
         let body =
@@ -226,10 +255,14 @@ impl PolicyHookClient {
                     .as_deref()
                     .filter(|token| !token.is_empty())
                     .map(str::to_string),
+                endpoint.body_cap_bytes,
                 body,
             )
             .await
-            .map_err(|err| PolicyHookError::Transport(err.to_string()))?;
+            .map_err(|err| match err {
+                PolicyHookError::Transport(message) => PolicyHookError::Transport(message),
+                err => err,
+            })?;
         if !(200..300).contains(&response.status) {
             return Err(PolicyHookError::HttpStatus(response.status));
         }
@@ -255,6 +288,7 @@ trait PolicyHookTransport: Send + Sync {
         url: Url,
         timeout: Duration,
         bearer_token: Option<String>,
+        body_cap_bytes: usize,
         body: Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = Result<PolicyHookHttpResponse, PolicyHookError>> + Send + 'a>>;
 }
@@ -270,6 +304,7 @@ impl PolicyHookTransport for ReqwestPolicyHookTransport {
         url: Url,
         timeout: Duration,
         bearer_token: Option<String>,
+        body_cap_bytes: usize,
         body: Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = Result<PolicyHookHttpResponse, PolicyHookError>> + Send + 'a>>
     {
@@ -289,24 +324,41 @@ impl PolicyHookTransport for ReqwestPolicyHookTransport {
                 .await
                 .map_err(|err| PolicyHookError::Transport(err.to_string()))?;
             let status = response.status().as_u16();
-            let body = response
-                .bytes()
-                .await
-                .map_err(|err| PolicyHookError::Transport(err.to_string()))?
-                .to_vec();
+            let mut body = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|err| PolicyHookError::Transport(err.to_string()))?;
+                let actual = body.len().saturating_add(chunk.len());
+                if actual > body_cap_bytes {
+                    return Err(PolicyHookError::ResponseTooLarge {
+                        actual,
+                        cap: body_cap_bytes,
+                    });
+                }
+                body.extend_from_slice(&chunk);
+            }
             Ok(PolicyHookHttpResponse { status, body })
         })
     }
 }
 
 fn decode_hook_response(bytes: &[u8]) -> Result<HookDecisionResponse, PolicyHookError> {
-    serde_json::from_slice::<HookDecisionResponse>(bytes)
-        .map_err(|err| PolicyHookError::Schema(err.to_string()))
+    let response = serde_json::from_slice::<HookDecisionResponse>(bytes)
+        .map_err(|err| PolicyHookError::Schema(err.to_string()))?;
+    response
+        .validate_semantics()
+        .map_err(PolicyHookError::Schema)?;
+    Ok(response)
 }
 
 fn validate_endpoint(endpoint: &PolicyHookEndpoint) -> Result<Url, PolicyHookError> {
     let url = Url::parse(&endpoint.decision_url)
         .map_err(|err| PolicyHookError::InvalidUrl(err.to_string()))?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(PolicyHookError::InvalidUrl(
+            "hook endpoint URL must not contain userinfo".to_string(),
+        ));
+    }
     let local = is_loopback_hook_url(&url);
     let https = url.scheme() == "https";
     let local_http = endpoint.allow_insecure_localhost && local && url.scheme() == "http";
@@ -325,8 +377,14 @@ fn validate_endpoint(endpoint: &PolicyHookEndpoint) -> Result<Url, PolicyHookErr
 
 fn is_loopback_hook_url(url: &Url) -> bool {
     match url.host_str() {
-        Some("localhost" | "127.0.0.1" | "::1") => true,
-        Some(host) => host.starts_with("127."),
+        Some("localhost") => true,
+        Some(host) => {
+            let host = host
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .unwrap_or(host);
+            host.parse::<IpAddr>().is_ok_and(|addr| addr.is_loopback())
+        }
         None => false,
     }
 }
@@ -341,6 +399,7 @@ async fn audit_outcome(
         return;
     };
     let response = &outcome.response;
+    let fallback = sanitized_fail_closed_decision(endpoint.fail_closed_decision);
     let event = PolicyHookEvent {
         timestamp: SystemTime::now(),
         endpoint_id: endpoint.id.clone(),
@@ -351,7 +410,7 @@ async fn audit_outcome(
             .clone()
             .or_else(|| Some(request.decision_id.clone())),
         callback: request.on.as_str().to_string(),
-        decision: Some(response.decision.as_str().to_string()),
+        decision: (!outcome.failed_closed).then(|| response.decision.as_str().to_string()),
         rule_id: response.rule_id.clone(),
         reason: response.reason.clone(),
         latency_ms: outcome.latency_ms,
@@ -361,9 +420,7 @@ async fn audit_outcome(
             response.decision.audit_status().to_string()
         },
         error: outcome.error.clone(),
-        fallback: outcome
-            .failed_closed
-            .then(|| endpoint.fail_closed_decision.as_str().to_string()),
+        fallback: outcome.failed_closed.then(|| fallback.as_str().to_string()),
         audit_tags: response.audit_tags.clone(),
         trace_id: request.trace_id.clone(),
         session_id: request.session_id.clone(),

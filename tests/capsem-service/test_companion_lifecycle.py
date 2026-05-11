@@ -21,6 +21,7 @@ leak trays/gateways that interfere with subsequent runs.
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import signal
 import subprocess
@@ -453,6 +454,73 @@ class TestServiceSigkillReapsAllCompanions:
             svc.stop()
 
 
+class TestServiceEnsuresTray:
+    """The service owns the tray lifecycle.
+
+    Relaunching Capsem.app can only restore a missing tray by asking the
+    already-running service to spawn it as a real child; launching
+    capsem-tray directly would fail the parent-pid guard.
+    """
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="tray is macOS-only")
+    def test_ensure_tray_respawns_missing_tray_child(self):
+        _sign()
+        with tempfile.TemporaryDirectory(prefix="capsem-tray-ensure-") as td:
+            tmp_dir = Path(td)
+            port = 31000 + (os.getpid() % 4000)
+            proc = _spawn_service_on_fixed_port(tmp_dir, port)
+            try:
+                tray_lock = tmp_dir / "tray.lock"
+                first_tray_pid = _read_pid(tray_lock, 5.0)
+                assert _pid_alive(first_tray_pid), (
+                    f"initial tray {first_tray_pid} must be running"
+                )
+
+                os.kill(first_tray_pid, signal.SIGKILL)
+                assert _wait_pid_exit(first_tray_pid, WATCH_DEADLINE_SECS), (
+                    f"killed tray {first_tray_pid} should exit"
+                )
+
+                uds_path = getattr(proc, "_uds_path")
+                response = subprocess.run(
+                    [
+                        "curl", "-s", "-S",
+                        "--unix-socket", str(uds_path),
+                        "-X", "POST",
+                        "http://localhost/companions/tray/ensure",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
+                )
+                payload = json.loads(response.stdout)
+                assert payload["tray"] == "spawned", payload
+                second_tray_pid = payload["pid"]
+                assert second_tray_pid != first_tray_pid
+                assert _pid_alive(second_tray_pid), (
+                    f"replacement tray {second_tray_pid} must be running"
+                )
+                assert second_tray_pid in _list_direct_children(proc.pid), (
+                    "replacement tray must be a direct child of capsem-service"
+                )
+                deadline = time.time() + 5.0
+                while time.time() < deadline:
+                    try:
+                        if int(tray_lock.read_text().strip()) == second_tray_pid:
+                            break
+                    except (FileNotFoundError, ValueError):
+                        pass
+                    time.sleep(0.05)
+                assert tray_lock.read_text().strip() == str(second_tray_pid)
+            finally:
+                os.kill(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=5)
+                log_file = getattr(proc, "_log_file", None)
+                if log_file is not None and not log_file.closed:
+                    log_file.close()
+
+
 class TestServiceSigtermReapsCompanionsPromptly:
     """`just shell` / `just ui` / `just run-service` all invoke `_ensure-service`,
     which SIGTERMs any prior dev service and sleeps 500ms before spawning a
@@ -831,6 +899,7 @@ def _spawn_service_on_fixed_port(
         stderr=subprocess.STDOUT,
     )
     proc._log_file = log_file  # type: ignore[attr-defined]
+    proc._uds_path = uds_path  # type: ignore[attr-defined]
     # Wait for service UDS to accept.
     start = time.time()
     while time.time() - start < 15:

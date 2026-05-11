@@ -35,6 +35,7 @@ function normalizePolicyConfig(policy: PolicyConfig | undefined): PolicyConfig {
 
 export const POLICY_RULE_TYPES = ['mcp', 'http', 'dns', 'model', 'hook'] as const;
 export type PolicyRuleType = (typeof POLICY_RULE_TYPES)[number];
+export const EDITABLE_POLICY_RULE_TYPES = ['mcp', 'http', 'dns', 'model'] as const;
 
 export interface PolicyRuleEntry {
   key: string;
@@ -42,6 +43,7 @@ export interface PolicyRuleEntry {
   name: string;
   rule: PolicyRuleConfig;
   origin?: string;
+  pending?: 'add' | 'update' | 'delete';
 }
 
 const CALLBACKS_BY_TYPE: Record<PolicyRuleType, PolicyCallback[]> = {
@@ -52,12 +54,32 @@ const CALLBACKS_BY_TYPE: Record<PolicyRuleType, PolicyCallback[]> = {
   hook: ['hook.decision'],
 };
 
+const POLICY_DECISIONS = ['allow', 'ask', 'block', 'rewrite'] as const;
+const POLICY_RULE_NAME_RE = /^[A-Za-z0-9_-]+$/;
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
 function policyRulesFor(config: PolicyConfig, type: PolicyRuleType): Record<string, PolicyRuleConfig> {
   return config[type] ?? {};
 }
 
+function assertEditablePolicyRuleType(type: PolicyRuleType): void {
+  if (!(EDITABLE_POLICY_RULE_TYPES as readonly string[]).includes(type)) {
+    throw new Error(`${type} policy rules are not editable in this release`);
+  }
+}
+
 export function policyRuleKey(type: PolicyRuleType, name: string): string {
   return `policy.${type}.${name}`;
+}
+
+export function parsePolicyRuleKey(key: string): { type: PolicyRuleType; name: string } | null {
+  const parts = key.split('.');
+  if (parts.length !== 3 || parts[0] !== 'policy') return null;
+  const type = parts[1];
+  const name = parts[2];
+  if (!(POLICY_RULE_TYPES as readonly string[]).includes(type)) return null;
+  if (!POLICY_RULE_NAME_RE.test(name)) return null;
+  return { type: type as PolicyRuleType, name };
 }
 
 export function policyRuleNameFromParts(parts: string[]): string {
@@ -68,6 +90,317 @@ export function policyRuleNameFromParts(parts: string[]): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
   return normalized || 'rule';
+}
+
+function optionalString(
+  rule: Record<string, unknown>,
+  field: 'reason' | 'rewrite_target' | 'rewrite_value',
+): { present: boolean; value: string | null } {
+  if (!Object.prototype.hasOwnProperty.call(rule, field) || rule[field] === null || rule[field] === undefined) {
+    return { present: false, value: null };
+  }
+  if (typeof rule[field] !== 'string') {
+    throw new Error(`${field} must be a string`);
+  }
+  return { present: true, value: rule[field].trim() };
+}
+
+function normalizeHeaderList(value: unknown, field: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array of HTTP header names`);
+  }
+  const seen = new Set<string>();
+  const headers: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      throw new Error(`${field} must contain only HTTP header names`);
+    }
+    const header = item.trim().toLowerCase();
+    if (!header) {
+      throw new Error(`${field} contains an empty HTTP header name`);
+    }
+    if (!HEADER_NAME_RE.test(header)) {
+      throw new Error(`${field} contains invalid HTTP header name '${item}'`);
+    }
+    if (!seen.has(header)) {
+      seen.add(header);
+      headers.push(header);
+    }
+  }
+  return headers;
+}
+
+function rewriteTargetField(target: string): string {
+  const [field, regexText] = target.split('=~');
+  if (regexText === undefined) {
+    throw new Error("rewrite_target must use '<field> =~ <regex>'");
+  }
+  const normalized = field.trim();
+  const regex = regexText.trim();
+  if (!normalized) {
+    throw new Error('rewrite_target field must not be empty');
+  }
+  if (regex.length < 2 || !['"', "'"].includes(regex[0])) {
+    throw new Error('rewrite_target regex must be quoted');
+  }
+  const quote = regex[0];
+  const end = regex.lastIndexOf(quote);
+  if (end === 0) {
+    throw new Error('rewrite_target regex is missing a closing quote');
+  }
+  if (regex.slice(end + 1).trim()) {
+    throw new Error('rewrite_target regex has trailing content after closing quote');
+  }
+  return normalized;
+}
+
+function validateReplacementReferences(target: string, value: string): void {
+  const captures = new Set<string>();
+  for (const match of target.matchAll(/\(\?P?<([A-Za-z_][A-Za-z0-9_]*)>/g)) {
+    captures.add(match[1]);
+  }
+  for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+    if (!captures.has(match[1])) {
+      throw new Error(`rewrite_value references unknown capture '${match[1]}'`);
+    }
+  }
+}
+
+function rewriteTargetAllowed(callback: PolicyCallback, field: string): boolean {
+  if (callback === 'http.request') {
+    return (
+      field === 'request.url' ||
+      field === 'request.path' ||
+      field === 'request.query' ||
+      field.startsWith('request.headers.')
+    );
+  }
+  if (callback === 'http.response') {
+    return field === 'response.status' || field.startsWith('response.headers.');
+  }
+  if (callback === 'dns.query' || callback === 'dns.response') {
+    return field === 'answer.ip' || field === 'answer.ips';
+  }
+  if (callback === 'mcp.request') {
+    return field === 'arguments' || field.startsWith('arguments.');
+  }
+  if (callback === 'mcp.response') {
+    return (
+      field === 'response.content' ||
+      field === 'response.text' ||
+      field.startsWith('response.')
+    );
+  }
+  if (callback === 'model.response') {
+    return ['response.text', 'text', 'content', 'thinking_content'].includes(field);
+  }
+  if (callback === 'model.tool_call') {
+    return field === 'tool.arguments' || field === 'tool.name' || field === 'tool.call_id' || field.startsWith('tool.arguments.');
+  }
+  if (callback === 'model.tool_response') {
+    return field === 'content' || field === 'response.content';
+  }
+  return false;
+}
+
+export function normalizePolicyRuleConfig(
+  type: PolicyRuleType,
+  name: string,
+  value: unknown,
+): PolicyRuleConfig {
+  if (!POLICY_RULE_NAME_RE.test(name)) {
+    throw new Error(`invalid policy rule name: ${name}`);
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid policy rule: ${policyRuleKey(type, name)}`);
+  }
+  const rule = value as Record<string, unknown>;
+  if (typeof rule.on !== 'string' || !CALLBACKS_BY_TYPE[type].includes(rule.on as PolicyCallback)) {
+    throw new Error(`policy rule ${policyRuleKey(type, name)} uses callback for a different policy type`);
+  }
+  if (typeof rule.if !== 'string' || rule.if.trim() === '') {
+    throw new Error(`policy rule ${policyRuleKey(type, name)} requires a non-empty CEL condition`);
+  }
+  if (typeof rule.decision !== 'string' || !(POLICY_DECISIONS as readonly string[]).includes(rule.decision)) {
+    throw new Error(`policy rule ${policyRuleKey(type, name)} has an invalid decision`);
+  }
+  if (typeof rule.priority !== 'number' || !Number.isFinite(rule.priority)) {
+    throw new Error(`policy rule ${policyRuleKey(type, name)} requires a numeric priority`);
+  }
+
+  const callback = rule.on as PolicyCallback;
+  const decision = rule.decision as PolicyRuleConfig['decision'];
+  const reason = optionalString(rule, 'reason');
+  const rewriteTarget = optionalString(rule, 'rewrite_target');
+  const rewriteValue = optionalString(rule, 'rewrite_value');
+  const stripRequestHeaders = normalizeHeaderList(rule.strip_request_headers, 'strip_request_headers');
+  const stripResponseHeaders = normalizeHeaderList(rule.strip_response_headers, 'strip_response_headers');
+
+  const normalized: PolicyRuleConfig = {
+    on: callback,
+    if: rule.if.trim(),
+    decision,
+    priority: rule.priority,
+  };
+  if (reason.value) normalized.reason = reason.value;
+
+  if (decision === 'rewrite') {
+    const hasTarget = Boolean(rewriteTarget.value);
+    const hasValue = Boolean(rewriteValue.value);
+    const hasHeaderStrip = stripRequestHeaders.length > 0 || stripResponseHeaders.length > 0;
+    if (stripRequestHeaders.length > 0 && callback !== 'http.request') {
+      throw new Error(`strip_request_headers is only supported for http.request`);
+    }
+    if (stripResponseHeaders.length > 0 && callback !== 'http.response') {
+      throw new Error(`strip_response_headers is only supported for http.response`);
+    }
+    if (hasTarget !== hasValue) {
+      throw new Error('rewrite requires both rewrite_target and rewrite_value');
+    }
+    if (!hasTarget && !hasHeaderStrip) {
+      throw new Error('rewrite requires rewrite_target/rewrite_value or header strip fields');
+    }
+    if (hasTarget && rewriteTarget.value && rewriteValue.value) {
+      const field = rewriteTargetField(rewriteTarget.value);
+      if (!rewriteTargetAllowed(callback, field)) {
+        throw new Error(`unsupported rewrite target '${field}' for ${callback}`);
+      }
+      validateReplacementReferences(rewriteTarget.value, rewriteValue.value);
+      normalized.rewrite_target = rewriteTarget.value;
+      normalized.rewrite_value = rewriteValue.value;
+    }
+    if (stripRequestHeaders.length > 0) normalized.strip_request_headers = stripRequestHeaders;
+    if (stripResponseHeaders.length > 0) normalized.strip_response_headers = stripResponseHeaders;
+  } else if (
+    rewriteTarget.present ||
+    rewriteValue.present ||
+    stripRequestHeaders.length > 0 ||
+    stripResponseHeaders.length > 0
+  ) {
+    throw new Error('only rewrite decisions may carry rewrite fields');
+  }
+
+  return normalized;
+}
+
+export function validatePolicyRuleConfig(
+  type: PolicyRuleType,
+  name: string,
+  value: unknown,
+): string | null {
+  try {
+    normalizePolicyRuleConfig(type, name, value);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function assertNoDuplicatePolicyRuleKeys(json: string): void {
+  let cursor = 0;
+
+  function skipWhitespace() {
+    while (/\s/.test(json[cursor] ?? '')) cursor += 1;
+  }
+
+  function parseString(): string {
+    if (json[cursor] !== '"') throw new Error('invalid json string');
+    cursor += 1;
+    let value = '';
+    while (cursor < json.length) {
+      const ch = json[cursor++];
+      if (ch === '"') return value;
+      if (ch === '\\') {
+        const escaped = json[cursor++];
+        value += escaped ?? '';
+      } else {
+        value += ch;
+      }
+    }
+    throw new Error('unterminated json string');
+  }
+
+  function parsePrimitive() {
+    while (cursor < json.length && !/[\s,\]}]/.test(json[cursor])) cursor += 1;
+  }
+
+  function parseArray(path: string[]) {
+    cursor += 1;
+    skipWhitespace();
+    if (json[cursor] === ']') {
+      cursor += 1;
+      return;
+    }
+    while (cursor < json.length) {
+      parseValue(path);
+      skipWhitespace();
+      if (json[cursor] === ',') {
+        cursor += 1;
+        continue;
+      }
+      if (json[cursor] === ']') {
+        cursor += 1;
+        return;
+      }
+      throw new Error('invalid json array');
+    }
+  }
+
+  function parseObject(path: string[]) {
+    cursor += 1;
+    const keys = new Set<string>();
+    const detectDuplicates = path[0] === 'policy' && path.length === 2;
+    skipWhitespace();
+    if (json[cursor] === '}') {
+      cursor += 1;
+      return;
+    }
+    while (cursor < json.length) {
+      skipWhitespace();
+      const key = parseString();
+      if (detectDuplicates) {
+        if (keys.has(key)) {
+          throw new Error(`Duplicate policy rule key: policy.${path[1]}.${key}`);
+        }
+        keys.add(key);
+      }
+      skipWhitespace();
+      if (json[cursor] !== ':') throw new Error('invalid json object');
+      cursor += 1;
+      parseValue([...path, key]);
+      skipWhitespace();
+      if (json[cursor] === ',') {
+        cursor += 1;
+        continue;
+      }
+      if (json[cursor] === '}') {
+        cursor += 1;
+        return;
+      }
+      throw new Error('invalid json object');
+    }
+  }
+
+  function parseValue(path: string[]) {
+    skipWhitespace();
+    const ch = json[cursor];
+    if (ch === '{') return parseObject(path);
+    if (ch === '[') return parseArray(path);
+    if (ch === '"') {
+      parseString();
+      return;
+    }
+    parsePrimitive();
+  }
+
+  try {
+    parseValue([]);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Duplicate policy rule key:')) {
+      throw error;
+    }
+  }
 }
 
 function escapeCelString(value: string): string {
@@ -211,10 +544,11 @@ export class SettingsModel {
   }
 
   get policyRuleEntries(): PolicyRuleEntry[] {
-    const entries: PolicyRuleEntry[] = [];
+    const byKey = new Map<string, PolicyRuleEntry>();
     for (const type of POLICY_RULE_TYPES) {
       for (const [name, rule] of Object.entries(policyRulesFor(this._policy, type))) {
-        entries.push({
+        const key = policyRuleKey(type, name);
+        byKey.set(key, {
           key: policyRuleKey(type, name),
           type,
           name,
@@ -222,6 +556,27 @@ export class SettingsModel {
         });
       }
     }
+    for (const [key, value] of this._pendingChanges) {
+      const parsed = parsePolicyRuleKey(key);
+      if (!parsed) continue;
+      const current = byKey.get(key);
+      if (value === null) {
+        if (current) {
+          byKey.set(key, { ...current, pending: 'delete' });
+        }
+        continue;
+      }
+      if (!isPolicyRuleConfig(value)) continue;
+      const rule = normalizePolicyRuleConfig(parsed.type, parsed.name, value);
+      byKey.set(key, {
+        key,
+        type: parsed.type,
+        name: parsed.name,
+        rule,
+        pending: current ? 'update' : 'add',
+      });
+    }
+    const entries = Array.from(byKey.values());
     return entries.sort((left, right) => {
       const priority = left.rule.priority - right.rule.priority;
       if (priority !== 0) return priority;
@@ -240,6 +595,7 @@ export class SettingsModel {
     ) => {
       const key = policyRuleKey(type, name);
       if (seenKeys.has(key)) return;
+      if (this.policyRuleMatchesPendingOrEffective(key, rule)) return;
       seenKeys.add(key);
       entries.push({
         key,
@@ -349,7 +705,19 @@ export class SettingsModel {
   }
 
   stagePolicyRule(type: PolicyRuleType, name: string, rule: PolicyRuleConfig): void {
-    this.stage(policyRuleKey(type, name), rule);
+    assertEditablePolicyRuleType(type);
+    this.stage(policyRuleKey(type, name), normalizePolicyRuleConfig(type, name, rule));
+  }
+
+  stagePolicyRuleRename(oldKey: string, type: PolicyRuleType, name: string, rule: PolicyRuleConfig): void {
+    assertEditablePolicyRuleType(type);
+    const newKey = policyRuleKey(type, name);
+    const normalized = normalizePolicyRuleConfig(type, name, rule);
+    this._pendingChanges = new Map(this._pendingChanges);
+    if (oldKey !== newKey) {
+      this._pendingChanges.set(oldKey, null);
+    }
+    this._pendingChanges.set(newKey, normalized);
   }
 
   deletePolicyRule(type: PolicyRuleType, name: string): void {
@@ -357,10 +725,23 @@ export class SettingsModel {
   }
 
   stageGeneratedPolicyRules(): number {
-    for (const entry of this.generatedPolicyRuleEntries) {
+    const entries = this.generatedPolicyRuleEntries;
+    for (const entry of entries) {
       this.stage(entry.key, entry.rule);
     }
-    return this.generatedPolicyRuleEntries.length;
+    return entries.length;
+  }
+
+  private policyRuleMatchesPendingOrEffective(key: string, rule: PolicyRuleConfig): boolean {
+    const parsed = parsePolicyRuleKey(key);
+    if (!parsed) return false;
+    const normalized = normalizePolicyRuleConfig(parsed.type, parsed.name, rule);
+    if (this._pendingChanges.has(key)) {
+      const pending = this._pendingChanges.get(key);
+      return pending !== null && isPolicyRuleConfig(pending) && JSON.stringify(normalizePolicyRuleConfig(parsed.type, parsed.name, pending)) === JSON.stringify(normalized);
+    }
+    const current = policyRulesFor(this._policy, parsed.type)[parsed.name];
+    return Boolean(current && JSON.stringify(normalizePolicyRuleConfig(parsed.type, parsed.name, current)) === JSON.stringify(normalized));
   }
 
   get activePresetId(): string | null {
@@ -494,6 +875,13 @@ export class SettingsModel {
   importFromJSON(json: string): Map<string, SettingsChangeValue> {
     let parsed: unknown;
     try {
+      assertNoDuplicatePolicyRuleKeys(json);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Duplicate policy rule key:')) {
+        throw error;
+      }
+    }
+    try {
       parsed = JSON.parse(json);
     } catch {
       throw new Error('Invalid JSON');
@@ -533,12 +921,11 @@ export class SettingsModel {
       const incomingPolicy = normalizePolicyConfig(obj.policy as PolicyConfig);
       for (const type of POLICY_RULE_TYPES) {
         for (const [name, rule] of Object.entries(policyRulesFor(incomingPolicy, type))) {
-          if (!isPolicyRuleConfig(rule)) {
-            throw new Error(`Invalid policy rule: ${policyRuleKey(type, name)}`);
-          }
+          assertEditablePolicyRuleType(type);
+          const normalizedRule = normalizePolicyRuleConfig(type, name, rule);
           const current = policyRulesFor(this._policy, type)[name];
-          if (JSON.stringify(current) === JSON.stringify(rule)) continue;
-          changes.set(policyRuleKey(type, name), rule);
+          if (current && JSON.stringify(normalizePolicyRuleConfig(type, name, current)) === JSON.stringify(normalizedRule)) continue;
+          changes.set(policyRuleKey(type, name), normalizedRule);
         }
       }
     }

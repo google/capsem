@@ -11,11 +11,13 @@
 //!
 //! ## Storage
 //!
-//! Flat `~/.capsem/assets/` with hash-based filenames
+//! Installed `~/.capsem/assets/{arch}/` layout with hash-based filenames
 //! (`vmlinuz-{hash16}`, `rootfs-{hash16}.squashfs`). Same hash = same file =
-//! natural dedup across asset versions.
+//! natural dedup across asset versions. Flat hash-named files are still
+//! accepted for development fixtures.
 
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -54,6 +56,32 @@ fn validate_hash(hash: &str) -> Result<()> {
         bail!("invalid blake3 hash (expected 64 hex chars): {hash}");
     }
     Ok(())
+}
+
+fn asset_version_key(version: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = version.split('.');
+    let year = parts.next()?.parse().ok()?;
+    let month_day = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((year, month_day, patch))
+}
+
+fn cmp_asset_versions(left: &str, right: &str) -> Ordering {
+    match (asset_version_key(left), asset_version_key(right)) {
+        (Some(l), Some(r)) => l.cmp(&r),
+        _ => left.cmp(right),
+    }
+}
+
+fn asset_version_ge(left: &str, right: &str) -> bool {
+    cmp_asset_versions(left, right) != Ordering::Less
+}
+
+fn asset_version_gt(left: &str, right: &str) -> bool {
+    cmp_asset_versions(left, right) == Ordering::Greater
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +479,7 @@ impl ManifestV2 {
                 .entry(version.clone())
                 .or_insert_with(|| entry.clone());
         }
-        if other.assets.current > self.assets.current {
+        if asset_version_gt(&other.assets.current, &self.assets.current) {
             self.assets.current = other.assets.current.clone();
         }
         for (version, entry) in &other.binaries.releases {
@@ -506,8 +534,8 @@ pub fn default_assets_dir() -> Option<PathBuf> {
 /// asset version lives only inside the manifest and is *not* a tag.
 ///
 /// Honors the `CAPSEM_RELEASE_URL` env override (used by integration tests that
-/// point at a local HTTP fixture). The trailing path `/v{version}` is still
-/// appended so local fixtures can mirror the release directory structure.
+/// point at a local HTTP fixture). The trailing path is `/v{binary_version}` so
+/// local fixtures can mirror the GitHub release tag directory structure.
 pub fn release_url(binary_version: &str) -> String {
     let base = std::env::var("CAPSEM_RELEASE_URL")
         .ok()
@@ -533,15 +561,19 @@ pub fn asset_download_url(binary_version: &str, arch: &str, logical_name: &str) 
 ///
 /// Returns paths that were removed.
 pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<Vec<PathBuf>> {
-    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut referenced: HashSet<String> = HashSet::new();
+    let mut referenced_by_arch: HashMap<String, HashSet<String>> = HashMap::new();
 
     for release in manifest.assets.releases.values() {
         if release.deprecated {
             continue;
         }
-        for assets in release.arches.values() {
+        for (arch, assets) in &release.arches {
+            let arch_referenced = referenced_by_arch.entry(arch.clone()).or_default();
             for (name, entry) in assets {
-                referenced.insert(hash_filename(name, &entry.hash));
+                let hashed = hash_filename(name, &entry.hash);
+                referenced.insert(hashed.clone());
+                arch_referenced.insert(hashed);
             }
         }
     }
@@ -551,29 +583,70 @@ pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<V
         return Ok(removed);
     }
 
+    cleanup_asset_dir(base_dir, &referenced, &mut removed)?;
+
     for entry in std::fs::read_dir(base_dir)? {
         let entry = entry?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
-        if name_str == "manifest.json" || name_str.starts_with('.') || name_str.ends_with(".tmp") {
+        if is_asset_metadata_file(&name_str)
+            || name_str.starts_with('.')
+            || name_str.ends_with(".tmp")
+        {
             continue;
         }
 
-        // Skip directories (arch subdirs like arm64/, x86_64/)
         if entry.file_type()?.is_dir() {
+            let path = entry.path();
+            if name_str.starts_with("v1.0.") {
+                info!(path = %path.display(), "removing legacy asset directory");
+                std::fs::remove_dir_all(&path)?;
+                removed.push(path);
+            } else if let Some(arch_referenced) = referenced_by_arch.get(name_str.as_ref()) {
+                cleanup_asset_dir(&path, arch_referenced, &mut removed)?;
+            }
             continue;
-        }
-
-        // Remove hash-named files not referenced by any release
-        if name_str.contains('-') && !referenced.contains(name_str.as_ref()) {
-            info!(path = %entry.path().display(), "removing unreferenced asset");
-            std::fs::remove_file(entry.path())?;
-            removed.push(entry.path());
         }
     }
 
     Ok(removed)
+}
+
+fn cleanup_asset_dir(
+    dir: &Path,
+    referenced: &HashSet<String>,
+    removed: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if is_asset_metadata_file(&name_str)
+            || name_str.starts_with('.')
+            || name_str.ends_with(".tmp")
+        {
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            continue;
+        }
+        if name_str.contains('-') && !referenced.contains(name_str.as_ref()) {
+            let path = entry.path();
+            info!(path = %path.display(), "removing unreferenced asset");
+            std::fs::remove_file(&path)?;
+            removed.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_asset_metadata_file(name: &str) -> bool {
+    matches!(
+        name,
+        "manifest.json" | "manifest.json.minisig" | "manifest-sign.dev.pub" | "B3SUMS"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -756,12 +829,16 @@ fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> String {
     // assets.current. Same fallback as binary_version not being in manifest.
     if let Some(bin_rel) = manifest.binaries.releases.get(binary_version) {
         let min = &bin_rel.min_assets;
-        if min.is_empty() || manifest.assets.current >= *min {
+        if min.is_empty() || asset_version_ge(&manifest.assets.current, min) {
             return manifest.assets.current.clone();
         }
         let mut best: Option<&str> = None;
         for v in manifest.assets.releases.keys() {
-            if v.as_str() >= min.as_str() && (best.is_none() || v.as_str() > best.unwrap()) {
+            if asset_version_ge(v.as_str(), min)
+                && best
+                    .map(|current| asset_version_gt(v.as_str(), current))
+                    .unwrap_or(true)
+            {
                 best = Some(v.as_str());
             }
         }
@@ -779,6 +856,7 @@ fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const SAMPLE_V2_MANIFEST: &str = r#"{
         "format": 2,
@@ -810,6 +888,63 @@ mod tests {
             }
         }
     }"#;
+
+    fn sample_arch_assets() -> serde_json::Value {
+        json!({
+            "vmlinuz": {
+                "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c",
+                "size": 1
+            },
+            "initrd.img": {
+                "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456",
+                "size": 1
+            },
+            "rootfs.squashfs": {
+                "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee",
+                "size": 1
+            }
+        })
+    }
+
+    fn manifest_with_asset_versions(
+        current: &str,
+        asset_versions: &[&str],
+        min_assets: &str,
+    ) -> ManifestV2 {
+        let mut releases = serde_json::Map::new();
+        for version in asset_versions {
+            releases.insert(
+                (*version).to_string(),
+                json!({
+                    "date": "2026-05-10",
+                    "deprecated": false,
+                    "min_binary": "1.0.0",
+                    "arches": {
+                        "arm64": sample_arch_assets(),
+                    },
+                }),
+            );
+        }
+
+        let manifest = json!({
+            "format": 2,
+            "assets": {
+                "current": current,
+                "releases": releases,
+            },
+            "binaries": {
+                "current": "1.0.1776269479",
+                "releases": {
+                    "1.0.1776269479": {
+                        "date": "2026-05-10",
+                        "deprecated": false,
+                        "min_assets": min_assets,
+                    }
+                }
+            }
+        });
+        ManifestV2::from_json(&serde_json::to_string(&manifest).unwrap()).unwrap()
+    }
 
     #[test]
     fn manifest_parse() {
@@ -1137,6 +1272,31 @@ mod tests {
     }
 
     #[test]
+    fn manifest_merge_uses_numeric_asset_patch_order() {
+        let mut m1 = manifest_with_asset_versions("2026.0510.9", &["2026.0510.9"], "");
+        let m2 = manifest_with_asset_versions("2026.0510.10", &["2026.0510.10"], "");
+        m1.merge(&m2);
+        assert_eq!(m1.assets.current, "2026.0510.10");
+    }
+
+    #[test]
+    fn pick_asset_version_uses_numeric_asset_patch_order() {
+        let m = manifest_with_asset_versions(
+            "2026.0510.2",
+            &["2026.0510.2", "2026.0510.9", "2026.0510.10"],
+            "2026.0510.9",
+        );
+        let resolved = m
+            .resolve(
+                "1.0.1776269479",
+                "arm64",
+                tempfile::tempdir().unwrap().path(),
+            )
+            .unwrap();
+        assert_eq!(resolved.asset_version, "2026.0510.10");
+    }
+
+    #[test]
     fn manifest_resolve_finds_files_in_arch_subdir() {
         // Simulates installed/dev layout: base_dir/arm64/vmlinuz-{hash}
         let dir = tempfile::tempdir().unwrap();
@@ -1287,6 +1447,9 @@ mod tests {
         std::fs::write(base.join("vmlinuz-deadbeef12345678"), b"old").unwrap();
         // Create manifest.json (should be preserved)
         std::fs::write(base.join("manifest.json"), b"{}").unwrap();
+        // Signature sidecars are top-level metadata, not hash-named assets.
+        std::fs::write(base.join("manifest.json.minisig"), b"sig").unwrap();
+        std::fs::write(base.join("manifest-sign.dev.pub"), b"pub").unwrap();
 
         let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
         let removed = cleanup_unused_assets(base, &m).unwrap();
@@ -1295,6 +1458,84 @@ mod tests {
         assert!(base.join("vmlinuz-a65f925ebe0b0cc7").exists());
         assert!(!base.join("vmlinuz-deadbeef12345678").exists());
         assert!(base.join("manifest.json").exists());
+        assert!(base.join("manifest.json.minisig").exists());
+        assert!(base.join("manifest-sign.dev.pub").exists());
+    }
+
+    #[test]
+    fn cleanup_removes_arch_stale_hashes_and_legacy_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let arm64 = base.join("arm64");
+        let x86_64 = base.join("x86_64");
+        let legacy = base.join("v1.0.1776269479");
+        let notes = base.join("notes");
+        std::fs::create_dir(&arm64).unwrap();
+        std::fs::create_dir(&x86_64).unwrap();
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::create_dir(&notes).unwrap();
+        std::fs::write(legacy.join("rootfs.squashfs"), b"old").unwrap();
+        std::fs::write(notes.join("README"), b"keep").unwrap();
+
+        let arm_live = arm64.join("vmlinuz-a65f925ebe0b0cc7");
+        let arm_stale = arm64.join("vmlinuz-deadbeef12345678");
+        let x86_live = x86_64.join("rootfs-ffffffffffffffff.squashfs");
+        let x86_stale = x86_64.join("rootfs-1111111111111111.squashfs");
+        std::fs::write(&arm_live, b"k").unwrap();
+        std::fs::write(&arm_stale, b"old-k").unwrap();
+        std::fs::write(&x86_live, b"r").unwrap();
+        std::fs::write(&x86_stale, b"old-r").unwrap();
+
+        let manifest = json!({
+            "format": 2,
+            "assets": {
+                "current": "2026.0510.1",
+                "releases": {
+                    "2026.0510.1": {
+                        "date": "2026-05-10",
+                        "deprecated": false,
+                        "min_binary": "1.0.0",
+                        "arches": {
+                            "arm64": sample_arch_assets(),
+                            "x86_64": {
+                                "vmlinuz": {
+                                    "hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                    "size": 1
+                                },
+                                "initrd.img": {
+                                    "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                                    "size": 1
+                                },
+                                "rootfs.squashfs": {
+                                    "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                                    "size": 1
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "binaries": {
+                "current": "1.0.1776269479",
+                "releases": {
+                    "1.0.1776269479": {
+                        "date": "2026-05-10",
+                        "deprecated": false,
+                        "min_assets": "2026.0510.1"
+                    }
+                }
+            }
+        });
+        let m = ManifestV2::from_json(&serde_json::to_string(&manifest).unwrap()).unwrap();
+
+        let removed = cleanup_unused_assets(base, &m).unwrap();
+        assert_eq!(removed.len(), 3);
+        assert!(arm_live.exists());
+        assert!(!arm_stale.exists());
+        assert!(x86_live.exists());
+        assert!(!x86_stale.exists());
+        assert!(!legacy.exists());
+        assert!(notes.join("README").exists());
     }
 
     #[test]

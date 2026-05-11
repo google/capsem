@@ -39,7 +39,7 @@ fi
 mkdir -p "$ASSETS_DST"
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2
@@ -53,6 +53,12 @@ done
 # ManifestV2::resolve() actually reads: $ASSETS_DST/$ARCH/{hash_filename}.
 if [[ -f "$ASSETS_SRC/manifest.json" ]]; then
     cp "$ASSETS_SRC/manifest.json" "$ASSETS_DST/"
+fi
+if [[ -f "$ASSETS_SRC/manifest.json.minisig" ]]; then
+    cp "$ASSETS_SRC/manifest.json.minisig" "$ASSETS_DST/"
+fi
+if [[ -f "$ASSETS_SRC/manifest-sign.dev.pub" ]]; then
+    cp "$ASSETS_SRC/manifest-sign.dev.pub" "$ASSETS_DST/"
 fi
 
 ARCH=$(uname -m)

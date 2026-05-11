@@ -29,6 +29,8 @@ REQUIRED_BINARIES = [
     "capsem-service",
     "capsem-process",
     "capsem-mcp",
+    "capsem-mcp-aggregator",
+    "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
 ]
@@ -92,7 +94,7 @@ def _deb_contents(deb: Path, dest: Path) -> Path:
 
 
 def test_happy_path_adds_every_companion_binary(tmp_path):
-    """All six companion binaries land in /usr/bin with mode 755."""
+    """All companion binaries land in /usr/bin with mode 755."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
     _seed_binaries(bin_dir)

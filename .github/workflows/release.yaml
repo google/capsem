@@ -106,6 +106,9 @@ jobs:
           just build-kernel ${{ matrix.arch }}
           just build-rootfs ${{ matrix.arch }}
 
+      - name: Validate rootfs contains all required artifacts
+        run: scripts/validate-rootfs.sh assets/${{ matrix.arch }}/rootfs.squashfs
+
       - uses: actions/upload-artifact@v7
         with:
           name: vm-assets-${{ matrix.arch }}
@@ -228,8 +231,12 @@ jobs:
         with:
           name: vm-assets-arm64
           path: assets/arm64/
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-x86_64
+          path: assets/x86_64/
 
-      # Regenerate manifest for this arch (creates assets/current symlink).
+      # Regenerate unified manifest for both arch dirs.
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - name: Generate manifest
@@ -240,6 +247,16 @@ jobs:
           from capsem.builder.docker import generate_checksums
           generate_checksums(Path('assets'), '$VERSION')
           "
+
+      - name: Sign package payload manifest
+        run: |
+          brew install minisign
+          echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
+          minisign -S -s /tmp/manifest-sign.key -m assets/manifest.json
+          rm /tmp/manifest-sign.key
+          minisign -Vm assets/manifest.json -x assets/manifest.json.minisig -p config/manifest-sign.pub
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
       # Replace symlink with real copy -- GitHub Actions strips symlinks
       # and Tauri build.rs needs assets/current/ to exist as a real dir.
@@ -360,6 +377,27 @@ jobs:
             "$VERSION" \
             "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
 
+      - name: Verify .pkg payload manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXPANDED="$RUNNER_TEMP/capsem-pkg-expanded"
+          pkgutil --expand-full "packages/Capsem-$VERSION.pkg" "$EXPANDED"
+          MANIFEST=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json' -print -quit)
+          SIG=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json.minisig' -print -quit)
+          if [ -z "$MANIFEST" ] || [ -z "$SIG" ]; then
+            echo "::error::.pkg payload missing manifest.json or manifest.json.minisig"
+            exit 1
+          fi
+          minisign -Vm "$MANIFEST" -x "$SIG" -p config/manifest-sign.pub
+          python3 - "$MANIFEST" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          arches = data["assets"]["releases"][data["assets"]["current"]]["arches"]
+          missing = {"arm64", "x86_64"} - set(arches)
+          if missing:
+              raise SystemExit(f"manifest missing arch maps: {sorted(missing)}")
+          PY
+
       - name: Notarize and staple .pkg
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -397,9 +435,6 @@ jobs:
 
   build-app-linux:
     needs: [preflight, build-assets, test, test-install]
-    # Linux release is best-effort for now. See sprints/linux/tracker.md --
-    # macOS .pkg is the shipping artifact until Linux is verified end-to-end.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -430,6 +465,15 @@ jobs:
           generate_checksums(Path('assets'), '$VERSION')
           "
 
+      - name: Sign package payload manifest
+        run: |
+          echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
+          minisign -S -s /tmp/manifest-sign.key -m assets/manifest.json
+          rm /tmp/manifest-sign.key
+          minisign -Vm assets/manifest.json -x assets/manifest.json.minisig -p config/manifest-sign.pub
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+
       # Replace symlink with real copy -- GitHub Actions strips symlinks
       # and Tauri build.rs needs assets/current/ to exist as a real dir.
       - name: Copy assets/current
@@ -453,6 +497,7 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             xdg-utils \
+            minisign \
             xvfb
 
       - uses: pnpm/action-setup@v5
@@ -483,27 +528,7 @@ jobs:
           cat assets/manifest.json | head -5
 
       - name: Validate rootfs contains all required artifacts
-        run: |
-          ROOTFS="assets/${{ matrix.arch }}/rootfs.squashfs"
-          if [ ! -f "$ROOTFS" ]; then
-            echo "::error::rootfs.squashfs not found at $ROOTFS"
-            exit 1
-          fi
-          MOUNT=$(mktemp -d)
-          sudo mount -t squashfs -o loop,ro "$ROOTFS" "$MOUNT"
-          MISSING=""
-          for bin in capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-doctor capsem-bench snapshots; do
-            if [ ! -f "$MOUNT/usr/local/bin/$bin" ]; then
-              MISSING="$MISSING $bin"
-            fi
-          done
-          sudo umount "$MOUNT"
-          rmdir "$MOUNT"
-          if [ -n "$MISSING" ]; then
-            echo "::error::rootfs is missing required binaries:$MISSING"
-            exit 1
-          fi
-          echo "All required binaries present in rootfs"
+        run: scripts/validate-rootfs.sh assets/${{ matrix.arch }}/rootfs.squashfs
 
       - name: Build app
         env:
@@ -515,19 +540,37 @@ jobs:
 
       - name: Build companion binaries
         run: |
-          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-gateway -p capsem-tray
+          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray
 
       - name: Repack .deb with companion binaries
         run: |
           DEB_FILE=$(ls target/release/bundle/deb/*.deb)
-          bash scripts/repack-deb.sh "$DEB_FILE" "target/release"
+          bash scripts/repack-deb.sh "$DEB_FILE" "target/release" "assets"
 
       - name: Validate artifacts
         run: |
           echo "=== Validate deb ==="
           dpkg-deb --info target/release/bundle/deb/*.deb
-          echo "=== Verify companion binaries in deb ==="
-          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-gateway|capsem-tray"
+          echo "=== Verify companion binaries and manifest in deb ==="
+          deb_contents="$(dpkg-deb --contents target/release/bundle/deb/*.deb)"
+          required_deb_payloads=(
+            "usr/bin/capsem"
+            "usr/bin/capsem-service"
+            "usr/bin/capsem-process"
+            "usr/bin/capsem-mcp"
+            "usr/bin/capsem-mcp-aggregator"
+            "usr/bin/capsem-mcp-builtin"
+            "usr/bin/capsem-gateway"
+            "usr/bin/capsem-tray"
+            "usr/share/capsem/assets/manifest.json"
+            "usr/share/capsem/assets/manifest.json.minisig"
+          )
+          for required in "${required_deb_payloads[@]}"; do
+            if ! grep -q "$required" <<<"$deb_contents"; then
+              echo "::error::.deb missing required payload: $required" >&2
+              exit 1
+            fi
+          done
 
       - name: Boot test (x86_64)
         if: matrix.arch == 'x86_64'
@@ -571,12 +614,13 @@ jobs:
           path: release-artifacts/
 
   create-release:
-    needs: [test, test-install, build-app-macos, build-app-linux]
+    needs: [test, test-install, build-assets, build-app-macos, build-app-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      # Download all platform artifacts. macOS is required; Linux is best-effort.
+      # Download all platform artifacts. Expected package artifacts are
+      # release-blocking: missing Linux artifacts must fail before publish.
       - uses: actions/download-artifact@v8
         with:
           name: release-macos
@@ -585,12 +629,10 @@ jobs:
         with:
           name: release-linux-arm64
           path: release-artifacts/
-        continue-on-error: true
       - uses: actions/download-artifact@v8
         with:
           name: release-linux-x86_64
           path: release-artifacts/
-        continue-on-error: true
 
       # Download per-arch VM assets for the release.
       - uses: actions/download-artifact@v8
@@ -611,6 +653,10 @@ jobs:
           mkdir -p unified-assets/arm64 unified-assets/x86_64
           cp release-artifacts/arm64/* unified-assets/arm64/
           cp release-artifacts/x86_64/* unified-assets/x86_64/
+          gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
+          if [ -f /tmp/prev-manifest/manifest.json ]; then
+            cp /tmp/prev-manifest/manifest.json unified-assets/manifest.json
+          fi
           VERSION="${GITHUB_REF_NAME#v}"
           uv run python3 -c "
           from pathlib import Path
@@ -618,6 +664,8 @@ jobs:
           generate_checksums(Path('unified-assets'), '$VERSION')
           "
           cp unified-assets/manifest.json release-artifacts/manifest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Populate v2 manifest binaries.releases[VERSION] with pkg + deb entries
       # and merge previous release's assets/binaries so clients can still
@@ -651,19 +699,24 @@ jobs:
               return h.hexdigest()
 
           binary_files = []
-          # .pkg is required -- .deb may be absent if Linux best-effort build failed.
           for pattern in ('*.pkg', '*.deb'):
               binary_files.extend(sorted(artifacts.glob(pattern)))
           if not any(f.suffix == '.pkg' for f in binary_files):
               raise SystemExit('No .pkg found in release-artifacts/ -- macOS build must have failed')
+          debs = [f for f in binary_files if f.suffix == '.deb']
+          if len(debs) < 2:
+              raise SystemExit(f'Expected Linux .deb artifacts for both arches, found {len(debs)}')
 
-          entry = {
+          # Preserve generated metadata (`date`, `deprecated`, `min_assets`)
+          # while adding package file hashes for the published release.
+          entry = new['binaries']['releases'].get(version, {})
+          entry.update({
               'version': version,
               'files': [
                   {'name': f.name, 'size': f.stat().st_size, 'sha256': sha256(f)}
                   for f in binary_files
               ],
-          }
+          })
           new['binaries']['releases'][version] = entry
           print(f'Populated binaries.releases[{version}] with {len(entry["files"])} file(s):')
           for fd in entry['files']:
@@ -700,13 +753,19 @@ jobs:
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
-      - name: Attest build provenance (pkg + deb + rootfs per arch)
+      - name: Attest build provenance (packages, signed manifest, boot assets)
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             release-artifacts/*.pkg
             release-artifacts/*.deb
+            release-artifacts/manifest.json
+            release-artifacts/manifest.json.minisig
+            release-artifacts/arm64/vmlinuz
+            release-artifacts/arm64/initrd.img
             release-artifacts/arm64/rootfs.squashfs
+            release-artifacts/x86_64/vmlinuz
+            release-artifacts/x86_64/initrd.img
             release-artifacts/x86_64/rootfs.squashfs
 
       - name: Attest SBOM
@@ -727,7 +786,7 @@ jobs:
           X86_ROOTFS=$(du -h release-artifacts/x86_64/rootfs.squashfs 2>/dev/null | cut -f1 || echo "N/A")
           SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
 
-          # Build artifact table rows for all debs (may be absent if Linux best-effort failed)
+          # Build artifact table rows for required Linux debs.
           LINUX_ROWS=""
           for f in release-artifacts/*.deb; do
             [ -f "$f" ] || continue
@@ -736,8 +795,10 @@ jobs:
             LINUX_ROWS="${LINUX_ROWS}| ${NAME} | ${SIZE} |
           "
           done
-          [ -z "$LINUX_ROWS" ] && LINUX_ROWS="| (no .deb produced -- Linux best-effort) | -- |
-          "
+          if [ -z "$LINUX_ROWS" ]; then
+            echo "::error::No .deb artifacts found"
+            exit 1
+          fi
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Release $VERSION
@@ -781,8 +842,8 @@ jobs:
             done < release-artifacts/arm64/tool-versions.txt
           fi
 
-          # Create release with the .pkg + manifest, then upload optional .deb
-          # files if Linux build succeeded (best-effort until sprints/linux lands).
+          # Create release with the .pkg + manifest, then upload the required
+          # Linux .deb files.
           gh release create ${{ github.ref_name }} \
             release-artifacts/*.pkg \
             release-artifacts/manifest.json release-artifacts/manifest.json.minisig \
@@ -820,6 +881,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
       - name: Wait for release assets to be queryable
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -838,6 +904,10 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/verify
           gh release download "${{ github.ref_name }}" --pattern manifest.json -D /tmp/verify
+          gh release download "${{ github.ref_name }}" --pattern manifest.json.minisig -D /tmp/verify
+          minisign -Vm /tmp/verify/manifest.json \
+            -x /tmp/verify/manifest.json.minisig \
+            -p config/manifest-sign.pub
           # The URL contract: <base>/v<binary_version>/<arch>-<logical_name>
           # where binary_version is the release tag (without leading 'v').
           # This MUST match crates/capsem-core/src/asset_manager.rs::asset_download_url.
@@ -873,11 +943,8 @@ jobs:
           arch=$(uname -m)
           [ "$arch" = "aarch64" ] && deb_arch=arm64 || deb_arch=amd64
           mkdir -p /tmp/deb
-          if ! gh release download "${{ github.ref_name }}" \
-               --pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb; then
-            echo "::warning::no .deb for ${deb_arch} on this release -- skipping binary e2e"
-            exit 0
-          fi
+          gh release download "${{ github.ref_name }}" \
+            --pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb
           deb=$(ls /tmp/deb/Capsem_*_${deb_arch}.deb | head -1)
           # Extract the bundled capsem binary; we don't need to dpkg -i for this.
           mkdir -p /tmp/extract && cd /tmp/extract
@@ -889,15 +956,24 @@ jobs:
           # bundled separately under /usr/share/capsem/bin or similar. Find it.
           CAPSEM_BIN=$(find . -type f -name capsem -perm -u+x | head -1)
           if [ -z "$CAPSEM_BIN" ]; then
-            echo "::warning::no 'capsem' CLI inside .deb -- skipping binary e2e"
-            exit 0
+            echo "::error::no 'capsem' CLI inside .deb"
+            exit 1
           fi
           echo "Using $CAPSEM_BIN ($("$CAPSEM_BIN" --version 2>&1 | head -1))"
 
-          # Stand up a clean CAPSEM_HOME with only the published manifest.
+          PKG_MANIFEST=$(find . -path '*/usr/share/capsem/assets/manifest.json' -print -quit)
+          PKG_SIG=$(find . -path '*/usr/share/capsem/assets/manifest.json.minisig' -print -quit)
+          if [ -z "$PKG_MANIFEST" ] || [ -z "$PKG_SIG" ]; then
+            echo "::error::.deb payload missing manifest.json or manifest.json.minisig"
+            exit 1
+          fi
+          minisign -Vm "$PKG_MANIFEST" -x "$PKG_SIG" -p "$GITHUB_WORKSPACE/config/manifest-sign.pub"
+
+          # Stand up a clean CAPSEM_HOME using the package payload manifest.
           export CAPSEM_HOME=/tmp/capsem-home
           mkdir -p "$CAPSEM_HOME/assets"
-          cp /tmp/verify/manifest.json "$CAPSEM_HOME/assets/manifest.json"
+          cp "$PKG_MANIFEST" "$CAPSEM_HOME/assets/manifest.json"
+          cp "$PKG_SIG" "$CAPSEM_HOME/assets/manifest.json.minisig"
           # No CAPSEM_RELEASE_URL override -- the binary must hit real GitHub.
           "$CAPSEM_BIN" update --assets
           # Sanity: at least the host arch's three canonical files must now exist.

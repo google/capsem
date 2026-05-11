@@ -1,6 +1,6 @@
 ---
 title: Policy
-description: Named policy rules for MCP, HTTP, DNS, model traffic, and policy hooks.
+description: Named policy rules for MCP, HTTP, DNS, model traffic, and Policy Hook Spec0 infrastructure.
 sidebar:
   order: 25
 ---
@@ -41,10 +41,13 @@ Rule names may contain ASCII letters, digits, `_`, and `-`.
 | `http` | `http.request`, `http.response` |
 | `dns` | `dns.query`, `dns.response` |
 | `model` | `model.request`, `model.response`, `model.tool_call`, `model.tool_response` |
-| `hook` | `hook.decision` |
 
 The table type must match the callback. For example, `on = "mcp.request"` is
-valid only in `[policy.mcp.<name>]`.
+valid only in `[policy.mcp.<name>]`. Policy Hook Spec0 has a `hook.decision`
+subject in the wire contract, but configured external hook dispatch is
+infrastructure-only for this release: the settings API and UI reject new
+`policy.hook.*` rules until an integration gate wires and verifies production
+dispatch.
 
 ## Decisions
 
@@ -89,7 +92,10 @@ TOML or settings API writes persist.
 | `model.response` | `provider`, `model`, `response.text`, `text`, `content`, `thinking_content`, `stop_reason`, `response.*` |
 | `model.tool_call` | `provider`, `model`, `tool.name`, `tool.call_id`, `tool.arguments.*` |
 | `model.tool_response` | `provider`, `model`, `tool.name`, `tool.call_id`, `content`, `response.content`, `is_error`, `tool.arguments.*`, `response.*` |
-| `hook.decision` | `callback`, `decision`, `rule.id`, `endpoint.id`, `request.*`, `response.*` |
+
+Policy Hook Spec0 defines a future `hook.decision` subject with `callback`,
+`decision`, `rule.id`, `endpoint.id`, `request.*`, and `response.*` fields.
+It is not editable or enforced through release settings in this build.
 
 ## Rewrite Examples
 
@@ -144,7 +150,9 @@ The frontend and service exchange named rules with the same keys:
 
 Sending `null` for a policy key deletes that user rule. The service validates
 the whole batch before writing `user.toml`, so a malformed policy rule rejects
-the entire settings save.
+the entire settings save. New `policy.hook.*` writes are rejected in this
+release because configured external hook dispatch is not a shipped runtime
+surface.
 
 ## Telemetry
 
@@ -153,10 +161,10 @@ Policy decisions are proved in `session.db`. MCP writes
 write `matched_rule` plus `policy_action`, `policy_rule`, and `policy_reason`
 on `net_events` and `dns_events` where the runtime path supports typed policy
 metadata. Model request, response, tool-call, and tool-response policy write
-the same fields on `net_events` for the enforced boundary. External Policy
-Hook callouts additionally write `policy_hook_events` rows with endpoint id,
-Spec0 version/hash, callback, decision id, latency, error/fallback state, and
-trace/session ids.
+the same fields on `net_events` for the enforced boundary. Policy Hook Spec0
+infrastructure writes `policy_hook_events` rows with endpoint id, Spec0
+version/hash, callback, decision id, latency, error/fallback state, and
+trace/session ids when the hook client path is exercised.
 
 See [Session Telemetry](/architecture/session-telemetry/#policy-decision-audit)
 for SQL queries.
@@ -172,7 +180,13 @@ curl --unix-socket "$CAPSEM_RUN_DIR/service.sock" \
   http://localhost/policy-hook/spec
 ```
 
-Hook endpoint config is strict: unknown fields are rejected, HTTPS is required
-outside localhost, remote endpoints require bearer auth, request/response body
-size is capped, and transport/schema errors fail closed to the configured
-fallback decision.
+Hook endpoint config validation is strict in the infrastructure path: unknown
+fields are rejected, HTTPS is required outside exact localhost/loopback
+addresses, non-local endpoints require bearer auth, request/response body size
+is capped while reading, and transport/schema errors fail closed to a `block`
+or `ask` fallback decision.
+
+Configured external hook dispatch is infrastructure-only in this release. The
+shipped UI/runtime rejects new hook policy rules and does not expose user or
+corporate hook configuration wiring unless a later integration gate explicitly
+enables and verifies that path.

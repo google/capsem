@@ -1,8 +1,9 @@
 <script lang="ts">
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import {
-    POLICY_RULE_TYPES,
+    EDITABLE_POLICY_RULE_TYPES,
     policyRuleNameFromParts,
+    validatePolicyRuleConfig,
     type PolicyRuleEntry,
     type PolicyRuleType,
   } from '../../models/settings-model';
@@ -32,20 +33,36 @@
   let stagedMessage = $state<string | null>(null);
   let draft = $state<RuleDraft>(emptyDraft('http'));
 
-  let entries = $derived(settingsStore.model?.policyRuleEntries ?? []);
-  let generatedEntries = $derived(settingsStore.model?.generatedPolicyRuleEntries ?? []);
+  let entries = $derived.by(() => {
+    settingsStore.revision;
+    return settingsStore.model?.policyRuleEntries ?? [];
+  });
+  let generatedEntries = $derived.by(() => {
+    settingsStore.revision;
+    return settingsStore.model?.generatedPolicyRuleEntries ?? [];
+  });
 
   let visibleEntries = $derived.by(() => entries.filter((entry) => entry.type === activeType));
+  let validationError = $derived(validateDraft());
 
   function callbacksFor(type: PolicyRuleType): PolicyCallback[] {
-    return settingsStore.model?.callbacksForPolicyType(type) ?? ['http.request'];
+    const callbacks = settingsStore.model?.callbacksForPolicyType(type) ?? ['http.request'];
+    return callbacks.filter((callback) => callback !== 'hook.decision' && callback !== 'dns.response');
+  }
+
+  function decisionsFor(callback: PolicyCallback): PolicyDecisionKind[] {
+    if (callback === 'model.request') {
+      return ['allow', 'ask', 'block'];
+    }
+    return DECISIONS;
   }
 
   function emptyDraft(type: PolicyRuleType): RuleDraft {
+    const callback = callbacksFor(type)[0] ?? 'http.request';
     return {
       type,
       name: '',
-      on: callbacksFor(type)[0],
+      on: callback,
       condition: type === 'http' ? 'request.host == "example.com"' : '',
       decision: type === 'http' ? 'block' : 'ask',
       priority: 100,
@@ -103,6 +120,19 @@
     return rule;
   }
 
+  function validateDraft(): string | null {
+    if (!draft.name.trim()) return 'Rule name is required.';
+    if (!draft.condition.trim()) return 'Condition is required.';
+    if (!callbacksFor(draft.type).includes(draft.on)) {
+      return `${draft.on} is not editable in this release.`;
+    }
+    if (!decisionsFor(draft.on).includes(draft.decision)) {
+      return `${draft.decision} is not supported for ${draft.on}.`;
+    }
+    const name = normalizeRuleName(draft.name);
+    return validatePolicyRuleConfig(draft.type, name, ruleFromDraft());
+  }
+
   function editRule(entry: PolicyRuleEntry) {
     activeType = entry.type;
     editingKey = entry.key;
@@ -130,8 +160,12 @@
 
   function stageDraft() {
     const name = normalizeRuleName(draft.name);
-    if (!name || !draft.condition.trim()) return;
-    settingsStore.stagePolicyRule(draft.type, name, ruleFromDraft());
+    if (validationError) return;
+    if (editingKey) {
+      settingsStore.stagePolicyRuleRename(editingKey, draft.type, name, ruleFromDraft());
+    } else {
+      settingsStore.stagePolicyRule(draft.type, name, ruleFromDraft());
+    }
     stagedMessage = `${editingKey ? 'Updated' : 'Added'} ${draft.type}.${name}.`;
     editingKey = null;
     draft = emptyDraft(activeType);
@@ -161,7 +195,7 @@
   </div>
 
   <div class="flex items-center gap-x-1">
-    {#each POLICY_RULE_TYPES as type (type)}
+    {#each EDITABLE_POLICY_RULE_TYPES as type (type)}
       <button
         type="button"
         class="py-2 px-3 text-sm font-medium rounded-lg border capitalize
@@ -187,10 +221,12 @@
             onchange={(e) => {
               const type = (e.target as HTMLSelectElement).value as PolicyRuleType;
               activeType = type;
-              draft = { ...draft, type, on: callbacksFor(type)[0] };
+              const on = callbacksFor(type)[0] ?? 'http.request';
+              const decision = decisionsFor(on).includes(draft.decision) ? draft.decision : 'block';
+              draft = { ...draft, type, on, decision };
             }}
           >
-            {#each POLICY_RULE_TYPES as type (type)}
+            {#each EDITABLE_POLICY_RULE_TYPES as type (type)}
               <option value={type}>{type}</option>
             {/each}
           </select>
@@ -200,7 +236,11 @@
           <select
             class="mt-1 w-full py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
             value={draft.on}
-            onchange={(e) => draft = { ...draft, on: (e.target as HTMLSelectElement).value as PolicyCallback }}
+            onchange={(e) => {
+              const on = (e.target as HTMLSelectElement).value as PolicyCallback;
+              const decision = decisionsFor(on).includes(draft.decision) ? draft.decision : 'block';
+              draft = { ...draft, on, decision };
+            }}
           >
             {#each callbacksFor(draft.type) as callback (callback)}
               <option value={callback}>{callback}</option>
@@ -223,7 +263,7 @@
             value={draft.decision}
             onchange={(e) => draft = { ...draft, decision: (e.target as HTMLSelectElement).value as PolicyDecisionKind }}
           >
-            {#each DECISIONS as decision (decision)}
+            {#each decisionsFor(draft.on) as decision (decision)}
               <option value={decision}>{decision}</option>
             {/each}
           </select>
@@ -316,7 +356,7 @@
           <button
             type="button"
             class="py-2 px-4 inline-flex items-center gap-x-1.5 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors disabled:opacity-50"
-            disabled={!draft.name.trim() || !draft.condition.trim()}
+            disabled={validationError !== null}
             onclick={stageDraft}
           >
             <Plus size={16} />
@@ -325,6 +365,9 @@
         </div>
       </div>
     </div>
+    {#if validationError}
+      <p class="text-xs text-destructive mt-2">{validationError}</p>
+    {/if}
     {#if stagedMessage}
       <p class="text-xs text-primary mt-2">{stagedMessage}</p>
     {/if}
@@ -332,7 +375,7 @@
 
   <div>
     <div class="flex items-center justify-between mb-2">
-      <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider">Effective {activeType} rules</h3>
+      <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider">Reviewable {activeType} rules</h3>
       <span class="text-xs text-muted-foreground-1">{visibleEntries.length} rule{visibleEntries.length === 1 ? '' : 's'}</span>
     </div>
     {#if visibleEntries.length === 0}
@@ -342,16 +385,17 @@
     {:else}
       <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
         {#each visibleEntries as entry (entry.key)}
-          {@const pending = settingsStore.model?.pendingChanges.get(entry.key)}
-          <div class="p-4 flex items-start justify-between gap-x-4 {pending === null ? 'opacity-45' : ''}">
+          <div class="p-4 flex items-start justify-between gap-x-4 {entry.pending === 'delete' ? 'opacity-45' : ''}">
             <button type="button" class="min-w-0 text-left flex-1" onclick={() => editRule(entry)}>
               <div class="flex items-center gap-x-2 flex-wrap">
                 <span class="text-sm font-mono text-foreground">{entry.name}</span>
                 <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1">{entry.rule.on}</span>
                 <span class="text-[10px] px-1.5 py-0.5 rounded-full {entry.rule.decision === 'block' ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-primary'}">{entry.rule.decision}</span>
-                {#if pending}
-                  <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 text-warning">staged</span>
-                {:else if pending === null}
+                {#if entry.pending === 'add'}
+                  <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 text-warning">staged add</span>
+                {:else if entry.pending === 'update'}
+                  <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 text-warning">staged update</span>
+                {:else if entry.pending === 'delete'}
                   <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive">delete</span>
                 {/if}
               </div>

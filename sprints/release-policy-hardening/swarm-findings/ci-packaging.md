@@ -1,6 +1,7 @@
 # CI Packaging and Release Artifact Findings
 
-Status: completed, pending transfer into T0/T1/T5/T10/T11.
+Status: completed; transferred to T7 FD10 and owner rows in
+T0/T1/T5/T10/T11/T12. Downstream implementation remains open.
 
 Agent: Bernoulli (`019e1269-a192-72f0-a6ee-67e338b017aa`)
 
@@ -45,7 +46,7 @@ Agent: Bernoulli (`019e1269-a192-72f0-a6ee-67e338b017aa`)
     seeding, then setup/update/status/doctor.
   - Sprint IDs: T0.3, T0.5, T0.7, T10.1, T11.3.
 
-- [ ] [P0] Linux `.deb` omits runtime MCP helpers.
+- [x] [P0] Linux `.deb` omits runtime MCP helpers.
   - Release impact: installed Linux release can lose MCP helper functionality.
   - Paths: `.github/workflows/release.yaml:516`,
     `scripts/repack-deb.sh:34`, `scripts/deb-postinst.sh:34`,
@@ -57,6 +58,8 @@ Agent: Bernoulli (`019e1269-a192-72f0-a6ee-67e338b017aa`)
     contents for both helpers, and run MCP tool discovery from installed
     `.deb`.
   - Sprint IDs: T5.1, T10.1, T11.1.
+  - Transfer status: resolved in T5; generated package and installed MCP tool
+    discovery proof remains T10/T11.
 
 - [ ] [P1] CI can publish while Linux packaging/rootfs validation failed.
   - Release impact: release can publish without expected Linux packages or
@@ -71,7 +74,7 @@ Agent: Bernoulli (`019e1269-a192-72f0-a6ee-67e338b017aa`)
     is absent or record release-blocking owner before publish.
   - Sprint IDs: T0.7, T1.5, T10.1, T11.1.
 
-- [ ] [P1] Rootfs validation misses required guest binaries and is not a hard
+- [x] [P1] Rootfs validation misses required guest binaries and is not a hard
   gate.
   - Release impact: release assets can be missing binaries required by
     `capsem-init`.
@@ -86,18 +89,19 @@ Agent: Bernoulli (`019e1269-a192-72f0-a6ee-67e338b017aa`)
     every release rootfs in a hard-gated job, fail create-release on missing
     artifacts.
   - Sprint IDs: T1.5, T5.4, T10.2.
+  - Transfer status: resolved in T1/T5; generated rootfs proof remains T10/T11.
 
 - [ ] [P1] Release manifest binary metadata is overwritten, and promised
   regression test is absent.
   - Release impact: compatibility metadata such as `min_assets` can disappear
     from published manifest, affecting asset selection for binaries.
   - Paths: `.github/workflows/release.yaml:660`,
-    `src/capsem/builder/docker.py:733`, `tests/test_release_workflow.py`
-    absent.
-  - Detail: create-release replaces `binaries.releases[version]` with only
-    `version/files`, dropping generated `date`, `deprecated`, and `min_assets`.
-  - Proof: add/run
-    `tests/test_release_workflow.py::test_create_release_preserves_binary_metadata`.
+    `src/capsem/builder/docker.py:733`,
+    `tests/test_release_workflow_policy.py`.
+  - Detail: create-release now preserves generated `date`, `deprecated`, and
+    `min_assets` while adding `version/files`.
+  - Proof: run
+    `tests/test_release_workflow_policy.py::test_create_release_preserves_binary_metadata`.
   - Sprint IDs: T1.1, T10.2.
 
 - [ ] [P1] Updater is enabled but release artifacts do not satisfy it.
@@ -145,3 +149,45 @@ Agent: Bernoulli (`019e1269-a192-72f0-a6ee-67e338b017aa`)
 ## Tests Not Run
 
 - Static release-policy pass only; no tests were run.
+
+## T5.1 Execution Audit, 2026-05-10
+
+Agent: Descartes (`019e1312-4d46-7153-b010-aadc111f3797`)
+
+Status: completed; findings captured for T5.1.
+
+### Findings
+
+- [x] [P2] Linux `.deb` contents proof is too weak.
+  - Release impact: CI can pass if any one of the listed files appears in the
+    package contents; it does not independently prove both MCP helper binaries
+    and both signed manifest files are present.
+  - Paths: `.github/workflows/release.yaml:550`.
+  - Required proof: make the workflow validate each required payload path
+    independently, and keep static workflow tests requiring the helper names.
+  - Sprint IDs: T5.1, T10.1.
+  - Transfer status: resolved in T5; generated package payload inspection
+    remains T10/T11.
+
+### Confirmed Fixed By Current Worktree
+
+- macOS `.pkg` builds, signs, packages, and postinstalls
+  `capsem-mcp-aggregator` and `capsem-mcp-builtin`.
+- Linux `.deb` builds, repacks, and postinstalls both MCP helpers.
+- Simulated installs and install-test expected binary lists use the eight-binary
+  contract.
+- Package script tests cover the helper binaries and signed manifest files.
+
+### Tests Run
+
+- `uv run pytest tests/test_package_scripts.py tests/test_repack_deb.py -q`
+  - Result: `3 passed, 6 skipped`.
+
+### Required T5.1 Proof Set
+
+- `uv run pytest tests/test_package_scripts.py tests/test_repack_deb.py -q`
+- `uv run pytest tests/capsem-install/test_installed_layout.py tests/capsem-install/test_smoke.py tests/capsem-install/test_reinstall.py -q`
+- After building artifacts:
+  `dpkg-deb --contents target/release/bundle/deb/*.deb | rg 'capsem-mcp-(aggregator|builtin)'`
+- After building pkg:
+  `pkgutil --expand-full packages/Capsem-*.pkg /tmp/capsem-pkg && find /tmp/capsem-pkg -type f | rg 'capsem-mcp-(aggregator|builtin)'`

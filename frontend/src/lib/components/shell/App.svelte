@@ -38,7 +38,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
       e.preventDefault();
       try {
-        const { id, name } = await vmStore.provision({ ram_mb: 2048, cpus: 2, persistent: false });
+        const { id, name } = await vmStore.provision({ persistent: false });
         tabStore.openVM(id, name);
       } catch {
         // Error handled by vmStore.error

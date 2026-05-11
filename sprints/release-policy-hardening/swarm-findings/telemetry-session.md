@@ -1,8 +1,11 @@
 # Telemetry and Session Findings
 
-Status: completed, pending transfer into T3/T6/T8/T10.
+Status: completed; transferred to T7 FD08 and owner rows in T3/T6/T8/T10.
+T6 implementation items are resolved as of 2026-05-10; real-session
+product-path proof remains in T8/T10.
 
 Agent: Hubble (`019e1268-9f19-72e2-a586-3b2512af7d6e`)
+T8 reload/telemetry audit agent: Mendel (`019e1342-9fe8-7b81-b5cb-39d3712ef196`)
 
 ## Scope
 
@@ -15,7 +18,7 @@ Agent: Hubble (`019e1268-9f19-72e2-a586-3b2512af7d6e`)
 
 ## Findings
 
-- [ ] [P1] Timeline/triage cannot prove Policy V2 telemetry.
+- [x] [P1] Timeline/triage cannot prove Policy V2 telemetry.
   - Release impact: release claims around DNS policy, hook fallback, audit,
     snapshot, and trace visibility cannot be verified through the tooling users
     will inspect.
@@ -32,8 +35,15 @@ Agent: Hubble (`019e1268-9f19-72e2-a586-3b2512af7d6e`)
     it ran 0 tests. `timeline_` showed 0 lib tests, then local bin runner hit
     codesign failure.
   - Sprint IDs: T6.3, T8.5, T10.5.
+  - Resolution: T6 adds dns/hook/audit/snapshot layers, persistent-session
+    timeline resolution, schema-aware old-column fallbacks, MCP help/schema
+    updates, triage DNS/hook/audit surfaces, and fixture tests covering all
+    layers plus NULL-trace retention. Mendel confirmed T8 still needed a real
+    product-path `/timeline/{id}` assertion after a Policy V2 decision; T8 now
+    adds that assertion to the framed MCP reload E2E, with T10 owning the
+    focused VM proof run.
 
-- [ ] [P1] `check_session.py` is false-red for old DBs and blind to current
+- [x] [P1] `check_session.py` is false-red for old DBs and blind to current
   DB policy fields.
   - Release impact: old valid sessions will look broken, while current Policy
     V2 evidence can go unchecked.
@@ -49,8 +59,11 @@ Agent: Hubble (`019e1268-9f19-72e2-a586-3b2512af7d6e`)
   - Proof: old-style DB fixture without hook table must pass compatibility
     mode; current DB fixture must assert all current policy columns.
   - Sprint IDs: T6.1, T6.5, T10.5.
+  - Resolution: T6 makes core tables required, current tables informational
+    for legacy DBs, previews DNS/exec/audit/snapshot/hook and Policy V2
+    fields, and adds old/current fixture tests.
 
-- [ ] [P1] MCP/tool correlation SQL is wrong in session tooling.
+- [x] [P1] MCP/tool correlation SQL is wrong in session tooling.
   - Release impact: session reports can say MCP calls are uncorrelated even
     when the DB contains the relationship.
   - Paths: `scripts/check_session.py:266`,
@@ -63,8 +76,11 @@ Agent: Hubble (`019e1268-9f19-72e2-a586-3b2512af7d6e`)
   - Proof: fixture with `tool_calls.mcp_call_id = 1` and matching
     `mcp_calls.id = 1` must report correlation.
   - Sprint IDs: T6.2, T10.5.
+  - Resolution: T6 uses `tool_calls.mcp_call_id = mcp_calls.id`, adds
+    trace/timestamp fallback, and fixes exhaustive tests to compare
+    `tool_responses.call_id` to `tool_calls.call_id`.
 
-- [ ] [P1] Hook failure audit rows still look like real hook decisions.
+- [x] [P1] Hook failure audit rows still look like real hook decisions.
   - Release impact: fallback blocks can be mistaken for valid remote-hook
     decisions unless consumers inspect secondary fields.
   - Paths: `crates/capsem-logger/src/events.rs:383`,
@@ -76,8 +92,11 @@ Agent: Hubble (`019e1268-9f19-72e2-a586-3b2512af7d6e`)
   - Proof: extend `malformed_schema_fails_closed_and_records_error` to assert
     `decision IS NULL`, plus timeout/status/body-cap fallback variants.
   - Sprint IDs: T3.4, T8.5, T10.4.
+  - Resolution: T3 corrected fail-closed audit semantics; T6 surfaces hook
+    `status`, `fallback`, `error`, and nullable decision values in
+    timeline/triage tooling.
 
-- [ ] [P2] Audit/session readers drop trace and policy visibility.
+- [x] [P2] Audit/session readers drop trace and policy visibility.
   - Release impact: UI/session views cannot show policy mode/action/rule/reason
     even when schema contains them.
   - Paths: `crates/capsem-logger/src/reader.rs:1393`,
@@ -90,6 +109,8 @@ Agent: Hubble (`019e1268-9f19-72e2-a586-3b2512af7d6e`)
   - Proof: reader tests and frontend SQL tests for trace_id plus
     `policy_mode`, `policy_action`, `policy_rule`, and `policy_reason`.
   - Sprint IDs: T6.3, T6.4, T8.5.
+  - Resolution: T6 includes trace/policy fields in session tooling and
+    frontend SQL/detail surfaces; frontend check and Vitest coverage passed.
 
 ## Tests / Tooling Notes
 

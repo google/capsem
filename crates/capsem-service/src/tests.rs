@@ -3,6 +3,62 @@ use std::sync::atomic::AtomicU64;
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+const UNSIGNED_MANIFEST: &str = r#"{
+    "format": 2,
+    "assets": {
+        "current": "2026.0415.1",
+        "releases": {
+            "2026.0415.1": {
+                "date": "2026-04-15",
+                "deprecated": false,
+                "min_binary": "1.0.0",
+                "arches": {
+                    "arm64": {
+                        "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
+                        "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
+                        "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
+                    }
+                }
+            }
+        }
+    },
+    "binaries": {
+        "current": "1.0.1776269479",
+        "releases": {
+            "1.0.1776269479": {
+                "date": "2026-04-15",
+                "deprecated": false,
+                "min_assets": "2026.0415.1"
+            }
+        }
+    }
+}"#;
+
+#[test]
+fn startup_manifest_loader_rejects_unsigned_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+
+    let err = load_startup_manifest_for_assets(dir.path()).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("signature missing"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn startup_manifest_loader_rejects_invalid_signature() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+    std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
+
+    let err = load_startup_manifest_for_assets(dir.path()).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("verify"),
+        "unexpected error: {err:#}"
+    );
+}
+
 #[test]
 fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     assert!(
@@ -21,6 +77,522 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
             "{key} must reach capsem-process because McpTimeouts::from_env() is read there"
         );
     }
+}
+
+#[tokio::test]
+async fn triage_session_db_surfaces_policy_v2_signals() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let now = std::time::SystemTime::now();
+
+    writer
+        .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
+            timestamp: now,
+            domain: "blocked.example".into(),
+            port: 443,
+            decision: capsem_logger::Decision::Denied,
+            process_name: Some("curl".into()),
+            pid: Some(123),
+            method: Some("GET".into()),
+            path: Some("/".into()),
+            query: None,
+            status_code: Some(403),
+            bytes_sent: 12,
+            bytes_received: 0,
+            duration_ms: 7,
+            matched_rule: Some("blocked.example".into()),
+            request_headers: None,
+            response_headers: None,
+            request_body_preview: None,
+            response_body_preview: None,
+            conn_type: Some("https".into()),
+            policy_mode: Some("v2".into()),
+            policy_action: Some("block".into()),
+            policy_rule: Some("policy.http.block_example".into()),
+            policy_reason: Some("test block".into()),
+            trace_id: Some("trace_t6".into()),
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::DnsEvent(capsem_logger::DnsEvent {
+            timestamp: now,
+            qname: "blocked.example".into(),
+            qtype: 1,
+            qclass: 1,
+            rcode: 5,
+            decision: "denied".into(),
+            matched_rule: Some("blocked.example".into()),
+            source_proto: Some("udp".into()),
+            process_name: Some("curl".into()),
+            upstream_resolver_ms: 0,
+            trace_id: Some("trace_t6".into()),
+            policy_mode: Some("v2".into()),
+            policy_action: Some("block".into()),
+            policy_rule: Some("policy.dns.block_example".into()),
+            policy_reason: Some("test dns block".into()),
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::McpCall(capsem_logger::McpCall {
+            timestamp: now,
+            server_name: "builtin".into(),
+            method: "tools/call".into(),
+            tool_name: Some("danger".into()),
+            request_id: Some("req1".into()),
+            request_preview: Some("{}".into()),
+            response_preview: None,
+            decision: "error".into(),
+            duration_ms: 5,
+            error_message: Some("policy denied".into()),
+            process_name: Some("agent".into()),
+            bytes_sent: 2,
+            bytes_received: 0,
+            policy_mode: Some("v2".into()),
+            policy_action: Some("block".into()),
+            policy_rule: Some("policy.mcp.block_danger".into()),
+            policy_reason: Some("test mcp block".into()),
+            trace_id: Some("trace_t6".into()),
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEvent(
+            capsem_logger::ExecEvent {
+                timestamp: now,
+                exec_id: 44,
+                command: "false".into(),
+                source: "api".into(),
+                mcp_call_id: None,
+                trace_id: Some("trace_t6".into()),
+                process_name: Some("false".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEventComplete(
+            capsem_logger::ExecEventComplete {
+                exec_id: 44,
+                exit_code: 1,
+                duration_ms: 9,
+                stdout_preview: None,
+                stderr_preview: Some("nope".into()),
+                stdout_bytes: 0,
+                stderr_bytes: 4,
+                pid: Some(444),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::PolicyHookEvent(
+            capsem_logger::events::PolicyHookEvent {
+                timestamp: now,
+                endpoint_id: "corp-hook".into(),
+                spec_version: "0.1.0".into(),
+                spec_hash: "sha256:test".into(),
+                decision_id: None,
+                callback: "mcp".into(),
+                decision: None,
+                rule_id: None,
+                reason: None,
+                latency_ms: 12,
+                status: "error".into(),
+                error: Some("schema violation".into()),
+                fallback: Some("fail_closed".into()),
+                audit_tags: vec!["test".into()],
+                trace_id: Some("trace_t6".into()),
+                session_id: Some("vm-t6".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::AuditEvent(
+            capsem_logger::AuditEvent {
+                timestamp: now,
+                pid: 444,
+                ppid: 1,
+                uid: 1000,
+                exe: "/usr/bin/false".into(),
+                comm: Some("false".into()),
+                argv: "false".into(),
+                cwd: Some("/capsem/workspace".into()),
+                tty: None,
+                session_id: Some(1),
+                audit_id: Some("audit-t6".into()),
+                exec_event_id: Some(44),
+                parent_exe: Some("/bin/sh".into()),
+                trace_id: Some("trace_t6".into()),
+            },
+        ))
+        .await;
+    drop(writer);
+
+    let triage = session_db_triage(&db_path, 10).unwrap();
+    let text = triage.to_string();
+    for expected in [
+        "policy.http.block_example",
+        "policy.dns.block_example",
+        "policy.mcp.block_danger",
+        "corp-hook",
+        "fail_closed",
+        "audit-t6",
+        "trace_t6",
+    ] {
+        assert!(
+            text.contains(expected),
+            "triage output should contain {expected}: {text}"
+        );
+    }
+}
+
+#[test]
+fn timeline_allowed_layers_include_policy_v2_tables() {
+    for expected in ["dns", "hook", "audit", "snapshot"] {
+        assert!(
+            ALLOWED_TIMELINE_LAYERS.contains(&expected),
+            "timeline layer allowlist missing {expected}"
+        );
+    }
+}
+
+#[test]
+fn timeline_existing_tables_lists_policy_v2_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    drop(writer);
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+
+    let tables = timeline_existing_tables(&reader).unwrap();
+
+    for expected in [
+        "dns_events",
+        "policy_hook_events",
+        "audit_events",
+        "snapshot_events",
+    ] {
+        assert!(
+            tables.contains(expected),
+            "timeline schema discovery missing {expected}: {tables:?}"
+        );
+    }
+}
+
+#[test]
+fn timeline_column_helpers_fallback_for_legacy_schema() {
+    let columns = HashMap::from([(
+        "net_events".to_string(),
+        HashSet::from([
+            "id".to_string(),
+            "timestamp".to_string(),
+            "domain".to_string(),
+            "decision".to_string(),
+        ]),
+    )]);
+
+    assert_eq!(
+        timeline_col(&columns, "net_events", "trace_id", "NULL"),
+        "NULL"
+    );
+    assert_eq!(timeline_policy_suffix(&columns, "net_events", None), "''");
+}
+
+#[test]
+fn timeline_column_helpers_emit_policy_suffix_for_current_schema() {
+    let columns = HashMap::from([(
+        "mcp_calls".to_string(),
+        HashSet::from([
+            "id".to_string(),
+            "timestamp".to_string(),
+            "policy_action".to_string(),
+            "policy_rule".to_string(),
+            "trace_id".to_string(),
+        ]),
+    )]);
+
+    assert_eq!(
+        timeline_alias_col(&columns, "mcp_calls", "m", "trace_id", "NULL"),
+        "m.trace_id"
+    );
+    assert_eq!(
+        timeline_policy_suffix(&columns, "mcp_calls", Some("m")),
+        "COALESCE(' policy=' || m.policy_action || '/' || m.policy_rule, '')"
+    );
+}
+
+#[tokio::test]
+async fn timeline_handler_returns_policy_v2_layers_and_null_trace_rows() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = "timeline-vm";
+    let session_dir = state.run_dir.join("sessions").join(vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
+    let now = std::time::SystemTime::now();
+
+    writer
+        .write(capsem_logger::WriteOp::ModelCall(
+            capsem_logger::ModelCall {
+                timestamp: now,
+                provider: "anthropic".into(),
+                model: Some("claude".into()),
+                process_name: Some("agent".into()),
+                pid: Some(10),
+                method: "POST".into(),
+                path: "/v1/messages".into(),
+                stream: false,
+                system_prompt_preview: None,
+                messages_count: 1,
+                tools_count: 0,
+                request_bytes: 2,
+                request_body_preview: Some("{}".into()),
+                message_id: Some("msg_t6".into()),
+                status_code: Some(200),
+                text_content: Some("ok".into()),
+                thinking_content: None,
+                stop_reason: Some("end_turn".into()),
+                input_tokens: Some(3),
+                output_tokens: Some(4),
+                usage_details: Default::default(),
+                duration_ms: 20,
+                response_bytes: 5,
+                estimated_cost_usd: 0.0,
+                trace_id: Some("trace_t6".into()),
+                tool_calls: Vec::new(),
+                tool_responses: Vec::new(),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::McpCall(capsem_logger::McpCall {
+            timestamp: now,
+            server_name: "builtin".into(),
+            method: "tools/call".into(),
+            tool_name: Some("policy_check".into()),
+            request_id: Some("req_t6".into()),
+            request_preview: Some("{}".into()),
+            response_preview: Some("{\"ok\":true}".into()),
+            decision: "allowed".into(),
+            duration_ms: 11,
+            error_message: None,
+            process_name: Some("agent".into()),
+            bytes_sent: 2,
+            bytes_received: 3,
+            policy_mode: Some("v2".into()),
+            policy_action: Some("allow".into()),
+            policy_rule: Some("policy.mcp.allow_policy_check".into()),
+            policy_reason: Some("fixture".into()),
+            trace_id: Some("trace_t6".into()),
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
+            timestamp: now,
+            domain: "example.com".into(),
+            port: 443,
+            decision: capsem_logger::Decision::Allowed,
+            process_name: Some("curl".into()),
+            pid: Some(20),
+            method: Some("GET".into()),
+            path: Some("/".into()),
+            query: None,
+            status_code: Some(200),
+            bytes_sent: 10,
+            bytes_received: 20,
+            duration_ms: 3,
+            matched_rule: Some("example.com".into()),
+            request_headers: None,
+            response_headers: None,
+            request_body_preview: None,
+            response_body_preview: None,
+            conn_type: Some("https".into()),
+            policy_mode: Some("v2".into()),
+            policy_action: Some("allow".into()),
+            policy_rule: Some("policy.http.allow_example".into()),
+            policy_reason: Some("fixture".into()),
+            trace_id: Some("trace_t6".into()),
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::DnsEvent(capsem_logger::DnsEvent {
+            timestamp: now,
+            qname: "example.com".into(),
+            qtype: 1,
+            qclass: 1,
+            rcode: 0,
+            decision: "allowed".into(),
+            matched_rule: Some("example.com".into()),
+            source_proto: Some("udp".into()),
+            process_name: Some("curl".into()),
+            upstream_resolver_ms: 1,
+            trace_id: Some("trace_t6".into()),
+            policy_mode: Some("v2".into()),
+            policy_action: Some("allow".into()),
+            policy_rule: Some("policy.dns.allow_example".into()),
+            policy_reason: Some("fixture".into()),
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEvent(
+            capsem_logger::ExecEvent {
+                timestamp: now,
+                exec_id: 77,
+                command: "echo timeline".into(),
+                source: "api".into(),
+                mcp_call_id: None,
+                trace_id: Some("trace_t6".into()),
+                process_name: Some("sh".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEventComplete(
+            capsem_logger::ExecEventComplete {
+                exec_id: 77,
+                exit_code: 0,
+                duration_ms: 2,
+                stdout_preview: Some("timeline".into()),
+                stderr_preview: None,
+                stdout_bytes: 8,
+                stderr_bytes: 0,
+                pid: Some(77),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::FileEvent(
+            capsem_logger::FileEvent {
+                timestamp: now,
+                action: capsem_logger::FileAction::Created,
+                path: "timeline.txt".into(),
+                size: Some(8),
+                trace_id: Some("trace_t6".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::FileEvent(
+            capsem_logger::FileEvent {
+                timestamp: now,
+                action: capsem_logger::FileAction::Modified,
+                path: "pre-trace.txt".into(),
+                size: Some(1),
+                trace_id: None,
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::SnapshotEvent(
+            capsem_logger::SnapshotEvent {
+                timestamp: now,
+                slot: 1,
+                origin: "manual".into(),
+                name: Some("checkpoint".into()),
+                files_count: 2,
+                start_fs_event_id: 0,
+                stop_fs_event_id: 2,
+                trace_id: Some("trace_t6".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::PolicyHookEvent(
+            capsem_logger::events::PolicyHookEvent {
+                timestamp: now,
+                endpoint_id: "hook".into(),
+                spec_version: "policy-hook/v0".into(),
+                spec_hash: "sha256:timeline".into(),
+                decision_id: Some("decision_t6".into()),
+                callback: "http.request".into(),
+                decision: Some("allow".into()),
+                rule_id: Some("policy.hook.allow_example".into()),
+                reason: Some("fixture".into()),
+                latency_ms: 4,
+                status: "allowed".into(),
+                error: None,
+                fallback: None,
+                audit_tags: vec!["timeline".into()],
+                trace_id: Some("trace_t6".into()),
+                session_id: Some(vm_id.into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::AuditEvent(
+            capsem_logger::AuditEvent {
+                timestamp: now,
+                pid: 77,
+                ppid: 1,
+                uid: 1000,
+                exe: "/bin/echo".into(),
+                comm: Some("echo".into()),
+                argv: "echo timeline".into(),
+                cwd: Some("/capsem/workspace".into()),
+                tty: None,
+                session_id: Some(1),
+                audit_id: Some("audit_t6".into()),
+                exec_event_id: Some(77),
+                parent_exe: Some("/bin/sh".into()),
+                trace_id: Some("trace_t6".into()),
+            },
+        ))
+        .await;
+    drop(writer);
+
+    state.instances.lock().unwrap().insert(
+        vm_id.into(),
+        InstanceInfo {
+            id: vm_id.into(),
+            pid: std::process::id(),
+            uds_path: state.run_dir.join("timeline.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+        },
+    );
+
+    let response = handle_timeline(
+        State(state),
+        Path(vm_id.into()),
+        axum::extract::Query(TimelineQuery {
+            trace_id: Some("trace_t6".into()),
+            since: None,
+            limit: Some(100),
+            layers: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let rows = json["rows"].as_array().unwrap();
+    let layers: HashSet<String> = rows
+        .iter()
+        .filter_map(|row| row.as_array()?.get(1)?.as_str().map(str::to_string))
+        .collect();
+
+    for expected in [
+        "exec", "mcp", "net", "dns", "hook", "audit", "snapshot", "fs", "model",
+    ] {
+        assert!(
+            layers.contains(expected),
+            "missing timeline layer {expected}: {json}"
+        );
+    }
+    assert!(
+        rows.iter().any(|row| row
+            .as_array()
+            .and_then(|cells| cells.get(6))
+            .is_some_and(|trace| trace.is_null())),
+        "trace filter should retain pre-trace NULL rows: {json}"
+    );
 }
 
 #[test]
@@ -218,6 +790,125 @@ fn cleanup_mixed_live_and_dead() {
     let instances = state.instances.lock().unwrap();
     assert_eq!(instances.len(), 1);
     assert!(instances.contains_key("live"));
+}
+
+#[tokio::test]
+async fn mcp_refresh_surfaces_process_failure() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let sock_path = dir.path().join("process.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+
+    let server = std::thread::spawn(move || {
+        let (mut std_stream, _) = listener.accept().unwrap();
+        capsem_core::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+                    channel_from_std(std_stream).unwrap();
+                match rx.recv().await.unwrap() {
+                    ServiceToProcess::McpRefreshTools { id } => {
+                        tx.send(ProcessToService::McpRefreshResult {
+                            id,
+                            success: false,
+                            error: Some("refresh exploded".into()),
+                        })
+                        .await
+                        .unwrap();
+                    }
+                    other => panic!("unexpected command: {other:?}"),
+                }
+            });
+    });
+
+    state.instances.lock().unwrap().insert(
+        "vm-refresh".to_string(),
+        InstanceInfo {
+            id: "vm-refresh".to_string(),
+            pid: std::process::id(),
+            uds_path: sock_path,
+            session_dir: dir.path().join("sessions/vm-refresh"),
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+        },
+    );
+
+    let err = handle_mcp_refresh(State(state)).await.unwrap_err();
+
+    server.join().unwrap();
+    assert_eq!(err.0, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        err.1.contains("refresh exploded"),
+        "unexpected error body: {}",
+        err.1
+    );
+}
+
+#[tokio::test]
+async fn reload_config_returns_structured_failed_session_state() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let sock_path = dir.path().join("process.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+
+    let server = std::thread::spawn(move || {
+        let (mut std_stream, _) = listener.accept().unwrap();
+        capsem_core::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+                    channel_from_std(std_stream).unwrap();
+                match rx.recv().await.unwrap() {
+                    ServiceToProcess::ReloadConfig => {
+                        tx.send(ProcessToService::ReloadConfigResult {
+                            success: false,
+                            error: Some("reload exploded".into()),
+                        })
+                        .await
+                        .unwrap();
+                    }
+                    other => panic!("unexpected command: {other:?}"),
+                }
+            });
+    });
+
+    state.instances.lock().unwrap().insert(
+        "vm-reload".to_string(),
+        InstanceInfo {
+            id: "vm-reload".to_string(),
+            pid: std::process::id(),
+            uds_path: sock_path,
+            session_dir: dir.path().join("sessions/vm-reload"),
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+        },
+    );
+
+    let (status, Json(body)) = handle_reload_config(State(state)).await.unwrap();
+
+    server.join().unwrap();
+    assert_eq!(status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["success"], false);
+    assert_eq!(body["reloaded"], 0);
+    assert_eq!(body["failed_session_count"], 1);
+    assert_eq!(body["failed_session_ids"], serde_json::json!(["vm-reload"]));
+    assert_eq!(body["failures"][0]["message"], "reload exploded");
 }
 
 // -----------------------------------------------------------------------

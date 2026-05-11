@@ -1,0 +1,40 @@
+# Capsem demo corporate policy.
+#
+# Purpose:
+# - Show OpenAI disabled by corporate policy in Settings.
+# - Block OpenAI model traffic through Policy V2.
+# - Block OpenAI/OpenClaw HTTP(S) traffic at runtime.
+#
+# Apply locally:
+#   ~/.capsem/bin/capsem setup --corp-config config/demo-corp-openai-openclaw.toml --non-interactive --accept-detected --force
+
+refresh_interval_hours = 12
+
+[settings]
+"ai.openai.allow" = { value = false, modified = "2026-05-10T20:10:00Z" }
+"ai.openai.api_key" = { value = "", modified = "2026-05-10T20:10:00Z" }
+"ai.openai.domains" = { value = "api.openai.com, openai.com, *.openai.com", modified = "2026-05-10T20:10:00Z" }
+"security.web.allow_read" = { value = true, modified = "2026-05-10T20:10:00Z" }
+"security.web.allow_write" = { value = false, modified = "2026-05-10T20:10:00Z" }
+"security.web.custom_block" = { value = "api.openai.com, openai.com, *.openai.com, github.com/openclaw, openclaw.ai, *.openclaw.ai", modified = "2026-05-10T20:10:00Z" }
+
+[policy.model.block_openai_model_requests]
+on = "model.request"
+if = 'provider == "openai"'
+decision = "block"
+priority = 1
+reason = "Corporate policy disables OpenAI model calls for this workspace."
+
+[policy.http.block_openai_http]
+on = "http.request"
+if = 'request.host.matches("(^|\\.)openai\\.com\\.?$")'
+decision = "block"
+priority = 5
+reason = "Corporate policy blocks OpenAI HTTP/S domains."
+
+[policy.http.block_openclaw_http]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openclaw(/|$)")'
+decision = "block"
+priority = 6
+reason = "Corporate policy blocks the OpenClaw GitHub namespace at the HTTP layer."

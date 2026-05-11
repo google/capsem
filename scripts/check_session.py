@@ -16,32 +16,76 @@ RUN_DIR = Path(os.environ.get("CAPSEM_RUN_DIR", CAPSEM_HOME / "run"))
 SESSIONS_DIR = RUN_DIR / "sessions"
 MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 
-# Tables expected in session.db with their key columns for preview
+# Tables expected in current session.db files with their key columns for
+# preview. Older DBs may only have the core six tables; check_session keeps
+# those readable while calling out current-version coverage gaps separately.
 SESSION_TABLES = {
     "net_events": [
         "id", "timestamp", "domain", "decision", "method", "path",
-        "status_code", "duration_ms",
+        "status_code", "duration_ms", "policy_mode", "policy_action",
+        "policy_rule", "policy_reason", "trace_id",
+    ],
+    "dns_events": [
+        "id", "timestamp", "qname", "rcode", "decision", "matched_rule",
+        "policy_mode", "policy_action", "policy_rule", "policy_reason",
+        "trace_id",
     ],
     "model_calls": [
         "id", "timestamp", "provider", "model", "input_tokens",
         "output_tokens", "stop_reason", "estimated_cost_usd", "duration_ms",
+        "trace_id",
     ],
     "tool_calls": [
         "id", "model_call_id", "tool_name", "call_id", "origin",
+        "mcp_call_id", "trace_id",
     ],
     "tool_responses": [
-        "id", "model_call_id", "call_id", "is_error",
+        "id", "model_call_id", "call_id", "is_error", "trace_id",
     ],
     "mcp_calls": [
         "id", "timestamp", "server_name", "method", "tool_name", "decision",
-        "duration_ms",
+        "duration_ms", "policy_mode", "policy_action", "policy_rule",
+        "policy_reason", "trace_id",
+    ],
+    "exec_events": [
+        "id", "timestamp", "exec_id", "command", "exit_code", "duration_ms",
+        "source", "mcp_call_id", "trace_id",
     ],
     "fs_events": [
-        "id", "timestamp", "action", "path", "size",
+        "id", "timestamp", "action", "path", "size", "trace_id",
+    ],
+    "snapshot_events": [
+        "id", "timestamp", "slot", "origin", "name", "files_count",
+        "trace_id",
+    ],
+    "audit_events": [
+        "id", "timestamp", "pid", "ppid", "uid", "exe", "comm",
+        "exit_code", "audit_id", "exec_event_id", "trace_id",
     ],
     "policy_hook_events": [
-        "id", "timestamp", "endpoint_id", "callback", "decision", "status",
-        "latency_ms",
+        "id", "timestamp", "endpoint_id", "callback", "decision", "rule_id",
+        "status", "fallback", "error", "latency_ms", "trace_id",
+    ],
+}
+
+CORE_REQUIRED_TABLES = {
+    "net_events",
+    "model_calls",
+    "tool_calls",
+    "tool_responses",
+    "mcp_calls",
+    "fs_events",
+}
+
+CURRENT_VERSION_TABLES = set(SESSION_TABLES) - CORE_REQUIRED_TABLES
+
+POLICY_V2_COLUMNS = {
+    "net_events": ["policy_mode", "policy_action", "policy_rule", "policy_reason", "trace_id"],
+    "dns_events": ["policy_mode", "policy_action", "policy_rule", "policy_reason", "trace_id"],
+    "mcp_calls": ["policy_mode", "policy_action", "policy_rule", "policy_reason", "trace_id"],
+    "policy_hook_events": [
+        "spec_version", "spec_hash", "decision_id", "rule_id", "fallback",
+        "audit_tags", "trace_id", "session_id",
     ],
 }
 
@@ -97,6 +141,11 @@ def list_recent_sessions(n: int = 5) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    """Return column names for a table, or an empty set when absent."""
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
 def resolve_session(session_id: Optional[str]) -> Path:
     """Resolve a session ID (or latest) to its session.db path.
 
@@ -150,11 +199,34 @@ def check_session(db_path: Path, preview_rows: int = 5):
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     }
-    missing = set(SESSION_TABLES) - existing
-    if missing:
-        print(f"  {RED}Missing tables: {', '.join(sorted(missing))}{RESET}\n")
+    missing_required = CORE_REQUIRED_TABLES - existing
+    missing_current = CURRENT_VERSION_TABLES - existing
+    if missing_required:
+        print(
+            f"  {RED}Missing required tables: "
+            f"{', '.join(sorted(missing_required))}{RESET}\n"
+        )
+    elif missing_current:
+        print(
+            f"  {YELLOW}Core tables present; optional/current tables absent "
+            f"(old DB compatible): {', '.join(sorted(missing_current))}{RESET}\n"
+        )
     else:
-        print(f"  {GREEN}All expected tables present{RESET}\n")
+        print(f"  {GREEN}All current-version tables present{RESET}\n")
+
+    policy_column_gaps: list[str] = []
+    for tbl, cols in POLICY_V2_COLUMNS.items():
+        if tbl not in existing:
+            continue
+        present = table_columns(conn, tbl)
+        missing_cols = [c for c in cols if c not in present]
+        if missing_cols:
+            policy_column_gaps.append(f"{tbl}: {', '.join(missing_cols)}")
+    if policy_column_gaps:
+        print(f"  {YELLOW}Policy V2 columns unavailable (old DB compatible):{RESET}")
+        for gap in policy_column_gaps:
+            print(f"    {YELLOW}{gap}{RESET}")
+        print()
 
     # -- Row counts --
     print(f"{BOLD}Event counts:{RESET}")
@@ -164,6 +236,8 @@ def check_session(db_path: Path, preview_rows: int = 5):
         if tbl in existing:
             n = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]
             count_rows.append([tbl, str(n)])
+        elif tbl in CURRENT_VERSION_TABLES:
+            count_rows.append([tbl, "MISSING (old DB optional)"])
         else:
             count_rows.append([tbl, "MISSING"])
     print(table(count_headers, count_rows))
@@ -245,9 +319,7 @@ def check_session(db_path: Path, preview_rows: int = 5):
         tc_total = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
         if tc_total > 0:
             # Check if origin column exists (may be missing on old DBs)
-            tc_cols = {
-                r[1] for r in conn.execute("PRAGMA table_info(tool_calls)").fetchall()
-            }
+            tc_cols = table_columns(conn, "tool_calls")
             if "origin" in tc_cols:
                 origin_rows = conn.execute(
                     "SELECT origin, COUNT(*) FROM tool_calls GROUP BY origin"
@@ -259,19 +331,47 @@ def check_session(db_path: Path, preview_rows: int = 5):
                 )
             # Show matching mcp_calls per tool if both tables exist
             if "mcp_calls" in existing:
+                mc_cols = table_columns(conn, "mcp_calls")
+                model_cols = table_columns(conn, "model_calls")
                 mcp_total = conn.execute(
                     "SELECT COUNT(*) FROM mcp_calls"
                 ).fetchone()[0]
                 if mcp_total > 0:
-                    # Approximate match: same tool_name within 60s window
-                    matched = conn.execute(
-                        "SELECT COUNT(DISTINCT tc.id) FROM tool_calls tc"
-                        " JOIN mcp_calls mc ON tc.tool_name = mc.tool_name"
-                        " AND mc.timestamp >= tc.call_id"  # timestamps always exist
-                    ).fetchone()[0]
+                    matched = 0
+                    method = "none"
+                    if "mcp_call_id" in tc_cols:
+                        matched = conn.execute(
+                            "SELECT COUNT(DISTINCT tc.id) FROM tool_calls tc"
+                            " JOIN mcp_calls mc ON tc.mcp_call_id = mc.id"
+                        ).fetchone()[0]
+                        method = "exact mcp_call_id"
+                    if (
+                        matched == 0
+                        and "trace_id" in tc_cols
+                        and "trace_id" in mc_cols
+                    ):
+                        matched = conn.execute(
+                            "SELECT COUNT(DISTINCT tc.id) FROM tool_calls tc"
+                            " JOIN mcp_calls mc ON tc.trace_id = mc.trace_id"
+                            " WHERE tc.trace_id IS NOT NULL"
+                        ).fetchone()[0]
+                        method = "trace_id fallback"
+                    if (
+                        matched == 0
+                        and "timestamp" in model_cols
+                        and "model_call_id" in tc_cols
+                    ):
+                        matched = conn.execute(
+                            "SELECT COUNT(DISTINCT tc.id) FROM tool_calls tc"
+                            " JOIN model_calls model ON tc.model_call_id = model.id"
+                            " JOIN mcp_calls mc ON tc.tool_name = mc.tool_name"
+                            " WHERE ABS(strftime('%s', mc.timestamp)"
+                            "          - strftime('%s', model.timestamp)) <= 60"
+                        ).fetchone()[0]
+                        method = "trace+timestamp fallback"
                     print(
                         f"  {CYAN}Guest MCP calls: {mcp_total}"
-                        f" (approx {matched} correlated with tool_calls){RESET}"
+                        f" ({matched} correlated with tool_calls via {method}){RESET}"
                     )
             print()
 

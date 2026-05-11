@@ -25,9 +25,49 @@ PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
 
-# Create user-level directory layout
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run"
+seed_asset_manifests() {
+    for asset in manifest.json manifest.json.minisig; do
+        src="$PKG_SHARE/assets/$asset"
+        if [ ! -f "$src" ]; then
+            echo "capsem: required package asset missing: $src" >&2
+            exit 1
+        fi
+        install -m 0644 "$src" "$CAPSEM_DIR/assets/$asset"
+    done
+    if [ -f "$PKG_SHARE/assets/manifest-sign.dev.pub" ]; then
+        install -m 0644 "$PKG_SHARE/assets/manifest-sign.dev.pub" \
+            "$CAPSEM_DIR/assets/manifest-sign.dev.pub"
+    fi
+}
+
+install_app_bundle() {
+    src="$PKG_SHARE/Capsem.app"
+    dst="/Applications/Capsem.app"
+    if [ ! -d "$src" ]; then
+        echo "capsem: required app bundle missing: $src" >&2
+        exit 1
+    fi
+    mkdir -p /Applications
+    rm -rf "$dst"
+    ditto "$src" "$dst"
+    chmod -R a+rX "$dst"
+}
+
+# Create user-level directory layout. Local dev installs may have
+# ~/.capsem/assets as a symlink into the repo; never seed package assets
+# through that link as root, or the repo's generated manifest files become
+# root-owned and later dev gates cannot re-sign them.
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/run"
+if [ -L "$CAPSEM_DIR/assets" ]; then
+    rm "$CAPSEM_DIR/assets"
+fi
+mkdir -p "$CAPSEM_DIR/assets"
 chown -R "$USER" "$CAPSEM_DIR"
+
+# Ensure the GUI app exists in the canonical macOS Applications folder. The
+# component payload also contains /Applications/Capsem.app, but this explicit
+# materialization makes the postinstall health contract match the installer UI.
+install_app_bundle
 
 # Copy companion binaries from pkg payload
 for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
@@ -45,10 +85,10 @@ if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     done
 fi
 
-# Copy assets (manifest + versioned dir)
-if [ -d "$PKG_SHARE/assets" ]; then
-    cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
-fi
+# Copy assets (signed manifest and optional dev pubkey). The manifest and
+# signature are release-critical: setup verifies them before it can mark an
+# install complete.
+seed_asset_manifests
 
 # Fix ownership (we ran as root)
 chown -R "$USER" "$CAPSEM_DIR"
@@ -65,9 +105,13 @@ for PROFILE in "$USER_HOME/.zshrc" "$USER_HOME/.bash_profile" "$USER_HOME/.bashr
     fi
 done
 
-# Register LaunchAgent and run setup as the installing user
-su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
-su "$USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected" 2>/dev/null || true
+# Register LaunchAgent and run setup as the installing user. These are
+# release-critical: if either fails, Installer must report failure instead of
+# leaving a package that looks installed but cannot boot.
+su "$USER" -c "$CAPSEM_DIR/bin/capsem install"
+seed_asset_manifests
+chown -R "$USER" "$CAPSEM_DIR/assets"
+su "$USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected"
 
 # --- GUI detection and app launch ---
 # Open the desktop app for interactive onboarding if a GUI is available.

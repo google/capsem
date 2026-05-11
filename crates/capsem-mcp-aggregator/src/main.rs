@@ -358,14 +358,22 @@ async fn handle_request(
             // Build and initialize the replacement manager off the lock,
             // then swap it in under a brief write guard.
             let mut new_mgr = McpServerManager::new(servers, reqwest::Client::new());
-            if let Err(e) = new_mgr.initialize_all().await {
-                warn!(error = %e, "some servers failed during refresh");
-            }
+            let refresh_error = new_mgr.initialize_all_strict().await.err();
             *manager.write().expect("manager rwlock poisoned") = new_mgr;
 
-            AggregatorResponse {
-                id,
-                body: AggregatorResult::Ok { ok: true },
+            if let Some(e) = refresh_error {
+                warn!(error = %e, "some servers failed during refresh");
+                AggregatorResponse {
+                    id,
+                    body: AggregatorResult::Error {
+                        error: e.to_string(),
+                    },
+                }
+            } else {
+                AggregatorResponse {
+                    id,
+                    body: AggregatorResult::Ok { ok: true },
+                }
             }
         }
 

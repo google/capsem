@@ -38,6 +38,12 @@ tool_hint() {
                 *)   echo "https://git-scm.com" ;;
             esac ;;
         b3sum)     echo "cargo install b3sum --locked" ;;
+        minisign)
+            case "$pkg" in
+                apt) echo "sudo apt install minisign" ;;
+                dnf) echo "sudo dnf install minisign" ;;
+                *)   echo "install minisign via your OS package manager" ;;
+            esac ;;
         flock)
             case "$pkg" in
                 apt) echo "sudo apt install util-linux" ;;

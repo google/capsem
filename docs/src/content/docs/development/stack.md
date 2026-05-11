@@ -149,7 +149,7 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 
 ## Stage 4: Boot
 
-The service loads three assets from `~/.capsem/assets/v{VERSION}/` (installed) or `assets/{arch}/` (development):
+The service loads three boot assets from a signed manifest. Installed layouts use hash-named files in `~/.capsem/assets/{arch}/`; development layouts use `assets/{arch}/` plus hash aliases created by `scripts/create_hash_assets.py`:
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|
@@ -157,7 +157,7 @@ The service loads three assets from `~/.capsem/assets/v{VERSION}/` (installed) o
 | `initrd.img` | `just run` (repacked each time) | Guest binaries + init scripts |
 | `rootfs.squashfs` | `just build-assets` | Debian bookworm base + AI CLIs + tools |
 
-Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
+Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent, network proxy, DNS proxy, MCP server, and sysutil. The host connects over vsock.
 
 ## VM image builds (`just build-assets`)
 
@@ -214,14 +214,15 @@ flowchart LR
 | `preflight` | macos-14 | Validates Apple cert, Tauri key, notarization creds |
 | `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
 | `test` | macos-14 | Unit tests + coverage, frontend check, audit |
-| `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
-| `build-app-linux` | ubuntu arm64 + x86_64 | deb (both arches), latest.json |
-| `create-release` | ubuntu | Merges latest.json, signs manifest, creates GitHub release |
+| `build-app-macos` | macos-14 | `.pkg` package, host binaries, signed manifest payload |
+| `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
+| `create-release` | ubuntu | Signs manifest, verifies package payloads, creates GitHub release |
 
 **Key design decisions:**
 - `test` runs in parallel with `build-assets` and app builds -- it gates `create-release` but doesn't block compilation
 - arm64 Linux produces `.deb` only
-- Each platform's `latest.json` is merged in `create-release` for the Tauri auto-updater
+- The desktop auto-updater is disabled for this release line unless a future
+  release ships a verified full-package updater feed
 
 ### Local vs CI
 

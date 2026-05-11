@@ -1,6 +1,8 @@
 # Swarm Transfer Closeout Findings
-Status: completed
-Agent: Codex
+Status: completed; transferred to T7 FD14 and owner rows in T2/T7/T8/T9/T10/T12.
+Downstream implementation remains open.
+Agent: Codex; additional T7 transfer mapping audit by Galileo
+`019e133b-8160-78b1-82e8-1b59a3f86a26`.
 
 ## Scope
 
@@ -95,6 +97,18 @@ commands, and proposed work that is not linked to an owning target.
     final verification, or mark them as to-be-created task items rather than
     runnable commands; prove with `test -e` checks or `rg --files` for each
     referenced test path.
+
+## Additional T7 Mapping Audit
+
+Galileo reviewed the current T7 transfer state after T6 implementation. It found
+no orphaned P0/P1 finding: FD01-FD14 all map to owner rows in T0-T12. It did
+find stale timing/status wording in `MASTER.md`, `tracker.md`, and T7, plus a
+too-narrow command-validity proof. Those follow-up points are resolved by the
+T7/T8/tracker/MASTER edits: T7.1-T7.3 are checked in the tracker, stale
+`before implementation starts` language is removed from active sprint docs, and
+the only missing referenced test file,
+`tests/capsem-e2e/test_policy_hook_runtime.py`, is explicitly owned by T8.2
+before the conditional hook-ships verification can become a final gate.
 
 ## Tests Run
 

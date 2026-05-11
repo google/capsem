@@ -1,6 +1,7 @@
 # CLI, Updater, and Install Findings
 
-Status: completed, pending transfer into T0/T5/T9/T10/T11.
+Status: completed; transferred to T7 FD06 and owner rows in T0/T5/T9/T10/T11.
+Downstream implementation remains open.
 
 Agent: Hypatia (`019e1264-dd92-7c23-8767-a72c4f9ffc58`)
 

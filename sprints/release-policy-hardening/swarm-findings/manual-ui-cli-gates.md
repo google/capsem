@@ -1,5 +1,6 @@
 # Manual UI CLI Gate Findings
-Status: completed
+Status: completed; transferred to T7 FD12 and owner rows in T10/T11 plus the
+tracker evidence ledger. Downstream implementation remains open.
 Agent: Codex
 
 ## Scope

@@ -58,12 +58,12 @@ assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray"
 
-# Stamp version as 1.0.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
+# Stamp version as 1.1.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
     CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    NEW="1.0.$(date +%s)"
+    NEW="${CAPSEM_RELEASE_VERSION:-1.1.$(date +%s)}"
     echo "Stamping version: ${CURRENT} -> ${NEW}"
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
@@ -413,6 +413,9 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     echo "=== Injection test ==="
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
 
+    echo "=== Verify local asset manifest signature ==="
+    bash scripts/verify-local-manifest-signature.sh {{assets_dir}} config/manifest-sign.pub
+
     echo "=== Integration test ==="
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
 
@@ -507,7 +510,22 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     esac
     # Sync assets layout for Tauri build
     rm -rf assets/current
-    if [ -d "assets/$TARGET_ARCH" ]; then cp -r "assets/$TARGET_ARCH" assets/current; fi
+    if [ -d "assets/$TARGET_ARCH" ]; then
+        cp -r "assets/$TARGET_ARCH" assets/current
+        : > assets/B3SUMS
+        for arch_dir in assets/*; do
+            [ -d "$arch_dir" ] || continue
+            arch_name=$(basename "$arch_dir")
+            if [ -f "$arch_dir/vmlinuz" ] && [ -f "$arch_dir/initrd.img" ] && [ -f "$arch_dir/rootfs.squashfs" ]; then
+                (cd assets && b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS)
+            fi
+        done
+        python3 scripts/gen_manifest.py assets Cargo.toml
+        python3 scripts/create_hash_assets.py assets
+        bash scripts/sync-dev-assets.sh assets assets
+        bash scripts/verify-local-manifest-signature.sh assets config/manifest-sign.pub
+        touch crates/capsem-app/build.rs
+    fi
     # If the host has the real release signing keys under private/tauri/,
     # inject them into the container. Otherwise the container generates a
     # throwaway dev-only key inline -- the authoritative release keys
@@ -570,15 +588,25 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                    echo '    using host-injected signing key'; \
                fi && \
                echo '--- Build Tauri app ---' && \
+               DEB_DIR=/cargo-target/\$RUST_TARGET/release/bundle/deb && \
+               rm -f \"\$DEB_DIR\"/*.deb && \
                cd crates/capsem-app && cargo tauri build --target \$RUST_TARGET --bundles deb && cd ../.. && \
                echo '--- Validate artifacts ---' && \
-               dpkg-deb --info /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb && \
-               cp /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb /src/dist/ && \
+               DEBS=(\"\$DEB_DIR\"/*.deb) && \
+               if [ \"\${#DEBS[@]}\" -ne 1 ] || [ ! -f \"\${DEBS[0]}\" ]; then \
+                   echo \"ERROR: expected exactly one deb artifact in \$DEB_DIR\" >&2; \
+                   ls -lah \"\$DEB_DIR\" >&2 || true; \
+                   exit 1; \
+               fi && \
+               DEB=\"\${DEBS[0]}\" && \
+               dpkg-deb --info \"\$DEB\" && \
+               rm -f /src/dist/Capsem_*_\"\$DPKG_ARCH\".deb && \
+               cp \"\$DEB\" /src/dist/ && \
                cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/ && \
                echo '--- Boot test ---' && \
                if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
                    echo 'KVM available + native arch: running boot test' && \
-                   dpkg -i /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb 2>/dev/null || apt-get install -f -y && \
+                   dpkg -i \"\$DEB\" 2>/dev/null || apt-get install -f -y && \
                    timeout 120 python3 scripts/doctor_session_test.py --binary capsem --assets assets; \
                else \
                    echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
@@ -788,6 +816,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     if [ "$OS" = "Darwin" ]; then
         echo "=== Building Capsem.app ==="
         eval cargo tauri build --bundles app $TAURI_FLAGS
+        echo "=== Signing local asset manifest for package payload ==="
+        bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
         echo "=== Assembling .pkg (v$VERSION) ==="
         bash scripts/build-pkg.sh \
             "target/release/bundle/macos/Capsem.app" \
@@ -800,8 +830,10 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     else
         echo "=== Building .deb ==="
         eval cargo tauri build --bundles deb $TAURI_FLAGS
+        echo "=== Signing local asset manifest for package payload ==="
+        bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
         DEB=$(ls target/release/bundle/deb/*.deb)
-        bash scripts/repack-deb.sh "$DEB" "target/release"
+        bash scripts/repack-deb.sh "$DEB" "target/release" "{{assets_dir}}"
         echo "=== Installing .deb ==="
         sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
     fi
@@ -933,10 +965,10 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug'
-    echo "Installing .deb via dpkg..."
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug assets'
+    echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
-        "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
+        'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 "$CONTAINER" bash -c \
         "cd /src && uv run pytest tests/capsem-install/ -v --tb=short"
@@ -1373,10 +1405,18 @@ _pack-initrd:
     mv "$TMP" "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
-    # Regenerate checksums -- handle per-arch and flat layouts
+    # Regenerate checksums -- handle every complete per-arch layout so a
+    # host-arch initrd repack does not erase the other arch's manifest map.
     ASSETS="$ROOT/{{assets_dir}}"
-    if [ -f "$ASSETS/$arch/vmlinuz" ]; then
-        (cd "$ASSETS" && b3sum "$arch/vmlinuz" "$arch/initrd.img" "$arch/rootfs.squashfs" > B3SUMS)
+    if [ -d "$ASSETS/$arch" ]; then
+        : > "$ASSETS/B3SUMS"
+        for arch_dir in "$ASSETS"/*; do
+            [ -d "$arch_dir" ] || continue
+            arch_name=$(basename "$arch_dir")
+            if [ -f "$arch_dir/vmlinuz" ] && [ -f "$arch_dir/initrd.img" ] && [ -f "$arch_dir/rootfs.squashfs" ]; then
+                (cd "$ASSETS" && b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS)
+            fi
+        done
     else
         (cd "$ASSETS" && b3sum vmlinuz initrd.img rootfs.squashfs > B3SUMS)
     fi
@@ -1384,6 +1424,10 @@ _pack-initrd:
     python3 "$ROOT/scripts/gen_manifest.py" "$ASSETS" "$ROOT/Cargo.toml"
     # Create hash-named copies so dev layout matches installed layout.
     python3 "$ROOT/scripts/create_hash_assets.py" "$ASSETS"
+    # Sign the freshly regenerated local manifest so dev `run-service` and
+    # `exec` can still exercise the same verified-manifest path as releases.
+    bash "$ROOT/scripts/sync-dev-assets.sh" "$ASSETS" "$ASSETS"
+    bash "$ROOT/scripts/verify-local-manifest-signature.sh" "$ASSETS" "$ROOT/config/manifest-sign.pub"
     # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
     echo "initrd repacked (with agent + net-proxy + mcp-server + sysutil + doctor)"

@@ -504,6 +504,15 @@ pub(crate) async fn handle_ipc_connection(
                 let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
                 let merged =
                     capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
+                let user_mcp = user_sf.mcp.clone().unwrap_or_default();
+                let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
+                let servers = crate::mcp_runtime::build_servers_with_builtin(
+                    &user_mcp,
+                    &corp_mcp,
+                    mcp_runtime.builtin_binary.as_deref(),
+                    &mcp_runtime.session_dir,
+                    &merged.domain,
+                );
 
                 let new_domain = Arc::new(merged.domain);
                 let new_network = Arc::new(merged.network);
@@ -515,9 +524,16 @@ pub(crate) async fn handle_ipc_connection(
                 *mcp_runtime.policy.write().await = new_mcp;
                 *mcp_runtime.policy_v2.write().await = new_policy_v2;
 
+                let reload_result = mcp_runtime.aggregator.refresh(servers).await;
+                let (success, error) = match reload_result {
+                    Ok(()) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                };
                 capsem_core::try_send!(
-                    "ipc_pong_reload",
-                    ipc_tx_out.send(ProcessToService::Pong).await
+                    "ipc_reload_config_result",
+                    ipc_tx_out
+                        .send(ProcessToService::ReloadConfigResult { success, error })
+                        .await
                 );
             }
             ServiceToProcess::Shutdown => {
@@ -618,10 +634,21 @@ pub(crate) async fn handle_ipc_connection(
                 tokio::spawn(async move {
                     // Reload config from disk and refresh aggregator.
                     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-                    let servers = capsem_core::mcp::build_server_list(
-                        &user_sf.mcp.clone().unwrap_or_default(),
-                        &corp_sf.mcp.clone().unwrap_or_default(),
+                    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(
+                        &user_sf, &corp_sf,
                     );
+                    let user_mcp = user_sf.mcp.clone().unwrap_or_default();
+                    let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
+                    let servers = crate::mcp_runtime::build_servers_with_builtin(
+                        &user_mcp,
+                        &corp_mcp,
+                        mcp.builtin_binary.as_deref(),
+                        &mcp.session_dir,
+                        &merged.domain,
+                    );
+                    *mcp.domain_policy.write().unwrap() = Arc::new(merged.domain);
+                    *mcp.policy.write().await = Arc::new(merged.mcp);
+                    *mcp.policy_v2.write().await = Arc::new(merged.policy);
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(

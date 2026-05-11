@@ -28,8 +28,8 @@ The script auto-detects your OS and architecture, downloads the Capsem binaries,
 ### Manual download
 
 1. Go to the [latest release](https://github.com/google/capsem/releases/latest) on GitHub.
-2. Download the `.dmg` (macOS) or `.deb` (Linux) file for your architecture.
-3. macOS: open the DMG and drag **Capsem.app** to `/Applications`.
+2. Download the `.pkg` (macOS) or `.deb` (Linux) file for your architecture.
+3. macOS: open the package and follow the installer.
 4. Linux: `sudo apt install ./capsem_*.deb`
 
 ### Building from source

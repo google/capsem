@@ -20,6 +20,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
+from capsem.builder.manifest_version import next_asset_version
 from capsem.builder.models import GuestImageConfig, PackageManager
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -692,11 +693,17 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
         b3sums_lines.append(f"{b3hash}  {filepath}")
     (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
 
-    # Build v2 manifest with separate assets/binaries sections
+    # Build v2 manifest with separate assets/binaries sections.
     import datetime
     today = datetime.date.today()
-    date_prefix = today.strftime("%Y.%m%d")
-    asset_version = f"{date_prefix}.1"
+    manifest_path = output_dir / "manifest.json"
+    existing_manifest = None
+    if manifest_path.exists():
+        try:
+            existing_manifest = json.loads(manifest_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing_manifest = None
+    asset_version = next_asset_version(existing_manifest, today=today)
 
     arch_assets: dict[str, dict[str, dict]] = {}
     for filepath in all_files:
@@ -738,7 +745,6 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             },
         },
     }
-    manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
     # Create assets/current symlink pointing to the most recently built arch.

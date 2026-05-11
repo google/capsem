@@ -1,5 +1,6 @@
 # CI Release Landing 1.1 Findings
-Status: completed
+Status: completed; transferred to T7 FD13 and owner rows in T1/T5/T9/T11/T12.
+Downstream implementation remains open.
 Agent: Codex
 
 ## Scope

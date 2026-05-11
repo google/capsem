@@ -91,6 +91,27 @@ fn bench_policy_matching(c: &mut Criterion) {
         "rule": {"id": "policy.model.block_secret"}
     });
 
+    assert!(policy
+        .find_matching_rule(PolicyCallback::HttpRequest, &http_subject)
+        .expect("bench HTTP rule must evaluate")
+        .is_some());
+    assert!(policy
+        .find_matching_rule(PolicyCallback::DnsQuery, &dns_subject)
+        .expect("bench DNS rule must evaluate")
+        .is_some());
+    assert!(policy
+        .find_matching_rule(PolicyCallback::ModelResponse, &model_response_subject)
+        .expect("bench model response rule must evaluate")
+        .is_some());
+    assert!(policy
+        .find_matching_rule(PolicyCallback::ModelToolCall, &tool_call_subject)
+        .expect("bench model tool-call rule must evaluate")
+        .is_some());
+    assert!(policy
+        .find_matching_rule(PolicyCallback::HookDecision, &hook_subject)
+        .expect("bench hook decision rule must evaluate")
+        .is_some());
+
     c.bench_function("policy_v2_http_request_match", |b| {
         b.iter(|| {
             black_box(

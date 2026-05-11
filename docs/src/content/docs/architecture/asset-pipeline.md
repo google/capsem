@@ -22,7 +22,7 @@ Two build templates exist:
 | `kernel` | `vmlinuz`, `initrd.img` | Builds a minimal Linux kernel from `defconfig` |
 | `rootfs` | `rootfs.squashfs` | Builds the full guest filesystem with packages, runtimes, and tools |
 
-The build process also cross-compiles guest agent binaries (`capsem-pty-agent`, `capsem-net-proxy`, `capsem-mcp-server`) for the target architecture and injects them into the rootfs.
+The build process also cross-compiles the canonical guest binaries (`capsem-pty-agent`, `capsem-net-proxy`, `capsem-dns-proxy`, `capsem-mcp-server`, `capsem-sysutil`) for the target architecture and injects them into the rootfs.
 
 ### Output layout
 
@@ -32,11 +32,18 @@ assets/
     vmlinuz
     initrd.img
     rootfs.squashfs
+    vmlinuz-<hash16>
+    initrd-<hash16>.img
+    rootfs-<hash16>.squashfs
   x86_64/
     vmlinuz
     initrd.img
     rootfs.squashfs
+    vmlinuz-<hash16>
+    initrd-<hash16>.img
+    rootfs-<hash16>.squashfs
   manifest.json
+  manifest.json.minisig
   B3SUMS
 ```
 
@@ -99,7 +106,7 @@ Key points:
 | `docker.py:generate_checksums()` | `just build-assets` | After full image builds |
 | `scripts/gen_manifest.py` | `just _pack-initrd` | After injecting updated guest binaries into initrd |
 
-Both emit the same format-2 schema. `scripts/create_hash_assets.py` then creates `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the content-addressable names used by the installed layout.
+Both emit the same format-2 schema and use the same `YYYY.MMDD.patch` same-day increment rules. `scripts/create_hash_assets.py` then creates `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the content-addressable names used by the installed layout.
 
 ## Runtime Hash Verification
 
@@ -113,8 +120,8 @@ At boot (`crates/capsem-core/src/vm/boot.rs`):
 
 Failure modes:
 
-- **No manifest at all**: hash verification is skipped (`[boot-audit] asset hash verification disabled`), both in debug and release. This handles fresh checkouts without any assets built yet.
-- **Manifest present, no `.minisig`**: debug builds log a warning and proceed (local dev loops with unsigned manifests). Release builds (`cfg!(debug_assertions) == false`) hard-fail -- an untrusted manifest must not drive hash verification.
+- **No manifest at all**: local development layouts may skip hash verification (`[boot-audit] asset hash verification disabled`) for fresh checkouts without assets built yet. Installed package layouts require a signed manifest.
+- **Manifest present, no `.minisig`**: local debug builds can proceed only in development layouts. Installed macOS `.pkg` and Linux `.deb` layouts hard-fail -- an untrusted manifest must not drive hash verification.
 - **Manifest present, `.minisig` invalid**: always hard-fail, regardless of build profile. A signature mismatch is a loud signal.
 
 Manifests are signed during the release workflow (`scripts/check-release-workflow.sh` uses `minisign -Sm assets/manifest.json`). The corresponding pubkey in `config/manifest-sign.pub` is included via `include_str!` at compile time, so the signing/verification loop is self-contained and does not depend on any TLS or external trust root.
@@ -132,33 +139,32 @@ Manifests are signed during the release workflow (`scripts/check-release-workflo
 
 For each candidate, it checks **per-arch first** (`candidate/{arch}/vmlinuz`), then **flat** (`candidate/vmlinuz`).
 
-### Step 2: Find rootfs
+### Step 2: Resolve manifest-selected assets
 
-`resolve_rootfs()` checks in order:
+`ManifestV2::resolve()` selects the compatible asset release for the running binary, then resolves hash-named assets in either the flat development layout or the installed per-arch layout:
 
-1. **Bundled**: `{assets_dir}/rootfs.squashfs`
-2. **Downloaded (versioned)**: `~/.capsem/assets/v{version}/rootfs.squashfs`
-3. **Downloaded (legacy)**: `~/.capsem/assets/rootfs.squashfs`
+1. **Flat**: `{assets_dir}/<stem>-<hash16>.<ext>`
+2. **Per-arch**: `{assets_dir}/{arch}/<stem>-<hash16>.<ext>`
 
 ### Step 3: Download if missing
 
 If rootfs is not found locally, `create_asset_manager()` loads the manifest and initiates download:
 
 1. Loads `manifest.json` from assets dir or its parent (handles per-arch layout)
-2. Creates `AssetManager` with version-scoped download directory (`~/.capsem/assets/v{version}/`)
+2. Creates `AssetManager` with per-arch download directory (`~/.capsem/assets/{arch}/`)
 3. Downloads from GitHub Releases with HTTP resume support (Range headers)
 4. Verifies BLAKE3 hash after download, deletes on mismatch
 5. Atomically renames temp file to final path
 
 ### Step 4: Boot
 
-`boot_vm()` builds `VmConfig` with asset paths and compile-time hashes:
+`boot_vm()` builds `VmConfig` with manifest-selected asset paths and hashes:
 
 ```
 VmConfig::builder()
-    .kernel_path(assets/vmlinuz)         + expected_kernel_hash
-    .initrd_path(assets/initrd.img)      + expected_initrd_hash
-    .disk_path(rootfs)                   + expected_disk_hash
+    .kernel_path(assets/{arch}/vmlinuz-<hash16>)         + expected_kernel_hash
+    .initrd_path(assets/{arch}/initrd-<hash16>.img)      + expected_initrd_hash
+    .disk_path(assets/{arch}/rootfs-<hash16>.squashfs)   + expected_disk_hash
     .build()  // verifies all hashes
 ```
 

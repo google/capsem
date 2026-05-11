@@ -157,13 +157,13 @@ Host-side latency for fork (image creation) and boot-from-image. Measured over 3
 | Metric | Min | Mean | Max | Gate | Description |
 |--------|-----|------|-----|------|-------------|
 | fork | 83ms | 88ms | 93ms | 500ms | APFS clonefile of rootfs overlay + workspace |
-| image_size | 7.5MB | 7.5MB | 7.5MB | 12MB | Actual disk (blocks), not logical sparse size |
+| image_size | 7.5MB | 7.5MB | 7.5MB | 16MB | Actual disk (blocks), not logical sparse size |
 | boot_provision | 744ms | 747ms | 752ms | 1,200ms | Clone image into new session + boot |
 | boot_ready | 11ms | 11ms | 12ms | 1,200ms | First ready check after provisioning |
 
 Fork is fast because APFS `clonefile()` is copy-on-write -- no actual data copying. Image size reports actual allocated blocks, not the logical 2GB sparse file size. Both rootfs overlay changes (installed packages) and workspace files (`/root/`) survive fork.
 
-**Regression gates**: fork < 500ms, image < 12MB, packages + workspace must survive every run.
+**Regression gates**: fork < 500ms, image < 16MB, packages + workspace must survive every run.
 
 Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
 

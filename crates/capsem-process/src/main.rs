@@ -113,6 +113,27 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
     session_dir.join("mcp-aggregator.stderr.log")
 }
 
+const AGGREGATOR_PARENT_ENV_ALLOWLIST: &[&str] = &["PATH", "RUST_LOG", "RUST_BACKTRACE"];
+
+fn aggregator_parent_env_from<F>(lookup: F) -> std::collections::HashMap<String, String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    AGGREGATOR_PARENT_ENV_ALLOWLIST
+        .iter()
+        .filter_map(|key| lookup(key).map(|value| ((*key).to_string(), value)))
+        .collect()
+}
+
+fn aggregator_child_env(vm_id: &str, trace_id: &str) -> std::collections::HashMap<String, String> {
+    let mut env = aggregator_parent_env_from(|key| std::env::var(key).ok());
+    for (k, v) in capsem_core::telemetry::child_trace_env(vm_id) {
+        env.insert(k, v);
+    }
+    env.insert("CAPSEM_TRACE_ID".to_string(), trace_id.to_string());
+    env
+}
+
 fn main() -> Result<()> {
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-process",
@@ -331,22 +352,12 @@ async fn run_async_main_loop(
     let builtin_bin = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
-    let mut builtin_env = std::collections::HashMap::new();
-    builtin_env.insert(
-        "CAPSEM_SESSION_DIR".into(),
-        session_dir.to_string_lossy().to_string(),
-    );
-    let db_path = session_dir.join("session.db");
-    builtin_env.insert(
-        "CAPSEM_SESSION_DB".into(),
-        db_path.to_string_lossy().to_string(),
-    );
-    mcp_runtime::insert_builtin_domain_policy_env(&mut builtin_env, &merged.domain);
-    let mcp_servers = capsem_core::mcp::build_server_list_with_builtin(
+    let mcp_servers = mcp_runtime::build_servers_with_builtin(
         &user_sf.mcp.clone().unwrap_or_default(),
         &corp_sf.mcp.clone().unwrap_or_default(),
         builtin_bin.as_deref(),
-        builtin_env,
+        &session_dir,
+        &merged.domain,
     );
     let snap_auto_max = snap_settings
         .iter()
@@ -460,6 +471,8 @@ async fn run_async_main_loop(
         policy: Arc::clone(&mcp_policy),
         policy_v2: Arc::clone(&policy_v2),
         domain_policy: Arc::clone(&mcp_domain_policy),
+        session_dir: session_dir.clone(),
+        builtin_binary: builtin_bin,
     });
 
     let telemetry_deps = Arc::new(
@@ -798,18 +811,14 @@ async fn spawn_mcp_aggregator(
     );
 
     let mut cmd = tokio::process::Command::new(&aggregator_bin);
+    cmd.env_clear();
     // W4: include CAPSEM_VM_ID, CAPSEM_TRACE_ID, TRACEPARENT, TRACESTATE.
-    // Caller already has `trace_id` from the root span; we re-derive via
-    // child_trace_env so the aggregator inherits this process's parent
-    // traceparent verbatim instead of getting a freshly-synthesized one.
-    for (k, v) in capsem_core::telemetry::child_trace_env(vm_id) {
+    // Keep PATH/RUST_LOG/RUST_BACKTRACE as the explicit execution/logging
+    // surface; config override paths and ambient provider tokens do not cross
+    // into the aggregator.
+    for (k, v) in aggregator_child_env(vm_id, trace_id) {
         cmd.env(k, v);
     }
-    // Keep the pre-W4 CAPSEM_TRACE_ID override path so callers that
-    // pass an explicit trace_id (the root span's value) still win over
-    // the env-derived id. Belt-and-suspenders for the aggregator's
-    // structured root span.
-    cmd.env("CAPSEM_TRACE_ID", trace_id);
     let mut child = cmd
         .arg("--parent-pid")
         .arg(std::process::id().to_string())
@@ -1181,5 +1190,39 @@ mod tests {
         let session = PathBuf::from("/tmp/some-session");
         let log = aggregator_log_path(&session);
         assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
+    }
+
+    #[test]
+    fn aggregator_parent_env_allows_execution_and_logging_only() {
+        let mut source = std::collections::HashMap::new();
+        source.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
+        source.insert("RUST_LOG".to_string(), "capsem=debug".to_string());
+        source.insert("RUST_BACKTRACE".to_string(), "1".to_string());
+        source.insert(
+            "CAPSEM_USER_CONFIG".to_string(),
+            "/tmp/user.toml".to_string(),
+        );
+        source.insert(
+            "CAPSEM_CORP_CONFIG".to_string(),
+            "/tmp/corp.toml".to_string(),
+        );
+        source.insert(
+            "CAPSEM_TEST_UPSTREAM_OVERRIDES".to_string(),
+            "leak".to_string(),
+        );
+        source.insert("OPENAI_API_KEY".to_string(), "secret".to_string());
+
+        let env = aggregator_parent_env_from(|key| source.get(key).cloned());
+
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin:/bin"));
+        assert_eq!(
+            env.get("RUST_LOG").map(String::as_str),
+            Some("capsem=debug")
+        );
+        assert_eq!(env.get("RUST_BACKTRACE").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("CAPSEM_USER_CONFIG"));
+        assert!(!env.contains_key("CAPSEM_CORP_CONFIG"));
+        assert!(!env.contains_key("CAPSEM_TEST_UPSTREAM_OVERRIDES"));
+        assert!(!env.contains_key("OPENAI_API_KEY"));
     }
 }

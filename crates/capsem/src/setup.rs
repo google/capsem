@@ -42,6 +42,16 @@ fn save_state_to(capsem_dir: &Path, state: &SetupState) -> Result<()> {
     capsem_core::setup_state::save_state(&state_path_in(capsem_dir), state)
 }
 
+fn load_setup_manifest_for_assets(
+    assets_dir: &Path,
+) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
+    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
+}
+
+fn setup_requires_manifest_for_layout(layout: &crate::platform::InstallLayout) -> bool {
+    !matches!(layout, crate::platform::InstallLayout::Development)
+}
+
 /// Run the setup wizard.
 pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     let cd = capsem_dir()?;
@@ -187,29 +197,30 @@ async fn step_welcome(
     println!("[2/6] Welcome to Capsem!");
     println!("  The fastest way to ship with AI securely.");
 
-    let manifest_path = capsem_dir.join("assets").join("manifest.json");
-    let manifest_bytes = match std::fs::read_to_string(&manifest_path) {
-        Ok(b) => b,
-        Err(e) => {
+    let assets_dir = capsem_dir.join("assets");
+    let manifest = match load_setup_manifest_for_assets(&assets_dir)? {
+        Some(m) => m,
+        None if setup_requires_manifest_for_layout(&crate::platform::detect_install_layout()) => {
+            anyhow::bail!(
+                "signed asset manifest missing at {}",
+                assets_dir.join("manifest.json").display()
+            );
+        }
+        None => {
             println!(
-                "  Skipping asset check: no manifest at {} ({}).",
-                manifest_path.display(),
-                e
+                "  Skipping asset check: no manifest at {}.",
+                assets_dir.join("manifest.json").display()
             );
             state.mark_done("welcome");
             save_state_to(capsem_dir, state)?;
             return Ok(None);
         }
     };
-    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
-        .with_context(|| format!("parse {}", manifest_path.display()))?;
-
     let arch = if cfg!(target_arch = "aarch64") {
         "arm64"
     } else {
         "x86_64"
     };
-    let assets_dir = capsem_dir.join("assets");
     let binary_version = env!("CARGO_PKG_VERSION").to_string();
 
     println!("  Checking VM assets...");
@@ -405,6 +416,37 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    const UNSIGNED_MANIFEST: &str = r#"{
+        "format": 2,
+        "assets": {
+            "current": "2026.0415.1",
+            "releases": {
+                "2026.0415.1": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_binary": "1.0.0",
+                    "arches": {
+                        "arm64": {
+                            "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
+                            "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
+                            "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
+                        }
+                    }
+                }
+            }
+        },
+        "binaries": {
+            "current": "1.0.1776269479",
+            "releases": {
+                "1.0.1776269479": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_assets": "2026.0415.1"
+                }
+            }
+        }
+    }"#;
+
     fn tmp_dir() -> TempDir {
         tempfile::tempdir().expect("tempdir")
     }
@@ -507,6 +549,43 @@ mod tests {
         // load should silently return default -- no panic, no error propagation.
         let s = load_state_from(d.path());
         assert_eq!(s.schema_version, 0);
+    }
+
+    #[test]
+    fn setup_manifest_loader_rejects_unsigned_manifest() {
+        let d = tmp_dir();
+        std::fs::write(d.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+
+        let err = load_setup_manifest_for_assets(d.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("signature missing"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn setup_manifest_loader_rejects_invalid_signature() {
+        let d = tmp_dir();
+        std::fs::write(d.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+        std::fs::write(d.path().join("manifest.json.minisig"), "not a signature").unwrap();
+
+        let err = load_setup_manifest_for_assets(d.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("verify"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn setup_requires_manifest_for_installed_layouts_only() {
+        use crate::platform::InstallLayout;
+
+        assert!(!setup_requires_manifest_for_layout(
+            &InstallLayout::Development
+        ));
+        assert!(setup_requires_manifest_for_layout(&InstallLayout::UserDir));
+        assert!(setup_requires_manifest_for_layout(&InstallLayout::MacosPkg));
+        assert!(setup_requires_manifest_for_layout(&InstallLayout::LinuxDeb));
     }
 
     // ---- step_corp_config (happy path + validation error) -------------

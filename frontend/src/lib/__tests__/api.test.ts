@@ -555,27 +555,6 @@ describe('api', () => {
     });
   });
 
-  describe('checkForAppUpdate', () => {
-    beforeEach(async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
-      await api.init();
-    });
-
-    it('returns update info when available', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ version: '2.0.0', current_version: '1.0.0' }));
-      const result = await api.checkForAppUpdate();
-      expect(result).toEqual({ version: '2.0.0', current_version: '1.0.0' });
-    });
-
-    it('returns null on error', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('fail'));
-      const result = await api.checkForAppUpdate();
-      expect(result).toBeNull();
-    });
-  });
-
   // ---- Terminal ----
 
   describe('terminal', () => {
@@ -627,16 +606,4 @@ describe('api', () => {
     });
   });
 
-  describe('getImages', () => {
-    it('sends GET /images', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
-      await api.init();
-
-      mockFetch.mockReturnValueOnce(jsonResponse({ images: [{ name: 'default' }] }));
-      const result = await api.getImages();
-      expect(result.images).toHaveLength(1);
-    });
-  });
 });

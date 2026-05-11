@@ -13,21 +13,16 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 
 pytestmark = pytest.mark.rootfs
 
-# The canonical list of required rootfs artifacts (files and dirs)
-REQUIRED_FILES = [
-    "capsem-init",
-    "capsem-bashrc",
-    "banner.txt",
-    "tips.txt",
-    "capsem-doctor",
-    "capsem-bench",
-    "snapshots",
-]
+from capsem.builder.docker import (
+    GUEST_BINARIES,
+    ROOTFS_SCRIPTS,
+    ROOTFS_SCRIPT_DIRS,
+    ROOTFS_SUPPORT_FILES,
+)
 
-REQUIRED_DIRS = [
-    "diagnostics",
-    "capsem_bench",
-]
+# The canonical list of required rootfs artifacts (files and dirs)
+REQUIRED_FILES = ["capsem-init", *ROOTFS_SUPPORT_FILES, *ROOTFS_SCRIPTS]
+REQUIRED_DIRS = list(ROOTFS_SCRIPT_DIRS)
 
 
 class TestArtifactsExist:
@@ -83,6 +78,21 @@ class TestBuildContext:
                 assert (context_dir / name).exists(), f"{name}/ not in context"
 
 
+class TestRootfsValidationContract:
+
+    def test_guest_binaries_include_release_critical_helpers(self):
+        """The canonical guest list includes helpers required by capsem-init."""
+        assert "capsem-dns-proxy" in GUEST_BINARIES
+        assert "capsem-sysutil" in GUEST_BINARIES
+
+    def test_validate_rootfs_derives_binary_requirements_from_guest_binaries(self):
+        """The release validator imports GUEST_BINARIES and checks /usr/local/bin."""
+        validator = (PROJECT_ROOT / "scripts" / "validate-rootfs.sh").read_text()
+        assert "GUEST_BINARIES" in validator
+        assert "for name in [*GUEST_BINARIES, *ROOTFS_SCRIPTS]" in validator
+        assert 'print(f"file /usr/local/bin/{name}")' in validator
+
+
 class TestDoctorConsistency:
 
     def test_doctor_check_source_files_passes(self):
@@ -105,7 +115,6 @@ class TestDoctorConsistency:
         docker_src = (PROJECT_ROOT / "src/capsem/builder/docker.py").read_text()
         doctor_src = (PROJECT_ROOT / "src/capsem/builder/doctor.py").read_text()
 
-        # Both should reference capsem-bashrc, banner.txt, snapshots, etc.
-        for name in ["capsem-bashrc", "banner.txt", "capsem-init", "snapshots"]:
-            assert name in docker_src, f"docker.py missing reference to {name}"
-            assert name in doctor_src, f"doctor.py missing reference to {name}"
+        for constant in ("ROOTFS_SCRIPTS", "ROOTFS_SCRIPT_DIRS", "ROOTFS_SUPPORT_FILES"):
+            assert constant in docker_src, f"docker.py missing {constant}"
+            assert constant in doctor_src, f"doctor.py missing {constant}"

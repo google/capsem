@@ -3,6 +3,9 @@
 use super::*;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::time::{timeout, Duration};
 
 fn sample_request() -> HookDecisionRequest {
     HookDecisionRequest {
@@ -58,6 +61,77 @@ fn endpoint_config_feeds_runtime_endpoint() {
     assert_eq!(endpoint.fail_closed_decision, HookDecision::Ask);
 }
 
+#[test]
+fn endpoint_config_rejects_fail_open_fallback_decisions() {
+    for decision in ["allow", "rewrite"] {
+        let err = serde_json::from_value::<PolicyHookEndpointConfig>(json!({
+            "id": "fixture",
+            "decision_url": "https://hooks.example.com/v1/policy/decision",
+            "fail_closed_decision": decision
+        }))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("fail_closed_decision"),
+            "unexpected error for {decision}: {err}"
+        );
+    }
+
+    for decision in ["block", "ask"] {
+        let config: PolicyHookEndpointConfig = serde_json::from_value(json!({
+            "id": "fixture",
+            "decision_url": "https://hooks.example.com/v1/policy/decision",
+            "fail_closed_decision": decision
+        }))
+        .unwrap();
+        assert_eq!(config.fail_closed_decision.as_str(), decision);
+    }
+}
+
+#[test]
+fn endpoint_validation_rejects_dns_loopback_lookalikes() {
+    for url in [
+        "http://127.evil.example/v1/policy/decision",
+        "http://127.0.0.1.evil/v1/policy/decision",
+        "http://localhost.evil/v1/policy/decision",
+        "https://127.0.0.1@evil.example/v1/policy/decision",
+    ] {
+        let endpoint = PolicyHookEndpoint::new("corp", url);
+        let err = validate_endpoint(&endpoint).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                PolicyHookError::InsecureEndpoint
+                    | PolicyHookError::MissingAuth
+                    | PolicyHookError::InvalidUrl(_)
+            ),
+            "lookalike URL {url} unexpectedly passed localhost validation: {err}"
+        );
+    }
+}
+
+#[test]
+fn endpoint_validation_allows_exact_loopbacks_without_bearer() {
+    for url in [
+        "http://127.0.0.1/v1/policy/decision",
+        "http://[::1]/v1/policy/decision",
+        "http://localhost/v1/policy/decision",
+    ] {
+        let endpoint = PolicyHookEndpoint::new("fixture", url);
+        assert!(validate_endpoint(&endpoint).is_ok(), "{url}");
+    }
+}
+
+#[test]
+fn nonlocal_https_endpoint_requires_bearer_auth() {
+    let endpoint = PolicyHookEndpoint::new("corp", "https://hooks.example.com/v1/policy/decision");
+    let err = validate_endpoint(&endpoint).unwrap_err();
+    assert!(matches!(err, PolicyHookError::MissingAuth));
+
+    let mut endpoint = endpoint;
+    endpoint.bearer_token = Some("token".to_string());
+    assert!(validate_endpoint(&endpoint).is_ok());
+}
+
 #[derive(Debug, Clone)]
 struct SeenRequest {
     url: String,
@@ -69,6 +143,27 @@ struct FixtureTransport {
     status: u16,
     body: Vec<u8>,
     seen: Mutex<Option<SeenRequest>>,
+}
+
+struct ErrorTransport;
+
+impl PolicyHookTransport for ErrorTransport {
+    fn post<'a>(
+        &'a self,
+        _url: reqwest::Url,
+        _timeout: std::time::Duration,
+        _bearer_token: Option<String>,
+        _body_cap_bytes: usize,
+        _body: Vec<u8>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<PolicyHookHttpResponse, PolicyHookError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move { Err(PolicyHookError::Transport("timeout".to_string())) })
+    }
 }
 
 impl FixtureTransport {
@@ -87,6 +182,7 @@ impl PolicyHookTransport for FixtureTransport {
         url: reqwest::Url,
         _timeout: std::time::Duration,
         bearer_token: Option<String>,
+        _body_cap_bytes: usize,
         body: Vec<u8>,
     ) -> std::pin::Pin<
         Box<
@@ -189,16 +285,70 @@ async fn malformed_schema_fails_closed_and_records_error() {
     }
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (status, fallback, error): (String, Option<String>, Option<String>) = conn
+    let (status, decision, fallback, error): (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = conn
         .query_row(
-            "SELECT status, fallback, error FROM policy_hook_events",
+            "SELECT status, decision, fallback, error FROM policy_hook_events",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .unwrap();
     assert_eq!(status, "error");
+    assert!(decision.is_none());
     assert_eq!(fallback.as_deref(), Some("block"));
     assert!(error.as_deref().unwrap_or_default().contains("schema"));
+}
+
+#[tokio::test]
+async fn failed_closed_transport_and_status_audits_do_not_record_real_decision() {
+    let cases: Vec<(&str, Arc<dyn PolicyHookTransport>)> = vec![
+        ("transport", Arc::new(ErrorTransport)),
+        (
+            "status",
+            FixtureTransport::new(503, "{}") as Arc<dyn PolicyHookTransport>,
+        ),
+    ];
+    for (name, transport) in cases {
+        let endpoint = PolicyHookEndpoint::new("fixture", "http://127.0.0.1/v1/policy/decision");
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join(format!("{name}.db"));
+
+        {
+            let writer = DbWriter::open(&db_path, 8).unwrap();
+            let outcome = PolicyHookClient::with_transport(transport)
+                .decide(&endpoint, &sample_request(), Some(&writer))
+                .await;
+            assert!(outcome.failed_closed, "{name}");
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let (status, decision, fallback): (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT status, decision, fallback FROM policy_hook_events",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "error", "{name}");
+        assert!(decision.is_none(), "{name}");
+        assert_eq!(fallback.as_deref(), Some("block"), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn invalid_manual_fail_closed_decision_never_fails_open() {
+    let mut endpoint = PolicyHookEndpoint::new("fixture", "http://127.0.0.1/v1/policy/decision");
+    endpoint.fail_closed_decision = HookDecision::Allow;
+    let outcome = PolicyHookClient::with_transport(Arc::new(ErrorTransport))
+        .decide(&endpoint, &sample_request(), None)
+        .await;
+
+    assert!(outcome.failed_closed);
+    assert_eq!(outcome.response.decision, HookDecision::Block);
 }
 
 #[tokio::test]
@@ -216,4 +366,46 @@ async fn request_body_cap_fails_closed_without_network() {
         .as_deref()
         .unwrap_or_default()
         .contains("exceeds cap"));
+}
+
+#[tokio::test]
+async fn streaming_response_cap_fails_before_waiting_for_full_body() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0_u8; 1024];
+        let _ = socket.read(&mut buf).await;
+        let _ = socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1048576\r\n\r\n",
+            )
+            .await;
+        for _ in 0..128 {
+            if socket.write_all(b"{\"decision\":\"allow\"}").await.is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+
+    let mut endpoint =
+        PolicyHookEndpoint::new("fixture", format!("http://{addr}/v1/policy/decision"));
+    endpoint.body_cap_bytes = 512;
+    endpoint.timeout_ms = 2_000;
+
+    let outcome = timeout(
+        Duration::from_millis(500),
+        PolicyHookClient::new().decide(&endpoint, &sample_request(), None),
+    )
+    .await
+    .expect("response cap should fail without waiting for the full streaming body");
+
+    assert!(outcome.failed_closed);
+    assert!(outcome
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("response body exceeds cap"));
+    server.abort();
 }

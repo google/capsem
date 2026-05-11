@@ -2,40 +2,39 @@
 
 ## Goal
 
-Prepare the next `1.1.xxx` release candidate by fixing the blocker-class issues
+Prepare the next `1.1.1778456247` release candidate by fixing the blocker-class issues
 found in the post-sprint swarm review: release artifacts must install and boot
 on fresh machines, Policy V2 settings must be usable from the UI, hook runtime
 must fail closed safely, and docs must not overclaim shipped behavior.
 
-T9 owns the exact `1.1.xxx` version choice and any stamping-recipe change needed
-to stop the old `1.0.{timestamp}` release line from leaking into docs, binaries,
-or tags. Until T9 records the exact version, all user-facing release copy should
-say `1.1.xxx`.
+T9 selected exact version `1.1.1778456247` and owns keeping the stamp recipe,
+docs, binaries, and tag plan on that line.
 
 ## Status
 
 | Track | Status | Priority | Dependencies | Proof / Test Count | Owner Notes |
 |---|---:|---:|---|---|---|
-| T0 release artifacts | Not started | P0 | T1 manifest contract, T5 helpers | 10 package/install checks | Fresh install can fail because packages ship missing/unsigned manifests; updater artifacts are not published. |
-| T1 image/manifest pipeline | Not started | P1 | None | 4 manifest/rootfs checks | Manifest compatibility and same-day asset version drift. |
-| T2 UI policy settings | Not started | P1 | T8 hook scope | 7 frontend checks | UI can save policy rules, but rename/staged-review/mock data/reload errors are broken. |
-| T3 policy hook runtime | Not started | P1 | T8 hook scope | 4 Rust/security checks | Localhost validation/body cap/fallback/MCP notification semantics need hardening. |
-| T4 docs and release notes | Not started | P1 | T0/T8 final decisions | 4 docs/release checks | Docs overclaim hooks and still mention stale artifact formats. |
-| T5 service/process/package helpers | Not started | P0 | T0 package layout, T1 rootfs gate | 8 package/service checks | Linux package omits MCP helper binaries; cleanup/env/rootfs/reload gaps. |
-| T6 telemetry/session tooling | Not started | P2 | T3/T8 telemetry semantics | 6 session/timeline checks | Old-DB compatibility, timeline layers, triage, schema tests. |
-| T7 swarm intake and review control | In progress | P2 | None active | swarm finding docs captured | Final investigation wave captured; expand implementation sub-sprints next. |
-| T8 policy integration E2E | Not started | P1 | T2/T3/T5/T6 | 4 E2E/scope checks | Decide hook shipping scope and prove UI/config/runtime/telemetry path. |
-| T9 release metadata and changelog | Not started | P1 | T0-T8 final decisions | 4 metadata checks | Version, changelog, latest release, and release page sync. |
-| T10 focused verification | Not started | P0 | T0-T9 fixes | 20 targeted checks | Per-track proof before full-suite cost. |
-| T11 local release candidate gate | Not started | P0 | T10 green | 12 local gates | Preflight, full `just test`, `just install`, installed CLI/UI/full-launch sign-off. |
-| T12 CI green release landing | Not started | P0 | T11 signed off | 10 CI/live-release gates | Tag `v1.1.xxx`, CI green, release assets verified, release landed. |
+| T0 release artifacts | Implementation complete; live install proof captured in T11 | P0 | T1 manifest contract, T5 helpers | 20 package/install/updater checks | Packages carry signed manifests, setup/update/status/service verify them, updater is disabled, and release workflow guards are hardened. Clean package install proof is captured in T11; release remains held on manual sign-off. |
+| T1 image/manifest pipeline | Complete; focused rootfs proof passed in T10 | P1 | None | 45 Python checks + 58 Rust checks + 15 rootfs artifact checks | Numeric asset-version ordering, shared same-day patch generation, all-arch local repack manifests, per-arch cleanup, canonical rootfs validation, and docs/comments are updated. |
+| T2 UI policy settings | Implementation complete; Gate A visual proof partially captured | P1 | T8 hook scope for final runtime matrix | 388 frontend tests + check/build + mock drift gate + asset-state browser smoke + T10 `just ui` screenshots | Staged policy review, atomic rename/type change, generated mocks, import validation, reload failure banner/dismissal, hidden unsupported hook/image surfaces, and service-default creation are implemented. T10.3 captured generated-rule and staged-rule/discard visual proof; exhaustive rename/delete/import/reload-failure behavior remains covered by frontend tests. |
+| T3 policy hook runtime | Implementation complete; focused VM/E2E proof passed in T10 | P1 | T8 hook scope | 103 focused Rust/logger checks + policy benchmark + focused T8 VM E2E | Localhost validation, streaming body cap, fail-closed fallback, Spec0 semantics, fallback audit rows, MCP notification denial, Policy V2 telemetry naming, and benchmark guards are implemented. |
+| T4 docs and release notes | Implementation complete; final changelog/latest-release pass pending T9 | P1 | T0/T8 final decisions | stale-term scans + docs build + site build | Docs now distinguish hook infrastructure from configured dispatch, describe `.pkg`/`.deb` and disabled updater truth, include hook/Policy V2 telemetry fields, and remove stale DNS/benchmark claims. |
+| T5 service/process/package helpers | Implementation complete; focused package/VM proof passed in T10 | P0 | T0 package layout, T1 rootfs gate | Focused Rust/Python checks + compile gate + T10 Gate B/E2E/package proof | Helper packaging, spec route/auth proof, rootfs validation, env isolation, async cleanup, and builtin-aware reload/refresh are implemented; clean installed-package launch remains T11. |
+| T6 telemetry/session tooling | Implementation complete; focused real-session trace proof passed in T10 | P2 | T3/T8 telemetry semantics | Logger/core/service/MCP/session/frontend gates passed + focused T8 timeline assertion | Old/core DB compatibility, Policy V2 schema checks, MCP/tool correlation, dns/hook/audit/snapshot timeline layers, triage, frontend policy fields, lifecycle tests, and legacy migration coverage are implemented. |
+| T7 swarm intake and review control | Owner mapping complete; downstream closeout open | P0 | T8-T12 downstream resolution | FD01-FD14 transfer trackers + Galileo audit | Final investigation wave and mapping audit are captured; every finding doc is linked to owner T-track rows, while downstream blocker checkboxes stay open until resolved or deferred. |
+| T8 policy integration E2E | Implementation complete; focused VM proof passed in T10 | P1 | T2/T3/T5/T6 | Hook defer decision + 388 frontend tests + focused Rust checks + focused VM E2E | Configured external hook dispatch is deferred for `1.1.1778456247`; non-hook Policy V2 settings/reload/timeline E2E path, reload banner dismissal, backend hook rejection, runtime support matrix, and live `/settings` + `/reload-config` MCP E2E proof are implemented. |
+| T9 release metadata and changelog | Implementation complete; commit discipline pending | P1 | T0-T8 final decisions | version sync + latest-release extraction + release page + docs build + partial workflow check | Exact `1.1.1778456247` stamp, changelog, latest release, 1.1 release page, lockfile, stamp recipe, and internal dependency metadata are synchronized; workflow preflight still needs local signing prerequisites. |
+| T10 focused verification | Complete; T11 blockers explicit | P0 | T0-T9 fixes | focused Rust/Python/frontend/docs + `.deb` install + `.pkg` expansion + Gate A/B + T8 E2E proof | Targeted checks, host doctor, strict `just test-install`, `just exec "echo cli-ok"`, `just exec "capsem-doctor"`, focused T8 policy E2E, rootfs validation, `.pkg` expansion/signature proof, frontend coverage, and `just ui` visual evidence are passing/captured; clean installed-package proof remains a T11/manual-host gate. |
+| T11 local release candidate gate | Full suite/private preflight/install smoke/installed doctor/demo UI green; manual sign-off open | P0 | T10 green | Full `just test`, final doctor, restored-private preflight, VM doctor, Docker install e2e, host install smoke | Final `just test`, final host `just doctor`, direct B3SUMS/signature checks, `just exec "capsem-doctor"`, restored Apple/notary/manifest preflight, `just install`, installed CLI run, installed doctor, rebuilt `.pkg` app-materialization fix, `/Applications` demo UI launch, `just run-ui --` process proof, and installed-app tray relaunch proof passed by 2026-05-11. Remaining blockers are Elie Gate C/Gate D visual sign-off and the no-tag/no-push hold before T12. |
+| T12 CI green release landing | Not started | P0 | T11 signed off | 10 CI/live-release gates | Tag `v1.1.1778456247`, CI green, release assets verified, release landed. |
 
 ## Phases
 
 - Foundation: T0, T1, T5.
 - Policy surface: T2, T3, T8.
 - Audit/docs: T4, T6.
-- Release control: T7, T9, T10.
+- Pre-sprint intake: T7.
+- Release control: T9, T10.
 - Local ship gate: T11.
 - CI and publish: T12.
 
@@ -52,7 +51,9 @@ say `1.1.xxx`.
 
 ## Execution Spine
 
-1. Close T7 first: no active swarm finding can remain only in a finding doc.
+1. Keep T7 closeout active: no active swarm finding can remain only in a finding doc,
+   and every completed finding doc must be represented by a FD01-FD14
+   pre-sprint subtask plus owner rows in the relevant T0-T12 trackers.
 2. Resolve T8 hook shipping scope before finalizing T2 UI choices or T4/T9
    release language.
 3. Fix foundation tracks T0/T1/T5 before trusting any install or CI proof.
@@ -63,7 +64,7 @@ say `1.1.xxx`.
    `tracker.md`.
 7. Run T11 locally: full suite, package generation, local install, and Elie +
    Codex CLI/UI/full-launch verification.
-8. Only after T11 is signed off, run T12: tag `v1.1.xxx`, wait for CI, verify
+8. Only after T11 is signed off, run T12: tag `v1.1.1778456247`, wait for CI, verify
    published assets, and mark the release landed.
 
 ## Elie + Codex Manual Gates
@@ -149,7 +150,7 @@ The release workflow must fail before publish if any expected item is missing.
 - `scripts/preflight.sh` and `scripts/check-release-workflow.sh`: verify Apple
   signing/notarization readiness, Tauri signing readiness if updater remains
   enabled, and manifest-signing readiness.
-- Release job: after tag `v1.1.xxx`, wait for CI green and require live
+- Release job: after tag `v1.1.1778456247`, wait for CI green and require live
   GitHub release asset verification before declaring the release landed.
 
 ## Immediate Release Blockers
@@ -171,12 +172,12 @@ The release workflow must fail before publish if any expected item is missing.
   release workflow does not publish `latest.json` or compatible updater
   archives; the current updater path would also update only the app bundle, not
   companion binaries.
-- `config/policy-hook-openapi.json` is referenced by `include_str!` tests and
-  must be explicitly tracked/staged for clean CI.
-- Policy hook controls are exposed in UI/config, but no production path loads
-  hook endpoints or calls `PolicyHookClient`.
-- MCP notification frames can bypass request policy/telemetry if non-notify
-  methods dispatch before policy enforcement.
+- `config/policy-hook-openapi.json` is now tracked and clean-checkout/static
+  release tests parse it; T10/T11 still own final release artifact proof.
+- Policy hook release scope is still undecided: T2 hides unsupported hook UI,
+  but T8 must decide and prove whether configured external hook dispatch ships.
+- MCP notification bypass is closed in the T3 framed runtime unit path; T8/T10
+  still own VM/E2E proof for the integration path.
 
 ## Swarm Inputs Captured
 
@@ -209,24 +210,29 @@ The release workflow must fail before publish if any expected item is missing.
 - Final telemetry/guest/CI/verification wave: captured in `swarm-findings/`
   for session tooling, rootfs/image-builder, release packaging, and proposed
   sub-sprint splits.
+- Pre-sprint transfer board: FD01-FD14 in `T7-active-review-followups.md`
+  links every finding doc to owner rows in T0-T12 and keeps downstream
+  blocker checkboxes open until implementation resolves them.
 
 ## Swarm Process
 
-The swarm was run as a no-edit investigation pass before implementation. The
-control board is `sprints/release-policy-hardening/swarm.md`; it is the first
-file to read after compaction or handoff. Each agent owned one domain, returned
-severity-ranked findings, and had its output copied into a durable finding doc
-under `sprints/release-policy-hardening/swarm-findings/`.
+The swarm was run as a no-edit investigation pass, with an additional T7
+mapping audit after T6 implementation. The control board is
+`sprints/release-policy-hardening/swarm.md`; it is the first file to read after
+compaction or handoff. Each agent owned one domain, returned severity-ranked
+findings, and had its output copied into a durable finding doc under
+`sprints/release-policy-hardening/swarm-findings/`.
 
 ### Resume Order
 
 1. Read `swarm.md`.
 2. Confirm the Finding Docs Index has no `In progress` rows.
-3. Read each completed finding doc before editing T0-T12.
+3. Read each completed finding doc before continuing T8-T12 work.
 4. Deduplicate overlapping P0/P1 findings.
-5. Expand implementation sub-sprints so every P0/P1 has exact files, tests,
+5. Keep implementation sub-sprints expanded so every P0/P1 has exact files, tests,
    package/UI/docs/VM proof, and a release-gate owner.
-6. Only then update T0-T12 from pending finding intake to execution tasks.
+6. Keep T0-T12 execution tasks synchronized with any newly captured audit
+   result before moving to the next track.
 
 ### Completed Finding Docs
 
@@ -242,19 +248,22 @@ under `sprints/release-policy-hardening/swarm-findings/`.
 | Telemetry/session tooling | `swarm-findings/telemetry-session.md` | T3, T6, T8, T10 |
 | Guest/image builder/rootfs | `swarm-findings/guest-image-builder.md` | T1, T5, T10 |
 | CI packaging/release artifacts | `swarm-findings/ci-packaging.md` | T0, T1, T5, T10, T11 |
-| Verification architecture | `swarm-findings/verification-architecture.md` | T7, T10, T11 |
+| Verification architecture | `swarm-findings/verification-architecture.md` | T2, T7, T8, T10, T11, T12 |
 | Manual UI/CLI gates | `swarm-findings/manual-ui-cli-gates.md` | T10, T11 |
 | CI release landing 1.1 | `swarm-findings/ci-release-landing-1-1.md` | T9, T11, T12 |
-| Swarm transfer closeout | `swarm-findings/swarm-transfer-closeout-2026-05-10.md` | T7, T10, T12 |
+| Swarm transfer closeout | `swarm-findings/swarm-transfer-closeout-2026-05-10.md` | T2, T7, T8, T9, T10, T12 |
+| T7 transfer mapping audit | `swarm-findings/swarm-transfer-closeout-2026-05-10.md` | T7, T8, tracker |
 
-### Required Closeout Before Implementation
+### Required Closeout Before Release Gates
 
-- Deduplicate repeated package-manifest, helper-binary, hook-scope, telemetry,
-  and updater findings across finding docs.
-- Add the proposed splits from `verification-architecture.md` and the final
+- Keep repeated package-manifest, helper-binary, hook-scope, telemetry, and
+  updater findings deduplicated across finding docs.
+- Keep the proposed splits from `verification-architecture.md` and the final
   targeted swarm docs, especially T7.4 swarm closeout, T8 scope branches,
   T10.8 evidence ledger, T11.6 local handoff, T12 CI release landing, and a
   frontend runtime/image-truth track.
+- Keep the FD01-FD14 pre-sprint subtasks in T7 synchronized with the
+  `## Swarm Transfer Tracker` rows in T0-T12.
 - Normalize invalid or future test commands before putting them in final
   verification gates.
 - Keep the release hold active until T10 focused verification, T11 local
@@ -289,8 +298,9 @@ under `sprints/release-policy-hardening/swarm-findings/`.
   events plus DNS/audit/snapshot layers appear in timeline/trace views.
 - Docs/release notes distinguish shipped hook Spec0/runtime infrastructure from
   not-yet-wired user/corp hook dispatch.
-- T8 records whether configured external hook dispatch ships; UI/docs/tests
-  match that decision.
+- T8 records that configured external hook dispatch does not ship in
+  `1.1.1778456247`; UI/docs/tests reject or describe hook dispatch as
+  infrastructure-only.
 - Frontend runtime/image truth has an owner: asset readiness, image/fork UI
   contract, create defaults, and service/gateway status truth cannot remain
   only in swarm findings.
@@ -301,5 +311,5 @@ under `sprints/release-policy-hardening/swarm-findings/`.
   release tagging.
 - `just install` generates and installs the package locally before CI/tagging,
   and Elie signs off CLI, JS UI, desktop launch, and installed app behavior.
-- T12 waits for CI green and verifies live `v1.1.xxx` release assets before the
+- T12 waits for CI green and verifies live `v1.1.1778456247` release assets before the
   release is marked landed.

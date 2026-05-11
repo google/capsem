@@ -3841,10 +3841,6 @@ fn settings_tree_contains_action_nodes() {
     }
 
     assert!(
-        find_action(&tree, ActionKind::CheckUpdate),
-        "tree should contain check_update action"
-    );
-    assert!(
         find_action(&tree, ActionKind::PresetSelect),
         "tree should contain preset_select action"
     );
@@ -6122,6 +6118,15 @@ fn batch_update_settings_json_rejects_invalid_policy_inputs_atomically() {
             serde_json::json!({
                 "on": "http.request",
                 "if": "request.path.match('^/openai')",
+                "decision": "block",
+                "priority": 10
+            }),
+        ),
+        (
+            "policy.hook.external_decision",
+            serde_json::json!({
+                "on": "hook.decision",
+                "if": "decision == 'block'",
                 "decision": "block",
                 "priority": 10
             }),

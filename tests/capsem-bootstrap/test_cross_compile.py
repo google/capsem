@@ -7,11 +7,11 @@ import pytest
 
 from pathlib import Path
 
+from capsem.builder.docker import GUEST_BINARIES
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 pytestmark = pytest.mark.bootstrap
-
-GUEST_BINARIES = ["capsem-pty-agent", "capsem-net-proxy", "capsem-mcp-server"]
 
 
 def _host_arch():
@@ -39,8 +39,7 @@ class TestGuestBinaries:
             pytest.skip(f"Agent dir not found: {agent_dir}")
         for name in GUEST_BINARIES:
             binary = agent_dir / name
-            if not binary.exists():
-                continue
+            assert binary.exists(), f"Guest binary not found: {binary}"
             result = subprocess.run(["file", str(binary)], capture_output=True, text=True)
             assert "ELF" in result.stdout, f"{name} is not an ELF binary: {result.stdout}"
 
@@ -52,8 +51,7 @@ class TestGuestBinaries:
         expected_arch = "aarch64" if arch == "arm64" else "x86-64"
         for name in GUEST_BINARIES:
             binary = agent_dir / name
-            if not binary.exists():
-                continue
+            assert binary.exists(), f"Guest binary not found: {binary}"
             result = subprocess.run(["file", str(binary)], capture_output=True, text=True)
             assert expected_arch in result.stdout, (
                 f"{name} has wrong arch. Expected {expected_arch}, got: {result.stdout}"
@@ -65,8 +63,7 @@ class TestGuestBinaries:
             pytest.skip(f"Agent dir not found: {agent_dir}")
         for name in GUEST_BINARIES:
             binary = agent_dir / name
-            if not binary.exists():
-                continue
+            assert binary.exists(), f"Guest binary not found: {binary}"
             result = subprocess.run(["file", str(binary)], capture_output=True, text=True)
             assert "statically linked" in result.stdout, (
                 f"{name} should be statically linked (musl): {result.stdout}"
@@ -78,6 +75,5 @@ class TestGuestBinaries:
             pytest.skip(f"Agent dir not found: {agent_dir}")
         for name in GUEST_BINARIES:
             binary = agent_dir / name
-            if not binary.exists():
-                continue
+            assert binary.exists(), f"Guest binary not found: {binary}"
             assert os.access(binary, os.X_OK), f"{name} is not executable"

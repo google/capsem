@@ -17,17 +17,6 @@ name = "App"
 description = "Application settings"
 collapsed = false
 
-[settings.app.auto_update]
-name = "Auto-check for updates"
-description = "Check for new Capsem versions on launch"
-type = "bool"
-default = true
-
-[settings.app.check_update]
-name = "Check for updates"
-description = "Manually check if a new version is available"
-action = "check_update"
-
 # -- AI Providers ------------------------------------------------------------
 
 [settings.ai]

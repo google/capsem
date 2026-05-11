@@ -45,6 +45,8 @@ _reg b3sum            "cargo install b3sum --locked" \
                       "Install b3sum"
 _reg cargo-tauri      "cargo install tauri-cli --locked" \
                       "Install cargo-tauri (tauri-cli crate)"
+_reg minisign         "case \"$(uname -s)\" in Darwin) brew install minisign ;; Linux) if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y minisign; elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y minisign; else echo 'install minisign via your OS package manager' >&2; exit 1; fi ;; *) echo 'install minisign via your OS package manager' >&2; exit 1 ;; esac" \
+                      "Install minisign"
 _reg entitlements     "git checkout entitlements.plist" \
                       "Restore entitlements.plist"
 _reg cargo-config     "git checkout .cargo/config.toml" \
@@ -178,6 +180,13 @@ _check_cargo_tool cargo-audit    cargo-audit
 _check_cargo_tool b3sum          b3sum
 _check_cargo_tool cargo-tauri    cargo-tauri
 
+section "Manifest Signing Tools"
+if command -v minisign &>/dev/null; then
+    pass "minisign"
+else
+    fixable minisign "minisign not found -- install: $(tool_hint minisign)"
+fi
+
 section "Container Tools"
 if command -v docker &>/dev/null; then
     pass "docker CLI ($(docker --version 2>/dev/null | head -1))"
@@ -222,6 +231,19 @@ if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
                 fixable build-assets "asset integrity check failed"
             fi
         fi
+
+        if [[ -f "$ASSETS_DIR/manifest.json.minisig" ]]; then
+            _manifest_sig_result=$(bash scripts/verify-local-manifest-signature.sh "$ASSETS_DIR" config/manifest-sign.pub 2>&1 || true)
+            if [[ "$_manifest_sig_result" == *"verifies with"* ]]; then
+                pass "local asset manifest signature ($_manifest_sig_result)"
+            elif [[ "$_manifest_sig_result" == *"minisign not found"* ]]; then
+                fixable minisign "minisign not found -- install: $(tool_hint minisign)"
+            else
+                fixable pack-initrd "local asset manifest signature invalid -- $_manifest_sig_result"
+            fi
+        else
+            fixable pack-initrd "local asset manifest signature missing"
+        fi
     else
         fixable build-assets "manifest.json missing"
     fi
@@ -233,7 +255,26 @@ section "Guest Binaries"
 if [[ -z "${CAPSEM_SKIP_ASSET_CHECK:-}" ]]; then
     arch=$(uname -m | sed 's/aarch64/arm64/')
     release_dir="target/linux-agent/$arch"
-    for b in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
+    if command -v uv >/dev/null 2>&1; then
+        guest_bins=()
+        while IFS= read -r b; do
+            guest_bins+=("$b")
+        done < <(PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" uv run python3 - <<'PY'
+from capsem.builder.docker import GUEST_BINARIES
+print("\n".join(GUEST_BINARIES))
+PY
+)
+    else
+        guest_bins=()
+        while IFS= read -r b; do
+            guest_bins+=("$b")
+        done < <(PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY'
+from capsem.builder.docker import GUEST_BINARIES
+print("\n".join(GUEST_BINARIES))
+PY
+)
+    fi
+    for b in "${guest_bins[@]}"; do
         if [[ -f "$release_dir/$b" ]]; then
             if file "$release_dir/$b" 2>/dev/null | grep -E -q "ELF 64-bit"; then
                 pass "$b (Linux ELF)"
@@ -330,7 +371,7 @@ if [[ "$_needed_count" -gt 0 ]]; then
         exec "$0"
     else
         echo ""
-        echo -e "Run ${BOLD}just doctor-fix${NC} to auto-fix these issues."
+        echo -e "Run ${BOLD}just doctor fix${NC} to auto-fix these issues."
     fi
 fi
 

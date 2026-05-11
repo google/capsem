@@ -57,6 +57,27 @@ function _detectBaseUrl(): string {
 
 let _baseUrl = _detectBaseUrl();
 
+export type ReloadConfigFailure = {
+  session_id: string;
+  message: string;
+};
+
+export type ReloadConfigResult = {
+  success: boolean;
+  reloaded: number;
+  failed_session_count: number;
+  failed_session_ids: string[];
+  failures: ReloadConfigFailure[];
+  message: string | null;
+};
+
+export class ReloadConfigError extends Error {
+  constructor(public result: ReloadConfigResult) {
+    super(result.message ?? 'reload failed');
+    this.name = 'ReloadConfigError';
+  }
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {
@@ -324,17 +345,73 @@ export async function writeFile(id: string, path: string, content: string): Prom
   await _post(`/write_file/${encodeURIComponent(id)}`, { path, content });
 }
 
-// -- Images --
-
-export async function getImages(): Promise<{ images: { name: string }[] }> {
-  const resp = await _get('/images');
-  return await resp.json();
-}
-
 // -- Config --
 
-export async function reloadConfig(): Promise<void> {
-  await _post('/reload-config');
+export async function reloadConfig(): Promise<ReloadConfigResult> {
+  const resp = await fetch(`${_baseUrl}/reload-config`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${_token}` },
+  });
+  const text = await resp.text();
+  const parsed = text ? parseReloadConfigBody(text) : null;
+  const result = normalizeReloadConfigResult(parsed, resp.ok, text);
+  if (!resp.ok || !result.success) {
+    throw new ReloadConfigError(result);
+  }
+  return result;
+}
+
+function parseReloadConfigBody(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeReloadConfigResult(
+  raw: unknown,
+  ok: boolean,
+  fallbackText: string,
+): ReloadConfigResult {
+  if (raw && typeof raw === 'object') {
+    const body = raw as Partial<ReloadConfigResult> & { error?: unknown };
+    if (typeof body.success === 'boolean') {
+      return {
+        success: body.success,
+        reloaded: typeof body.reloaded === 'number' ? body.reloaded : 0,
+        failed_session_count: typeof body.failed_session_count === 'number' ? body.failed_session_count : 0,
+        failed_session_ids: Array.isArray(body.failed_session_ids) ? body.failed_session_ids.filter((id): id is string => typeof id === 'string') : [],
+        failures: Array.isArray(body.failures)
+          ? body.failures
+              .filter((failure): failure is ReloadConfigFailure =>
+                Boolean(failure)
+                && typeof failure === 'object'
+                && typeof (failure as ReloadConfigFailure).session_id === 'string'
+                && typeof (failure as ReloadConfigFailure).message === 'string')
+          : [],
+        message: typeof body.message === 'string' ? body.message : null,
+      };
+    }
+    if (typeof body.error === 'string') {
+      return {
+        success: false,
+        reloaded: 0,
+        failed_session_count: 0,
+        failed_session_ids: [],
+        failures: [],
+        message: body.error,
+      };
+    }
+  }
+  return {
+    success: ok,
+    reloaded: ok ? 0 : 0,
+    failed_session_count: 0,
+    failed_session_ids: [],
+    failures: [],
+    message: ok ? null : fallbackText,
+  };
 }
 
 // -- Stats --
@@ -800,16 +877,6 @@ export async function openUrl(url: string): Promise<void> {
     return;
   }
   window.open(url, '_blank', 'noopener,noreferrer');
-}
-
-/** Check for app updates. Returns null if no update available. */
-export async function checkForAppUpdate(): Promise<{ version: string; current_version: string } | null> {
-  try {
-    const resp = await _get('/update/check');
-    return await resp.json();
-  } catch {
-    return null;
-  }
 }
 
 // -- Files API (host-side VirtioFS) --

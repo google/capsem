@@ -90,8 +90,8 @@ export interface SandboxInfo {
 // POST /provision, POST /run
 export interface ProvisionRequest {
   name?: string;
-  ram_mb: number;
-  cpus: number;
+  ram_mb?: number;
+  cpus?: number;
   persistent: boolean;
   env?: Record<string, string>;
   from?: string;
