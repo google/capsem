@@ -228,6 +228,26 @@ def test_install_e2e_downloads_built_assets_before_running_recipe():
     assert "minisign" in body
 
 
+def test_linux_app_manifest_signing_installs_minisign_before_use():
+    """Linux app builds must install minisign before signing manifests."""
+    text = _workflow_text()
+    build_linux = re.search(
+        r"(?ms)^  build-app-linux:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert build_linux, "build-app-linux job missing"
+    sign_step = re.search(
+        r"(?ms)- name: Sign package payload manifest\n(?P<body>.*?)(?=\n      - name:|\n      - uses:|\Z)",
+        build_linux.group("body"),
+    )
+    assert sign_step, "Linux package manifest signing step missing"
+    body = sign_step.group("body")
+
+    assert "apt-get install" in body
+    assert "minisign" in body
+    assert body.index("apt-get install") < body.index("minisign -S")
+
+
 def test_policy_hook_openapi_artifact_is_tracked_and_valid():
     """Clean checkouts must include the checked-in Policy Hook OpenAPI spec."""
     artifact = REPO_ROOT / "config" / "policy-hook-openapi.json"

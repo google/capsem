@@ -474,6 +474,8 @@ jobs:
 
       - name: Sign package payload manifest
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
           echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
           minisign -S -s /tmp/manifest-sign.key -m assets/manifest.json
           rm /tmp/manifest-sign.key
@@ -504,7 +506,6 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             xdg-utils \
-            minisign \
             xvfb
 
       - uses: pnpm/action-setup@v5
