@@ -14,8 +14,8 @@
 #
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
-#   /usr/local/share/capsem/bin/       -- 6 companion binaries
-#   /usr/local/share/capsem/assets/    -- manifest.json only (heavy assets downloaded on first use)
+#   /usr/local/share/capsem/bin/       -- companion binaries
+#   /usr/local/share/capsem/assets/    -- signed manifest only (heavy assets downloaded on first use)
 #   /usr/local/share/capsem/entitlements.plist
 #
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
@@ -52,16 +52,30 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator
     fi
 done
 
+# Fallback app copy used by postinstall. The package payload also installs
+# /Applications/Capsem.app directly, but postinstall verifies/materializes the
+# app from this copy so a successful install cannot leave the GUI missing.
+cp -R "$APP_PATH" "$SHARE_DIR/Capsem.app"
+
 # Entitlements (needed by postinstall for codesigning)
 if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM assets: only bundle the manifest. The heavy assets (kernel, rootfs)
+# VM assets: only bundle the signed manifest. The heavy assets (kernel, rootfs)
 # are downloaded on first use by `capsem setup` / auto-setup.
 mkdir -p "$SHARE_DIR/assets"
-if [ -f "$ASSETS_DIR/manifest.json" ]; then
-    cp "$ASSETS_DIR/manifest.json" "$SHARE_DIR/assets/"
+for asset in manifest.json manifest.json.minisig; do
+    src="$ASSETS_DIR/$asset"
+    if [ -f "$src" ]; then
+        cp "$src" "$SHARE_DIR/assets/"
+    else
+        echo "ERROR: signed manifest file not found: $src" >&2
+        exit 1
+    fi
+done
+if [ -f "$ASSETS_DIR/manifest-sign.dev.pub" ]; then
+    cp "$ASSETS_DIR/manifest-sign.dev.pub" "$SHARE_DIR/assets/"
 fi
 
 echo "=== Building component package ==="

@@ -62,6 +62,15 @@ erDiagram
         text decision
         text matched_rule
     }
+    policy_hook_events {
+        int id PK
+        text endpoint_id
+        text callback
+        text decision
+        text status
+        text fallback
+        text trace_id
+    }
     exec_events {
         int id PK
         int exec_id
@@ -175,7 +184,7 @@ Tool invocations extracted from model responses. One row per `tool_use` content 
 | `tool_name` | TEXT | Tool name |
 | `arguments` | TEXT | JSON arguments |
 | `origin` | TEXT | `native`, `local`, `mcp_proxy` |
-| `mcp_call_id` | INTEGER | FK to `mcp_calls` (reserved, not yet populated) |
+| `mcp_call_id` | INTEGER | Optional FK to `mcp_calls`; current model traffic does not populate it |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### tool_responses
@@ -211,8 +220,8 @@ MCP JSON-RPC tool invocations through the guest MCP relay and host MITM MCP endp
 | `process_name` | TEXT | Guest process |
 | `bytes_sent` | INTEGER | Request size |
 | `bytes_received` | INTEGER | Response size |
-| `policy_mode` | TEXT | Legacy MCP policy mode, when used |
-| `policy_action` | TEXT | policy decision (`allow`, `ask`, `deny`, `rewrite`) |
+| `policy_mode` | TEXT | Policy engine mode (`audit_only` or `enforce`) |
+| `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
 | `policy_rule` | TEXT | Matching rule key, for example `policy.mcp.block_prod_token` |
 | `policy_reason` | TEXT | Optional audit reason |
 | `trace_id` | TEXT | Cross-table correlation ID |
@@ -239,6 +248,32 @@ DNS queries handled by the host DNS proxy.
 | `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
 | `policy_rule` | TEXT | Matching policy rule key |
 | `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
+
+### policy_hook_events
+
+Policy Hook Spec0 client attempts and fail-closed fallbacks. These rows are
+written when the hook client path is exercised; configured external hook
+dispatch is not a shipped user-facing runtime path in this release.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp` | TEXT | ISO 8601 |
+| `endpoint_id` | TEXT | Hook endpoint identifier |
+| `spec_version` | TEXT | Hook wire-spec version |
+| `spec_hash` | TEXT | Hash of the OpenAPI/Spec0 contract |
+| `decision_id` | TEXT | Hook response decision ID, when a valid response is received |
+| `callback` | TEXT | Callback subject, such as `http.request` |
+| `decision` | TEXT | `allow`, `ask`, `block`, or `rewrite` for valid hook responses; NULL for transport/schema failures |
+| `rule_id` | TEXT | Hook-provided rule ID, when present |
+| `reason` | TEXT | Hook-provided reason, when present |
+| `latency_ms` | INTEGER | Hook round-trip latency |
+| `status` | TEXT | `allowed`, `denied`, or `error` |
+| `error` | TEXT | Transport, status, schema, timeout, or body-cap error text |
+| `fallback` | TEXT | Fail-closed fallback decision (`block` or `ask`), when used |
+| `audit_tags` | TEXT | JSON array of hook audit tags |
+| `trace_id` | TEXT | Cross-table correlation ID |
+| `session_id` | TEXT | Session identifier, when known |
 
 ### exec_events
 
@@ -326,6 +361,7 @@ graph LR
         AUDIT["Guest audit stream<br/>(vsock:5006)"]
         FS["VirtioFS<br/>(file watcher)"]
         SNAP["Snapshot scheduler"]
+        HOOK["Policy Hook client"]
     end
 
     subgraph "Writer Pipeline"
@@ -337,6 +373,7 @@ graph LR
     MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| CH
     MCP -->|"WriteOp::McpCall"| CH
     DNS -->|"WriteOp::DnsEvent"| CH
+    HOOK -->|"WriteOp::PolicyHookEvent"| CH
     EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| CH
     AUDIT -->|"WriteOp::AuditEvent"| CH
     FS -->|"WriteOp::FileEvent"| CH
@@ -357,6 +394,7 @@ graph LR
 | `WriteOp::FileEvent` | VirtioFS watcher | `fs_events` |
 | `WriteOp::SnapshotEvent` | Snapshot scheduler | `snapshot_events` |
 | `WriteOp::DnsEvent` | DNS proxy | `dns_events` |
+| `WriteOp::PolicyHookEvent` | Policy Hook client | `policy_hook_events` |
 
 ## Policy Decision Audit
 
@@ -380,13 +418,13 @@ For no-dispatch checks, pair the policy row with the expected error response:
 just query-session "
 SELECT tool_name, policy_action, policy_rule, response_preview
 FROM mcp_calls
-WHERE policy_action IN ('ask', 'deny', 'rewrite')
+WHERE policy_action IN ('ask', 'block', 'rewrite')
 ORDER BY id DESC
 LIMIT 20;"
 ```
 
-MCP block decisions are currently logged as `policy_action = 'deny'` for
-legacy compatibility; named rule syntax still uses `decision = "block"`.
+MCP named Policy V2 blocks use `policy_action = 'block'`. The coarse
+`mcp_calls.decision` field still uses `denied` for denied JSON-RPC outcomes.
 
 ### HTTP
 
@@ -460,9 +498,13 @@ row. Model response, tool-call, and tool-response enforcement use the same
 rule, decision, and reason vocabulary on `net_events`; response-side rewrites
 must show only the rewritten preview.
 
+For model-extracted tool calls, `tool_calls.origin` uses `native`, `local`, or
+`mcp_proxy`. The `tool_calls.mcp_call_id` column exists for future direct
+correlation, but the current model telemetry path does not populate it.
+
 ### Policy Hooks
 
-Policy Hook Spec0 callouts write one row per decision attempt:
+Policy Hook Spec0 client attempts write one row per decision attempt:
 
 ```bash
 just query-session "

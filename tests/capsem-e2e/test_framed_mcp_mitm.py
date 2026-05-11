@@ -164,6 +164,35 @@ def _wait_for_net_row(db_path: Path, predicate, timeout: float = 20.0):
     pytest.fail(f"timed out waiting for net_events row; rows={rows}")
 
 
+def _timeline_rows(svc: ServiceInstance, vm: str, *, layers: str, limit: int = 50):
+    response = svc.client().get(
+        f"/timeline/{vm}?layers={layers}&limit={limit}",
+        timeout=15,
+    )
+    columns = response.get("columns", [])
+    return [dict(zip(columns, row)) for row in response.get("rows", [])]
+
+
+def _wait_for_timeline_row(
+    svc: ServiceInstance,
+    vm: str,
+    *,
+    layers: str,
+    predicate,
+    timeout: float = 20.0,
+):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rows = _timeline_rows(svc, vm, layers=layers)
+        for row in rows:
+            if predicate(row):
+                return row
+        time.sleep(0.2)
+    pytest.fail(
+        f"timed out waiting for timeline row; rows={_timeline_rows(svc, vm, layers=layers)}"
+    )
+
+
 def _responses_by_id(stdout: str) -> dict[object, dict]:
     payload = json.loads(stdout.strip().splitlines()[-1])
     return {resp["id"]: resp for resp in payload["responses"] if "id" in resp}
@@ -346,7 +375,14 @@ sys.exit(proc.returncode)
         assert init["method"] == "initialize"
         assert tools["method"] == "tools/list"
         rows = _query_mcp_rows(db_path)
-        assert {row["request_id"] for row in rows} == {"init-string", "tools-list-string"}
+        request_ids = {row["request_id"] for row in rows}
+        assert request_ids == {"init-string", "tools-list-string", None}
+        denied_notification = [
+            row for row in rows if row["request_id"] is None and row["method"] == "$/progress"
+        ]
+        assert len(denied_notification) == 1
+        assert denied_notification[0]["decision"] == "denied"
+        assert denied_notification[0]["policy_rule"] == "mcp.notification.disallowed"
     finally:
         if vm is not None:
             _delete_vm(svc, vm)
@@ -578,13 +614,23 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
         )
 
-        config_path = svc.tmp_dir / "user.toml"
-        config_path.write_text(
-            "[mcp.tool_permissions]\nlocal__echo = \"block\"\n",
-            encoding="utf-8",
+        saved = svc.client().post(
+            "/settings",
+            {
+                "policy.mcp.block_live_reload_echo": {
+                    "on": "mcp.request",
+                    "if": 'method == "tools/call" && tool.name == "local__echo" && arguments.text == "after-reload"',
+                    "decision": "block",
+                    "priority": 10,
+                    "reason": "Live reload block from settings API",
+                }
+            },
+            timeout=15,
         )
+        assert saved["policy"]["mcp"]["block_live_reload_echo"]["decision"] == "block"
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
+        assert reload_response["reloaded"] >= 1
 
         stdout, stderr = proc.communicate(timeout=60)
         assert proc.returncode == 0, stderr
@@ -596,9 +642,22 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             db_path,
             lambda r: r["request_id"] == "3" and r["decision"] == "denied",
         )
-        assert denied["policy_action"] == "deny"
-        assert denied["policy_rule"] == "mcp.tool.local__echo"
-        assert "after-reload" in denied["request_preview"]
+        assert denied["policy_action"] == "block"
+        assert denied["policy_rule"] == "policy.mcp.block_live_reload_echo"
+        assert denied["policy_reason"] == "Live reload block from settings API"
+        assert "redacted_by_policy" in (denied["request_preview"] or "")
+        assert "after-reload" not in (denied["request_preview"] or "")
+
+        timeline_row = _wait_for_timeline_row(
+            svc,
+            vm,
+            layers="mcp",
+            predicate=lambda r: (
+                r["layer"] == "mcp"
+                and "policy=block/policy.mcp.block_live_reload_echo" in r["summary"]
+            ),
+        )
+        assert timeline_row["status"] is None
     finally:
         if proc is not None and proc.poll() is None:
             proc.kill()
@@ -686,7 +745,8 @@ sys.exit(proc.returncode)
         assert denied["server_name"] == "local"
         assert denied["tool_name"] == "local__echo"
         assert denied["process_name"] == "python3"
-        assert denied["policy_action"] == "deny"
+        assert denied["policy_mode"] == "enforce"
+        assert denied["policy_action"] == "block"
         assert denied["policy_rule"] == "policy.mcp.block_prod_token"
         assert (
             denied["policy_reason"]
@@ -817,6 +877,47 @@ def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
     svc = _start_service()
     vm = None
     try:
+        vm = _create_vm(svc, "framed-builtin-http")
+
+        warmup_script = r'''
+import json
+import subprocess
+import sys
+
+messages = [
+    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "builtin-http-warmup", "version": "1.0"},
+    }},
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "local__http_headers",
+        "arguments": {"url": "https://example.com/", "method": "HEAD"},
+    }},
+]
+
+proc = subprocess.run(
+    ["/run/capsem-mcp-server"],
+    input="\n".join(json.dumps(m) for m in messages) + "\n",
+    capture_output=True,
+    text=True,
+    timeout=45,
+)
+responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+print(json.dumps({
+    "returncode": proc.returncode,
+    "stderr": proc.stderr,
+    "responses": responses,
+}))
+sys.exit(proc.returncode)
+'''
+        warmup = _exec_cli(svc, vm, _guest_python(warmup_script), timeout=120)
+        assert warmup.returncode == 0, warmup.stderr
+        assert "domain blocked by policy: example.com" in json.dumps(
+            _responses_by_id(warmup.stdout)[2]["result"]
+        )
+
         saved = svc.client().post(
             "/settings",
             {
@@ -830,8 +931,8 @@ def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
         assert "error" not in saved, saved
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
+        assert reload_response["reloaded"] >= 1
 
-        vm = _create_vm(svc, "framed-builtin-http")
         script = r'''
 import json
 import subprocess
@@ -878,6 +979,14 @@ sys.exit(proc.returncode)
         )
 
         db_path = _session_db(svc, vm)
+        warmup_denied_net = _wait_for_net_row(
+            db_path,
+            lambda r: r["domain"] == "example.com"
+            and r["method"] == "HEAD"
+            and r["decision"] == "denied",
+        )
+        assert warmup_denied_net["process_name"] == "mcp_builtin"
+
         allowed_mcp = _wait_for_mcp_row(
             db_path,
             lambda r: r["request_id"] == "2" and r["tool_name"] == "local__http_headers",
@@ -892,7 +1001,9 @@ sys.exit(proc.returncode)
 
         allowed_net = _wait_for_net_row(
             db_path,
-            lambda r: r["domain"] == "example.com" and r["method"] == "HEAD",
+            lambda r: r["domain"] == "example.com"
+            and r["method"] == "HEAD"
+            and r["decision"] == "allowed",
         )
         assert allowed_net["decision"] == "allowed"
         assert allowed_net["process_name"] == "mcp_builtin"
@@ -1264,7 +1375,8 @@ sys.exit(proc.returncode)
         )
         assert blocked_request["server_name"] == "fast"
         assert blocked_request["tool_name"] == "fast__ping"
-        assert blocked_request["policy_action"] == "deny"
+        assert blocked_request["policy_mode"] == "enforce"
+        assert blocked_request["policy_action"] == "block"
         assert (
             blocked_request["policy_rule"]
             == "policy.mcp.block_external_deny_text"
@@ -1279,7 +1391,8 @@ sys.exit(proc.returncode)
         )
         assert blocked_response["server_name"] == "fast"
         assert blocked_response["tool_name"] == "fast__ping"
-        assert blocked_response["policy_action"] == "deny"
+        assert blocked_response["policy_mode"] == "enforce"
+        assert blocked_response["policy_action"] == "block"
         assert (
             blocked_response["policy_rule"]
             == "policy.mcp.block_external_secret_return"

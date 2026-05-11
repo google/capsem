@@ -76,7 +76,7 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 | Format | SPDX 2.3 JSON |
 | Scope | All Rust crate dependencies |
 | Published as | `capsem-sbom.spdx.json` in GitHub release |
-| Attestation | SBOM attested against DMG and deb artifacts |
+| Attestation | SBOM attested against `.pkg` and `.deb` artifacts |
 
 ## SLSA attestation
 
@@ -84,11 +84,11 @@ Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation
 
 | Artifact | Attestation |
 |----------|-------------|
-| `.dmg` (macOS installer) | Build provenance |
+| `.pkg` (macOS installer) | Build provenance |
 | `.deb` (Linux package) | Build provenance |
 | `rootfs.squashfs` (arm64) | Build provenance |
 | `rootfs.squashfs` (x86_64) | Build provenance |
-| `.dmg`, `.deb` | SBOM (SPDX 2.3) |
+| `.pkg`, `.deb` | SBOM (SPDX 2.3) |
 
 Attestations are published to the GitHub Attestations API and can be verified with `gh attestation verify`.
 

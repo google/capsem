@@ -4,6 +4,7 @@ TDD: these tests define the expected behavior of docker.py before implementation
 Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 """
 
+import datetime
 import json
 import re
 import shutil
@@ -1061,6 +1062,49 @@ class TestGenerateChecksums:
         arm_hashes = {entry["hash"] for entry in arches["arm64"].values()}
         x86_hashes = {entry["hash"] for entry in arches["x86_64"].values()}
         assert arm_hashes.isdisjoint(x86_hashes)
+
+    def test_manifest_same_day_patch_auto_increment(self, tmp_path):
+        """Repeated full asset builds on one day increment the asset patch."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
+
+        generate_checksums(tmp_path, "0.13.0")
+        first = json.loads((tmp_path / "manifest.json").read_text())
+        first_asset = first["assets"]["current"]
+        assert first_asset.endswith(".1")
+
+        generate_checksums(tmp_path, "0.13.0")
+        second = json.loads((tmp_path / "manifest.json").read_text())
+        second_asset = second["assets"]["current"]
+        assert second_asset == first_asset.rsplit(".", 1)[0] + ".2"
+
+    def test_manifest_same_day_patch_uses_numeric_order(self, tmp_path):
+        """Existing `.9` releases advance to `.10`, not a lexicographic value."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
+
+        today_prefix = datetime.date.today().strftime("%Y.%m%d")
+        (tmp_path / "manifest.json").write_text(json.dumps({
+            "format": 2,
+            "assets": {
+                "current": f"{today_prefix}.9",
+                "releases": {
+                    f"{today_prefix}.2": {},
+                    f"{today_prefix}.9": {},
+                },
+            },
+            "binaries": {"current": "0.13.0", "releases": {}},
+        }))
+
+        generate_checksums(tmp_path, "0.13.0")
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        assert manifest["assets"]["current"] == f"{today_prefix}.10"
 
 
 # ---------------------------------------------------------------------------

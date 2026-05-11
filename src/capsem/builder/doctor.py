@@ -298,16 +298,22 @@ def check_guest_config(guest_dir: Path) -> CheckResult:
 
 def check_source_files(repo_root: Path) -> CheckResult:
     """Check that required source files exist for build context assembly."""
+    from capsem.builder.docker import (
+        ROOTFS_SCRIPTS,
+        ROOTFS_SCRIPT_DIRS,
+        ROOTFS_SUPPORT_FILES,
+    )
+
+    artifacts = repo_root / "guest" / "artifacts"
     required = {
-        "guest/artifacts/capsem-init": repo_root / "guest" / "artifacts" / "capsem-init",
-        "guest/artifacts/capsem-bashrc": repo_root / "guest" / "artifacts" / "capsem-bashrc",
-        "guest/artifacts/banner.txt": repo_root / "guest" / "artifacts" / "banner.txt",
-        "guest/artifacts/tips.txt": repo_root / "guest" / "artifacts" / "tips.txt",
-        "guest/artifacts/capsem-doctor": repo_root / "guest" / "artifacts" / "capsem-doctor",
-        "guest/artifacts/capsem-bench": repo_root / "guest" / "artifacts" / "capsem-bench",
-        "guest/artifacts/snapshots": repo_root / "guest" / "artifacts" / "snapshots",
-        "guest/artifacts/capsem_bench/": repo_root / "guest" / "artifacts" / "capsem_bench",
-        "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
+        **{
+            f"guest/artifacts/{name}": artifacts / name
+            for name in ["capsem-init", *ROOTFS_SUPPORT_FILES, *ROOTFS_SCRIPTS]
+        },
+        **{
+            f"guest/artifacts/{name}/": artifacts / name
+            for name in ROOTFS_SCRIPT_DIRS
+        },
         "config/capsem-ca.crt": repo_root / "config" / "capsem-ca.crt",
     }
 

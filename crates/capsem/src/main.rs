@@ -13,7 +13,7 @@ mod update;
 use anyhow::{Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use client::{
@@ -614,11 +614,11 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     };
 
     let mut stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
     let mut buf = vec![0u8; 65536];
 
     // Spawn a task to read from IPC and write to stdout
     let mut output_task = tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
         while let Ok(msg) = rx.recv().await {
             match msg {
                 ProcessToService::TerminalOutput { data } => {
@@ -641,6 +641,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                     let _ = stdout.flush().await;
                 }
                 ProcessToService::Pong => {}
+                ProcessToService::ReloadConfigResult { .. } => {}
                 ProcessToService::StateChanged { .. } => {}
                 ProcessToService::ExecResult { .. } => {}
                 ProcessToService::WriteFileResult { .. } => {}
@@ -818,12 +819,8 @@ async fn check_service_health() -> Result<Vec<String>> {
     }
 
     if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
-        let manifest_path = assets_dir.join("manifest.json");
-        match std::fs::read_to_string(&manifest_path)
-            .ok()
-            .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
-        {
-            Some(m) => {
+        match load_diagnostic_manifest_for_assets(&assets_dir) {
+            Ok(Some(m)) => {
                 let arch = if cfg!(target_arch = "aarch64") {
                     "arm64"
                 } else {
@@ -853,13 +850,20 @@ async fn check_service_health() -> Result<Vec<String>> {
                     Err(e) => issues.push(format!("Failed to resolve assets: {}", e)),
                 }
             }
-            None => issues.push("Manifest file not found in assets directory".into()),
+            Ok(None) => issues.push("Manifest file not found in assets directory".into()),
+            Err(e) => issues.push(format!("Manifest verification failed: {e:#}")),
         }
     } else {
         issues.push("Assets directory not found".into());
     }
 
     Ok(issues)
+}
+
+fn load_diagnostic_manifest_for_assets(
+    assets_dir: &Path,
+) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
+    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
 }
 
 #[tokio::main]
@@ -1042,12 +1046,8 @@ async fn main() -> Result<()> {
 
             // Show asset info from manifest
             if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
-                let manifest_path = assets_dir.join("manifest.json");
-                match std::fs::read_to_string(&manifest_path)
-                    .ok()
-                    .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
-                {
-                    Some(m) => {
+                match load_diagnostic_manifest_for_assets(&assets_dir) {
+                    Ok(Some(m)) => {
                         let arch = if cfg!(target_arch = "aarch64") {
                             "arm64"
                         } else {
@@ -1078,7 +1078,8 @@ async fn main() -> Result<()> {
                             Err(e) => println!("  resolve: {}", e),
                         }
                     }
-                    None => println!("Assets:    no manifest found"),
+                    Ok(None) => println!("Assets:    no manifest found"),
+                    Err(e) => println!("Assets:    manifest verification failed: {e:#}"),
                 }
             }
 
@@ -2041,6 +2042,62 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
 mod tests {
     use super::*;
     use clap::Parser;
+
+    const UNSIGNED_MANIFEST: &str = r#"{
+        "format": 2,
+        "assets": {
+            "current": "2026.0415.1",
+            "releases": {
+                "2026.0415.1": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_binary": "1.0.0",
+                    "arches": {
+                        "arm64": {
+                            "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
+                            "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
+                            "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
+                        }
+                    }
+                }
+            }
+        },
+        "binaries": {
+            "current": "1.0.1776269479",
+            "releases": {
+                "1.0.1776269479": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_assets": "2026.0415.1"
+                }
+            }
+        }
+    }"#;
+
+    #[test]
+    fn diagnostic_manifest_loader_rejects_unsigned_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+
+        let err = load_diagnostic_manifest_for_assets(dir.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("signature missing"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn diagnostic_manifest_loader_rejects_invalid_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+        std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
+
+        let err = load_diagnostic_manifest_for_assets(dir.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("verify"),
+            "unexpected error: {err:#}"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // CLI parsing

@@ -20,6 +20,30 @@ use tracing::{debug, info, warn};
 
 use super::types::*;
 
+const STDIO_CHILD_ENV_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "CAPSEM_VM_ID",
+    "CAPSEM_TRACE_ID",
+    "TRACEPARENT",
+    "TRACESTATE",
+];
+
+fn stdio_child_base_env_from<F>(lookup: F) -> HashMap<String, String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    STDIO_CHILD_ENV_ALLOWLIST
+        .iter()
+        .filter_map(|key| lookup(key).map(|value| ((*key).to_string(), value)))
+        .collect()
+}
+
+fn stdio_child_base_env() -> HashMap<String, String> {
+    stdio_child_base_env_from(|key| std::env::var(key).ok())
+}
+
 /// One rmcp client connection. For stdio-pool servers, the manager keeps
 /// several of these in a `ServerPool`.
 struct RunningServer {
@@ -93,6 +117,25 @@ impl McpServerManager {
     /// Connect to all enabled servers (HTTP and stdio), run MCP handshake,
     /// then query each to build the unified catalog.
     pub async fn initialize_all(&mut self) -> Result<()> {
+        let _ = self.initialize_all_collect_errors().await;
+        self.log_catalog_built();
+        Ok(())
+    }
+
+    /// Connect to all enabled servers and report any failed server. The
+    /// manager still keeps successfully initialized servers so refresh can
+    /// partially recover while surfacing the failed names to callers.
+    pub async fn initialize_all_strict(&mut self) -> Result<()> {
+        let errors = self.initialize_all_collect_errors().await;
+        self.log_catalog_built();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!("{}", errors.join("; "))
+        }
+    }
+
+    async fn initialize_all_collect_errors(&mut self) -> Vec<String> {
         let defs: Vec<McpServerDef> = self
             .definitions
             .iter()
@@ -100,6 +143,7 @@ impl McpServerManager {
             .cloned()
             .collect();
 
+        let mut errors = Vec::new();
         for def in &defs {
             match self.connect_and_initialize(def).await {
                 Ok(()) => {
@@ -108,10 +152,14 @@ impl McpServerManager {
                 }
                 Err(e) => {
                     warn!(server = %def.name, error = %e, "failed to initialize MCP server");
+                    errors.push(format!("{}: {e}", def.name));
                 }
             }
         }
+        errors
+    }
 
+    fn log_catalog_built(&self) {
         info!(
             tools = self.tool_catalog.len(),
             resources = self.resource_catalog.len(),
@@ -119,7 +167,6 @@ impl McpServerManager {
             servers = self.running.len(),
             "MCP aggregator catalog built"
         );
-        Ok(())
     }
 
     /// Connect to a single server, run MCP handshake, populate catalogs.
@@ -322,6 +369,10 @@ impl McpServerManager {
             .ok_or_else(|| anyhow::anyhow!("stdio server '{}' has no command", def.name))?;
 
         let mut cmd = tokio::process::Command::new(command);
+        cmd.env_clear();
+        for (k, v) in stdio_child_base_env() {
+            cmd.env(k, v);
+        }
         cmd.args(&def.args);
         for (k, v) in &def.env {
             cmd.env(k, v);
@@ -587,6 +638,46 @@ mod tests {
         let mgr = McpServerManager::new(vec![def], reqwest::Client::new());
         assert_eq!(mgr.definitions().len(), 1);
         assert!(mgr.definitions()[0].is_stdio());
+    }
+
+    #[test]
+    fn stdio_child_base_env_allows_trace_and_execution_only() {
+        let mut source = HashMap::new();
+        source.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
+        source.insert("RUST_LOG".to_string(), "capsem=debug".to_string());
+        source.insert("CAPSEM_VM_ID".to_string(), "vm-1".to_string());
+        source.insert("CAPSEM_TRACE_ID".to_string(), "trace-1".to_string());
+        source.insert("TRACEPARENT".to_string(), "00-abc-def-01".to_string());
+        source.insert(
+            "CAPSEM_USER_CONFIG".to_string(),
+            "/tmp/user.toml".to_string(),
+        );
+        source.insert(
+            "CAPSEM_CORP_CONFIG".to_string(),
+            "/tmp/corp.toml".to_string(),
+        );
+        source.insert(
+            "CAPSEM_TEST_UPSTREAM_OVERRIDES".to_string(),
+            "leak".to_string(),
+        );
+        source.insert("OPENAI_API_KEY".to_string(), "secret".to_string());
+
+        let env = stdio_child_base_env_from(|key| source.get(key).cloned());
+
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin:/bin"));
+        assert_eq!(env.get("CAPSEM_VM_ID").map(String::as_str), Some("vm-1"));
+        assert_eq!(
+            env.get("CAPSEM_TRACE_ID").map(String::as_str),
+            Some("trace-1")
+        );
+        assert_eq!(
+            env.get("TRACEPARENT").map(String::as_str),
+            Some("00-abc-def-01")
+        );
+        assert!(!env.contains_key("CAPSEM_USER_CONFIG"));
+        assert!(!env.contains_key("CAPSEM_CORP_CONFIG"));
+        assert!(!env.contains_key("CAPSEM_TEST_UPSTREAM_OVERRIDES"));
+        assert!(!env.contains_key("OPENAI_API_KEY"));
     }
 
     #[test]

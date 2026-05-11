@@ -6,12 +6,16 @@ pytestmark = pytest.mark.session_lifecycle
 
 EXPECTED_TABLES = [
     "net_events",
+    "dns_events",
     "model_calls",
     "tool_calls",
     "tool_responses",
     "mcp_calls",
+    "exec_events",
     "fs_events",
     "snapshot_events",
+    "audit_events",
+    "policy_hook_events",
 ]
 
 
@@ -23,7 +27,7 @@ def test_db_exists_after_boot(lifecycle_env):
 
 
 def test_all_tables_present(lifecycle_db):
-    """session.db has all 7 expected tables."""
+    """session.db has all expected current-version tables."""
     tables = [
         r[0] for r in lifecycle_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"

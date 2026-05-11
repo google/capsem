@@ -440,7 +440,7 @@ fn local_decision_provider_marks_blocked_tool_as_audit_deny() {
     let decision = provider.decide(&McpDecisionRequest::from_summary("codex", &summary));
 
     assert_eq!(decision.mode, McpPolicyMode::AuditOnly);
-    assert_eq!(decision.action, McpPolicyAction::Deny);
+    assert_eq!(decision.action, McpPolicyAction::Block);
     assert_eq!(decision.rule, "mcp.tool.github__delete_repo");
     assert!(decision.reason.contains("block"));
 }
@@ -476,7 +476,8 @@ reason = "Production issue creation needs approval"
     .unwrap();
     let summary = interpret_mcp_method(&req);
     let decision = provider.decide(&McpDecisionRequest::from_request("codex", &req, &summary));
-    assert_eq!(decision.action, McpPolicyAction::Deny);
+    assert_eq!(decision.mode, McpPolicyMode::Enforce);
+    assert_eq!(decision.action, McpPolicyAction::Block);
     assert_eq!(decision.rule, "policy.mcp.block_prod_token");
     assert_eq!(
         decision.reason,
@@ -489,9 +490,41 @@ reason = "Production issue creation needs approval"
     .unwrap();
     let summary = interpret_mcp_method(&req);
     let decision = provider.decide(&McpDecisionRequest::from_request("codex", &req, &summary));
+    assert_eq!(decision.mode, McpPolicyMode::Enforce);
     assert_eq!(decision.action, McpPolicyAction::Ask);
     assert_eq!(decision.rule, "policy.mcp.ask_prod_issue");
     assert_eq!(decision.reason, "Production issue creation needs approval");
+}
+
+#[test]
+fn local_decision_provider_preserves_policy_v2_allow_match() {
+    let settings: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.allow_safe_search]
+on = "mcp.request"
+if = 'method == "tools/call" && tool.name == "github__search_repos" && arguments.query == "capsem"'
+decision = "allow"
+priority = 10
+reason = "Safe repository search"
+"#,
+    )
+    .unwrap();
+    let provider = LocalMcpDecisionProvider::audit_only_with_policy_v2(
+        McpPolicy::new(),
+        Arc::new(settings.policy),
+    );
+
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"github__search_repos","arguments":{"query":"capsem"}}}"#,
+    )
+    .unwrap();
+    let summary = interpret_mcp_method(&req);
+    let decision = provider.decide(&McpDecisionRequest::from_request("codex", &req, &summary));
+
+    assert_eq!(decision.mode, McpPolicyMode::Enforce);
+    assert_eq!(decision.action, McpPolicyAction::Allow);
+    assert_eq!(decision.rule, "policy.mcp.allow_safe_search");
+    assert_eq!(decision.reason, "Safe repository search");
 }
 
 #[test]
@@ -557,7 +590,7 @@ fn local_decision_provider_uses_server_level_policy_for_resources_and_prompts() 
         &resource_summary,
     ));
 
-    assert_eq!(resource_decision.action, McpPolicyAction::Deny);
+    assert_eq!(resource_decision.action, McpPolicyAction::Block);
     assert_eq!(resource_decision.rule, "mcp.resource.docs");
 
     let prompt_req = parse_json_rpc_payload(
@@ -568,7 +601,7 @@ fn local_decision_provider_uses_server_level_policy_for_resources_and_prompts() 
     let prompt_decision =
         provider.decide(&McpDecisionRequest::from_summary("codex", &prompt_summary));
 
-    assert_eq!(prompt_decision.action, McpPolicyAction::Deny);
+    assert_eq!(prompt_decision.action, McpPolicyAction::Block);
     assert_eq!(prompt_decision.rule, "mcp.prompt.linear");
 }
 
@@ -656,7 +689,7 @@ fn local_decision_provider_blocks_tool_resource_arg_name_and_arg_value_rules() {
         let request = decision_request("codex", &payload);
         let decision = provider.decide(&request);
 
-        assert_eq!(decision.action, McpPolicyAction::Deny, "{name}");
+        assert_eq!(decision.action, McpPolicyAction::Block, "{name}");
         assert_eq!(decision.rule, expected_rule, "{name}");
         assert!(
             decision.reason.contains("blocked"),
@@ -724,7 +757,7 @@ fn local_decision_provider_denies_take_precedence_over_allow_rules() {
 
     let decision = provider.decide(&decision_request("codex", &payload));
 
-    assert_eq!(decision.action, McpPolicyAction::Deny);
+    assert_eq!(decision.action, McpPolicyAction::Block);
     assert_eq!(decision.rule, "mcp.rule.deny-token-arg");
 }
 
@@ -768,9 +801,9 @@ fn local_decision_provider_matches_prompt_argument_rules() {
     let value_decision = provider.decide(&decision_request("codex", &value_payload));
     let name_decision = provider.decide(&decision_request("codex", &name_payload));
 
-    assert_eq!(value_decision.action, McpPolicyAction::Deny);
+    assert_eq!(value_decision.action, McpPolicyAction::Block);
     assert_eq!(value_decision.rule, "mcp.rule.deny-prod-issue");
-    assert_eq!(name_decision.action, McpPolicyAction::Deny);
+    assert_eq!(name_decision.action, McpPolicyAction::Block);
     assert_eq!(name_decision.rule, "mcp.rule.deny-token-arg");
 }
 
@@ -802,7 +835,7 @@ fn local_decision_provider_blocks_return_value_rules_after_response() {
     );
     let after_response = provider.decide_response(&request, &response, before_response);
 
-    assert_eq!(after_response.action, McpPolicyAction::Deny);
+    assert_eq!(after_response.action, McpPolicyAction::Block);
     assert_eq!(after_response.rule, "mcp.rule.deny-secret-return");
 }
 
@@ -853,7 +886,7 @@ fn local_decision_provider_return_rules_match_nested_paths_and_ignore_misses() {
     );
 
     assert_eq!(public_decision.action, McpPolicyAction::Allow);
-    assert_eq!(secret_decision.action, McpPolicyAction::Deny);
+    assert_eq!(secret_decision.action, McpPolicyAction::Block);
     assert_eq!(secret_decision.rule, "mcp.rule.deny-nested-secret-return");
     assert_eq!(wrong_method_decision.action, McpPolicyAction::Allow);
 }
@@ -948,7 +981,7 @@ async fn framed_session_records_policy_fields_after_live_policy_mutation() {
     }));
 
     assert_eq!(second.policy_mode.as_deref(), Some("audit_only"));
-    assert_eq!(second.policy_action.as_deref(), Some("deny"));
+    assert_eq!(second.policy_action.as_deref(), Some("block"));
     assert_eq!(
         second.policy_rule.as_deref(),
         Some("mcp.rule.deny-danger-query")
@@ -1146,7 +1179,7 @@ async fn framed_session_blocks_request_rule_matrix_and_records_fields() {
 
         assert_eq!(call.decision, "denied", "{expected_rule}");
         assert_eq!(call.policy_mode.as_deref(), Some("audit_only"));
-        assert_eq!(call.policy_action.as_deref(), Some("deny"));
+        assert_eq!(call.policy_action.as_deref(), Some("block"));
         assert_eq!(call.policy_rule.as_deref(), Some(expected_rule));
         assert!(call
             .error_message
@@ -1238,7 +1271,8 @@ reason = "Do not send production tokens to MCP tools"
         .expect("Policy V2 blocked request should be logged");
 
     assert_eq!(call.decision, "denied");
-    assert_eq!(call.policy_action.as_deref(), Some("deny"));
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
+    assert_eq!(call.policy_action.as_deref(), Some("block"));
     assert_eq!(
         call.policy_rule.as_deref(),
         Some("policy.mcp.block_prod_token")
@@ -1256,6 +1290,76 @@ reason = "Do not send production tokens to MCP tools"
     assert!(
         !preview.contains("secret"),
         "Policy V2 blocked request telemetry must not retain original arguments"
+    );
+}
+
+#[tokio::test]
+async fn framed_session_records_policy_v2_allow_rule_fields() {
+    let settings: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.allow_safe_search]
+on = "mcp.request"
+if = 'method == "tools/call" && tool.name == "github__search_repos" && arguments.query == "capsem"'
+decision = "allow"
+priority = 10
+reason = "Safe repository search"
+"#,
+    )
+    .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let config = test_mcp_frame_config(&db_path, McpPolicy::new());
+    *config.endpoint.policy_v2.write().await = Arc::new(settings.policy);
+
+    let (mut client, server) = tokio::io::duplex(64 * 1024);
+    let serve_endpoint = Arc::clone(&config.endpoint);
+    let serve_db = Arc::clone(&config.db);
+    let serve_task =
+        tokio::spawn(async move { serve_io(Vec::new(), server, serve_endpoint, serve_db).await });
+
+    write_mcp_request_frame(
+        &mut client,
+        37,
+        request_payload_with_params(
+            37,
+            "tools/call",
+            serde_json::json!({
+                "name": "github__search_repos",
+                "arguments": {"query": "capsem"}
+            }),
+        ),
+    )
+    .await;
+    let response = read_response_frame(&mut client).await;
+    assert!(
+        response.error.is_none(),
+        "allow rule should preserve successful dispatch: {response:?}"
+    );
+    client.shutdown().await.unwrap();
+    drop(client);
+
+    serve_task.await.unwrap().unwrap();
+    shutdown_db_writer(&config).await;
+
+    let reader = DbReader::open(&db_path).unwrap();
+    let call = reader
+        .recent_mcp_calls(10)
+        .unwrap()
+        .into_iter()
+        .find(|call| call.request_id.as_deref() == Some("37"))
+        .expect("Policy V2 allow request should be logged");
+
+    assert_eq!(call.decision, "allowed");
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
+    assert_eq!(call.policy_action.as_deref(), Some("allow"));
+    assert_eq!(
+        call.policy_rule.as_deref(),
+        Some("policy.mcp.allow_safe_search")
+    );
+    assert_eq!(
+        call.policy_reason.as_deref(),
+        Some("Safe repository search")
     );
 }
 
@@ -1319,6 +1423,7 @@ reason = "Production issue creation needs approval"
         .expect("Policy V2 ask request should be logged");
 
     assert_eq!(call.decision, "denied");
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(call.policy_action.as_deref(), Some("ask"));
     assert_eq!(
         call.policy_rule.as_deref(),
@@ -1409,7 +1514,8 @@ reason = "Do not return production secrets from MCP tools"
         .expect("Policy V2 response block should be logged");
 
     assert_eq!(call.decision, "denied");
-    assert_eq!(call.policy_action.as_deref(), Some("deny"));
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
+    assert_eq!(call.policy_action.as_deref(), Some("block"));
     assert_eq!(
         call.policy_rule.as_deref(),
         Some("policy.mcp.block_secret_response")
@@ -1504,6 +1610,7 @@ rewrite_value = "PROD_SECRET=[redacted]"
         .expect("Policy V2 response rewrite should be logged");
 
     assert_eq!(call.decision, "allowed");
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(call.policy_action.as_deref(), Some("rewrite"));
     assert_eq!(
         call.policy_rule.as_deref(),
@@ -1624,6 +1731,7 @@ rewrite_value = "[redacted]"
         .expect("Policy V2 request rewrite should be logged");
 
     assert_eq!(call.decision, "allowed");
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(call.policy_action.as_deref(), Some("rewrite"));
     assert_eq!(
         call.policy_rule.as_deref(),
@@ -1724,6 +1832,7 @@ rewrite_value = "github__redacted"
         .expect("Policy V2 request rewrite error should be logged");
 
     assert_eq!(call.decision, "denied");
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(call.policy_action.as_deref(), Some("rewrite"));
     assert_eq!(
         call.policy_rule.as_deref(),
@@ -1860,7 +1969,7 @@ async fn framed_session_records_response_rule_policy_fields() {
         .expect("framed MCP call should be logged");
 
     assert_eq!(call.policy_mode.as_deref(), Some("audit_only"));
-    assert_eq!(call.policy_action.as_deref(), Some("deny"));
+    assert_eq!(call.policy_action.as_deref(), Some("block"));
     assert_eq!(
         call.policy_rule.as_deref(),
         Some("mcp.rule.deny-public-return")
@@ -1921,7 +2030,7 @@ async fn framed_session_blocks_policy_denied_tool_and_records_fields() {
 
     assert_eq!(call.decision, "denied");
     assert_eq!(call.policy_mode.as_deref(), Some("audit_only"));
-    assert_eq!(call.policy_action.as_deref(), Some("deny"));
+    assert_eq!(call.policy_action.as_deref(), Some("block"));
     assert_eq!(
         call.policy_rule.as_deref(),
         Some("mcp.tool.github__delete_repo")
@@ -1962,6 +2071,86 @@ async fn framed_session_rejects_stream_id_reuse_after_invalid_json() {
     assert!(
         calls.is_empty(),
         "invalid JSON and rejected reuse must not create mcp_calls rows: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn tools_call_notification_is_blocked_without_dispatch_or_argument_leak() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let dispatch_count = Arc::new(AtomicUsize::new(0));
+    let dispatch_count_h = Arc::clone(&dispatch_count);
+    let endpoint = test_mcp_endpoint_state_with_driver(
+        McpPolicy::new(),
+        McpTimeouts::default(),
+        move |_req| {
+            dispatch_count_h.fetch_add(1, Ordering::SeqCst);
+            async move {
+                AggregatorResult::CallResult {
+                    result: serde_json::json!({"unexpected": "dispatch"}),
+                }
+            }
+        },
+    );
+    let (mut client, server) = tokio::io::duplex(64 * 1024);
+    let serve_endpoint = Arc::clone(&endpoint);
+    let serve_db = Arc::clone(&db);
+    let serve_task =
+        tokio::spawn(async move { serve_io(Vec::new(), server, serve_endpoint, serve_db).await });
+
+    write_mcp_notification_frame(
+        &mut client,
+        serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "github__delete_repo",
+                "arguments": {
+                    "token": "secret-token"
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .await;
+    client.shutdown().await.unwrap();
+    drop(client);
+
+    serve_task.await.unwrap().unwrap();
+    assert_eq!(
+        dispatch_count.load(Ordering::SeqCst),
+        0,
+        "disallowed notification must not dispatch to aggregator"
+    );
+    tokio::task::spawn_blocking(move || db.shutdown_blocking())
+        .await
+        .unwrap();
+
+    let reader = DbReader::open(&db_path).unwrap();
+    let call = reader
+        .recent_mcp_calls(10)
+        .unwrap()
+        .into_iter()
+        .find(|call| call.method == "tools/call")
+        .expect("disallowed notification should be audited");
+
+    assert_eq!(call.request_id, None);
+    assert_eq!(call.decision, "denied");
+    assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
+    assert_eq!(call.policy_action.as_deref(), Some("block"));
+    assert_eq!(
+        call.policy_rule.as_deref(),
+        Some("mcp.notification.disallowed")
+    );
+    let preview = call
+        .request_preview
+        .as_deref()
+        .expect("notification audit should retain a safe preview");
+    assert!(preview.contains("redacted_by_policy"));
+    assert!(
+        !preview.contains("secret-token"),
+        "notification bypass audit must not leak original arguments"
     );
 }
 
@@ -2016,6 +2205,13 @@ async fn write_raw_mcp_frame(
     payload: Vec<u8>,
 ) {
     let frame = capsem_proto::encode_mcp_frame(stream_id, 0, "codex", &payload).unwrap();
+    client.write_all(&frame).await.unwrap();
+    client.flush().await.unwrap();
+}
+
+async fn write_mcp_notification_frame(client: &mut tokio::io::DuplexStream, payload: Vec<u8>) {
+    let frame =
+        capsem_proto::encode_mcp_frame(0, MCP_FRAME_FLAG_NOTIFICATION, "codex", &payload).unwrap();
     client.write_all(&frame).await.unwrap();
     client.flush().await.unwrap();
 }

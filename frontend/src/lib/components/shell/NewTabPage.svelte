@@ -115,7 +115,25 @@
   let creatingTemp = $state(false);
   let actionError = $state<string | null>(null);
 
-  let assetsReady = $derived(vmStore.assetHealth?.ready !== false);
+  let assetsReady = $derived(vmStore.assetHealth?.ready === true);
+  let assetStatus = $derived.by(() => {
+    if (!vmStore.assetHealth) {
+      return {
+        title: 'VM asset status is unknown',
+        message: 'Waiting for the service to report rootfs and manifest readiness.',
+      };
+    }
+    if (!vmStore.assetHealth.ready) {
+      const missing = vmStore.assetHealth.missing.length > 0
+        ? `Missing: ${vmStore.assetHealth.missing.join(', ')}.`
+        : 'Required VM assets are not ready.';
+      return {
+        title: 'VM assets are missing',
+        message: `${missing} Run capsem setup to download.`,
+      };
+    }
+    return null;
+  });
 
   function parseApiError(e: unknown): string {
     if (!(e instanceof Error)) return 'An unexpected error occurred';
@@ -140,7 +158,7 @@
     creatingTemp = true;
     try {
       console.log('[NewTabPage] calling vmStore.provision()');
-      const { id, name } = await vmStore.provision({ ram_mb: 2048, cpus: 2, persistent: false });
+      const { id, name } = await vmStore.provision({ persistent: false });
       console.log('[NewTabPage] provision OK id=%s name=%s', id, name);
       tabStore.openVM(id, name);
     } catch (e) {
@@ -263,14 +281,13 @@
   </div>
 
   <!-- Asset health warning -->
-  {#if vmStore.assetHealth && !vmStore.assetHealth.ready}
+  {#if assetStatus}
     <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-warning/30 bg-warning/10 text-sm">
       <Warning size={18} class="text-warning mt-0.5 shrink-0" />
       <div>
-        <p class="font-medium text-foreground">VM assets are missing</p>
+        <p class="font-medium text-foreground">{assetStatus.title}</p>
         <p class="text-muted-foreground-1 mt-0.5">
-          Missing: {vmStore.assetHealth.missing.join(', ')}.
-          Run <code class="px-1 py-0.5 rounded bg-background-1 text-xs font-mono">capsem setup</code> to download.
+          {assetStatus.message}
         </p>
       </div>
     </div>

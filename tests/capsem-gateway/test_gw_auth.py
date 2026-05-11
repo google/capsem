@@ -29,6 +29,16 @@ class TestAuthAcceptance:
         )
         assert result.stdout.strip() == "401"
 
+    def test_policy_hook_spec_without_auth_returns_401(self, gateway_env):
+        """GET /policy-hook/spec without Authorization header returns 401."""
+        result = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+             "--max-time", "5",
+             f"http://127.0.0.1:{gateway_env.port}/policy-hook/spec"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.stdout.strip() == "401"
+
     def test_wrong_token_returns_401(self, gateway_env):
         """GET /list with wrong Bearer token returns 401."""
         result = subprocess.run(
@@ -36,6 +46,17 @@ class TestAuthAcceptance:
              "--max-time", "5",
              "-H", "Authorization: Bearer wrong-token-value",
              f"http://127.0.0.1:{gateway_env.port}/list"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.stdout.strip() == "401"
+
+    def test_policy_hook_spec_wrong_token_returns_401(self, gateway_env):
+        """GET /policy-hook/spec with wrong Bearer token returns 401."""
+        result = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+             "--max-time", "5",
+             "-H", "Authorization: Bearer wrong-token-value",
+             f"http://127.0.0.1:{gateway_env.port}/policy-hook/spec"],
             capture_output=True, text=True, timeout=10,
         )
         assert result.stdout.strip() == "401"

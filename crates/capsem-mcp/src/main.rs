@@ -513,8 +513,7 @@ struct TriageMcpParams {
     since: Option<String>,
     /// Max items per category. Default 20, max 200.
     limit: Option<u64>,
-    /// Optional session id (reserved for the future session.db
-    /// cross-reference; ignored today).
+    /// Optional session id for session.db cross-reference.
     id: Option<String>,
 }
 
@@ -532,7 +531,8 @@ struct TimelineMcpParams {
     since: Option<String>,
     /// Max rows. Default 200, max 2000.
     limit: Option<u64>,
-    /// Comma-separated subset of layers: "exec,mcp,net,fs,model".
+    /// Comma-separated subset of layers:
+    /// "exec,mcp,net,dns,hook,audit,snapshot,fs,model".
     /// Default all.
     layers: Option<String>,
 }
@@ -656,7 +656,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_triage",
-        description = "Opinionated host triage summary: ranked list of recent panics, dropped IPC frames (target=ipc warns), 4xx/5xx server errors (target=service), and slow operations (target=fs op=fsync etc., >500ms). Reads ~/.capsem/run/{service,mcp,gateway,tray}.log and capsem-app's latest jsonl. Use this after capsem_panics to widen the search. Optional `id` parameter is reserved for the future session.db cross-reference (T3)."
+        description = "Opinionated host + session triage summary: ranked list of recent panics, dropped IPC frames (target=ipc warns), 4xx/5xx server errors (target=service), slow operations (target=fs op=fsync etc., >500ms), and when `id` is provided session.db denied network/DNS, MCP errors, exec/audit failures, and policy hook failures/fallbacks. Reads ~/.capsem/run/{service,mcp,gateway,tray}.log and capsem-app's latest jsonl. Use this after capsem_panics to widen the search."
     )]
     async fn triage(
         &self,
@@ -702,7 +702,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_timeline",
-        description = "Render a unified time-ordered timeline for a session, joining exec/mcp/net/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all five; pass a subset like `exec,mcp` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
+        description = "Render a unified time-ordered timeline for a session, joining exec/mcp/net/dns/hook/audit/snapshot/fs/model events. Optional traceId filter follows one logical operation across layers (W6 added trace_id to every table; pre-W4 rows are NULL and surface alongside). Layers default to all available tables; pass a subset like `exec,mcp,dns,hook` to scope. Use this AFTER capsem_triage / capsem_panics narrow the window."
     )]
     async fn timeline(
         &self,

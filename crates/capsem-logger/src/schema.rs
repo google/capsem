@@ -491,6 +491,7 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_audit_events_pid ON audit_events(pid);
         CREATE INDEX IF NOT EXISTS idx_audit_events_ppid ON audit_events(ppid);",
     );
+    let _ = conn.execute("ALTER TABLE audit_events ADD COLUMN exit_code INTEGER", []);
 
     // W6: trace_id everywhere. Adding the column to the seven tables that
     // didn't already have it lets `capsem_timeline --trace_id <X>` join
@@ -764,6 +765,121 @@ mod tests {
         assert_eq!(action, "deny");
         assert_eq!(rule, "mcp.tool.github__delete_repo");
         assert_eq!(reason, "local policy block");
+    }
+
+    #[test]
+    fn migrate_legacy_pre_policy_db_adds_current_tables_and_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE net_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                decision TEXT NOT NULL
+            );
+            CREATE TABLE model_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                method TEXT NOT NULL,
+                path TEXT NOT NULL
+            );
+            CREATE TABLE tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_call_id INTEGER NOT NULL,
+                call_index INTEGER NOT NULL,
+                call_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL
+            );
+            CREATE TABLE tool_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_call_id INTEGER NOT NULL,
+                call_id TEXT NOT NULL
+            );
+            CREATE TABLE mcp_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                server_name TEXT NOT NULL,
+                method TEXT NOT NULL,
+                decision TEXT NOT NULL
+            );
+            CREATE TABLE fs_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                action TEXT NOT NULL,
+                path TEXT NOT NULL,
+                size INTEGER
+            );",
+        )
+        .unwrap();
+
+        migrate(&conn);
+        migrate(&conn);
+
+        for table in [
+            "dns_events",
+            "exec_events",
+            "snapshot_events",
+            "audit_events",
+            "policy_hook_events",
+        ] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "missing migrated table {table}");
+        }
+
+        for (table, column) in [
+            ("net_events", "policy_action"),
+            ("mcp_calls", "policy_reason"),
+            ("dns_events", "policy_rule"),
+            ("tool_calls", "mcp_call_id"),
+            ("tool_responses", "trace_id"),
+            ("fs_events", "trace_id"),
+            ("snapshot_events", "trace_id"),
+            ("audit_events", "exit_code"),
+            ("audit_events", "trace_id"),
+            ("policy_hook_events", "fallback"),
+        ] {
+            let count: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
+                    [column],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{table} missing migrated column {column}");
+        }
+
+        conn.execute(
+            "INSERT INTO dns_events (
+                timestamp, qname, qtype, qclass, rcode, decision,
+                policy_mode, policy_action, policy_rule, policy_reason, trace_id
+             )
+             VALUES (
+                '2026-05-10T00:00:00Z', 'blocked.example', 1, 1, 5, 'denied',
+                'v2', 'block', 'policy.dns.block_example', 'fixture', 'trace_legacy'
+             )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO policy_hook_events (
+                timestamp, endpoint_id, spec_version, spec_hash, callback,
+                status, fallback, error, trace_id
+             )
+             VALUES (
+                '2026-05-10T00:00:01Z', 'legacy-hook', 'policy-hook/v0',
+                'sha256:legacy', 'dns.request', 'error', 'fail_closed',
+                'schema violation', 'trace_legacy'
+             )",
+            [],
+        )
+        .unwrap();
     }
 
     #[test]

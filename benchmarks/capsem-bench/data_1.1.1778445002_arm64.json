@@ -1,0 +1,200 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1778453874.295893,
+  "hostname": "bench-2926d0bd",
+  "disk": {
+    "directory": "/root",
+    "size_mb": 256,
+    "seq_write": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 99.7,
+      "throughput_mbps": 2568.2
+    },
+    "seq_read": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 51.3,
+      "throughput_mbps": 4991.2
+    },
+    "rand_write_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 901.4,
+      "iops": 11093.6,
+      "throughput_mbps": 43.3
+    },
+    "rand_read_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 96.0,
+      "iops": 104195.0,
+      "throughput_mbps": 407.0
+    }
+  },
+  "rootfs": {
+    "scan_dirs": [
+      "/usr/bin",
+      "/usr/lib",
+      "/opt/ai-clis"
+    ],
+    "largest_file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex/codex",
+    "largest_file_size": 192945336,
+    "seq_read": {
+      "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex/codex",
+      "size_bytes": 192945336,
+      "block_size": 1048576,
+      "duration_ms": 228.6,
+      "throughput_mbps": 805.0
+    },
+    "files_found": 3325,
+    "rand_read_4k": {
+      "count": 5000,
+      "files_sampled": 2600,
+      "block_size": 4096,
+      "duration_ms": 440.6,
+      "iops": 11348.6,
+      "throughput_mbps": 44.3
+    }
+  },
+  "startup": {
+    "runs_per_command": 3,
+    "commands": {
+      "python3": {
+        "command": [
+          "python3",
+          "--version"
+        ],
+        "timings_ms": [
+          5.2,
+          8.1,
+          8.3
+        ],
+        "min_ms": 5.2,
+        "mean_ms": 7.2,
+        "max_ms": 8.3
+      },
+      "node": {
+        "command": [
+          "node",
+          "--version"
+        ],
+        "timings_ms": [
+          135.9,
+          134.4,
+          134.5
+        ],
+        "min_ms": 134.4,
+        "mean_ms": 134.9,
+        "max_ms": 135.9
+      },
+      "claude": {
+        "command": [
+          "claude",
+          "--version"
+        ],
+        "timings_ms": [
+          289.2,
+          290.2,
+          289.0
+        ],
+        "min_ms": 289.0,
+        "mean_ms": 289.5,
+        "max_ms": 290.2
+      },
+      "gemini": {
+        "command": [
+          "gemini",
+          "--version"
+        ],
+        "timings_ms": [
+          552.3,
+          504.7,
+          549.9
+        ],
+        "min_ms": 504.7,
+        "mean_ms": 535.6,
+        "max_ms": 552.3
+      },
+      "codex": {
+        "command": [
+          "codex",
+          "--version"
+        ],
+        "timings_ms": [
+          293.0,
+          288.5,
+          288.6
+        ],
+        "min_ms": 288.5,
+        "mean_ms": 290.0,
+        "max_ms": 293.0
+      }
+    }
+  },
+  "http": {
+    "url": "https://www.google.com/",
+    "total_requests": 50,
+    "concurrency": 5,
+    "successful": 50,
+    "failed": 0,
+    "total_duration_ms": 1138.9,
+    "requests_per_sec": 43.9,
+    "transfer_bytes": 4027547,
+    "latency_ms": {
+      "min": 53.1,
+      "max": 224.2,
+      "mean": 99.2,
+      "p50": 96.5,
+      "p95": 204.0,
+      "p99": 222.4
+    }
+  },
+  "throughput": {
+    "url": "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf",
+    "http_code": 200,
+    "size_bytes": 9984968,
+    "duration_s": 0.471,
+    "throughput_mbps": 20.23
+  },
+  "snapshot": {
+    "10_files": {
+      "create_ms": 765.1,
+      "create_ok": true,
+      "list_ms": 324.3,
+      "list_ok": true,
+      "changes_ms": 323.5,
+      "changes_ok": true,
+      "revert_ms": 331.6,
+      "revert_ok": true,
+      "delete_ms": 320.7,
+      "delete_ok": true
+    },
+    "100_files": {
+      "create_ms": 321.5,
+      "create_ok": true,
+      "list_ms": 323.3,
+      "list_ok": true,
+      "changes_ms": 322.8,
+      "changes_ok": true,
+      "revert_ms": 328.4,
+      "revert_ok": true,
+      "delete_ms": 332.1,
+      "delete_ok": true
+    },
+    "500_files": {
+      "create_ms": 326.7,
+      "create_ok": true,
+      "list_ms": 323.8,
+      "list_ok": true,
+      "changes_ms": 341.6,
+      "changes_ok": true,
+      "revert_ms": 334.1,
+      "revert_ok": true,
+      "delete_ms": 334.6,
+      "delete_ok": true
+    }
+  },
+  "host_recorded_at": 1778453888.167872,
+  "arch": "arm64"
+}

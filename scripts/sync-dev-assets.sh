@@ -41,10 +41,9 @@ sign_manifest_with_dev_key() {
     local manifest="$1"
     local dst_dir="$2"
     if ! command -v minisign >/dev/null 2>&1; then
-        echo "WARNING: minisign not installed; locally built manifest will be"
-        echo "         unsigned and release binaries will refuse to boot it."
-        echo "         Fix: brew install minisign (macOS) or apt install minisign (Linux)."
-        return 0
+        echo "ERROR: minisign not installed; cannot sign local asset manifest." >&2
+        echo "       Fix: brew install minisign (macOS) or apt install minisign (Linux)." >&2
+        return 1
     fi
     local key_dir="$HOME/.capsem/dev-keys"
     local priv="$key_dir/manifest-sign.dev.key"

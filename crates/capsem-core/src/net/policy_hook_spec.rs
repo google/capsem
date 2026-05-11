@@ -129,6 +129,19 @@ pub struct HookDecisionRequest {
     pub audit_context: Option<HookAuditContext>,
 }
 
+impl HookDecisionRequest {
+    pub fn validate_semantics(&self) -> Result<(), String> {
+        require_object("subject", &self.subject)?;
+        if let Some(preview) = &self.preview {
+            require_object("preview", preview)?;
+        }
+        if let Some(hashes) = &self.hashes {
+            require_object("hashes", hashes)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookDecisionResponse {
@@ -151,6 +164,40 @@ pub struct HookDecisionResponse {
     pub redactions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audit_tags: Vec<String>,
+}
+
+impl HookDecisionResponse {
+    pub fn validate_semantics(&self) -> Result<(), String> {
+        let has_target = self
+            .rewrite_target
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_value = self.rewrite_value.is_some();
+        match self.decision {
+            HookDecision::Rewrite => {
+                if !has_target {
+                    return Err("rewrite decision requires rewrite_target".to_string());
+                }
+                if !has_value {
+                    return Err("rewrite decision requires rewrite_value".to_string());
+                }
+            }
+            HookDecision::Allow | HookDecision::Ask | HookDecision::Block => {
+                if self.rewrite_target.is_some() || self.rewrite_value.is_some() {
+                    return Err("non-rewrite decisions must not include rewrite fields".to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn require_object(field: &str, value: &Value) -> Result<(), String> {
+    if value.is_object() {
+        Ok(())
+    } else {
+        Err(format!("{field} must be a JSON object"))
+    }
 }
 
 pub fn policy_hook_openapi_document() -> Value {

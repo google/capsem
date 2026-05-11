@@ -127,7 +127,7 @@ export const FAQS = [
   {
     question: "Is the VM truly air-gapped?",
     answer:
-      "Yes. The guest has no real network interface. It uses a dummy NIC with fake DNS (dnsmasq) and iptables rules that redirect all port 443 traffic through the MITM proxy. Direct IP access and non-443 ports are blocked entirely.",
+      "Yes. The guest has no real network interface. It uses a dummy NIC with capsem-dns-proxy and iptables rules that redirect all port 443 traffic through the MITM proxy. Direct IP access and non-443 ports are blocked entirely.",
   },
 ] as const;
 

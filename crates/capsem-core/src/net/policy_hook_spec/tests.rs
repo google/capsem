@@ -96,3 +96,65 @@ fn sample_request_response_round_trip() {
     assert_eq!(decoded.decision, HookDecision::Rewrite);
     assert_eq!(decoded.rewrite_value.as_deref(), Some("[redacted]"));
 }
+
+#[test]
+fn request_semantics_require_object_payloads() {
+    let mut request = HookDecisionRequest {
+        spec_version: POLICY_HOOK_SPEC_VERSION.to_string(),
+        decision_id: "decision-1".to_string(),
+        trace_id: None,
+        session_id: None,
+        on: HookCallback::HttpRequest,
+        subject: json!({"request": {"host": "example.com"}}),
+        preview: None,
+        hashes: None,
+        audit_context: None,
+    };
+    assert!(request.validate_semantics().is_ok());
+
+    request.subject = json!(["not", "object"]);
+    assert!(request
+        .validate_semantics()
+        .unwrap_err()
+        .contains("subject"));
+
+    request.subject = json!({});
+    request.preview = Some(json!(null));
+    assert!(request
+        .validate_semantics()
+        .unwrap_err()
+        .contains("preview"));
+
+    request.preview = Some(json!({}));
+    request.hashes = Some(json!("sha256"));
+    assert!(request.validate_semantics().unwrap_err().contains("hashes"));
+}
+
+#[test]
+fn response_semantics_require_rewrite_fields_only_for_rewrite() {
+    let mut response = HookDecisionResponse {
+        decision: HookDecision::Rewrite,
+        decision_id: Some("decision-1".to_string()),
+        rule_id: None,
+        priority: None,
+        reason: None,
+        ttl_ms: None,
+        rewrite_target: None,
+        rewrite_value: Some("[redacted]".to_string()),
+        redactions: Vec::new(),
+        audit_tags: Vec::new(),
+    };
+    assert!(response
+        .validate_semantics()
+        .unwrap_err()
+        .contains("rewrite_target"));
+
+    response.rewrite_target = Some("subject.path".to_string());
+    assert!(response.validate_semantics().is_ok());
+
+    response.decision = HookDecision::Block;
+    assert!(response
+        .validate_semantics()
+        .unwrap_err()
+        .contains("non-rewrite"));
+}

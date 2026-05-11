@@ -3,7 +3,8 @@ use std::path::Path;
 
 use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
-    is_policy_rule_key, parse_policy_rule_key, PolicyRuleConfig, SettingValue, SettingsFile,
+    is_policy_rule_key, parse_policy_rule_key, PolicyRuleConfig, PolicyRuleType, SettingValue,
+    SettingsFile,
 };
 
 // ---------------------------------------------------------------------------
@@ -468,6 +469,14 @@ pub fn batch_update_settings_json(
                         continue;
                     }
 
+                    if !is_release_editable_policy_rule_type(rule_type) {
+                        errors.push(format!(
+                            "{} policy rules are infrastructure-only in this release: {id}",
+                            policy_rule_type_name(rule_type)
+                        ));
+                        continue;
+                    }
+
                     match serde_json::from_value::<PolicyRuleConfig>(value.clone()) {
                         Ok(rule) if rule.on.policy_type() == rule_type => {
                             policy_changes.push((id.clone(), Some(rule)));
@@ -540,6 +549,20 @@ pub fn batch_update_settings_json(
     write_settings_file(&user_path, &user_file)?;
     applied.sort();
     Ok(applied)
+}
+
+fn is_release_editable_policy_rule_type(rule_type: PolicyRuleType) -> bool {
+    !matches!(rule_type, PolicyRuleType::Hook)
+}
+
+fn policy_rule_type_name(rule_type: PolicyRuleType) -> &'static str {
+    match rule_type {
+        PolicyRuleType::Mcp => "mcp",
+        PolicyRuleType::Http => "http",
+        PolicyRuleType::Dns => "dns",
+        PolicyRuleType::Model => "model",
+        PolicyRuleType::Hook => "hook",
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -44,11 +44,11 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
 | 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
 | 2 | Python deps | `uv sync` | Locked via `uv.lock` |
-| 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
+| 2 (macOS) | `flock`, `minisign`, `pnpm` | `brew` | flock = multi-agent recipe lock; minisign = local asset manifest signatures; pnpm = frontend deps |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` | Runs Docker; Rosetta enables x86_64 cross-builds |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
-| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, builds VM assets, packs initrd |
+| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `minisign`, builds VM assets, packs initrd |
 
 Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.
 
@@ -94,9 +94,9 @@ On macOS, the compiled binary must be codesigned with Apple's `com.apple.securit
 |-------|-------------------|-----------------|
 | Xcode CLTools | `xcode-select -p` returns a path | `xcode-select --install` |
 | `codesign` binary | The tool exists in PATH | Install Xcode CLTools (see above) |
-| `entitlements.plist` | The file exists and is readable | `just doctor-fix` (auto-restores from git) |
-| `.cargo/config.toml` | Cargo runner configured | `just doctor-fix` (auto-restores from git) |
-| `run_signed.sh` | Script exists and is executable | `just doctor-fix` (auto-restores from git) |
+| `entitlements.plist` | The file exists and is readable | `just doctor fix` (auto-restores from git) |
+| `.cargo/config.toml` | Cargo runner configured | `just doctor fix` (auto-restores from git) |
+| `run_signed.sh` | Script exists and is executable | `just doctor fix` (auto-restores from git) |
 | Test sign | Compiles a tiny binary + signs it with entitlements | See [troubleshooting](#codesign-fails) below |
 
 No Apple Developer ID certificate is needed for local development -- ad-hoc signing (`--sign -`) is sufficient.
@@ -123,7 +123,7 @@ api_key = "AIza..."
 
 ### `just doctor` fails
 
-Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (Rust targets, cargo tools, config files, build assets, guest binaries). Non-fixable issues (system tools like node, docker) show platform-specific install hints.
+Run `just doctor fix` to auto-fix all fixable issues. Fixes run in dependency order (Rust targets, cargo tools, `minisign`, config files, build assets, guest binaries). Non-fixable issues (system tools like node, docker) show platform-specific install hints.
 
 ### Codesign fails
 

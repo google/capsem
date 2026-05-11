@@ -104,6 +104,12 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "cpus": vm["cpus"],
                 })
             self._send_json({"sandboxes": sandboxes})
+        elif self.clean_path == "/policy-hook/spec":
+            self._send_json({
+                "openapi": "3.1.0",
+                "info": {"title": "Capsem Policy Hook Spec0", "version": "0"},
+                "paths": {"/decision": {"post": {}}},
+            })
         elif self.clean_path.startswith("/info/"):
             vm_id = self.clean_path.split("/info/", 1)[1].split("?")[0]
             if vm_id in MOCK_VMS:

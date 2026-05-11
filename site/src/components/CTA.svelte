@@ -19,12 +19,12 @@
       <InstallCommand dark />
     </div>
 
-    <p class="mt-4 text-sm text-muted-dark">or download the DMG directly</p>
+    <p class="mt-4 text-sm text-muted-dark">or download a package directly</p>
 
     <div class="mt-4 flex flex-wrap justify-center gap-4">
       <a href={SITE.releases} target="_blank" rel="noopener noreferrer" class="btn-primary">
         <Icon name="downloadAlt" />
-        Download DMG
+        Download packages
         <span class="sr-only">(opens in new tab)</span>
       </a>
       <a href={SITE.github} target="_blank" rel="noopener noreferrer" class="btn-outline-dark">

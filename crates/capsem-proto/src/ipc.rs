@@ -65,6 +65,11 @@ pub enum ServiceToProcess {
 pub enum ProcessToService {
     /// Response to Ping.
     Pong,
+    /// Response to ReloadConfig.
+    ReloadConfigResult {
+        success: bool,
+        error: Option<String>,
+    },
     /// Output bytes from the guest PTY.
     TerminalOutput { data: Vec<u8> },
     /// State change notification (e.g. Booting -> Running).

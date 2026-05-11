@@ -106,6 +106,47 @@ def _make_manifest(arch: str, files: dict[str, bytes]) -> dict:
     }
 
 
+def _write_signed_manifest(assets: Path, manifest: dict) -> None:
+    """Write a test manifest plus a sibling minisign signature/dev pubkey."""
+    manifest_path = assets / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+
+    key_dir = assets / ".test-minisign"
+    key_dir.mkdir()
+    secret = key_dir / "manifest-sign.dev.key"
+    pubkey = key_dir / "manifest-sign.dev.pub"
+    sig = assets / "manifest.json.minisig"
+
+    gen = subprocess.run(
+        ["minisign", "-G", "-f", "-W", "-p", str(pubkey), "-s", str(secret)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert gen.returncode == 0, f"minisign keygen failed:\n{gen.stderr}"
+
+    sign = subprocess.run(
+        [
+            "minisign",
+            "-S",
+            "-f",
+            "-s",
+            str(secret),
+            "-m",
+            str(manifest_path),
+            "-x",
+            str(sig),
+            "-t",
+            "capsem install test",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert sign.returncode == 0, f"minisign signing failed:\n{sign.stderr}"
+    (assets / "manifest-sign.dev.pub").write_bytes(pubkey.read_bytes())
+
+
 @pytest.fixture
 def http_fixture(tmp_path: Path):
     """Spin an http.server in the background; yield (base_url, serve_dir)."""
@@ -170,7 +211,7 @@ def test_update_assets_downloads_missing(tmp_path: Path, http_fixture, installed
     assets.mkdir(parents=True)
 
     manifest = _make_manifest(arch, files)
-    (assets / "manifest.json").write_text(json.dumps(manifest))
+    _write_signed_manifest(assets, manifest)
 
     env = {
         "CAPSEM_HOME": str(capsem_home),
@@ -213,7 +254,7 @@ def test_update_assets_idempotent_when_hashes_match(tmp_path: Path, http_fixture
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
     assets.mkdir(parents=True)
-    (assets / "manifest.json").write_text(json.dumps(_make_manifest(arch, files)))
+    _write_signed_manifest(assets, _make_manifest(arch, files))
 
     env = {"CAPSEM_HOME": str(capsem_home), "CAPSEM_RELEASE_URL": base_url}
     r1 = _run(env, "update", "--assets")
@@ -252,7 +293,7 @@ def test_update_assets_hash_mismatch_fails(tmp_path: Path, http_fixture, install
     manifest["assets"]["releases"]["2030.0101.1"]["arches"][arch].update(
         {name: {"hash": _blake3(blob), "size": len(blob)} for name, blob in extras.items()}
     )
-    (assets / "manifest.json").write_text(json.dumps(manifest))
+    _write_signed_manifest(assets, manifest)
 
     env = {"CAPSEM_HOME": str(capsem_home), "CAPSEM_RELEASE_URL": base_url}
     r = _run(env, "update", "--assets")
@@ -281,7 +322,7 @@ def test_update_assets_404_fails(tmp_path: Path, http_fixture, installed_layout)
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
     assets.mkdir(parents=True)
-    (assets / "manifest.json").write_text(json.dumps(_make_manifest(arch, files)))
+    _write_signed_manifest(assets, _make_manifest(arch, files))
 
     env = {"CAPSEM_HOME": str(capsem_home), "CAPSEM_RELEASE_URL": base_url}
     r = _run(env, "update", "--assets")

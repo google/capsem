@@ -38,6 +38,13 @@ fn cache_path() -> Option<PathBuf> {
         .map(|d| d.join("update-check.json"))
 }
 
+fn load_update_manifest_for_assets(
+    assets_dir: &std::path::Path,
+) -> Result<capsem_core::asset_manager::ManifestV2> {
+    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)?
+        .with_context(|| format!("manifest file not found at {}", assets_dir.display()))
+}
+
 /// Read cached update notice. Sync file read, no latency.
 /// Returns a message to display if an update is available and cache is fresh.
 pub fn read_cached_update_notice() -> Option<String> {
@@ -186,11 +193,7 @@ pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
 async fn refresh_assets() -> Result<()> {
     let assets_dir = capsem_core::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-    let manifest_path = assets_dir.join("manifest.json");
-    let manifest_bytes = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("read {}", manifest_path.display()))?;
-    let manifest = capsem_core::asset_manager::ManifestV2::from_json(&manifest_bytes)
-        .with_context(|| format!("parse {}", manifest_path.display()))?;
+    let manifest = load_update_manifest_for_assets(&assets_dir)?;
 
     let arch = if cfg!(target_arch = "aarch64") {
         "arm64"
@@ -226,6 +229,37 @@ async fn refresh_assets() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const UNSIGNED_MANIFEST: &str = r#"{
+        "format": 2,
+        "assets": {
+            "current": "2026.0415.1",
+            "releases": {
+                "2026.0415.1": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_binary": "1.0.0",
+                    "arches": {
+                        "arm64": {
+                            "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
+                            "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
+                            "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
+                        }
+                    }
+                }
+            }
+        },
+        "binaries": {
+            "current": "1.0.1776269479",
+            "releases": {
+                "1.0.1776269479": {
+                    "date": "2026-04-15",
+                    "deprecated": false,
+                    "min_assets": "2026.0415.1"
+                }
+            }
+        }
+    }"#;
 
     #[test]
     fn is_newer_semver() {
@@ -269,5 +303,30 @@ mod tests {
     #[test]
     fn cache_ttl_constant() {
         assert_eq!(CACHE_TTL_SECS, 86400);
+    }
+
+    #[test]
+    fn update_assets_manifest_loader_rejects_unsigned_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+
+        let err = load_update_manifest_for_assets(dir.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("signature missing"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn update_assets_manifest_loader_rejects_invalid_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+        std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
+
+        let err = load_update_manifest_for_assets(dir.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("verify"),
+            "unexpected error: {err:#}"
+        );
     }
 }

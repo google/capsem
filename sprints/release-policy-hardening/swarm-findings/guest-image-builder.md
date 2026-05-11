@@ -1,6 +1,7 @@
 # Guest, Image Builder, and Rootfs Findings
 
-Status: completed, pending transfer into T1/T5/T10.
+Status: completed; transferred to T7 FD09 and owner rows in T1/T5/T10.
+Downstream implementation remains open.
 
 Agent: Erdos (`019e1268-9e40-78f2-9751-b0550b4584d5`)
 
@@ -30,7 +31,7 @@ Agent: Erdos (`019e1268-9e40-78f2-9751-b0550b4584d5`)
     `/run/capsem-sysutil` and required symlinks exist.
   - Sprint IDs: T1.3, T1.5, T5.4, T10.2, T10.5.
 
-- [ ] [P1] Release rootfs validation is stale and not a hard release gate.
+- [x] [P1] Release rootfs validation is stale and not a hard release gate.
   - Release impact: CI can publish rootfs assets missing binaries required by
     `capsem-init`.
   - Paths: `.github/workflows/release.yaml:398`,
@@ -43,6 +44,8 @@ Agent: Erdos (`019e1268-9e40-78f2-9751-b0550b4584d5`)
   - Proof: rootfs validation derives binary list from `GUEST_BINARIES` and is a
     hard pre-publish gate.
   - Sprint IDs: T1.5, T5.4, T10.2.
+  - Transfer status: resolved in T1/T5; live rootfs artifact validation remains
+    T10/T11.
 
 - [ ] [P1] `_pack-initrd` can rewrite the manifest as host-arch-only.
   - Release impact: local repacks can drop one arch from `assets/manifest.json`,
@@ -110,3 +113,64 @@ Agent: Erdos (`019e1268-9e40-78f2-9751-b0550b4584d5`)
 ## Tests Not Run
 
 - Static no-edit investigation only; no tests were run.
+
+## T5.2/T5.4 Execution Audit, 2026-05-10
+
+Agent: Hubble (`019e1312-7f9e-7fe0-9608-67af861606f3`)
+
+Status: completed; findings captured for T5.2 and T5.4.
+
+### Findings
+
+- [x] [P1] Clean-checkout policy hook artifact proof is missing.
+  - Release impact: `config/policy-hook-openapi.json` can drift or be left
+    unstaged while local Rust tests still pass against generated code.
+  - Paths: `config/policy-hook-openapi.json`,
+    `crates/capsem-core/src/net/policy_hook_spec/tests.rs:52`,
+    `tests/test_release_workflow_policy.py`.
+  - Required proof: static release workflow test proves the artifact is tracked
+    with `git ls-files --error-unmatch` and parses as JSON.
+  - Sprint IDs: T5.2, T10.5.
+  - Transfer status: resolved in T5.
+
+- [x] [P2] `/policy-hook/spec` has handler coverage but not gateway route/auth
+  matrix coverage.
+  - Release impact: the public service route can regress outside the direct
+    handler test, especially through gateway fallback/auth behavior.
+  - Paths: `crates/capsem-service/src/main.rs:4653`,
+    `crates/capsem-service/src/tests.rs:1437`,
+    `crates/capsem-gateway/src/auth/tests.rs:287`,
+    `tests/capsem-gateway/conftest.py:94`.
+  - Required proof: gateway auth matrix includes `/policy-hook/spec`; gateway
+    integration tests cover unauthenticated/wrong-token `401` and valid-token
+    JSON proxying.
+  - Sprint IDs: T5.2, T10.5.
+  - Transfer status: resolved in T5.
+
+- [x] [P2] Rootfs validation is wired, but local proof is indirect.
+  - Release impact: string-based workflow checks can pass while the canonical
+    required binary list drifts away from validation.
+  - Paths: `scripts/validate-rootfs.sh:27`,
+    `src/capsem/builder/docker.py:30`,
+    `tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py:16`.
+  - Required proof: tests assert `GUEST_BINARIES` includes
+    `capsem-dns-proxy` and `capsem-sysutil`, and that the validator derives
+    `/usr/local/bin/<name>` requirements from `GUEST_BINARIES`.
+  - Sprint IDs: T5.4, T10.2.
+  - Transfer status: resolved in T5.
+
+- [x] [P2] Canonical guest binary list still has multiple practical sources.
+  - Release impact: preflight can pass by grepping names in the justfile even
+    when `GUEST_BINARIES` or `validate-rootfs.sh` drifts.
+  - Paths: `scripts/preflight.sh:281`,
+    `scripts/preflight.sh:299`,
+    `src/capsem/builder/docker.py:30`.
+  - Required proof: preflight or tests compare Cargo guest bin names with
+    `capsem.builder.docker.GUEST_BINARIES` and assert the release validator is
+    the hard gate.
+  - Sprint IDs: T5.4, T10.2.
+  - Transfer status: resolved in T5.
+
+### Tests Not Run
+
+- Static code-reading investigation only; no builds/tests were run.

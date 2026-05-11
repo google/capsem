@@ -15,6 +15,15 @@ import datetime
 import json
 import os
 import sys
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from capsem.builder.manifest_version import next_asset_version
 
 
 def main():
@@ -40,31 +49,16 @@ def main():
     today = datetime.date.today()
     today_str = today.isoformat()
 
-    # Derive asset version: YYYY.MMDD.patch
-    # Check existing manifest for same-day releases to increment patch.
     manifest_path = os.path.join(assets_dir, "manifest.json")
-    date_prefix = today.strftime("%Y.%m%d")
-    patch = 1
+    existing_manifest = None
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path) as f:
-                existing = json.load(f)
-            # v2 format
-            if existing.get("format") == 2:
-                for v in existing.get("assets", {}).get("releases", {}):
-                    if v.startswith(date_prefix + "."):
-                        p = int(v.rsplit(".", 1)[1])
-                        patch = max(patch, p + 1)
-            # v1 format -- check if latest matches today's date pattern
-            elif "latest" in existing:
-                v = existing["latest"]
-                if v.startswith(date_prefix + "."):
-                    p = int(v.rsplit(".", 1)[1])
-                    patch = max(patch, p + 1)
+                existing_manifest = json.load(f)
         except (json.JSONDecodeError, ValueError, KeyError):
-            pass
+            existing_manifest = None
 
-    asset_version = f"{date_prefix}.{patch}"
+    asset_version = next_asset_version(existing_manifest, today=today)
 
     # Read B3SUMS and collect entries with file sizes.
     b3sums_path = os.path.join(assets_dir, "B3SUMS")

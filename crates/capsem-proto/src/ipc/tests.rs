@@ -320,6 +320,23 @@ fn reload_config_roundtrip() {
     assert!(matches!(msg2, ServiceToProcess::ReloadConfig));
 }
 
+#[test]
+fn reload_config_result_roundtrip() {
+    let msg = ProcessToService::ReloadConfigResult {
+        success: false,
+        error: Some("refresh failed".into()),
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::ReloadConfigResult { success, error } => {
+            assert!(!success);
+            assert_eq!(error.as_deref(), Some("refresh failed"));
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
 // -----------------------------------------------------------------------
 // Lifecycle IPC roundtrips
 // -----------------------------------------------------------------------

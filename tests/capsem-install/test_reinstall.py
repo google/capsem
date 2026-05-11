@@ -66,7 +66,7 @@ class TestReinstall:
         assert file_hash_1 != file_hash_2, "File hashes should differ after reinstall"
 
     def test_all_binaries_updated(self, installed_layout):
-        """All 6 binaries must exist and be executable after install."""
+        """All host binaries must exist and be executable after install."""
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"missing after install: {name}"

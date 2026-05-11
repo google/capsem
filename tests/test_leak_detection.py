@@ -36,7 +36,11 @@ class _FakeProc:
     def __init__(self, pid, name, cmdline_impl):
         self.pid = pid
         self.info = {"pid": pid, "name": name}
+        self._name = name
         self._cmdline_impl = cmdline_impl
+
+    def name(self):
+        return self._name
 
     def cmdline(self):
         return self._cmdline_impl()
@@ -51,6 +55,18 @@ def patch_iter(monkeypatch):
             lambda attrs=None: iter(procs),
         )
     return _patch
+
+
+def test_process_scan_does_not_request_attr_prefetch(monkeypatch):
+    """Attr prefetch can fail before per-proc handling on macOS."""
+    def process_iter(attrs=None):
+        assert attrs is None
+        return iter([_FakeProc(42, "capsem-process", lambda: ["capsem-process"])])
+
+    monkeypatch.setattr(psutil, "process_iter", process_iter)
+
+    got = get_capsem_processes()
+    assert got[42]["name"] == "capsem-process"
 
 
 def test_ignores_non_capsem_cmdline_errors(patch_iter):

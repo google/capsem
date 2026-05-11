@@ -223,7 +223,7 @@ Additional network tests in `test_sandbox.py`:
 | `test_iptables_redirect` | REDIRECT rule active |
 | `test_net_proxy_running` | capsem-net-proxy process alive |
 | `test_dns_proxy_running` | capsem-dns-proxy process alive |
-| `test_dnsmasq_not_running` | Legacy dnsmasq is absent |
+| legacy DNS daemon check | Retired DNS service is absent |
 | `test_no_real_nics` | Only `lo` and `dummy0` in `/sys/class/net/` |
 | `test_allowed_domain` | End-to-end HTTPS to allowed domain (5-step diagnostic) |
 | `test_denied_domain` | HTTPS to denied domain returns 403 or refused |

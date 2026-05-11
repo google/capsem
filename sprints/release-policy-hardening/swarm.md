@@ -28,6 +28,7 @@ domain ownership, finding-doc targets, and intake status.
 | Status | Domain | Agent | Finding doc | Sprint targets |
 |---|---|---|---|---|
 | Done | UI policy/settings support | Jason `019e1263-534b-7702-864a-ca1f7b3a4f74` | [ui-policy-settings.md](swarm-findings/ui-policy-settings.md) | T2, T8, T10 |
+| Done | T2 frontend execution audit | Boole `019e12e6-3d40-70e1-b10e-3c9c4d09e6e1` | [ui-policy-settings.md](swarm-findings/ui-policy-settings.md) | T2 |
 | Done | Docs and release metadata | Copernicus `019e1263-54c4-7292-8d50-9f818cf7779f` | [docs-release-metadata.md](swarm-findings/docs-release-metadata.md) | T4, T9, T11 |
 | Done | Sprint consistency | Meitner `019e1263-5600-72d0-9cdc-f19479b74540` | [sprint-consistency.md](swarm-findings/sprint-consistency.md) | T7, T10, T11 |
 | Done | Core policy/assets | Kant `019e1264-dba6-7ae3-b34e-20edf051132d` | [core-policy-assets.md](swarm-findings/core-policy-assets.md) | T1, T3, T8, T10 |
@@ -41,6 +42,14 @@ domain ownership, finding-doc targets, and intake status.
 | Done | Manual UI/CLI gates | Nietzsche `019e127d-2a58-77b2-9670-85ae8bc5d3a5` | [manual-ui-cli-gates.md](swarm-findings/manual-ui-cli-gates.md) | T10, T11 |
 | Done | CI release landing 1.1 | Euler `019e127d-299b-7b12-af43-97a6d06e38aa` | [ci-release-landing-1-1.md](swarm-findings/ci-release-landing-1-1.md) | T9, T11, T12 |
 | Done | Swarm transfer closeout | Lovelace `019e127d-2bf1-7a93-836a-92b03b40b854` | [swarm-transfer-closeout-2026-05-10.md](swarm-findings/swarm-transfer-closeout-2026-05-10.md) | T7, T10, T12 |
+| Done | T3 hook client/spec execution audit | Lagrange `019e12fd-d72b-7ad1-ac5e-f1907235feac` | [core-policy-assets.md](swarm-findings/core-policy-assets.md) | T3 |
+| Done | T3 MCP notification/telemetry execution audit | Socrates `019e12fd-d81b-72d3-a023-e618a6c2edb6` | [mcp-policy-boundary.md](swarm-findings/mcp-policy-boundary.md) | T3 |
+| Done | T5 package/helper binary execution audit | Descartes `019e1312-4d46-7153-b010-aadc111f3797` | [ci-packaging.md](swarm-findings/ci-packaging.md) | T5 |
+| Done | T5 process/env/reload execution audit | Volta `019e1312-61f4-7622-b6e6-ebc4fc63b508` | [service-process.md](swarm-findings/service-process.md) | T5 |
+| Done | T5 route/rootfs validation execution audit | Hubble `019e1312-7f9e-7fe0-9608-67af861606f3` | [guest-image-builder.md](swarm-findings/guest-image-builder.md) | T5 |
+| Done | T7 transfer mapping audit | Galileo `019e133b-8160-78b1-82e8-1b59a3f86a26` | [swarm-transfer-closeout-2026-05-10.md](swarm-findings/swarm-transfer-closeout-2026-05-10.md) | T7, T8, tracker |
+| Done | T8 hook ship/defer scope audit | Gibbs `019e1342-9f35-7261-a62f-953938ceb395` | [core-policy-assets.md](swarm-findings/core-policy-assets.md), [service-process.md](swarm-findings/service-process.md), [ui-policy-settings.md](swarm-findings/ui-policy-settings.md) | T8, T9 |
+| Done | T8 reload/telemetry proof audit | Mendel `019e1342-9fe8-7b81-b5cb-39d3712ef196` | [service-process.md](swarm-findings/service-process.md), [telemetry-session.md](swarm-findings/telemetry-session.md), [ui-policy-settings.md](swarm-findings/ui-policy-settings.md) | T8, T10 |
 
 Compaction note: after any context reset, reopen this table first, then read the
 finding docs for every row whose status is Done or In progress.
@@ -83,6 +92,12 @@ sub-sprint without reading chat history:
   - Finding doc: [ui-policy-settings.md](swarm-findings/ui-policy-settings.md)
   - Sprint targets: T2, T8, T10.
   - Status: findings captured; slot ready to recycle.
+
+- [x] Done: Boole, T2 frontend execution audit.
+  - Agent id: `019e12e6-3d40-70e1-b10e-3c9c4d09e6e1`
+  - Finding doc: [ui-policy-settings.md](swarm-findings/ui-policy-settings.md)
+  - Sprint targets: T2.
+  - Status: findings captured during T2 implementation; agent closed.
 
 - [x] Done: Copernicus, docs and release metadata.
   - Agent id: `019e1263-54c4-7292-8d50-9f818cf7779f`
@@ -166,6 +181,47 @@ sub-sprint without reading chat history:
   - Sprint targets: T7, T10, T12.
   - Status: findings captured; slot ready to recycle.
 
+- [x] Done: Lagrange, T3 hook client/spec execution audit.
+  - Agent id: `019e12fd-d72b-7ad1-ac5e-f1907235feac`
+  - Finding doc: [core-policy-assets.md](swarm-findings/core-policy-assets.md)
+  - Sprint targets: T3.
+  - Status: findings captured during T3 implementation; agent closed.
+
+- [x] Done: Socrates, T3 MCP notification/telemetry execution audit.
+  - Agent id: `019e12fd-d81b-72d3-a023-e618a6c2edb6`
+  - Finding doc:
+    [mcp-policy-boundary.md](swarm-findings/mcp-policy-boundary.md)
+  - Sprint targets: T3.
+  - Status: findings captured during T3 implementation; agent closed.
+
+- [x] Done: Galileo, T7 transfer mapping audit.
+  - Agent id: `019e133b-8160-78b1-82e8-1b59a3f86a26`
+  - Finding doc:
+    [swarm-transfer-closeout-2026-05-10.md](swarm-findings/swarm-transfer-closeout-2026-05-10.md)
+  - Sprint targets: T7, T8, tracker.
+  - Status: no orphaned P0/P1 findings found; stale status wording and
+    conditional missing-test ownership captured during T7 closeout.
+
+- [x] Done: Gibbs, T8 hook ship/defer scope audit.
+  - Agent id: `019e1342-9f35-7261-a62f-953938ceb395`
+  - Finding docs:
+    [core-policy-assets.md](swarm-findings/core-policy-assets.md),
+    [service-process.md](swarm-findings/service-process.md),
+    [ui-policy-settings.md](swarm-findings/ui-policy-settings.md)
+  - Sprint targets: T8, T9.
+  - Status: defer decision captured; direct `policy.hook.*` write/import
+    rejection and release-wording tightening transferred into T8.
+
+- [x] Done: Mendel, T8 reload/telemetry proof audit.
+  - Agent id: `019e1342-9fe8-7b81-b5cb-39d3712ef196`
+  - Finding docs:
+    [service-process.md](swarm-findings/service-process.md),
+    [telemetry-session.md](swarm-findings/telemetry-session.md),
+    [ui-policy-settings.md](swarm-findings/ui-policy-settings.md)
+  - Sprint targets: T8, T10.
+  - Status: SettingsPage banner/dismissal gap and live `/settings` +
+    `/reload-config` E2E/timeline proof gaps transferred into T8.
+
 ## Active Agents
 
 - [x] None.
@@ -176,15 +232,18 @@ sub-sprint without reading chat history:
 
 ## Intake Checklist
 
-- [x] Poll active agents.
-- [x] Move completed agent output into its finding doc.
-- [x] Mark the agent `[x] Done` after the finding doc is populated.
+- [x] Poll active T3 agents.
+- [x] Move completed T3 agent output into its finding doc.
+- [x] Mark each T3 agent `[x] Done` after the finding doc is populated.
 - [x] Launch the next queued agent into the freed slot.
-- [ ] Deduplicate P0/P1 findings across finding docs.
-- [ ] Transfer captured findings into the owning T0-T12 sprint docs.
+- [x] Deduplicate P0/P1 findings across finding docs.
+- [x] Transfer captured findings into the owning T0-T12 sprint docs.
 - [x] Update `tracker.md`, `MASTER.md`, and `T7-active-review-followups.md`
   after all current agent outputs are captured.
 - [x] Run stale-status searches after transfer.
+- [x] Poll active T5 agents.
+- [x] Move completed T5 agent output into finding docs.
+- [x] Mark each T5 agent `[x] Done` after the finding doc is populated.
 
 ## Completeness Gate
 
@@ -205,5 +264,6 @@ The swarm investigation is not complete until all of these are true:
 ## Current Slot Limit
 
 The app currently allows six active agent threads in this workspace. All planned
-investigation domains have launched and reported. Remaining work is
-deduplicating P0/P1 findings and expanding implementation sub-sprints.
+investigation domains and the final T7 mapping audit have launched and
+reported. Remaining work is resolving the FD01-FD14 downstream blocker
+checkboxes in `T7-active-review-followups.md` while executing T8-T12.

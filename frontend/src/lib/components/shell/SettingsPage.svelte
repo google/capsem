@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { themeStore, PRELINE_THEMES, FONT_SIZES, FONT_FAMILIES, UI_FONT_SIZES } from '../../stores/theme.svelte.ts';
   import { settingsStore } from '../../stores/settings.svelte.ts';
+  import { vmStore } from '../../stores/vms.svelte.ts';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import SettingsSection from '../settings/SettingsSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
@@ -19,6 +20,8 @@
   import Export from 'phosphor-svelte/lib/Export';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
 
+  const appVersion = __APP_VERSION__;
+
   // Live preview: resolve current terminal theme to get colors
   let previewTheme = $derived(getTheme(resolveThemeKey(themeStore.terminalTheme, themeStore.mode)));
 
@@ -34,6 +37,14 @@
   // Active dynamic group (if sidebar selected a dynamic section)
   let activeDynamicGroup = $derived.by(() => {
     return dynamicSections.find(s => s.key === activeSection);
+  });
+
+  let reloadActiveSessionIds = $derived(vmStore.vms
+    .filter(vm => vm.status === 'Running' || vm.status === 'Booting')
+    .map(vm => vm.id));
+
+  $effect(() => {
+    settingsStore.clearReloadStateIfAffectedSessionsStopped(reloadActiveSessionIds);
   });
 
   // Icon map for dynamic sections
@@ -139,6 +150,25 @@
       </div>
     {:else}
     <div class="py-6 px-8">
+      {#if settingsStore.reloadError}
+        <div class="mb-4 border border-warning/30 bg-warning/10 rounded-lg px-4 py-3 flex items-center gap-x-3">
+          <div class="flex-1">
+            <p class="text-sm text-warning">{settingsStore.reloadError}</p>
+            {#if settingsStore.reloadState && !settingsStore.reloadState.applied && settingsStore.reloadState.failed_session_ids.length > 0}
+              <p class="mt-1 text-xs text-warning/80">
+                Affected sessions: {settingsStore.reloadState.failed_session_ids.join(', ')}
+              </p>
+            {/if}
+          </div>
+          <button
+            type="button"
+            class="py-1.5 px-3 text-xs font-medium rounded-lg border border-warning/30 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+            onclick={() => settingsStore.retryReload()}
+          >
+            Retry reload
+          </button>
+        </div>
+      {/if}
 
       {#if activeSection === 'appearance'}
         <!-- ===== Appearance (custom, not from backend tree) ===== -->
@@ -331,26 +361,12 @@
         <!-- ===== About ===== -->
         <h2 class="text-xl font-medium text-foreground mb-6">About</h2>
 
-        <!-- App settings (auto-update, check for updates) -->
-        {@const appGroup = settingsStore.findGroup('App')}
-        {#if appGroup}
-          <SettingsSection group={appGroup} depth={1} />
-        {/if}
-
         <!-- Version info -->
         <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Version</h3>
         <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
           <div class="flex items-center justify-between p-4">
             <p class="text-sm text-foreground">Version</p>
-            <p class="text-sm text-muted-foreground-1">0.1.0-dev</p>
-          </div>
-          <div class="flex items-center justify-between p-4">
-            <p class="text-sm text-foreground">Runtime</p>
-            <p class="text-sm text-muted-foreground-1">Apple Virtualization.framework</p>
-          </div>
-          <div class="flex items-center justify-between p-4">
-            <p class="text-sm text-foreground">Kernel</p>
-            <p class="text-sm text-muted-foreground-1">6.12-capsem</p>
+            <p class="text-sm text-muted-foreground-1">{appVersion}</p>
           </div>
         </div>
 

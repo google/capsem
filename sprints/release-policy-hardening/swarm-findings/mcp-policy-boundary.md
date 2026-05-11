@@ -1,6 +1,8 @@
 # MCP Policy Boundary Findings
 
-Status: completed, pending transfer into T3/T5/T6/T8/T10.
+Status: completed; transferred to T7 FD07 and owner rows in T3/T5/T6/T8/T10.
+T3 notification/telemetry, T5 service/process, and T6 telemetry/tooling items
+are implemented where marked; T8/T10 runtime E2E proof remains open.
 
 Agent: Chandrasekhar (`019e1268-9d79-7cf1-bae8-7581987836b8`)
 
@@ -15,7 +17,7 @@ Agent: Chandrasekhar (`019e1268-9d79-7cf1-bae8-7581987836b8`)
 
 ## Findings
 
-- [ ] [P0] MCP notification bypass can execute tools without policy blocking
+- [x] [P0] MCP notification bypass can execute tools without policy blocking
   or `mcp_calls` telemetry.
   - Release impact: a no-id `tools/call` can bypass request policy, leak
     arguments, and execute through the aggregator without the expected audit
@@ -33,6 +35,7 @@ Agent: Chandrasekhar (`019e1268-9d79-7cf1-bae8-7581987836b8`)
   - Proof: adversarial no-id `tools/call` notification test proving aggregator
     dispatch is zero, sensitive args absent from logs, and denied/audit row
     exists.
+  - Run: `cargo test -p capsem-core mcp_frame -- --nocapture`.
   - Sprint IDs: T3.5, T8.5, T10.4.
 
 - [ ] [P0] Linux release packaging omits required MCP helper binaries.
@@ -105,7 +108,7 @@ Agent: Chandrasekhar (`019e1268-9d79-7cf1-bae8-7581987836b8`)
     source of truth.
   - Sprint IDs: T6.2, T8.5, T10.5.
 
-- [ ] [P2] MCP Policy V2 telemetry still says `audit_only`/`deny` for enforced
+- [x] [P2] MCP Policy V2 telemetry still says `audit_only`/`deny` for enforced
   blocks.
   - Release impact: consumers cannot distinguish enforcement from audit-only
     behavior without private translation knowledge.
@@ -115,6 +118,7 @@ Agent: Chandrasekhar (`019e1268-9d79-7cf1-bae8-7581987836b8`)
     `tests/capsem-e2e/test_framed_mcp_mitm.py:689`.
   - Proof: normalize enforced telemetry to `enforce`/`block`, or document the
     translation boundary and update consumers/tests.
+  - Run: `cargo test -p capsem-core mcp_frame -- --nocapture`.
   - Sprint IDs: T3.6, T8.5, T10.4.
 
 - [ ] [P2] Trace correlation for MCP child processes is accidental, not a
@@ -145,6 +149,40 @@ Agent: Chandrasekhar (`019e1268-9d79-7cf1-bae8-7581987836b8`)
     fallback routes are 401 without token and proxy only with token.
   - Sprint IDs: T5.2, T10.5.
 
+## T3 Execution Audit, 2026-05-10
+
+Agent: Socrates (`019e12fd-d81b-72d3-a023-e618a6c2edb6`)
+
+Status: completed; no edits made by the agent. Findings captured during T3
+implementation.
+
+- [x] T3.5 confirmed no-id `tools/call` notifications could dispatch before
+  policy/log handling; fixed with a notification allowlist, denied/audited
+  handling for disallowed notifications, zero aggregator dispatch, and
+  sanitized request previews.
+- [x] T3.6 confirmed Policy V2 MCP telemetry used `audit_only` for enforced
+  decisions; fixed with explicit `enforce` mode for Policy V2 matches.
+- [x] T3.6 confirmed Policy V2 block telemetry used `deny`; fixed so
+  `policy_action = block` while coarse `mcp_calls.decision` remains
+  `denied`.
+- [x] T3.6 confirmed matched Policy V2 allow rules were dropped before
+  telemetry; fixed so allow decisions are preserved unless superseded by a
+  higher-priority denial.
+- [x] Logger storage was confirmed pass-through; semantic fixes landed in
+  `mcp_frame`, with logger persistence verified separately.
+
+## Tests Run
+
+- `cargo test -p capsem-core mcp_frame -- --nocapture` (50 passed).
+- `cargo test -p capsem-core mcp_endpoint -- --nocapture` (9 passed).
+- `cargo test -p capsem-logger mcp_call -- --nocapture` (15 passed).
+
+## T3 Tests Not Run
+
+- `pytest tests/capsem-e2e/test_framed_mcp_mitm.py -k "policy_v2 or notification" -v`
+  remains a T8/T10 VM/E2E proof item.
+
 ## Tests Not Run
 
-- Read-only investigation only; no tests were run.
+- Original Chandrasekhar investigation was read-only; no tests were run in that
+  pass.

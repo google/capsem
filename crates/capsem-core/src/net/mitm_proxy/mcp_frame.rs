@@ -154,10 +154,25 @@ where
             .increment(1);
 
             if disposition == StreamDisposition::Notification {
-                let endpoint_h = Arc::clone(&endpoint);
-                tokio::spawn(async move {
-                    let _ = endpoint_h.handle_request(&request).await;
-                });
+                if is_allowed_mcp_notification(&request) {
+                    let endpoint_h = Arc::clone(&endpoint);
+                    tokio::spawn(async move {
+                        let _ = endpoint_h.handle_request(&request).await;
+                    });
+                } else {
+                    let decision = disallowed_notification_decision(&request);
+                    let response = policy_blocked_response(None, "notification", &decision);
+                    let safe_request = policy_request_with_redacted_arguments(&request);
+                    log_mcp_call_with_policy(
+                        &db,
+                        &safe_request,
+                        &response,
+                        &process_name,
+                        0,
+                        McpCallPolicyFields::from(&decision),
+                    )
+                    .await;
+                }
                 continue;
             }
 
@@ -251,7 +266,7 @@ where
                     request_decision,
                 );
                 let response = match final_decision.action {
-                    McpPolicyAction::Ask | McpPolicyAction::Deny => {
+                    McpPolicyAction::Ask | McpPolicyAction::Block => {
                         policy_blocked_response(
                             dispatch_request.id.clone(),
                             "response",
@@ -576,12 +591,14 @@ impl McpDecisionRequest {
 #[serde(rename_all = "snake_case")]
 enum McpPolicyMode {
     AuditOnly,
+    Enforce,
 }
 
 impl McpPolicyMode {
     fn as_str(self) -> &'static str {
         match self {
             Self::AuditOnly => "audit_only",
+            Self::Enforce => "enforce",
         }
     }
 }
@@ -591,7 +608,7 @@ impl McpPolicyMode {
 enum McpPolicyAction {
     Allow,
     Ask,
-    Deny,
+    Block,
     Rewrite,
 }
 
@@ -600,7 +617,7 @@ impl McpPolicyAction {
         match self {
             Self::Allow => "allow",
             Self::Ask => "ask",
-            Self::Deny => "deny",
+            Self::Block => "block",
             Self::Rewrite => "rewrite",
         }
     }
@@ -746,17 +763,22 @@ impl LocalMcpDecisionProvider {
     }
 
     fn decide(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
-        if let Some(decision) = self.matching_policy_v2_request_rule(request) {
+        let policy_v2_decision = self.matching_policy_v2_request_rule(request);
+        if let Some(decision) = &policy_v2_decision {
             if decision.action.blocks_dispatch() {
-                return decision;
+                return decision.clone();
             }
         }
 
         if let Some(rule) = self.matching_request_rule(request) {
-            return self.decision_from_audit_rule(rule);
+            let decision = self.decision_from_audit_rule(rule);
+            if decision.action.blocks_dispatch() {
+                return decision;
+            }
+            return policy_v2_decision.unwrap_or(decision);
         }
 
-        match request.method_kind.as_str() {
+        let base = match request.method_kind.as_str() {
             "tools/call" => self.decide_tool_call(request),
             "resources/read" => self.decide_server_method(request, "resource"),
             "prompts/get" => self.decide_server_method(request, "prompt"),
@@ -767,6 +789,11 @@ impl LocalMcpDecisionProvider {
                     request.method
                 ),
             ),
+        };
+        if base.action.blocks_dispatch() {
+            base
+        } else {
+            policy_v2_decision.unwrap_or(base)
         }
     }
 
@@ -776,22 +803,27 @@ impl LocalMcpDecisionProvider {
         response: &JsonRpcResponse,
         base: McpPolicyDecision,
     ) -> McpPolicyDecision {
-        if matches!(base.action, McpPolicyAction::Ask | McpPolicyAction::Deny) {
+        if matches!(base.action, McpPolicyAction::Ask | McpPolicyAction::Block) {
             return base;
         }
-        if let Some(decision) = self.matching_policy_v2_response_rule(request, response) {
+        let policy_v2_decision = self.matching_policy_v2_response_rule(request, response);
+        if let Some(decision) = &policy_v2_decision {
+            if decision.action.blocks_dispatch() {
+                return decision.clone();
+            }
+        }
+        if let Some(rule) = self.matching_response_rule(request, response) {
+            let decision = self.decision_from_audit_rule(rule);
             if decision.action.blocks_dispatch() {
                 return decision;
             }
         }
-        self.matching_response_rule(request, response)
-            .map(|rule| self.decision_from_audit_rule(rule))
-            .unwrap_or(base)
+        policy_v2_decision.unwrap_or(base)
     }
 
     fn decide_tool_call(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
         let Some(tool_name) = request.tool_name.as_deref().filter(|name| !name.is_empty()) else {
-            return self.deny(
+            return self.block(
                 "mcp.method.tools_call.invalid".to_string(),
                 "audit-only local policy denies tools/call without a tool name".to_string(),
             );
@@ -801,7 +833,7 @@ impl LocalMcpDecisionProvider {
             .as_deref()
             .filter(|server| !server.is_empty())
         else {
-            return self.deny(
+            return self.block(
                 format!("mcp.tool.{tool_name}"),
                 format!("audit-only local policy denies unnamespaced tool {tool_name}"),
             );
@@ -824,7 +856,7 @@ impl LocalMcpDecisionProvider {
             .as_deref()
             .filter(|server| !server.is_empty())
         else {
-            return self.deny(
+            return self.block(
                 format!("mcp.{method_subject}.invalid"),
                 format!(
                     "audit-only local policy denies {} without a namespaced server",
@@ -848,7 +880,7 @@ impl LocalMcpDecisionProvider {
     ) -> McpPolicyDecision {
         match decision {
             ToolDecision::Block => {
-                self.deny(rule, format!("audit-only local policy block for {subject}"))
+                self.block(rule, format!("audit-only local policy block for {subject}"))
             }
             ToolDecision::Warn => self.allow(
                 rule,
@@ -879,7 +911,7 @@ impl LocalMcpDecisionProvider {
         {
             Ok(matched) => matched,
             Err(error) => {
-                return Some(self.deny(
+                return Some(self.block(
                     "policy.mcp.invalid_condition".to_string(),
                     format!("Policy V2 condition evaluation failed closed: {error}"),
                 ));
@@ -900,7 +932,7 @@ impl LocalMcpDecisionProvider {
         {
             Ok(matched) => matched,
             Err(error) => {
-                return Some(self.deny(
+                return Some(self.block(
                     "policy.mcp.invalid_response_condition".to_string(),
                     format!("Policy V2 response condition evaluation failed closed: {error}"),
                 ));
@@ -925,7 +957,7 @@ impl LocalMcpDecisionProvider {
     fn decision_from_audit_rule(&self, rule: &McpDecisionRule) -> McpPolicyDecision {
         match rule.action {
             McpDecisionRuleAction::Allow => self.allow(rule_name(rule), rule_reason(rule)),
-            McpDecisionRuleAction::Deny => self.deny(rule_name(rule), rule_reason(rule)),
+            McpDecisionRuleAction::Deny => self.block(rule_name(rule), rule_reason(rule)),
         }
     }
 
@@ -939,17 +971,19 @@ impl LocalMcpDecisionProvider {
             .reason
             .clone()
             .unwrap_or_else(|| format!("Policy V2 {:?} rule {rule_name} matched", rule.decision));
-        match rule.decision {
+        let mut decision = match rule.decision {
             PolicyDecisionKind::Allow => self.allow(rule_name, reason),
             PolicyDecisionKind::Ask => self.ask(rule_name, reason),
-            PolicyDecisionKind::Block => self.deny(rule_name, reason),
+            PolicyDecisionKind::Block => self.block(rule_name, reason),
             PolicyDecisionKind::Rewrite => self.rewrite(
                 rule_name,
                 reason,
                 rule.rewrite_target.clone(),
                 rule.rewrite_value.clone(),
             ),
-        }
+        };
+        decision.mode = McpPolicyMode::Enforce;
+        decision
     }
 
     fn allow(&self, rule: String, reason: String) -> McpPolicyDecision {
@@ -974,10 +1008,10 @@ impl LocalMcpDecisionProvider {
         }
     }
 
-    fn deny(&self, rule: String, reason: String) -> McpPolicyDecision {
+    fn block(&self, rule: String, reason: String) -> McpPolicyDecision {
         McpPolicyDecision {
             mode: self.mode,
-            action: McpPolicyAction::Deny,
+            action: McpPolicyAction::Block,
             rule,
             reason,
             rewrite_target: None,
@@ -1013,6 +1047,21 @@ fn policy_blocked_response(
         -32600,
         format!("MCP {subject} blocked by policy: {}", decision.rule),
     )
+}
+
+fn is_allowed_mcp_notification(request: &JsonRpcRequest) -> bool {
+    request.method == "notifications/initialized"
+}
+
+fn disallowed_notification_decision(request: &JsonRpcRequest) -> McpPolicyDecision {
+    McpPolicyDecision {
+        mode: McpPolicyMode::Enforce,
+        action: McpPolicyAction::Block,
+        rule: "mcp.notification.disallowed".to_string(),
+        reason: format!("MCP notification method {} is not allowed", request.method),
+        rewrite_target: None,
+        rewrite_value: None,
+    }
 }
 
 fn policy_safe_request_for_rewrite_error(request: &JsonRpcRequest) -> JsonRpcRequest {

@@ -123,6 +123,35 @@ if ! command -v flock >/dev/null 2>&1; then
     esac
 fi
 
+# minisign is required for the local dev manifest signature. `just exec`
+# repacks assets/manifest.json and the service refuses unsigned manifests, so
+# bootstrap must install it before doctor or VM recipes can honestly pass.
+if ! command -v minisign >/dev/null 2>&1; then
+    case "$(uname -s)" in
+        Darwin)
+            if command -v brew >/dev/null 2>&1; then
+                if confirm "minisign (local asset manifest signing, via brew)"; then
+                    brew install minisign
+                fi
+            else
+                printf "  [SKIP] minisign (Homebrew not installed -- install brew, then: brew install minisign)\n"
+            fi ;;
+        Linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                if confirm "minisign (local asset manifest signing, via apt)"; then
+                    sudo apt-get update
+                    sudo apt-get install -y minisign
+                fi
+            elif command -v dnf >/dev/null 2>&1; then
+                if confirm "minisign (local asset manifest signing, via dnf)"; then
+                    sudo dnf install -y minisign
+                fi
+            else
+                printf "  [SKIP] minisign (install minisign via your OS package manager)\n"
+            fi ;;
+    esac
+fi
+
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
     (cd frontend && pnpm install --frozen-lockfile)

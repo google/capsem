@@ -207,13 +207,14 @@ mod tests {
     // Layout:
     //   ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}
     //   ~/.capsem/assets/manifest.json
-    //   ~/.capsem/assets/v{VERSION}/{vmlinuz,initrd.img,rootfs.squashfs}
+    //   ~/.capsem/assets/manifest.json.minisig
+    //   ~/.capsem/assets/{arch}/{vmlinuz-<hash16>,initrd-<hash16>.img,rootfs-<hash16>.squashfs}
     //   ~/.capsem/run/                     (created at runtime)
     //
     // Service reads:
     //   --assets-dir  -> ~/.capsem/assets/
     //   manifest.json -> assets_dir/manifest.json
-    //   rootfs        -> assets_dir/v{CARGO_PKG_VERSION}/rootfs.squashfs
+    //   rootfs        -> manifest-selected hash-named asset under assets_dir/{arch}/
     // -----------------------------------------------------------------------
 
     #[test]
@@ -230,17 +231,22 @@ mod tests {
     }
 
     #[test]
-    fn service_versioned_assets_path_matches_install_layout() {
-        // Service looks for: assets_dir/v{version}/rootfs.squashfs
-        // simulate-install.sh copies to: ~/.capsem/assets/v{VERSION}/rootfs.squashfs
+    fn service_hash_named_assets_path_matches_install_layout() {
+        // Service resolves hash-named files from manifest entries.
+        // simulate-install.sh copies to: ~/.capsem/assets/{arch}/{hash-named file}
         let home = "/home/test";
         let assets_dir = assets_dir_from_home(home);
-        let version = env!("CARGO_PKG_VERSION");
         let rootfs = assets_dir
-            .join(format!("v{version}"))
-            .join("rootfs.squashfs");
-        assert!(rootfs.to_str().unwrap().contains(&format!("v{version}")));
-        assert!(rootfs.to_str().unwrap().ends_with("rootfs.squashfs"));
+            .join("arm64")
+            .join(capsem_core::asset_manager::hash_filename(
+                "rootfs.squashfs",
+                "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee",
+            ));
+        assert!(rootfs.to_str().unwrap().contains("/assets/arm64/"));
+        assert!(rootfs
+            .to_str()
+            .unwrap()
+            .ends_with("rootfs-b8199dc4a83069b9.squashfs"));
     }
 
     // -----------------------------------------------------------------------

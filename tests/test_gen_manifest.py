@@ -8,6 +8,7 @@ correct hash/size entries.
 import json
 import subprocess
 import sys
+import datetime
 from pathlib import Path
 
 import pytest
@@ -144,3 +145,32 @@ class TestGenManifestV2:
         m2 = json.loads((tmp_path / "manifest.json").read_text())
         v2 = m2["assets"]["current"]
         assert v2.endswith(".2")
+
+    def test_patch_auto_increment_uses_numeric_order(self, tmp_path):
+        """A same-day `.9` manifest advances to `.10`."""
+        (tmp_path / "vmlinuz").write_bytes(b"kernel")
+        (tmp_path / "B3SUMS").write_text(
+            "aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa1  vmlinuz\n"
+        )
+        cargo = _make_cargo_toml(tmp_path)
+        today_prefix = datetime.date.today().strftime("%Y.%m%d")
+        (tmp_path / "manifest.json").write_text(json.dumps({
+            "format": 2,
+            "assets": {
+                "current": f"{today_prefix}.9",
+                "releases": {
+                    f"{today_prefix}.2": {},
+                    f"{today_prefix}.9": {},
+                },
+            },
+            "binaries": {"current": "1.0.1000000000", "releases": {}},
+        }))
+
+        result = subprocess.run(
+            [sys.executable, str(GEN_MANIFEST), str(tmp_path), str(cargo)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        assert manifest["assets"]["current"] == f"{today_prefix}.10"

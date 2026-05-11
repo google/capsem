@@ -89,7 +89,7 @@ LIMIT 20;"
 | `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker) | ~10 min |
 | `just build-kernel <arch>` | Kernel only | ~5 min |
 | `just build-rootfs <arch>` | Rootfs only | ~8 min |
-| `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
+| `just cross-compile [arch]` | Full Linux build in container: agent binaries + `.deb` package | ~15 min |
 
 You only need `just build-assets` on first setup or when `guest/config/`
 changes rootfs packages or image build inputs. Day-to-day, `just shell` and

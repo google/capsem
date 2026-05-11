@@ -6,7 +6,7 @@ service startup expect. Works with both installation paths:
   - simulate-install.sh (standalone pytest): fallback
 
 Layout contract:
-  ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}  (executables or symlinks)
+  ~/.capsem/bin/capsem{,-service,-process,-mcp,-mcp-aggregator,-mcp-builtin,-gateway,-tray}  (executables or symlinks)
   ~/.capsem/assets/manifest.json                                (service reads this)
   ~/.capsem/assets/{arch}/{logical}-{hash16}.{ext}              (resolver target)
   ~/.capsem/run/                                                (created at runtime)
@@ -42,7 +42,7 @@ class TestInstalledLayoutContract:
     # -- Binaries --
 
     def test_all_binaries_exist(self, installed_layout):
-        """All 6 binaries present in ~/.capsem/bin/."""
+        """All host binaries present in ~/.capsem/bin/."""
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"missing: {binary}"
@@ -113,6 +113,7 @@ class TestInstalledLayoutContract:
             f"resolver will fail: ManifestV2::resolve() checks $ASSETS/{arch}/<hash>"
         )
 
+        missing = []
         for logical, meta in arch_assets.items():
             prefix = meta["hash"][:16]
             if "." in logical:
@@ -121,10 +122,18 @@ class TestInstalledLayoutContract:
             else:
                 hashed = f"{logical}-{prefix}"
             target = arch_dir / hashed
-            assert target.exists(), (
-                f"asset missing: {target}\n"
-                f"manifest says {logical} hash={meta['hash']}, expected file name {hashed}"
-            )
+            if not target.exists():
+                missing.append((logical, meta["hash"], target, hashed))
+
+        if missing and os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
+            names = ", ".join(logical for logical, _, _, _ in missing)
+            pytest.skip(f"VM assets downloaded on first use, not bundled in .deb: {names}")
+
+        assert not missing, "\n".join(
+            f"asset missing: {target}\n"
+            f"manifest says {logical} hash={hash_}, expected file name {hashed}"
+            for logical, hash_, target, hashed in missing
+        )
 
     def test_no_legacy_version_dirs(self, installed_layout):
         """Reject leftover ~/.capsem/assets/v1.0.* dirs -- resolver doesn't read them."""
@@ -169,7 +178,7 @@ class TestInstalledLayoutContract:
     #   capsem-service --foreground --assets-dir ~/.capsem/assets/ --process-binary ~/.capsem/bin/capsem-process
     # The service then:
     #   1. Reads manifest.json from --assets-dir
-    #   2. Resolves rootfs from --assets-dir/v{VERSION}/
+    #   2. Resolves hash-named rootfs from --assets-dir/{arch}/
     #   3. Spawns --process-binary for each VM
 
     def test_service_binary_is_sibling_of_capsem(self, installed_layout):

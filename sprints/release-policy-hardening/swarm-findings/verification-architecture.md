@@ -1,6 +1,7 @@
 # Verification Architecture Findings
 
-Status: completed, pending transfer into T7/T10/T11 and proposed new splits.
+Status: completed; transferred to T7 FD11 and owner rows in
+T2/T7/T8/T10/T11/T12. Downstream implementation remains open.
 
 Agent: Cicero (`019e126a-d865-7ce3-9ec6-cc9b15637250`)
 
@@ -23,8 +24,8 @@ Agent: Cicero (`019e126a-d865-7ce3-9ec6-cc9b15637250`)
     `sprints/release-policy-hardening/T7-active-review-followups.md:67`.
   - Detail: at review time, several finding docs were placeholders and
     tracker/T7 still listed old swarm state.
-  - Proof: no `Awaiting agent output`, no `In progress` rows, and synchronized
-    `MASTER.md`/`tracker.md`/T7 before implementation.
+  - Proof: no placeholder agent-output text, no `In progress` rows, and
+    synchronized `MASTER.md`/`tracker.md`/T7 before implementation.
   - Sprint IDs: T7.4, T10.7, T11.4.
 
 - [ ] [P0] Several verification commands are not implementation-ready.
@@ -36,7 +37,7 @@ Agent: Cicero (`019e126a-d865-7ce3-9ec6-cc9b15637250`)
     `justfile`.
   - Detail: `just run "capsem-doctor"` appears in sprint docs, but the justfile
     has `exec`, `run-service`, `smoke`, and `doctor`, not `run`. Referenced
-    tests that do not exist yet include `tests/test_release_workflow.py`,
+    tests that do not exist yet include
     `frontend/src/lib/__tests__/policy-rules-section.test.ts`,
     `tests/capsem-e2e/test_policy_hook_runtime.py`, and
     `tests/capsem-session/test_check_session_compat.py`.

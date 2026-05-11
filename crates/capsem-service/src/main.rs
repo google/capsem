@@ -8,10 +8,10 @@ use axum::{
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use clap::Parser;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
@@ -113,6 +113,12 @@ struct ServiceState {
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.
     shutdown_lock: tokio::sync::Mutex<()>,
+}
+
+fn load_startup_manifest_for_assets(
+    assets_dir: &FsPath,
+) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
+    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
 }
 
 struct InstanceInfo {
@@ -310,7 +316,10 @@ impl ServiceState {
                     "failed to preserve session dir for post-mortem -- logs lost; removed to reclaim disk"
                 );
             }
-            PreserveOutcome::FailedAndOrphaned { rename_error, remove_error } => {
+            PreserveOutcome::FailedAndOrphaned {
+                rename_error,
+                remove_error,
+            } => {
                 warn!(
                     id,
                     from = %session_dir.display(),
@@ -341,9 +350,7 @@ impl ServiceState {
         let failed_dir = self.run_dir.join("sessions").join(&failed_id);
         match std::fs::rename(session_dir, &failed_dir) {
             Ok(()) => PreserveOutcome::Preserved(failed_dir),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                PreserveOutcome::AlreadyAbsent
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => PreserveOutcome::AlreadyAbsent,
             Err(rename_error) => match std::fs::remove_dir_all(session_dir) {
                 Ok(()) => PreserveOutcome::FailedAndRemoved { rename_error },
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -673,10 +680,20 @@ impl ServiceState {
                 } else {
                     tracing::info!(id_clone, "child exited cleanly (guest-initiated shutdown)");
                     if !info.persistent {
-                        if let Err(e) = std::fs::remove_dir_all(&info.session_dir) {
+                        let session_dir = info.session_dir.clone();
+                        let cleanup_path = session_dir.clone();
+                        let cleanup = tokio::task::spawn_blocking(move || {
+                            std::fs::remove_dir_all(&cleanup_path)
+                        })
+                        .await;
+                        if let Err(e) = cleanup.unwrap_or_else(|join_err| {
+                            Err(std::io::Error::other(format!(
+                                "cleanup task failed: {join_err}"
+                            )))
+                        }) {
                             tracing::warn!(
                                 id_clone,
-                                path = %info.session_dir.display(),
+                                path = %session_dir.display(),
                                 error = %e,
                                 "failed to remove clean ephemeral session dir"
                             );
@@ -2208,17 +2225,13 @@ async fn handle_triage(
     errors.truncate(limit);
     slow_ops.truncate(limit);
 
-    // F6: when `id` is set, query session.db for session-scoped error
+    // F6/T6: when `id` is set, query session.db for session-scoped error
     // signals. Best-effort -- a missing or vacuumed DB just leaves the
-    // session block empty, the host-side triage still returns.
+    // session block empty, the host-side triage still returns. Persistent
+    // stopped sessions are supported through the registry resolver.
     let session_block = if let Some(ref vm_id) = params.id {
-        let db_path = {
-            let instances = state.instances.lock().unwrap();
-            instances
-                .get(vm_id)
-                .map(|i| i.session_dir.join("session.db"))
-        };
-        if let Some(path) = db_path {
+        if let Ok(session_dir) = resolve_session_dir(&state, vm_id) {
+            let path = session_dir.join("session.db");
             session_db_triage(&path, limit).unwrap_or_else(|e| {
                 tracing::warn!(target: "service", vm = %vm_id, error = %e, "session-db triage skipped");
                 serde_json::json!({})
@@ -2283,20 +2296,44 @@ async fn handle_triage(
 fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<serde_json::Value> {
     let reader = capsem_logger::DbReader::open(db_path)?;
     let denied_net_sql = format!(
-        "SELECT timestamp, domain, decision, status_code, duration_ms \
+        "SELECT timestamp, domain, decision, status_code, duration_ms, \
+                policy_mode, policy_action, policy_rule, policy_reason, trace_id \
          FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
     let mcp_errors_sql = format!(
         "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
-                policy_rule, policy_reason, error_message, duration_ms \
+                policy_rule, policy_reason, error_message, duration_ms, trace_id \
          FROM mcp_calls WHERE decision IN ('denied','error') OR error_message IS NOT NULL \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
     let exec_failures_sql = format!(
-        "SELECT timestamp, exec_id, command, exit_code, duration_ms \
+        "SELECT timestamp, exec_id, command, exit_code, duration_ms, trace_id \
          FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0 \
          ORDER BY timestamp DESC LIMIT {limit}"
+    );
+    let dns_issues_sql = format!(
+        "SELECT timestamp, qname, rcode, decision, matched_rule, policy_mode, \
+                policy_action, policy_rule, policy_reason, trace_id \
+         FROM dns_events WHERE decision != 'allowed' OR rcode != 0 \
+         ORDER BY timestamp DESC LIMIT {limit}"
+    );
+    let policy_hook_issues_sql = format!(
+        "SELECT timestamp, endpoint_id, callback, decision, rule_id, status, error, \
+                fallback, latency_ms, trace_id \
+         FROM policy_hook_events \
+         WHERE status != 'ok' OR error IS NOT NULL OR fallback IS NOT NULL \
+         ORDER BY timestamp DESC LIMIT {limit}"
+    );
+    let audit_failures_sql = format!(
+        "SELECT a.timestamp, a.pid, a.ppid, a.uid, a.exe, a.comm, a.argv, \
+                COALESCE(a.exit_code, e.exit_code) AS exit_code, a.audit_id, \
+                a.exec_event_id, a.trace_id \
+         FROM audit_events a \
+         LEFT JOIN exec_events e ON a.exec_event_id = e.exec_id \
+         WHERE COALESCE(a.exit_code, e.exit_code) IS NOT NULL \
+           AND COALESCE(a.exit_code, e.exit_code) != 0 \
+         ORDER BY a.timestamp DESC LIMIT {limit}"
     );
 
     let denied_net = reader
@@ -2308,16 +2345,33 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     let exec_failures = reader
         .query_raw(&exec_failures_sql)
         .unwrap_or_else(|_| "[]".into());
+    let dns_issues = reader
+        .query_raw(&dns_issues_sql)
+        .unwrap_or_else(|_| "[]".into());
+    let policy_hook_issues = reader
+        .query_raw(&policy_hook_issues_sql)
+        .unwrap_or_else(|_| "[]".into());
+    let audit_failures = reader
+        .query_raw(&audit_failures_sql)
+        .unwrap_or_else(|_| "[]".into());
 
     let denied_net_v: serde_json::Value = serde_json::from_str(&denied_net).unwrap_or_default();
     let mcp_errors_v: serde_json::Value = serde_json::from_str(&mcp_errors).unwrap_or_default();
     let exec_failures_v: serde_json::Value =
         serde_json::from_str(&exec_failures).unwrap_or_default();
+    let dns_issues_v: serde_json::Value = serde_json::from_str(&dns_issues).unwrap_or_default();
+    let policy_hook_issues_v: serde_json::Value =
+        serde_json::from_str(&policy_hook_issues).unwrap_or_default();
+    let audit_failures_v: serde_json::Value =
+        serde_json::from_str(&audit_failures).unwrap_or_default();
 
     Ok(serde_json::json!({
         "denied_net": denied_net_v,
+        "dns_issues": dns_issues_v,
         "mcp_errors": mcp_errors_v,
         "exec_failures": exec_failures_v,
+        "policy_hook_issues": policy_hook_issues_v,
+        "audit_failures": audit_failures_v,
     }))
 }
 
@@ -2328,7 +2382,7 @@ struct TriageQuery {
     since: Option<String>,
     /// Max items per category. Default 20, capped at 200.
     limit: Option<usize>,
-    /// Optional session id (reserved for the future session.db query).
+    /// Optional session id for session.db cross-reference.
     id: Option<String>,
 }
 
@@ -2489,6 +2543,12 @@ async fn send_ipc_command(
             ProcessToService::Pong => {
                 if matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig) {
                     return Ok(ProcessToService::Pong);
+                }
+                continue;
+            }
+            ProcessToService::ReloadConfigResult { success, error } => {
+                if matches!(cmd, ServiceToProcess::ReloadConfig) {
+                    return Ok(ProcessToService::ReloadConfigResult { success, error });
                 }
                 continue;
             }
@@ -2708,7 +2768,7 @@ async fn handle_read_file(
 
 async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
     // Collect paths to broadcast to.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
@@ -2722,28 +2782,73 @@ async fn handle_reload_config(
         let id = id.clone();
         async move {
             match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, Some(5)).await {
+                Ok(ProcessToService::ReloadConfigResult {
+                    success: true,
+                    error: _,
+                }) => None,
+                Ok(ProcessToService::ReloadConfigResult {
+                    success: false,
+                    error,
+                }) => Some(ReloadConfigFailure {
+                    session_id: id,
+                    message: error.unwrap_or_else(|| "reload failed".to_string()),
+                }),
                 Ok(ProcessToService::Pong) => None,
-                Ok(_) => Some(format!("{id}: unexpected response")),
-                Err(e) => Some(format!("{id}: {e}")),
+                Ok(_) => Some(ReloadConfigFailure {
+                    session_id: id,
+                    message: "unexpected response".to_string(),
+                }),
+                Err(e) => Some(ReloadConfigFailure {
+                    session_id: id,
+                    message: e,
+                }),
             }
         }
     }))
     .await;
-    let failures: Vec<String> = results.into_iter().flatten().collect();
+    let failures: Vec<ReloadConfigFailure> = results.into_iter().flatten().collect();
+    let failed_session_ids: Vec<String> = failures
+        .iter()
+        .map(|failure| failure.session_id.clone())
+        .collect();
+    let reloaded = uds_paths.len().saturating_sub(failures.len());
 
     if failures.is_empty() {
-        Ok(Json(
-            serde_json::json!({ "success": true, "reloaded": uds_paths.len() }),
+        Ok((
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "reloaded": uds_paths.len(),
+                "failed_session_count": 0,
+                "failed_session_ids": [],
+                "failures": [],
+                "message": null,
+            })),
         ))
     } else {
-        Err(AppError(
+        let message = format!(
+            "failed to reload config in {} running session{}",
+            failures.len(),
+            if failures.len() == 1 { "" } else { "s" }
+        );
+        Ok((
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "failed to reload config in some instances: {}",
-                failures.join(", ")
-            ),
+            Json(serde_json::json!({
+                "success": false,
+                "reloaded": reloaded,
+                "failed_session_count": failures.len(),
+                "failed_session_ids": failed_session_ids,
+                "failures": failures,
+                "message": message,
+            })),
         ))
     }
+}
+
+#[derive(Debug, Serialize)]
+struct ReloadConfigFailure {
+    session_id: String,
+    message: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -3060,14 +3165,42 @@ async fn handle_mcp_refresh(
             .map(|info| info.uds_path.clone())
             .collect::<Vec<_>>()
     };
-    for uds_path in &uds_paths {
+    let results = futures::future::join_all(uds_paths.iter().map(|uds_path| {
         let id = state.next_job_id();
-        let _ =
-            send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
+        async move {
+            match send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30))
+                .await
+            {
+                Ok(ProcessToService::McpRefreshResult {
+                    success: true,
+                    error: _,
+                    ..
+                }) => None,
+                Ok(ProcessToService::McpRefreshResult {
+                    success: false,
+                    error,
+                    ..
+                }) => Some(error.unwrap_or_else(|| "MCP refresh failed".to_string())),
+                Ok(_) => Some("unexpected MCP refresh response".to_string()),
+                Err(e) => Some(e),
+            }
+        }
+    }))
+    .await;
+    let failures: Vec<String> = results.into_iter().flatten().collect();
+    if failures.is_empty() {
+        Ok(Json(
+            serde_json::json!({"success": true, "instances": uds_paths.len()}),
+        ))
+    } else {
+        Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "failed to refresh MCP tools in some instances: {}",
+                failures.join(", ")
+            ),
+        ))
     }
-    Ok(Json(
-        serde_json::json!({"success": true, "instances": uds_paths.len()}),
-    ))
 }
 
 /// POST /mcp/tools/:name/approve -- approve a tool (mark approved in cache).
@@ -3202,24 +3335,170 @@ async fn handle_inspect(
 
 /// `GET /timeline/{id}?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
 /// -- unified time-ordered event stream for one session, joining
-/// `exec_events`, `mcp_calls`, `net_events`, `fs_events`, and
-/// `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
+/// `exec_events`, `mcp_calls`, `net_events`, `dns_events`,
+/// `policy_hook_events`, `audit_events`, `snapshot_events`, `fs_events`,
+/// and `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
 ///
 /// W6 added `trace_id` to every layer; this handler filters with
 /// `WHERE trace_id = ? OR trace_id IS NULL` so rows that pre-date W4's
 /// trace propagation still surface for the user.
+const ALLOWED_TIMELINE_LAYERS: &[&str] = &[
+    "exec", "mcp", "net", "dns", "hook", "audit", "snapshot", "fs", "model",
+];
+
+fn timeline_existing_tables(reader: &capsem_logger::DbReader) -> Result<HashSet<String>, AppError> {
+    let raw = reader
+        .query_raw("SELECT name FROM sqlite_master WHERE type='table'")
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to inspect DB schema: {e}"),
+            )
+        })?;
+    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to parse DB schema: {e}"),
+        )
+    })?;
+    let mut out = HashSet::new();
+    if let Some(rows) = val.get("rows").and_then(|r| r.as_array()) {
+        for row in rows {
+            if let Some(name) = row
+                .as_array()
+                .and_then(|cells| cells.first())
+                .and_then(|cell| cell.as_str())
+            {
+                out.insert(name.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn timeline_table_columns(
+    reader: &capsem_logger::DbReader,
+    table: &str,
+) -> Result<HashSet<String>, AppError> {
+    let raw = reader
+        .query_raw(&format!("SELECT name FROM pragma_table_info('{table}')"))
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to inspect DB columns for {table}: {e}"),
+            )
+        })?;
+    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to parse DB columns for {table}: {e}"),
+        )
+    })?;
+    let mut out = HashSet::new();
+    if let Some(rows) = val.get("rows").and_then(|r| r.as_array()) {
+        for row in rows {
+            if let Some(name) = row
+                .as_array()
+                .and_then(|cells| cells.first())
+                .and_then(|cell| cell.as_str())
+            {
+                out.insert(name.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn timeline_existing_columns(
+    reader: &capsem_logger::DbReader,
+    tables: &HashSet<String>,
+) -> Result<HashMap<String, HashSet<String>>, AppError> {
+    let mut out = HashMap::new();
+    for table in [
+        "exec_events",
+        "mcp_calls",
+        "net_events",
+        "dns_events",
+        "policy_hook_events",
+        "audit_events",
+        "snapshot_events",
+        "fs_events",
+        "model_calls",
+        "tool_calls",
+    ] {
+        if tables.contains(table) {
+            out.insert(table.to_string(), timeline_table_columns(reader, table)?);
+        }
+    }
+    Ok(out)
+}
+
+fn timeline_has_column(
+    columns: &HashMap<String, HashSet<String>>,
+    table: &str,
+    column: &str,
+) -> bool {
+    columns.get(table).is_some_and(|cols| cols.contains(column))
+}
+
+fn timeline_col(
+    columns: &HashMap<String, HashSet<String>>,
+    table: &str,
+    column: &str,
+    fallback: &str,
+) -> String {
+    if timeline_has_column(columns, table, column) {
+        column.to_string()
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn timeline_alias_col(
+    columns: &HashMap<String, HashSet<String>>,
+    table: &str,
+    alias: &str,
+    column: &str,
+    fallback: &str,
+) -> String {
+    if timeline_has_column(columns, table, column) {
+        format!("{alias}.{column}")
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn timeline_policy_suffix(
+    columns: &HashMap<String, HashSet<String>>,
+    table: &str,
+    qualifier: Option<&str>,
+) -> &'static str {
+    if timeline_has_column(columns, table, "policy_action")
+        && timeline_has_column(columns, table, "policy_rule")
+    {
+        match qualifier {
+            Some("m") => "COALESCE(' policy=' || m.policy_action || '/' || m.policy_rule, '')",
+            _ => "COALESCE(' policy=' || policy_action || '/' || policy_rule, '')",
+        }
+    } else {
+        "''"
+    }
+}
+
 async fn handle_timeline(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<TimelineQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let db_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.session_dir.join("session.db")
-    };
+    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open DB: {e}"),
+        )
+    })?;
+    let existing_tables = timeline_existing_tables(&reader)?;
+    let existing_columns = timeline_existing_columns(&reader, &existing_tables)?;
 
     let limit = params.limit.unwrap_or(200).min(2000);
     let since_filter = params
@@ -3229,73 +3508,173 @@ async fn handle_timeline(
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs());
 
-    // Layers the caller wants. Default to all five. C1: filter against
+    // Layers the caller wants. Default to all current layers. C1: filter against
     // a hard allowlist BEFORE building SQL so even a future careless
     // copy-paste of this format!() can't leak attacker-supplied
     // tokens into the query string.
-    const ALLOWED_LAYERS: &[&str] = &["exec", "mcp", "net", "fs", "model"];
     let layers: Vec<&str> = params
         .layers
         .as_deref()
         .map(|s| {
             s.split(',')
                 .filter(|x| !x.is_empty())
-                .filter(|x| ALLOWED_LAYERS.contains(x))
+                .filter(|x| ALLOWED_TIMELINE_LAYERS.contains(x))
                 .collect()
         })
-        .unwrap_or_else(|| ALLOWED_LAYERS.to_vec());
+        .unwrap_or_else(|| ALLOWED_TIMELINE_LAYERS.to_vec());
 
     let mut parts: Vec<String> = Vec::new();
-    if layers.contains(&"exec") {
-        parts.push(
+    if layers.contains(&"exec") && existing_tables.contains("exec_events") {
+        let status = timeline_col(&existing_columns, "exec_events", "exit_code", "NULL");
+        let duration = timeline_col(&existing_columns, "exec_events", "duration_ms", "NULL");
+        let trace_id = timeline_col(&existing_columns, "exec_events", "trace_id", "NULL");
+        parts.push(format!(
             "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
-             exit_code AS status, duration_ms, trace_id FROM exec_events"
-                .to_string(),
-        );
+             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM exec_events"
+        ));
     }
-    if layers.contains(&"mcp") {
+    if layers.contains(&"mcp") && existing_tables.contains("mcp_calls") {
         // F7: include the originating model_call's tool_calls.call_id when
         // an mcp_call serviced a model tool_use, so the timeline shows
         // "model X tool_use Y -> mcp_call Z" inline. Best-effort LEFT JOIN
         // -- mcp_calls without a tool_calls peer just show NULL.
-        parts.push(
+        let tool_summary = if timeline_has_column(&existing_columns, "mcp_calls", "tool_name") {
+            "COALESCE(m.tool_name, m.method)"
+        } else {
+            "m.method"
+        };
+        let join_tool_calls = existing_tables.contains("tool_calls")
+            && timeline_has_column(&existing_columns, "tool_calls", "mcp_call_id")
+            && timeline_has_column(&existing_columns, "tool_calls", "call_id");
+        let join_sql = if join_tool_calls {
+            " LEFT JOIN tool_calls tc ON tc.mcp_call_id = m.id"
+        } else {
+            ""
+        };
+        let call_id_suffix = if join_tool_calls {
+            "COALESCE(' (call_id=' || tc.call_id || ')', '')"
+        } else {
+            "''"
+        };
+        let duration =
+            timeline_alias_col(&existing_columns, "mcp_calls", "m", "duration_ms", "NULL");
+        let trace_id = timeline_alias_col(&existing_columns, "mcp_calls", "m", "trace_id", "NULL");
+        let policy_suffix = timeline_policy_suffix(&existing_columns, "mcp_calls", Some("m"));
+        parts.push(format!(
             "SELECT m.timestamp AS timestamp, 'mcp' AS layer, m.id AS ref, \
-             m.server_name || '/' || COALESCE(m.tool_name, m.method) || \
-                COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
-             NULL AS status, m.duration_ms AS duration_ms, m.trace_id AS trace_id \
-             FROM mcp_calls m \
-             LEFT JOIN tool_calls tc ON tc.mcp_call_id = m.id"
-                .to_string(),
-        );
+             m.server_name || '/' || {tool_summary} || {call_id_suffix} || {policy_suffix} AS summary, \
+             NULL AS status, {duration} AS duration_ms, {trace_id} AS trace_id \
+             FROM mcp_calls m{join_sql}"
+        ));
     }
-    if layers.contains(&"net") {
-        parts.push(
+    if layers.contains(&"net") && existing_tables.contains("net_events") {
+        let method = timeline_col(&existing_columns, "net_events", "method", "'GET'");
+        let path = timeline_col(&existing_columns, "net_events", "path", "''");
+        let status = timeline_col(&existing_columns, "net_events", "status_code", "NULL");
+        let duration = timeline_col(&existing_columns, "net_events", "duration_ms", "NULL");
+        let trace_id = timeline_col(&existing_columns, "net_events", "trace_id", "NULL");
+        let policy_suffix = timeline_policy_suffix(&existing_columns, "net_events", None);
+        parts.push(format!(
             "SELECT timestamp, 'net' AS layer, id AS ref, \
-             COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
-             status_code AS status, duration_ms, trace_id FROM net_events"
-                .to_string(),
-        );
+             COALESCE({method}, 'GET') || ' ' || domain || COALESCE({path}, '') || \
+                {policy_suffix} AS summary, \
+             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM net_events"
+        ));
     }
-    if layers.contains(&"fs") {
-        parts.push(
+    if layers.contains(&"dns") && existing_tables.contains("dns_events") {
+        let duration = timeline_col(
+            &existing_columns,
+            "dns_events",
+            "upstream_resolver_ms",
+            "NULL",
+        );
+        let trace_id = timeline_col(&existing_columns, "dns_events", "trace_id", "NULL");
+        let policy_suffix = timeline_policy_suffix(&existing_columns, "dns_events", None);
+        parts.push(format!(
+            "SELECT timestamp, 'dns' AS layer, id AS ref, \
+             qname || ' rcode=' || rcode || {policy_suffix} AS summary, \
+             decision AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM dns_events"
+        ));
+    }
+    if layers.contains(&"hook") && existing_tables.contains("policy_hook_events") {
+        let decision_suffix =
+            if timeline_has_column(&existing_columns, "policy_hook_events", "decision") {
+                "COALESCE(' decision=' || decision, '')"
+            } else {
+                "''"
+            };
+        let fallback_suffix =
+            if timeline_has_column(&existing_columns, "policy_hook_events", "fallback") {
+                "COALESCE(' fallback=' || fallback, '')"
+            } else {
+                "''"
+            };
+        let error_suffix = if timeline_has_column(&existing_columns, "policy_hook_events", "error")
+        {
+            "COALESCE(' error=' || error, '')"
+        } else {
+            "''"
+        };
+        let status = if timeline_has_column(&existing_columns, "policy_hook_events", "decision") {
+            "COALESCE(decision, status)"
+        } else {
+            "status"
+        };
+        let duration = timeline_col(
+            &existing_columns,
+            "policy_hook_events",
+            "latency_ms",
+            "NULL",
+        );
+        let trace_id = timeline_col(&existing_columns, "policy_hook_events", "trace_id", "NULL");
+        parts.push(format!(
+            "SELECT timestamp, 'hook' AS layer, id AS ref, \
+             endpoint_id || '/' || callback || ' status=' || status || \
+                {decision_suffix} || {fallback_suffix} || {error_suffix} AS summary, \
+             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id \
+             FROM policy_hook_events"
+        ));
+    }
+    if layers.contains(&"audit") && existing_tables.contains("audit_events") {
+        let status = timeline_col(&existing_columns, "audit_events", "exit_code", "NULL");
+        let trace_id = timeline_col(&existing_columns, "audit_events", "trace_id", "NULL");
+        parts.push(format!(
+            "SELECT timestamp, 'audit' AS layer, id AS ref, \
+             COALESCE(comm, exe) || ' ' || argv AS summary, \
+             {status} AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM audit_events"
+        ));
+    }
+    if layers.contains(&"snapshot") && existing_tables.contains("snapshot_events") {
+        let trace_id = timeline_col(&existing_columns, "snapshot_events", "trace_id", "NULL");
+        parts.push(format!(
+            "SELECT timestamp, 'snapshot' AS layer, id AS ref, \
+             origin || ' cp-' || slot || COALESCE(' ' || name, '') AS summary, \
+             NULL AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM snapshot_events"
+        ));
+    }
+    if layers.contains(&"fs") && existing_tables.contains("fs_events") {
+        let trace_id = timeline_col(&existing_columns, "fs_events", "trace_id", "NULL");
+        parts.push(format!(
             "SELECT timestamp, 'fs' AS layer, id AS ref, action || ' ' || path AS summary, \
-             NULL AS status, NULL AS duration_ms, trace_id FROM fs_events"
-                .to_string(),
-        );
+             NULL AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM fs_events"
+        ));
     }
-    if layers.contains(&"model") {
-        parts.push(
+    if layers.contains(&"model") && existing_tables.contains("model_calls") {
+        let model = timeline_col(&existing_columns, "model_calls", "model", "'?'");
+        let status = timeline_col(&existing_columns, "model_calls", "status_code", "NULL");
+        let duration = timeline_col(&existing_columns, "model_calls", "duration_ms", "NULL");
+        let trace_id = timeline_col(&existing_columns, "model_calls", "trace_id", "NULL");
+        parts.push(format!(
             "SELECT timestamp, 'model' AS layer, id AS ref, \
-             provider || '/' || COALESCE(model, '?') AS summary, \
-             status_code AS status, duration_ms, trace_id FROM model_calls"
-                .to_string(),
-        );
+             provider || '/' || COALESCE({model}, '?') AS summary, \
+             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM model_calls"
+        ));
     }
 
     if parts.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
-            "no layers selected".into(),
+            "no selected layers found in session DB".into(),
         ));
     }
 
@@ -3317,12 +3696,6 @@ async fn handle_timeline(
     }
     sql.push_str(&format!(" ORDER BY timestamp ASC LIMIT {limit}"));
 
-    let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to open DB: {e}"),
-        )
-    })?;
     let json_str = reader.query_raw(&sql).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -4512,34 +4885,16 @@ async fn main() -> Result<()> {
         .assets_dir
         .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
 
-    // Load v2 manifest if available. In dev mode (no manifest or v1), use None.
+    // Load v2 manifest if available. In dev mode with no manifest, use None.
+    // If a manifest exists, verify its minisign signature before trusting
+    // asset hashes or cleanup metadata.
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let manifest_path = if assets_base_dir.join("manifest.json").exists() {
-        Some(assets_base_dir.join("manifest.json"))
-    } else if assets_base_dir
-        .parent()
-        .unwrap()
-        .join("manifest.json")
-        .exists()
-    {
-        Some(assets_base_dir.parent().unwrap().join("manifest.json"))
-    } else {
-        None
-    };
-
-    let manifest = manifest_path.and_then(|path| {
-        let content = std::fs::read_to_string(&path).ok()?;
-        match capsem_core::asset_manager::ManifestV2::from_json(&content) {
-            Ok(m) => {
-                info!(asset_version = %m.assets.current, "loaded manifest");
-                Some(Arc::new(m))
-            }
-            Err(e) => {
-                warn!(error = %e, "failed to parse manifest");
-                None
-            }
-        }
-    });
+    let manifest = load_startup_manifest_for_assets(&assets_base_dir)
+        .context("load verified asset manifest")?
+        .map(|m| {
+            info!(asset_version = %m.assets.current, "loaded verified manifest");
+            Arc::new(m)
+        });
 
     // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files)
     if let Some(ref m) = manifest {
@@ -4611,15 +4966,39 @@ async fn main() -> Result<()> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
                 interval.tick().await;
-                state_for_cleanup.cleanup_stale_instances();
+                let state = Arc::clone(&state_for_cleanup);
+                if let Err(e) =
+                    tokio::task::spawn_blocking(move || state.cleanup_stale_instances()).await
+                {
+                    warn!(error = %e, "stale instance cleanup task failed");
+                }
             }
         });
     }
+
+    // Spawn companion processes (gateway + tray) in the background so the UDS
+    // starts accepting immediately. The previous .await here delayed accept()
+    // by up to 5s on every startup while polling gateway.token into existence
+    // -- fatal under parallel test load. Companions are stateless and can come
+    // up after the service is already serving clients.
+    let companions = Arc::new(std::sync::Mutex::new(CompanionManager {
+        children: Vec::new(),
+        spawn_task: None,
+        #[cfg(target_os = "macos")]
+        run_dir: run_dir.clone(),
+        #[cfg(target_os = "macos")]
+        tray_bin: args.tray_binary.clone(),
+    }));
+    let companions_for_route = Arc::clone(&companions);
 
     let app = Router::new()
         .route(
             "/version",
             get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
+        )
+        .route(
+            "/companions/tray/ensure",
+            post(move || handle_ensure_tray(Arc::clone(&companions_for_route))),
         )
         .route("/provision", post(handle_provision))
         .route("/list", get(handle_list))
@@ -4684,19 +5063,6 @@ async fn main() -> Result<()> {
     // its flock wait can fast-probe us and exit 0.
     drop(startup_lock_guard);
 
-    // Spawn companion processes (gateway + tray) in the background so the UDS
-    // starts accepting immediately. The previous .await here delayed accept()
-    // by up to 5s on every startup while polling gateway.token into existence
-    // -- fatal under parallel test load. Companions are stateless and can come
-    // up after the service is already serving clients.
-    struct CompanionManager {
-        children: Vec<tokio::process::Child>,
-        spawn_task: Option<tokio::task::JoinHandle<()>>,
-    }
-    let companions = Arc::new(std::sync::Mutex::new(CompanionManager {
-        children: Vec::new(),
-        spawn_task: None,
-    }));
     let companions_for_spawn = Arc::clone(&companions);
     let service_sock_for_spawn = service_sock.clone();
     let run_dir_for_spawn = run_dir.clone();
@@ -4746,9 +5112,13 @@ async fn main() -> Result<()> {
             };
 
             info!(count = children.len(), "killing companions");
-            for mut child in children {
-                info!(pid = child.id(), "killing companion process");
-                let _ = child.kill().await;
+            for mut companion in children {
+                info!(
+                    pid = companion.child.id(),
+                    kind = ?companion.kind,
+                    "killing companion process"
+                );
+                let _ = companion.child.kill().await;
             }
             info!("killing all VM processes");
             kill_all_vm_processes(&shutdown_state);
@@ -4988,6 +5358,170 @@ fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdio, std::pro
     }
 }
 
+fn companion_log_dir(run_dir: &std::path::Path) -> PathBuf {
+    if std::env::var("CAPSEM_RUN_DIR").is_ok() {
+        run_dir.join("logs")
+    } else {
+        std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
+            .unwrap_or_else(|_| run_dir.join("logs"))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompanionKind {
+    Gateway,
+    #[cfg(target_os = "macos")]
+    Tray,
+}
+
+struct CompanionProcess {
+    kind: CompanionKind,
+    child: tokio::process::Child,
+}
+
+struct CompanionManager {
+    children: Vec<CompanionProcess>,
+    spawn_task: Option<tokio::task::JoinHandle<()>>,
+    #[cfg(target_os = "macos")]
+    run_dir: PathBuf,
+    #[cfg(target_os = "macos")]
+    tray_bin: Option<PathBuf>,
+}
+
+#[derive(Serialize)]
+struct EnsureTrayResponse {
+    tray: &'static str,
+    pid: Option<u32>,
+    reason: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_tray_companion(
+    run_dir: &std::path::Path,
+    tray_bin: Option<PathBuf>,
+) -> std::io::Result<CompanionProcess> {
+    let tray_bin = tray_bin.unwrap_or_else(|| find_sibling_binary("capsem-tray"));
+    let log_dir = companion_log_dir(run_dir);
+    let _ = std::fs::create_dir_all(&log_dir);
+    let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
+    info!(binary = %tray_bin.display(), "spawning capsem-tray");
+    tokio::process::Command::new(&tray_bin)
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string())
+        .stdout(tray_out)
+        .stderr(tray_err)
+        .kill_on_drop(true)
+        .spawn()
+        .map(|child| CompanionProcess {
+            kind: CompanionKind::Tray,
+            child,
+        })
+}
+
+fn ensure_tray_running(manager: &mut CompanionManager) -> (StatusCode, EnsureTrayResponse) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = manager;
+        return (
+            StatusCode::OK,
+            EnsureTrayResponse {
+                tray: "unsupported",
+                pid: None,
+                reason: Some("capsem-tray is only supported on macOS".into()),
+            },
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        manager.children.retain_mut(|companion| {
+            if companion.kind != CompanionKind::Tray {
+                return true;
+            }
+            match companion.child.try_wait() {
+                Ok(Some(status)) => {
+                    info!(
+                        pid = companion.child.id(),
+                        ?status,
+                        "dropping exited capsem-tray child"
+                    );
+                    false
+                }
+                Ok(None) => true,
+                Err(e) => {
+                    warn!(
+                        pid = companion.child.id(),
+                        error = %e,
+                        "dropping unreadable capsem-tray child handle"
+                    );
+                    false
+                }
+            }
+        });
+
+        if let Some(companion) = manager
+            .children
+            .iter()
+            .find(|companion| companion.kind == CompanionKind::Tray)
+        {
+            return (
+                StatusCode::OK,
+                EnsureTrayResponse {
+                    tray: "running",
+                    pid: companion.child.id(),
+                    reason: None,
+                },
+            );
+        }
+
+        if !manager.run_dir.join("gateway.token").exists() {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                EnsureTrayResponse {
+                    tray: "unavailable",
+                    pid: None,
+                    reason: Some("gateway token is not ready yet".into()),
+                },
+            );
+        }
+
+        match spawn_tray_companion(&manager.run_dir, manager.tray_bin.clone()) {
+            Ok(companion) => {
+                let pid = companion.child.id();
+                info!(pid, "capsem-tray spawned by ensure request");
+                manager.children.push(companion);
+                (
+                    StatusCode::OK,
+                    EnsureTrayResponse {
+                        tray: "spawned",
+                        pid,
+                        reason: None,
+                    },
+                )
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                EnsureTrayResponse {
+                    tray: "error",
+                    pid: None,
+                    reason: Some(e.to_string()),
+                },
+            ),
+        }
+    }
+}
+
+async fn handle_ensure_tray(
+    companions: Arc<std::sync::Mutex<CompanionManager>>,
+) -> impl IntoResponse {
+    let (status, response) = {
+        let mut manager = companions.lock().unwrap();
+        ensure_tray_running(&mut manager)
+    };
+    (status, Json(response))
+}
+
 /// Spawn the gateway and tray as child processes of the service.
 async fn spawn_companions(
     service_sock: &std::path::Path,
@@ -4995,7 +5529,7 @@ async fn spawn_companions(
     gateway_bin: Option<PathBuf>,
     gateway_port: Option<u16>,
     tray_bin: Option<PathBuf>,
-) -> Vec<tokio::process::Child> {
+) -> Vec<CompanionProcess> {
     // tray_bin is only consumed by the macOS-gated tray-spawn block below.
     // On Linux there's no system tray, so the parameter is intentionally
     // unused -- silence the unused-variable warning without breaking the
@@ -5008,13 +5542,7 @@ async fn spawn_companions(
     // Log files for companion processes. Tests set CAPSEM_RUN_DIR for isolation;
     // when it is set, keep logs under that run_dir so parallel test workers do
     // not trample each other's gateway.log in ~/Library/Logs/capsem.
-    let log_dir = if std::env::var("CAPSEM_RUN_DIR").is_ok() {
-        run_dir.join("logs")
-    } else {
-        std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
-            .unwrap_or_else(|_| run_dir.join("logs"))
-    };
+    let log_dir = companion_log_dir(run_dir);
     let _ = std::fs::create_dir_all(&log_dir);
 
     // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
@@ -5044,7 +5572,10 @@ async fn spawn_companions(
     {
         Ok(child) => {
             info!(pid = child.id(), "capsem-gateway spawned");
-            children.push(child);
+            children.push(CompanionProcess {
+                kind: CompanionKind::Gateway,
+                child,
+            });
 
             // Wait for gateway to write token + port files (up to 5s)
             let token_path = run_dir.join("gateway.token");
@@ -5075,20 +5606,10 @@ async fn spawn_companions(
             // 2. Spawn capsem-tray (menu bar) -- only on macOS, only after gateway ready
             #[cfg(target_os = "macos")]
             if token_path.exists() {
-                let tray_bin = tray_bin.unwrap_or_else(|| find_sibling_binary("capsem-tray"));
-                let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
-                info!(binary = %tray_bin.display(), "spawning capsem-tray");
-                match tokio::process::Command::new(&tray_bin)
-                    .arg("--parent-pid")
-                    .arg(std::process::id().to_string())
-                    .stdout(tray_out)
-                    .stderr(tray_err)
-                    .kill_on_drop(true)
-                    .spawn()
-                {
-                    Ok(child) => {
-                        info!(pid = child.id(), "capsem-tray spawned");
-                        children.push(child);
+                match spawn_tray_companion(run_dir, tray_bin) {
+                    Ok(companion) => {
+                        info!(pid = companion.child.id(), "capsem-tray spawned");
+                        children.push(companion);
                     }
                     Err(e) => {
                         tracing::warn!("failed to spawn capsem-tray: {e} (non-fatal)");
