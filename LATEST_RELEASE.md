@@ -1,4 +1,4 @@
-version: 1.1.1778456247
+version: 1.1.1778539599
 ---
 ### Changed
 - Disabled the unsupported desktop self-updater surface for the next release:
@@ -15,6 +15,9 @@ version: 1.1.1778456247
 - macOS `.pkg` and Linux `.deb` package flows now carry signed
   `manifest.json` snapshots plus all host helper binaries, and release CI
   verifies package payload signatures before publishing.
+- Release install E2E now consumes clean-checkout VM assets, locally signs the
+  package manifest, and repacks the Linux `.deb` in place so CI installs the
+  tested package instead of the unrepacked Tauri artifact.
 - Setup, `capsem update --assets`, service startup, status, and doctor
   diagnostics now use verified manifest loading so unsigned or invalid
   manifests cannot silently downgrade asset verification.

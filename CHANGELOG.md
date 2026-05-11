@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.1.1778456247] - 2026-05-11
+## [1.1.1778539599] - 2026-05-11
 
 ### Changed
 - Disabled the unsupported desktop self-updater surface for the next release:
@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS `.pkg` and Linux `.deb` package flows now carry signed
   `manifest.json` snapshots plus all host helper binaries, and release CI
   verifies package payload signatures before publishing.
+- Release install E2E now consumes clean-checkout VM assets, locally signs the
+  package manifest, and repacks the Linux `.deb` in place so CI installs the
+  tested package instead of the unrepacked Tauri artifact.
 - Setup, `capsem update --assets`, service startup, status, and doctor
   diagnostics now use verified manifest loading so unsigned or invalid
   manifests cannot silently downgrade asset verification.
