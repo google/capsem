@@ -13,6 +13,11 @@ scripts/preflight.sh           # Validate Apple certs for CI
 just test                      # ALL tests: unit + integration + cross-compile + bench
 ```
 
+`minisign` is a first-class local release prerequisite. `bootstrap.sh`,
+`just doctor`, `just doctor fix`, and `scripts/preflight.sh` must all surface it
+before any local install, `just exec`, asset sync, or package signing path can
+claim to be healthy.
+
 ## Cutting a release
 
 ### Release history discipline
@@ -124,6 +129,13 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   `Sign package payload manifest` runs immediately after `Generate manifest`.
   The install E2E can still pass while the release Linux app jobs fail here, so
   keep a static workflow policy test for the step ordering.
+- **Local manifest signing is part of setup, not a release afterthought.**
+  `bootstrap.sh` must install `minisign` on macOS with Homebrew when available,
+  `capsem-doctor` must list it under `Manifest Signing Tools`, and `just doctor
+  fix` must auto-install it on macOS like the rest of the fixable toolchain.
+  Local VM assets use a signed manifest too; if `just exec`, `just install`, or
+  `scripts/sync-dev-assets.sh` signs `assets/manifest.json`, a machine without
+  `minisign` is not actually ready.
 - **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
 - **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.
@@ -200,7 +212,7 @@ and packaging checks, but they are gitignored and must never be staged.
 gh release view vX.Y.Z
 gh release download vX.Y.Z --pattern manifest.json -D /tmp/verify
 gh release download vX.Y.Z --pattern manifest.json.minisig -D /tmp/verify
-minisign -Vm /tmp/verify/manifest.json -p config/manifest-sign.pub
+minisign -Vm /tmp/verify/manifest.json -x /tmp/verify/manifest.json.minisig -p config/manifest-sign.pub
 gh release download vX.Y.Z --pattern '*.pkg' -D /tmp/verify
 pkgutil --check-signature /tmp/verify/Capsem-*.pkg
 spctl -a -vv -t install /tmp/verify/Capsem-*.pkg      # Gatekeeper accepts notarized+stapled
@@ -212,6 +224,23 @@ If `dpkg-deb` is available, inspect the `.deb` contents and confirm the
 manifest, manifest signature, and companion binaries are present. The manifest
 signature check is mandatory for local-signature releases; a release is not
 verified until `minisign -Vm` passes against `config/manifest-sign.pub`.
+
+For a demo-facing macOS release, also prove the installer path users see:
+
+```bash
+just install
+test -d /Applications/Capsem.app
+open -a Capsem
+pgrep -x capsem-service
+pgrep -x capsem-tray
+```
+
+`scripts/build-pkg.sh` must install `/Applications/Capsem.app` and carry a
+fallback app copy in `/usr/local/share/capsem/Capsem.app` so postinstall cannot
+report success while the GUI is missing. Relaunching `Capsem.app` must ask the
+running service to ensure the tray via `/companions/tray/ensure`; spawning
+`capsem-tray` directly bypasses the service parent guard and is not the product
+path.
 
 ## Documentation site
 
