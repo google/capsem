@@ -1,4 +1,4 @@
-version: 1.1.1778539599
+version: 1.1.1778542197
 ---
 ### Changed
 - Disabled the unsupported desktop self-updater surface for the next release:
@@ -18,6 +18,9 @@ version: 1.1.1778539599
 - Release install E2E now consumes clean-checkout VM assets, locally signs the
   package manifest, and repacks the Linux `.deb` in place so CI installs the
   tested package instead of the unrepacked Tauri artifact.
+- Linux release app builds now install `minisign` before package payload
+  manifest signing, matching the clean install E2E gate and preventing
+  release-only `minisign: command not found` failures.
 - Setup, `capsem update --assets`, service startup, status, and doctor
   diagnostics now use verified manifest loading so unsigned or invalid
   manifests cannot silently downgrade asset verification.
