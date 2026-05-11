@@ -192,10 +192,15 @@ jobs:
           EOF
 
   test-install:
-    needs: preflight
+    needs: [preflight, build-assets]
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-arm64
+          path: assets/arm64/
 
       - uses: extractions/setup-just@v3
 
@@ -210,7 +215,9 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             pkg-config \
-            build-essential
+            build-essential \
+            b3sum \
+            minisign
 
       - name: Build host builder Docker image
         run: just build-host-image

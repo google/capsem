@@ -911,6 +911,40 @@ test-install:
             docker volume rm capsem-install-target >/dev/null 2>&1 || true
         fi
     fi
+    INSTALL_ARCH=$(uname -m)
+    case "$INSTALL_ARCH" in
+        aarch64|arm64) INSTALL_ARCH=arm64 ;;
+        x86_64|amd64) INSTALL_ARCH=x86_64 ;;
+        *) echo "Unsupported install-test architecture: $INSTALL_ARCH" >&2; exit 1 ;;
+    esac
+    if [ ! -f "{{assets_dir}}/$INSTALL_ARCH/vmlinuz" ] \
+        || [ ! -f "{{assets_dir}}/$INSTALL_ARCH/initrd.img" ] \
+        || [ ! -f "{{assets_dir}}/$INSTALL_ARCH/rootfs.squashfs" ]; then
+        echo "Missing install-test VM assets for $INSTALL_ARCH -- building them now..."
+        just build-assets "$INSTALL_ARCH"
+    fi
+    if ! command -v b3sum >/dev/null 2>&1; then
+        echo "Installing b3sum for install-test manifest generation..."
+        cargo install b3sum --locked
+    fi
+    if ! command -v minisign >/dev/null 2>&1; then
+        echo "ERROR: minisign required to sign install-test manifest." >&2
+        echo "       Fix with: just doctor fix minisign" >&2
+        exit 1
+    fi
+    echo "Preparing signed install-test manifest..."
+    : > "{{assets_dir}}/B3SUMS"
+    for arch_dir in "{{assets_dir}}"/*; do
+        [ -d "$arch_dir" ] || continue
+        arch_name=$(basename "$arch_dir")
+        if [ -f "$arch_dir/vmlinuz" ] && [ -f "$arch_dir/initrd.img" ] && [ -f "$arch_dir/rootfs.squashfs" ]; then
+            (cd "{{assets_dir}}" && b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS)
+        fi
+    done
+    python3 scripts/gen_manifest.py "{{assets_dir}}" Cargo.toml
+    python3 scripts/create_hash_assets.py "{{assets_dir}}"
+    bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
+    bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub
     # Stable container name + preemptive rm -f handles any container leaked
     # by a previous run that aborted before reaching cleanup (e.g. cargo
     # SIGTERM under Colima OOM). The EXIT trap below guarantees cleanup on
@@ -965,7 +999,7 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug assets'
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"'
     echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
         'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'

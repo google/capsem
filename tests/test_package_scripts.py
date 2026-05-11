@@ -166,6 +166,62 @@ esac
     assert output_deb.exists()
 
 
+def test_repack_deb_rejects_missing_assets_dir_with_explicit_output(tmp_path):
+    """A missing assets dir must not be silently treated as the output .deb."""
+    input_deb = tmp_path / "capsem.deb"
+    input_deb.write_text("fixture\n")
+    bin_dir = tmp_path / "bin"
+    missing_assets_dir = tmp_path / "assets"
+    output_deb = tmp_path / "out.deb"
+    _seed_host_binaries(bin_dir)
+
+    tool_dir = _fake_tool_dir(tmp_path)
+    (tool_dir / "dpkg-deb").write_text(
+        """#!/bin/sh
+set -eu
+case "$1" in
+  -R)
+    dest="$3"
+    mkdir -p "$dest/DEBIAN"
+    printf 'Package: capsem\\nVersion: 1.1.0\\nArchitecture: all\\nDescription: test\\n' > "$dest/DEBIAN/control"
+    ;;
+  -b)
+    printf deb > "$3"
+    ;;
+  --info)
+    printf info\\n
+    ;;
+  *)
+    echo "unexpected dpkg-deb args: $*" >&2
+    exit 2
+    ;;
+esac
+"""
+    )
+    (tool_dir / "dpkg-deb").chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{tool_dir}:{env['PATH']}"
+    result = subprocess.run(
+        [
+            str(REPACK_DEB),
+            str(input_deb),
+            str(bin_dir),
+            str(missing_assets_dir),
+            str(output_deb),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "assets_dir is not a directory" in result.stderr
+    assert not missing_assets_dir.exists()
+    assert not output_deb.exists()
+
+
 def test_postinstall_release_critical_commands_fail_loudly():
     """Package postinstall must not hide service registration or setup failures."""
     for script in (PKG_POSTINSTALL, DEB_POSTINST):

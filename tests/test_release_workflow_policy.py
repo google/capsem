@@ -210,6 +210,24 @@ def test_linux_deb_contents_validation_checks_each_required_payload():
         assert payload in body
 
 
+def test_install_e2e_downloads_built_assets_before_running_recipe():
+    """Install E2E must not depend on an untracked local assets/ directory."""
+    text = _workflow_text()
+    test_install = re.search(
+        r"(?ms)^  test-install:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert test_install, "test-install job missing"
+    body = test_install.group("body")
+
+    assert "needs: [preflight, build-assets]" in body
+    assert "actions/download-artifact@v8" in body
+    assert "name: vm-assets-arm64" in body
+    assert "path: assets/arm64/" in body
+    assert "b3sum" in body
+    assert "minisign" in body
+
+
 def test_policy_hook_openapi_artifact_is_tracked_and_valid():
     """Clean checkouts must include the checked-in Policy Hook OpenAPI spec."""
     artifact = REPO_ROOT / "config" / "policy-hook-openapi.json"
@@ -316,3 +334,23 @@ def test_local_cross_compile_validates_one_fresh_deb_artifact():
     assert 'rm -f /src/dist/Capsem_*_\\"\\$DPKG_ARCH\\".deb' in body
     assert 'dpkg-deb --info /cargo-target/\\$RUST_TARGET/release/bundle/deb/*.deb' not in body
     assert 'dpkg -i \\"\\$DEB\\"' in body
+
+
+def test_install_e2e_prepares_clean_checkout_assets_before_repack():
+    """Release install E2E starts from a clean checkout, so assets must be materialized."""
+    justfile = (REPO_ROOT / "justfile").read_text()
+    test_install = re.search(
+        r"(?ms)^test-install:\n(?P<body>.*?)(?=^# Wait for CI to build)",
+        justfile,
+    )
+    assert test_install, "test-install recipe missing"
+    body = test_install.group("body")
+
+    assert 'just build-assets "$INSTALL_ARCH"' in body
+    assert 'b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS' in body
+    assert 'python3 scripts/gen_manifest.py "{{assets_dir}}" Cargo.toml' in body
+    assert 'python3 scripts/create_hash_assets.py "{{assets_dir}}"' in body
+    assert 'bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"' in body
+    assert 'bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub' in body
+    assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"' in body
+    assert 'scripts/repack-deb.sh "$DEB" /cargo-target/debug assets' not in body
