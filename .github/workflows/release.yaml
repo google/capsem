@@ -467,6 +467,8 @@ jobs:
 
       - name: Sign package payload manifest
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign zstd
           echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
           minisign -S -s /tmp/manifest-sign.key -m assets/manifest.json
           rm /tmp/manifest-sign.key
@@ -497,7 +499,6 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             xdg-utils \
-            minisign \
             xvfb
 
       - uses: pnpm/action-setup@v5
@@ -551,26 +552,18 @@ jobs:
         run: |
           echo "=== Validate deb ==="
           dpkg-deb --info target/release/bundle/deb/*.deb
-          echo "=== Verify companion binaries and manifest in deb ==="
-          deb_contents="$(dpkg-deb --contents target/release/bundle/deb/*.deb)"
-          required_deb_payloads=(
-            "usr/bin/capsem"
-            "usr/bin/capsem-service"
-            "usr/bin/capsem-process"
-            "usr/bin/capsem-mcp"
-            "usr/bin/capsem-mcp-aggregator"
-            "usr/bin/capsem-mcp-builtin"
-            "usr/bin/capsem-gateway"
-            "usr/bin/capsem-tray"
-            "usr/share/capsem/assets/manifest.json"
-            "usr/share/capsem/assets/manifest.json.minisig"
-          )
-          for required in "${required_deb_payloads[@]}"; do
-            if ! grep -q "$required" <<<"$deb_contents"; then
-              echo "::error::.deb missing required payload: $required" >&2
-              exit 1
-            fi
-          done
+          echo "=== Verify companion binaries and signed manifest in deb ==="
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "${{ matrix.arch }}" in
+            arm64) deb_arch=arm64 ;;
+            x86_64) deb_arch=amd64 ;;
+            *) echo "::error::unknown release arch ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          python3 scripts/verify_deb_payload.py \
+            target/release/bundle/deb/*.deb \
+            --version "$VERSION" \
+            --architecture "$deb_arch" \
+            --minisign-pubkey config/manifest-sign.pub
 
       - name: Boot test (x86_64)
         if: matrix.arch == 'x86_64'
@@ -884,7 +877,7 @@ jobs:
       - name: Install verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y minisign
+          sudo apt-get install -y minisign zstd
 
       - name: Wait for release assets to be queryable
         env:
@@ -946,6 +939,11 @@ jobs:
           gh release download "${{ github.ref_name }}" \
             --pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb
           deb=$(ls /tmp/deb/Capsem_*_${deb_arch}.deb | head -1)
+          version="${GITHUB_REF_NAME#v}"
+          python3 scripts/verify_deb_payload.py "$deb" \
+            --version "$version" \
+            --architecture "$deb_arch" \
+            --minisign-pubkey config/manifest-sign.pub
           # Extract the bundled capsem binary; we don't need to dpkg -i for this.
           mkdir -p /tmp/extract && cd /tmp/extract
           ar x "$deb"
