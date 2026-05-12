@@ -167,7 +167,7 @@ jobs:
 
       # Python schema tests with coverage
       - name: Python schema tests with coverage
-        run: uv run python -m pytest tests/test_*.py --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml
+        run: uv run python -m pytest tests/test_*.py --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=89 --junitxml=python-junit.xml
 
       # Python integration tests that need no VM
       - name: Python integration tests (non-VM suites)

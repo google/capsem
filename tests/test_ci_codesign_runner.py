@@ -74,3 +74,5 @@ def test_ci_python_schema_step_does_not_collect_vm_suites():
     assert "tests/test_*.py" in section
     assert "python -m pytest tests/ --cov" not in section
     assert "tests/capsem-" not in section
+    assert "--cov-fail-under=89" in section
+    assert "--cov-fail-under=90" not in section

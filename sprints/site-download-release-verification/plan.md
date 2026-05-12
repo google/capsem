@@ -62,6 +62,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
   contract tests instead of accidentally collecting VM integration suites.
 - The shared `just` execution lock works on macOS runners without installing a
   separate `flock` binary.
+- macOS PR CI's scoped top-level Python contract lane uses its own clean-runner
+  coverage floor while the full local `just test` Python gate remains 90%.
 
 ## Testing Matrix
 
