@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   site/download installer hardening can merge.
 - Fixed macOS PR CI's clean-checkout Rust unit gate by creating a minimal
   frontend dist before `capsem-app`'s Tauri test build runs.
+- Fixed macOS PR CI codesigning races during `nextest` discovery by
+  serializing the ad-hoc signing runner and preserving its build log on
+  workflow failures.
 
 ## [1.1.1778542197] - 2026-05-11
 

@@ -23,7 +23,10 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - `scripts/verify_deb_payload.py`
 - `tests/test_verify_deb_payload.py`
 - `.github/workflows/release.yaml`
+- `.github/workflows/ci.yaml`
 - `tests/test_release_workflow_policy.py`
+- `tests/test_ci_codesign_runner.py`
+- `scripts/run_signed.sh`
 - `CHANGELOG.md`
 
 ## Done
@@ -38,6 +41,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - `.deb` payload verifier checks control metadata, helper binaries, signed
   manifest files, and optional minisign verification.
 - Release CI calls the verifier for Linux release artifacts.
+- PR CI preserves the macOS cargo runner build log on failures, and the runner
+  serializes ad-hoc codesigning during concurrent `nextest` discovery.
 
 ## Testing Matrix
 

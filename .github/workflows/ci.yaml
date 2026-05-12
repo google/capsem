@@ -96,6 +96,7 @@ jobs:
           path: |
             test-artifacts/
             frontend/test-artifacts/
+            target/build.log
           retention-days: 7
           if-no-files-found: ignore
 
@@ -242,6 +243,7 @@ jobs:
           path: |
             test-artifacts/
             frontend/test-artifacts/
+            target/build.log
           retention-days: 7
           if-no-files-found: ignore
 
