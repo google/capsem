@@ -282,6 +282,15 @@ jobs:
 
       - uses: extractions/setup-just@v3
 
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
 

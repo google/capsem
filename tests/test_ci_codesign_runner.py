@@ -33,8 +33,14 @@ def test_pr_install_e2e_sets_up_asset_build_prerequisites():
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     install_job = workflow.split("  test-install:\n", 1)[1]
 
+    assert "pnpm/action-setup@v5" in install_job
+    assert "actions/setup-node@v5" in install_job
+    assert "node-version: 24" in install_job
+    assert "cache-dependency-path: frontend/pnpm-lock.yaml" in install_job
     assert "astral-sh/setup-uv@v5" in install_job
     assert "uv sync" in install_job
     assert "b3sum minisign" in install_job
+    assert install_job.index("pnpm/action-setup@v5") < install_job.index("just test-install")
+    assert install_job.index("actions/setup-node@v5") < install_job.index("just test-install")
     assert install_job.index("uv sync") < install_job.index("just test-install")
     assert install_job.index("b3sum minisign") < install_job.index("just test-install")

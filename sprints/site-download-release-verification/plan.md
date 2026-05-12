@@ -44,7 +44,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - PR CI preserves the macOS cargo runner build log on failures, and the runner
   serializes ad-hoc codesigning during concurrent `nextest` discovery.
 - PR install E2E installs the host tools needed to build and sign missing VM
-  assets from a clean checkout.
+  assets from a clean checkout, including Node/pnpm for the doctor/frontend
+  checks reached by the clean asset rebuild fallback.
 
 ## Testing Matrix
 
