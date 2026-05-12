@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   macOS now installs the downloaded `.pkg` with the native installer, and
   package downloads are checked against the release manifest when local tools
   are available.
+- Fixed Linux KVM unit-test compilation issues surfaced by PR CI before the
+  site/download installer hardening can merge.
 
 ## [1.1.1778542197] - 2026-05-11
 
