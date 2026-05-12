@@ -27,6 +27,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - `tests/test_release_workflow_policy.py`
 - `tests/test_ci_codesign_runner.py`
 - `scripts/run_signed.sh`
+- `scripts/create_hash_assets.py`
+- `tests/capsem-build-chain/test_create_hash_assets.py`
 - `CHANGELOG.md`
 
 ## Done
@@ -48,11 +50,13 @@ Linux `.deb` payload verification a permanent script and CI gate.
   checks reached by the clean asset rebuild fallback.
 - PR CI Rust coverage uses the same 65-line floor as the documented local
   `just test` gate, with a policy test preventing future drift.
+- Clean Linux CI can rebuild VM asset hash aliases even when Docker-produced
+  source files cannot be hardlinked by the runner user.
 
 ## Testing Matrix
 
-- Unit/contract: focused Python tests for installer helper functions and `.deb`
-  verifier archive parsing.
+- Unit/contract: focused Python tests for installer helper functions, `.deb`
+  verifier archive parsing, CI policy drift, and hash-asset hardlink fallback.
 - Functional: marketing site build and release workflow policy tests.
 - Adversarial: malformed/missing `.deb` payload tests and missing release asset
   tests.
