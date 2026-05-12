@@ -8,6 +8,9 @@ permissions:
   attestations: write
   id-token: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   preflight:
     runs-on: macos-14

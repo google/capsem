@@ -161,6 +161,12 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   `cargo test --no-run --all-targets` for the portable host crates: it compiles
   the KVM backend and Linux test binaries without executing hosted-runner KVM
   probes, while release CI owns real-KVM exercise.
+- **Ordinary CI must not hide red signals.** Diagnostic-only steps should not
+  use `continue-on-error`; make the diagnostic command itself non-fatal so a
+  green job does not carry a red annotation. Test steps must not end in
+  `|| true`, coverage summary pipes must use `set -o pipefail`, and Codecov
+  test analytics should use `codecov/codecov-action@v5` with
+  `report_type: test_results`.
 - **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
 - **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.

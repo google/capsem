@@ -125,3 +125,53 @@ def test_pr_linux_ci_compiles_kvm_without_exercising_hosted_kvm():
     assert "codecov-linux.json" not in linux_job
     assert "-p capsem-core" in linux_job
     assert 'std::env::var_os("CAPSEM_SKIP_KVM_TESTS")' in kvm_sys
+
+
+def test_pr_linux_kvm_diagnostics_do_not_emit_red_success_annotations():
+    """Diagnostic-only KVM setup must not rely on continue-on-error."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    linux_job = workflow.split("  test-linux:\n", 1)[1]
+    linux_job = linux_job.split("\n  # ---------------------------------------------------------------------------", 1)[0]
+
+    assert "continue-on-error: true" not in linux_job
+    assert "Enable KVM (best-effort)" not in linux_job
+    assert "Collect KVM diagnostics" in linux_job
+
+
+def test_ci_rust_integration_coverage_is_release_blocking():
+    """Rust integration coverage must fail CI when the tests fail."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    section = workflow.split("      - name: Integration tests with coverage\n", 1)[1]
+    section = section.split("\n      # Frontend tests with coverage", 1)[0]
+
+    assert "cargo llvm-cov nextest" in section
+    assert "|| true" not in section
+
+
+def test_ci_coverage_summary_report_errors_are_not_hidden_by_tee():
+    """The coverage summary command must be compatible and pipefail-protected."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    section = workflow.split("      - name: Unit tests with coverage\n", 1)[1]
+    section = section.split("\n      # Integration tests", 1)[0]
+
+    assert "set -o pipefail" in section
+    assert "cargo llvm-cov report --summary-only" in section
+    assert "cargo llvm-cov report --no-cfg-coverage" not in section
+
+
+def test_ci_uses_supported_codecov_test_results_upload():
+    """Codecov test analytics should use codecov-action, not deprecated action."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    section = workflow.split("      - name: Upload test results to Codecov\n", 1)[1]
+    section = section.split("\n      # T5: preserve every test artifact", 1)[0]
+
+    assert "codecov/test-results-action" not in workflow
+    assert "uses: codecov/codecov-action@v5" in section
+    assert "report_type: test_results" in section
+
+
+def test_workflows_opt_into_node24_action_runtime():
+    """Avoid late Node 20 action-runtime surprises across all workflows."""
+    for workflow in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yaml")):
+        text = workflow.read_text()
+        assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true" in text, workflow
