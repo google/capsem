@@ -14,6 +14,7 @@
 - [x] Fix Linux KVM test compile errors surfaced by PR CI.
 - [x] Fix macOS PR CI clean-checkout frontend dist ordering for Tauri tests.
 - [x] Fix macOS PR CI codesigning race/diagnostics in the cargo runner.
+- [x] Fix PR install E2E clean-checkout host prerequisites.
 
 ## Notes
 
@@ -39,10 +40,15 @@
   `codesign`. `scripts/run_signed.sh` now serializes signing, skips already
   valid signatures, and CI uploads `target/build.log` on failure so the real
   signing error is not lost behind Codecov fallout.
+- PR #37 then failed `test-install` because PR CI starts from a clean checkout
+  without VM assets; `just test-install` correctly falls back to
+  `just build-assets`, but the job had not installed `uv`, `b3sum`, or
+  `minisign` on the host. The PR job now installs those prerequisites before
+  running the install E2E recipe.
 
 ## Coverage Ledger
 
-- Unit/contract: `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_install_sh.py tests/test_verify_deb_payload.py tests/test_release_workflow_policy.py -q` passed with 36 tests; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_ci_codesign_runner.py tests/test_release_workflow_policy.py -q` passed with 18 tests; `cargo check -p capsem-core --tests` passed.
+- Unit/contract: `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_install_sh.py tests/test_verify_deb_payload.py tests/test_release_workflow_policy.py -q` passed with 36 tests; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_ci_codesign_runner.py tests/test_release_workflow_policy.py -q` passed with 19 tests after the install-prereq patch; `cargo check -p capsem-core --tests` passed.
 - Functional: `pnpm -C site run build` passed and generated `/index.html` plus `/faq/index.html`; `sh -n site/public/install.sh` passed; `bash -n scripts/run_signed.sh` passed; disposable local `scripts/run_signed.sh` codesign smoke passed; `PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache python3 -m py_compile scripts/verify_deb_payload.py` passed.
 - Adversarial: `.deb` verifier tests reject missing helper payloads and mismatched architecture; install script tests reject missing release assets.
 - E2E/VM:

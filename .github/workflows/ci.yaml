@@ -282,6 +282,14 @@ jobs:
 
       - uses: extractions/setup-just@v3
 
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
+      - name: Install install-test host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends b3sum minisign
+
       - name: Build host builder Docker image
         run: just build-host-image
 

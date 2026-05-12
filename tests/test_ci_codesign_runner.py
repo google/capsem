@@ -26,3 +26,15 @@ def test_ci_failure_artifacts_include_codesign_runner_log():
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
 
     assert "target/build.log" in workflow
+
+
+def test_pr_install_e2e_sets_up_asset_build_prerequisites():
+    """PR install E2E builds missing VM assets from a clean checkout."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    install_job = workflow.split("  test-install:\n", 1)[1]
+
+    assert "astral-sh/setup-uv@v5" in install_job
+    assert "uv sync" in install_job
+    assert "b3sum minisign" in install_job
+    assert install_job.index("uv sync") < install_job.index("just test-install")
+    assert install_job.index("b3sum minisign") < install_job.index("just test-install")

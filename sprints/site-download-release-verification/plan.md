@@ -43,6 +43,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - Release CI calls the verifier for Linux release artifacts.
 - PR CI preserves the macOS cargo runner build log on failures, and the runner
   serializes ad-hoc codesigning during concurrent `nextest` discovery.
+- PR install E2E installs the host tools needed to build and sign missing VM
+  assets from a clean checkout.
 
 ## Testing Matrix
 

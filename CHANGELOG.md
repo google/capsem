@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed macOS PR CI codesigning races during `nextest` discovery by
   serializing the ad-hoc signing runner and preserving its build log on
   workflow failures.
+- Fixed PR install E2E's clean-checkout host setup so missing VM assets can be
+  built with `uv` and signed with `minisign`.
 
 ## [1.1.1778542197] - 2026-05-11
 
