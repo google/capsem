@@ -30,6 +30,9 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - `scripts/run_signed.sh`
 - `scripts/create_hash_assets.py`
 - `tests/capsem-build-chain/test_create_hash_assets.py`
+- `scripts/lib/exec_lock.sh`
+- `tests/test_exec_lock.py`
+- `skills/release-process/SKILL.md`
 - `CHANGELOG.md`
 
 ## Done
@@ -57,11 +60,14 @@ Linux `.deb` payload verification a permanent script and CI gate.
   dependency group available instead of relying on implicit `uv run` behavior.
 - macOS PR CI keeps Python schema/coverage collection scoped to top-level
   contract tests instead of accidentally collecting VM integration suites.
+- The shared `just` execution lock works on macOS runners without installing a
+  separate `flock` binary.
 
 ## Testing Matrix
 
 - Unit/contract: focused Python tests for installer helper functions, `.deb`
-  verifier archive parsing, CI policy drift, and hash-asset hardlink fallback.
+  verifier archive parsing, CI policy drift, hash-asset hardlink fallback, and
+  the macOS-safe execution-lock fallback.
 - Functional: marketing site build and release workflow policy tests.
 - Adversarial: malformed/missing `.deb` payload tests and missing release asset
   tests.

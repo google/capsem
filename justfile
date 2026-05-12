@@ -143,7 +143,7 @@ _ensure-service: _sign
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
-    # flock held after the outer shell exits, blocking subsequent runs.
+    # advisory lock held after the outer shell exits, blocking subsequent runs.
     RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
@@ -292,7 +292,7 @@ update-deps: _pnpm-install
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
 #
 # Runs against an isolated CAPSEM_HOME under target/test-home/ so the suite
-# never kills or mutates the user's locally installed capsem. The flock is
+# never kills or mutates the user's locally installed capsem. The advisory lock is
 # still honored for multi-agent coordination but now lives inside the test
 # home, not the shared ~/.capsem/run.
 # Show the latest preserved test-artifacts directory after a red `just test`.
@@ -329,7 +329,7 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
-    # and the second would flock a brand-new inode unchallenged.
+    # and the second would lock a brand-new inode unchallenged.
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "{{justfile_directory()}}/target/capsem-test-execution.lock"
     rm -rf "$CAPSEM_HOME"
@@ -640,7 +640,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just smoke` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
-    # and the second would flock a brand-new inode unchallenged.
+    # and the second would lock a brand-new inode unchallenged.
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "{{justfile_directory()}}/target/capsem-test-execution.lock"
     # Wipe stale state so assertions that read <capsem_home>/logs or

@@ -136,6 +136,12 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   Local VM assets use a signed manifest too; if `just exec`, `just install`, or
   `scripts/sync-dev-assets.sh` signs `assets/manifest.json`, a machine without
   `minisign` is not actually ready.
+- **Do not make macOS CI depend on a Homebrew-only `flock` binary.** GitHub's
+  macOS runners do not provide `flock`, even when developer machines do.
+  Shared `just` execution locking must work with the checked-in
+  `scripts/lib/exec_lock.sh` fallback: use `flock` when it exists and a Python
+  `fcntl.flock` holder process otherwise. Keep `flock` out of `capsem-doctor`
+  required tools unless the fallback is removed.
 - **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
 - **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.

@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container.
 - Fixed macOS PR CI's Python coverage step so it collects top-level Python
   contract tests without accidentally booting VM integration suites.
+- Fixed the shared `just` execution lock on macOS hosts without a `flock`
+  binary by falling back to a Python `fcntl` lock holder.
 
 ## [1.1.1778542197] - 2026-05-11
 

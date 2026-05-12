@@ -143,7 +143,7 @@ echo -e "${BOLD}Capsem Doctor${NC}"
 echo "============================================"
 
 section "System Tools"
-for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock; do
+for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else
