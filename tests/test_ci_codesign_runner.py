@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -44,3 +45,21 @@ def test_pr_install_e2e_sets_up_asset_build_prerequisites():
     assert install_job.index("actions/setup-node@v5") < install_job.index("just test-install")
     assert install_job.index("uv sync") < install_job.index("just test-install")
     assert install_job.index("b3sum minisign") < install_job.index("just test-install")
+
+
+def test_ci_rust_coverage_floor_matches_just_test_gate():
+    """CI should not drift from the local full-test coverage floor."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    justfile = (REPO_ROOT / "justfile").read_text()
+
+    just_match = re.search(
+        r"cargo llvm-cov --workspace --no-cfg-coverage --fail-under-lines (\d+)",
+        justfile,
+    )
+    assert just_match, "just test Rust coverage floor missing"
+
+    ci_thresholds = set(
+        re.findall(r"cargo llvm-cov nextest [^\n]*--fail-under-lines (\d+)", workflow)
+    )
+    assert ci_thresholds, "CI Rust coverage floors missing"
+    assert ci_thresholds == {just_match.group(1)}

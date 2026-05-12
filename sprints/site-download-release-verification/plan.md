@@ -46,6 +46,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - PR install E2E installs the host tools needed to build and sign missing VM
   assets from a clean checkout, including Node/pnpm for the doctor/frontend
   checks reached by the clean asset rebuild fallback.
+- PR CI Rust coverage uses the same 65-line floor as the documented local
+  `just test` gate, with a policy test preventing future drift.
 
 ## Testing Matrix
 

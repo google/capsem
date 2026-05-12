@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed PR install E2E's clean-checkout host setup so missing VM assets can be
   built with `uv`, checked through pnpm-backed doctor paths, and signed with
   `minisign`.
+- Fixed PR CI coverage drift by aligning the workflow's Rust coverage floor
+  with the documented `just test` gate.
 
 ## [1.1.1778542197] - 2026-05-11
 
