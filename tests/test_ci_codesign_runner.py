@@ -63,3 +63,14 @@ def test_ci_rust_coverage_floor_matches_just_test_gate():
     )
     assert ci_thresholds, "CI Rust coverage floors missing"
     assert ci_thresholds == {just_match.group(1)}
+
+
+def test_ci_python_schema_step_does_not_collect_vm_suites():
+    """The schema/coverage step must not accidentally boot VM integration suites."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    section = workflow.split("      - name: Python schema tests with coverage\n", 1)[1]
+    section = section.split("\n      # Python integration tests that need no VM", 1)[0]
+
+    assert "tests/test_*.py" in section
+    assert "python -m pytest tests/ --cov" not in section
+    assert "tests/capsem-" not in section

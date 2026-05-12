@@ -55,6 +55,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
   source files cannot be hardlinked by the runner user.
 - PR install E2E runs pytest inside the Docker/systemd container with the dev
   dependency group available instead of relying on implicit `uv run` behavior.
+- macOS PR CI keeps Python schema/coverage collection scoped to top-level
+  contract tests instead of accidentally collecting VM integration suites.
 
 ## Testing Matrix
 

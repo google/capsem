@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed PR install E2E's Docker test runner to include the project dev
   dependency group before invoking pytest inside the installed-package
   container.
+- Fixed macOS PR CI's Python coverage step so it collects top-level Python
+  contract tests without accidentally booting VM integration suites.
 
 ## [1.1.1778542197] - 2026-05-11
 
