@@ -169,10 +169,13 @@ jobs:
       - name: Python schema tests with coverage
         run: uv run python -m pytest tests/test_*.py --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=89 --junitxml=python-junit.xml
 
-      # Python integration tests that need no VM
+      # Python integration tests that need no VM and no generated assets.
+      # Bootstrap/codesign suites are artifact-dependent: full `just test`
+      # runs them after assets and signed host binaries exist, while this PR
+      # lane import-collects them below to catch syntax/fixture drift.
       - name: Python integration tests (non-VM suites)
         run: |
-          uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ -v --tb=short
+          uv run python -m pytest tests/capsem-rootfs-artifacts/ -v --tb=short
 
       # Verify all integration test suites import cleanly (catches broken imports/syntax)
       - name: Verify all integration test imports

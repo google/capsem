@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed macOS PR CI's scoped Python coverage floor so the top-level contract
   lane matches clean-runner coverage while the full `just test` gate stays at
   90%.
+- Fixed macOS PR CI's no-VM Python integration lane so clean runners execute
+  only suites without generated asset/signing prerequisites while still
+  import-checking every integration suite.
 
 ## [1.1.1778542197] - 2026-05-11
 

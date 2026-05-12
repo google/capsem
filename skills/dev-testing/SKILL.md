@@ -228,8 +228,8 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 | Suite | Marker | VM? | CI | Smoke | Full |
 |-------|--------|:---:|:--:|:-----:|:----:|
-| capsem-bootstrap | `bootstrap` | No | Run | No | Yes |
-| capsem-codesign | `codesign` | No | Run | No | Yes |
+| capsem-bootstrap | `bootstrap` | No | Collect; run in full gate after assets exist | No | Yes |
+| capsem-codesign | `codesign` | No | Collect; run in full gate after signing | No | Yes |
 | capsem-rootfs-artifacts | `rootfs` | No | Run | No | Yes |
 | capsem-mcp | `mcp` | Yes | Collect | Yes | Yes |
 | capsem-service | `integration` | Yes | Collect | Yes | Yes |
@@ -254,14 +254,15 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 | capsem-recipes | `recipe` | No | Run | No | Yes |
 | capsem-install | `install` | No | Yes (Docker) | No | Yes |
 
-"Run" = tests execute in CI. "Collect" = imports verified (`--collect-only`) but tests skip (need VM). "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
+"Run" = tests execute in PR CI. "Collect" = imports verified (`--collect-only`) but tests do not execute in that PR lane. Artifact-dependent no-VM suites still execute in the full `just test` gate after their build/sign prerequisites exist. "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
 
 ### Coverage targets
 
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
-| Rust workspace | 70% | `--fail-under-lines 70` | CI (`cargo llvm-cov`), `just test` |
-| Python builder | 90% | `--cov-fail-under=90` | CI (`pytest`), `just test` |
+| Rust workspace | 65% | `--fail-under-lines 65` | CI (`cargo llvm-cov`), `just test` |
+| Python top-level contracts | 89% | `--cov-fail-under=89` | PR CI (`tests/test_*.py`) |
+| Python full suite | 90% | `--cov-fail-under=90` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
 | capsem-mcp | 80% | Codecov component | `codecov.yml` |
 | capsem-gateway | 80% | Codecov component | `codecov.yml` |
@@ -269,8 +270,8 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test` (floor: 70% line coverage)
-- Python: `--cov-fail-under=90`
+- Rust: `cargo llvm-cov` via `just test` (floor: 65% line coverage)
+- Python: PR top-level contract lane uses 89%; full `just test` uses 90%.
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 
 ## Fast debug with capsem MCP tools

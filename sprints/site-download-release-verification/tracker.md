@@ -24,6 +24,8 @@
   binary.
 - [x] Fix macOS PR CI scoped Python coverage floor for clean-runner top-level
   contract coverage.
+- [x] Fix macOS PR CI no-VM integration lane so clean runners do not execute
+  asset-dependent bootstrap/codesign suites before their prerequisites exist.
 
 ## Notes
 
@@ -89,10 +91,17 @@
   88.67%, while the same local command reports 91.07%. The PR schema lane now
   uses a specific 89% floor for `tests/test_*.py`; the full `just test` Python
   gate remains at 90% for the complete suite.
+- The next macOS PR run then reached the separate no-VM integration step and
+  failed because that lane tried to execute `capsem-bootstrap` without generated
+  `assets/<arch>/` and `capsem-codesign` without built/signed host binaries.
+  That was a misplaced CI lane, not a product pass: PR CI now runs only
+  `capsem-rootfs-artifacts` there and still import-collects every
+  `tests/capsem-*/` suite; full `just test` remains the execution gate for
+  bootstrap/codesign after `_pack-initrd` and `_sign`.
 
 ## Coverage Ledger
 
-- Unit/contract: `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_install_sh.py tests/test_verify_deb_payload.py tests/test_release_workflow_policy.py -q` passed with 36 tests; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_ci_codesign_runner.py tests/test_release_workflow_policy.py -q` passed with 20 tests after the CI coverage-floor patch, and 21 tests after the scoped Python coverage-floor patch; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/capsem-build-chain/test_create_hash_assets.py tests/test_ci_codesign_runner.py tests/test_release_workflow_policy.py -q` passed with 24 tests after the hash-asset fallback and Docker pytest dependency patches, and 25 tests after the Python schema scope patch; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_exec_lock.py -q` passed with 4 tests after the macOS no-`flock` fallback; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline python -m pytest tests/test_*.py --cov=src/capsem --cov-report=xml:/private/tmp/capsem-codecov-python.xml --cov-fail-under=89 --junitxml=/private/tmp/capsem-python-junit.xml -q` passed with 744 tests, 7 skipped, and 91.07% coverage; `cargo check -p capsem-core --tests` passed.
+- Unit/contract: `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_install_sh.py tests/test_verify_deb_payload.py tests/test_release_workflow_policy.py -q` passed with 36 tests; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_ci_codesign_runner.py tests/test_release_workflow_policy.py -q` passed with 20 tests after the CI coverage-floor patch, and 21 tests after the scoped Python coverage-floor patch; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/capsem-build-chain/test_create_hash_assets.py tests/test_ci_codesign_runner.py tests/test_release_workflow_policy.py -q` passed with 24 tests after the hash-asset fallback and Docker pytest dependency patches, and 25 tests after the Python schema scope patch; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_exec_lock.py -q` passed with 4 tests after the macOS no-`flock` fallback; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline pytest tests/test_ci_codesign_runner.py tests/capsem-rootfs-artifacts/ -q` passed with 21 tests after the no-VM integration lane prerequisite fix; `UV_CACHE_DIR=/private/tmp/capsem-uv-cache PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache uv run --offline python -m pytest tests/test_*.py --cov=src/capsem --cov-report=xml:/private/tmp/capsem-codecov-python.xml --cov-fail-under=89 --junitxml=/private/tmp/capsem-python-junit.xml -q` passed with 744 tests, 7 skipped, and 91.07% coverage; `cargo check -p capsem-core --tests` passed.
 - Functional: `pnpm -C site run build` passed and generated `/index.html` plus `/faq/index.html`; `sh -n site/public/install.sh` passed; `bash -n scripts/run_signed.sh` passed; disposable local `scripts/run_signed.sh` codesign smoke passed; `PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache python3 -m py_compile scripts/verify_deb_payload.py` passed; `PYTHONPYCACHEPREFIX=/private/tmp/capsem-pycache python3 -m py_compile scripts/create_hash_assets.py` passed.
 - Adversarial: `.deb` verifier tests reject missing helper payloads and mismatched architecture; install script tests reject missing release assets.
 - E2E/VM:

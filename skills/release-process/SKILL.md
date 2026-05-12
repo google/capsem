@@ -148,6 +148,13 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   runner that top-level subset reports about 88.67% coverage, so the workflow
   floor is 89%. The complete local `just test` Python stage still runs the full
   suite and keeps its 90% floor.
+- **Do not execute artifact-dependent Python suites on a clean PR runner before
+  creating their artifacts.** `tests/capsem-bootstrap/` needs real
+  `assets/<arch>/` plus `assets/manifest.json`, and `tests/capsem-codesign/`
+  needs built, signed host binaries. The PR macOS no-VM integration lane runs
+  only suites without generated prerequisites and then import-collects every
+  `tests/capsem-*/` suite; the full `just test` gate owns bootstrap/codesign
+  execution after `_pack-initrd`/`_sign` have made the prerequisites real.
 - **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
 - **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.

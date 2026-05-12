@@ -76,3 +76,26 @@ def test_ci_python_schema_step_does_not_collect_vm_suites():
     assert "tests/capsem-" not in section
     assert "--cov-fail-under=89" in section
     assert "--cov-fail-under=90" not in section
+
+
+def test_pr_non_vm_integration_lane_has_no_generated_asset_prereqs():
+    """Clean PR runners must not execute suites that require built assets/signing."""
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    section = workflow.split(
+        "      - name: Python integration tests (non-VM suites)\n",
+        1,
+    )[1]
+    section = section.split(
+        "\n      # Verify all integration test suites import cleanly",
+        1,
+    )[0]
+    collect_section = workflow.split(
+        "      - name: Verify all integration test imports\n",
+        1,
+    )[1]
+    collect_section = collect_section.split("\n      # Schema drift check", 1)[0]
+
+    assert "tests/capsem-rootfs-artifacts/" in section
+    assert "tests/capsem-bootstrap/" not in section
+    assert "tests/capsem-codesign/" not in section
+    assert "tests/capsem-*/ --collect-only" in collect_section

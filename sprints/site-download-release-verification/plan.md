@@ -64,12 +64,17 @@ Linux `.deb` payload verification a permanent script and CI gate.
   separate `flock` binary.
 - macOS PR CI's scoped top-level Python contract lane uses its own clean-runner
   coverage floor while the full local `just test` Python gate remains 90%.
+- macOS PR CI's no-VM integration lane executes only suites with no generated
+  artifact prerequisite, while artifact-dependent bootstrap/codesign suites are
+  import-collected there and executed by the full `just test` gate after assets
+  and signed binaries exist.
 
 ## Testing Matrix
 
 - Unit/contract: focused Python tests for installer helper functions, `.deb`
   verifier archive parsing, CI policy drift, hash-asset hardlink fallback, and
-  the macOS-safe execution-lock fallback.
+  the macOS-safe execution-lock fallback, including policy coverage that PR CI
+  no longer runs asset-dependent integration suites before their prerequisites.
 - Functional: marketing site build and release workflow policy tests.
 - Adversarial: malformed/missing `.deb` payload tests and missing release asset
   tests.
