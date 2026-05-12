@@ -68,13 +68,16 @@ Linux `.deb` payload verification a permanent script and CI gate.
   artifact prerequisite, while artifact-dependent bootstrap/codesign suites are
   import-collected there and executed by the full `just test` gate after assets
   and signed binaries exist.
+- Linux PR CI compiles the KVM backend but skips live hosted-runner KVM probes
+  that can hang under coverage; release CI remains the real-KVM exercise gate.
 
 ## Testing Matrix
 
 - Unit/contract: focused Python tests for installer helper functions, `.deb`
   verifier archive parsing, CI policy drift, hash-asset hardlink fallback, and
   the macOS-safe execution-lock fallback, including policy coverage that PR CI
-  no longer runs asset-dependent integration suites before their prerequisites.
+  no longer runs asset-dependent integration suites before their prerequisites
+  or live hosted-runner KVM probes under coverage.
 - Functional: marketing site build and release workflow policy tests.
 - Adversarial: malformed/missing `.deb` payload tests and missing release asset
   tests.

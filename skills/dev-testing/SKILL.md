@@ -212,7 +212,7 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 | Crate | Tests | CI macOS | CI Linux | Smoke | Full |
 |-------|------:|:--------:|:--------:|:-----:|:----:|
-| capsem-core | ~1695 | Yes | Yes | No | Yes |
+| capsem-core | ~1695 | Yes | Compile + non-live-KVM | No | Yes |
 | capsem-agent | ~71 | Yes | No | No | Yes |
 | capsem-logger | ~47 | Yes | Yes | No | Yes |
 | capsem-proto | ~132 | Yes | Yes | No | Yes |

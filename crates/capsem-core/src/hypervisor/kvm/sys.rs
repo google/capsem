@@ -1424,6 +1424,10 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn require_kvm() -> Option<KvmFd> {
+        if std::env::var_os("CAPSEM_SKIP_KVM_TESTS").is_some() {
+            eprintln!("SKIPPED: CAPSEM_SKIP_KVM_TESTS set");
+            return None;
+        }
         match KvmFd::open() {
             Ok(kvm) => Some(kvm),
             Err(_) => {
