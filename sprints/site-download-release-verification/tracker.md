@@ -12,6 +12,7 @@
 - [x] Check live `capsem.org` and confirm the deployed site was still stale.
 - [x] Open PR #37 from a fresh `origin/main` branch.
 - [x] Fix Linux KVM test compile errors surfaced by PR CI.
+- [x] Fix macOS PR CI clean-checkout frontend dist ordering for Tauri tests.
 
 ## Notes
 
@@ -28,6 +29,10 @@
   errors: wrong `memory` path in a KVM MMIO test, missing `Debug` derives for
   `unwrap_err()`, missing `PermissionsExt`, and immutable test harness bindings
   around mutable queue notification.
+- PR #37 then failed macOS `test` before frontend build because
+  `capsem-app`'s Tauri test build checks `frontendDist`. CI now creates a
+  minimal `frontend/dist/index.html` before Rust unit coverage; the real
+  frontend check/test/build step still runs later.
 
 ## Coverage Ledger
 

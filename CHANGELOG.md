@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are available.
 - Fixed Linux KVM unit-test compilation issues surfaced by PR CI before the
   site/download installer hardening can merge.
+- Fixed macOS PR CI's clean-checkout Rust unit gate by creating a minimal
+  frontend dist before `capsem-app`'s Tauri test build runs.
 
 ## [1.1.1778542197] - 2026-05-11
 

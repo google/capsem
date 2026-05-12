@@ -138,6 +138,11 @@ jobs:
           cargo install cargo-llvm-cov --locked
           cargo install cargo-nextest --locked
 
+      - name: Create frontend dist for Tauri test build
+        run: |
+          mkdir -p frontend/dist
+          printf '<!doctype html><html><body></body></html>\n' > frontend/dist/index.html
+
       # Unit tests: all crates with coverage + JUnit XML for test analytics.
       # capsem-app (Tauri bin) is macOS-only; capsem-mcp-aggregator and
       # capsem-mcp-builtin are thin binaries that pull capsem-core logic.
