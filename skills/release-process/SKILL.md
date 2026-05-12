@@ -167,6 +167,14 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
 - **`just cross-compile` is not a perfect CI replica.** It runs in a docker container on macOS, which has FUSE (via Colima's Linux VM). CI runners may not have FUSE, so AppImage bundling that works locally can fail in CI. The recipe catches compile errors and most packaging issues, but environment differences (FUSE, linuxdeploy availability) can still slip through. Always verify the first CI run of a new Linux packaging change.
 - **Platform-gate all macOS-only APIs.** Every use of `libc::clonefile`, `AppleVzHypervisor`, `core_foundation_sys`, etc. must be wrapped in `#[cfg(target_os = "macos")]` -- struct, impl, AND tests. The Linux app build compiles the full workspace. `cargo test --test platform_gating` catches ungated symbols at unit test time. This burned v0.14.7 through v0.14.9.
 - **Pin Xcode version on macOS runners.** Always `sudo xcode-select -s /Applications/Xcode_16.2.app` (or latest) before any Apple toolchain use. GitHub periodically updates runner images and the default Xcode can break (Abort trap in xcodebuild). The preflight may pass on one runner instance while build-app-macos gets a different one. v0.14.12 failed because Xcode 15.4's xcodebuild crashed with `Abort trap: 6` when Tauri tried to locate notarytool -- despite zero workflow changes from v0.14.11 which passed 9 hours earlier.
+- **Installer identity and Gatekeeper checks are release gates.** Release
+  preflight must require `APPLE_INSTALLER_SIGNING_IDENTITY`, and it must start
+  with `Developer ID Installer:`. Pass it into `scripts/build-pkg.sh` through
+  the job environment, not inline expressions. After `xcrun stapler validate`,
+  `build-app-macos` must run `pkgutil --check-signature` and
+  `spctl -a -vv -t install` against the built `.pkg`. If a local macOS host
+  reports Code Signing subsystem errors for multiple known-good releases, treat
+  the host as suspect, but keep the CI macOS gate release-blocking.
 - **`latest.json` is optional in `gh release create`.** Tauri only generates updater `latest.json` for bundle types that produce `.tar.gz` + `.sig` artifacts (AppImage, not deb). With deb-only builds, no `latest.json` exists. The create-release step must handle this gracefully.
 - **AppImage was dropped after 14 failed releases.** linuxdeploy (a FUSE2 AppImage) cannot run on Ubuntu 24.04 CI runners (FUSE3 only). Tested: `libfuse2` install, `APPIMAGE_EXTRACT_AND_RUN=1` env var, both together -- none worked reliably. If AppImage support is needed in the future, the approach would be to pre-extract linuxdeploy (`--appimage-extract`) and run the extracted binary directly, bypassing FUSE entirely.
 
@@ -220,6 +228,7 @@ Propagation can lag 1-5 min after accepting. `notarytool history` must return a 
 | `APPLE_CERTIFICATE` | Base64 `.p12` (legacy 3DES) |
 | `APPLE_CERTIFICATE_PASSWORD` | Password for p12 |
 | `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Elie Bursztein (L8EGK4X86T)` |
+| `APPLE_INSTALLER_SIGNING_IDENTITY` | `Developer ID Installer: Elie Bursztein (L8EGK4X86T)` |
 | `APPLE_API_ISSUER` | App Store Connect issuer UUID |
 | `APPLE_API_KEY` | App Store Connect key ID |
 | `APPLE_API_KEY_PATH` | Contents of `.p8` private key |
@@ -250,7 +259,9 @@ Use `scripts/verify_deb_payload.py` for `.deb` inspection instead of ad hoc
 `tar`/`strings` checks. It validates control metadata, companion binaries, the
 signed manifest files, and optional minisign verification. The manifest
 signature check is mandatory for local-signature releases; a release is not
-verified until `minisign -Vm` passes against `config/manifest-sign.pub`.
+verified until `minisign -Vm` passes against `config/manifest-sign.pub`. The
+script handles `.tar.zst` Debian payloads with a streaming zstandard reader
+because published `.deb` members may omit an embedded content-size header.
 
 For a demo-facing macOS release, also prove the installer path users see:
 

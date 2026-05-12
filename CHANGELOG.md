@@ -12,12 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the first FAQ.
 - Added a reusable `.deb` payload verifier and wired release CI to validate
   Linux package helper binaries, signed manifests, and manifest signatures.
+- Added a macOS release CI gate that requires a Developer ID Installer identity
+  and runs `pkgutil --check-signature` plus Gatekeeper assessment after
+  notarization and stapling.
 
 ### Fixed
 - Fixed the marketing-site installer for the stamped v1.1 package assets:
   macOS now installs the downloaded `.pkg` with the native installer, and
   package downloads are checked against the release manifest when local tools
   are available.
+- Fixed `.deb` payload verification for zstd-compressed packages without an
+  embedded content-size header, matching the published Debian package format.
 - Fixed Linux KVM unit-test compilation issues surfaced by PR CI before the
   site/download installer hardening can merge.
 - Fixed macOS PR CI's clean-checkout Rust unit gate by creating a minimal

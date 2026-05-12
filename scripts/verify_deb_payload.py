@@ -99,7 +99,8 @@ def _decompress(name: str, payload: bytes) -> bytes:
                 stderr = result.stderr.decode("utf-8", errors="replace")
                 raise VerificationError(f"zstd failed to decompress {name}: {stderr}")
             return result.stdout
-        return zstandard.ZstdDecompressor().decompress(payload)
+        with zstandard.ZstdDecompressor().stream_reader(BytesIO(payload)) as reader:
+            return reader.read()
     return payload
 
 

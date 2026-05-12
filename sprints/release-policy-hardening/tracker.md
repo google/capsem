@@ -2,7 +2,7 @@
 
 ## Mission
 
-Do not tag `v1.1.1778456247` until the release artifacts, Policy V2 UI/runtime,
+Do not tag `v1.1.1778542197` until the release artifacts, Policy V2 UI/runtime,
 telemetry, docs, and package verification can prove the shipped behavior from a
 clean install. This tracker is the execution board; each `T*.md` file is the
 owning sub-sprint doc with detailed task lists.
@@ -20,10 +20,10 @@ owning sub-sprint doc with detailed task lists.
 | T6 telemetry/session tooling | Implementation complete; focused real-session trace proof passed in T10 | P2 | Yes | Old/core DB compatibility, current Policy V2 schema checks, MCP correlation, timeline/triage layers, frontend policy fields, lifecycle tests, and legacy migration coverage are implemented. |
 | T7 swarm intake and review control | Owner mapping complete; downstream closeout open | P0 | Yes | FD01-FD14 transfer board, Galileo mapping audit, and command-validity sweep are captured; downstream blocker checkboxes stay open until T8-T12 resolves or defers each point. |
 | T8 policy integration E2E | Implementation complete; focused VM proof passed in T10 | P1 | Yes | Hook dispatch deferred for 1.1, backend/frontend hook writes rejected, reload banner dismissal and live `/settings` reload/timeline E2E path implemented; focused live `/settings` + `/reload-config` MCP E2E passed on 2026-05-10. |
-| T9 release metadata and changelog | Implementation complete; commit discipline pending | P1 | Yes | Exact `1.1.1778456247` stamp, changelog, latest release, release page, lockfile, stamp recipe, and internal dependency metadata are synchronized. |
+| T9 release metadata and changelog | Implementation complete; commit discipline pending | P1 | Yes | Exact `1.1.1778542197` stamp, changelog, latest release, release page, lockfile, stamp recipe, and internal dependency metadata are synchronized. |
 | T10 focused verification | Complete; T11 blockers explicit | P0 | Yes | Focused Rust/Python/frontend/docs, strict `.deb` install, host doctor, T8 policy E2E, Gate A visual proof, Gate B command proof, rootfs validation, frontend coverage, and `.pkg` expansion/signature proof are green or captured; clean installed-package proof and full-suite gates remain T11. |
 | T11 local release candidate gate | Full suite, private preflight, install smoke, installed doctor, demo UI, and final post-tray full gate green; manual sign-off open | P0 | Yes | Final `just test`, host doctor, `just exec "capsem-doctor"`, restored-private preflight, release workflow check, host package install, installed CLI run, installed doctor, rebuilt `.pkg` app-materialization fix, `/Applications` demo UI launch, `just run-ui --` process proof, and installed-app tray relaunch proof are captured. Elie Gate C/Gate D visual sign-off still blocks T12. |
-| T12 CI green release landing | Not started | P0 | Yes | Tag `v1.1.1778456247`, wait for CI green, verify live release assets. |
+| T12 CI green release landing | Release landed; CI hardening follow-up in progress | P0 | Yes | `v1.1.1778542197` is published/latest, release CI and site publish are green, live manifest/packages verify, and follow-up CI now blocks future releases on macOS pkg signature/Gatekeeper checks. |
 
 ## Active Swarm
 
@@ -311,7 +311,7 @@ tests/capsem-session/test_check_session_compat.py -q` (2 passed),
 
 - [x] T8.1 Decide Shipping Scope.
 - [x] T8.2 If Hook Dispatch Ships: deferred post-1.1 because configured
-  external hook dispatch does not ship in `1.1.1778456247`.
+  external hook dispatch does not ship in `1.1.1778542197`.
 - [x] T8.3 If Hook Dispatch Does Not Ship.
 - [x] T8.4 Running Session Apply Semantics: implementation and UI tests done;
   focused VM proof passed in T10.
@@ -473,7 +473,7 @@ tests/capsem-session/test_check_session_compat.py -q` (2 passed),
 - Telemetry: session/timeline assertion added to focused E2E path.
 - Performance: n/a.
 - Missing/deferred: configured external hook dispatch and image/fork selector
-  are deferred for `1.1.1778456247`; docs/UI mark or hide them.
+  are deferred for `1.1.1778542197`; docs/UI mark or hide them.
 - Runtime truth: T8.6 support matrix records shipped/deferred UI surfaces, and
   T2.8 proves or hides them.
 
@@ -529,7 +529,7 @@ tests/capsem-session/test_check_session_compat.py -q` (2 passed),
 
 ### T12
 
-- Unit/contract: exact `1.1.1778456247` version agrees across tag, metadata, and
+- Unit/contract: exact `1.1.1778542197` version agrees across tag, metadata, and
   release docs.
 - Functional: CI release workflow runs green and publishes expected assets.
 - Adversarial: release job fails if expected packages, manifests, signatures,
@@ -620,13 +620,19 @@ tests/capsem-session/test_check_session_compat.py -q` (2 passed),
 - [x] `just build-ui`
 - [x] `just run-ui --`
 - [x] `open /Applications/Capsem.app`
-- [ ] `just release v1.1.1778456247`
-- [ ] `gh release view v1.1.1778456247`
-- [ ] `minisign -Vm /tmp/capsem-v1.1.1778456247/manifest.json -p config/manifest-sign.pub`
-- [ ] `pkgutil --check-signature /tmp/capsem-v1.1.1778456247/Capsem-*.pkg`
-- [ ] `spctl -a -vv -t install /tmp/capsem-v1.1.1778456247/Capsem-*.pkg`
-- [ ] `xcrun stapler validate /tmp/capsem-v1.1.1778456247/Capsem-*.pkg`
-- [ ] `dpkg-deb --contents /tmp/capsem-v1.1.1778456247/*.deb | rg 'manifest\\.json(\\.minisig)?|capsem-mcp-(aggregator|builtin)'`
+- [x] `gh release view v1.1.1778542197`
+- [x] `gh run view 25703667428 --json status,conclusion,headSha,url,jobs`
+- [x] `gh run view 25723005949 --json status,conclusion,headSha,url,jobs`
+- [x] `gh run view 25723006002 --json status,conclusion,headSha,url,jobs`
+- [x] `minisign -Vm /private/tmp/capsem-release-verify/manifest.json -x /private/tmp/capsem-release-verify/manifest.json.minisig -p config/manifest-sign.pub`
+- [x] Package SHA256 checks for `Capsem-1.1.1778542197.pkg`,
+  `Capsem_1.1.1778542197_amd64.deb`, and
+  `Capsem_1.1.1778542197_arm64.deb` matched the release manifest.
+- [x] `uv run --offline python scripts/verify_deb_payload.py /private/tmp/capsem-release-verify/Capsem_1.1.1778542197_amd64.deb /private/tmp/capsem-release-verify/Capsem_1.1.1778542197_arm64.deb --minisign-pubkey config/manifest-sign.pub`
+- [ ] Local `pkgutil --check-signature`, `spctl -a -vv -t install`, and
+  `xcrun stapler validate` reported Code Signing subsystem errors on macOS 26
+  for both v1.0 and v1.1 packages; follow-up release CI now makes
+  `pkgutil`/`spctl` package assessment release-blocking on macOS CI.
 
 ## Evidence Ledger
 
@@ -641,7 +647,7 @@ here. Do not rely on chat history as evidence.
 | Gate B CLI/VM | Pass | `just exec "echo cli-ok"` + `just exec "capsem-doctor"` + T8 policy E2E | CLI output is understandable; VM doctor and policy/session proof pass | `sprints/release-policy-hardening/evidence/T10-2026-05-10-minisign-install-proof.md`; `sprints/release-policy-hardening/evidence/T11-2026-05-10-full-release-gate.md` | T10.5/T10.8/T11.4 | Final VM doctor rerun passed in T11; manual product sign-off still belongs to Gate C/Gate D. |
 | Gate C desktop dev launch | Partial | `just build-ui` + `just run-ui --` + browser screenshot | embedded UI launches, service/gateway reachable, and demo chrome does not show the build timestamp | `sprints/release-policy-hardening/evidence/T11-2026-05-10-full-release-gate.md`; `sprints/release-policy-hardening/evidence/T11-gate-c-no-build-stamp.png` | T11.4 | `just build-ui` and `just run-ui --` process proof passed; no-build-stamp screenshot is captured. Elie visual sign-off remains open until he accepts the installed app path. |
 | Gate D installed package | Partial | Fresh `.pkg` build + `just install` + installed service/CLI/UI smoke + Docker/systemd `.deb` install e2e inside `just test` | package payload contains signed manifest/signature/dev pubkey, every helper binary, and a postinstall `/Applications/Capsem.app` materialization fallback; Linux install e2e is green; host service responds; installed CLI VM run and installed doctor pass; demo UI process runs from `/Applications/Capsem.app`; killed tray is relaunched by the installed service when the app launches or remains open | `sprints/release-policy-hardening/evidence/T10-2026-05-10-minisign-install-proof.md`; `sprints/release-policy-hardening/evidence/T11-2026-05-10-full-release-gate.md`; `/private/tmp/capsem-pkg-1.1.1778445002-expanded` | T0/T10.1/T11.3 | Elie visual sign-off remains open before T12. |
-| T12 CI/live release | Not run | `just release v1.1.1778456247` + `gh release view/download` | CI green, published assets signed/payload-verified, downloaded package proof recorded | TBD | TBD | TBD |
+| T12 CI/live release | Pass with local macOS package-assessment caveat | `gh run view 25703667428`; `gh run view 25723005949`; `gh run view 25723006002`; `gh release view/download`; `minisign -Vm`; hardened `scripts/verify_deb_payload.py` | Release CI green, site publish green, published assets signed and SHA256-verified, downloaded `.deb` package payloads verified | `sprints/release-policy-hardening/T12-ci-release-landing.md#landed-release-evidence`; `/private/tmp/capsem-release-verify` | T12 | Local macOS 26 `pkgutil`/`spctl`/`stapler` reported Code Signing subsystem errors for both v1.0 and v1.1 packages; follow-up release CI now adds macOS pkg signature/Gatekeeper gates. |
 
 ## Pre-Sprint Transfer Ledger
 
@@ -671,16 +677,16 @@ checkboxes in T7 stay open until implementation resolves or defers each point.
 - [x] Do we disable Tauri updater for this release, or build a full-install
   updater path that includes companion binaries and service/package state?
 - [x] Is configured external policy hook dispatch shipping in
-  `1.1.1778456247`, or is only Spec0/client/fail-closed/audit infrastructure
+  `1.1.1778542197`, or is only Spec0/client/fail-closed/audit infrastructure
   shipping? Decision: external dispatch is deferred; only Spec0/client/audit
   infrastructure plus non-hook Policy V2 enforcement ships.
 - [ ] Can clean macOS `.pkg` boot verification run in CI, or is it a manual
   release blocker with recorded proof?
 - [ ] Should helper/external stdio MCP children inherit any parent env beyond
   explicitly configured server env?
-- [x] What exact `1.1.1778456247` suffix ships, and does `_stamp-version` need to
+- [x] What exact `1.1.1778542197` suffix ships, and does `_stamp-version` need to
   change before `just install` or `just cut-release`? Decision:
-  `1.1.1778456247`; `_stamp-version` now defaults to `1.1.<timestamp>` and
+  `1.1.1778542197`; `_stamp-version` now defaults to `1.1.<timestamp>` and
   accepts `CAPSEM_RELEASE_VERSION` for exact stamping.
 
 ## Notes

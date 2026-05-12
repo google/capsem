@@ -213,6 +213,29 @@ def test_linux_deb_contents_validation_checks_each_required_payload():
         assert payload in verifier
 
 
+def test_macos_pkg_signature_and_gatekeeper_are_release_blocking():
+    """Release macOS packages must be signed with Installer ID and assessed."""
+    text = _workflow_text()
+    preflight = re.search(
+        r"(?ms)^  preflight:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert preflight, "preflight job missing"
+    preflight_body = preflight.group("body")
+    assert "APPLE_INSTALLER_SIGNING_IDENTITY" in preflight_body
+    assert "Developer ID Installer:" in preflight_body
+
+    build_macos = re.search(
+        r"(?ms)^  build-app-macos:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert build_macos, "build-app-macos job missing"
+    body = build_macos.group("body")
+    assert '"$APPLE_INSTALLER_SIGNING_IDENTITY"' in body
+    assert "pkgutil --check-signature" in body
+    assert "spctl -a -vv -t install" in body
+
+
 def test_linux_app_manifest_signing_installs_minisign_before_use():
     """Linux release app jobs must install minisign before signing manifests."""
     text = _workflow_text()
