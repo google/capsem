@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a dedicated marketing FAQ page with a hypervisor-vs-container answer
+  as the first FAQ.
+- Added a reusable `.deb` payload verifier and wired release CI to validate
+  Linux package helper binaries, signed manifests, and manifest signatures.
+
+### Fixed
+- Fixed the marketing-site installer for the stamped v1.1 package assets:
+  macOS now installs the downloaded `.pkg` with the native installer, and
+  package downloads are checked against the release manifest when local tools
+  are available.
+
 ## [1.1.1778542197] - 2026-05-11
 
 ### Changed

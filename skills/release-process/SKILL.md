@@ -69,7 +69,7 @@ git push origin vX.Y.Z
 gh run watch <run-id>
 gh run view <run-id> --json status,conclusion,headSha,url
 gh run view <run-id> --log-failed
-gh release view vX.Y.Z --json name,tagName,isLatest,assets,url
+gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,assets,url
 ```
 
 Before pushing a tag, confirm the tag does not already exist remotely. After
@@ -218,10 +218,12 @@ pkgutil --check-signature /tmp/verify/Capsem-*.pkg
 spctl -a -vv -t install /tmp/verify/Capsem-*.pkg      # Gatekeeper accepts notarized+stapled
 xcrun stapler validate /tmp/verify/Capsem-*.pkg       # Staple ticket present
 gh release download vX.Y.Z --pattern '*.deb' -D /tmp/verify
+python3 scripts/verify_deb_payload.py /tmp/verify/*.deb --minisign-pubkey config/manifest-sign.pub
 ```
 
-If `dpkg-deb` is available, inspect the `.deb` contents and confirm the
-manifest, manifest signature, and companion binaries are present. The manifest
+Use `scripts/verify_deb_payload.py` for `.deb` inspection instead of ad hoc
+`tar`/`strings` checks. It validates control metadata, companion binaries, the
+signed manifest files, and optional minisign verification. The manifest
 signature check is mandatory for local-signature releases; a release is not
 verified until `minisign -Vm` passes against `config/manifest-sign.pub`.
 
@@ -241,7 +243,6 @@ report success while the GUI is missing. Relaunching `Capsem.app` must ask the
 running service to ensure the tray via `/companions/tray/ensure`; spawning
 `capsem-tray` directly bypasses the service parent guard and is not the product
 path.
-
 ## Documentation site
 
 The product website uses Astro Starlight. Docs live in `docs/src/content/docs/`.

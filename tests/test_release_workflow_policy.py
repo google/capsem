@@ -187,14 +187,17 @@ def test_rootfs_validation_is_hard_gated_and_canonical():
 def test_linux_deb_contents_validation_checks_each_required_payload():
     """The Linux release job must prove every package payload independently."""
     text = _workflow_text()
+    verifier = (REPO_ROOT / "scripts" / "verify_deb_payload.py").read_text()
     build_linux = re.search(
         r"(?ms)^  build-app-linux:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
         text,
     )
     assert build_linux, "build-app-linux job missing"
     body = build_linux.group("body")
-    assert "required_deb_payloads=(" in body
-    assert "grep -q \"$required\"" in body
+    assert "python3 scripts/verify_deb_payload.py" in body
+    assert "--minisign-pubkey config/manifest-sign.pub" in body
+    assert "deb_arch=arm64" in body
+    assert "deb_arch=amd64" in body
     for payload in (
         "usr/bin/capsem",
         "usr/bin/capsem-service",
@@ -207,7 +210,22 @@ def test_linux_deb_contents_validation_checks_each_required_payload():
         "usr/share/capsem/assets/manifest.json",
         "usr/share/capsem/assets/manifest.json.minisig",
     ):
-        assert payload in body
+        assert payload in verifier
+
+
+def test_linux_app_manifest_signing_installs_minisign_before_use():
+    """Linux release app jobs must install minisign before signing manifests."""
+    text = _workflow_text()
+    build_linux = re.search(
+        r"(?ms)^  build-app-linux:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert build_linux, "build-app-linux job missing"
+    body = build_linux.group("body")
+    install_pos = body.index("sudo apt-get install -y --no-install-recommends minisign zstd")
+    sign_pos = body.index("minisign -S -s /tmp/manifest-sign.key")
+    assert install_pos < sign_pos
+    assert "minisign \\" not in body[body.index("Install Tauri system deps"):body.index("Build frontend")]
 
 
 def test_install_e2e_downloads_built_assets_before_running_recipe():
