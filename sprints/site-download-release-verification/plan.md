@@ -24,6 +24,7 @@ Linux `.deb` payload verification a permanent script and CI gate.
 - `tests/test_verify_deb_payload.py`
 - `.github/workflows/release.yaml`
 - `.github/workflows/ci.yaml`
+- `justfile`
 - `tests/test_release_workflow_policy.py`
 - `tests/test_ci_codesign_runner.py`
 - `scripts/run_signed.sh`
@@ -52,6 +53,8 @@ Linux `.deb` payload verification a permanent script and CI gate.
   `just test` gate, with a policy test preventing future drift.
 - Clean Linux CI can rebuild VM asset hash aliases even when Docker-produced
   source files cannot be hardlinked by the runner user.
+- PR install E2E runs pytest inside the Docker/systemd container with the dev
+  dependency group available instead of relying on implicit `uv run` behavior.
 
 ## Testing Matrix
 

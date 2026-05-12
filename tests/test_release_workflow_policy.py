@@ -391,4 +391,5 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     assert 'bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"' in body
     assert 'bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub' in body
     assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"' in body
+    assert "uv run --group dev python -m pytest tests/capsem-install/" in body
     assert 'scripts/repack-deb.sh "$DEB" /cargo-target/debug assets' not in body

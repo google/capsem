@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the documented `just test` gate.
 - Fixed clean-checkout install E2E asset alias creation by copying hash-named
   assets when Linux protected-hardlink rules reject Docker-produced files.
+- Fixed PR install E2E's Docker test runner to include the project dev
+  dependency group before invoking pytest inside the installed-package
+  container.
 
 ## [1.1.1778542197] - 2026-05-11
 
