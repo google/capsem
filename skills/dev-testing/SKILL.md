@@ -208,20 +208,20 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 ## Test matrix: what runs where
 
-### Rust crate CI coverage
+### Rust crate CI matrix
 
 | Crate | Tests | CI macOS | CI Linux | Smoke | Full |
 |-------|------:|:--------:|:--------:|:-----:|:----:|
-| capsem-core | ~1695 | Yes | Compile + non-live-KVM | No | Yes |
-| capsem-agent | ~71 | Yes | No | No | Yes |
-| capsem-logger | ~47 | Yes | Yes | No | Yes |
-| capsem-proto | ~132 | Yes | Yes | No | Yes |
-| capsem-gateway | ~38 | Yes | No | No | Yes |
-| capsem-service | ~109 | Yes | Yes | No | Yes |
-| capsem (CLI) | ~140 | Yes | Yes | No | Yes |
-| capsem-mcp | ~67 | Yes | Yes | No | Yes |
+| capsem-core | ~1695 | Yes | Compile/no-run + non-live-KVM | No | Yes |
+| capsem-agent | ~71 | Yes | Compile/no-run | No | Yes |
+| capsem-logger | ~47 | Yes | Compile/no-run | No | Yes |
+| capsem-proto | ~132 | Yes | Compile/no-run | No | Yes |
+| capsem-gateway | ~38 | Yes | Compile/no-run | No | Yes |
+| capsem-service | ~109 | Yes | Compile/no-run | No | Yes |
+| capsem (CLI) | ~140 | Yes | Compile/no-run | No | Yes |
+| capsem-mcp | ~67 | Yes | Compile/no-run | No | Yes |
 | capsem-tray | ~47 | Yes | No | No | Yes |
-| capsem-process | ~62 | Yes | No | No | Yes |
+| capsem-process | ~62 | Yes | Compile/no-run | No | Yes |
 | capsem-app | ~35 | Check | No | No | Yes |
 
 ### Python integration suite tier map

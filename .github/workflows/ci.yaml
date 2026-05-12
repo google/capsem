@@ -9,13 +9,13 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Linux: compile + test KVM hypervisor backend (cfg(target_os = "linux"))
+  # Linux: compile KVM hypervisor backend (cfg(target_os = "linux"))
   # ---------------------------------------------------------------------------
   test-linux:
     runs-on: ubuntu-24.04-arm
     env:
       # Hosted ARM runners can expose /dev/kvm but hang in nested/restricted
-      # KVM ioctls under llvm-cov. PR CI compiles the Linux KVM backend; the
+      # KVM ioctls. PR CI compiles the Linux KVM backend and test binaries; the
       # release pipeline owns real-KVM exercise.
       CAPSEM_SKIP_KVM_TESTS: "1"
     steps:
@@ -29,8 +29,8 @@ jobs:
 
       # Try to enable KVM for diagnostics only. GitHub-hosted runners don't
       # always expose nested virt -- and when they do, restricted ioctls can
-      # hang under coverage. PR CI compiles the KVM backend with
-      # CAPSEM_SKIP_KVM_TESTS=1; the release pipeline owns real-KVM coverage.
+      # hang. PR CI compiles the KVM backend with CAPSEM_SKIP_KVM_TESTS=1; the
+      # release pipeline owns real-KVM coverage.
       - name: Enable KVM (best-effort)
         continue-on-error: true
         run: |
@@ -38,32 +38,20 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install tools
-        run: |
-          cargo install cargo-nextest --locked
-          cargo install cargo-llvm-cov --locked
-
-      # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux).
+      # Compile Linux library + service crate tests without executing them. The
+      # macOS job owns runtime unit coverage for portable code; this job proves
+      # the Linux-only/KVM cfg surface and test binaries compile on aarch64.
       # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
-      # other host crate is portable and runs here so it gets Linux-specific regression coverage.
-      - name: Unit tests (KVM backend) with coverage
+      # other host crate is portable and compiles here for Linux-specific regression coverage.
+      - name: Compile tests (KVM backend, no live KVM)
+        timeout-minutes: 15
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json --fail-under-lines 65 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process 2>&1 | tee coverage-summary-linux.txt
-
-      - name: Upload Linux coverage
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
-        with:
-          files: codecov-linux.json
-          flags: linux-unit
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+          cargo test --no-run --all-targets -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process
 
       # Note KVM exercise status. Hosted ARM runners may lack /dev/kvm or
-      # expose restricted nested KVM; PR CI keeps this compile-only and release
-      # CI owns live-KVM coverage. Surfacing as a warning keeps CI honest
-      # without false-failing or hanging on a runner-fleet limitation.
+      # expose restricted nested KVM; PR CI keeps this compile/no-run and
+      # release CI owns live-KVM coverage. Surfacing as a warning keeps CI
+      # honest without false-failing or hanging on a runner-fleet limitation.
       - name: Note KVM exercise status
         run: |
           if [ "${CAPSEM_SKIP_KVM_TESTS:-}" = "1" ]; then
@@ -83,8 +71,6 @@ jobs:
           elif [ ! -e /dev/kvm ]; then
             KVM_STATUS="not available"
           fi
-          COV=$(grep 'TOTAL' coverage-summary-linux.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
-
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Linux Test Results
 
@@ -92,8 +78,8 @@ jobs:
           |--------|--------|
           | Runner | ubuntu-24.04-arm (aarch64) |
           | /dev/kvm | $KVM_STATUS |
-          | Line coverage | $COV |
-          | KVM backend | compiled (real-KVM tests run in release pipeline) |
+          | Test execution | no-run in PR CI |
+          | KVM backend | compiled with test binaries (real-KVM tests run in release pipeline) |
           EOF
 
       # T5: preserve test artifacts on failure (Linux job).

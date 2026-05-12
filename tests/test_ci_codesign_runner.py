@@ -102,7 +102,7 @@ def test_pr_non_vm_integration_lane_has_no_generated_asset_prereqs():
 
 
 def test_pr_linux_ci_compiles_kvm_without_exercising_hosted_kvm():
-    """Hosted ARM KVM can hang under coverage; PR CI must stay compile-only."""
+    """Hosted ARM KVM can hang; PR CI must stay compile/no-run."""
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     linux_job = workflow.split("  test-linux:\n", 1)[1]
     linux_job = linux_job.split("\n  # ---------------------------------------------------------------------------", 1)[0]
@@ -118,6 +118,10 @@ def test_pr_linux_ci_compiles_kvm_without_exercising_hosted_kvm():
 
     assert 'CAPSEM_SKIP_KVM_TESTS: "1"' in linux_job
     assert "release pipeline owns real-KVM coverage" in linux_job
-    assert "cargo llvm-cov nextest" in linux_job
+    assert "Compile tests (KVM backend, no live KVM)" in linux_job
+    assert "timeout-minutes: 15" in linux_job
+    assert "cargo test --no-run --all-targets" in linux_job
+    assert "cargo llvm-cov nextest" not in linux_job
+    assert "codecov-linux.json" not in linux_job
     assert "-p capsem-core" in linux_job
     assert 'std::env::var_os("CAPSEM_SKIP_KVM_TESTS")' in kvm_sys

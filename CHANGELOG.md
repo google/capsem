@@ -45,9 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed macOS PR CI's no-VM Python integration lane so clean runners execute
   only suites without generated asset/signing prerequisites while still
   import-checking every integration suite.
-- Fixed Linux PR CI so hosted ARM runners compile the KVM backend without
-  hanging in live KVM probes under coverage; release CI remains the real-KVM
-  exercise gate.
+- Fixed Linux PR CI so hosted ARM runners compile the KVM backend and test
+  binaries without hanging in live KVM probes or unbounded hosted-runner test
+  execution; release CI remains the real-KVM exercise gate.
 
 ## [1.1.1778542197] - 2026-05-11
 
