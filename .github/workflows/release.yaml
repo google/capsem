@@ -21,7 +21,19 @@ jobs:
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
+          if [ -z "$APPLE_INSTALLER_SIGNING_IDENTITY" ]; then
+            echo "::error::APPLE_INSTALLER_SIGNING_IDENTITY secret is not set"
+            exit 1
+          fi
+          case "$APPLE_INSTALLER_SIGNING_IDENTITY" in
+            "Developer ID Installer:"*) ;;
+            *)
+              echo "::error::APPLE_INSTALLER_SIGNING_IDENTITY must name a Developer ID Installer identity"
+              exit 1
+              ;;
+          esac
           echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
           KEYCHAIN="preflight-$$.keychain"
           security create-keychain -p "" "$KEYCHAIN"
@@ -375,6 +387,8 @@ jobs:
           done
 
       - name: Build .pkg installer
+        env:
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           bash scripts/build-pkg.sh \
@@ -382,7 +396,7 @@ jobs:
             "target/release" \
             "assets" \
             "$VERSION" \
-            "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
+            "$APPLE_INSTALLER_SIGNING_IDENTITY"
 
       - name: Verify .pkg payload manifest
         run: |
@@ -419,6 +433,12 @@ jobs:
             --wait --timeout 30m
           xcrun stapler staple "packages/Capsem-$VERSION.pkg"
           xcrun stapler validate "packages/Capsem-$VERSION.pkg"
+
+      - name: Verify .pkg signature and Gatekeeper acceptance
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          pkgutil --check-signature "packages/Capsem-$VERSION.pkg"
+          spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"
 
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json

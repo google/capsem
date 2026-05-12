@@ -2,12 +2,12 @@
 
 ## Goal
 
-Prepare the next `1.1.1778456247` release candidate by fixing the blocker-class issues
+Prepare the next `1.1.1778542197` release candidate by fixing the blocker-class issues
 found in the post-sprint swarm review: release artifacts must install and boot
 on fresh machines, Policy V2 settings must be usable from the UI, hook runtime
 must fail closed safely, and docs must not overclaim shipped behavior.
 
-T9 selected exact version `1.1.1778456247` and owns keeping the stamp recipe,
+T9 selected exact version `1.1.1778542197` and owns keeping the stamp recipe,
 docs, binaries, and tag plan on that line.
 
 ## Status
@@ -22,11 +22,11 @@ docs, binaries, and tag plan on that line.
 | T5 service/process/package helpers | Implementation complete; focused package/VM proof passed in T10 | P0 | T0 package layout, T1 rootfs gate | Focused Rust/Python checks + compile gate + T10 Gate B/E2E/package proof | Helper packaging, spec route/auth proof, rootfs validation, env isolation, async cleanup, and builtin-aware reload/refresh are implemented; clean installed-package launch remains T11. |
 | T6 telemetry/session tooling | Implementation complete; focused real-session trace proof passed in T10 | P2 | T3/T8 telemetry semantics | Logger/core/service/MCP/session/frontend gates passed + focused T8 timeline assertion | Old/core DB compatibility, Policy V2 schema checks, MCP/tool correlation, dns/hook/audit/snapshot timeline layers, triage, frontend policy fields, lifecycle tests, and legacy migration coverage are implemented. |
 | T7 swarm intake and review control | Owner mapping complete; downstream closeout open | P0 | T8-T12 downstream resolution | FD01-FD14 transfer trackers + Galileo audit | Final investigation wave and mapping audit are captured; every finding doc is linked to owner T-track rows, while downstream blocker checkboxes stay open until resolved or deferred. |
-| T8 policy integration E2E | Implementation complete; focused VM proof passed in T10 | P1 | T2/T3/T5/T6 | Hook defer decision + 388 frontend tests + focused Rust checks + focused VM E2E | Configured external hook dispatch is deferred for `1.1.1778456247`; non-hook Policy V2 settings/reload/timeline E2E path, reload banner dismissal, backend hook rejection, runtime support matrix, and live `/settings` + `/reload-config` MCP E2E proof are implemented. |
-| T9 release metadata and changelog | Implementation complete; commit discipline pending | P1 | T0-T8 final decisions | version sync + latest-release extraction + release page + docs build + partial workflow check | Exact `1.1.1778456247` stamp, changelog, latest release, 1.1 release page, lockfile, stamp recipe, and internal dependency metadata are synchronized; workflow preflight still needs local signing prerequisites. |
+| T8 policy integration E2E | Implementation complete; focused VM proof passed in T10 | P1 | T2/T3/T5/T6 | Hook defer decision + 388 frontend tests + focused Rust checks + focused VM E2E | Configured external hook dispatch is deferred for `1.1.1778542197`; non-hook Policy V2 settings/reload/timeline E2E path, reload banner dismissal, backend hook rejection, runtime support matrix, and live `/settings` + `/reload-config` MCP E2E proof are implemented. |
+| T9 release metadata and changelog | Implementation complete; commit discipline pending | P1 | T0-T8 final decisions | version sync + latest-release extraction + release page + docs build + partial workflow check | Exact `1.1.1778542197` stamp, changelog, latest release, 1.1 release page, lockfile, stamp recipe, and internal dependency metadata are synchronized; workflow preflight still needs local signing prerequisites. |
 | T10 focused verification | Complete; T11 blockers explicit | P0 | T0-T9 fixes | focused Rust/Python/frontend/docs + `.deb` install + `.pkg` expansion + Gate A/B + T8 E2E proof | Targeted checks, host doctor, strict `just test-install`, `just exec "echo cli-ok"`, `just exec "capsem-doctor"`, focused T8 policy E2E, rootfs validation, `.pkg` expansion/signature proof, frontend coverage, and `just ui` visual evidence are passing/captured; clean installed-package proof remains a T11/manual-host gate. |
 | T11 local release candidate gate | Full suite/private preflight/install smoke/installed doctor/demo UI green; manual sign-off open | P0 | T10 green | Full `just test`, final doctor, restored-private preflight, VM doctor, Docker install e2e, host install smoke | Final `just test`, final host `just doctor`, direct B3SUMS/signature checks, `just exec "capsem-doctor"`, restored Apple/notary/manifest preflight, `just install`, installed CLI run, installed doctor, rebuilt `.pkg` app-materialization fix, `/Applications` demo UI launch, `just run-ui --` process proof, and installed-app tray relaunch proof passed by 2026-05-11. Remaining blockers are Elie Gate C/Gate D visual sign-off and the no-tag/no-push hold before T12. |
-| T12 CI green release landing | Not started | P0 | T11 signed off | 10 CI/live-release gates | Tag `v1.1.1778456247`, CI green, release assets verified, release landed. |
+| T12 CI green release landing | Release landed; CI hardening follow-up in progress | P0 | T11 signed off | CI green + live asset verification + follow-up package gates | `v1.1.1778542197` is published/latest, CI and site publish are green, live manifest/packages verify, and follow-up CI now blocks future releases on macOS pkg signature/Gatekeeper checks. |
 
 ## Phases
 
@@ -64,7 +64,7 @@ docs, binaries, and tag plan on that line.
    `tracker.md`.
 7. Run T11 locally: full suite, package generation, local install, and Elie +
    Codex CLI/UI/full-launch verification.
-8. Only after T11 is signed off, run T12: tag `v1.1.1778456247`, wait for CI, verify
+8. Only after T11 is signed off, run T12: tag `v1.1.1778542197`, wait for CI, verify
    published assets, and mark the release landed.
 
 ## Elie + Codex Manual Gates
@@ -150,7 +150,7 @@ The release workflow must fail before publish if any expected item is missing.
 - `scripts/preflight.sh` and `scripts/check-release-workflow.sh`: verify Apple
   signing/notarization readiness, Tauri signing readiness if updater remains
   enabled, and manifest-signing readiness.
-- Release job: after tag `v1.1.1778456247`, wait for CI green and require live
+- Release job: after tag `v1.1.1778542197`, wait for CI green and require live
   GitHub release asset verification before declaring the release landed.
 
 ## Immediate Release Blockers
@@ -299,7 +299,7 @@ findings, and had its output copied into a durable finding doc under
 - Docs/release notes distinguish shipped hook Spec0/runtime infrastructure from
   not-yet-wired user/corp hook dispatch.
 - T8 records that configured external hook dispatch does not ship in
-  `1.1.1778456247`; UI/docs/tests reject or describe hook dispatch as
+  `1.1.1778542197`; UI/docs/tests reject or describe hook dispatch as
   infrastructure-only.
 - Frontend runtime/image truth has an owner: asset readiness, image/fork UI
   contract, create defaults, and service/gateway status truth cannot remain
@@ -311,5 +311,5 @@ findings, and had its output copied into a durable finding doc under
   release tagging.
 - `just install` generates and installs the package locally before CI/tagging,
   and Elie signs off CLI, JS UI, desktop launch, and installed app behavior.
-- T12 waits for CI green and verifies live `v1.1.1778456247` release assets before the
+- T12 waits for CI green and verifies live `v1.1.1778542197` release assets before the
   release is marked landed.
