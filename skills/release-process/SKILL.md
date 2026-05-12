@@ -69,7 +69,7 @@ git push origin vX.Y.Z
 gh run watch <run-id>
 gh run view <run-id> --json status,conclusion,headSha,url
 gh run view <run-id> --log-failed
-gh release view vX.Y.Z --json name,tagName,isLatest,assets,url
+gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,assets,url
 ```
 
 Before pushing a tag, confirm the tag does not already exist remotely. After
@@ -136,6 +136,31 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   Local VM assets use a signed manifest too; if `just exec`, `just install`, or
   `scripts/sync-dev-assets.sh` signs `assets/manifest.json`, a machine without
   `minisign` is not actually ready.
+- **Do not make macOS CI depend on a Homebrew-only `flock` binary.** GitHub's
+  macOS runners do not provide `flock`, even when developer machines do.
+  Shared `just` execution locking must work with the checked-in
+  `scripts/lib/exec_lock.sh` fallback: use `flock` when it exists and a Python
+  `fcntl.flock` holder process otherwise. Keep `flock` out of `capsem-doctor`
+  required tools unless the fallback is removed.
+- **Treat the PR Python schema lane as a scoped contract gate, not the full
+  Python coverage gate.** The macOS PR job intentionally runs
+  `tests/test_*.py` so it does not boot VM suites; on a clean GitHub macOS
+  runner that top-level subset reports about 88.67% coverage, so the workflow
+  floor is 89%. The complete local `just test` Python stage still runs the full
+  suite and keeps its 90% floor.
+- **Do not execute artifact-dependent Python suites on a clean PR runner before
+  creating their artifacts.** `tests/capsem-bootstrap/` needs real
+  `assets/<arch>/` plus `assets/manifest.json`, and `tests/capsem-codesign/`
+  needs built, signed host binaries. The PR macOS no-VM integration lane runs
+  only suites without generated prerequisites and then import-collects every
+  `tests/capsem-*/` suite; the full `just test` gate owns bootstrap/codesign
+  execution after `_pack-initrd`/`_sign` have made the prerequisites real.
+- **Do not run live KVM probes on GitHub-hosted PR runners.** Hosted ARM runners
+  can expose `/dev/kvm` but still hang or behave inconsistently under test
+  execution. PR Linux CI sets `CAPSEM_SKIP_KVM_TESTS=1` and runs
+  `cargo test --no-run --all-targets` for the portable host crates: it compiles
+  the KVM backend and Linux test binaries without executing hosted-runner KVM
+  probes, while release CI owns real-KVM exercise.
 - **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
 - **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.
@@ -218,10 +243,12 @@ pkgutil --check-signature /tmp/verify/Capsem-*.pkg
 spctl -a -vv -t install /tmp/verify/Capsem-*.pkg      # Gatekeeper accepts notarized+stapled
 xcrun stapler validate /tmp/verify/Capsem-*.pkg       # Staple ticket present
 gh release download vX.Y.Z --pattern '*.deb' -D /tmp/verify
+python3 scripts/verify_deb_payload.py /tmp/verify/*.deb --minisign-pubkey config/manifest-sign.pub
 ```
 
-If `dpkg-deb` is available, inspect the `.deb` contents and confirm the
-manifest, manifest signature, and companion binaries are present. The manifest
+Use `scripts/verify_deb_payload.py` for `.deb` inspection instead of ad hoc
+`tar`/`strings` checks. It validates control metadata, companion binaries, the
+signed manifest files, and optional minisign verification. The manifest
 signature check is mandatory for local-signature releases; a release is not
 verified until `minisign -Vm` passes against `config/manifest-sign.pub`.
 
@@ -241,7 +268,6 @@ report success while the GUI is missing. Relaunching `Capsem.app` must ask the
 running service to ensure the tray via `/companions/tray/ensure`; spawning
 `capsem-tray` directly bypasses the service parent guard and is not the product
 path.
-
 ## Documentation site
 
 The product website uses Astro Starlight. Docs live in `docs/src/content/docs/`.

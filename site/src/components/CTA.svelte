@@ -12,7 +12,7 @@
       Download {SITE.name}
     </h2>
     <p class="mt-6 text-lg text-body-dark max-w-xl mx-auto">
-      Open source, native macOS, boots in under 10 seconds.
+      Open source, native packages for macOS and Linux.
     </p>
 
     <div class="mt-10 mx-auto max-w-lg">
@@ -34,7 +34,7 @@
     </div>
 
     <p class="mt-8 text-xs text-muted-dark">
-      Requires {SITE.platform}. Capsem uses Apple Virtualization.framework.
+      Requires {SITE.platform}. Capsem uses Apple Virtualization.framework on macOS and KVM on Linux.
     </p>
   </div>
 </section>

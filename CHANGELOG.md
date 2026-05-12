@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a dedicated marketing FAQ page with a hypervisor-vs-container answer
+  as the first FAQ.
+- Added a reusable `.deb` payload verifier and wired release CI to validate
+  Linux package helper binaries, signed manifests, and manifest signatures.
+
+### Fixed
+- Fixed the marketing-site installer for the stamped v1.1 package assets:
+  macOS now installs the downloaded `.pkg` with the native installer, and
+  package downloads are checked against the release manifest when local tools
+  are available.
+- Fixed Linux KVM unit-test compilation issues surfaced by PR CI before the
+  site/download installer hardening can merge.
+- Fixed macOS PR CI's clean-checkout Rust unit gate by creating a minimal
+  frontend dist before `capsem-app`'s Tauri test build runs.
+- Fixed macOS PR CI codesigning races during `nextest` discovery by
+  serializing the ad-hoc signing runner and preserving its build log on
+  workflow failures.
+- Fixed PR install E2E's clean-checkout host setup so missing VM assets can be
+  built with `uv`, checked through pnpm-backed doctor paths, and signed with
+  `minisign`.
+- Fixed PR CI coverage drift by aligning the workflow's Rust coverage floor
+  with the documented `just test` gate.
+- Fixed clean-checkout install E2E asset alias creation by copying hash-named
+  assets when Linux protected-hardlink rules reject Docker-produced files.
+- Fixed PR install E2E's Docker test runner to include the project dev
+  dependency group before invoking pytest inside the installed-package
+  container.
+- Fixed macOS PR CI's Python coverage step so it collects top-level Python
+  contract tests without accidentally booting VM integration suites.
+- Fixed the shared `just` execution lock on macOS hosts without a `flock`
+  binary by falling back to a Python `fcntl` lock holder.
+- Fixed macOS PR CI's scoped Python coverage floor so the top-level contract
+  lane matches clean-runner coverage while the full `just test` gate stays at
+  90%.
+- Fixed macOS PR CI's no-VM Python integration lane so clean runners execute
+  only suites without generated asset/signing prerequisites while still
+  import-checking every integration suite.
+- Fixed Linux PR CI so hosted ARM runners compile the KVM backend and test
+  binaries without hanging in live KVM probes or unbounded hosted-runner test
+  execution; release CI remains the real-KVM exercise gate.
+
 ## [1.1.1778542197] - 2026-05-11
 
 ### Changed

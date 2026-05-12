@@ -416,8 +416,7 @@ mod tests {
     ) {
         let mem = GuestMemory::new(4096).unwrap();
         let (dev, activated, notify_count) = DummyDevice::new();
-        let transport =
-            VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(super::memory::RAM_BASE));
+        let transport = VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(RAM_BASE));
         (transport, activated, notify_count)
     }
 
