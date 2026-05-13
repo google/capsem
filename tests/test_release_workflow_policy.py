@@ -334,3 +334,87 @@ def test_local_cross_compile_validates_one_fresh_deb_artifact():
     assert 'rm -f /src/dist/Capsem_*_\\"\\$DPKG_ARCH\\".deb' in body
     assert 'dpkg-deb --info /cargo-target/\\$RUST_TARGET/release/bundle/deb/*.deb' not in body
     assert 'dpkg -i \\"\\$DEB\\"' in body
+
+
+def _just_install_body() -> str:
+    justfile = (REPO_ROOT / "justfile").read_text()
+    install = re.search(
+        r"(?ms)^install:.*?(?=^# Run install e2e tests in Docker)",
+        justfile,
+    )
+    assert install, "install recipe missing"
+    return install.group(0)
+
+
+def test_local_install_hard_cleans_before_installing_package():
+    """`just install` must prove the old local install is gone before reinstalling."""
+    body = _just_install_body()
+
+    assert 'echo "=== Clean uninstalling existing local Capsem ==="' in body
+    assert 'CAPSEM_SETTINGS_BACKUP="$(mktemp -d' in body
+    for setting in ("user.toml", "corp.toml", "corp-source.json"):
+        assert setting in body
+    assert '"$HOME/.capsem/bin/capsem" uninstall --yes' in body
+    assert '"$ROOT/target/release/capsem" uninstall --yes' in body
+    assert "assert_clean_uninstall" in body
+    assert 'LaunchAgent still exists after uninstall' in body
+    assert 'unexpected files left after uninstall' in body
+
+    clean_pos = body.index("=== Clean uninstalling existing local Capsem ===")
+    assert_pos = body.index("\n    assert_clean_uninstall", clean_pos)
+    mac_install_pos = body.index('sudo installer -pkg "$PKG" -target /')
+    linux_install_pos = body.index('sudo apt install -y "$DEB"')
+    assert clean_pos < assert_pos < mac_install_pos
+    assert clean_pos < assert_pos < linux_install_pos
+
+
+def test_local_install_uses_same_native_install_commands_as_install_sh():
+    """The local installer path should match what users run from install.sh."""
+    body = _just_install_body()
+    install_sh = (REPO_ROOT / "site" / "public" / "install.sh").read_text()
+
+    assert 'sudo installer -pkg "$PKG_PATH" -target /' in install_sh
+    assert 'sudo installer -pkg "$PKG" -target /' in body
+    assert 'open -W "$PKG"' not in body
+
+    assert 'sudo apt install -y "$DEB_PATH"' in install_sh
+    assert 'sudo apt install -y "$DEB"' in body
+    assert "sudo dpkg -i" not in body
+
+
+def test_local_install_removes_stale_tauri_bundle_before_rebuild():
+    """Root-owned or stale app bundles must not break the repeatable install loop."""
+    body = _just_install_body()
+
+    assert 'remove_stale_path "target/release/bundle/macos/Capsem.app"' in body
+    assert 'sudo rm -rf "$path"' in body
+    assert body.index('remove_stale_path "target/release/bundle/macos/Capsem.app"') < body.index(
+        "cargo tauri build --bundles app"
+    )
+
+
+def test_local_install_verifies_fresh_install_and_guest_network():
+    """Service-only health is insufficient; the installed VM must resolve and curl."""
+    body = _just_install_body()
+
+    for binary in (
+        "capsem",
+        "capsem-service",
+        "capsem-process",
+        "capsem-mcp",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-gateway",
+        "capsem-tray",
+    ):
+        assert f'assert_executable "$HOME/.capsem/bin/{binary}"' in body
+
+    assert "WARNING: Service not responding" not in body
+    assert 'BUILT_VERSION=$("$ROOT/target/release/capsem" version)' in body
+    assert 'INSTALLED_VERSION=$("$HOME/.capsem/bin/capsem" version)' in body
+    assert 'curl -fsS --unix-socket "$HOME/.capsem/run/service.sock"' in body
+    assert 'curl -fsS "http://127.0.0.1:$GATEWAY_PORT/health"' in body
+    assert '"$HOME/.capsem/bin/capsem" run' in body
+    assert "getent hosts elie.net" in body
+    assert "getent hosts generativelanguage.googleapis.com" in body
+    assert "curl -fsS --connect-timeout 10 https://elie.net" in body

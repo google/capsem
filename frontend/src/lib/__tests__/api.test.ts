@@ -297,6 +297,15 @@ describe('api', () => {
       const result = await api.lintConfig();
       expect(result).toEqual(issues);
     });
+
+    it('getDebugReport sends GET /debug/report', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ text: 'Capsem Debug Report\ninitrd_manifest_hash: abc' }));
+      const result = await api.getDebugReport();
+      expect(result.text).toContain('Capsem Debug Report');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/debug/report');
+      expect(call[1].method).toBeUndefined();
+    });
   });
 
   // ---- MCP config (via settings) ----

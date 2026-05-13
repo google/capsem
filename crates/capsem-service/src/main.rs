@@ -23,6 +23,7 @@ mod startup;
 
 use capsem_service::api;
 use capsem_service::api::*;
+use capsem_service::debug_report;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
 use capsem_service::registry::{PersistentRegistry, PersistentVmEntry};
 use capsem_service::triage;
@@ -1970,6 +1971,54 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
         sandboxes,
         asset_health,
     })
+}
+
+async fn handle_debug_report(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<debug_report::DebugReport>, AppError> {
+    let (running_vm_count, total_vm_count) = {
+        let instances = state.instances.lock().unwrap();
+        let running_ids: HashSet<String> = instances.keys().cloned().collect();
+        let running = running_ids.len();
+        drop(instances);
+
+        let registry = state.persistent_registry.lock().unwrap();
+        let stopped_or_suspended = registry
+            .list()
+            .into_iter()
+            .filter(|entry| !running_ids.contains(&entry.name))
+            .count();
+        (running, running + stopped_or_suspended)
+    };
+
+    let generated_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| secs_to_rfc3339(d.as_secs()))
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into());
+
+    let report = debug_report::build_debug_report(debug_report::DebugReportInput {
+        generated_at,
+        version: state.current_version.clone(),
+        build_hash: option_env!("CAPSEM_BUILD_HASH")
+            .unwrap_or("dev")
+            .to_string(),
+        build_ts: option_env!("CAPSEM_BUILD_TS").unwrap_or("dev").to_string(),
+        platform: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+        capsem_home: capsem_core::paths::capsem_home(),
+        run_dir: state.run_dir.clone(),
+        assets_dir: state.assets_dir.clone(),
+        manifest: state.manifest.as_ref().map(|m| m.as_ref().clone()),
+        running_vm_count,
+        total_vm_count,
+    })
+    .map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to build debug report: {e:#}"),
+        )
+    })?;
+
+    Ok(Json(report))
 }
 
 async fn handle_info(
@@ -5017,6 +5066,7 @@ async fn main() -> Result<()> {
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))
         .route("/service-logs", get(handle_service_logs))
+        .route("/debug/report", get(handle_debug_report))
         .route("/triage", get(handle_triage))
         .route("/panics", get(handle_panics))
         .route("/host-logs/{name}", get(handle_host_logs))

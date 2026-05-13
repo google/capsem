@@ -26,7 +26,7 @@
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
 #   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
-#                       (release build + frontend + Tauri bundle + .pkg/.deb installer)
+#                       (hard clean + native package install + guest DNS/HTTPS gate)
 #   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
@@ -37,7 +37,7 @@
 # Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
-# Local install:      just install       (build .pkg/.deb + install it)
+# Local install:      just install       (hard clean + native package install + VM network gate)
 # Releases:           just cut-release   (test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps   (cargo update + pnpm update)
 #                     just update-prices (refresh genai-prices.json)
@@ -767,9 +767,8 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
     echo "=== Host-side benchmarks (lifecycle, fork) ==="
     uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
 
-# Build the platform package (.pkg on macOS, .deb on Linux) and install it.
-# Builds release binaries, frontend, and Tauri app. Asks for sudo to install.
-# The postinstall script handles codesign, PATH, service registration, and setup.
+# Build package, hard-clean local install, use the install.sh native command,
+# then verify installed service, gateway, and guest DNS/HTTPS.
 install: _pnpm-install _stamp-version _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
@@ -779,12 +778,96 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     # install would permanently embed a path that gets wiped on the next
     # test run. `capsem install` also refuses these vars defensively.
     unset CAPSEM_HOME CAPSEM_RUN_DIR CAPSEM_ASSETS_DIR
-    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
+    ROOT="{{justfile_directory()}}"
+    source "$ROOT/scripts/lib/exec_lock.sh"
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
+
+    CAPSEM_SETTINGS_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/capsem-settings.XXXXXX")"
+    cleanup_settings_backup() {
+        rm -rf "$CAPSEM_SETTINGS_BACKUP"
+    }
+    trap cleanup_settings_backup EXIT
+
+    preserve_setting() {
+        local rel="$1"
+        local src="$HOME/.capsem/$rel"
+        local dst="$CAPSEM_SETTINGS_BACKUP/$rel"
+        if [ -f "$src" ]; then
+            mkdir -p "$(dirname "$dst")"
+            cp -p "$src" "$dst"
+        fi
+    }
+
+    restore_setting() {
+        local rel="$1"
+        local src="$CAPSEM_SETTINGS_BACKUP/$rel"
+        local dst="$HOME/.capsem/$rel"
+        if [ -f "$src" ]; then
+            mkdir -p "$(dirname "$dst")"
+            cp -p "$src" "$dst"
+        fi
+    }
+
+    assert_clean_uninstall() {
+        local failed=0
+        if [ -e "$HOME/.capsem" ]; then
+            echo "ERROR: unexpected files left after uninstall:" >&2
+            find "$HOME/.capsem" -maxdepth 4 -print >&2 || true
+            failed=1
+        fi
+        if [ -e "$HOME/Library/LaunchAgents/com.capsem.service.plist" ]; then
+            echo "ERROR: LaunchAgent still exists after uninstall" >&2
+            failed=1
+        fi
+        if [ -e "$HOME/.config/systemd/user/capsem.service" ]; then
+            echo "ERROR: systemd user unit still exists after uninstall" >&2
+            failed=1
+        fi
+        for name in capsem-service capsem-process capsem-gateway capsem-tray; do
+            if pgrep -f "$HOME/.capsem/bin/$name" >/dev/null 2>&1; then
+                echo "ERROR: $name from ~/.capsem/bin is still running after uninstall" >&2
+                failed=1
+            fi
+        done
+        return "$failed"
+    }
+
+    assert_executable() {
+        local path="$1"
+        if [ ! -x "$path" ]; then
+            echo "ERROR: expected executable missing after install: $path" >&2
+            exit 1
+        fi
+    }
+
+    remove_stale_path() {
+        local path="$1"
+        if [ -e "$path" ]; then
+            rm -rf "$path" 2>/dev/null || sudo rm -rf "$path"
+        fi
+    }
+
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
     cargo build --release {{host_crates}}
+
+    echo "=== Clean uninstalling existing local Capsem ==="
+    preserve_setting "user.toml"
+    preserve_setting "corp.toml"
+    preserve_setting "corp-source.json"
+    if [ -x "$HOME/.capsem/bin/capsem" ]; then
+        if "$HOME/.capsem/bin/capsem" uninstall --yes; then
+            echo "Existing local Capsem uninstalled."
+        else
+            echo "Installed capsem uninstall failed; retrying with freshly built CLI." >&2
+        fi
+    elif [ -e "$HOME/.capsem/bin/capsem" ]; then
+        echo "Installed capsem exists but is not executable; retrying with freshly built CLI." >&2
+    fi
+    "$ROOT/target/release/capsem" uninstall --yes || true
+    assert_clean_uninstall
+
     echo "=== Building frontend ==="
     cd frontend
     pnpm build
@@ -798,23 +881,10 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     else
         TAURI_FLAGS="--config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     fi
-    # Unload LaunchAgent first so macOS doesn't respawn while we install
-    PLIST="$HOME/Library/LaunchAgents/com.capsem.service.plist"
-    if [ -f "$PLIST" ]; then
-        launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || \
-            launchctl unload "$PLIST" 2>/dev/null || true
-    fi
-    pkill -9 -x capsem-service 2>/dev/null || true
-    pkill -9 -x capsem-gateway 2>/dev/null || true
-    pkill -9 -x capsem-tray 2>/dev/null || true
-    pkill -9 -x capsem-process 2>/dev/null || true
-    sleep 0.5
-    rm -f "$HOME/.capsem/run/service.sock"
-    rm -f "$HOME/.capsem/run/gateway.token"
-    rm -f "$HOME/.capsem/run/gateway.port"
     OS=$(uname -s)
     if [ "$OS" = "Darwin" ]; then
         echo "=== Building Capsem.app ==="
+        remove_stale_path "target/release/bundle/macos/Capsem.app"
         eval cargo tauri build --bundles app $TAURI_FLAGS
         echo "=== Signing local asset manifest for package payload ==="
         bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
@@ -825,24 +895,63 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
             "{{assets_dir}}" \
             "$VERSION"
         PKG="packages/Capsem-$VERSION.pkg"
-        echo "=== Opening installer ==="
-        open -W "$PKG"
+        echo "=== Installing .pkg ==="
+        sudo installer -pkg "$PKG" -target /
     else
         echo "=== Building .deb ==="
+        rm -f target/release/bundle/deb/*.deb
         eval cargo tauri build --bundles deb $TAURI_FLAGS
         echo "=== Signing local asset manifest for package payload ==="
         bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
-        DEB=$(ls target/release/bundle/deb/*.deb)
+        DEB=$(ls -t target/release/bundle/deb/*.deb | head -1)
         bash scripts/repack-deb.sh "$DEB" "target/release" "{{assets_dir}}"
         echo "=== Installing .deb ==="
-        sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
+        sudo apt install -y "$DEB"
     fi
-    # Post-install health check
+
+    echo "=== Restoring preserved settings ==="
+    restore_setting "user.toml"
+    restore_setting "corp.toml"
+    restore_setting "corp-source.json"
+
+    echo "=== Verifying installed layout ==="
+    assert_executable "$HOME/.capsem/bin/capsem"
+    assert_executable "$HOME/.capsem/bin/capsem-service"
+    assert_executable "$HOME/.capsem/bin/capsem-process"
+    assert_executable "$HOME/.capsem/bin/capsem-mcp"
+    assert_executable "$HOME/.capsem/bin/capsem-mcp-aggregator"
+    assert_executable "$HOME/.capsem/bin/capsem-mcp-builtin"
+    assert_executable "$HOME/.capsem/bin/capsem-gateway"
+    assert_executable "$HOME/.capsem/bin/capsem-tray"
+    if [ ! -f "$HOME/.capsem/assets/manifest.json" ]; then
+        echo "ERROR: installed asset manifest missing" >&2
+        exit 1
+    fi
+    if [ ! -f "$HOME/.capsem/assets/manifest.json.minisig" ]; then
+        echo "ERROR: installed asset manifest signature missing" >&2
+        exit 1
+    fi
+    BUILT_VERSION=$("$ROOT/target/release/capsem" version)
+    INSTALLED_VERSION=$("$HOME/.capsem/bin/capsem" version)
+    if [ "$BUILT_VERSION" != "$INSTALLED_VERSION" ]; then
+        echo "ERROR: installed capsem version does not match the current checkout" >&2
+        echo "  built:     $BUILT_VERSION" >&2
+        echo "  installed: $INSTALLED_VERSION" >&2
+        exit 1
+    fi
+
+    echo "=== Syncing locally built assets into ~/.capsem/assets ==="
+    bash scripts/sync-dev-assets.sh "{{assets_dir}}" "$HOME/.capsem/assets"
+
+    echo "=== Restarting installed service ==="
+    "$HOME/.capsem/bin/capsem" stop >/dev/null 2>&1 || true
+    "$HOME/.capsem/bin/capsem" start
+
     echo "=== Verifying service health ==="
     HEALTHY=false
-    for i in $(seq 1 30); do
+    for i in $(seq 1 60); do
         if [ -S "$HOME/.capsem/run/service.sock" ] && \
-           curl -s --unix-socket "$HOME/.capsem/run/service.sock" --max-time 2 http://localhost/list >/dev/null 2>&1; then
+           curl -fsS --unix-socket "$HOME/.capsem/run/service.sock" --max-time 2 http://localhost/list >/dev/null 2>&1; then
             echo "Service is responding."
             HEALTHY=true
             break
@@ -850,15 +959,37 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         sleep 0.5
     done
     if [ "$HEALTHY" != "true" ]; then
-        echo "WARNING: Service not responding after 15s."
+        echo "ERROR: Service not responding after 30s." >&2
         if [ "$OS" = "Darwin" ]; then
-            echo "Check: ~/Library/Logs/capsem/service.log"
+            echo "Check: ~/Library/Logs/capsem/service.log" >&2
         else
-            echo "Check: journalctl --user -u capsem"
+            echo "Check: journalctl --user -u capsem" >&2
         fi
+        exit 1
     fi
-    echo "=== Syncing locally built assets into ~/.capsem/assets ==="
-    bash scripts/sync-dev-assets.sh "{{assets_dir}}" "$HOME/.capsem/assets"
+
+    echo "=== Verifying gateway health ==="
+    GATEWAY_HEALTHY=false
+    for i in $(seq 1 60); do
+        if [ -f "$HOME/.capsem/run/gateway.port" ]; then
+            GATEWAY_PORT=$(tr -d '[:space:]' < "$HOME/.capsem/run/gateway.port")
+            if [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] && \
+               curl -fsS "http://127.0.0.1:$GATEWAY_PORT/health" >/dev/null 2>&1; then
+                echo "Gateway is responding on port $GATEWAY_PORT."
+                GATEWAY_HEALTHY=true
+                break
+            fi
+        fi
+        sleep 0.5
+    done
+    if [ "$GATEWAY_HEALTHY" != "true" ]; then
+        echo "ERROR: Gateway not responding after 30s." >&2
+        exit 1
+    fi
+
+    echo "=== Verifying guest DNS and HTTPS ==="
+    "$HOME/.capsem/bin/capsem" run 'set -eux; getent hosts elie.net; getent hosts generativelanguage.googleapis.com; curl -fsS --connect-timeout 10 https://elie.net >/dev/null'
+
     echo "=== Pruning stale build artifacts ==="
     just _clean-stale
 

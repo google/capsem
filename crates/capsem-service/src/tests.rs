@@ -675,6 +675,19 @@ fn make_test_state() -> Arc<ServiceState> {
     })
 }
 
+#[tokio::test]
+async fn handle_debug_report_returns_pasteable_text() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    insert_fake_instance(&state, "debug-vm", std::process::id());
+
+    let Json(report) = handle_debug_report(State(state)).await.unwrap();
+
+    assert!(report.text.contains("Capsem Debug Report"));
+    assert!(report.text.contains("capsem_version: 0.0.0"));
+    assert!(report.text.contains("running_vm_count: 1"));
+    assert!(report.text.contains("manifest_present: false"));
+}
+
 fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
     state.instances.lock().unwrap().insert(
         id.to_string(),

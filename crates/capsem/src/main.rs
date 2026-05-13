@@ -866,6 +866,13 @@ fn load_diagnostic_manifest_for_assets(
     capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
 }
 
+fn command_refreshes_update_cache(command: Option<&Commands>) -> bool {
+    !matches!(
+        command,
+        Some(Commands::Misc(MiscCommands::Uninstall { .. }))
+    )
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -896,9 +903,11 @@ async fn main() -> Result<()> {
         eprintln!("{}", notice);
     }
 
-    // Background update check (fire-and-forget). Spawned early so it runs
-    // even for commands that call std::process::exit (exec, run).
-    tokio::spawn(update::refresh_update_cache_if_stale());
+    // Background update check (fire-and-forget). Skip destructive cleanup
+    // commands so `capsem uninstall` cannot recreate state it just removed.
+    if command_refreshes_update_cache(cli.command.as_ref()) {
+        tokio::spawn(update::refresh_update_cache_if_stale());
+    }
 
     if cli.command.is_none() {
         let issues = check_service_health().await?;
@@ -2612,6 +2621,12 @@ mod tests {
             Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(yes),
             _ => panic!("expected Uninstall"),
         }
+    }
+
+    #[test]
+    fn uninstall_does_not_refresh_update_cache() {
+        let cli = Cli::parse_from(["capsem", "uninstall", "--yes"]);
+        assert!(!command_refreshes_update_cache(cli.command.as_ref()));
     }
 
     #[test]

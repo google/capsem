@@ -7,6 +7,7 @@
 //! second `Cargo.toml` change.
 
 pub mod api;
+pub mod debug_report;
 pub mod errors;
 pub mod fs_utils;
 pub mod naming;

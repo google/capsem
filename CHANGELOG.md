@@ -10,14 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added a dedicated marketing FAQ page with a hypervisor-vs-container answer
   as the first FAQ.
+- Added a Settings -> About debug report action that copies redacted
+  version, runtime, and VM asset/initrd fingerprints for GitHub bug reports.
 - Added a reusable `.deb` payload verifier and wired release CI to validate
   Linux package helper binaries, signed manifests, and manifest signatures.
+
+### Changed
+- Hardened `just install` for local release reproduction: it now force-cleans
+  the existing local install while preserving user settings, installs through
+  the same native package commands as `install.sh`, and fails if service,
+  gateway, guest DNS, or guest HTTPS checks do not pass.
 
 ### Fixed
 - Fixed the marketing-site installer for the stamped v1.1 package assets:
   macOS now installs the downloaded `.pkg` with the native installer, and
   package downloads are checked against the release manifest when local tools
   are available.
+- Fixed `capsem uninstall --yes` so it no longer recreates
+  `~/.capsem/update-check.json` via the background update checker while
+  uninstalling.
+- Fixed repeat local installs when stale Tauri app bundles under
+  `target/release/bundle/macos/` are not removable by the normal build step.
 
 ## [1.1.1778456247] - 2026-05-11
 
