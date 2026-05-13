@@ -118,8 +118,11 @@
     debugCopyMessage = null;
     try {
       const report = await getDebugReport();
-      await navigator.clipboard.writeText(report.text);
-      debugCopyMessage = { text: 'Copied debug info.', error: false };
+      const payload = report.json ?? report.text;
+      await navigator.clipboard.writeText(
+        typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
+      );
+      debugCopyMessage = { text: 'Copied debug report.', error: false };
     } catch (err) {
       debugCopyMessage = {
         text: String(err instanceof Error ? err.message : err),
@@ -397,7 +400,7 @@
           <div class="p-4">
             <div class="flex items-center justify-between gap-x-4">
               <div>
-                <p class="text-sm font-medium text-foreground">Debug info</p>
+                <p class="text-sm font-medium text-foreground">Debug report</p>
                 <p class="text-xs text-muted-foreground-1 mt-0.5">Redacted version, runtime, and asset fingerprints for bug reports</p>
               </div>
               <button
@@ -407,7 +410,7 @@
                 onclick={handleCopyDebugInfo}
               >
                 <ClipboardText size={16} />
-                {debugCopyBusy ? 'Collecting...' : 'Copy debug info'}
+                {debugCopyBusy ? 'Collecting...' : 'Copy debug report'}
               </button>
             </div>
             {#if debugCopyMessage}

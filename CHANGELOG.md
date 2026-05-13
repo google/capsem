@@ -10,12 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added a dedicated marketing FAQ page with a hypervisor-vs-container answer
   as the first FAQ.
+- Added `capsem status --json` with a typed `capsem.status.v1` health report
+  for install verification and UI/test consumers.
 - Added a Settings -> About debug report action that copies redacted
   version, runtime, and VM asset/initrd fingerprints for GitHub bug reports.
+- Added `capsem debug` and the `capsem.debug.v1` JSON debug report so release
+  bugs can include status/doctor readiness issues, setup-state, runtime, asset
+  hash, host binary hash, disk-space, install-layout, process-liveness, and
+  redacted log-tail evidence from the same `/debug/report` service endpoint
+  used by the UI.
 - Added a reusable `.deb` payload verifier and wired release CI to validate
   Linux package helper binaries, signed manifests, and manifest signatures.
 
 ### Changed
+- Changed `capsem doctor` to preflight through the same typed health checks
+  used by `capsem status` before provisioning a diagnostic VM. Status blockers
+  now carry stable issue codes and severity before they are rendered.
+- Changed `capsem status` to report missing or non-executable host helper
+  binaries as typed health blockers.
+- Changed `capsem status` to report stale `capsem-service` and
+  `capsem-process` helper binary versions as typed health blockers.
+- Changed `capsem status` to report stale/missing service units, asset manifest
+  problems, and missing/corrupt/incomplete setup state as typed health blockers.
 - Hardened `just install` for local release reproduction: it now force-cleans
   the existing local install while preserving user settings, installs through
   the same native package commands as `install.sh`, and fails if service,

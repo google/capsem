@@ -676,6 +676,7 @@ export async function lintConfig(): Promise<ConfigIssue[]> {
 
 export type DebugReport = {
   text: string;
+  json: unknown;
 };
 
 /** Build a redacted pasteable debug report for bug reports. */

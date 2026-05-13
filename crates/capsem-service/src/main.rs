@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     response::IntoResponse,
     routing::{delete, get, post},
-    Json, Router,
 };
-use capsem_core::poll::{poll_until, PollOpts};
+use capsem_core::poll::{PollOpts, poll_until};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
-use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
+use tokio_unix_ipc::{Receiver, Sender, channel_from_std};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
@@ -528,7 +528,9 @@ impl ServiceState {
 
         let mut child_cmd = tokio::process::Command::new(&self.process_binary);
         if !self.process_binary.exists() {
-            info!("process_binary does not exist at absolute path, trying target/debug/capsem-process");
+            info!(
+                "process_binary does not exist at absolute path, trying target/debug/capsem-process"
+            );
             child_cmd = tokio::process::Command::new("target/debug/capsem-process");
         }
 
@@ -1815,7 +1817,7 @@ async fn provision_attempt(
     {
         Ok(r) => r,
         Err(e) => {
-            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!("provision task: {e}"))
+            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!("provision task: {e}"));
         }
     };
 
@@ -1854,7 +1856,10 @@ async fn provision_attempt(
                     None => "(no preserved log found)".to_string(),
                 });
             return if is_launchd_cleanup_transient(&tail) {
-                warn!(id, "provision: detected launchd-cleanup transient (misleading 'entitlement' error)");
+                warn!(
+                    id,
+                    "provision: detected launchd-cleanup transient (misleading 'entitlement' error)"
+                );
                 ProvisionAttemptOutcome::LaunchdTransient
             } else {
                 ProvisionAttemptOutcome::BootCrash { tail }
@@ -1976,7 +1981,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
 async fn handle_debug_report(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<debug_report::DebugReport>, AppError> {
-    let (running_vm_count, total_vm_count) = {
+    let (running_vm_count, total_vm_count, defunct_sessions) = {
         let instances = state.instances.lock().unwrap();
         let running_ids: HashSet<String> = instances.keys().cloned().collect();
         let running = running_ids.len();
@@ -1988,13 +1993,44 @@ async fn handle_debug_report(
             .into_iter()
             .filter(|entry| !running_ids.contains(&entry.name))
             .count();
-        (running, running + stopped_or_suspended)
+        let defunct_sessions: Vec<debug_report::DefunctSessionReport> = registry
+            .list()
+            .filter(|entry| entry.defunct)
+            .map(|entry| debug_report::DefunctSessionReport {
+                name: entry.name.clone(),
+                last_error: entry.last_error.clone(),
+            })
+            .collect();
+        (running, running + stopped_or_suspended, defunct_sessions)
     };
+    let resolved_assets = state
+        .resolve_asset_paths()
+        .map(|resolved| debug_report::StatusResolvedAssets {
+            kernel: resolved.kernel,
+            initrd: resolved.initrd,
+            rootfs: resolved.rootfs,
+        })
+        .map_err(|e| e.to_string());
+    let status_issues = debug_report::status_issues(debug_report::StatusIssuesInput {
+        gateway_port_file_exists: state.run_dir.join("gateway.port").exists(),
+        gateway_token_file_exists: state.run_dir.join("gateway.token").exists(),
+        assets_dir_exists: state.assets_dir.exists(),
+        manifest_present: state.manifest.is_some(),
+        resolved_assets,
+        defunct_session_count: defunct_sessions.len(),
+    });
 
     let generated_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| secs_to_rfc3339(d.as_secs()))
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into());
+    let install = debug_report::default_install_report_input();
+    let current_exe = install
+        .as_ref()
+        .map(|input| input.current_exe.clone())
+        .or_else(|| std::env::current_exe().ok())
+        .unwrap_or_else(|| PathBuf::from("capsem-service"));
+    let process_pids = debug_report::default_process_report_inputs(&state.run_dir, &current_exe);
 
     let report = debug_report::build_debug_report(debug_report::DebugReportInput {
         generated_at,
@@ -2010,6 +2046,10 @@ async fn handle_debug_report(
         manifest: state.manifest.as_ref().map(|m| m.as_ref().clone()),
         running_vm_count,
         total_vm_count,
+        status_issues,
+        defunct_sessions,
+        install,
+        process_pids,
     })
     .map_err(|e| {
         AppError(
@@ -2158,7 +2198,7 @@ async fn handle_logs(
                             return Err(AppError(
                                 StatusCode::NOT_FOUND,
                                 format!("sandbox not found: {id}"),
-                            ))
+                            ));
                         }
                     }
                 }

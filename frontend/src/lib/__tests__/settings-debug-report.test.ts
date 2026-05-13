@@ -7,6 +7,7 @@ import type { SettingsResponse } from '../types/settings';
 
 let mockResponse: SettingsResponse;
 let debugReportText = '';
+let debugReportJson: unknown = {};
 const writeText = vi.fn(async (_text: string) => {});
 
 vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
@@ -29,7 +30,7 @@ vi.mock('../api', () => ({
   getSettings: vi.fn(async () => mockResponse),
   saveSettings: vi.fn(async () => mockResponse),
   applyPreset: vi.fn(async () => mockResponse),
-  getDebugReport: vi.fn(async () => ({ text: debugReportText })),
+  getDebugReport: vi.fn(async () => ({ text: debugReportText, json: debugReportJson })),
   reloadConfig: vi.fn(async () => ({
     success: true,
     reloaded: 0,
@@ -52,6 +53,10 @@ describe('SettingsPage debug report', () => {
   beforeEach(() => {
     mockResponse = buildMockSettingsResponse();
     debugReportText = 'Capsem Debug Report\ninitrd_manifest_hash: abc123';
+    debugReportJson = {
+      schema: 'capsem.debug.v1',
+      assets: { files: { initrd: { manifest_hash: 'abc123' } } },
+    };
     writeText.mockClear();
     settingsStore.model = null;
     settingsStore.loading = false;
@@ -65,11 +70,11 @@ describe('SettingsPage debug report', () => {
     await waitFor(() => expect(screen.getAllByText('Appearance').length).toBeGreaterThan(0));
 
     await fireEvent.click(screen.getByRole('button', { name: 'About' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Copy debug info' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy debug report' }));
 
     await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(debugReportText);
+      expect(writeText).toHaveBeenCalledWith(JSON.stringify(debugReportJson, null, 2));
     });
-    expect(screen.getByText('Copied debug info.')).toBeTruthy();
+    expect(screen.getByText('Copied debug report.')).toBeTruthy();
   });
 });

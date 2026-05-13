@@ -5,6 +5,7 @@ mod platform;
 mod service_install;
 mod setup;
 mod shell_exit;
+mod status;
 mod support;
 mod support_bundle;
 mod uninstall;
@@ -13,7 +14,7 @@ mod update;
 use anyhow::{Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use client::{
@@ -69,7 +70,7 @@ const GROUPED_HELP: &str = "\
 
 \x1b[36;1;4mService:\x1b[0m
   \x1b[32;1minstall\x1b[0m      Install as a system service (LaunchAgent / systemd)
-  \x1b[32;1mstatus\x1b[0m       Show service status
+  \x1b[32;1mstatus\x1b[0m       Show installed Capsem health and readiness
   \x1b[32;1mstart\x1b[0m        Start the background service
   \x1b[32;1mstop\x1b[0m         Stop the background service
 
@@ -84,6 +85,7 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1msetup\x1b[0m        Run the first-time setup wizard
   \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
   \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh session
+  \x1b[32;1mdebug\x1b[0m        Print a redacted JSON debug report for bug reports
   \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
   \x1b[32;1mversion\x1b[0m      Show version and build information
   \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
@@ -383,6 +385,8 @@ enum MiscCommands {
         #[arg(long)]
         bundle: bool,
     },
+    /// Print a redacted JSON debug report for bug reports
+    Debug,
     /// Generate shell completions (bash, zsh, fish, powershell)
     Completions {
         /// Shell to generate completions for
@@ -428,8 +432,12 @@ enum MiscCommands {
     },
     /// Install capsem as a system service (LaunchAgent on macOS, systemd on Linux)
     Install,
-    /// Show service installation and runtime status
-    Status,
+    /// Show installed Capsem health and readiness
+    Status {
+        /// Output a machine-readable status report
+        #[arg(long)]
+        json: bool,
+    },
     /// Start the background service
     Start,
     /// Stop the background service
@@ -719,153 +727,6 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-async fn check_service_health() -> Result<Vec<String>> {
-    let mut issues = Vec::new();
-    let status = service_install::service_status().await?;
-
-    if !status.running {
-        issues.push("Service is not running. Run `capsem start` to start the service.".into());
-        return Ok(issues);
-    }
-
-    let home = crate::paths::capsem_home().unwrap_or_default();
-    let sock = home.join("run/service.sock");
-    let my_version = env!("CARGO_PKG_VERSION");
-
-    // Check service version via UDS
-    let svc_version = async {
-        let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
-        let (reader, mut writer) = tokio::io::split(stream);
-        writer
-            .write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-            .await
-            .ok()?;
-        let mut buf = Vec::new();
-        tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf)
-            .await
-            .ok()?;
-        let body = String::from_utf8_lossy(&buf);
-        let json_start = body.find('{')?;
-        let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
-        v.get("version")?.as_str().map(String::from)
-    }
-    .await;
-
-    match svc_version {
-        Some(ref v) if v == my_version => {}
-        Some(ref v) => issues.push(format!(
-            "Service is STALE (running v{}, binary is v{}) -- restart service",
-            v, my_version
-        )),
-        None => issues.push("Service is STALE (socket dead or no /version endpoint)".into()),
-    }
-
-    let port_path = home.join("run/gateway.port");
-    let token_path = home.join("run/gateway.token");
-    match (
-        std::fs::read_to_string(&port_path),
-        std::fs::read_to_string(&token_path),
-    ) {
-        (Ok(port_str), Ok(token)) => {
-            let port = port_str.trim();
-            let token = token.trim();
-            let client = reqwest::Client::new();
-
-            // Check gateway version (unauthenticated health endpoint)
-            let health_url = format!("http://127.0.0.1:{}/health", port);
-            let gw_version: Option<String> = async {
-                let r = client
-                    .get(&health_url)
-                    .timeout(std::time::Duration::from_secs(2))
-                    .send()
-                    .await
-                    .ok()?;
-                let v: serde_json::Value = r.json().await.ok()?;
-                v.get("version")?.as_str().map(String::from)
-            }
-            .await;
-
-            // Check token validity (authenticated endpoint)
-            let auth_url = format!("http://127.0.0.1:{}/list", port);
-            let token_ok = client
-                .get(&auth_url)
-                .header("Authorization", format!("Bearer {}", token))
-                .timeout(std::time::Duration::from_secs(2))
-                .send()
-                .await
-                .map(|r| r.status().is_success())
-                .unwrap_or(false);
-
-            match (gw_version, token_ok) {
-                (Some(ref v), true) if v == my_version => {}
-                (Some(ref v), true) => {
-                    issues.push(format!(
-                        "Gateway is STALE (running v{}, binary is v{}) -- restart service",
-                        v, my_version
-                    ));
-                }
-                (Some(_), false) => {
-                    issues.push(format!(
-                        "Gateway token MISMATCH (port {}) -- restart service",
-                        port
-                    ));
-                }
-                (None, _) => {
-                    issues.push(format!("Gateway is DOWN (port {} not responding)", port));
-                }
-            }
-        }
-        _ => issues.push("Gateway files not found (no token/port files)".into()),
-    }
-
-    if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
-        match load_diagnostic_manifest_for_assets(&assets_dir) {
-            Ok(Some(m)) => {
-                let arch = if cfg!(target_arch = "aarch64") {
-                    "arm64"
-                } else {
-                    "x86_64"
-                };
-                match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
-                    Ok(resolved) => {
-                        if !resolved.kernel.exists() {
-                            issues.push(format!(
-                                "Kernel asset is MISSING: {}",
-                                resolved.kernel.display()
-                            ));
-                        }
-                        if !resolved.initrd.exists() {
-                            issues.push(format!(
-                                "Initrd asset is MISSING: {}",
-                                resolved.initrd.display()
-                            ));
-                        }
-                        if !resolved.rootfs.exists() {
-                            issues.push(format!(
-                                "Rootfs asset is MISSING: {}",
-                                resolved.rootfs.display()
-                            ));
-                        }
-                    }
-                    Err(e) => issues.push(format!("Failed to resolve assets: {}", e)),
-                }
-            }
-            Ok(None) => issues.push("Manifest file not found in assets directory".into()),
-            Err(e) => issues.push(format!("Manifest verification failed: {e:#}")),
-        }
-    } else {
-        issues.push("Assets directory not found".into());
-    }
-
-    Ok(issues)
-}
-
-fn load_diagnostic_manifest_for_assets(
-    assets_dir: &Path,
-) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
-    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
-}
-
 fn command_refreshes_update_cache(command: Option<&Commands>) -> bool {
     !matches!(
         command,
@@ -910,7 +771,7 @@ async fn main() -> Result<()> {
     }
 
     if cli.command.is_none() {
-        let issues = check_service_health().await?;
+        let issues = status::check_service_health().await?;
         if !issues.is_empty() {
             eprintln!("\x1b[31;1m[!] Background service has issues:\x1b[0m");
             for issue in issues {
@@ -956,184 +817,8 @@ async fn main() -> Result<()> {
             println!("Service installed.");
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Status) => {
-            let status = service_install::service_status().await?;
-            println!("Version:   {}", env!("CARGO_PKG_VERSION"));
-            println!("Installed: {}", status.installed);
-            println!("Running:   {}", status.running);
-            if let Some(pid) = status.pid {
-                println!("PID:       {}", pid);
-            }
-            if let Some(path) = &status.unit_path {
-                println!("Unit:      {}", path.display());
-            }
-            // Check service + gateway connectivity and version sync
-            if status.running {
-                let home = crate::paths::capsem_home().unwrap_or_default();
-                let sock = home.join("run/service.sock");
-                let my_version = env!("CARGO_PKG_VERSION");
-
-                // Check service version via UDS
-                let svc_version = async {
-                    let stream = tokio::net::UnixStream::connect(&sock).await.ok()?;
-                    let (reader, mut writer) = tokio::io::split(stream);
-                    writer.write_all(b"GET /version HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.ok()?;
-                    let mut buf = Vec::new();
-                    tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::BufReader::new(reader), &mut buf).await.ok()?;
-                    let body = String::from_utf8_lossy(&buf);
-                    let json_start = body.find('{')?;
-                    let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
-                    v.get("version")?.as_str().map(String::from)
-                }.await;
-
-                match svc_version {
-                    Some(ref v) if v == my_version => println!("Service:   ok (v{})", v),
-                    Some(ref v) => println!(
-                        "Service:   STALE (running v{}, binary is v{}) -- restart service",
-                        v, my_version
-                    ),
-                    None => println!("Service:   STALE (socket dead or no /version endpoint)"),
-                }
-
-                let port_path = home.join("run/gateway.port");
-                let token_path = home.join("run/gateway.token");
-                match (
-                    std::fs::read_to_string(&port_path),
-                    std::fs::read_to_string(&token_path),
-                ) {
-                    (Ok(port_str), Ok(token)) => {
-                        let port = port_str.trim();
-                        let token = token.trim();
-                        let client = reqwest::Client::new();
-
-                        // Check gateway version (unauthenticated health endpoint)
-                        let health_url = format!("http://127.0.0.1:{}/health", port);
-                        let gw_version: Option<String> = async {
-                            let r = client
-                                .get(&health_url)
-                                .timeout(std::time::Duration::from_secs(2))
-                                .send()
-                                .await
-                                .ok()?;
-                            let v: serde_json::Value = r.json().await.ok()?;
-                            v.get("version")?.as_str().map(String::from)
-                        }
-                        .await;
-
-                        // Check token validity (authenticated endpoint)
-                        let auth_url = format!("http://127.0.0.1:{}/list", port);
-                        let token_ok = client
-                            .get(&auth_url)
-                            .header("Authorization", format!("Bearer {}", token))
-                            .timeout(std::time::Duration::from_secs(2))
-                            .send()
-                            .await
-                            .map(|r| r.status().is_success())
-                            .unwrap_or(false);
-
-                        match (gw_version, token_ok) {
-                            (Some(ref v), true) if v == my_version => {
-                                println!("Gateway:   ok (port {}, v{})", port, v);
-                            }
-                            (Some(ref v), true) => {
-                                println!("Gateway:   STALE (running v{}, binary is v{}) -- restart service", v, my_version);
-                            }
-                            (Some(_), false) => {
-                                println!(
-                                    "Gateway:   token MISMATCH (port {}) -- restart service",
-                                    port
-                                );
-                            }
-                            (None, _) => {
-                                println!("Gateway:   DOWN (port {} not responding)", port);
-                            }
-                        }
-                    }
-                    _ => println!("Gateway:   no token/port files"),
-                }
-            }
-
-            // Show asset info from manifest
-            if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
-                match load_diagnostic_manifest_for_assets(&assets_dir) {
-                    Ok(Some(m)) => {
-                        let arch = if cfg!(target_arch = "aarch64") {
-                            "arm64"
-                        } else {
-                            "x86_64"
-                        };
-                        println!("Assets:    {} ({})", m.assets.current, arch);
-                        match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
-                            Ok(resolved) => {
-                                let k = if resolved.kernel.exists() {
-                                    "ok"
-                                } else {
-                                    "MISSING"
-                                };
-                                let i = if resolved.initrd.exists() {
-                                    "ok"
-                                } else {
-                                    "MISSING"
-                                };
-                                let r = if resolved.rootfs.exists() {
-                                    "ok"
-                                } else {
-                                    "MISSING"
-                                };
-                                println!("  kernel:  {} ({})", resolved.kernel.display(), k);
-                                println!("  initrd:  {} ({})", resolved.initrd.display(), i);
-                                println!("  rootfs:  {} ({})", resolved.rootfs.display(), r);
-                            }
-                            Err(e) => println!("  resolve: {}", e),
-                        }
-                    }
-                    Ok(None) => println!("Assets:    no manifest found"),
-                    Err(e) => println!("Assets:    manifest verification failed: {e:#}"),
-                }
-            }
-
-            // Surface defunct sandboxes prominently -- a boot failure
-            // otherwise only appears as a line in `capsem list`, and the
-            // first command users reach for after "it doesn't work" is
-            // `capsem status`. One-line banner + hint at `capsem logs`.
-            if status.running {
-                let home = crate::paths::capsem_home().unwrap_or_default();
-                let sock = home.join("run/service.sock");
-                let list_client = client::UdsClient::new(sock, false);
-                if let Ok(resp) = list_client
-                    .get::<client::ApiResponse<client::ListResponse>>("/list")
-                    .await
-                {
-                    if let Ok(list) = resp.into_result() {
-                        let defunct: Vec<&client::SessionInfo> = list
-                            .sessions
-                            .iter()
-                            .filter(|s| s.status == "Defunct")
-                            .collect();
-                        if !defunct.is_empty() {
-                            println!();
-                            println!(
-                                "Defunct:   {} sandbox(es) failed to boot -- run `capsem logs <name>`",
-                                defunct.len()
-                            );
-                            for s in &defunct {
-                                let name = s.name.as_deref().unwrap_or(&s.id);
-                                if let Some(err) = &s.last_error {
-                                    let last = err
-                                        .lines()
-                                        .rev()
-                                        .find(|line| !line.trim().is_empty())
-                                        .unwrap_or("(log empty)");
-                                    println!("  - {}: {}", name, last);
-                                } else {
-                                    println!("  - {}", name);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
+        Commands::Misc(MiscCommands::Status { json }) => {
+            status::run(*json).await?;
             return Ok(());
         }
         Commands::Misc(MiscCommands::Start) => {
@@ -1709,6 +1394,9 @@ async fn main() -> Result<()> {
             let result = resp.into_result()?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
+        Commands::Misc(MiscCommands::Debug) => {
+            status::debug_report(&client).await?;
+        }
         Commands::Misc(
             MiscCommands::Version
             | MiscCommands::Setup { .. }
@@ -1716,7 +1404,7 @@ async fn main() -> Result<()> {
             | MiscCommands::Completions { .. }
             | MiscCommands::Uninstall { .. }
             | MiscCommands::Install
-            | MiscCommands::Status
+            | MiscCommands::Status { .. }
             | MiscCommands::Start
             | MiscCommands::Stop
             | MiscCommands::SupportBundle { .. }, /* handled before UDS */
@@ -1733,6 +1421,8 @@ async fn main() -> Result<()> {
 
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
+
+            status::doctor_preflight().await?;
 
             let req = ProvisionRequest {
                 name: None,
@@ -2052,62 +1742,6 @@ mod tests {
     use super::*;
     use clap::Parser;
 
-    const UNSIGNED_MANIFEST: &str = r#"{
-        "format": 2,
-        "assets": {
-            "current": "2026.0415.1",
-            "releases": {
-                "2026.0415.1": {
-                    "date": "2026-04-15",
-                    "deprecated": false,
-                    "min_binary": "1.0.0",
-                    "arches": {
-                        "arm64": {
-                            "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
-                            "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
-                            "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
-                        }
-                    }
-                }
-            }
-        },
-        "binaries": {
-            "current": "1.0.1776269479",
-            "releases": {
-                "1.0.1776269479": {
-                    "date": "2026-04-15",
-                    "deprecated": false,
-                    "min_assets": "2026.0415.1"
-                }
-            }
-        }
-    }"#;
-
-    #[test]
-    fn diagnostic_manifest_loader_rejects_unsigned_manifest() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
-
-        let err = load_diagnostic_manifest_for_assets(dir.path()).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("signature missing"),
-            "unexpected error: {err:#}"
-        );
-    }
-
-    #[test]
-    fn diagnostic_manifest_loader_rejects_invalid_signature() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
-        std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
-
-        let err = load_diagnostic_manifest_for_assets(dir.path()).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("verify"),
-            "unexpected error: {err:#}"
-        );
-    }
-
     // -----------------------------------------------------------------------
     // CLI parsing
     // -----------------------------------------------------------------------
@@ -2319,7 +1953,16 @@ mod tests {
         let cli = Cli::parse_from(["capsem", "status"]);
         assert!(matches!(
             cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Status)
+            Commands::Misc(MiscCommands::Status { json: false })
+        ));
+    }
+
+    #[test]
+    fn parse_status_json() {
+        let cli = Cli::parse_from(["capsem", "status", "--json"]);
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Status { json: true })
         ));
     }
 
@@ -2512,6 +2155,15 @@ mod tests {
                 fast: false,
                 bundle: true
             })
+        ));
+    }
+
+    #[test]
+    fn parse_debug() {
+        let cli = Cli::parse_from(["capsem", "debug"]);
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::Debug)
         ));
     }
 
