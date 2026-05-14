@@ -65,3 +65,19 @@ class TestUninstall:
         result = run_capsem("uninstall", "--yes", timeout=10)
         assert result.returncode == 0
         assert "nothing to uninstall" in result.stdout.lower()
+
+    def test_product_purge_removes_durable_state(self, installed_layout, clean_state):
+        """Whole-product purge removes runtime and durable user state."""
+        (CAPSEM_DIR / "user.toml").write_text("# purge sentinel\n")
+        (CAPSEM_DIR / "assets" / "arm64").mkdir(parents=True, exist_ok=True)
+        (CAPSEM_DIR / "assets" / "arm64" / "old-rootfs.squashfs").write_text("asset")
+        persistent = CAPSEM_DIR / "run" / "persistent" / "saved-vm"
+        persistent.mkdir(parents=True, exist_ok=True)
+        (persistent / "state.vz").write_text("saved")
+
+        result = run_capsem("purge", "--product", "--yes", timeout=20)
+        assert result.returncode == 0, (
+            f"product purge failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+        assert not CAPSEM_DIR.exists(), "product purge should remove all ~/.capsem state"

@@ -42,7 +42,7 @@ The startup contract lives in `startup-info.md`. It is the source of truth for:
 | S4 - Saved VM Asset Dependencies | Done | Persist and honor saved VM base asset identities; protect referenced blobs. | Updates/uninstalls cannot strand saved VMs by deleting their rootfs lineage. |
 | S5 - `capsem-setup` Hardening | Done | Make setup idempotent, correctly launched, fan-out capable, and status-aware. | Setup stops claiming readiness it does not own or prove. |
 | S6 - UI Wizard/Dashboard Startup States | Done | Show service, asset, saved-VM, setup, and retry states in wizard/dashboard. | UI stops returning silently or hiding blocked startup work. |
-| S7 - Update/Uninstall/Purge Integration | Not Started | Tie package update, uninstall, purge, setup, service, and UI contracts together. | Update becomes an end-to-end runtime replacement path with durable-state safety. |
+| S7 - Update/Uninstall/Purge Integration | Done | Tie package update, uninstall, purge, setup, service, and UI contracts together. | Update becomes an end-to-end runtime replacement path with durable-state safety. |
 
 ## Symptom Mapping
 

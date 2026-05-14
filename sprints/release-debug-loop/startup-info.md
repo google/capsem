@@ -43,15 +43,11 @@ processes, unregisters launch agents, removes installed binaries/app/runtime
 wiring, clears stale sockets, and removes temp VM state. It preserves durable
 user state and any asset blobs referenced by saved VMs.
 
-`capsem purge` is the destructive reset. It removes the runtime and durable
-state, including configs, saved VM metadata/data, logs subject to policy,
-credential references, and assets. It requires explicit confirmation.
-
-Implementation note: the current checkout already has a top-level
-`capsem purge` command for session cleanup. S7 must reconcile that CLI naming
-before shipping a whole-product destructive purge. The S1 code path now fixes
-the urgent side of the contract: `capsem uninstall` is runtime removal, not
-durable-state deletion.
+`capsem purge --product` is the destructive reset. It removes the runtime and
+durable state, including configs, saved VM metadata/data, logs subject to
+policy, credential references, and assets. It requires explicit confirmation
+unless automation passes `--yes`. Plain `capsem purge` keeps its existing
+session-cleanup behavior.
 
 Update is runtime replacement:
 

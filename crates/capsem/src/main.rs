@@ -66,7 +66,7 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mdelete\x1b[0m       Delete a session and all its state
   \x1b[32;1mfork\x1b[0m         Fork a session into a reusable snapshot
   \x1b[32;1mpersist\x1b[0m      Promote an ephemeral session to persistent
-  \x1b[32;1mpurge\x1b[0m        Destroy all temporary sessions
+  \x1b[32;1mpurge\x1b[0m        Destroy temporary sessions or reset product state
 
 \x1b[36;1;4mService:\x1b[0m
   \x1b[32;1minstall\x1b[0m      Install as a system service (LaunchAgent / systemd)
@@ -302,13 +302,20 @@ enum SessionCommands {
         /// Name to assign
         name: String,
     },
-    /// Destroy all temporary sessions
+    /// Destroy temporary sessions or reset product state
     ///
     /// Use --all to also destroy persistent sessions (requires confirmation).
+    /// Use --product for a destructive whole-product reset.
     Purge {
         /// Also destroy persistent sessions (requires confirmation)
         #[arg(long, default_value_t = false)]
         all: bool,
+        /// Remove runtime and all durable user state. Requires confirmation unless --yes is passed.
+        #[arg(long, default_value_t = false)]
+        product: bool,
+        /// Skip confirmation prompt for --product.
+        #[arg(long, short, default_value_t = false)]
+        yes: bool,
     },
     /// Show command history for a session
     ///
@@ -731,6 +738,10 @@ fn command_refreshes_update_cache(command: Option<&Commands>) -> bool {
     !matches!(
         command,
         Some(Commands::Misc(MiscCommands::Uninstall { .. }))
+            | Some(Commands::Session(SessionCommands::Purge {
+                product: true,
+                ..
+            }))
     )
 }
 
@@ -863,6 +874,19 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         _ => {}
+    }
+
+    if let Some(Commands::Session(SessionCommands::Purge {
+        all,
+        product: true,
+        yes,
+    })) = cli.command.as_ref()
+    {
+        if *all {
+            anyhow::bail!("`capsem purge --product` cannot be combined with --all");
+        }
+        uninstall::run_purge(*yes).await?;
+        return Ok(());
     }
 
     // Auto-setup on first use: if setup-state.json doesn't exist, the user
@@ -1123,7 +1147,16 @@ async fn main() -> Result<()> {
                 session, name
             );
         }
-        Commands::Session(SessionCommands::Purge { all }) => {
+        Commands::Session(SessionCommands::Purge {
+            all,
+            product,
+            yes: _,
+        }) => {
+            if *product {
+                anyhow::bail!(
+                    "internal error: product purge should be handled before service startup"
+                );
+            }
             if *all {
                 // Confirmation prompt
                 use std::io::Write;
@@ -1891,7 +1924,11 @@ mod tests {
     fn parse_purge() {
         let cli = Cli::parse_from(["capsem", "purge"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Purge { all }) => assert!(!all),
+            Commands::Session(SessionCommands::Purge { all, product, yes }) => {
+                assert!(!all);
+                assert!(!product);
+                assert!(!yes);
+            }
             _ => panic!("expected Purge"),
         }
     }
@@ -1900,8 +1937,25 @@ mod tests {
     fn parse_purge_all() {
         let cli = Cli::parse_from(["capsem", "purge", "--all"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Purge { all }) => assert!(all),
+            Commands::Session(SessionCommands::Purge { all, product, yes }) => {
+                assert!(all);
+                assert!(!product);
+                assert!(!yes);
+            }
             _ => panic!("expected Purge --all"),
+        }
+    }
+
+    #[test]
+    fn parse_purge_product_yes() {
+        let cli = Cli::parse_from(["capsem", "purge", "--product", "--yes"]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Purge { all, product, yes }) => {
+                assert!(!all);
+                assert!(product);
+                assert!(yes);
+            }
+            _ => panic!("expected Purge --product --yes"),
         }
     }
 
@@ -2297,6 +2351,12 @@ mod tests {
     #[test]
     fn uninstall_does_not_refresh_update_cache() {
         let cli = Cli::parse_from(["capsem", "uninstall", "--yes"]);
+        assert!(!command_refreshes_update_cache(cli.command.as_ref()));
+    }
+
+    #[test]
+    fn product_purge_does_not_refresh_update_cache() {
+        let cli = Cli::parse_from(["capsem", "purge", "--product", "--yes"]);
         assert!(!command_refreshes_update_cache(cli.command.as_ref()));
     }
 

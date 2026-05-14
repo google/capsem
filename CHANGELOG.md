@@ -37,11 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a macOS release CI gate that requires a Developer ID Installer identity
   and runs `pkgutil --check-signature` plus Gatekeeper assessment after
   notarization and stapling.
+- Added `capsem purge --product` for explicit whole-product resets that remove
+  runtime files plus durable Capsem state after confirmation.
 
 ### Changed
 - Changed `capsem uninstall` to remove the installed runtime while preserving
   durable user state such as config, setup state, assets, logs, session/audit
   data, and persistent VM state.
+- Changed the runtime replacement proof to exercise uninstall plus fresh
+  install while preserving user config, persistent VM state, and saved-VM asset
+  blobs.
 - Changed `capsem doctor` to preflight through the same typed health checks
   used by `capsem status` before provisioning a diagnostic VM. Status blockers
   now carry stable issue codes and severity before they are rendered.

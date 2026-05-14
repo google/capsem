@@ -128,6 +128,42 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
     Ok(())
 }
 
+/// Run whole-product purge: remove runtime and durable user state.
+pub async fn run_purge(yes: bool) -> Result<()> {
+    let capsem_dir = capsem_core::paths::capsem_home_opt().context("HOME not set")?;
+
+    if !yes {
+        println!("This will permanently remove all Capsem state:");
+        println!("  - Runtime binaries and service registration");
+        println!("  - user.toml, corp.toml, setup-state.json");
+        println!("  - assets, logs, session/audit data, and persistent VM state");
+        println!();
+        println!("This cannot be undone.");
+
+        let confirm = inquire::Confirm::new("Permanently purge Capsem?")
+            .with_default(false)
+            .prompt()
+            .context("purge cancelled")?;
+        if !confirm {
+            println!("Purge cancelled.");
+            return Ok(());
+        }
+    }
+
+    run_uninstall(true).await?;
+
+    if capsem_dir.exists() {
+        println!(
+            "Removing durable user state from {}...",
+            capsem_dir.display()
+        );
+        remove_product_state(&capsem_dir);
+    }
+
+    println!("Capsem purged. Runtime and durable user state were removed.");
+    Ok(())
+}
+
 fn remove_known_binaries_from_dir(bin_dir: &Path) {
     for name in CAPSEM_BINARIES {
         std::fs::remove_file(bin_dir.join(name)).ok();
@@ -139,6 +175,10 @@ fn remove_runtime_state(capsem_dir: &Path, run_dir: &Path) -> Result<()> {
     remove_path(&capsem_dir.join("update-check.json"));
     remove_runtime_run_entries(run_dir)?;
     Ok(())
+}
+
+fn remove_product_state(capsem_dir: &Path) {
+    remove_path(capsem_dir);
 }
 
 fn remove_runtime_run_entries(run_dir: &Path) -> Result<()> {
@@ -260,5 +300,28 @@ mod tests {
         assert!(home.join("sessions/main.db").exists());
         assert!(run.join("persistent/saved-vm/state.vz").exists());
         assert!(run.join("persistent_registry.json").exists());
+    }
+
+    #[test]
+    fn product_purge_removes_durable_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("capsem-home");
+
+        write(&home.join("bin/capsem"), b"bin");
+        write(&home.join("user.toml"), b"[ai]\n");
+        write(&home.join("corp.toml"), b"[net]\n");
+        write(&home.join("setup-state.json"), b"{}\n");
+        write(&home.join("assets/arm64/rootfs.squashfs"), b"rootfs");
+        write(&home.join("logs/app.log"), b"log");
+        write(&home.join("sessions/main.db"), b"session index");
+        write(&home.join("run/persistent/saved-vm/state.vz"), b"saved");
+        write(&home.join("run/persistent_registry.json"), b"{\"vms\":[]}");
+
+        remove_product_state(&home);
+
+        assert!(
+            !home.exists(),
+            "whole-product purge must remove durable state"
+        );
     }
 }

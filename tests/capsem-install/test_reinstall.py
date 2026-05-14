@@ -16,6 +16,8 @@ from pathlib import Path
 import pytest
 
 from .conftest import (
+    CAPSEM_DIR,
+    ASSETS_DIR,
     INSTALL_DIR,
     BINARIES,
     get_build_hash,
@@ -113,6 +115,31 @@ class TestReinstall:
 
         for name in BINARIES:
             assert (INSTALL_DIR / name).exists(), f"missing after reinstall: {name}"
+        _assert_status_has_no_runtime_layout_issues()
+
+    def test_runtime_replacement_preserves_durable_state_and_saved_assets(
+        self, installed_layout, clean_state
+    ):
+        """The update contract preserves user state across uninstall/install."""
+        durable = CAPSEM_DIR / "user.toml"
+        durable.write_text("# update preservation sentinel\n")
+        persistent = CAPSEM_DIR / "run" / "persistent" / "saved-vm"
+        persistent.mkdir(parents=True, exist_ok=True)
+        (persistent / "state.vz").write_text("saved")
+        saved_asset = ASSETS_DIR / "arm64" / "rootfs-deadbeefdeadbeef.squashfs"
+        saved_asset.parent.mkdir(parents=True, exist_ok=True)
+        saved_asset.write_text("saved asset")
+
+        result = run_capsem("uninstall", "--yes", timeout=15)
+        assert result.returncode == 0, (
+            f"uninstall failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+        _simulate_install_from_current_build()
+
+        assert durable.exists(), "runtime replacement must preserve user config"
+        assert persistent.exists(), "runtime replacement must preserve persistent VM state"
+        assert saved_asset.exists(), "runtime replacement must preserve saved-VM assets"
         _assert_status_has_no_runtime_layout_issues()
 
     def test_reinstall_over_existing_replaces_corrupt_helper(

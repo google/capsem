@@ -321,6 +321,12 @@ states.
 
 **Purpose:** Connect all contracts into the release path.
 
+**Current slice (2026-05-14):** Closed for focused S7 scope. Runtime
+replacement is proven as uninstall plus fresh install while preserving durable
+user config, persistent VM state, and saved-VM asset blobs. Whole-product reset
+is explicit via `capsem purge --product` and requires confirmation unless
+automation passes `--yes`; plain `capsem purge` remains session cleanup.
+
 **Behavior to build:**
 
 - Update verifies new payload before runtime uninstall.
