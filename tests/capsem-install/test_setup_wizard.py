@@ -7,12 +7,17 @@ prompts, persists state, respects --force, and writes user.toml.
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
+import tomllib
 
 import pytest
 
 from .conftest import (
     CAPSEM_DIR,
+    ASSETS_DIR,
+    INSTALL_DIR,
+    RUN_DIR,
     run_capsem,
 )
 
@@ -27,6 +32,18 @@ def clean_setup_state():
     USER_TOML.unlink(missing_ok=True)
     yield
     SETUP_STATE.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def setup_isolation_env(monkeypatch):
+    """Force setup's test-isolation mode in packaging/non-live harnesses.
+
+    This keeps setup from writing persistent LaunchAgent/systemd units while
+    still exercising the real setup summary/service-truth path.
+    """
+    monkeypatch.setenv("CAPSEM_HOME", str(CAPSEM_DIR))
+    monkeypatch.setenv("CAPSEM_RUN_DIR", str(RUN_DIR))
+    monkeypatch.setenv("CAPSEM_ASSETS_DIR", str(ASSETS_DIR))
 
 
 @pytest.mark.live_system
@@ -121,3 +138,107 @@ class TestSetupWizard:
 
         state = json.loads(SETUP_STATE.read_text())
         assert state.get("security_preset") == "medium"
+
+
+class TestSetupWizardHarness:
+    """Packaging-safe S5 setup harness proofs."""
+
+    def test_setup_rerun_is_idempotent_under_isolation(
+        self,
+        installed_layout,
+        clean_state,
+        clean_setup_state,
+        setup_isolation_env,
+    ):
+        """Second non-interactive run keeps setup state stable."""
+        first = run_capsem("setup", "--non-interactive", "--accept-detected", timeout=30)
+        assert first.returncode == 0, (
+            f"first setup run failed:\nstdout: {first.stdout}\nstderr: {first.stderr}"
+        )
+        state1 = json.loads(SETUP_STATE.read_text())
+
+        second = run_capsem("setup", "--non-interactive", "--accept-detected", timeout=30)
+        assert second.returncode == 0, (
+            f"second setup run failed:\nstdout: {second.stdout}\nstderr: {second.stderr}"
+        )
+        state2 = json.loads(SETUP_STATE.read_text())
+
+        assert state1 == state2, "setup rerun should not mutate settled state"
+        assert state2.get("install_completed") is True
+        assert state2.get("service_installed") is False
+        assert state2.get("providers_done") is True
+        assert state2.get("repositories_done") is True
+        assert "summary" in state2.get("completed_steps", [])
+
+    def test_setup_provider_settings_fallback_with_no_detected_keys(
+        self,
+        installed_layout,
+        clean_state,
+        clean_setup_state,
+        setup_isolation_env,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Setup succeeds and falls back cleanly when provider detection is empty."""
+        # Make host detection deterministic: no git/ssh/provider files under HOME
+        # and no API key env vars.
+        monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+        (tmp_path / "empty-home").mkdir(parents=True, exist_ok=True)
+        for key in (
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "GITHUB_TOKEN",
+        ):
+            monkeypatch.delenv(key, raising=False)
+
+        result = run_capsem("setup", "--non-interactive", "--accept-detected", timeout=30)
+        assert result.returncode == 0, (
+            f"setup should succeed with empty provider detection:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "No API keys detected. Configure later with `capsem setup --force`." in result.stdout
+
+        # Security preset still writes a valid settings file even with no
+        # provider credentials detected.
+        parsed = tomllib.loads(USER_TOML.read_text())
+        assert isinstance(parsed, dict), "user.toml must be valid TOML after setup"
+
+        state = json.loads(SETUP_STATE.read_text())
+        assert state.get("providers_done") is True
+        assert state.get("install_completed") is True
+        assert "summary" in state.get("completed_steps", [])
+
+    def test_setup_reports_pending_when_service_never_becomes_live(
+        self,
+        installed_layout,
+        clean_state,
+        clean_setup_state,
+        setup_isolation_env,
+    ):
+        """Setup completes config but reports pending VM readiness on dead service."""
+        service_bin = INSTALL_DIR / "capsem-service"
+        original = service_bin.read_bytes()
+        try:
+            # Break direct auto-launch in isolation mode so /list never comes up.
+            service_bin.unlink()
+            service_bin.write_text("#!/bin/sh\nexit 1\n")
+            service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
+
+            result = run_capsem("setup", "--non-interactive", "--accept-detected", timeout=30)
+            assert result.returncode == 0, (
+                f"setup should complete with pending readiness when service is unavailable:\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+            combined = f"{result.stdout}\n{result.stderr}"
+            assert "Service asset status unavailable" in combined
+            assert "VM readiness is not verified" in combined
+
+            state = json.loads(SETUP_STATE.read_text())
+            assert state.get("vm_verified") is False
+            assert state.get("install_completed") is True
+            assert "summary" in state.get("completed_steps", [])
+        finally:
+            service_bin.unlink(missing_ok=True)
+            service_bin.write_bytes(original)
+            service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)

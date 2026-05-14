@@ -31,7 +31,7 @@ dependencies, UI consumption, and update path.
 - [x] S2 - Verification Harness
 - [x] S3 - Service Asset Supervisor And Consumer Audit
 - [x] S4 - Saved VM Asset Dependencies
-- [ ] S5 - `capsem-setup` Hardening
+- [x] S5 - `capsem-setup` Hardening
 - [ ] S6 - UI Wizard/Dashboard Startup States
 - [ ] S7 - Update/Uninstall/Purge Integration
 
@@ -154,8 +154,8 @@ dependencies, UI consumption, and update path.
 - [x] Fail setup summary on unknown or internally inconsistent service asset truth.
 - [x] Keep setup non-blocking for asset `checking` / `updating` by leaving `vm_verified=false` while still completing config work.
 - [x] Add focused unit tests for setup asset-health evaluation (`ready`, `checking`, `updating`, `error`, `unknown`).
-- [ ] Add focused install-harness proof for setup rerun idempotence and provider/settings fallback resilience.
-- [ ] Add focused black-box proof that setup surfaces explicit pending readiness when the service never becomes live.
+- [x] Add focused install-harness proof for setup rerun idempotence and provider/settings fallback resilience.
+- [x] Add focused black-box proof that setup surfaces explicit pending readiness when the service never becomes live.
 - [x] Run the full `just test` gate after S5 hardening, including Docker install E2E and injection scenarios.
 
 ## S6 Checklist
@@ -234,6 +234,7 @@ dependencies, UI consumption, and update path.
 - 2026-05-14: Closed the immediate S5 gate blocker by bumping frontend `svelte` and overriding `devalue` to patched versions, then re-running `just test` end-to-end: audits/frontend, Rust coverage, Python suites, build-chain, injection, integration diagnostics, Linux packaging, and install E2E all passed.
 - 2026-05-14: Started S6 UI startup-truth slice. Dashboard now blocks create actions on service + asset readiness, shows explicit service-offline and asset-state messaging, exposes saved-VM dependency gaps, and offers retry setup when service marks asset errors retryable. Onboarding welcome/ready steps now mirror the same startup truth model.
 - 2026-05-14: Verified S6 slice with `cd frontend && pnpm check` and `cd frontend && pnpm vitest run src/lib/__tests__/session-runtime-truth.test.ts`.
+- 2026-05-14: Closed remaining S5 harness proofs with packaging-safe setup tests: rerun idempotence under isolation, provider/settings fallback with empty detection, and explicit pending-readiness messaging when service never becomes live (`uv run pytest tests/capsem-install/test_setup_wizard.py -q` => 3 passed, 5 skipped).
 
 ## Coverage Ledger
 

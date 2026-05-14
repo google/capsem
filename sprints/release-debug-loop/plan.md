@@ -263,11 +263,14 @@ update-over-existing proof remains in S7 and the final meta-sprint gate.
 
 **Purpose:** Make setup a config/onboarding workflow that is honest about readiness.
 
-**Current slice (2026-05-14):** In progress. Setup summary now gates on live
-service `/list` asset truth, keeps config completion non-blocking while
-reporting pending readiness for unavailable/checking/updating/error service
-states (`vm_verified=false`), fails on unknown/inconsistent service truth, and
-only marks VM readiness complete when service reports `ready`.
+**Current slice (2026-05-14):** Closed for the setup-hardening scope. Setup
+summary now gates on live service `/list` asset truth, keeps config completion
+non-blocking while reporting pending readiness for
+unavailable/checking/updating/error service states (`vm_verified=false`), fails
+on unknown/inconsistent service truth, and only marks VM readiness complete
+when service reports `ready`. Packaging-safe harness proofs now cover setup
+rerun idempotence/provider fallback and explicit pending-readiness output when
+service never becomes live.
 
 **Behavior to build:**
 
