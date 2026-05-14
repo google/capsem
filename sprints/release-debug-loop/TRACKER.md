@@ -4,7 +4,7 @@ Last updated: 2026-05-14
 
 ## Active Sprint
 
-S5 - `capsem-setup` Hardening (in progress; service-truth hardening implemented and full `just test` gate green)
+S6 - UI Wizard/Dashboard Startup States (in progress; first startup-truth slice landed)
 
 S1, S2, S3, and S4 are closed for their current scope. The live sudo-backed
 `capsem uninstall -> just install -> capsem status` proof remains the final
@@ -158,6 +158,16 @@ dependencies, UI consumption, and update path.
 - [ ] Add focused black-box proof that setup surfaces explicit pending readiness when the service never becomes live.
 - [x] Run the full `just test` gate after S5 hardening, including Docker install E2E and injection scenarios.
 
+## S6 Checklist
+
+- [x] Surface explicit service-offline status in the dashboard create-session gate messaging.
+- [x] Keep create-session actions disabled unless service is running and assets are ready.
+- [x] Surface service asset-state truth (`unknown`/`checking`/`updating`/`error`) in dashboard and onboarding.
+- [x] Surface saved-VM missing dependency details in onboarding/dashboard status panes.
+- [x] Add retry affordance in the dashboard when service asset state is retryable `error`.
+- [ ] Add wizard/dashboard coverage for retryable setup error flows and status-refresh UX.
+- [ ] Add UI proof that startup failures never collapse into an empty-session lookalike state.
+
 ## Evidence Log
 
 - 2026-05-13: Original hitlist contained B1 assets/setup, B2 provider onboarding/settings, and B3 VM list/session UI symptoms.
@@ -222,6 +232,8 @@ dependencies, UI consumption, and update path.
 - 2026-05-14: Verified S4 with focused tests: `cargo test -p capsem-core cleanup_preserves_saved_vm --lib`, `cargo test -p capsem-service --bin capsem-service saved_vm`, `cargo test -p capsem-service --bin capsem-service handle_fork_`, `cargo test -p capsem-service registry --lib`, `cargo test -p capsem status::tests -- --nocapture`, `cargo test -p capsem-gateway --bin capsem-gateway fetch_status_preserves_service_asset_state` (escalated for temporary UDS binding), `cargo test -p capsem-tray --bin capsem-tray spec_shows_saved_vm_asset_gap_without_blocking_new_session`, `npx vitest run src/lib/__tests__/session-runtime-truth.test.ts`, and `cargo check -p capsem-core -p capsem-service -p capsem -p capsem-gateway -p capsem-tray`.
 - 2026-05-14: Started S5 setup hardening slice. `capsem setup` summary now consumes live service truth via `/list`, keeps `vm_verified=false` for unavailable/checking/updating/error asset states while still completing config work, fails on unknown/inconsistent truth, and only marks VM verified when service reports true ready-state consistency.
 - 2026-05-14: Closed the immediate S5 gate blocker by bumping frontend `svelte` and overriding `devalue` to patched versions, then re-running `just test` end-to-end: audits/frontend, Rust coverage, Python suites, build-chain, injection, integration diagnostics, Linux packaging, and install E2E all passed.
+- 2026-05-14: Started S6 UI startup-truth slice. Dashboard now blocks create actions on service + asset readiness, shows explicit service-offline and asset-state messaging, exposes saved-VM dependency gaps, and offers retry setup when service marks asset errors retryable. Onboarding welcome/ready steps now mirror the same startup truth model.
+- 2026-05-14: Verified S6 slice with `cd frontend && pnpm check` and `cd frontend && pnpm vitest run src/lib/__tests__/session-runtime-truth.test.ts`.
 
 ## Coverage Ledger
 

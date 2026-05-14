@@ -5,6 +5,17 @@
   onMount(() => {
     onboardingStore.loadAssetStatus();
   });
+
+  function assetSummaryLabel(): string {
+    if (onboardingStore.serviceStatus !== 'running') return 'Service offline';
+    if (onboardingStore.assetsReady) {
+      return onboardingStore.assetsVersion ? `Ready (v${onboardingStore.assetsVersion})` : 'Ready';
+    }
+    if (onboardingStore.assetsState === 'checking') return 'Checking';
+    if (onboardingStore.assetsState === 'updating') return 'Updating';
+    if (onboardingStore.assetsState === 'error') return 'Error';
+    return 'Unknown';
+  }
 </script>
 
 <div class="text-center space-y-6">
@@ -26,11 +37,7 @@
     <!-- Assets -->
     <div class="flex items-center justify-between text-sm">
       <span class="text-muted-foreground-1">VM Assets</span>
-      {#if onboardingStore.assetsReady}
-        <span class="text-primary">Ready{#if onboardingStore.assetsVersion}&nbsp;(v{onboardingStore.assetsVersion}){/if}</span>
-      {:else}
-        <span class="text-muted-foreground">Not downloaded</span>
-      {/if}
+      <span class={onboardingStore.assetsReady ? 'text-primary' : 'text-muted-foreground'}>{assetSummaryLabel()}</span>
     </div>
 
     <!-- Providers -->
@@ -58,8 +65,32 @@
   </div>
 
   {#if !onboardingStore.assetsReady}
-    <p class="text-xs text-muted-foreground">
-      VMs won't boot until assets are downloaded. You can still explore the app.
-    </p>
+    <div class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-left">
+      <p class="text-xs text-foreground">
+        VMs stay blocked until readiness is complete. You can still explore the app.
+      </p>
+      {#if onboardingStore.assetsState === 'updating'}
+        <p class="mt-1 text-xs text-muted-foreground">Assets are downloading in the background.</p>
+      {:else if onboardingStore.assetsState === 'checking'}
+        <p class="mt-1 text-xs text-muted-foreground">The service is verifying required assets.</p>
+      {:else if onboardingStore.assetsState === 'error'}
+        <p class="mt-1 text-xs text-muted-foreground">{onboardingStore.assetsError ?? 'Asset preparation failed.'}</p>
+      {:else if onboardingStore.serviceStatus !== 'running'}
+        <p class="mt-1 text-xs text-muted-foreground">Start the service to continue readiness checks.</p>
+      {/if}
+    </div>
+  {/if}
+
+  {#if onboardingStore.savedVmDependencies.length > 0}
+    <div class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-left">
+      <p class="text-xs font-medium text-foreground">Saved VM dependencies missing</p>
+      <ul class="mt-2 space-y-1">
+        {#each onboardingStore.savedVmDependencies as dep}
+          <li class="text-xs text-muted-foreground">
+            <span class="font-mono text-foreground">{dep.vm}</span> missing {dep.missing.join(', ')} ({dep.recovery_hint})
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
 </div>

@@ -41,7 +41,7 @@ The startup contract lives in `startup-info.md`. It is the source of truth for:
 | S3 - Service Asset Supervisor And Consumer Audit | Done | Make the service autonomously supervise assets on start, timer, and version change; audit tray/app/gateway/CLI consumers. | Assets stop being a setup-side hidden prerequisite. |
 | S4 - Saved VM Asset Dependencies | Done | Persist and honor saved VM base asset identities; protect referenced blobs. | Updates/uninstalls cannot strand saved VMs by deleting their rootfs lineage. |
 | S5 - `capsem-setup` Hardening | In Progress | Make setup idempotent, correctly launched, fan-out capable, and status-aware. | Setup stops claiming readiness it does not own or prove. |
-| S6 - UI Wizard/Dashboard Startup States | Not Started | Show service, asset, saved-VM, setup, and retry states in wizard/dashboard. | UI stops returning silently or hiding blocked startup work. |
+| S6 - UI Wizard/Dashboard Startup States | In Progress | Show service, asset, saved-VM, setup, and retry states in wizard/dashboard. | UI stops returning silently or hiding blocked startup work. |
 | S7 - Update/Uninstall/Purge Integration | Not Started | Tie package update, uninstall, purge, setup, service, and UI contracts together. | Update becomes an end-to-end runtime replacement path with durable-state safety. |
 
 ## Symptom Mapping
@@ -66,12 +66,11 @@ structure.
 
 ## Current Active Work
 
-S5 remains active for a final proof pass. The current S5 hardening slice is in
-place: setup summary now polls service `/list` truth, leaves `vm_verified=false`
-for unavailable/checking/updating/error asset states, only sets `vm_verified`
-when service assets are truly `ready`, and no longer blocks setup on
-setup-owned asset downloads. The full local gate (`just test`) is green,
-including install E2E.
+S6 is active. The current S6 slice upgrades wizard/dashboard startup truth:
+explicit service-offline and asset-state messaging (`unknown`/`checking`/
+`updating`/`error`), saved-VM dependency surfacing, create-action blocking on
+service + assets, and retry setup affordances when service marks asset errors
+retryable.
 
 S0 is in review. S0 output:
 

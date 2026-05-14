@@ -7,6 +7,7 @@ import CreateSandboxDialog from '../components/shell/CreateSandboxDialog.svelte'
 import { tabStore } from '../stores/tabs.svelte';
 import { vmStore } from '../stores/vms.svelte';
 import type { AssetHealth, ProvisionRequest } from '../types/gateway';
+import * as api from '../api';
 
 vi.mock('../api', () => ({
   getStats: vi.fn(async () => ({
@@ -23,6 +24,7 @@ vi.mock('../api', () => ({
       total_denied: 0,
     },
   })),
+  retrySetup: vi.fn(async () => undefined),
 }));
 
 const originalProvision = vmStore.provision.bind(vmStore);
@@ -69,6 +71,17 @@ describe('session runtime truth UI', () => {
     expect((screen.getByRole('button', { name: /customize session/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('shows service offline state as a blocking reason', () => {
+    vmStore.serviceStatus = 'unavailable';
+    vmStore.assetHealth = assetHealth({ ready: true, state: 'ready', missing: [] });
+    render(NewTabPage);
+
+    expect(screen.getByText('Capsem service is offline')).toBeTruthy();
+    expect(screen.getByText('Start or recover the service before creating sessions.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /quick session/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /customize session/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('shows missing asset details and keeps creation disabled', () => {
     vmStore.assetHealth = assetHealth({ state: 'updating', missing: ['rootfs', 'manifest.json'] });
     render(NewTabPage);
@@ -76,6 +89,20 @@ describe('session runtime truth UI', () => {
     expect(screen.getByText('VM assets are updating')).toBeTruthy();
     expect(screen.getByText('Required VM assets are updating.')).toBeTruthy();
     expect((screen.getByRole('button', { name: /quick session/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows retry setup affordance when service marks asset error as retryable', async () => {
+    const refreshSpy = vi.spyOn(vmStore, 'refresh').mockResolvedValue();
+    vmStore.assetHealth = assetHealth({ state: 'error', retryable: true, error: 'download failed' });
+    render(NewTabPage);
+
+    expect(screen.getByText('VM assets need attention')).toBeTruthy();
+    const button = screen.getByRole('button', { name: /retry setup/i });
+    await fireEvent.click(button);
+
+    expect(api.retrySetup).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    refreshSpy.mockRestore();
   });
 
   it('quick session lets the service choose resource defaults', async () => {

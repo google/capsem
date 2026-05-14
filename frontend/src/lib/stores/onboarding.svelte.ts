@@ -6,6 +6,7 @@ import type {
   SetupStateResponse,
   DetectedConfigSummary,
 } from '../types/onboarding';
+import type { AssetHealth, SavedVmAssetDependency } from '../types/gateway';
 
 const TOTAL_STEPS = 4;
 const ASSET_POLL_INTERVAL = 3000;
@@ -31,9 +32,16 @@ class OnboardingStore {
   detecting = $state(false);
 
   // Asset status (from GET /status -- the gateway endpoint)
+  serviceStatus = $state<string>('unknown');
   assetsReady = $state(false);
+  assetsState = $state<AssetHealth['state']>('unknown');
   assetsMissing = $state<string[]>([]);
   assetsVersion = $state<string | null>(null);
+  assetsError = $state<string | null>(null);
+  assetsRetryable = $state(false);
+  assetsRetryCount = $state(0);
+  assetsProgressLabel = $state<string | null>(null);
+  savedVmDependencies = $state<SavedVmAssetDependency[]>([]);
 
   #assetPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -73,13 +81,39 @@ class OnboardingStore {
   async loadAssetStatus(): Promise<void> {
     try {
       const status = await api.getStatus();
+      this.serviceStatus = status.service;
       if (status.assets) {
         this.assetsReady = status.assets.ready;
+        this.assetsState = status.assets.state;
         this.assetsMissing = status.assets.missing;
         this.assetsVersion = status.assets.version ?? null;
+        this.assetsError = status.assets.error ?? null;
+        this.assetsRetryable = status.assets.retryable;
+        this.assetsRetryCount = status.assets.retry_count;
+        this.assetsProgressLabel = status.assets.progress?.logical_name ?? null;
+        this.savedVmDependencies = status.assets.saved_vm_dependencies ?? [];
+        return;
       }
+      this.assetsReady = false;
+      this.assetsState = 'unknown';
+      this.assetsMissing = [];
+      this.assetsVersion = null;
+      this.assetsError = null;
+      this.assetsRetryable = false;
+      this.assetsRetryCount = 0;
+      this.assetsProgressLabel = null;
+      this.savedVmDependencies = [];
     } catch {
-      // Status unavailable
+      this.serviceStatus = 'unknown';
+      this.assetsReady = false;
+      this.assetsState = 'unknown';
+      this.assetsMissing = [];
+      this.assetsVersion = null;
+      this.assetsError = null;
+      this.assetsRetryable = false;
+      this.assetsRetryCount = 0;
+      this.assetsProgressLabel = null;
+      this.savedVmDependencies = [];
     }
   }
 
@@ -112,6 +146,7 @@ class OnboardingStore {
     try {
       await api.retrySetup();
       await this.checkOnboarding();
+      await this.loadAssetStatus();
     } catch (e) {
       this.retryError = e instanceof Error ? e.message : String(e);
     } finally {

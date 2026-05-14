@@ -290,6 +290,12 @@ only marks VM readiness complete when service reports `ready`.
 
 **Purpose:** Make UI startup states truthful and recoverable.
 
+**Current slice (2026-05-14):** In progress. Dashboard session creation now
+requires both service-running and assets-ready truth, surfaces explicit
+service-offline/asset-state/saved-VM-dependency messaging, and exposes retry
+setup affordances on retryable service asset errors. Onboarding welcome/ready
+views now consume and render the same service/asset truth states.
+
 **Behavior to build:**
 
 - Wizard/dashboard show service offline, service starting, checking, updating, ready, error, and saved-VM dependency missing.
