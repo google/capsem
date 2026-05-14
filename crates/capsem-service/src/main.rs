@@ -195,17 +195,6 @@ impl LegacyAwareVmSettings {
     }
 }
 
-fn legacy_service_endpoint_removed(path: &str, replacement: Option<&str>) -> AppError {
-    let replacement_hint = match replacement {
-        Some(next) => format!(" ; use '{next}' instead"),
-        None => String::new(),
-    };
-    AppError(
-        StatusCode::GONE,
-        format!("legacy endpoint removed: {path} (no migration){replacement_hint}"),
-    )
-}
-
 /// Result of [`ServiceState::preserve_failed_session_dir_outcome`].
 ///
 /// AB-008: pulled out so callers can distinguish "already preserved by an
@@ -1768,7 +1757,7 @@ async fn handle_provision(
     let ram_mb = payload
         .ram_mb
         .unwrap_or_else(|| vm_settings.effective_ram_mb());
-    let cpus = payload.cpus.unwrap_or_else(|| vm_settings.cpu_count);
+    let cpus = payload.cpus.unwrap_or(vm_settings.cpu_count);
 
     // Retry budget for the launchd-cleanup transient. Failed attempts
     // fast-fail in ~500ms (capsem-process spawn -> validateWithError
@@ -2061,7 +2050,6 @@ async fn handle_debug_report(
         let registry = state.persistent_registry.lock().unwrap();
         let stopped_or_suspended = registry
             .list()
-            .into_iter()
             .filter(|entry| !running_ids.contains(&entry.name))
             .count();
         let defunct_sessions: Vec<debug_report::DefunctSessionReport> = registry
@@ -3019,47 +3007,48 @@ struct ReloadConfigFailure {
 
 /// GET /settings -- unified settings tree + issues + presets.
 async fn handle_get_settings() -> Result<Json<serde_json::Value>, AppError> {
-    Err(legacy_service_endpoint_removed("/settings", None))
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
 /// POST /settings -- batch-update settings and return the refreshed tree.
 async fn handle_save_settings(
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if raw.is_empty() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "legacy endpoint removed: /settings expects no-op data path".into(),
-        ));
-    }
-    Err(legacy_service_endpoint_removed("/settings", None))
+    capsem_core::net::policy_config::batch_update_settings_json(&raw)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
 /// GET /settings/presets -- list security presets.
 async fn handle_get_presets() -> Result<Json<serde_json::Value>, AppError> {
-    Err(legacy_service_endpoint_removed("/settings/presets", Some("/profiles API")))
+    let presets = capsem_core::net::policy_config::security_presets();
+    Ok(Json(serde_json::to_value(presets).unwrap_or_default()))
 }
 
 /// POST /settings/presets/{id} -- apply a security preset, return refreshed tree.
 async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    let _ = id;
-    Err(legacy_service_endpoint_removed("/settings/presets/:id", Some("/profiles API")))
+    capsem_core::net::policy_config::apply_preset(&id)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let resp = capsem_core::net::policy_config::load_settings_response();
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
 /// POST /settings/lint -- validate config and return issues.
 async fn handle_lint_config() -> Result<Json<serde_json::Value>, AppError> {
-    Err(legacy_service_endpoint_removed("/settings/lint", Some("/profiles API")))
+    let issues = capsem_core::net::policy_config::load_merged_lint();
+    Ok(Json(serde_json::to_value(issues).unwrap_or_default()))
 }
 
 /// POST /settings/validate-key -- validate an API key against a provider endpoint.
 async fn handle_validate_key(
     Json(payload): Json<ValidateKeyRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _ = payload;
-    Err(legacy_service_endpoint_removed(
-        "/settings/validate-key",
-        Some("/profiles API"),
-    ))
+    let result = capsem_core::host_config::validate_api_key(&payload.provider, &payload.key)
+        .await
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(serde_json::to_value(result).unwrap_or_default()))
 }
 
 // ---------------------------------------------------------------------------
@@ -3209,11 +3198,29 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _ = payload;
-    Err(legacy_service_endpoint_removed(
-        "/setup/corp-config",
-        Some("/profiles API"),
-    ))
+    use capsem_core::net::policy_config::corp_provision;
+
+    let capsem_dir = capsem_core::paths::capsem_home_opt()
+        .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+
+    if let Some(source) = &payload.source {
+        // Use the existing provision function which handles fetch + install
+        corp_provision::provision_from_source(&capsem_dir, source)
+            .await
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    } else if let Some(toml_content) = &payload.toml {
+        corp_provision::validate_corp_toml(toml_content)
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        corp_provision::install_inline_corp_config(&capsem_dir, toml_content)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    } else {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "provide either 'source' (URL) or 'toml' (inline content)".into(),
+        ));
+    }
+
+    Ok(Json(json!({ "success": true })))
 }
 
 // ---------------------------------------------------------------------------
@@ -3225,8 +3232,9 @@ async fn handle_mcp_servers() -> Json<serde_json::Value> {
     use capsem_core::mcp::policy::McpUserConfig;
     use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
 
-    let user_mcp = McpUserConfig::default();
-    let corp_mcp = McpUserConfig::default();
+    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+    let user_mcp = user_sf.mcp.unwrap_or_default();
+    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
 
     // Include the "local" builtin server if the binary exists.
     let builtin_bin = std::env::current_exe()
@@ -3285,7 +3293,29 @@ async fn handle_mcp_tools() -> Json<serde_json::Value> {
 
 /// GET /mcp/policy -- return the merged MCP policy.
 async fn handle_mcp_policy() -> Result<Json<serde_json::Value>, AppError> {
-    Err(legacy_service_endpoint_removed("/mcp/policy", Some("/api/v2/policies")))
+    use capsem_core::mcp::policy::McpUserConfig;
+
+    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+    let user_mcp = user_sf.mcp.unwrap_or_default();
+    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
+
+    let resp = api::McpPolicyInfoResponse {
+        global_policy: user_mcp.global_policy.clone(),
+        default_tool_permission: user_mcp
+            .default_tool_permission
+            .map(|d| format!("{d:?}").to_lowercase())
+            .unwrap_or_else(|| "allow".into()),
+        blocked_servers: {
+            let policy = user_mcp.to_policy(&corp_mcp);
+            policy.blocked_servers
+        },
+        tool_permissions: user_mcp
+            .tool_permissions
+            .iter()
+            .map(|(k, v)| (k.clone(), format!("{v:?}").to_lowercase()))
+            .collect(),
+    };
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
 /// GET /policy-hook/spec -- export the Policy Hook Spec0 OpenAPI contract.

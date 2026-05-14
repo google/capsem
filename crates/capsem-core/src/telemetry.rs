@@ -187,12 +187,24 @@ pub fn current_parent_traceparent() -> &'static str {
 /// with the existing `CAPSEM_TRACE_ID` 16-hex convention -- one fewer
 /// representation to remember when grepping.
 pub fn ambient_capsem_trace_id() -> Option<String> {
-    if let Ok(env) = std::env::var("CAPSEM_TRACE_ID") {
+    let env_trace_id = std::env::var("CAPSEM_TRACE_ID").ok();
+    ambient_capsem_trace_id_from_inputs(
+        env_trace_id.as_deref(),
+        PARENT_TRACEPARENT.get().map(String::as_str),
+    )
+}
+
+fn ambient_capsem_trace_id_from_inputs(
+    env_trace_id: Option<&str>,
+    parent_traceparent: Option<&str>,
+) -> Option<String> {
+    if let Some(env) = env_trace_id {
         if !env.is_empty() {
-            return Some(env);
+            return Some(env.to_string());
         }
     }
-    let tp = PARENT_TRACEPARENT.get()?;
+
+    let tp = parent_traceparent?;
     let mut parts = tp.split('-');
     let _version = parts.next()?;
     let trace_id = parts.next()?;

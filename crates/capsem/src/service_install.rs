@@ -840,8 +840,8 @@ mod tests {
         assert!(err.contains("CAPSEM_ASSETS_DIR"));
     }
 
-    #[tokio::test]
-    async fn service_status_ignores_platform_unit_in_isolation_env() {
+    #[test]
+    fn service_status_ignores_platform_unit_in_isolation_env() {
         let _lock = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let run = dir.path().join("run");
@@ -849,7 +849,8 @@ mod tests {
         let _r = EnvGuard::set("CAPSEM_RUN_DIR", run.to_str().unwrap());
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
 
-        let status = service_status().await.unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let status = runtime.block_on(service_status()).unwrap();
 
         assert!(!status.installed);
         assert!(!status.running);

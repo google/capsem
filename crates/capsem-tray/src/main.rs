@@ -39,7 +39,7 @@ struct Args {
 
 /// Message from the async poller to the main thread.
 enum PollResult {
-    Status(gateway::StatusResponse),
+    Status(Box<gateway::StatusResponse>),
     Unavailable(String),
 }
 
@@ -177,10 +177,10 @@ fn main() -> Result<()> {
                         last_state = Some(TrayState::Idle);
                     }
 
-                    if last_status.as_ref() != Some(&status) {
+                    if last_status.as_ref() != Some(status.as_ref()) {
                         let new_menu = menu::build_menu(&status);
                         tray.set_menu(Some(Box::new(new_menu)));
-                        last_status = Some(status);
+                        last_status = Some(*status);
                     }
                 }
                 PollResult::Unavailable(reason) => {
@@ -276,7 +276,7 @@ async fn async_worker(
                 // Poll status
                 match client.status().await {
                     Ok(status) => {
-                        let _ = poll_tx.send(PollResult::Status(status));
+                        let _ = poll_tx.send(PollResult::Status(Box::new(status)));
                     }
                     Err(e) => {
                         warn!("status poll failed: {e}");
@@ -299,7 +299,7 @@ async fn async_worker(
                 poll_interval.reset(); // Optional: reset interval if we want to delay next poll
                 // OR just poll immediately:
                 if let Ok(status) = client.status().await {
-                     let _ = poll_tx.send(PollResult::Status(status));
+                     let _ = poll_tx.send(PollResult::Status(Box::new(status)));
                 }
             }
         }

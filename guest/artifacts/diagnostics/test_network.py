@@ -46,6 +46,7 @@ def test_iptables_redirect_dns_udp_to_1053():
         "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
         timeout=5,
     )
+    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
     assert "1053" in result.stdout, \
         f"no REDIRECT to 1053 (DNS proxy):\n{result.stdout}"
     assert "udp dpt:53" in result.stdout, \
@@ -59,6 +60,7 @@ def test_iptables_redirect_dns_tcp_to_1053():
         "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
         timeout=5,
     )
+    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
     assert "tcp dpt:53" in result.stdout, \
         f"no TCP dport 53 redirect rule:\n{result.stdout}"
 
@@ -108,6 +110,7 @@ def test_iptables_redirect_443_to_10443():
         "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
         timeout=5,
     )
+    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
     assert "REDIRECT" in result.stdout and "10443" in result.stdout, \
         f"no REDIRECT 443->10443:\n{result.stdout}"
 
@@ -118,6 +121,7 @@ def test_iptables_redirect_80_to_10080():
         "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
         timeout=5,
     )
+    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
     # Look for a REDIRECT line carrying ports "80" and "10080".
     assert "10080" in result.stdout, \
         f"no REDIRECT to 10080 (plain HTTP path):\n{result.stdout}"
@@ -132,6 +136,7 @@ def test_iptables_redirect_11434_to_10080():
         "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
         timeout=5,
     )
+    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
     assert "11434" in result.stdout, \
         f"no REDIRECT for 11434 (Ollama):\n{result.stdout}"
 

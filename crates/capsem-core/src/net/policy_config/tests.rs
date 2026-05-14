@@ -3979,7 +3979,7 @@ fn disabled_mcp_servers_are_not_injected_into_agent_configs() {
 
     let json = inject_mcp_servers_json(
         r#"{"mcpServers":{"local":{"command":"/run/capsem-mcp-server"},"github":{"command":"npx"}}}"#,
-        &[server.clone()],
+        std::slice::from_ref(&server),
     );
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert!(parsed["mcpServers"]
@@ -3990,7 +3990,7 @@ fn disabled_mcp_servers_are_not_injected_into_agent_configs() {
 
     let toml = inject_mcp_servers_toml(
         "[mcp_servers.local]\ncommand = \"/run/capsem-mcp-server\"\n[mcp_servers.github]\ncommand = \"npx\"\n",
-        &[server],
+        std::slice::from_ref(&server),
     );
     let parsed: toml::Value = toml::from_str(&toml).unwrap();
     assert!(parsed

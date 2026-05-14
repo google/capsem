@@ -1427,7 +1427,14 @@ async fn main() -> Result<()> {
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
 
-            status::doctor_preflight().await?;
+            // Preflight checks the default host install layout and service
+            // manager state. When the user targets a custom socket via
+            // --uds-path, those checks are unrelated to the selected
+            // service instance and can false-fail (for example in e2e
+            // harnesses that run against an ephemeral service).
+            if auto_launch {
+                status::doctor_preflight().await?;
+            }
 
             let req = ProvisionRequest {
                 name: None,

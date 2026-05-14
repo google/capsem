@@ -5,14 +5,15 @@
 //! repository access, service installation, and VM boot verification.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-
-use tracing::warn;
 
 use capsem_core::net::policy_config;
 use capsem_core::net::policy_config::corp_provision;
 use capsem_core::setup_state::SetupState;
+
+use crate::client::{self, UdsClient};
 
 /// Options passed from CLI flags.
 pub struct SetupOptions {
@@ -52,6 +53,98 @@ fn setup_requires_manifest_for_layout(layout: &crate::platform::InstallLayout) -
     !matches!(layout, crate::platform::InstallLayout::Development)
 }
 
+const SETUP_SERVICE_TRUTH_TIMEOUT: Duration = Duration::from_secs(8);
+const SETUP_SERVICE_TRUTH_POLL: Duration = Duration::from_millis(250);
+
+enum SetupAssetProbe {
+    Available(client::AssetHealth),
+    Unavailable(String),
+}
+
+fn evaluate_setup_asset_health(asset_health: &client::AssetHealth) -> Result<bool> {
+    match asset_health.state.as_str() {
+        "ready" => {
+            if !asset_health.ready {
+                anyhow::bail!("service asset state is inconsistent: state=ready but ready=false");
+            }
+            if !asset_health.missing.is_empty() {
+                anyhow::bail!(
+                    "service asset state is inconsistent: state=ready but missing={}",
+                    asset_health.missing.join(", ")
+                );
+            }
+            if !asset_health.saved_vm_dependencies.is_empty() {
+                return Ok(false);
+            }
+            Ok(true)
+        }
+        "checking" | "updating" => {
+            if asset_health.ready {
+                anyhow::bail!(
+                    "service asset state is inconsistent: state={} but ready=true",
+                    asset_health.state
+                );
+            }
+            Ok(false)
+        }
+        "error" => Ok(false),
+        "unknown" => anyhow::bail!("service asset state is unknown"),
+        other => anyhow::bail!("service asset state is unsupported: {}", other),
+    }
+}
+
+async fn fetch_setup_asset_health(capsem_dir: &Path) -> SetupAssetProbe {
+    let sock = capsem_dir.join("run/service.sock");
+    let isolation_mode = crate::service_install::test_isolation_env_active();
+    let client = UdsClient::new(sock, isolation_mode);
+    let deadline = Instant::now() + SETUP_SERVICE_TRUTH_TIMEOUT;
+
+    loop {
+        let observation = if isolation_mode {
+            match client
+                .get::<client::ApiResponse<client::ListResponse>>("/list")
+                .await
+            {
+                Ok(resp) => match resp.into_result() {
+                    Ok(list) => {
+                        if let Some(asset_health) = list.asset_health {
+                            return SetupAssetProbe::Available(asset_health);
+                        }
+                        "service /list response missing asset_health".to_string()
+                    }
+                    Err(e) => format!("service /list returned error: {e:#}"),
+                },
+                Err(e) => format!("service /list query failed: {e:#}"),
+            }
+        } else {
+            match crate::service_install::service_status().await {
+                Ok(status) if status.running => match client
+                    .get::<client::ApiResponse<client::ListResponse>>("/list")
+                    .await
+                {
+                    Ok(resp) => match resp.into_result() {
+                        Ok(list) => {
+                            if let Some(asset_health) = list.asset_health {
+                                return SetupAssetProbe::Available(asset_health);
+                            }
+                            "service /list response missing asset_health".to_string()
+                        }
+                        Err(e) => format!("service /list returned error: {e:#}"),
+                    },
+                    Err(e) => format!("service /list query failed: {e:#}"),
+                },
+                Ok(_) => "service is not running".to_string(),
+                Err(e) => format!("failed to read service status: {e:#}"),
+            }
+        };
+
+        if Instant::now() >= deadline {
+            return SetupAssetProbe::Unavailable(observation);
+        }
+        tokio::time::sleep(SETUP_SERVICE_TRUTH_POLL).await;
+    }
+}
+
 /// Run the setup wizard.
 pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     let cd = capsem_dir()?;
@@ -85,12 +178,10 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     // Load merged settings for corp-awareness
     let (_user_settings, corp_settings) = policy_config::load_settings_files();
 
-    // Step 1: Welcome + start background asset download
-    let bg_download = if opts.force || !state.is_step_done("welcome") {
-        step_welcome(&cd, &mut state).await?
-    } else {
-        None
-    };
+    // Step 1: Welcome + asset-manifest readiness checks.
+    if opts.force || !state.is_step_done("welcome") {
+        step_welcome(&cd, &mut state).await?;
+    }
 
     // Step 3: Security preset
     if opts.force || !state.is_step_done("security_preset") {
@@ -107,20 +198,6 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
         step_repositories(&cd, &mut state, &opts, &corp_settings)?;
     }
 
-    // Wait for background download to finish before summary
-    if let Some(handle) = bg_download {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                warn!(error = %e, "background asset download failed");
-                println!("  Asset download failed: {}. Run `capsem update` later.", e);
-            }
-            Err(e) => {
-                warn!(error = %e, "background download task panicked");
-            }
-        }
-    }
-
     // Step 6: Summary (guarded like other steps to avoid re-killing the service)
     if opts.force || !state.is_step_done("summary") {
         step_summary(&cd, &mut state, &opts).await?;
@@ -128,7 +205,7 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
 
     // All mandatory steps finished -- the CLI side of install is done.
     // Separate from onboarding_completed, which only the GUI wizard can flip.
-    state.install_completed = true;
+    state.install_completed = state.is_step_done("summary");
 
     save_state_to(&cd, &state)?;
     println!("\nSetup complete.");
@@ -187,13 +264,7 @@ async fn step_corp_config(capsem_dir: &Path, source: &str, state: &mut SetupStat
     Ok(())
 }
 
-/// Type alias for the background download join handle.
-type BgDownloadHandle = tokio::task::JoinHandle<anyhow::Result<()>>;
-
-async fn step_welcome(
-    capsem_dir: &Path,
-    state: &mut SetupState,
-) -> Result<Option<BgDownloadHandle>> {
+async fn step_welcome(capsem_dir: &Path, state: &mut SetupState) -> Result<()> {
     println!("[2/6] Welcome to Capsem!");
     println!("  The fastest way to ship with AI securely.");
 
@@ -213,48 +284,18 @@ async fn step_welcome(
             );
             state.mark_done("welcome");
             save_state_to(capsem_dir, state)?;
-            return Ok(None);
+            return Ok(());
         }
     };
-    let arch = if cfg!(target_arch = "aarch64") {
-        "arm64"
-    } else {
-        "x86_64"
-    };
-    let binary_version = env!("CARGO_PKG_VERSION").to_string();
-
-    println!("  Checking VM assets...");
-    let handle = tokio::spawn(async move {
-        let on_progress = |p: capsem_core::asset_manager::DownloadProgress| {
-            if p.done {
-                let mb = p.bytes_done as f64 / 1_048_576.0;
-                println!("  Asset ready: {} ({:.1} MB)", p.logical_name, mb);
-            }
-        };
-        match capsem_core::asset_manager::download_missing_assets(
-            &manifest,
-            &binary_version,
-            arch,
-            &assets_dir,
-            on_progress,
-        )
-        .await
-        {
-            Ok(downloaded) if downloaded.is_empty() => {
-                println!("  All VM assets already present.");
-                Ok(())
-            }
-            Ok(downloaded) => {
-                println!("  Downloaded {} asset(s).", downloaded.len());
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    });
+    let current = manifest.assets.current.clone();
+    println!(
+        "  Asset manifest verified (release {}). Service will verify and update assets in the background.",
+        current
+    );
 
     state.mark_done("welcome");
     save_state_to(capsem_dir, state)?;
-    Ok(Some(handle))
+    Ok(())
 }
 
 fn step_security_preset(
@@ -395,14 +436,44 @@ async fn step_summary(
         }
     }
 
-    // Install service
-    match crate::service_install::install_service().await {
-        Ok(()) => {
-            println!("  Service installed.");
-            state.service_installed = true;
+    if crate::service_install::test_isolation_env_active() {
+        println!("  Test-isolation mode: skipping persistent service unit install.");
+        state.service_installed = false;
+    } else {
+        crate::service_install::install_service()
+            .await
+            .context("service installation failed during setup")?;
+        println!("  Service installed.");
+        state.service_installed = true;
+    }
+
+    match fetch_setup_asset_health(capsem_dir).await {
+        SetupAssetProbe::Available(asset_health) => {
+            state.vm_verified = evaluate_setup_asset_health(&asset_health)?;
+            if state.vm_verified {
+                println!("  VM assets ready.");
+            } else if asset_health.state == "error" {
+                let detail = asset_health
+                    .error
+                    .as_deref()
+                    .unwrap_or("service reported an unspecified asset error");
+                println!(
+                    "  VM assets are in error: {}. Setup completed config, but VM readiness is not verified.",
+                    detail
+                );
+            } else {
+                println!(
+                    "  VM assets are still {}. Setup completed config; VM readiness will follow service progress.",
+                    asset_health.state
+                );
+            }
         }
-        Err(e) => {
-            println!("  Service installation skipped: {}", e);
+        SetupAssetProbe::Unavailable(observation) => {
+            state.vm_verified = false;
+            println!(
+                "  Service asset status unavailable: {}. Setup completed config, but VM readiness is not verified.",
+                observation
+            );
         }
     }
 
@@ -586,6 +657,59 @@ mod tests {
         assert!(setup_requires_manifest_for_layout(&InstallLayout::UserDir));
         assert!(setup_requires_manifest_for_layout(&InstallLayout::MacosPkg));
         assert!(setup_requires_manifest_for_layout(&InstallLayout::LinuxDeb));
+    }
+
+    fn asset_health(state: &str, ready: bool) -> crate::client::AssetHealth {
+        crate::client::AssetHealth {
+            ready,
+            state: state.to_string(),
+            version: Some("2026.0415.1".to_string()),
+            arch: Some("arm64".to_string()),
+            missing: Vec::new(),
+            progress: None,
+            error: None,
+            retry_count: 0,
+            retryable: false,
+            saved_vm_dependencies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn setup_asset_health_ready_verifies_vm() {
+        let health = asset_health("ready", true);
+        assert!(evaluate_setup_asset_health(&health).unwrap());
+    }
+
+    #[test]
+    fn setup_asset_health_ready_must_match_ready_flag() {
+        let health = asset_health("ready", false);
+        let err = evaluate_setup_asset_health(&health).unwrap_err();
+        assert!(
+            err.to_string().contains("state=ready but ready=false"),
+            "unexpected error: {err:#}",
+        );
+    }
+
+    #[test]
+    fn setup_asset_health_checking_or_updating_is_pending() {
+        let checking = asset_health("checking", false);
+        let updating = asset_health("updating", false);
+        assert!(!evaluate_setup_asset_health(&checking).unwrap());
+        assert!(!evaluate_setup_asset_health(&updating).unwrap());
+    }
+
+    #[test]
+    fn setup_asset_health_error_is_pending_and_unknown_fails() {
+        let mut errored = asset_health("error", false);
+        errored.error = Some("release source unavailable".to_string());
+        assert!(!evaluate_setup_asset_health(&errored).unwrap());
+
+        let unknown = asset_health("unknown", false);
+        let unknown_error = evaluate_setup_asset_health(&unknown).unwrap_err();
+        assert!(
+            unknown_error.to_string().contains("state is unknown"),
+            "unexpected error: {unknown_error:#}",
+        );
     }
 
     // ---- step_corp_config (happy path + validation error) -------------

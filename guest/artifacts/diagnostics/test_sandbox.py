@@ -177,6 +177,7 @@ def test_iptables_redirect():
     """iptables REDIRECT rule must capture port 443 to 10443."""
     # Try iptables-legacy first (kernel has NF_TABLES=n), fall back to iptables
     result = run("iptables-legacy -t nat -L -n 2>&1 || iptables -t nat -L -n 2>&1", timeout=5)
+    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
     assert "REDIRECT" in result.stdout, f"no REDIRECT rule:\n{result.stdout}"
     assert "10443" in result.stdout, f"no redirect to 10443:\n{result.stdout}"
 
