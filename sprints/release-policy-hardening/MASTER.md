@@ -21,12 +21,13 @@ docs, binaries, and tag plan on that line.
 | T4 docs and release notes | Implementation complete; final changelog/latest-release pass pending T9 | P1 | T0/T8 final decisions | stale-term scans + docs build + site build | Docs now distinguish hook infrastructure from configured dispatch, describe `.pkg`/`.deb` and disabled updater truth, include hook/Policy V2 telemetry fields, and remove stale DNS/benchmark claims. |
 | T5 service/process/package helpers | Implementation complete; focused package/VM proof passed in T10 | P0 | T0 package layout, T1 rootfs gate | Focused Rust/Python checks + compile gate + T10 Gate B/E2E/package proof | Helper packaging, spec route/auth proof, rootfs validation, env isolation, async cleanup, and builtin-aware reload/refresh are implemented; clean installed-package launch remains T11. |
 | T6 telemetry/session tooling | Implementation complete; focused real-session trace proof passed in T10 | P2 | T3/T8 telemetry semantics | Logger/core/service/MCP/session/frontend gates passed + focused T8 timeline assertion | Old/core DB compatibility, Policy V2 schema checks, MCP/tool correlation, dns/hook/audit/snapshot timeline layers, triage, frontend policy fields, lifecycle tests, and legacy migration coverage are implemented. |
-| T7 swarm intake and review control | Owner mapping complete; downstream closeout open | P0 | T8-T12 downstream resolution | FD01-FD14 transfer trackers + Galileo audit | Final investigation wave and mapping audit are captured; every finding doc is linked to owner T-track rows, while downstream blocker checkboxes stay open until resolved or deferred. |
+| T7 swarm intake and review control | Owner mapping complete; downstream closeout open | P0 | T8-T13 downstream resolution | FD01-FD14 transfer trackers + Galileo audit | Final investigation wave and mapping audit are captured; every finding doc is linked to owner T-track rows, while downstream blocker checkboxes stay open until resolved or deferred. |
 | T8 policy integration E2E | Implementation complete; focused VM proof passed in T10 | P1 | T2/T3/T5/T6 | Hook defer decision + 388 frontend tests + focused Rust checks + focused VM E2E | Configured external hook dispatch is deferred for `1.1.1778542197`; non-hook Policy V2 settings/reload/timeline E2E path, reload banner dismissal, backend hook rejection, runtime support matrix, and live `/settings` + `/reload-config` MCP E2E proof are implemented. |
 | T9 release metadata and changelog | Implementation complete; commit discipline pending | P1 | T0-T8 final decisions | version sync + latest-release extraction + release page + docs build + partial workflow check | Exact `1.1.1778542197` stamp, changelog, latest release, 1.1 release page, lockfile, stamp recipe, and internal dependency metadata are synchronized; workflow preflight still needs local signing prerequisites. |
 | T10 focused verification | Complete; T11 blockers explicit | P0 | T0-T9 fixes | focused Rust/Python/frontend/docs + `.deb` install + `.pkg` expansion + Gate A/B + T8 E2E proof | Targeted checks, host doctor, strict `just test-install`, `just exec "echo cli-ok"`, `just exec "capsem-doctor"`, focused T8 policy E2E, rootfs validation, `.pkg` expansion/signature proof, frontend coverage, and `just ui` visual evidence are passing/captured; clean installed-package proof remains a T11/manual-host gate. |
 | T11 local release candidate gate | Full suite/private preflight/install smoke/installed doctor/demo UI green; manual sign-off open | P0 | T10 green | Full `just test`, final doctor, restored-private preflight, VM doctor, Docker install e2e, host install smoke | Final `just test`, final host `just doctor`, direct B3SUMS/signature checks, `just exec "capsem-doctor"`, restored Apple/notary/manifest preflight, `just install`, installed CLI run, installed doctor, rebuilt `.pkg` app-materialization fix, `/Applications` demo UI launch, `just run-ui --` process proof, and installed-app tray relaunch proof passed by 2026-05-11. Remaining blockers are Elie Gate C/Gate D visual sign-off and the no-tag/no-push hold before T12. |
 | T12 CI green release landing | Release landed; CI hardening follow-up in progress | P0 | T11 signed off | CI green + live asset verification + follow-up package gates | `v1.1.1778542197` is published/latest, CI and site publish are green, live manifest/packages verify, and follow-up CI now blocks future releases on macOS pkg signature/Gatekeeper checks. |
+| T13 kernel/netfilter recovery gate | Complete; full gate green on 2026-05-14 | P0 | T10-T12 baseline + fresh asset rebuild | focused VM/network-policy/session tests + full `just test` | Kernel/netfilter recovery is in place: guest iptables tables and redirect rules are available again, focused policy/session telemetry paths pass, and local full `just test` is green. |
 
 ## Phases
 
@@ -37,6 +38,7 @@ docs, binaries, and tag plan on that line.
 - Release control: T9, T10.
 - Local ship gate: T11.
 - CI and publish: T12.
+- Post-release stabilization gate: T13.
 
 ## Just Recipes
 
@@ -53,7 +55,7 @@ docs, binaries, and tag plan on that line.
 
 1. Keep T7 closeout active: no active swarm finding can remain only in a finding doc,
    and every completed finding doc must be represented by a FD01-FD14
-   pre-sprint subtask plus owner rows in the relevant T0-T12 trackers.
+   pre-sprint subtask plus owner rows in the relevant T0-T13 trackers.
 2. Resolve T8 hook shipping scope before finalizing T2 UI choices or T4/T9
    release language.
 3. Fix foundation tracks T0/T1/T5 before trusting any install or CI proof.
@@ -66,6 +68,8 @@ docs, binaries, and tag plan on that line.
    Codex CLI/UI/full-launch verification.
 8. Only after T11 is signed off, run T12: tag `v1.1.1778542197`, wait for CI, verify
    published assets, and mark the release landed.
+9. Before opening any new sprint scope, close T13 by proving redirect-path
+   integrity and full `just test` green on the current branch.
 
 ## Elie + Codex Manual Gates
 
@@ -211,7 +215,7 @@ The release workflow must fail before publish if any expected item is missing.
   for session tooling, rootfs/image-builder, release packaging, and proposed
   sub-sprint splits.
 - Pre-sprint transfer board: FD01-FD14 in `T7-active-review-followups.md`
-  links every finding doc to owner rows in T0-T12 and keeps downstream
+  links every finding doc to owner rows in T0-T13 and keeps downstream
   blocker checkboxes open until implementation resolves them.
 
 ## Swarm Process
@@ -227,11 +231,11 @@ findings, and had its output copied into a durable finding doc under
 
 1. Read `swarm.md`.
 2. Confirm the Finding Docs Index has no `In progress` rows.
-3. Read each completed finding doc before continuing T8-T12 work.
+3. Read each completed finding doc before continuing T8-T13 work.
 4. Deduplicate overlapping P0/P1 findings.
 5. Keep implementation sub-sprints expanded so every P0/P1 has exact files, tests,
    package/UI/docs/VM proof, and a release-gate owner.
-6. Keep T0-T12 execution tasks synchronized with any newly captured audit
+6. Keep T0-T13 execution tasks synchronized with any newly captured audit
    result before moving to the next track.
 
 ### Completed Finding Docs
@@ -263,11 +267,12 @@ findings, and had its output copied into a durable finding doc under
   T10.8 evidence ledger, T11.6 local handoff, T12 CI release landing, and a
   frontend runtime/image-truth track.
 - Keep the FD01-FD14 pre-sprint subtasks in T7 synchronized with the
-  `## Swarm Transfer Tracker` rows in T0-T12.
+  `## Swarm Transfer Tracker` rows in T0-T13.
 - Normalize invalid or future test commands before putting them in final
   verification gates.
 - Keep the release hold active until T10 focused verification, T11 local
-  release candidate gate, and T12 CI release landing are green.
+  release candidate gate, T12 CI release landing, and T13 post-release
+  kernel/netfilter recovery gate are green.
 
 ## Completion Criteria
 

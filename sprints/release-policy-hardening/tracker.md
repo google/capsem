@@ -18,12 +18,13 @@ owning sub-sprint doc with detailed task lists.
 | T4 docs and release notes | Implementation complete; final changelog/latest-release pass pending T9 | P1 | Yes | Hook overclaims, stale artifacts/updater text, telemetry docs, DNS wording, and benchmark gate docs are cleaned up. |
 | T5 service/process/helper packaging | Implementation complete; focused package/VM proof passed in T10 | P0 | Yes | Helper binaries, route/spec proof, rootfs validation, env isolation, cleanup, and reload/refresh semantics are implemented; clean installed-package launch remains T11. |
 | T6 telemetry/session tooling | Implementation complete; focused real-session trace proof passed in T10 | P2 | Yes | Old/core DB compatibility, current Policy V2 schema checks, MCP correlation, timeline/triage layers, frontend policy fields, lifecycle tests, and legacy migration coverage are implemented. |
-| T7 swarm intake and review control | Owner mapping complete; downstream closeout open | P0 | Yes | FD01-FD14 transfer board, Galileo mapping audit, and command-validity sweep are captured; downstream blocker checkboxes stay open until T8-T12 resolves or defers each point. |
+| T7 swarm intake and review control | Owner mapping complete; downstream closeout open | P0 | Yes | FD01-FD14 transfer board, Galileo mapping audit, and command-validity sweep are captured; downstream blocker checkboxes stay open until T8-T13 resolves or defers each point. |
 | T8 policy integration E2E | Implementation complete; focused VM proof passed in T10 | P1 | Yes | Hook dispatch deferred for 1.1, backend/frontend hook writes rejected, reload banner dismissal and live `/settings` reload/timeline E2E path implemented; focused live `/settings` + `/reload-config` MCP E2E passed on 2026-05-10. |
 | T9 release metadata and changelog | Implementation complete; commit discipline pending | P1 | Yes | Exact `1.1.1778542197` stamp, changelog, latest release, release page, lockfile, stamp recipe, and internal dependency metadata are synchronized. |
 | T10 focused verification | Complete; T11 blockers explicit | P0 | Yes | Focused Rust/Python/frontend/docs, strict `.deb` install, host doctor, T8 policy E2E, Gate A visual proof, Gate B command proof, rootfs validation, frontend coverage, and `.pkg` expansion/signature proof are green or captured; clean installed-package proof and full-suite gates remain T11. |
 | T11 local release candidate gate | Full suite, private preflight, install smoke, installed doctor, demo UI, and final post-tray full gate green; manual sign-off open | P0 | Yes | Final `just test`, host doctor, `just exec "capsem-doctor"`, restored-private preflight, release workflow check, host package install, installed CLI run, installed doctor, rebuilt `.pkg` app-materialization fix, `/Applications` demo UI launch, `just run-ui --` process proof, and installed-app tray relaunch proof are captured. Elie Gate C/Gate D visual sign-off still blocks T12. |
 | T12 CI green release landing | Release landed; CI hardening follow-up in progress | P0 | Yes | `v1.1.1778542197` is published/latest, release CI and site publish are green, live manifest/packages verify, and follow-up CI now blocks future releases on macOS pkg signature/Gatekeeper checks. |
+| T13 kernel/netfilter recovery gate | Complete; full gate green on 2026-05-14 | P0 | Yes | Kernel/netfilter recovery now restores iptables tables and redirect installation, focused network-policy/session telemetry paths are passing, and local full `just test` completed green. |
 
 ## Active Swarm
 
@@ -359,6 +360,17 @@ tests/capsem-session/test_check_session_compat.py -q` (2 passed),
 - [ ] T12.4 Live Release Asset Verification.
 - [ ] T12.5 Release Landed Record.
 
+### T13 Kernel Netfilter Recovery Gate
+
+- [x] T13.1 Failure Baseline.
+- [x] T13.2 Deterministic Kernel Line.
+- [x] T13.3 Build-Time Netfilter Contract.
+- [x] T13.4 Boot-Time Fail Closed.
+- [x] T13.5 Test Hardening.
+- [x] T13.6 Rebuild + Focused Verification.
+- [x] T13.7 Full Gate.
+- [x] Evidence captured: local `just test` pass on 2026-05-14.
+
 ## Coverage Ledger
 
 ### T0
@@ -454,7 +466,7 @@ tests/capsem-session/test_check_session_compat.py -q` (2 passed),
 
 - Unit/contract: n/a.
 - Functional: every reviewer result is represented by a FD01-FD14 pre-sprint
-  subtask plus owner rows in T0-T12.
+  subtask plus owner rows in T0-T13.
 - Adversarial: stale status checks.
 - E2E/VM: n/a.
 - Telemetry: n/a.
@@ -539,9 +551,32 @@ tests/capsem-session/test_check_session_compat.py -q` (2 passed),
 - Performance: CI/full-suite benchmark gates are green.
 - Missing/deferred: any live asset or CI failure reopens the owning track.
 
+### T13
+
+- Unit/contract: kernel build asserts required netfilter/iptables symbols
+  after `olddefconfig`; missing symbols fail build.
+- Functional: guest boot installs redirect rules and exposes iptables tables.
+- Adversarial: redirect install failure aborts boot with explicit netfilter
+  mismatch messaging (no silent degraded mode).
+- E2E/VM: focused failing network-policy/session telemetry suites pass after
+  asset rebuild.
+- Telemetry: `net_events` and policy evidence return for guest curl/model
+  traffic.
+- Performance: n/a.
+- Missing/deferred: none; this track blocks "next sprint" scope until full
+  `just test` is green.
+
 ## Verification Commands
 
 - [x] `git diff --check`
+- [ ] `just build-assets arm64`
+- [ ] `just build-assets x86_64`
+- [ ] `just _pack-initrd`
+- [ ] `uv run pytest -q tests/capsem-session-lifecycle/test_exec_events.py::test_exec_curl_creates_net_event`
+- [ ] `uv run pytest -q tests/capsem-guest/test_guest_network.py::TestGuestNetwork::test_iptables_redirect`
+- [ ] `uv run pytest -q tests/capsem-e2e/test_model_policy_mitm.py::test_guest_model_request_policy_block_records_session_db_no_leak`
+- [ ] `uv run pytest -q tests/capsem-e2e/test_policy_v2_http_dns_mitm.py::test_guest_http_policy_v2_block_and_header_strip_records_session_db`
+- [ ] `uv run pytest -q tests/capsem-gateway/test_mitm_policy.py::test_mitm_policy_telemetry`
 - [ ] `pkgutil --expand-full /tmp/verify/Capsem-*.pkg /tmp/capsem-pkg-proof/pkg-expanded`
 - [ ] `test -f /tmp/capsem-pkg-proof/pkg-expanded/**/*.app/Contents/Resources/manifest.json`
 - [ ] `test -f /tmp/capsem-pkg-proof/pkg-expanded/**/*.app/Contents/Resources/manifest.json.minisig`
