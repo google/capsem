@@ -293,11 +293,13 @@ service never becomes live.
 
 **Purpose:** Make UI startup states truthful and recoverable.
 
-**Current slice (2026-05-14):** In progress. Dashboard session creation now
-requires both service-running and assets-ready truth, surfaces explicit
-service-offline/asset-state/saved-VM-dependency messaging, and exposes retry
-setup affordances on retryable service asset errors. Onboarding welcome/ready
-views now consume and render the same service/asset truth states.
+**Current slice (2026-05-14):** Closed for the UI startup-state scope.
+Dashboard session creation now requires both service-running and assets-ready
+truth, surfaces explicit service-offline/asset-state/saved-VM-dependency
+messaging, keeps refresh status available while blocked, and exposes retry
+setup affordances plus inline retry errors on retryable service asset errors.
+Onboarding welcome/ready views consume and render the same service/asset truth
+states.
 
 **Behavior to build:**
 

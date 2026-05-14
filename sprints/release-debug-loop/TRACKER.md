@@ -4,7 +4,7 @@ Last updated: 2026-05-14
 
 ## Active Sprint
 
-S6 - UI Wizard/Dashboard Startup States (in progress; first startup-truth slice landed)
+S6 - UI Wizard/Dashboard Startup States (done; startup failures, retry, refresh, and blocked-empty states covered)
 
 S1, S2, S3, and S4 are closed for their current scope. The live sudo-backed
 `capsem uninstall -> just install -> capsem status` proof remains the final
@@ -32,7 +32,7 @@ dependencies, UI consumption, and update path.
 - [x] S3 - Service Asset Supervisor And Consumer Audit
 - [x] S4 - Saved VM Asset Dependencies
 - [x] S5 - `capsem-setup` Hardening
-- [ ] S6 - UI Wizard/Dashboard Startup States
+- [x] S6 - UI Wizard/Dashboard Startup States
 - [ ] S7 - Update/Uninstall/Purge Integration
 
 ## S0 Checklist
@@ -165,8 +165,8 @@ dependencies, UI consumption, and update path.
 - [x] Surface service asset-state truth (`unknown`/`checking`/`updating`/`error`) in dashboard and onboarding.
 - [x] Surface saved-VM missing dependency details in onboarding/dashboard status panes.
 - [x] Add retry affordance in the dashboard when service asset state is retryable `error`.
-- [ ] Add wizard/dashboard coverage for retryable setup error flows and status-refresh UX.
-- [ ] Add UI proof that startup failures never collapse into an empty-session lookalike state.
+- [x] Add wizard/dashboard coverage for retryable setup error flows and status-refresh UX.
+- [x] Add UI proof that startup failures never collapse into an empty-session lookalike state.
 
 ## Evidence Log
 
@@ -236,17 +236,18 @@ dependencies, UI consumption, and update path.
 - 2026-05-14: Verified S6 slice with `cd frontend && pnpm check` and `cd frontend && pnpm vitest run src/lib/__tests__/session-runtime-truth.test.ts`.
 - 2026-05-14: Closed remaining S5 harness proofs with packaging-safe setup tests: rerun idempotence under isolation, provider/settings fallback with empty detection, and explicit pending-readiness messaging when service never becomes live (`uv run pytest tests/capsem-install/test_setup_wizard.py -q` => 3 passed, 5 skipped).
 - 2026-05-14: Fixed the downstream install-suite broken-service regression by racing direct auto-launch socket readiness against child process exit; `capsem list` now returns promptly when an installed `capsem-service` exits before binding. Verification: `cargo test -p capsem connect_ -- --nocapture` => 3 passed; targeted broken-service install tests => 2 passed; `uv run pytest tests/capsem-install -q -rs` => 54 passed, 30 skipped.
+- 2026-05-14: Closed S6 dashboard startup-state coverage. Empty session panels now show startup-blocked copy while service/assets are unavailable, refresh status is always available on startup banners, retry setup errors stay visible, and focused frontend proof covers offline, unknown, updating, retryable-error, refresh, and blocked-empty states (`cd frontend && pnpm vitest run src/lib/__tests__/session-runtime-truth.test.ts` => 10 passed; `cd frontend && pnpm check` => 0 errors/warnings).
 
 ## Coverage Ledger
 
 - Unit/contract: `status::tests::doctor_preflight_fails_when_status_has_issues`, `status::tests::doctor_preflight_accepts_clean_status`, `status::tests::status_gate_fails_without_doctor_wording`, `status::tests::health_issue_is_typed_before_rendering`, `status::tests::health_issue_has_stable_machine_identity`, `status::tests::health_issue_report_is_machine_readable`, `status::tests::status_report_contains_service_and_typed_issues`, `status::tests::status_report_groups_issue_codes_by_install_surface`, `status::tests::status_report_preserves_service_asset_updating_state`, `status::tests::status_report_blocks_on_saved_vm_asset_dependencies`, host-binary readiness/version tests including gateway/tray, service-unit tests, setup-state tests, app-bundle tests, asset-manifest tests, signed-manifest rejection tests for status/doctor asset loading, install-fixture freshness tests, uninstall runtime-preservation policy tests, B4 MCP enabled-override/settings-injection tests, S3 asset-supervisor state/progress/error tests, and S4 registry/cleanup/base-asset identity tests; planned for purge policy.
-- Functional: parser coverage for `capsem status`, `capsem status --json`, and `capsem doctor`; black-box install harness coverage for `capsem status --json` typed blockers and grouped check states, missing service helper binaries, missing MCP helper binaries, stale process helper version, corrupt setup-state, missing asset manifest, missing canonical rootfs, completed setup-state, and runtime uninstall preserving durable state; S3 has service `/list`, gateway `/status`, CLI status JSON, tray menu, and frontend runtime-type pass-through coverage for asset states; S4 adds service `/list`, gateway `/status`, tray menu, frontend type, and CLI status coverage for saved-VM dependency gaps; planned for setup reruns and provider settings fallback.
+- Functional: parser coverage for `capsem status`, `capsem status --json`, and `capsem doctor`; black-box install harness coverage for `capsem status --json` typed blockers and grouped check states, missing service helper binaries, missing MCP helper binaries, stale process helper version, corrupt setup-state, missing asset manifest, missing canonical rootfs, completed setup-state, setup rerun/provider fallback, and runtime uninstall preserving durable state; S3 has service `/list`, gateway `/status`, CLI status JSON, tray menu, and frontend runtime-type pass-through coverage for asset states; S4 adds service `/list`, gateway `/status`, tray menu, frontend type, and CLI status coverage for saved-VM dependency gaps.
 - Adversarial: missing binaries, missing tray helper, corrupt setup state, missing manifest, missing rootfs, missing app-bundle evidence, runtime-uninstall preservation, captured partial-install evidence, dead-service evidence, stale service-unit evidence, malformed persistent registry evidence, S3 retryable asset-supervisor error-state coverage, and S4 saved-VM missing-rootfs launch refusal now have focused coverage; planned for bad permissions and unreadable assets.
 - E2E/install: simulated reinstall-after-uninstall and reinstall-over-corrupt-helper gates now have black-box coverage; planned for live clean install final gate and true update-over-existing in S7. S4 has local cleanup/startup wiring proof, but the live update-over-existing proof that old saved-VM assets survive package replacement remains part of S7/meta-gate.
-- UI/product: B4 has focused frontend interaction coverage for local MCP disable/re-enable; planned for wizard/dashboard/tray/app startup states and retry flows.
-- Telemetry/observability: failed-gate evidence bundle exists for `capsem status --json`, grouped status checks, optional `capsem debug`, redacted run-state breadcrumbs, install-layout evidence, app/tray evidence, and saved-VM state plus saved-VM asset-reference fields; it has fake-binary and installed-layout dirty coverage and is wired into `just install`; UI rendering proof lives in S6.
+- UI/product: B4 has focused frontend interaction coverage for local MCP disable/re-enable; S6 has focused dashboard/onboarding coverage for service offline, unknown/checking/updating/error assets, saved-VM dependency gaps, retry setup, refresh status, and blocked-empty startup states.
+- Telemetry/observability: failed-gate evidence bundle exists for `capsem status --json`, grouped status checks, optional `capsem debug`, redacted run-state breadcrumbs, install-layout evidence, app/tray evidence, and saved-VM state plus saved-VM asset-reference fields; it has fake-binary and installed-layout dirty coverage and is wired into `just install`; UI rendering proof landed in S6.
 - Performance: not a release blocker unless service asset supervisor introduces startup regressions; measure startup latency if status polling/download supervision becomes heavy.
-- Missing/deferred: live sudo-backed `capsem uninstall -> just install -> capsem status` remains the final meta-sprint gate. Deeper wizard/dashboard rendering lives in S6, and true update-over-existing plus destructive whole-product purge live in S7.
+- Missing/deferred: live sudo-backed `capsem uninstall -> just install -> capsem status` remains the final meta-sprint gate. True update-over-existing plus destructive whole-product purge live in S7.
 
 ## Superseded Work To Reconcile
 

@@ -120,6 +120,7 @@
   let serviceReady = $derived(vmStore.serviceStatus === 'running');
   let assetsReady = $derived(vmStore.assetHealth?.ready === true);
   let canCreateSessions = $derived(serviceReady && assetsReady);
+  let startupBlocked = $derived(!initialLoading && !canCreateSessions);
   let assetStatus = $derived.by(() => {
     if (!serviceReady) {
       return {
@@ -189,6 +190,13 @@
     }
     return null;
   });
+
+  function emptySessionText(kind: 'ephemeral' | 'persistent'): string {
+    if (startupBlocked) {
+      return 'Session list unavailable until startup checks pass';
+    }
+    return kind === 'ephemeral' ? 'No ephemeral sessions' : 'No persistent sessions';
+  }
 
   function parseApiError(e: unknown): string {
     if (!(e instanceof Error)) return 'An unexpected error occurred';
@@ -365,8 +373,8 @@
             {/each}
           </ul>
         {/if}
-        {#if assetStatus.showRetry}
-          <div class="mt-3 flex items-center gap-2">
+        <div class="mt-3 flex items-center gap-2">
+          {#if assetStatus.showRetry}
             <button
               type="button"
               class="py-1 px-3 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -375,15 +383,15 @@
             >
               {setupRetrying ? 'Retrying...' : 'Retry setup'}
             </button>
-            <button
-              type="button"
-              class="py-1 px-3 text-xs font-medium rounded-lg bg-layer border border-layer-line text-layer-foreground hover:bg-layer-hover transition-colors"
-              onclick={() => vmStore.refresh()}
-            >
-              Refresh status
-            </button>
-          </div>
-        {/if}
+          {/if}
+          <button
+            type="button"
+            class="py-1 px-3 text-xs font-medium rounded-lg bg-layer border border-layer-line text-layer-foreground hover:bg-layer-hover transition-colors"
+            onclick={() => vmStore.refresh()}
+          >
+            Refresh status
+          </button>
+        </div>
         {#if setupRetryError}
           <p class="mt-2 text-xs text-destructive">{setupRetryError}</p>
         {/if}
@@ -419,7 +427,7 @@
     </div>
   {:else if ephemeralVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">No ephemeral sessions</p>
+      <p class="text-muted-foreground-1 text-sm">{emptySessionText('ephemeral')}</p>
     </div>
   {:else}
     {@render sessionTable(ephemeralVms)}
@@ -434,7 +442,7 @@
     </div>
   {:else if persistentVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">No persistent sessions</p>
+      <p class="text-muted-foreground-1 text-sm">{emptySessionText('persistent')}</p>
     </div>
   {:else}
     {@render sessionTable(persistentVms)}

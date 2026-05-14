@@ -59,6 +59,7 @@ function resetStores() {
 
 describe('session runtime truth UI', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     resetStores();
   });
 
@@ -82,6 +83,17 @@ describe('session runtime truth UI', () => {
     expect((screen.getByRole('button', { name: /customize session/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('does not collapse service offline startup failure into empty-session copy', () => {
+    vmStore.serviceStatus = 'unavailable';
+    vmStore.assetHealth = assetHealth({ ready: true, state: 'ready', missing: [] });
+    render(NewTabPage);
+
+    expect(screen.getByText('Capsem service is offline')).toBeTruthy();
+    expect(screen.getAllByText('Session list unavailable until startup checks pass')).toHaveLength(2);
+    expect(screen.queryByText('No ephemeral sessions')).toBeNull();
+    expect(screen.queryByText('No persistent sessions')).toBeNull();
+  });
+
   it('shows missing asset details and keeps creation disabled', () => {
     vmStore.assetHealth = assetHealth({ state: 'updating', missing: ['rootfs', 'manifest.json'] });
     render(NewTabPage);
@@ -102,6 +114,32 @@ describe('session runtime truth UI', () => {
 
     expect(api.retrySetup).toHaveBeenCalledTimes(1);
     expect(refreshSpy).toHaveBeenCalledTimes(1);
+    refreshSpy.mockRestore();
+  });
+
+  it('surfaces retry setup errors without hiding the refresh affordance', async () => {
+    vi.mocked(api.retrySetup).mockRejectedValueOnce(new Error('API error 500: {"error":"asset retry failed"}'));
+    const refreshSpy = vi.spyOn(vmStore, 'refresh').mockResolvedValue();
+    vmStore.assetHealth = assetHealth({ state: 'error', retryable: true, error: 'download failed' });
+    render(NewTabPage);
+
+    await fireEvent.click(screen.getByRole('button', { name: /retry setup/i }));
+
+    expect(await screen.findByText('asset retry failed')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /refresh status/i })).toBeTruthy();
+    expect(refreshSpy).not.toHaveBeenCalled();
+    refreshSpy.mockRestore();
+  });
+
+  it('refreshes startup status without requiring a retryable setup error', async () => {
+    const refreshSpy = vi.spyOn(vmStore, 'refresh').mockResolvedValue();
+    vmStore.assetHealth = assetHealth({ state: 'checking', retryable: false });
+    render(NewTabPage);
+
+    await fireEvent.click(screen.getByRole('button', { name: /refresh status/i }));
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /retry setup/i })).toBeNull();
     refreshSpy.mockRestore();
   });
 
