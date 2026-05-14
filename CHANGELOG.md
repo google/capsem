@@ -88,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gated by `capsem status --json` runtime-layout issue codes.
 
 ### Fixed
+- Fixed first-run CLI auto-launch when `capsem-service` exits before binding
+  its socket, so broken installed service binaries return a clear startup
+  error instead of waiting through repeated socket timeouts.
 - Fixed the built-in `local` MCP server toggle so
   `mcp.servers.local.enabled = false` persists, stays visible in settings, stops
   injecting or preserving the local stdio bridge in agent configs, and disables

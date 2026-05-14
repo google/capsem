@@ -476,7 +476,19 @@ impl UdsClient {
             .spawn()
             .context("failed to spawn capsem-service")?;
 
-        match self.connect_with_timeout(ConnectMode::AwaitStartup).await {
+        let connect = self.connect_with_timeout(ConnectMode::AwaitStartup);
+        tokio::pin!(connect);
+
+        match tokio::select! {
+            result = &mut connect => result,
+            status = child.wait() => status
+                .context("failed to wait for capsem-service startup")
+                .and_then(|status| {
+                    Err(anyhow::anyhow!(
+                        "capsem-service exited before becoming ready: {status}"
+                    ))
+                }),
+        } {
             Ok(stream) => {
                 info!("Service spawned and responding");
                 tokio::spawn(async move {
@@ -484,7 +496,10 @@ impl UdsClient {
                 });
                 Ok(stream)
             }
-            Err(e) => Err(e).context("capsem-service failed to start"),
+            Err(e) => {
+                let _ = child.kill().await;
+                Err(e).context("capsem-service failed to start")
+            }
         }
     }
 

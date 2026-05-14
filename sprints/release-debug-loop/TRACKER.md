@@ -235,6 +235,7 @@ dependencies, UI consumption, and update path.
 - 2026-05-14: Started S6 UI startup-truth slice. Dashboard now blocks create actions on service + asset readiness, shows explicit service-offline and asset-state messaging, exposes saved-VM dependency gaps, and offers retry setup when service marks asset errors retryable. Onboarding welcome/ready steps now mirror the same startup truth model.
 - 2026-05-14: Verified S6 slice with `cd frontend && pnpm check` and `cd frontend && pnpm vitest run src/lib/__tests__/session-runtime-truth.test.ts`.
 - 2026-05-14: Closed remaining S5 harness proofs with packaging-safe setup tests: rerun idempotence under isolation, provider/settings fallback with empty detection, and explicit pending-readiness messaging when service never becomes live (`uv run pytest tests/capsem-install/test_setup_wizard.py -q` => 3 passed, 5 skipped).
+- 2026-05-14: Fixed the downstream install-suite broken-service regression by racing direct auto-launch socket readiness against child process exit; `capsem list` now returns promptly when an installed `capsem-service` exits before binding. Verification: `cargo test -p capsem connect_ -- --nocapture` => 3 passed; targeted broken-service install tests => 2 passed; `uv run pytest tests/capsem-install -q -rs` => 54 passed, 30 skipped.
 
 ## Coverage Ledger
 
