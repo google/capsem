@@ -259,6 +259,9 @@ jobs:
 
       # Check-only (no link) -- actual cross-compile runs on Linux in release workflow
       - name: Cross-compile check (guest binaries)
+        # Keep release-profile checks on PR validation, but skip them on
+        # post-merge pushes to main.
+        if: ${{ github.event_name == 'pull_request' }}
         run: |
           cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
           cargo check --release --target x86_64-unknown-linux-musl -p capsem-agent
