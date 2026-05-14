@@ -19,10 +19,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hash, host binary hash, disk-space, install-layout, process-liveness, and
   redacted log-tail evidence from the same `/debug/report` service endpoint
   used by the UI.
+- Added `scripts/capture-install-status.py`, a release verification harness
+  helper that captures `capsem status --json` into a structured evidence bundle
+  with raw command output, parsed status JSON, metadata, version output, and a
+  shallow `CAPSEM_HOME` tree snapshot. The bundle also captures optional
+  `capsem debug` output and service/gateway pid, socket, and port breadcrumbs
+  while redacting `gateway.token`, plus a focused installed-layout index for
+  helper binaries, asset manifests, setup state, the platform service unit, and
+  the macOS app bundle path. Saved VM registry and persistent-session summaries
+  are captured without leaking saved VM environment variable values.
+- Added a service-owned VM asset supervisor that reports `checking`,
+  `updating`, `ready`, and `error` states with progress and retry detail.
+- Added saved-VM base asset dependency tracking so persistent VMs can record the
+  rootfs/kernel/initrd hashes, asset version, arch, and guest ABI they require.
 - Added a reusable `.deb` payload verifier and wired release CI to validate
   Linux package helper binaries, signed manifests, and manifest signatures.
 
 ### Changed
+- Changed `capsem uninstall` to remove the installed runtime while preserving
+  durable user state such as config, setup state, assets, logs, session/audit
+  data, and persistent VM state.
 - Changed `capsem doctor` to preflight through the same typed health checks
   used by `capsem status` before provisioning a diagnostic VM. Status blockers
   now carry stable issue codes and severity before they are rendered.
@@ -32,12 +48,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem-process` helper binary versions as typed health blockers.
 - Changed `capsem status` to report stale/missing service units, asset manifest
   problems, and missing/corrupt/incomplete setup state as typed health blockers.
-- Hardened `just install` for local release reproduction: it now force-cleans
-  the existing local install while preserving user settings, installs through
-  the same native package commands as `install.sh`, and fails if service,
-  gateway, guest DNS, or guest HTTPS checks do not pass.
+- Changed `capsem status` to report a missing `/Applications/Capsem.app` as a
+  typed health blocker for real installed macOS runtimes.
+- Changed `capsem status` to report stale `capsem-gateway` and `capsem-tray`
+  helper binary versions as typed health blockers. Their `--version` paths now
+  answer before runtime initialization, so status can check them safely.
+- Changed `capsem status --json` to include a top-level `state` plus grouped
+  `checks` for host binaries, service unit, setup, assets, app bundle, service
+  endpoint, and gateway readiness.
+- Changed service `/list`, gateway `/status`, and `capsem status --json` to
+  preserve the service asset supervisor state instead of collapsing asset work
+  into only ready/missing booleans.
+- Changed the tray menu to show asset `checking`/`updating`/`error` states and
+  disable New Session until VM assets are ready.
+- Changed asset cleanup, saved-VM resume/fork, service `/list`, gateway
+  `/status`, tray status, frontend types, and `capsem status --json` to preserve
+  and report saved-VM asset dependencies. Missing saved-VM assets now surface as
+  typed `saved_vm_asset_missing` status blockers without blocking new current-
+  version VM creation.
+- Hardened `just install` for local release reproduction: it now removes and
+  verifies the old runtime while preserving durable state, installs through the
+  same native package commands as `install.sh`, captures typed installed
+  `capsem status --json` evidence, and fails if service, gateway, status, guest
+  DNS, or guest HTTPS checks do not pass.
+- Hardened the Python install-test fixture so local simulated install tests
+  build the default host binaries once, then refresh installed helpers when
+  they differ from `CAPSEM_BIN_SRC`, not only when missing.
+- Hardened the install-status capture harness with dirty-state evidence for
+  missing tray helpers and missing macOS app bundles without mutating
+  `/Applications`.
+- Hardened the install-status capture harness to preserve grouped status
+  checks in metadata and capture saved-VM asset-reference fields when present,
+  including file-state evidence for referenced asset paths.
+- Added black-box simulated install coverage for reinstalling after
+  `capsem uninstall` and reinstalling over a corrupted helper binary, both
+  gated by `capsem status --json` runtime-layout issue codes.
 
 ### Fixed
+- Fixed the built-in `local` MCP server toggle so
+  `mcp.servers.local.enabled = false` persists, stays visible in settings, stops
+  injecting or preserving the local stdio bridge in agent configs, and disables
+  the runtime built-in server list entry.
 - Fixed the marketing-site installer for the stamped v1.1 package assets:
   macOS now installs the downloaded `.pkg` with the native installer, and
   package downloads are checked against the release manifest when local tools

@@ -242,7 +242,6 @@ pub fn build_settings_tree_with_mcp(
     if !mcp_servers.is_empty() {
         let mcp_children: Vec<SettingsNode> = mcp_servers
             .iter()
-            .filter(|s| s.enabled)
             .map(|s| SettingsNode::McpServer(Box::new(s.clone())))
             .collect();
         if !mcp_children.is_empty() {

@@ -26,7 +26,7 @@
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
 #   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
-#                       (hard clean + native package install + guest DNS/HTTPS gate)
+#                       (hard clean + native package install + status capture + guest DNS/HTTPS gate)
 #   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
@@ -37,7 +37,7 @@
 # Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
-# Local install:      just install       (hard clean + native package install + VM network gate)
+# Local install:      just install       (hard clean + native package install + status/VM network gate)
 # Releases:           just cut-release   (test + bump, tag, push, CI)
 # Dep maintenance:    just update-deps   (cargo update + pnpm update)
 #                     just update-prices (refresh genai-prices.json)
@@ -767,8 +767,8 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
     echo "=== Host-side benchmarks (lifecycle, fork) ==="
     uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
 
-# Build package, hard-clean local install, use the install.sh native command,
-# then verify installed service, gateway, and guest DNS/HTTPS.
+# Build package, runtime-clean local install, use the install.sh native command,
+# then verify installed status, service, gateway, and guest DNS/HTTPS.
 install: _pnpm-install _stamp-version _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
@@ -812,9 +812,9 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
 
     assert_clean_uninstall() {
         local failed=0
-        if [ -e "$HOME/.capsem" ]; then
-            echo "ERROR: unexpected files left after uninstall:" >&2
-            find "$HOME/.capsem" -maxdepth 4 -print >&2 || true
+        if [ -d "$HOME/.capsem/bin" ]; then
+            echo "ERROR: runtime bin dir still exists after uninstall:" >&2
+            find "$HOME/.capsem/bin" -maxdepth 2 -print >&2 || true
             failed=1
         fi
         if [ -e "$HOME/Library/LaunchAgents/com.capsem.service.plist" ]; then
@@ -831,6 +831,18 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
                 failed=1
             fi
         done
+        if [ -d "$HOME/.capsem/run" ]; then
+            local runtime_left
+            runtime_left=$(find "$HOME/.capsem/run" -mindepth 1 -maxdepth 1 \
+                ! -name persistent \
+                ! -name persistent_registry.json \
+                -print 2>/dev/null || true)
+            if [ -n "$runtime_left" ]; then
+                echo "ERROR: runtime run-state still exists after uninstall:" >&2
+                echo "$runtime_left" >&2
+                failed=1
+            fi
+        fi
         return "$failed"
     }
 
@@ -986,6 +998,11 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         echo "ERROR: Gateway not responding after 30s." >&2
         exit 1
     fi
+
+    echo "=== Capturing installed status ==="
+    python3 scripts/capture-install-status.py \
+        --capsem-bin "$HOME/.capsem/bin/capsem" \
+        --label just-install
 
     echo "=== Verifying guest DNS and HTTPS ==="
     "$HOME/.capsem/bin/capsem" run 'set -eux; getent hosts elie.net; getent hosts generativelanguage.googleapis.com; curl -fsS --connect-timeout 10 https://elie.net >/dev/null'

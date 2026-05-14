@@ -33,9 +33,38 @@ impl StatusCache {
 #[derive(Serialize, Clone)]
 pub struct AssetHealth {
     pub ready: bool,
+    pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
     pub missing: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<AssetProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub retry_count: u32,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedVmAssetDependency {
+    pub vm: String,
+    pub asset_version: String,
+    pub arch: String,
+    pub missing: Vec<String>,
+    pub recovery_hint: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AssetProgress {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+    pub done: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -167,10 +196,28 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 #[derive(Deserialize)]
 struct ServiceAssetHealth {
     ready: bool,
+    #[serde(default = "default_asset_state")]
+    state: String,
     #[serde(default)]
     version: Option<String>,
     #[serde(default)]
+    arch: Option<String>,
+    #[serde(default)]
     missing: Vec<String>,
+    #[serde(default)]
+    progress: Option<AssetProgress>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    retry_count: u32,
+    #[serde(default)]
+    retryable: bool,
+    #[serde(default)]
+    saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+}
+
+fn default_asset_state() -> String {
+    "unknown".to_string()
 }
 
 #[derive(Deserialize)]
@@ -282,8 +329,15 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 
     let assets = list.asset_health.map(|h| AssetHealth {
         ready: h.ready,
+        state: h.state,
         version: h.version,
+        arch: h.arch,
         missing: h.missing,
+        progress: h.progress,
+        error: h.error,
+        retry_count: h.retry_count,
+        retryable: h.retryable,
+        saved_vm_dependencies: h.saved_vm_dependencies,
     });
 
     StatusResponse {

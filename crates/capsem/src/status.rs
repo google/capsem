@@ -26,7 +26,11 @@ pub struct StatusReport {
     pub schema: &'static str,
     pub version: String,
     pub ok: bool,
+    pub state: &'static str,
     pub service: StatusServiceReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_health: Option<client::AssetHealth>,
+    pub checks: StatusChecksReport,
     pub issues: Vec<HealthIssueReport>,
 }
 
@@ -38,6 +42,38 @@ pub struct StatusServiceReport {
     pub pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unit_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StatusChecksReport {
+    pub host: StatusCheckReport,
+    pub service_unit: StatusCheckReport,
+    pub setup: StatusCheckReport,
+    pub assets: StatusCheckReport,
+    pub app: StatusCheckReport,
+    pub service_endpoint: StatusCheckReport,
+    pub gateway: StatusCheckReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StatusCheckReport {
+    pub state: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub issue_codes: Vec<&'static str>,
+}
+
+impl StatusCheckReport {
+    fn from_issues(issues: Vec<&HealthIssue>, skipped: bool) -> Self {
+        let issue_codes = issue_codes(issues);
+        let state = if !issue_codes.is_empty() {
+            "blocked"
+        } else if skipped {
+            "skipped"
+        } else {
+            "ok"
+        };
+        Self { state, issue_codes }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +117,9 @@ pub enum HealthIssueCode {
     ManifestMissing,
     ManifestVerificationFailed,
     AssetsDirMissing,
+    ServiceAssetError,
+    SavedVmAssetMissing,
+    AppBundleMissing,
 }
 
 impl HealthIssueCode {
@@ -112,6 +151,9 @@ impl HealthIssueCode {
             HealthIssueCode::ManifestMissing => "manifest_missing",
             HealthIssueCode::ManifestVerificationFailed => "manifest_verification_failed",
             HealthIssueCode::AssetsDirMissing => "assets_dir_missing",
+            HealthIssueCode::ServiceAssetError => "service_asset_error",
+            HealthIssueCode::SavedVmAssetMissing => "saved_vm_asset_missing",
+            HealthIssueCode::AppBundleMissing => "app_bundle_missing",
         }
     }
 }
@@ -195,6 +237,20 @@ pub enum HealthIssue {
         error: String,
     },
     AssetsDirMissing,
+    ServiceAssetError {
+        state: String,
+        error: Option<String>,
+    },
+    SavedVmAssetMissing {
+        vm: String,
+        asset_version: String,
+        arch: String,
+        missing: Vec<String>,
+        recovery_hint: String,
+    },
+    AppBundleMissing {
+        path: PathBuf,
+    },
 }
 
 impl HealthIssue {
@@ -232,6 +288,9 @@ impl HealthIssue {
                 HealthIssueCode::ManifestVerificationFailed
             }
             HealthIssue::AssetsDirMissing => HealthIssueCode::AssetsDirMissing,
+            HealthIssue::ServiceAssetError { .. } => HealthIssueCode::ServiceAssetError,
+            HealthIssue::SavedVmAssetMissing { .. } => HealthIssueCode::SavedVmAssetMissing,
+            HealthIssue::AppBundleMissing { .. } => HealthIssueCode::AppBundleMissing,
         }
     }
 
@@ -308,12 +367,32 @@ impl HealthIssue {
             }
             HealthIssue::KernelAssetMissing { path }
             | HealthIssue::InitrdAssetMissing { path }
-            | HealthIssue::RootfsAssetMissing { path } => {
+            | HealthIssue::RootfsAssetMissing { path }
+            | HealthIssue::AppBundleMissing { path } => {
                 details.insert("path", path.display().to_string());
             }
             HealthIssue::AssetResolveFailed { error }
             | HealthIssue::ManifestVerificationFailed { error } => {
                 details.insert("error", error.clone());
+            }
+            HealthIssue::ServiceAssetError { state, error } => {
+                details.insert("state", state.clone());
+                if let Some(error) = error {
+                    details.insert("error", error.clone());
+                }
+            }
+            HealthIssue::SavedVmAssetMissing {
+                vm,
+                asset_version,
+                arch,
+                missing,
+                recovery_hint,
+            } => {
+                details.insert("vm", vm.clone());
+                details.insert("asset_version", asset_version.clone());
+                details.insert("arch", arch.clone());
+                details.insert("missing", missing.join(","));
+                details.insert("recovery_hint", recovery_hint.clone());
             }
             HealthIssue::ServiceUnitMissing
             | HealthIssue::ServiceNotRunning
@@ -449,22 +528,76 @@ impl fmt::Display for HealthIssue {
                 write!(f, "Manifest verification failed: {}", error)
             }
             HealthIssue::AssetsDirMissing => write!(f, "Assets directory not found"),
+            HealthIssue::ServiceAssetError { state, error } => write!(
+                f,
+                "Service asset supervisor is {}: {}",
+                state,
+                error.as_deref().unwrap_or("no error detail")
+            ),
+            HealthIssue::SavedVmAssetMissing {
+                vm,
+                asset_version,
+                arch,
+                missing,
+                recovery_hint,
+            } => write!(
+                f,
+                "Saved VM asset dependency is missing: {} needs {} ({}, {}) -- {}",
+                vm,
+                missing.join(", "),
+                asset_version,
+                arch,
+                recovery_hint
+            ),
+            HealthIssue::AppBundleMissing { path } => {
+                write!(f, "Desktop app bundle is missing: {}", path.display())
+            }
         }
     }
 }
 
 pub async fn run(json: bool) -> Result<()> {
     let service = service_install::service_status().await?;
-    let issues = check_service_health_from_status(&service).await?;
-
-    if json {
-        let report = status_report_from_parts(&service, &issues);
-        println!("{}", serde_json::to_string_pretty(&report)?);
-        return status_result_from_issues(&issues);
+    let asset_health = fetch_service_asset_health(service.running).await;
+    let mut issues = check_service_health_from_status(&service).await?;
+    if let Some(asset_health) = &asset_health {
+        issues.extend(service_asset_health_issues(asset_health));
     }
 
-    print_text_status(&service).await;
-    status_result_from_issues(&issues)
+    if json {
+        let report = status_report_from_parts_with_assets(&service, &issues, asset_health.clone());
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return status_result_from_report(&report, &issues);
+    }
+
+    print_text_status(&service, asset_health.as_ref()).await;
+    if let Some(report_asset_health) = asset_health {
+        let report =
+            status_report_from_parts_with_assets(&service, &issues, Some(report_asset_health));
+        status_result_from_report(&report, &issues)
+    } else {
+        status_result_from_issues(&issues)
+    }
+}
+
+fn service_asset_health_issues(asset_health: &client::AssetHealth) -> Vec<HealthIssue> {
+    let mut issues = Vec::new();
+    if asset_health.state == "error" {
+        issues.push(HealthIssue::ServiceAssetError {
+            state: asset_health.state.clone(),
+            error: asset_health.error.clone(),
+        });
+    }
+    issues.extend(asset_health.saved_vm_dependencies.iter().map(|dependency| {
+        HealthIssue::SavedVmAssetMissing {
+            vm: dependency.vm.clone(),
+            asset_version: dependency.asset_version.clone(),
+            arch: dependency.arch.clone(),
+            missing: dependency.missing.clone(),
+            recovery_hint: dependency.recovery_hint.clone(),
+        }
+    }));
+    issues
 }
 
 pub async fn doctor_preflight() -> Result<()> {
@@ -506,14 +639,35 @@ pub(crate) fn status_result_from_issues(issues: &[HealthIssue]) -> Result<()> {
     )
 }
 
+fn status_result_from_report(report: &StatusReport, issues: &[HealthIssue]) -> Result<()> {
+    if report.ok {
+        return Ok(());
+    }
+    if issues.is_empty() {
+        bail!("capsem status reported state: {}", report.state);
+    }
+    status_result_from_issues(issues)
+}
+
+#[cfg(test)]
 pub(crate) fn status_report_from_parts(
     service: &service_install::ServiceStatus,
     issues: &[HealthIssue],
 ) -> StatusReport {
+    status_report_from_parts_with_assets(service, issues, None)
+}
+
+pub(crate) fn status_report_from_parts_with_assets(
+    service: &service_install::ServiceStatus,
+    issues: &[HealthIssue],
+    asset_health: Option<client::AssetHealth>,
+) -> StatusReport {
+    let state = status_state(issues, asset_health.as_ref());
     StatusReport {
         schema: "capsem.status.v1",
         version: env!("CARGO_PKG_VERSION").to_string(),
-        ok: issues.is_empty(),
+        ok: issues.is_empty() && state == "ready",
+        state,
         service: StatusServiceReport {
             installed: service.installed,
             running: service.running,
@@ -523,8 +677,145 @@ pub(crate) fn status_report_from_parts(
                 .as_ref()
                 .map(|path| path.display().to_string()),
         },
+        asset_health,
+        checks: checks_report_from_issues(service, issues),
         issues: issues.iter().map(HealthIssue::to_report).collect(),
     }
+}
+
+fn status_state(
+    issues: &[HealthIssue],
+    asset_health: Option<&client::AssetHealth>,
+) -> &'static str {
+    if !issues.is_empty() {
+        return "blocked";
+    }
+    match asset_health.map(|health| health.state.as_str()) {
+        Some("checking") => "checking",
+        Some("updating") => "updating",
+        Some("error") => "blocked",
+        _ => "ready",
+    }
+}
+
+fn checks_report_from_issues(
+    service: &service_install::ServiceStatus,
+    issues: &[HealthIssue],
+) -> StatusChecksReport {
+    StatusChecksReport {
+        host: StatusCheckReport::from_issues(
+            issues
+                .iter()
+                .filter(|issue| {
+                    matches!(
+                        issue.code(),
+                        HealthIssueCode::HostPathDiscoveryFailed
+                            | HealthIssueCode::HostBinaryMissing
+                            | HealthIssueCode::HostBinaryNotExecutable
+                            | HealthIssueCode::HostBinaryVersionMismatch
+                    )
+                })
+                .collect(),
+            false,
+        ),
+        service_unit: StatusCheckReport::from_issues(
+            issues
+                .iter()
+                .filter(|issue| {
+                    matches!(
+                        issue.code(),
+                        HealthIssueCode::ServiceUnitMissing
+                            | HealthIssueCode::ServiceUnitUnreadable
+                            | HealthIssueCode::ServiceUnitStalePath
+                    )
+                })
+                .collect(),
+            false,
+        ),
+        setup: StatusCheckReport::from_issues(
+            issues
+                .iter()
+                .filter(|issue| {
+                    matches!(
+                        issue.code(),
+                        HealthIssueCode::SetupStatePathUnavailable
+                            | HealthIssueCode::SetupStateMissing
+                            | HealthIssueCode::SetupStateUnreadable
+                            | HealthIssueCode::SetupStateInvalid
+                            | HealthIssueCode::SetupIncomplete
+                    )
+                })
+                .collect(),
+            false,
+        ),
+        assets: StatusCheckReport::from_issues(
+            issues
+                .iter()
+                .filter(|issue| {
+                    matches!(
+                        issue.code(),
+                        HealthIssueCode::KernelAssetMissing
+                            | HealthIssueCode::InitrdAssetMissing
+                            | HealthIssueCode::RootfsAssetMissing
+                            | HealthIssueCode::AssetResolveFailed
+                            | HealthIssueCode::ManifestMissing
+                            | HealthIssueCode::ManifestVerificationFailed
+                            | HealthIssueCode::AssetsDirMissing
+                            | HealthIssueCode::ServiceAssetError
+                            | HealthIssueCode::SavedVmAssetMissing
+                    )
+                })
+                .collect(),
+            false,
+        ),
+        app: StatusCheckReport::from_issues(
+            issues
+                .iter()
+                .filter(|issue| matches!(issue.code(), HealthIssueCode::AppBundleMissing))
+                .collect(),
+            false,
+        ),
+        service_endpoint: StatusCheckReport::from_issues(
+            issues
+                .iter()
+                .filter(|issue| {
+                    matches!(
+                        issue.code(),
+                        HealthIssueCode::ServiceNotRunning
+                            | HealthIssueCode::ServiceStale
+                            | HealthIssueCode::ServiceEndpointUnavailable
+                    )
+                })
+                .collect(),
+            false,
+        ),
+        gateway: StatusCheckReport::from_issues(
+            issues
+                .iter()
+                .filter(|issue| {
+                    matches!(
+                        issue.code(),
+                        HealthIssueCode::GatewayFilesMissing
+                            | HealthIssueCode::GatewayStale
+                            | HealthIssueCode::GatewayTokenMismatch
+                            | HealthIssueCode::GatewayDown
+                    )
+                })
+                .collect(),
+            !service.running,
+        ),
+    }
+}
+
+fn issue_codes(issues: Vec<&HealthIssue>) -> Vec<&'static str> {
+    let mut codes = Vec::new();
+    for issue in issues {
+        let code = issue.code().as_str();
+        if !codes.contains(&code) {
+            codes.push(code);
+        }
+    }
+    codes
 }
 
 fn format_issue_list(issues: &[HealthIssue]) -> String {
@@ -552,6 +843,7 @@ async fn check_service_health_from_status(
             issues.extend(check_host_binaries(&paths));
             issues.extend(check_host_binary_versions(&paths).await);
             issues.extend(check_service_unit(status, &paths));
+            issues.extend(check_desktop_app_bundle(&paths));
         }
         Err(e) => issues.push(HealthIssue::HostPathDiscoveryFailed {
             error: format!("{e:#}"),
@@ -650,12 +942,48 @@ pub(crate) async fn check_host_binary_versions(
     for (name, path) in [
         ("capsem-service", &paths.service_bin),
         ("capsem-process", &paths.process_bin),
+        ("capsem-gateway", &paths.gateway_bin),
+        ("capsem-tray", &paths.tray_bin),
     ] {
         if let Some(issue) = host_binary_version_mismatch(name, path).await {
             issues.push(issue);
         }
     }
     issues
+}
+
+pub(crate) fn check_desktop_app_bundle(paths: &crate::paths::CapsemPaths) -> Vec<HealthIssue> {
+    if should_check_desktop_app_bundle(paths) {
+        check_app_bundle_path(Path::new("/Applications/Capsem.app"))
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn should_check_desktop_app_bundle(paths: &crate::paths::CapsemPaths) -> bool {
+    if crate::service_install::test_isolation_env_active() {
+        return false;
+    }
+    let Ok(home) = crate::paths::capsem_home() else {
+        return false;
+    };
+    paths.cli_bin == home.join("bin/capsem")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn should_check_desktop_app_bundle(_paths: &crate::paths::CapsemPaths) -> bool {
+    false
+}
+
+pub(crate) fn check_app_bundle_path(path: &Path) -> Vec<HealthIssue> {
+    if path.is_dir() {
+        Vec::new()
+    } else {
+        vec![HealthIssue::AppBundleMissing {
+            path: path.to_path_buf(),
+        }]
+    }
 }
 
 async fn host_binary_version_mismatch(name: &'static str, path: &Path) -> Option<HealthIssue> {
@@ -861,7 +1189,10 @@ pub(crate) fn check_setup_state_path(path: &Path) -> Vec<HealthIssue> {
     }
 }
 
-async fn print_text_status(service: &service_install::ServiceStatus) {
+async fn print_text_status(
+    service: &service_install::ServiceStatus,
+    asset_health: Option<&client::AssetHealth>,
+) {
     println!("Version:   {}", env!("CARGO_PKG_VERSION"));
     println!("Installed: {}", service.installed);
     println!("Running:   {}", service.running);
@@ -875,8 +1206,59 @@ async fn print_text_status(service: &service_install::ServiceStatus) {
     if service.running {
         print_service_and_gateway_status().await;
     }
-    print_asset_status();
+    if let Some(asset_health) = asset_health {
+        print_service_asset_status(asset_health);
+    } else {
+        print_asset_status();
+    }
     print_defunct_sessions(service.running).await;
+}
+
+fn print_service_asset_status(asset_health: &client::AssetHealth) {
+    let version = asset_health.version.as_deref().unwrap_or("unknown");
+    let arch = asset_health.arch.as_deref().unwrap_or("unknown");
+    println!("Assets:    {} (v{}, {})", asset_health.state, version, arch);
+    if !asset_health.missing.is_empty() {
+        println!("  missing: {}", asset_health.missing.join(", "));
+    }
+    if let Some(progress) = &asset_health.progress {
+        match progress.bytes_total {
+            Some(total) => println!(
+                "  updating: {} {}/{} bytes",
+                progress.logical_name, progress.bytes_done, total
+            ),
+            None => println!(
+                "  updating: {} {} bytes",
+                progress.logical_name, progress.bytes_done
+            ),
+        }
+    }
+    if let Some(error) = &asset_health.error {
+        println!("  error: {}", error);
+    }
+    for dependency in &asset_health.saved_vm_dependencies {
+        println!(
+            "  saved VM missing: {} needs {} ({}, {})",
+            dependency.vm,
+            dependency.missing.join(", "),
+            dependency.asset_version,
+            dependency.arch
+        );
+    }
+}
+
+async fn fetch_service_asset_health(service_running: bool) -> Option<client::AssetHealth> {
+    if !service_running {
+        return None;
+    }
+    let home = crate::paths::capsem_home().ok()?;
+    let sock = home.join("run/service.sock");
+    let list_client = UdsClient::new(sock, false);
+    let resp = list_client
+        .get::<client::ApiResponse<client::ListResponse>>("/list")
+        .await
+        .ok()?;
+    resp.into_result().ok()?.asset_health
 }
 
 pub(crate) fn load_diagnostic_manifest_for_assets(

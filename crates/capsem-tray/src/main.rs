@@ -15,7 +15,7 @@ use crate::icons::TrayState;
 use crate::menu::Action;
 
 #[derive(Parser)]
-#[command(about = "Capsem system tray")]
+#[command(name = "capsem-tray", version, about = "Capsem system tray")]
 struct Args {
     /// Gateway port (overrides discovery from gateway.port file)
     #[arg(long)]
@@ -44,6 +44,7 @@ enum PollResult {
 }
 
 fn main() -> Result<()> {
+    let args = Args::parse();
     let run_dir = capsem_core::paths::capsem_run_dir();
     let _ = std::fs::create_dir_all(&run_dir);
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
@@ -53,8 +54,6 @@ fn main() -> Result<()> {
         },
         default_filter: "capsem_tray=info",
     })?;
-
-    let args = Args::parse();
 
     // Companion guards: (1) refuse to start without a live parent service,
     // (2) refuse to start if another tray already holds the singleton. Both

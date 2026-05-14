@@ -1,11 +1,11 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use axum::{
-    Json, Router,
     extract::{Path, Query, State},
     response::IntoResponse,
     routing::{delete, get, post},
+    Json, Router,
 };
-use capsem_core::poll::{PollOpts, poll_until};
+use capsem_core::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::net::UnixListener;
-use tokio_unix_ipc::{Receiver, Sender, channel_from_std};
+use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
@@ -23,9 +23,11 @@ mod startup;
 
 use capsem_service::api;
 use capsem_service::api::*;
+use capsem_service::asset_supervisor::{host_asset_arch, AssetSupervisor};
 use capsem_service::debug_report;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
-use capsem_service::registry::{PersistentRegistry, PersistentVmEntry};
+use capsem_service::registry::{PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets};
+use capsem_service::saved_vm_assets;
 use capsem_service::triage;
 
 #[derive(Parser, Debug)]
@@ -89,6 +91,8 @@ struct ServiceState {
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
     manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
+    /// Service-owned asset state machine and background reconciler.
+    asset_supervisor: Arc<AssetSupervisor>,
     current_version: String,
     /// Magika file-type detection session (thread-safe, shared)
     magika: Mutex<magika::Session>,
@@ -139,6 +143,8 @@ struct InstanceInfo {
     env: Option<std::collections::HashMap<String, String>>,
     /// Sandbox this VM was cloned from, if any
     forked_from: Option<String>,
+    /// Exact boot-asset identity this VM's root overlay depends on.
+    base_assets: Option<SavedVmBaseAssets>,
 }
 
 pub struct ProvisionOptions<'a> {
@@ -163,6 +169,42 @@ pub struct ProvisionOptions<'a> {
 /// span a 10-iteration stress suite that creates 1-3 VMs per iteration
 /// without losing earlier failures to the cull.
 const MAX_FAILED_SESSIONS: usize = 32;
+
+const DEFAULT_MAX_CONCURRENT_VMS: u32 = 10;
+const DEFAULT_RAM_GB: u32 = 4;
+const DEFAULT_CPU_COUNT: u32 = 4;
+
+#[derive(Debug, Clone, Copy)]
+struct LegacyAwareVmSettings {
+    max_concurrent_vms: u32,
+    ram_gb: u32,
+    cpu_count: u32,
+}
+
+impl LegacyAwareVmSettings {
+    fn service_defaults() -> Self {
+        Self {
+            max_concurrent_vms: DEFAULT_MAX_CONCURRENT_VMS,
+            ram_gb: DEFAULT_RAM_GB,
+            cpu_count: DEFAULT_CPU_COUNT,
+        }
+    }
+
+    fn effective_ram_mb(&self) -> u64 {
+        self.ram_gb as u64 * 1024
+    }
+}
+
+fn legacy_service_endpoint_removed(path: &str, replacement: Option<&str>) -> AppError {
+    let replacement_hint = match replacement {
+        Some(next) => format!(" ; use '{next}' instead"),
+        None => String::new(),
+    };
+    AppError(
+        StatusCode::GONE,
+        format!("legacy endpoint removed: {path} (no migration){replacement_hint}"),
+    )
+}
 
 /// Result of [`ServiceState::preserve_failed_session_dir_outcome`].
 ///
@@ -417,8 +459,8 @@ impl ServiceState {
             description,
         } = options;
 
-        let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
-        let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
+        let vm_settings = LegacyAwareVmSettings::service_defaults();
+        let max_concurrent_vms = vm_settings.max_concurrent_vms as usize;
 
         if !(1..=8).contains(&cpus) {
             return Err(anyhow!("cpus must be between 1 and 8"));
@@ -484,6 +526,50 @@ impl ServiceState {
         } else {
             version_override.unwrap_or_else(|| self.current_version.clone())
         };
+        let base_assets = if let Some(ref entry) = source_entry {
+            entry.base_assets.clone().or(self.current_base_assets()?)
+        } else {
+            self.current_base_assets()?
+        };
+
+        let pinned_source_assets = source_entry.as_ref().and_then(|entry| {
+            entry
+                .base_assets
+                .as_ref()
+                .map(|assets| (&entry.name, assets))
+        });
+        let resolved = if let Some((source_name, base_assets)) = pinned_source_assets {
+            saved_vm_assets::ensure_saved_base_assets_available(
+                source_name,
+                &self.assets_dir,
+                base_assets,
+            )?
+        } else {
+            let health = self.asset_supervisor.snapshot();
+            if !health.ready {
+                return Err(anyhow!(
+                    "VM assets are not ready (state={}, missing={:?}, error={})",
+                    health.state.as_str(),
+                    health.missing,
+                    health.error.unwrap_or_else(|| "none".to_string())
+                ));
+            }
+            self.resolve_asset_paths()?
+        };
+        for (name, path) in [
+            ("vmlinuz", &resolved.kernel),
+            ("initrd.img", &resolved.initrd),
+            ("rootfs.squashfs", &resolved.rootfs),
+        ] {
+            if !path.exists() {
+                error!(asset = name, path = %path.display(), "asset NOT FOUND after ready check");
+                return Err(anyhow!(
+                    "{} not found at {}; service asset state is stale",
+                    name,
+                    path.display()
+                ));
+            }
+        }
 
         info!(id, version, persistent, from, "provision_sandbox called");
 
@@ -507,19 +593,6 @@ impl ServiceState {
             info!(from = entry.name, session_dir = %session_dir.display(), "cloning session from source sandbox");
             capsem_core::auto_snapshot::clone_sandbox_state(&entry.session_dir, &session_dir)
                 .context("failed to clone sandbox state")?;
-        }
-
-        let resolved = self.resolve_asset_paths()?;
-        if !resolved.rootfs.exists() {
-            let entries = std::fs::read_dir(&self.assets_dir)
-                .map(|d| d.map(|e| e.unwrap().file_name()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            error!(rootfs = %resolved.rootfs.display(), ?entries, "rootfs NOT FOUND");
-            return Err(anyhow!(
-                "rootfs not found at {}. Dir entries: {:?}",
-                resolved.rootfs.display(),
-                entries
-            ));
         }
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
@@ -735,6 +808,7 @@ impl ServiceState {
                 last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
+                base_assets: base_assets.clone(),
             })?;
         }
 
@@ -753,6 +827,7 @@ impl ServiceState {
                 persistent,
                 env,
                 forked_from: from.clone(),
+                base_assets,
             },
         );
 
@@ -792,6 +867,7 @@ impl ServiceState {
         let ram_mb = ram_mb_override.unwrap_or(entry.ram_mb);
         let cpus = cpus_override.unwrap_or(entry.cpus);
         let version = entry.base_version.clone();
+        let base_assets = entry.base_assets.clone();
 
         info!(name, version, "resume_sandbox: re-spawning process");
 
@@ -804,7 +880,24 @@ impl ServiceState {
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-        let resolved = self.resolve_asset_paths()?;
+        let resolved = if let Some(ref base_assets) = entry.base_assets {
+            saved_vm_assets::ensure_saved_base_assets_available(
+                name,
+                &self.assets_dir,
+                base_assets,
+            )?
+        } else {
+            let health = self.asset_supervisor.snapshot();
+            if !health.ready {
+                return Err(anyhow!(
+                    "VM assets are not ready (state={}, missing={:?}, error={})",
+                    health.state.as_str(),
+                    health.missing,
+                    health.error.unwrap_or_else(|| "none".to_string())
+                ));
+            }
+            self.resolve_asset_paths()?
+        };
         if !resolved.rootfs.exists() {
             return Err(anyhow!("rootfs not found at {}", resolved.rootfs.display()));
         }
@@ -924,6 +1017,7 @@ impl ServiceState {
                 persistent: true,
                 env: None,
                 forked_from: entry.forked_from.clone(),
+                base_assets,
             },
         );
 
@@ -1001,30 +1095,24 @@ impl ServiceState {
     /// In v2 mode (manifest present): resolves hash-based filenames from manifest.
     /// In dev mode (no manifest): finds assets by logical name in arch subdirs.
     fn resolve_asset_paths(&self) -> Result<capsem_core::asset_manager::ResolvedAssets> {
-        let arch = if cfg!(target_arch = "aarch64") {
-            "arm64"
-        } else {
-            "x86_64"
-        };
+        self.asset_supervisor.resolve_asset_paths()
+    }
 
-        // Resolve from v2 manifest (works for both dev and installed --
-        // dev creates hash-named symlinks, installed has hash-named files)
-        if let Some(ref manifest) = self.manifest {
-            return manifest.resolve(&self.current_version, arch, &self.assets_dir);
-        }
+    fn current_base_assets(&self) -> Result<Option<SavedVmBaseAssets>> {
+        saved_vm_assets::current_base_assets(
+            self.manifest.as_deref(),
+            &self.current_version,
+            host_asset_arch(),
+        )
+    }
 
-        // No manifest: use logical names as fallback
-        let base = if self.assets_dir.join(arch).join("rootfs.squashfs").exists() {
-            self.assets_dir.join(arch)
-        } else {
-            self.assets_dir.clone()
+    fn asset_health_snapshot(&self) -> AssetHealth {
+        let mut health = self.asset_supervisor.snapshot();
+        health.saved_vm_dependencies = {
+            let registry = self.persistent_registry.lock().unwrap();
+            saved_vm_assets::saved_vm_dependency_issues(&registry, &self.assets_dir)
         };
-        Ok(capsem_core::asset_manager::ResolvedAssets {
-            kernel: base.join("vmlinuz"),
-            initrd: base.join("initrd.img"),
-            rootfs: base.join("rootfs.squashfs"),
-            asset_version: "dev".to_string(),
-        })
+        health
     }
 }
 
@@ -1498,7 +1586,7 @@ async fn handle_fork(
     }
 
     // Find source: running instance or stopped persistent VM
-    let (session_dir, ram_mb, cpus, base_version, uds_path) = {
+    let (session_dir, ram_mb, cpus, base_version, base_assets, uds_path) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
@@ -1506,6 +1594,7 @@ async fn handle_fork(
                 i.ram_mb,
                 i.cpus,
                 i.base_version.clone(),
+                i.base_assets.clone(),
                 Some(i.uds_path.clone()),
             )
         } else {
@@ -1517,6 +1606,7 @@ async fn handle_fork(
                     p.ram_mb,
                     p.cpus,
                     p.base_version.clone(),
+                    p.base_assets.clone(),
                     None,
                 )
             } else {
@@ -1599,6 +1689,7 @@ async fn handle_fork(
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
+                base_assets,
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -1670,16 +1761,14 @@ async fn handle_provision(
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     });
 
-    // Missing ram_mb/cpus fall back to merged VM settings. This keeps
+    // Missing ram_mb/cpus fall back to legacy-free service defaults. This keeps
     // "new ephemeral VM" callers (tray, MCP one-shots) honoring the user's
     // configured defaults without having to fetch settings first.
-    let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
+    let vm_settings = LegacyAwareVmSettings::service_defaults();
     let ram_mb = payload
         .ram_mb
-        .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
-    let cpus = payload
-        .cpus
-        .unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+        .unwrap_or_else(|| vm_settings.effective_ram_mb());
+    let cpus = payload.cpus.unwrap_or_else(|| vm_settings.cpu_count);
 
     // Retry budget for the launchd-cleanup transient. Failed attempts
     // fast-fail in ~500ms (capsem-process spawn -> validateWithError
@@ -1912,6 +2001,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.ram_mb = Some(i.ram_mb);
             info.cpus = Some(i.cpus);
             info.version = Some(i.base_version.clone());
+            info.base_assets = i.base_assets.clone();
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
             enrich_telemetry(&mut info, &i.session_dir);
@@ -1940,6 +2030,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
                 info.ram_mb = Some(entry.ram_mb);
                 info.cpus = Some(entry.cpus);
                 info.version = Some(entry.base_version.clone());
+                info.base_assets = entry.base_assets.clone();
                 info.forked_from = entry.forked_from.clone();
                 info.description = entry.description.clone();
                 if entry.defunct {
@@ -1950,27 +2041,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
         }
     }
 
-    // Check asset health
-    let asset_health = match state.resolve_asset_paths() {
-        Ok(resolved) => {
-            let mut missing = Vec::new();
-            if !resolved.kernel.exists() {
-                missing.push("vmlinuz".to_string());
-            }
-            if !resolved.initrd.exists() {
-                missing.push("initrd.img".to_string());
-            }
-            if !resolved.rootfs.exists() {
-                missing.push("rootfs.squashfs".to_string());
-            }
-            Some(AssetHealth {
-                ready: missing.is_empty(),
-                version: Some(resolved.asset_version),
-                missing,
-            })
-        }
-        Err(_) => None,
-    };
+    let asset_health = Some(state.asset_health_snapshot());
 
     Json(ListResponse {
         sandboxes,
@@ -2081,6 +2152,7 @@ async fn handle_info(
                     info.ram_mb = Some(i.ram_mb);
                     info.cpus = Some(i.cpus);
                     info.version = Some(i.base_version.clone());
+                    info.base_assets = i.base_assets.clone();
                     info.forked_from = i.forked_from.clone();
                     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
                     (Some(info), Some(i.session_dir.clone()))
@@ -2110,6 +2182,7 @@ async fn handle_info(
             info.ram_mb = Some(entry.ram_mb);
             info.cpus = Some(entry.cpus);
             info.version = Some(entry.base_version.clone());
+            info.base_assets = entry.base_assets.clone();
             info.forked_from = entry.forked_from.clone();
             info.description = entry.description.clone();
             if entry.defunct {
@@ -2945,49 +3018,48 @@ struct ReloadConfigFailure {
 // ---------------------------------------------------------------------------
 
 /// GET /settings -- unified settings tree + issues + presets.
-async fn handle_get_settings() -> Json<serde_json::Value> {
-    let resp = capsem_core::net::policy_config::load_settings_response();
-    Json(serde_json::to_value(resp).unwrap_or_default())
+async fn handle_get_settings() -> Result<Json<serde_json::Value>, AppError> {
+    Err(legacy_service_endpoint_removed("/settings", None))
 }
 
 /// POST /settings -- batch-update settings and return the refreshed tree.
 async fn handle_save_settings(
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    capsem_core::net::policy_config::batch_update_settings_json(&raw)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let resp = capsem_core::net::policy_config::load_settings_response();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+    if raw.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "legacy endpoint removed: /settings expects no-op data path".into(),
+        ));
+    }
+    Err(legacy_service_endpoint_removed("/settings", None))
 }
 
 /// GET /settings/presets -- list security presets.
 async fn handle_get_presets() -> Json<serde_json::Value> {
-    let presets = capsem_core::net::policy_config::security_presets();
-    Json(serde_json::to_value(presets).unwrap_or_default())
+    Err(legacy_service_endpoint_removed("/settings/presets", Some("/profiles API")))
 }
 
 /// POST /settings/presets/{id} -- apply a security preset, return refreshed tree.
 async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    capsem_core::net::policy_config::apply_preset(&id)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let resp = capsem_core::net::policy_config::load_settings_response();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+    let _ = id;
+    Err(legacy_service_endpoint_removed("/settings/presets/:id", Some("/profiles API")))
 }
 
 /// POST /settings/lint -- validate config and return issues.
 async fn handle_lint_config() -> Json<serde_json::Value> {
-    let issues = capsem_core::net::policy_config::load_merged_lint();
-    Json(serde_json::to_value(issues).unwrap_or_default())
+    Err(legacy_service_endpoint_removed("/settings/lint", Some("/profiles API")))
 }
 
 /// POST /settings/validate-key -- validate an API key against a provider endpoint.
 async fn handle_validate_key(
     Json(payload): Json<ValidateKeyRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = capsem_core::host_config::validate_api_key(&payload.provider, &payload.key)
-        .await
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    Ok(Json(serde_json::to_value(result).unwrap_or_default()))
+    let _ = payload;
+    Err(legacy_service_endpoint_removed(
+        "/settings/validate-key",
+        Some("/profiles API"),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -3087,25 +3159,47 @@ async fn handle_complete_onboarding() -> Result<Json<serde_json::Value>, AppErro
 
 /// GET /setup/assets -- query asset download status.
 async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<serde_json::Value> {
+    let health = state.asset_supervisor.snapshot();
     match state.resolve_asset_paths() {
         Ok(resolved) => {
+            let progress_name = health.progress.as_ref().map(|p| p.logical_name.as_str());
+            let status_for = |name: &str, path: &std::path::Path| {
+                if path.exists() {
+                    "present"
+                } else if health.state == AssetHealthState::Updating
+                    && (progress_name == Some(name) || health.missing.iter().any(|m| m == name))
+                {
+                    "downloading"
+                } else {
+                    "missing"
+                }
+            };
             let assets = vec![
-                json!({ "name": "vmlinuz", "path": resolved.kernel.display().to_string(), "status": if resolved.kernel.exists() { "present" } else { "missing" } }),
-                json!({ "name": "initrd.img", "path": resolved.initrd.display().to_string(), "status": if resolved.initrd.exists() { "present" } else { "missing" } }),
-                json!({ "name": "rootfs.squashfs", "path": resolved.rootfs.display().to_string(), "status": if resolved.rootfs.exists() { "present" } else { "missing" } }),
+                json!({ "name": "vmlinuz", "path": resolved.kernel.display().to_string(), "status": status_for("vmlinuz", &resolved.kernel) }),
+                json!({ "name": "initrd.img", "path": resolved.initrd.display().to_string(), "status": status_for("initrd.img", &resolved.initrd) }),
+                json!({ "name": "rootfs.squashfs", "path": resolved.rootfs.display().to_string(), "status": status_for("rootfs.squashfs", &resolved.rootfs) }),
             ];
-            let all_ready = assets.iter().all(|a| a["status"] == "present");
             Json(json!({
-                "ready": all_ready,
-                "downloading": false,
-                "asset_version": resolved.asset_version,
+                "ready": health.ready,
+                "state": health.state,
+                "downloading": health.state == AssetHealthState::Updating,
+                "asset_version": health.version.unwrap_or(resolved.asset_version),
+                "arch": health.arch,
+                "missing": health.missing,
+                "progress": health.progress,
+                "error": health.error,
+                "retry_count": health.retry_count,
+                "retryable": health.retryable,
                 "assets": assets,
             }))
         }
         Err(e) => Json(json!({
             "ready": false,
+            "state": "error",
             "downloading": false,
             "error": e.to_string(),
+            "retryable": false,
+            "retry_count": health.retry_count,
             "assets": [],
         })),
     }
@@ -3115,31 +3209,11 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    use capsem_core::net::policy_config::corp_provision;
-
-    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "HOME not set".into(),
-    ))?;
-
-    if let Some(source) = &payload.source {
-        // Use the existing provision function which handles fetch + install
-        corp_provision::provision_from_source(&capsem_dir, source)
-            .await
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    } else if let Some(toml_content) = &payload.toml {
-        corp_provision::validate_corp_toml(toml_content)
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-        corp_provision::install_inline_corp_config(&capsem_dir, toml_content)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    } else {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "provide either 'source' (URL) or 'toml' (inline content)".into(),
-        ));
-    }
-
-    Ok(Json(json!({ "success": true })))
+    let _ = payload;
+    Err(legacy_service_endpoint_removed(
+        "/setup/corp-config",
+        Some("/profiles API"),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -3151,9 +3225,8 @@ async fn handle_mcp_servers() -> Json<serde_json::Value> {
     use capsem_core::mcp::policy::McpUserConfig;
     use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
 
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let user_mcp = user_sf.mcp.unwrap_or_default();
-    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
+    let user_mcp = McpUserConfig::default();
+    let corp_mcp = McpUserConfig::default();
 
     // Include the "local" builtin server if the binary exists.
     let builtin_bin = std::env::current_exe()
@@ -3212,29 +3285,7 @@ async fn handle_mcp_tools() -> Json<serde_json::Value> {
 
 /// GET /mcp/policy -- return the merged MCP policy.
 async fn handle_mcp_policy() -> Json<serde_json::Value> {
-    use capsem_core::mcp::policy::McpUserConfig;
-
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let user_mcp = user_sf.mcp.unwrap_or_default();
-    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
-
-    let resp = api::McpPolicyInfoResponse {
-        global_policy: user_mcp.global_policy.clone(),
-        default_tool_permission: user_mcp
-            .default_tool_permission
-            .map(|d| format!("{d:?}").to_lowercase())
-            .unwrap_or_else(|| "allow".into()),
-        blocked_servers: {
-            let policy = user_mcp.to_policy(&corp_mcp);
-            policy.blocked_servers
-        },
-        tool_permissions: user_mcp
-            .tool_permissions
-            .iter()
-            .map(|(k, v)| (k.clone(), format!("{v:?}").to_lowercase()))
-            .collect(),
-    };
-    Json(serde_json::to_value(resp).unwrap_or_default())
+    Err(legacy_service_endpoint_removed("/mcp/policy", Some("/api/v2/policies")))
 }
 
 /// GET /policy-hook/spec -- export the Policy Hook Spec0 OpenAPI contract.
@@ -4474,7 +4525,7 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, ram_mb, cpus, base_version, forked_from, env) = {
+    let (old_session_dir, ram_mb, cpus, base_version, forked_from, env, base_assets) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -4492,6 +4543,7 @@ async fn handle_persist(
             i.base_version.clone(),
             i.forked_from.clone(),
             i.env.clone(),
+            i.base_assets.clone(),
         )
     };
 
@@ -4529,6 +4581,7 @@ async fn handle_persist(
                 last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
+                base_assets: base_assets.clone(),
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -4551,6 +4604,7 @@ async fn handle_persist(
                     persistent: true,
                     env: info.env,
                     forked_from,
+                    base_assets,
                 },
             );
         }
@@ -4985,9 +5039,22 @@ async fn main() -> Result<()> {
             Arc::new(m)
         });
 
+    let registry_path = run_dir.join("persistent_registry.json");
+    let persistent_registry = PersistentRegistry::load(registry_path);
+    info!(
+        persistent_vms = persistent_registry.data.vms.len(),
+        "loaded persistent VM registry"
+    );
+
     // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files)
     if let Some(ref m) = manifest {
-        match capsem_core::asset_manager::cleanup_unused_assets(&assets_base_dir, m) {
+        let saved_vm_references =
+            saved_vm_assets::registry_referenced_asset_filenames(&persistent_registry);
+        match capsem_core::asset_manager::cleanup_unused_assets_preserving(
+            &assets_base_dir,
+            m,
+            saved_vm_references,
+        ) {
             Ok(removed) if !removed.is_empty() => {
                 info!(count = removed.len(), "cleaned up stale assets");
             }
@@ -4995,13 +5062,14 @@ async fn main() -> Result<()> {
             _ => {}
         }
     }
-
-    let registry_path = run_dir.join("persistent_registry.json");
-    let persistent_registry = PersistentRegistry::load(registry_path);
-    info!(
-        persistent_vms = persistent_registry.data.vms.len(),
-        "loaded persistent VM registry"
-    );
+    let asset_supervisor = Arc::new(AssetSupervisor::new(
+        assets_base_dir.clone(),
+        manifest.clone(),
+        current_version.clone(),
+        host_asset_arch().to_string(),
+        std::time::Duration::from_secs(300),
+    ));
+    asset_supervisor.refresh_local_state();
 
     let magika_session = magika::Session::builder()
         .with_inter_threads(1)
@@ -5017,11 +5085,14 @@ async fn main() -> Result<()> {
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         manifest,
+        asset_supervisor,
         current_version,
         magika: Mutex::new(magika_session),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
+
+    Arc::clone(&state.asset_supervisor).spawn();
 
     // Reap capsem-process orphans from any prior service run sharing this
     // run_dir. A previous service that crashed (SIGKILL) or was killed by

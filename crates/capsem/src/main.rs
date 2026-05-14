@@ -88,7 +88,7 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mdebug\x1b[0m        Print a redacted JSON debug report for bug reports
   \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
   \x1b[32;1mversion\x1b[0m      Show version and build information
-  \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
+  \x1b[32;1muninstall\x1b[0m    Uninstall Capsem runtime, preserving user state";
 
 #[derive(Parser)]
 #[command(
@@ -424,7 +424,7 @@ enum MiscCommands {
         #[arg(long, default_value_t = 50 * 1024 * 1024)]
         max_session_bytes: u64,
     },
-    /// Uninstall capsem completely (service, binaries, data)
+    /// Uninstall Capsem runtime, preserving user state
     Uninstall {
         /// Skip confirmation prompt
         #[arg(long, short)]
@@ -1131,8 +1131,10 @@ async fn main() -> Result<()> {
                 let resp = list_resp.into_result()?;
                 let persistent_count = resp.sessions.iter().filter(|s| s.persistent).count();
                 let ephemeral_count = resp.sessions.iter().filter(|s| !s.persistent).count();
-                print!("[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
-                    persistent_count, ephemeral_count);
+                print!(
+                    "[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
+                    persistent_count, ephemeral_count
+                );
                 std::io::stdout().flush()?;
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
@@ -1295,7 +1297,10 @@ async fn main() -> Result<()> {
                 client.get(&format!("/info/{}", name)).await?;
             let info = info_resp.into_result()?;
             if !info.persistent {
-                anyhow::bail!("Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.", name);
+                anyhow::bail!(
+                    "Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.",
+                    name
+                );
             }
 
             // Stop, then resume
@@ -1642,7 +1647,14 @@ async fn main() -> Result<()> {
                     }
                 }
                 if !copied {
-                    eprintln!("warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar", candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+                    eprintln!(
+                        "warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar",
+                        candidates
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                 }
             }
 

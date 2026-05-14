@@ -87,22 +87,16 @@ fn attributes_the_installed_initrd() {
     })
     .unwrap();
 
-    assert!(
-        report
-            .text
-            .contains("asset_version_for_binary: 2026.0512.1")
-    );
-    assert!(
-        report
-            .text
-            .contains(&format!("initrd_manifest_hash: {initrd_hash}"))
-    );
+    assert!(report
+        .text
+        .contains("asset_version_for_binary: 2026.0512.1"));
+    assert!(report
+        .text
+        .contains(&format!("initrd_manifest_hash: {initrd_hash}")));
     assert!(report.text.contains("initrd_path: "));
-    assert!(
-        report
-            .text
-            .contains("initrd_actual_hash_matches_manifest: true")
-    );
+    assert!(report
+        .text
+        .contains("initrd_actual_hash_matches_manifest: true"));
     assert!(report.text.contains("running_vm_count: 1"));
     assert!(report.text.contains("total_vm_count: 2"));
 }
@@ -300,9 +294,7 @@ fn missing_assets_are_reported_without_panicking() {
     .unwrap();
 
     assert!(report.text.contains("initrd_exists: false"));
-    assert!(
-        report
-            .text
-            .contains("initrd_actual_hash_matches_manifest: false")
-    );
+    assert!(report
+        .text
+        .contains("initrd_actual_hash_matches_manifest: false"));
 }

@@ -111,6 +111,53 @@ pub struct SessionInfo {
 pub struct ListResponse {
     #[serde(rename = "sandboxes")]
     pub sessions: Vec<SessionInfo>,
+    #[serde(default)]
+    pub asset_health: Option<AssetHealth>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetProgress {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+    pub done: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetHealth {
+    pub ready: bool,
+    #[serde(default = "default_asset_state")]
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    #[serde(default)]
+    pub missing: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<AssetProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default)]
+    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmAssetDependency {
+    pub vm: String,
+    pub asset_version: String,
+    pub arch: String,
+    pub missing: Vec<String>,
+    pub recovery_hint: String,
+}
+
+fn default_asset_state() -> String {
+    "unknown".to_string()
 }
 
 #[derive(Serialize, Deserialize, Debug)]

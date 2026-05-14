@@ -51,11 +51,11 @@ class TestLifecycle:
         # May fail due to no network, but should not crash
         assert "Development build" not in r.stdout
 
-        # 6. Service uninstall before full uninstall
+        # 6. Service uninstall before runtime uninstall
         r = run_capsem("service", "uninstall", timeout=15)
         assert r.returncode == 0, f"service uninstall failed: {r.stderr}"
 
-        # 7. Full uninstall
+        # 7. Runtime uninstall
         r = run_capsem("uninstall", "--yes", timeout=15)
         assert r.returncode == 0, f"uninstall failed: {r.stderr}"
         assert not (CAPSEM_DIR / "bin" / "capsem").exists(), "binary should be removed"

@@ -4,6 +4,8 @@ use capsem_core::session::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::registry::SavedVmBaseAssets;
+
 /// Response for GET /stats -- full main.db dump in one call.
 #[derive(Serialize, Debug)]
 pub struct StatsResponse {
@@ -77,6 +79,8 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_assets: Option<SavedVmBaseAssets>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -130,6 +134,7 @@ impl SandboxInfo {
             ram_mb: None,
             cpus: None,
             version: None,
+            base_assets: None,
             forked_from: None,
             description: None,
             size_bytes: None,
@@ -186,12 +191,65 @@ pub struct RunRequest {
     pub env: Option<HashMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetHealthState {
+    Checking,
+    Updating,
+    Ready,
+    Error,
+}
+
+impl AssetHealthState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Checking => "checking",
+            Self::Updating => "updating",
+            Self::Ready => "ready",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetProgress {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+    pub done: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmAssetDependency {
+    pub vm: String,
+    pub asset_version: String,
+    pub arch: String,
+    pub missing: Vec<String>,
+    pub recovery_hint: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct AssetHealth {
     pub ready: bool,
+    pub state: AssetHealthState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
     pub missing: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<AssetProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at_unix_secs: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

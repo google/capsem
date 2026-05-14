@@ -552,6 +552,7 @@ async fn timeline_handler_returns_policy_v2_layers_and_null_trace_rows() {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
 
@@ -658,17 +659,35 @@ fn test_magika() -> Mutex<magika::Session> {
     )
 }
 
+fn test_asset_supervisor(
+    assets_dir: PathBuf,
+    manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
+    current_version: &str,
+) -> Arc<AssetSupervisor> {
+    Arc::new(AssetSupervisor::new(
+        assets_dir,
+        manifest,
+        current_version.to_string(),
+        host_asset_arch().to_string(),
+        std::time::Duration::from_secs(60),
+    ))
+}
+
 fn make_test_state() -> Arc<ServiceState> {
     let registry_path = PathBuf::from("/tmp/capsem-test-svc/persistent_registry.json");
+    let assets_dir = PathBuf::from("/nonexistent/assets");
+    let manifest = None;
+    let current_version = "0.0.0";
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: PathBuf::from("/nonexistent/assets"),
+        assets_dir: assets_dir.clone(),
         run_dir: PathBuf::from("/tmp/capsem-test-svc"),
         job_counter: AtomicU64::new(1),
-        manifest: None,
-        current_version: "0.0.0".into(),
+        manifest: manifest.clone(),
+        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -688,6 +707,159 @@ async fn handle_debug_report_returns_pasteable_text() {
     assert!(report.text.contains("manifest_present: false"));
 }
 
+#[tokio::test]
+async fn handle_list_exposes_service_asset_supervisor_state() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    state.asset_supervisor.refresh_local_state();
+
+    let Json(list) = handle_list(State(state)).await;
+
+    let assets = list.asset_health.expect("asset health should be present");
+    assert_eq!(assets.state, AssetHealthState::Updating);
+    assert!(!assets.ready);
+    assert_eq!(
+        assets.missing,
+        vec!["vmlinuz", "initrd.img", "rootfs.squashfs"]
+    );
+}
+
+fn test_saved_vm_base_assets() -> capsem_service::registry::SavedVmBaseAssets {
+    capsem_service::registry::SavedVmBaseAssets {
+        asset_version: "2026.0415.1".into(),
+        arch: host_asset_arch().into(),
+        kernel_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        initrd_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        rootfs_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
+        guest_abi: Some("capsem-guest-v1".into()),
+    }
+}
+
+#[test]
+fn saved_vm_current_base_assets_from_manifest_records_boot_hashes() {
+    let manifest = capsem_core::asset_manager::ManifestV2::from_json(UNSIGNED_MANIFEST).unwrap();
+    let base_assets =
+        saved_vm_assets::current_base_assets(Some(&manifest), "1.0.1776269479", "arm64")
+            .unwrap()
+            .unwrap();
+
+    assert_eq!(base_assets.asset_version, "2026.0415.1");
+    assert_eq!(base_assets.arch, "arm64");
+    assert_eq!(
+        base_assets.kernel_hash,
+        "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"
+    );
+    assert_eq!(
+        base_assets.initrd_hash,
+        "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456"
+    );
+    assert_eq!(
+        base_assets.rootfs_hash,
+        "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
+    );
+    assert_eq!(base_assets.guest_abi.as_deref(), Some("capsem-guest-v1"));
+}
+
+#[tokio::test]
+async fn handle_list_reports_missing_saved_vm_dependencies_separately() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
+    std::fs::write(state.assets_dir.join("vmlinuz"), b"current kernel").unwrap();
+    std::fs::write(state.assets_dir.join("initrd.img"), b"current initrd").unwrap();
+    std::fs::write(state.assets_dir.join("rootfs.squashfs"), b"current rootfs").unwrap();
+    std::fs::write(
+        state.assets_dir.join("vmlinuz-aaaaaaaaaaaaaaaa"),
+        b"old kernel",
+    )
+    .unwrap();
+    std::fs::write(
+        state.assets_dir.join("initrd-bbbbbbbbbbbbbbbb.img"),
+        b"old initrd",
+    )
+    .unwrap();
+    state.asset_supervisor.refresh_local_state();
+
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry.data.vms.insert(
+            "saved-old".into(),
+            PersistentVmEntry {
+                name: "saved-old".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: Some(test_saved_vm_base_assets()),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/saved-old"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(list) = handle_list(State(state)).await;
+    let assets = list.asset_health.expect("asset health should be present");
+
+    assert_eq!(assets.state, AssetHealthState::Ready);
+    assert!(assets.ready);
+    assert!(assets.missing.is_empty());
+    assert_eq!(assets.saved_vm_dependencies.len(), 1);
+    assert_eq!(assets.saved_vm_dependencies[0].vm, "saved-old");
+    assert_eq!(
+        assets.saved_vm_dependencies[0].missing,
+        vec!["rootfs.squashfs"]
+    );
+}
+
+#[test]
+fn resume_saved_vm_fails_when_pinned_rootfs_is_missing() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
+    std::fs::write(
+        state.assets_dir.join("vmlinuz-aaaaaaaaaaaaaaaa"),
+        b"old kernel",
+    )
+    .unwrap();
+    std::fs::write(
+        state.assets_dir.join("initrd-bbbbbbbbbbbbbbbb.img"),
+        b"old initrd",
+    )
+    .unwrap();
+    let session_dir = state.run_dir.join("persistent/saved-old");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry.data.vms.insert(
+            "saved-old".into(),
+            PersistentVmEntry {
+                name: "saved-old".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: Some(test_saved_vm_base_assets()),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let err = state.resume_sandbox("saved-old", None, None).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("saved VM saved-old"), "{msg}");
+    assert!(msg.contains("rootfs.squashfs"), "{msg}");
+}
+
 fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
     state.instances.lock().unwrap().insert(
         id.to_string(),
@@ -703,6 +875,7 @@ fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
 }
@@ -851,6 +1024,7 @@ async fn mcp_refresh_surfaces_process_failure() {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
 
@@ -910,6 +1084,7 @@ async fn reload_config_returns_structured_failed_session_state() {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
 
@@ -989,15 +1164,19 @@ fn drain_dead_instances_releases_mutex_before_returning() {
 fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
     let registry_path = run_dir.join("persistent_registry.json");
     std::fs::create_dir_all(run_dir.join("sessions")).unwrap();
+    let assets_dir = PathBuf::from("/nonexistent/assets");
+    let manifest = None;
+    let current_version = "0.0.0";
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: PathBuf::from("/nonexistent/assets"),
+        assets_dir: assets_dir.clone(),
         run_dir,
         job_counter: AtomicU64::new(1),
-        manifest: None,
-        current_version: "0.0.0".into(),
+        manifest: manifest.clone(),
+        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -1423,6 +1602,7 @@ fn provision_persistent_rejects_duplicate_name() {
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
+                base_assets: None,
                 created_at: "0".into(),
                 session_dir: PathBuf::from("/tmp/taken"),
                 forked_from: None,
@@ -1482,15 +1662,19 @@ fn provision_persistent_validates_name() {
 fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let registry_path = dir.path().join("persistent_registry.json");
+    let assets_dir = dir.path().join("assets");
+    let manifest = None;
+    let current_version = "0.0.0";
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: dir.path().join("assets"),
+        assets_dir: assets_dir.clone(),
         run_dir: dir.path().to_path_buf(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
-        current_version: "0.0.0".into(),
+        manifest: manifest.clone(),
+        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -1506,6 +1690,7 @@ async fn handle_fork_creates_persistent_sandbox() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let base_assets = test_saved_vm_base_assets();
     state.instances.lock().unwrap().insert(
         "fork-src".into(),
         InstanceInfo {
@@ -1520,6 +1705,7 @@ async fn handle_fork_creates_persistent_sandbox() {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: Some(base_assets.clone()),
         },
     );
     let result = handle_fork(
@@ -1540,6 +1726,7 @@ async fn handle_fork_creates_persistent_sandbox() {
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
     assert_eq!(entry.base_version, "0.0.0");
+    assert_eq!(entry.base_assets, Some(base_assets));
 }
 
 #[tokio::test]
@@ -1580,6 +1767,7 @@ async fn handle_fork_duplicate_returns_conflict() {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
     // state is already Arc<ServiceState> from make_test_state*
@@ -1615,6 +1803,7 @@ async fn handle_fork_from_persistent_registry() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let base_assets = test_saved_vm_base_assets();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
@@ -1624,6 +1813,7 @@ async fn handle_fork_from_persistent_registry() {
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
+                base_assets: Some(base_assets.clone()),
                 created_at: "2026-01-01T00:00:00Z".into(),
                 session_dir: session_dir.clone(),
                 forked_from: None,
@@ -1638,7 +1828,7 @@ async fn handle_fork_from_persistent_registry() {
     }
     // state is already Arc<ServiceState> from make_test_state*
     let result = handle_fork(
-        State(state),
+        State(state.clone()),
         Path("pers-vm".into()),
         Json(ForkRequest {
             name: "from-pers".into(),
@@ -1648,6 +1838,11 @@ async fn handle_fork_from_persistent_registry() {
     .await
     .unwrap();
     assert_eq!(result.0.name, "from-pers");
+    let registry = state.persistent_registry.lock().unwrap();
+    assert_eq!(
+        registry.get("from-pers").unwrap().base_assets,
+        Some(base_assets)
+    );
 }
 
 #[test]
@@ -1689,6 +1884,7 @@ async fn handle_list_shows_suspended_status() {
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
+                base_assets: None,
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/susp-vm"),
                 forked_from: None,
@@ -1712,6 +1908,7 @@ async fn handle_list_shows_suspended_status() {
                 ram_mb: 1024,
                 cpus: 1,
                 base_version: "0.0.0".into(),
+                base_assets: None,
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/stop-vm"),
                 forked_from: None,
@@ -1753,6 +1950,7 @@ async fn handle_info_shows_suspended_status() {
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
+                base_assets: None,
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/info-susp"),
                 forked_from: None,
@@ -1792,6 +1990,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
                 persistent: false,
                 env: None,
                 forked_from: None,
+                base_assets: None,
             },
         );
     }
@@ -1827,6 +2026,7 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
+                base_assets: None,
                 created_at: "0".into(),
                 session_dir: session_dir.clone(),
                 forked_from: None,
@@ -2286,15 +2486,19 @@ fn make_test_state_with_tempdir_at(
 ) -> (Arc<ServiceState>, tempfile::TempDir) {
     let run_dir = dir.path().join("run");
     let registry_path = run_dir.join("persistent_registry.json");
+    let assets_dir = run_dir.join("assets");
+    let manifest = None;
+    let current_version = "0.0.0";
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: run_dir.join("assets"),
+        assets_dir: assets_dir.clone(),
         run_dir,
         job_counter: AtomicU64::new(1),
-        manifest: None,
-        current_version: "0.0.0".into(),
+        manifest: manifest.clone(),
+        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -2341,6 +2545,7 @@ fn resolve_rejects_symlink_escape() {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
 
@@ -2371,6 +2576,7 @@ fn resolve_valid_path_inside_workspace() {
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
 
@@ -2481,6 +2687,7 @@ fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &
             persistent: false,
             env: None,
             forked_from: None,
+            base_assets: None,
         },
     );
 }
@@ -2685,8 +2892,11 @@ fn classify_provision_error_already_exists_returns_409() {
     let err = anyhow::anyhow!("persistent VM \"vm-5\" already exists. Use `capsem resume vm-5`.");
     match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-5") {
         AttemptDecision::BailWithError(AppError(status, _)) => {
-            assert_eq!(status, StatusCode::CONFLICT,
-                "duplicate-name errors must return 409 so clients can distinguish from server failures");
+            assert_eq!(
+                status,
+                StatusCode::CONFLICT,
+                "duplicate-name errors must return 409 so clients can distinguish from server failures"
+            );
         }
         other => panic!("expected BailWithError(409) for already-exists, got {other:?}"),
     }

@@ -178,6 +178,16 @@ pub struct ResolvedAssets {
     pub asset_version: String,
 }
 
+/// Manifest identity for the three boot assets of one resolved asset release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedAssetMetadata {
+    pub asset_version: String,
+    pub arch: String,
+    pub kernel_hash: String,
+    pub initrd_hash: String,
+    pub rootfs_hash: String,
+}
+
 /// BLAKE3 hashes for the three canonical boot assets of one arch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExpectedAssetHashes {
@@ -418,6 +428,38 @@ impl ManifestV2 {
         arch: &str,
         base_dir: &Path,
     ) -> Result<ResolvedAssets> {
+        let metadata = self.resolve_metadata(binary_version, arch)?;
+
+        let resolve_one = |name: &str, hash: &str| -> PathBuf {
+            let hname = hash_filename(name, hash);
+            // Check flat layout first (base_dir/{hash}), then arch subdir (base_dir/{arch}/{hash})
+            let flat = base_dir.join(&hname);
+            if flat.exists() {
+                return flat;
+            }
+            let arch_path = base_dir.join(arch).join(&hname);
+            if arch_path.exists() {
+                return arch_path;
+            }
+            // Return the flat path (caller will report the error)
+            flat
+        };
+
+        Ok(ResolvedAssets {
+            kernel: resolve_one("vmlinuz", &metadata.kernel_hash),
+            initrd: resolve_one("initrd.img", &metadata.initrd_hash),
+            rootfs: resolve_one("rootfs.squashfs", &metadata.rootfs_hash),
+            asset_version: metadata.asset_version,
+        })
+    }
+
+    /// Resolve manifest hashes for the compatible asset release without
+    /// consulting the filesystem.
+    pub fn resolve_metadata(
+        &self,
+        binary_version: &str,
+        arch: &str,
+    ) -> Result<ResolvedAssetMetadata> {
         let asset_version = pick_asset_version(self, binary_version);
 
         let release =
@@ -428,32 +470,26 @@ impl ManifestV2 {
             format!("arch {} not found in asset release {}", arch, asset_version)
         })?;
 
-        let resolve_one = |name: &str| -> Result<PathBuf> {
-            let entry = arch_assets.get(name).with_context(|| {
-                format!(
-                    "{} not found in asset release {} / {}",
-                    name, asset_version, arch
-                )
-            })?;
-            let hname = hash_filename(name, &entry.hash);
-            // Check flat layout first (base_dir/{hash}), then arch subdir (base_dir/{arch}/{hash})
-            let flat = base_dir.join(&hname);
-            if flat.exists() {
-                return Ok(flat);
-            }
-            let arch_path = base_dir.join(arch).join(&hname);
-            if arch_path.exists() {
-                return Ok(arch_path);
-            }
-            // Return the flat path (caller will report the error)
-            Ok(flat)
+        let hash_for = |name: &str| -> Result<String> {
+            Ok(arch_assets
+                .get(name)
+                .with_context(|| {
+                    format!("{name} not found in asset release {asset_version} / {arch}")
+                })?
+                .hash
+                .clone())
         };
 
-        Ok(ResolvedAssets {
-            kernel: resolve_one("vmlinuz")?,
-            initrd: resolve_one("initrd.img")?,
-            rootfs: resolve_one("rootfs.squashfs")?,
+        let kernel_hash = hash_for("vmlinuz")?;
+        let initrd_hash = hash_for("initrd.img")?;
+        let rootfs_hash = hash_for("rootfs.squashfs")?;
+
+        Ok(ResolvedAssetMetadata {
             asset_version,
+            arch: arch.to_string(),
+            kernel_hash,
+            initrd_hash,
+            rootfs_hash,
         })
     }
 
@@ -561,6 +597,23 @@ pub fn asset_download_url(binary_version: &str, arch: &str, logical_name: &str) 
 ///
 /// Returns paths that were removed.
 pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<Vec<PathBuf>> {
+    cleanup_unused_assets_preserving(base_dir, manifest, std::iter::empty::<String>())
+}
+
+/// Remove hash-named asset files not referenced by any non-deprecated release
+/// or an explicit saved-VM preservation set.
+///
+/// `extra_referenced` contains hash-derived filenames such as
+/// `rootfs-89eb92b83534d9d0.squashfs`.
+pub fn cleanup_unused_assets_preserving<I, S>(
+    base_dir: &Path,
+    manifest: &ManifestV2,
+    extra_referenced: I,
+) -> Result<Vec<PathBuf>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     let mut referenced: HashSet<String> = HashSet::new();
     let mut referenced_by_arch: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -577,6 +630,12 @@ pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<V
             }
         }
     }
+
+    let extra_referenced: HashSet<String> = extra_referenced
+        .into_iter()
+        .map(|name| name.as_ref().to_string())
+        .collect();
+    referenced.extend(extra_referenced.iter().cloned());
 
     let mut removed = Vec::new();
     if !base_dir.exists() {
@@ -604,7 +663,9 @@ pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<V
                 std::fs::remove_dir_all(&path)?;
                 removed.push(path);
             } else if let Some(arch_referenced) = referenced_by_arch.get(name_str.as_ref()) {
-                cleanup_asset_dir(&path, arch_referenced, &mut removed)?;
+                let mut arch_referenced = arch_referenced.clone();
+                arch_referenced.extend(extra_referenced.iter().cloned());
+                cleanup_asset_dir(&path, &arch_referenced, &mut removed)?;
             }
             continue;
         }
@@ -1460,6 +1521,55 @@ mod tests {
         assert!(base.join("manifest.json").exists());
         assert!(base.join("manifest.json.minisig").exists());
         assert!(base.join("manifest-sign.dev.pub").exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_saved_vm_referenced_hash_named_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        let stale_rootfs = base.join("rootfs-1111111111111111.squashfs");
+        let stale_initrd = base.join("initrd-2222222222222222.img");
+        let disposable_kernel = base.join("vmlinuz-3333333333333333");
+        std::fs::write(&stale_rootfs, b"saved rootfs").unwrap();
+        std::fs::write(&stale_initrd, b"saved initrd").unwrap();
+        std::fs::write(&disposable_kernel, b"temp").unwrap();
+
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let removed = cleanup_unused_assets_preserving(
+            base,
+            &m,
+            [
+                "rootfs-1111111111111111.squashfs",
+                "initrd-2222222222222222.img",
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(removed, vec![disposable_kernel]);
+        assert!(stale_rootfs.exists());
+        assert!(stale_initrd.exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_saved_vm_references_inside_arch_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let arm64 = base.join("arm64");
+        std::fs::create_dir(&arm64).unwrap();
+
+        let saved_rootfs = arm64.join("rootfs-1111111111111111.squashfs");
+        let temp_rootfs = arm64.join("rootfs-2222222222222222.squashfs");
+        std::fs::write(&saved_rootfs, b"saved rootfs").unwrap();
+        std::fs::write(&temp_rootfs, b"temp rootfs").unwrap();
+
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let removed =
+            cleanup_unused_assets_preserving(base, &m, ["rootfs-1111111111111111.squashfs"])
+                .unwrap();
+
+        assert_eq!(removed, vec![temp_rootfs]);
+        assert!(saved_rootfs.exists());
     }
 
     #[test]

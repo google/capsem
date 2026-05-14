@@ -1,5 +1,6 @@
 use super::builder::{
     inject_api_key_approval, inject_capsem_mcp_server, inject_capsem_mcp_server_toml,
+    inject_mcp_servers_json, inject_mcp_servers_toml,
 };
 use super::*;
 use std::collections::HashMap;
@@ -3922,6 +3923,84 @@ fn mcp_servers_in_tree() {
             .any(|c| matches!(c, SettingsNode::McpServer(s) if s.key == "local"));
         assert!(has_local, "MCP Servers group should contain local");
     }
+}
+
+#[test]
+fn batch_update_mcp_local_enabled_writes_override_and_keeps_node_visible() {
+    with_temp_configs(vec![], vec![], |user_path, _| {
+        let mut changes = HashMap::new();
+        changes.insert(
+            "mcp.servers.local.enabled".to_string(),
+            serde_json::json!(false),
+        );
+        let applied = loader::batch_update_settings_json(&changes).unwrap();
+        assert_eq!(applied, vec!["mcp.servers.local.enabled"]);
+
+        let user = loader::load_settings_file(user_path).unwrap();
+        assert_eq!(
+            user.mcp
+                .as_ref()
+                .and_then(|m| m.server_enabled.get("local")),
+            Some(&false)
+        );
+
+        let response = loader::load_settings_response();
+        let local = response.tree.iter().find_map(|node| match node {
+            SettingsNode::Group { name, children, .. } if name == "MCP Servers" => {
+                children.iter().find_map(|child| match child {
+                    SettingsNode::McpServer(server) if server.key == "local" => Some(server),
+                    _ => None,
+                })
+            }
+            _ => None,
+        });
+        let local = local.expect("disabled local MCP server must stay visible for re-enable");
+        assert!(!local.enabled);
+    });
+}
+
+#[test]
+fn disabled_mcp_servers_are_not_injected_into_agent_configs() {
+    let server = McpServerDef {
+        key: "local".into(),
+        name: "Local".into(),
+        description: None,
+        transport: McpTransport::Stdio,
+        command: Some("/run/capsem-mcp-server".into()),
+        url: None,
+        args: vec![],
+        env: HashMap::new(),
+        headers: HashMap::new(),
+        builtin: true,
+        enabled: false,
+        source: PolicySource::Default,
+        corp_locked: false,
+    };
+
+    let json = inject_mcp_servers_json(
+        r#"{"mcpServers":{"local":{"command":"/run/capsem-mcp-server"},"github":{"command":"npx"}}}"#,
+        &[server.clone()],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(parsed["mcpServers"]
+        .as_object()
+        .map(|servers| !servers.contains_key("local"))
+        .unwrap_or(true));
+    assert_eq!(parsed["mcpServers"]["github"]["command"], "npx");
+
+    let toml = inject_mcp_servers_toml(
+        "[mcp_servers.local]\ncommand = \"/run/capsem-mcp-server\"\n[mcp_servers.github]\ncommand = \"npx\"\n",
+        &[server],
+    );
+    let parsed: toml::Value = toml::from_str(&toml).unwrap();
+    assert!(parsed
+        .get("mcp_servers")
+        .and_then(|servers| servers.get("local"))
+        .is_none());
+    assert_eq!(
+        parsed["mcp_servers"]["github"]["command"].as_str().unwrap(),
+        "npx"
+    );
 }
 
 // -----------------------------------------------------------------------

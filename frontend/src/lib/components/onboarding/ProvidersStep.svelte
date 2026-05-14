@@ -17,7 +17,23 @@
     docsUrl: string | null; // where to get a key
   };
 
-  let providers = $state<ProviderInfo[]>([]);
+  const providerDefs = [
+    { id: 'anthropic', name: 'Anthropic', settingId: 'ai.anthropic.api_key' },
+    { id: 'openai', name: 'OpenAI', settingId: 'ai.openai.api_key' },
+    { id: 'google', name: 'Google AI', settingId: 'ai.google.api_key' },
+    { id: 'github', name: 'GitHub', settingId: 'repository.providers.github.token' },
+  ];
+
+  function fallbackProviders(): ProviderInfo[] {
+    return providerDefs.map(p => ({
+      ...p,
+      configured: false,
+      corpLocked: false,
+      docsUrl: null,
+    }));
+  }
+
+  let providers = $state<ProviderInfo[]>(fallbackProviders());
   let gitName = $state<string | null>(null);
   let gitEmail = $state<string | null>(null);
   let sshConfigured = $state(false);
@@ -42,17 +58,18 @@
     return false;
   }
 
+  function ensureKeyInputs() {
+    for (const p of providers) {
+      if (!p.configured && !p.corpLocked && keyInputs[p.id] === undefined) {
+        keyInputs[p.id] = '';
+      }
+    }
+  }
+
   onMount(async () => {
     try {
       const settings = await api.getSettings();
-      const tree = settings.tree;
-
-      const providerDefs = [
-        { id: 'anthropic', name: 'Anthropic', settingId: 'ai.anthropic.api_key' },
-        { id: 'openai', name: 'OpenAI', settingId: 'ai.openai.api_key' },
-        { id: 'google', name: 'Google AI', settingId: 'ai.google.api_key' },
-        { id: 'github', name: 'GitHub', settingId: 'repository.providers.github.token' },
-      ];
+      const tree = Array.isArray(settings.tree) ? settings.tree : [];
 
       providers = providerDefs.map(p => {
         const leaf = findLeaf(tree, p.settingId);
@@ -77,16 +94,10 @@
       // Claude OAuth
       const oauthLeaf = findLeaf(tree, 'ai.anthropic.claude.credentials_json');
       oauthConfigured = isPopulated(oauthLeaf);
-
-      // Init key inputs for unconfigured providers
-      for (const p of providers) {
-        if (!p.configured && !p.corpLocked) {
-          keyInputs[p.id] = '';
-        }
-      }
     } catch {
-      // Settings unavailable
+      providers = fallbackProviders();
     } finally {
+      ensureKeyInputs();
       loading = false;
     }
 

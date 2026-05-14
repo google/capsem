@@ -124,12 +124,33 @@
       };
     }
     if (!vmStore.assetHealth.ready) {
+      if (vmStore.assetHealth.state === 'checking') {
+        return {
+          title: 'VM assets are being checked',
+          message: 'Waiting for the service to verify rootfs and manifest readiness.',
+        };
+      }
+      if (vmStore.assetHealth.state === 'updating') {
+        const progress = vmStore.assetHealth.progress
+          ? `Updating ${vmStore.assetHealth.progress.logical_name}.`
+          : 'Required VM assets are updating.';
+        return {
+          title: 'VM assets are updating',
+          message: progress,
+        };
+      }
+      if (vmStore.assetHealth.state === 'error') {
+        return {
+          title: 'VM assets need attention',
+          message: vmStore.assetHealth.error ?? 'The service could not prepare required VM assets.',
+        };
+      }
       const missing = vmStore.assetHealth.missing.length > 0
         ? `Missing: ${vmStore.assetHealth.missing.join(', ')}.`
         : 'Required VM assets are not ready.';
       return {
         title: 'VM assets are missing',
-        message: `${missing} Run capsem setup to download.`,
+        message: `${missing} The service will keep trying in the background.`,
       };
     }
     return null;

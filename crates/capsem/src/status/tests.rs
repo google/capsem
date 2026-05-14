@@ -137,19 +137,151 @@ fn status_report_contains_service_and_typed_issues() {
     let report = super::status_report_from_parts(&service, &issues);
     assert_eq!(report.schema, "capsem.status.v1");
     assert!(!report.ok);
+    assert_eq!(report.state, "blocked");
     assert_eq!(report.service.installed, true);
     assert_eq!(report.service.running, false);
     assert_eq!(
         report.service.unit_path.as_deref(),
         Some("/tmp/capsem.service")
     );
+    assert_eq!(report.checks.service_endpoint.state, "blocked");
+    assert_eq!(
+        report.checks.service_endpoint.issue_codes,
+        vec!["service_not_running"]
+    );
+    assert_eq!(report.checks.gateway.state, "skipped");
     assert_eq!(report.issues[0].code, "service_not_running");
 
     let json = serde_json::to_value(&report).unwrap();
     assert_eq!(json["schema"], "capsem.status.v1");
     assert_eq!(json["ok"], false);
+    assert_eq!(json["state"], "blocked");
     assert_eq!(json["service"]["installed"], true);
+    assert_eq!(json["checks"]["service_endpoint"]["state"], "blocked");
+    assert_eq!(
+        json["checks"]["service_endpoint"]["issue_codes"][0],
+        "service_not_running"
+    );
+    assert_eq!(json["checks"]["gateway"]["state"], "skipped");
     assert_eq!(json["issues"][0]["code"], "service_not_running");
+}
+
+#[test]
+fn status_report_groups_issue_codes_by_install_surface() {
+    let service = crate::service_install::ServiceStatus {
+        installed: true,
+        running: true,
+        pid: Some(42),
+        unit_path: None,
+    };
+    let issues = vec![
+        super::HealthIssue::HostBinaryMissing {
+            name: "capsem-tray",
+            path: "/tmp/capsem-tray".into(),
+        },
+        super::HealthIssue::ManifestMissing,
+        super::HealthIssue::GatewayDown {
+            port: "19222".into(),
+        },
+        super::HealthIssue::SetupIncomplete {
+            path: "/tmp/setup-state.json".into(),
+        },
+    ];
+
+    let report = super::status_report_from_parts(&service, &issues);
+    assert_eq!(report.state, "blocked");
+    assert_eq!(report.checks.host.issue_codes, vec!["host_binary_missing"]);
+    assert_eq!(report.checks.assets.issue_codes, vec!["manifest_missing"]);
+    assert_eq!(report.checks.gateway.issue_codes, vec!["gateway_down"]);
+    assert_eq!(report.checks.setup.issue_codes, vec!["setup_incomplete"]);
+    assert_eq!(report.checks.service_endpoint.state, "ok");
+    assert_eq!(report.checks.gateway.state, "blocked");
+}
+
+#[test]
+fn status_report_preserves_service_asset_updating_state() {
+    let service = crate::service_install::ServiceStatus {
+        installed: true,
+        running: true,
+        pid: Some(42),
+        unit_path: None,
+    };
+    let asset_health = crate::client::AssetHealth {
+        ready: false,
+        state: "updating".into(),
+        version: Some("2026.0513.1".into()),
+        arch: Some("arm64".into()),
+        missing: vec!["rootfs.squashfs".into()],
+        progress: Some(crate::client::AssetProgress {
+            logical_name: "rootfs.squashfs".into(),
+            bytes_done: 12,
+            bytes_total: Some(24),
+            done: false,
+        }),
+        error: None,
+        retry_count: 0,
+        retryable: false,
+        saved_vm_dependencies: Vec::new(),
+    };
+
+    let report = super::status_report_from_parts_with_assets(&service, &[], Some(asset_health));
+
+    assert!(!report.ok);
+    assert_eq!(report.state, "updating");
+    assert_eq!(
+        report.asset_health.as_ref().unwrap().missing,
+        vec!["rootfs.squashfs"]
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["state"], "updating");
+    assert_eq!(json["asset_health"]["state"], "updating");
+    assert_eq!(
+        json["asset_health"]["progress"]["logical_name"],
+        "rootfs.squashfs"
+    );
+}
+
+#[test]
+fn status_report_blocks_on_saved_vm_asset_dependencies() {
+    let service = crate::service_install::ServiceStatus {
+        installed: true,
+        running: true,
+        pid: Some(42),
+        unit_path: None,
+    };
+    let asset_health = crate::client::AssetHealth {
+        ready: true,
+        state: "ready".into(),
+        version: Some("2026.0513.1".into()),
+        arch: Some("arm64".into()),
+        missing: Vec::new(),
+        progress: None,
+        error: None,
+        retry_count: 0,
+        retryable: false,
+        saved_vm_dependencies: vec![crate::client::SavedVmAssetDependency {
+            vm: "saved-old".into(),
+            asset_version: "2026.0415.1".into(),
+            arch: "arm64".into(),
+            missing: vec!["rootfs.squashfs".into()],
+            recovery_hint: "restore assets".into(),
+        }],
+    };
+    let issues = super::service_asset_health_issues(&asset_health);
+
+    let report = super::status_report_from_parts_with_assets(&service, &issues, Some(asset_health));
+
+    assert!(!report.ok);
+    assert_eq!(report.state, "blocked");
+    assert_eq!(
+        report.checks.assets.issue_codes,
+        vec!["saved_vm_asset_missing"]
+    );
+    assert_eq!(report.issues[0].details["vm"], "saved-old");
+    assert_eq!(
+        report.asset_health.unwrap().saved_vm_dependencies[0].missing,
+        vec!["rootfs.squashfs"]
+    );
 }
 
 #[cfg(unix)]
@@ -274,6 +406,51 @@ async fn host_binary_version_check_reports_stale_process_binary() {
     ));
     assert_eq!(issues[0].code().as_str(), "host_binary_version_mismatch");
     assert_eq!(issues[0].to_report().details["actual_version"], "0.0.0");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn host_binary_version_check_reports_stale_gateway_and_tray() {
+    let dir = tempfile::tempdir().unwrap();
+    let service_bin = dir.path().join("capsem-service");
+    let process_bin = dir.path().join("capsem-process");
+    let gateway_bin = dir.path().join("capsem-gateway");
+    let tray_bin = dir.path().join("capsem-tray");
+    for (path, name, version) in [
+        (&service_bin, "capsem-service", env!("CARGO_PKG_VERSION")),
+        (&process_bin, "capsem-process", env!("CARGO_PKG_VERSION")),
+        (&gateway_bin, "capsem-gateway", "0.0.0"),
+        (&tray_bin, "capsem-tray", "0.0.0"),
+    ] {
+        write_executable_script(path, &format!("#!/bin/sh\nprintf '{name} {version}\\n'\n"));
+    }
+
+    let paths = crate::paths::CapsemPaths {
+        cli_bin: dir.path().join("capsem"),
+        service_bin,
+        process_bin,
+        mcp_bin: dir.path().join("capsem-mcp"),
+        mcp_aggregator_bin: dir.path().join("capsem-mcp-aggregator"),
+        mcp_builtin_bin: dir.path().join("capsem-mcp-builtin"),
+        gateway_bin,
+        tray_bin,
+        assets_dir: dir.path().join("assets"),
+    };
+
+    let issues = super::check_host_binary_versions(&paths).await;
+    let names: std::collections::BTreeSet<_> = issues
+        .iter()
+        .map(|issue| issue.to_report().details["name"].clone())
+        .collect();
+    assert_eq!(
+        names,
+        ["capsem-gateway".to_string(), "capsem-tray".to_string()]
+            .into_iter()
+            .collect()
+    );
+    assert!(issues
+        .iter()
+        .all(|issue| issue.code().as_str() == "host_binary_version_mismatch"));
 }
 
 #[test]
@@ -406,6 +583,52 @@ fn service_unit_check_accepts_escaped_paths() {
     };
 
     let issues = super::check_service_unit(&service, &paths);
+    assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+}
+
+#[test]
+fn app_bundle_check_reports_missing_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Capsem.app");
+
+    let issues = super::check_app_bundle_path(&path);
+    assert!(matches!(
+        issues.as_slice(),
+        [super::HealthIssue::AppBundleMissing { path: issue_path }] if issue_path == &path
+    ));
+    assert_eq!(issues[0].code().as_str(), "app_bundle_missing");
+    assert_eq!(
+        issues[0].to_report().details["path"],
+        path.display().to_string()
+    );
+}
+
+#[test]
+fn app_bundle_check_accepts_existing_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Capsem.app");
+    std::fs::create_dir(&path).unwrap();
+
+    let issues = super::check_app_bundle_path(&path);
+    assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+}
+
+#[test]
+fn desktop_app_bundle_check_skips_non_installed_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = crate::paths::CapsemPaths {
+        cli_bin: dir.path().join("capsem"),
+        service_bin: dir.path().join("capsem-service"),
+        process_bin: dir.path().join("capsem-process"),
+        mcp_bin: dir.path().join("capsem-mcp"),
+        mcp_aggregator_bin: dir.path().join("capsem-mcp-aggregator"),
+        mcp_builtin_bin: dir.path().join("capsem-mcp-builtin"),
+        gateway_bin: dir.path().join("capsem-gateway"),
+        tray_bin: dir.path().join("capsem-tray"),
+        assets_dir: dir.path().join("assets"),
+    };
+
+    let issues = super::check_desktop_app_bundle(&paths);
     assert!(issues.is_empty(), "unexpected issues: {issues:?}");
 }
 

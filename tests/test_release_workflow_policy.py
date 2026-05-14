@@ -346,8 +346,8 @@ def _just_install_body() -> str:
     return install.group(0)
 
 
-def test_local_install_hard_cleans_before_installing_package():
-    """`just install` must prove the old local install is gone before reinstalling."""
+def test_local_install_removes_old_runtime_before_installing_package():
+    """`just install` must prove the old runtime is gone before reinstalling."""
     body = _just_install_body()
 
     assert 'echo "=== Clean uninstalling existing local Capsem ==="' in body
@@ -358,7 +358,10 @@ def test_local_install_hard_cleans_before_installing_package():
     assert '"$ROOT/target/release/capsem" uninstall --yes' in body
     assert "assert_clean_uninstall" in body
     assert 'LaunchAgent still exists after uninstall' in body
-    assert 'unexpected files left after uninstall' in body
+    assert 'runtime bin dir still exists after uninstall' in body
+    assert 'runtime run-state still exists after uninstall' in body
+    assert '! -name persistent' in body
+    assert '! -name persistent_registry.json' in body
 
     clean_pos = body.index("=== Clean uninstalling existing local Capsem ===")
     assert_pos = body.index("\n    assert_clean_uninstall", clean_pos)
@@ -414,7 +417,15 @@ def test_local_install_verifies_fresh_install_and_guest_network():
     assert 'INSTALLED_VERSION=$("$HOME/.capsem/bin/capsem" version)' in body
     assert 'curl -fsS --unix-socket "$HOME/.capsem/run/service.sock"' in body
     assert 'curl -fsS "http://127.0.0.1:$GATEWAY_PORT/health"' in body
+    assert "python3 scripts/capture-install-status.py \\" in body
+    assert '--capsem-bin "$HOME/.capsem/bin/capsem"' in body
+    assert "--label just-install" in body
     assert '"$HOME/.capsem/bin/capsem" run' in body
     assert "getent hosts elie.net" in body
     assert "getent hosts generativelanguage.googleapis.com" in body
     assert "curl -fsS --connect-timeout 10 https://elie.net" in body
+
+    gateway_pos = body.index("=== Verifying gateway health ===")
+    status_pos = body.index("=== Capturing installed status ===")
+    guest_pos = body.index("=== Verifying guest DNS and HTTPS ===")
+    assert gateway_pos < status_pos < guest_pos

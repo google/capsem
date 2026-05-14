@@ -6,7 +6,7 @@ import NewTabPage from '../components/shell/NewTabPage.svelte';
 import CreateSandboxDialog from '../components/shell/CreateSandboxDialog.svelte';
 import { tabStore } from '../stores/tabs.svelte';
 import { vmStore } from '../stores/vms.svelte';
-import type { ProvisionRequest } from '../types/gateway';
+import type { AssetHealth, ProvisionRequest } from '../types/gateway';
 
 vi.mock('../api', () => ({
   getStats: vi.fn(async () => ({
@@ -27,6 +27,17 @@ vi.mock('../api', () => ({
 
 const originalProvision = vmStore.provision.bind(vmStore);
 const originalOpenVm = tabStore.openVM.bind(tabStore);
+
+function assetHealth(overrides: Partial<AssetHealth>): AssetHealth {
+  return {
+    ready: false,
+    state: 'updating',
+    missing: [],
+    retry_count: 0,
+    retryable: false,
+    ...overrides,
+  };
+}
 
 function resetStores() {
   vmStore.vms = [];
@@ -59,17 +70,17 @@ describe('session runtime truth UI', () => {
   });
 
   it('shows missing asset details and keeps creation disabled', () => {
-    vmStore.assetHealth = { ready: false, missing: ['rootfs', 'manifest.json'] };
+    vmStore.assetHealth = assetHealth({ state: 'updating', missing: ['rootfs', 'manifest.json'] });
     render(NewTabPage);
 
-    expect(screen.getByText('VM assets are missing')).toBeTruthy();
-    expect(screen.getByText('Missing: rootfs, manifest.json. Run capsem setup to download.')).toBeTruthy();
+    expect(screen.getByText('VM assets are updating')).toBeTruthy();
+    expect(screen.getByText('Required VM assets are updating.')).toBeTruthy();
     expect((screen.getByRole('button', { name: /quick session/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('quick session lets the service choose resource defaults', async () => {
     const requests: ProvisionRequest[] = [];
-    vmStore.assetHealth = { ready: true, missing: [] };
+    vmStore.assetHealth = assetHealth({ ready: true, state: 'ready', missing: [] });
     vmStore.provision = vi.fn(async (request: ProvisionRequest) => {
       requests.push(request);
       return { id: 'vm-1', name: 'vm-1' };
