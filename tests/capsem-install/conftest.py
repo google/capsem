@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import atexit
 import filecmp
+import json
 import os
+import platform
 import re
 import shutil
 import signal
@@ -194,7 +196,29 @@ def _installed_binaries_current(bin_src: Path, install_dir: Path) -> bool:
 
 
 def _resolve_bin_src() -> Path:
-    path = Path(os.environ.get("CAPSEM_BIN_SRC", str(DEFAULT_BIN_SRC))).expanduser()
+    env_src = os.environ.get("CAPSEM_BIN_SRC")
+    if env_src:
+        path = Path(env_src).expanduser()
+    elif os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
+        # The Docker packaging harness builds host crates with
+        # CARGO_TARGET_DIR=/cargo-target. Using /src/target/debug here can pick
+        # up macOS host binaries from the bind mount and trigger Exec format
+        # errors when simulate-install refreshes the fixture.
+        cargo_target_debug = Path("/cargo-target/debug")
+        if cargo_target_debug.exists():
+            path = cargo_target_debug
+        else:
+            path = DEFAULT_BIN_SRC
+    else:
+        path = DEFAULT_BIN_SRC
+
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path
+
+
+def _resolve_assets_src() -> Path:
+    path = Path(os.environ.get("CAPSEM_ASSETS_SRC", "assets")).expanduser()
     if not path.is_absolute():
         path = PROJECT_ROOT / path
     return path
@@ -233,23 +257,36 @@ def _ensure_local_binaries_built(bin_src: Path) -> None:
 
 def _ensure_installed() -> None:
     """Build and (re)run simulate-install.sh when installed binaries are stale."""
+    bin_src = _resolve_bin_src()
+    assets_src = _resolve_assets_src()
+
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"binary not installed by dpkg: {binary}"
             assert os.access(binary, os.X_OK), f"binary not executable: {binary}"
-        return
+        if _installed_binaries_current(bin_src, INSTALL_DIR) and _installed_assets_ready():
+            return
+    else:
+        _ensure_local_binaries_built(bin_src)
+        if _installed_binaries_current(bin_src, INSTALL_DIR):
+            return
 
-    bin_src = _resolve_bin_src()
-    _ensure_local_binaries_built(bin_src)
-    if _installed_binaries_current(bin_src, INSTALL_DIR):
-        return
+    if not bin_src.exists():
+        raise AssertionError(
+            f"capsem binary source directory not found: {bin_src}\n"
+            "Set CAPSEM_BIN_SRC to a valid built binary directory."
+        )
+    if not assets_src.exists():
+        raise AssertionError(
+            f"capsem assets source directory not found: {assets_src}\n"
+            "Set CAPSEM_ASSETS_SRC to a valid assets directory."
+        )
 
-    assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
     script = PROJECT_ROOT / "scripts" / "simulate-install.sh"
     assert script.exists(), f"simulate-install.sh not found at {script}"
     result = subprocess.run(
-        ["bash", str(script), str(bin_src), assets_src],
+        ["bash", str(script), str(bin_src), str(assets_src)],
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, (
@@ -259,6 +296,42 @@ def _ensure_installed() -> None:
         binary = INSTALL_DIR / name
         assert binary.exists(), f"binary not installed: {binary}"
         assert os.access(binary, os.X_OK), f"binary not executable: {binary}"
+
+
+def _installed_assets_ready() -> bool:
+    manifest = ASSETS_DIR / "manifest.json"
+    if not manifest.is_file():
+        return False
+
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        current = data["assets"]["current"]
+        arch = _host_manifest_arch()
+        arch_assets = data["assets"]["releases"][current]["arches"][arch]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+    for logical in ("vmlinuz", "initrd.img", "rootfs.squashfs"):
+        entry = arch_assets.get(logical)
+        if not isinstance(entry, dict):
+            return False
+        h = entry.get("hash")
+        if not isinstance(h, str) or len(h) < 16:
+            return False
+        stem, dot, suffix = logical.partition(".")
+        hashed = f"{stem}-{h[:16]}"
+        if dot:
+            hashed += f".{suffix}"
+        if not (ASSETS_DIR / arch / hashed).is_file():
+            return False
+    return True
+
+
+def _host_manifest_arch() -> str:
+    machine = platform.machine().lower()
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    return "x86_64"
 
 
 @pytest.fixture
