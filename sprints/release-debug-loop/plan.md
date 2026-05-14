@@ -263,18 +263,24 @@ update-over-existing proof remains in S7 and the final meta-sprint gate.
 
 **Purpose:** Make setup a config/onboarding workflow that is honest about readiness.
 
+**Current slice (2026-05-14):** In progress. Setup summary now gates on live
+service `/list` asset truth, keeps config completion non-blocking while
+reporting pending readiness for unavailable/checking/updating/error service
+states (`vm_verified=false`), fails on unknown/inconsistent service truth, and
+only marks VM readiness complete when service reports `ready`.
+
 **Behavior to build:**
 
 - Setup requires service liveness for service-backed readiness.
 - Setup fans out independent work where safe: provider detection, repo detection, corp config refresh, security preset checks.
 - Setup observes service asset status rather than owning asset download.
 - Setup is idempotent and safe to rerun after reinstall/update.
-- Setup does not mark install complete when service truth is unavailable or inconsistent.
+- Setup does not claim VM readiness when service truth is unavailable, non-ready, or inconsistent.
 - Provider/settings parsing failures produce actionable fallback UI and diagnostics.
 
 **Tests to add before implementation:**
 
-- setup fails clearly if service is not live.
+- setup surfaces explicit pending readiness when service is not live.
 - setup completes config work while assets are `updating`.
 - setup does not claim VM readiness while assets are still updating.
 - setup rerun after reinstall preserves accepted provider/security choices.

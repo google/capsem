@@ -4,9 +4,9 @@ Last updated: 2026-05-14
 
 ## Active Sprint
 
-S4 - Saved VM Asset Dependencies (implementation complete; final live gate remains meta-sprint)
+S5 - `capsem-setup` Hardening (in progress; service-truth hardening implemented and full `just test` gate green)
 
-S1, S2, and S3 are closed for their current scope. The live sudo-backed
+S1, S2, S3, and S4 are closed for their current scope. The live sudo-backed
 `capsem uninstall -> just install -> capsem status` proof remains the final
 meta-sprint gate, not a local-unit substitute.
 
@@ -147,6 +147,17 @@ dependencies, UI consumption, and update path.
 - [x] Add typed `saved_vm_asset_missing` status blockers for the install/update health oracle.
 - [x] Add focused cleanup, registry, service, gateway, tray, frontend, and CLI status tests.
 
+## S5 Checklist
+
+- [x] Add setup summary service-truth polling against service `/list` before marking summary complete.
+- [x] Keep setup config completion non-blocking when service truth is unavailable/`checking`/`updating`/`error`, while leaving `vm_verified=false` with explicit status messaging.
+- [x] Fail setup summary on unknown or internally inconsistent service asset truth.
+- [x] Keep setup non-blocking for asset `checking` / `updating` by leaving `vm_verified=false` while still completing config work.
+- [x] Add focused unit tests for setup asset-health evaluation (`ready`, `checking`, `updating`, `error`, `unknown`).
+- [ ] Add focused install-harness proof for setup rerun idempotence and provider/settings fallback resilience.
+- [ ] Add focused black-box proof that setup surfaces explicit pending readiness when the service never becomes live.
+- [x] Run the full `just test` gate after S5 hardening, including Docker install E2E and injection scenarios.
+
 ## Evidence Log
 
 - 2026-05-13: Original hitlist contained B1 assets/setup, B2 provider onboarding/settings, and B3 VM list/session UI symptoms.
@@ -209,6 +220,8 @@ dependencies, UI consumption, and update path.
 - 2026-05-14: Implemented S4 saved-VM asset dependencies. Persistent VM entries can now carry base asset identity, forks inherit it, cleanup preserves referenced hash-named blobs, saved-VM resume/clone resolves pinned assets instead of current assets, and missing saved-VM rootfs/kernel/initrd files surface separately from current-version asset readiness.
 - 2026-05-14: Wired S4 through status consumers. Service `/list` adds saved-VM dependency issues to asset health, gateway `/status` and frontend/tray types preserve them, the tray shows saved-VM asset gaps without blocking new sessions, and `capsem status --json` emits typed `saved_vm_asset_missing` blockers.
 - 2026-05-14: Verified S4 with focused tests: `cargo test -p capsem-core cleanup_preserves_saved_vm --lib`, `cargo test -p capsem-service --bin capsem-service saved_vm`, `cargo test -p capsem-service --bin capsem-service handle_fork_`, `cargo test -p capsem-service registry --lib`, `cargo test -p capsem status::tests -- --nocapture`, `cargo test -p capsem-gateway --bin capsem-gateway fetch_status_preserves_service_asset_state` (escalated for temporary UDS binding), `cargo test -p capsem-tray --bin capsem-tray spec_shows_saved_vm_asset_gap_without_blocking_new_session`, `npx vitest run src/lib/__tests__/session-runtime-truth.test.ts`, and `cargo check -p capsem-core -p capsem-service -p capsem -p capsem-gateway -p capsem-tray`.
+- 2026-05-14: Started S5 setup hardening slice. `capsem setup` summary now consumes live service truth via `/list`, keeps `vm_verified=false` for unavailable/checking/updating/error asset states while still completing config work, fails on unknown/inconsistent truth, and only marks VM verified when service reports true ready-state consistency.
+- 2026-05-14: Closed the immediate S5 gate blocker by bumping frontend `svelte` and overriding `devalue` to patched versions, then re-running `just test` end-to-end: audits/frontend, Rust coverage, Python suites, build-chain, injection, integration diagnostics, Linux packaging, and install E2E all passed.
 
 ## Coverage Ledger
 
