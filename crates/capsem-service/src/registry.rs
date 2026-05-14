@@ -188,7 +188,7 @@ mod tests {
             kernel_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             initrd_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
             rootfs_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
-            guest_abi: Some("capsem-guest-v1".into()),
+            guest_abi: Some("capsem-guest-v2".into()),
         });
 
         registry.register(entry).unwrap();
@@ -206,7 +206,7 @@ mod tests {
             base_assets.rootfs_hash,
             "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         );
-        assert_eq!(base_assets.guest_abi.as_deref(), Some("capsem-guest-v1"));
+        assert_eq!(base_assets.guest_abi.as_deref(), Some("capsem-guest-v2"));
     }
 
     #[test]

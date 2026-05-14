@@ -730,7 +730,7 @@ fn test_saved_vm_base_assets() -> capsem_service::registry::SavedVmBaseAssets {
         kernel_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
         initrd_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
         rootfs_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
-        guest_abi: Some("capsem-guest-v1".into()),
+        guest_abi: Some("capsem-guest-v2".into()),
     }
 }
 
@@ -756,7 +756,7 @@ fn saved_vm_current_base_assets_from_manifest_records_boot_hashes() {
         base_assets.rootfs_hash,
         "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
     );
-    assert_eq!(base_assets.guest_abi.as_deref(), Some("capsem-guest-v1"));
+    assert_eq!(base_assets.guest_abi.as_deref(), Some("capsem-guest-v2"));
 }
 
 #[tokio::test]
@@ -2271,7 +2271,7 @@ fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, Pat
 
 #[tokio::test]
 async fn handle_get_settings_returns_tree() {
-    let Json(val) = handle_get_settings().await;
+    let Json(val) = handle_get_settings().await.unwrap();
     assert!(val.get("tree").is_some(), "response must have 'tree'");
     assert!(val.get("issues").is_some(), "response must have 'issues'");
     assert!(val.get("presets").is_some(), "response must have 'presets'");
@@ -2297,7 +2297,7 @@ async fn handle_policy_hook_spec_exports_spec0_contract() {
 
 #[tokio::test]
 async fn handle_get_presets_returns_list() {
-    let Json(val) = handle_get_presets().await;
+    let Json(val) = handle_get_presets().await.unwrap();
     let arr = val.as_array().expect("presets should be an array");
     assert!(!arr.is_empty(), "should have at least one preset");
     assert!(arr[0].get("id").is_some());
@@ -2307,7 +2307,7 @@ async fn handle_get_presets_returns_list() {
 
 #[tokio::test]
 async fn handle_lint_config_returns_array() {
-    let Json(val) = handle_lint_config().await;
+    let Json(val) = handle_lint_config().await.unwrap();
     assert!(val.is_array(), "lint response should be an array");
 }
 

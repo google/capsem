@@ -168,9 +168,9 @@ match request fields such as `method`, `server.name`, `tool.name`, and
 | `block` | Returns a policy JSON-RPC error. The request is not dispatched. |
 | `rewrite` | Mutates only the configured response target before returning to the guest. |
 
-Legacy MCP default permissions still exist for fallback behavior, but new
+MCP default permissions still exist for fallback behavior, but new
 tool-specific UI controls save named policy rules. `warn` is historical
-legacy terminology and is not a policy decision.
+terminology and is not a policy decision.
 
 ## MCP call logging
 
@@ -199,7 +199,7 @@ See [Session Telemetry](/architecture/session-telemetry/) for the full `mcp_call
 |-------|------|---------|
 | `aggregator` | `AggregatorClient` | Client handle for the isolated MCP aggregator subprocess |
 | `db` | `Arc<DbWriter>` | Async telemetry writer |
-| `policy` | `RwLock<Arc<McpPolicy>>` | Hot-reloadable legacy MCP fallback policy |
+| `policy` | `RwLock<Arc<McpPolicy>>` | Hot-reloadable MCP fallback policy |
 | named policy rules | `RwLock<Arc<PolicyConfig>>` | Hot-reloadable policy rules |
 | `domain_policy` | `RwLock<Arc<DomainPolicy>>` | Domain policy for builtin HTTP tools |
 
@@ -234,7 +234,7 @@ External MCP servers are auto-detected from AI CLI settings (`~/.claude/settings
 | `capsem-core/src/mcp/builtin_tools.rs` | Builtin HTTP tools (fetch_http, grep_http, http_headers) |
 | `capsem-core/src/mcp/file_tools.rs` | File and snapshot tools (VirtioFS workspace) |
 | `capsem-core/src/mcp/server_manager.rs` | External MCP server lifecycle and tool catalog |
-| `capsem-core/src/mcp/policy.rs` | Legacy MCP fallback policy evaluation |
+| `capsem-core/src/mcp/policy.rs` | MCP fallback policy evaluation |
 | `capsem-core/src/net/policy_config/types.rs` | policy rule types, validation, and condition evaluation |
 | `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: NDJSON loop, server connections |
 | `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks |

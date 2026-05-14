@@ -189,7 +189,7 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
     .unwrap();
 
     let json = serde_json::to_value(&report.json).unwrap();
-    assert_eq!(json["schema"], "capsem.debug.v1");
+    assert_eq!(json["schema"], "capsem.debug.v2");
     assert_eq!(json["redacted"], true);
     assert_eq!(json["setup"]["present"], true);
     assert_eq!(json["setup"]["install_completed"], true);

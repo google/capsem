@@ -315,7 +315,7 @@ pub fn build_debug_report(input: DebugReportInput) -> Result<DebugReport> {
     append_logs_report(&mut lines, &logs);
 
     let json = DebugReportJson {
-        schema: "capsem.debug.v1".to_string(),
+        schema: "capsem.debug.v2".to_string(),
         redacted: true,
         generated_at: input.generated_at,
         version,
@@ -606,7 +606,7 @@ fn disk_path_report(path: &Path) -> DiskPathReport {
     let stat_path = existing_stat_path(path);
     match nix::sys::statvfs::statvfs(&stat_path) {
         Ok(stat) => {
-            let fragment_size = u64::from(stat.fragment_size());
+            let fragment_size = stat.fragment_size();
             DiskPathReport {
                 path: redact_path_for_report(path),
                 exists,

@@ -138,8 +138,8 @@ fn status_report_contains_service_and_typed_issues() {
     assert_eq!(report.schema, "capsem.status.v1");
     assert!(!report.ok);
     assert_eq!(report.state, "blocked");
-    assert_eq!(report.service.installed, true);
-    assert_eq!(report.service.running, false);
+    assert!(report.service.installed);
+    assert!(!report.service.running);
     assert_eq!(
         report.service.unit_path.as_deref(),
         Some("/tmp/capsem.service")
@@ -687,11 +687,11 @@ fn debug_report_payload_prefers_service_json_field() {
     let payload = super::debug_report_payload(serde_json::json!({
         "text": "Capsem Debug Report",
         "json": {
-            "schema": "capsem.debug.v1",
+            "schema": "capsem.debug.v2",
             "status": { "issues": [] }
         }
     }));
-    assert_eq!(payload["schema"], "capsem.debug.v1");
+    assert_eq!(payload["schema"], "capsem.debug.v2");
     assert_eq!(payload["status"]["issues"], serde_json::json!([]));
 }
 

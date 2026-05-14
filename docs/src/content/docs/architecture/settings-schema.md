@@ -128,7 +128,7 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 |---|---|---|---|
 | `origin` | McpToolOrigin | `null` | Where the tool runs (`builtin`, `remote`, `in_vm`) |
 
-### MCP server-specific (legacy)
+### MCP server-specific
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -159,7 +159,7 @@ Settings saves use fully qualified keys such as
 `policy.http.block_openai_github`. The Rust loader validates key shape, policy
 type, callback compatibility, condition fields, decisions, rewrites, and HTTP
 header names. The TypeScript model preserves these objects during export/import
-and stages them without flattening them into legacy setting leaves.
+and stages them without flattening them into setting leaves.
 
 See [Policy](/security/policy/) for the rule body schema and examples.
 

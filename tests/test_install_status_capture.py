@@ -16,7 +16,7 @@ def write_fake_capsem(
     tmp_path: Path,
     status_body: str,
     status_code: int,
-    debug_body: str = '{"schema":"capsem.debug.v1","ok":true}',
+    debug_body: str = '{"schema":"capsem.debug.v2","ok":true}',
     debug_code: int = 0,
 ) -> Path:
     fake = tmp_path / "capsem"
@@ -132,7 +132,7 @@ def test_capture_install_status_preserves_typed_status_failure(tmp_path):
     )
     assert "capsem 9.9.9" in (bundle / "version.stdout.txt").read_text(encoding="utf-8")
     assert json.loads((bundle / "debug.json").read_text(encoding="utf-8")) == {
-        "schema": "capsem.debug.v1",
+        "schema": "capsem.debug.v2",
         "ok": True,
     }
     assert (bundle / "debug.stderr.txt").read_text(encoding="utf-8").strip() == (

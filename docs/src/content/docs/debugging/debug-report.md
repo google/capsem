@@ -25,7 +25,7 @@ GET /debug/report
 
 ## What It Contains
 
-The JSON schema is `capsem.debug.v1`.
+The JSON schema is `capsem.debug.v2`.
 
 | Section | Purpose |
 |---------|---------|

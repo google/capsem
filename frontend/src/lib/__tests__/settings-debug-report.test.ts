@@ -54,7 +54,7 @@ describe('SettingsPage debug report', () => {
     mockResponse = buildMockSettingsResponse();
     debugReportText = 'Capsem Debug Report\ninitrd_manifest_hash: abc123';
     debugReportJson = {
-      schema: 'capsem.debug.v1',
+      schema: 'capsem.debug.v2',
       assets: { files: { initrd: { manifest_hash: 'abc123' } } },
     };
     writeText.mockClear();

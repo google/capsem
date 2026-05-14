@@ -10,7 +10,7 @@ use crate::registry::{PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets};
 const LOGICAL_KERNEL: &str = "vmlinuz";
 const LOGICAL_INITRD: &str = "initrd.img";
 const LOGICAL_ROOTFS: &str = "rootfs.squashfs";
-const CURRENT_GUEST_ABI: &str = "capsem-guest-v1";
+const CURRENT_GUEST_ABI: &str = "capsem-guest-v2";
 
 pub fn current_base_assets(
     manifest: Option<&ManifestV2>,
