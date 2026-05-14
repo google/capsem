@@ -202,11 +202,6 @@ fn build_purge_body(params: &PurgeParams) -> Value {
     json!({ "all": params.all.unwrap_or(false) })
 }
 
-/// Body for POST /read_file/{id}.
-fn build_read_file_body(params: &FileReadParams) -> Value {
-    json!({ "path": params.path })
-}
-
 /// Resolve the UDS path following the env-var precedence used by main().
 fn resolve_uds_path(override_val: Option<&str>, run_dir: &std::path::Path) -> PathBuf {
     override_val
@@ -348,6 +343,63 @@ impl UdsClient {
             Ok(r) => Ok(r),
             Err(e) => {
                 error!(error = %e, body = %String::from_utf8_lossy(&body_bytes), "failed to parse service response");
+                Err(e.into())
+            }
+        }
+    }
+
+    async fn request_binary<R: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<R> {
+        info!(method, path, content_type, "sending UDS binary request");
+
+        let stream = match UnixStream::connect(&self.uds_path).await {
+            Ok(s) => s,
+            Err(_) => {
+                self.try_ensure_service().await?;
+                UnixStream::connect(&self.uds_path).await?
+            }
+        };
+
+        let io = TokioIo::new(stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
+        tokio::task::spawn(async move {
+            if let Err(err) = conn.await {
+                error!("Connection failed: {:?}", err);
+            }
+        });
+
+        let req = Request::builder()
+            .method(method)
+            .uri(format!("http://localhost{}", path))
+            .header("Content-Type", content_type)
+            .body(Full::new(Bytes::from(body)))?;
+
+        let res = match sender.send_request(req).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!(error = %e, "failed to send binary request to service");
+                return Err(e.into());
+            }
+        };
+        let status = res.status();
+        let body_bytes = res.collect().await?.to_bytes();
+        if !status.is_success() {
+            let msg = serde_json::from_slice::<Value>(&body_bytes)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+                .unwrap_or_else(|| String::from_utf8_lossy(&body_bytes).into_owned());
+            error!(method, path, status = %status, body = %msg, "service returned non-success status");
+            return Err(anyhow::anyhow!("{status}: {msg}"));
+        }
+        match serde_json::from_slice(&body_bytes) {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                error!(error = %e, body = %String::from_utf8_lossy(&body_bytes), "failed to parse binary response");
                 Err(e.into())
             }
         }
@@ -768,32 +820,39 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_read_file",
-        description = "Read a file from a session's guest filesystem. Returns file content as text"
+        description = "Read a file from a session workspace path. Returns file content as text"
     )]
     async fn read_file(
         &self,
         Parameters(params): Parameters<FileReadParams>,
     ) -> Result<String, String> {
-        let body = build_read_file_body(&params);
-        let resp = self
-            .client
-            .request::<Value, Value>("POST", &format!("/read_file/{}", params.id), Some(body))
-            .await;
-        format_service_response(resp)
+        let q = query_string(&[("path", Some(params.path))]);
+        let path = format!("/files/{}/content{q}", params.id);
+        match self.client.request_text("GET", &path).await {
+            Ok(content) => Ok(serde_json::to_string_pretty(&json!({ "content": content }))
+                .unwrap_or_else(|_| "{\"content\":\"\"}".to_string())),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     #[tool(
         name = "capsem_write_file",
-        description = "Write a file to a session's guest filesystem"
+        description = "Write a file to a session workspace path"
     )]
     async fn write_file(
         &self,
         Parameters(params): Parameters<FileWriteParams>,
     ) -> Result<String, String> {
-        let path = format!("/write_file/{}", params.id);
+        let q = query_string(&[("path", Some(params.path.clone()))]);
+        let path = format!("/files/{}/content{q}", params.id);
         let resp = self
             .client
-            .request::<FileWriteParams, Value>("POST", &path, Some(params))
+            .request_binary::<Value>(
+                "POST",
+                &path,
+                "application/octet-stream",
+                params.content.into_bytes(),
+            )
             .await;
         format_service_response(resp)
     }

@@ -101,10 +101,7 @@ def _run_fork_benchmark(client):
         assert resp and resp.get("exit_code") == 0, f"apt-get failed: {resp}"
 
         # Write workspace file
-        client.post(f"/write_file/{src}", {
-            "path": "/root/bench.txt",
-            "content": "fork-benchmark-marker",
-        })
+        client.write_file(src, "/root/bench.txt", "fork-benchmark-marker")
 
         # Fork -- time it
         t0 = time.monotonic()

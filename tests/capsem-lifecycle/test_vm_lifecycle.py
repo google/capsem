@@ -60,10 +60,7 @@ class TestGuestShutdownPersistent:
 
         # Write a marker file
         marker = f"shutdown-test-{uuid.uuid4().hex[:8]}"
-        client.post(f"/write_file/{name}", {
-            "path": f"/root/{marker}",
-            "content": f"hello from {marker}",
-        })
+        client.write_file(name, f"/root/{marker}", f"hello from {marker}")
 
         # Guest-initiated shutdown
         client.post(f"/exec/{name}", {
@@ -97,7 +94,7 @@ class TestGuestShutdownPersistent:
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
             f"VM {resumed_id} never became exec-ready after resume"
 
-        read_resp = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
+        read_resp = client.read_file(resumed_id, f"/root/{marker}")
         assert isinstance(read_resp, dict) and "content" in read_resp, \
             f"read_file returned an error instead of content: {read_resp}"
         assert marker in read_resp["content"], \
@@ -181,10 +178,7 @@ class TestStopResumeE2E:
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         marker = f"e2e-{uuid.uuid4().hex[:8]}"
-        client.post(f"/write_file/{name}", {
-            "path": f"/root/{marker}",
-            "content": f"hello from {marker}",
-        })
+        client.write_file(name, f"/root/{marker}", f"hello from {marker}")
 
         # Stop
         client.post(f"/stop/{name}", {})
@@ -196,7 +190,7 @@ class TestStopResumeE2E:
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
 
         # Read back
-        read_resp = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
+        read_resp = client.read_file(resumed_id, f"/root/{marker}")
         assert marker in str(read_resp), \
             f"File did not survive stop + resume: {read_resp}"
 
@@ -248,10 +242,7 @@ class TestSuspendResume:
 
         # Write a marker file
         marker = f"suspend-test-{uuid.uuid4().hex[:8]}"
-        client.post(f"/write_file/{name}", {
-            "path": f"/root/{marker}",
-            "content": f"hello from {marker}",
-        })
+        client.write_file(name, f"/root/{marker}", f"hello from {marker}")
 
         # Suspend via service API
         suspend_resp = client.post(f"/suspend/{name}", {}, timeout=EXEC_READY_TIMEOUT)
@@ -272,7 +263,7 @@ class TestSuspendResume:
             f"VM {resumed_id} never became exec-ready after warm resume"
 
         # Verify file survived
-        read_resp = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
+        read_resp = client.read_file(resumed_id, f"/root/{marker}")
         assert marker in str(read_resp), \
             f"File did not survive suspend + resume: {read_resp}"
 
