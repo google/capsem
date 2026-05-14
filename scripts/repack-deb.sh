@@ -30,8 +30,15 @@ if [ "${3:-}" != "" ]; then
     if [ -d "$3" ]; then
         ASSETS_DIR="$3"
         OUTPUT_DEB="${4:-$INPUT_DEB}"
-    else
+    elif [ "${4:-}" != "" ]; then
+        echo "ERROR: assets_dir is not a directory: $3" >&2
+        exit 1
+    elif [[ "$3" == *.deb ]]; then
         OUTPUT_DEB="$3"
+    else
+        echo "ERROR: third argument is neither an existing assets directory nor a .deb output path: $3" >&2
+        echo "       Usage: repack-deb.sh <input.deb> <bin_dir> [assets_dir] [output.deb]" >&2
+        exit 1
     fi
 fi
 

@@ -3036,7 +3036,7 @@ async fn handle_save_settings(
 }
 
 /// GET /settings/presets -- list security presets.
-async fn handle_get_presets() -> Json<serde_json::Value> {
+async fn handle_get_presets() -> Result<Json<serde_json::Value>, AppError> {
     Err(legacy_service_endpoint_removed("/settings/presets", Some("/profiles API")))
 }
 
@@ -3047,7 +3047,7 @@ async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::
 }
 
 /// POST /settings/lint -- validate config and return issues.
-async fn handle_lint_config() -> Json<serde_json::Value> {
+async fn handle_lint_config() -> Result<Json<serde_json::Value>, AppError> {
     Err(legacy_service_endpoint_removed("/settings/lint", Some("/profiles API")))
 }
 
@@ -3284,7 +3284,7 @@ async fn handle_mcp_tools() -> Json<serde_json::Value> {
 }
 
 /// GET /mcp/policy -- return the merged MCP policy.
-async fn handle_mcp_policy() -> Json<serde_json::Value> {
+async fn handle_mcp_policy() -> Result<Json<serde_json::Value>, AppError> {
     Err(legacy_service_endpoint_removed("/mcp/policy", Some("/api/v2/policies")))
 }
 

@@ -8,6 +8,9 @@ permissions:
   attestations: write
   id-token: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   preflight:
     runs-on: macos-14
@@ -21,7 +24,19 @@ jobs:
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
+          if [ -z "$APPLE_INSTALLER_SIGNING_IDENTITY" ]; then
+            echo "::error::APPLE_INSTALLER_SIGNING_IDENTITY secret is not set"
+            exit 1
+          fi
+          case "$APPLE_INSTALLER_SIGNING_IDENTITY" in
+            "Developer ID Installer:"*) ;;
+            *)
+              echo "::error::APPLE_INSTALLER_SIGNING_IDENTITY must name a Developer ID Installer identity"
+              exit 1
+              ;;
+          esac
           echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
           KEYCHAIN="preflight-$$.keychain"
           security create-keychain -p "" "$KEYCHAIN"
@@ -192,10 +207,15 @@ jobs:
           EOF
 
   test-install:
-    needs: preflight
+    needs: [preflight, build-assets]
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-arm64
+          path: assets/arm64/
 
       - uses: extractions/setup-just@v3
 
@@ -210,7 +230,9 @@ jobs:
             librsvg2-dev \
             libxdo-dev \
             pkg-config \
-            build-essential
+            build-essential \
+            b3sum \
+            minisign
 
       - name: Build host builder Docker image
         run: just build-host-image
@@ -368,6 +390,8 @@ jobs:
           done
 
       - name: Build .pkg installer
+        env:
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           bash scripts/build-pkg.sh \
@@ -375,7 +399,28 @@ jobs:
             "target/release" \
             "assets" \
             "$VERSION" \
-            "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
+            "$APPLE_INSTALLER_SIGNING_IDENTITY"
+
+      - name: Verify .pkg payload manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXPANDED="$RUNNER_TEMP/capsem-pkg-expanded"
+          pkgutil --expand-full "packages/Capsem-$VERSION.pkg" "$EXPANDED"
+          MANIFEST=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json' -print -quit)
+          SIG=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json.minisig' -print -quit)
+          if [ -z "$MANIFEST" ] || [ -z "$SIG" ]; then
+            echo "::error::.pkg payload missing manifest.json or manifest.json.minisig"
+            exit 1
+          fi
+          minisign -Vm "$MANIFEST" -x "$SIG" -p config/manifest-sign.pub
+          python3 - "$MANIFEST" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          arches = data["assets"]["releases"][data["assets"]["current"]]["arches"]
+          missing = {"arm64", "x86_64"} - set(arches)
+          if missing:
+              raise SystemExit(f"manifest missing arch maps: {sorted(missing)}")
+          PY
 
       - name: Verify .pkg payload manifest
         run: |
@@ -412,6 +457,12 @@ jobs:
             --wait --timeout 30m
           xcrun stapler staple "packages/Capsem-$VERSION.pkg"
           xcrun stapler validate "packages/Capsem-$VERSION.pkg"
+
+      - name: Verify .pkg signature and Gatekeeper acceptance
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          pkgutil --check-signature "packages/Capsem-$VERSION.pkg"
+          spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"
 
       - name: Generate SBOM
         run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json

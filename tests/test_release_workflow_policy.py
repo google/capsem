@@ -213,6 +213,29 @@ def test_linux_deb_contents_validation_checks_each_required_payload():
         assert payload in verifier
 
 
+def test_macos_pkg_signature_and_gatekeeper_are_release_blocking():
+    """Release macOS packages must be signed with Installer ID and assessed."""
+    text = _workflow_text()
+    preflight = re.search(
+        r"(?ms)^  preflight:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert preflight, "preflight job missing"
+    preflight_body = preflight.group("body")
+    assert "APPLE_INSTALLER_SIGNING_IDENTITY" in preflight_body
+    assert "Developer ID Installer:" in preflight_body
+
+    build_macos = re.search(
+        r"(?ms)^  build-app-macos:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert build_macos, "build-app-macos job missing"
+    body = build_macos.group("body")
+    assert '"$APPLE_INSTALLER_SIGNING_IDENTITY"' in body
+    assert "pkgutil --check-signature" in body
+    assert "spctl -a -vv -t install" in body
+
+
 def test_linux_app_manifest_signing_installs_minisign_before_use():
     """Linux release app jobs must install minisign before signing manifests."""
     text = _workflow_text()
@@ -226,6 +249,24 @@ def test_linux_app_manifest_signing_installs_minisign_before_use():
     sign_pos = body.index("minisign -S -s /tmp/manifest-sign.key")
     assert install_pos < sign_pos
     assert "minisign \\" not in body[body.index("Install Tauri system deps"):body.index("Build frontend")]
+
+
+def test_install_e2e_downloads_built_assets_before_running_recipe():
+    """Install E2E must not depend on an untracked local assets/ directory."""
+    text = _workflow_text()
+    test_install = re.search(
+        r"(?ms)^  test-install:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert test_install, "test-install job missing"
+    body = test_install.group("body")
+
+    assert "needs: [preflight, build-assets]" in body
+    assert "actions/download-artifact@v8" in body
+    assert "name: vm-assets-arm64" in body
+    assert "path: assets/arm64/" in body
+    assert "b3sum" in body
+    assert "minisign" in body
 
 
 def test_policy_hook_openapi_artifact_is_tracked_and_valid():
@@ -429,3 +470,24 @@ def test_local_install_verifies_fresh_install_and_guest_network():
     status_pos = body.index("=== Capturing installed status ===")
     guest_pos = body.index("=== Verifying guest DNS and HTTPS ===")
     assert gateway_pos < status_pos < guest_pos
+
+
+def test_install_e2e_prepares_clean_checkout_assets_before_repack():
+    """Release install E2E starts from a clean checkout, so assets must be materialized."""
+    justfile = (REPO_ROOT / "justfile").read_text()
+    test_install = re.search(
+        r"(?ms)^test-install:\n(?P<body>.*?)(?=^# Wait for CI to build)",
+        justfile,
+    )
+    assert test_install, "test-install recipe missing"
+    body = test_install.group("body")
+
+    assert 'just build-assets "$INSTALL_ARCH"' in body
+    assert 'b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS' in body
+    assert 'python3 scripts/gen_manifest.py "{{assets_dir}}" Cargo.toml' in body
+    assert 'python3 scripts/create_hash_assets.py "{{assets_dir}}"' in body
+    assert 'bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"' in body
+    assert 'bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub' in body
+    assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"' in body
+    assert "uv run --group dev python -m pytest tests/capsem-install/" in body
+    assert 'scripts/repack-deb.sh "$DEB" /cargo-target/debug assets' not in body

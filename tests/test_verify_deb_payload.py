@@ -9,6 +9,8 @@ import tarfile
 from io import BytesIO
 from pathlib import Path
 
+import zstandard
+
 
 REPO_ROOT = Path(__file__).parent.parent
 VERIFY_SCRIPT = REPO_ROOT / "scripts" / "verify_deb_payload.py"
@@ -34,6 +36,17 @@ def _tar_gz(files: dict[str, bytes]) -> bytes:
     return out.getvalue()
 
 
+def _tar_zst_without_content_size(files: dict[str, bytes]) -> bytes:
+    out = BytesIO()
+    with tarfile.open(fileobj=out, mode="w:") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o755 if name.startswith("./usr/bin/") else 0o644
+            tar.addfile(info, BytesIO(data))
+    return zstandard.ZstdCompressor(write_content_size=False).compress(out.getvalue())
+
+
 def _ar_member(name: str, data: bytes) -> bytes:
     encoded_name = (name + "/").encode()
     header = (
@@ -55,6 +68,7 @@ def _write_deb(
     version: str = "1.1.0",
     architecture: str = "amd64",
     omit: str | None = None,
+    data_member: str = "data.tar.gz",
 ) -> None:
     control = _tar_gz({
         "./control": (
@@ -69,18 +83,34 @@ def _write_deb(
     }
     payload_files["./usr/share/capsem/assets/manifest.json"] = b'{"format":2}\n'
     payload_files["./usr/share/capsem/assets/manifest.json.minisig"] = b"sig\n"
-    data = _tar_gz(payload_files)
+    data = (
+        _tar_zst_without_content_size(payload_files)
+        if data_member == "data.tar.zst"
+        else _tar_gz(payload_files)
+    )
     path.write_bytes(
         b"!<arch>\n"
         + _ar_member("debian-binary", b"2.0\n")
         + _ar_member("control.tar.gz", control)
-        + _ar_member("data.tar.gz", data)
+        + _ar_member(data_member, data)
     )
 
 
 def test_verify_deb_accepts_required_payloads(tmp_path):
     deb = tmp_path / "Capsem_1.1.0_amd64.deb"
     _write_deb(deb)
+
+    verify_deb_payload.verify_deb(
+        deb,
+        expected_version="1.1.0",
+        expected_architecture="amd64",
+        minisign_pubkey=None,
+    )
+
+
+def test_verify_deb_accepts_zstd_payload_without_content_size(tmp_path):
+    deb = tmp_path / "Capsem_1.1.0_amd64.deb"
+    _write_deb(deb, data_member="data.tar.zst")
 
     verify_deb_payload.verify_deb(
         deb,

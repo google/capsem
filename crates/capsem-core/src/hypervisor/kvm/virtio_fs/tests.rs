@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt;
 
 fn temp_share(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("capsem-virtfs-test").join(name);

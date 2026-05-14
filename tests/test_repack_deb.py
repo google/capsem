@@ -160,6 +160,30 @@ def test_missing_companion_binary_fails_loudly(tmp_path):
     )
 
 
+def test_missing_assets_dir_named_assets_fails_loudly(tmp_path):
+    """Clean checkout `assets` must not be mistaken for an output .deb path."""
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    _seed_binaries(bin_dir)
+    missing_assets_dir = tmp_path / "assets"
+
+    res = subprocess.run(
+        [str(SCRIPT), str(fixture), str(bin_dir), str(missing_assets_dir)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert res.returncode != 0, (
+        "repack should have rejected a missing assets directory instead of "
+        f"building a .deb at that path; stdout={res.stdout!r} stderr={res.stderr!r}"
+    )
+    assert "neither an existing assets directory nor a .deb output path" in (
+        res.stdout + res.stderr
+    )
+    assert not missing_assets_dir.exists()
+
+
 def test_path_with_embedded_newline_fails(tmp_path):
     """Newline-joined paths must fail fast, not corrupt an output .deb.
 

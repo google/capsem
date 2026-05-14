@@ -634,7 +634,7 @@ mod tests {
             data[i] = (i % 256) as u8;
         }
         let path = temp_disk_with_data("read-1.img", &data);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         // Read request: type=IN, sector=0, 512 bytes writable data buffer
         h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
@@ -656,7 +656,7 @@ mod tests {
             data[i] = ((i * 7) % 256) as u8;
         }
         let path = temp_disk_with_data("read-multi.img", &data);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         h.setup_request(VIRTIO_BLK_T_IN, 0, 1024, true);
         h.dev.queue_notify(0);
@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn block_write_single_sector() {
         let path = temp_disk("write-1.img", 512);
-        let h = TestHarness::new(&path, false);
+        let mut h = TestHarness::new(&path, false);
 
         // Write request: type=OUT, sector=0, 512 bytes readable data buffer
         h.setup_request(VIRTIO_BLK_T_OUT, 0, 512, false);
@@ -698,7 +698,7 @@ mod tests {
     fn block_write_to_read_only_returns_ioerr() {
         let original = vec![0xABu8; 512];
         let path = temp_disk_with_data("write-ro.img", &original);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         h.setup_request(VIRTIO_BLK_T_OUT, 0, 512, false);
         let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
@@ -717,7 +717,7 @@ mod tests {
     #[test]
     fn block_read_past_end_returns_ioerr() {
         let path = temp_disk("read-oob.img", 512); // 1 sector
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         // Read sector 1 (out of bounds for a 1-sector disk)
         h.setup_request(VIRTIO_BLK_T_IN, 1, 512, true);
@@ -730,7 +730,7 @@ mod tests {
     #[test]
     fn block_write_past_end_returns_ioerr() {
         let path = temp_disk("write-oob.img", 512); // 1 sector
-        let h = TestHarness::new(&path, false);
+        let mut h = TestHarness::new(&path, false);
 
         h.setup_request(VIRTIO_BLK_T_OUT, 1, 512, false);
         h.dev.queue_notify(0);
@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn block_get_id() {
         let path = temp_disk("getid-test.img", 512);
-        let h = TestHarness::new(&path, false);
+        let mut h = TestHarness::new(&path, false);
 
         h.setup_request(VIRTIO_BLK_T_GET_ID, 0, VIRTIO_BLK_ID_LEN as u32, true);
         h.dev.queue_notify(0);
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn block_unknown_request_type_returns_unsupp() {
         let path = temp_disk("unsupp.img", 512);
-        let h = TestHarness::new(&path, false);
+        let mut h = TestHarness::new(&path, false);
 
         h.setup_request(99, 0, 512, true);
         h.dev.queue_notify(0);
@@ -774,7 +774,7 @@ mod tests {
             data[i] = (i % 256) as u8;
         }
         let path = temp_disk_with_data("batch.img", &data);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         // Request 1: read sector 0 using descs 0-2
         let hdr1_offset = DATA_AREA_OFFSET;
@@ -838,7 +838,7 @@ mod tests {
     #[test]
     fn block_notify_empty_queue_noop() {
         let path = temp_disk("empty-q.img", 512);
-        let h = TestHarness::new(&path, false);
+        let mut h = TestHarness::new(&path, false);
         // avail ring empty (idx=0), notify should be a no-op
         h.dev.queue_notify(0);
         assert_eq!(h.read_used_idx(), 0);
@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn block_notify_wrong_queue_ignored() {
         let path = temp_disk("wrong-q.img", 512);
-        let h = TestHarness::new(&path, false);
+        let mut h = TestHarness::new(&path, false);
         h.dev.queue_notify(1); // only queue 0 exists
         h.dev.queue_notify(99);
         // no crash, no processing
@@ -860,7 +860,7 @@ mod tests {
     #[test]
     fn block_sector_overflow_u64() {
         let path = temp_disk("overflow.img", 512);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         // sector * 512 would overflow u64
         h.setup_request(VIRTIO_BLK_T_IN, u64::MAX / 256, 512, true);
@@ -873,7 +873,7 @@ mod tests {
     #[test]
     fn block_zero_length_data_descriptor() {
         let path = temp_disk("zero-len.img", 512);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         // Read with 0-length data buffer
         h.setup_request(VIRTIO_BLK_T_IN, 0, 0, true);
@@ -886,7 +886,7 @@ mod tests {
     #[test]
     fn block_data_gpa_out_of_ram() {
         let path = temp_disk("bad-gpa.img", 512);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         let header_offset = DATA_AREA_OFFSET;
         let status_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64 + 512;
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn block_notify_before_activate_noop() {
         let path = temp_disk("no-activate.img", 512);
-        let dev = VirtioBlockDevice::new(&path, false).unwrap();
+        let mut dev = VirtioBlockDevice::new(&path, false).unwrap();
         // queue_notify before activate should not crash
         dev.queue_notify(0);
     }
@@ -931,7 +931,7 @@ mod tests {
         // Device constructed as read-only -- writes must fail regardless
         let original = vec![0xAAu8; 512];
         let path = temp_disk_with_data("ro-enforced.img", &original);
-        let h = TestHarness::new(&path, true);
+        let mut h = TestHarness::new(&path, true);
 
         h.setup_request(VIRTIO_BLK_T_OUT, 0, 512, false);
         let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;

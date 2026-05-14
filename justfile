@@ -1098,6 +1098,9 @@ test-install:
     echo "Building host binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo build {{host_crates}}"
+    echo "Preparing clean-checkout assets..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        'cd /src && INSTALL_ARCH="{{test_install_arch}}" && just build-assets "$INSTALL_ARCH" && arch_name="{{assets_dir}}" && b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS && python3 scripts/gen_manifest.py "{{assets_dir}}" Cargo.toml && python3 scripts/create_hash_assets.py "{{assets_dir}}" && bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}" && bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub'
     echo "Building frontend..."
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
         "cd /src/frontend && pnpm install && pnpm build"
@@ -1113,13 +1116,13 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug assets'
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"'
     echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
         'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 "$CONTAINER" bash -c \
-        "cd /src && uv run pytest tests/capsem-install/ -v --tb=short"
+        "cd /src && uv run --group dev python -m pytest tests/capsem-install/ -v --tb=short"
 
 # Wait for CI to build and publish a tag.
 # Usage: just release          (uses latest vX.Y.Z tag on HEAD)

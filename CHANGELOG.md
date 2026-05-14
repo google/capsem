@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rootfs/kernel/initrd hashes, asset version, arch, and guest ABI they require.
 - Added a reusable `.deb` payload verifier and wired release CI to validate
   Linux package helper binaries, signed manifests, and manifest signatures.
+- Added a macOS release CI gate that requires a Developer ID Installer identity
+  and runs `pkgutil --check-signature` plus Gatekeeper assessment after
+  notarization and stapling.
 
 ### Changed
 - Changed `capsem uninstall` to remove the installed runtime while preserving
@@ -98,8 +101,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uninstalling.
 - Fixed repeat local installs when stale Tauri app bundles under
   `target/release/bundle/macos/` are not removable by the normal build step.
+- Fixed `.deb` payload verification for zstd-compressed packages without an
+  embedded content-size header, matching the published Debian package format.
+- Fixed Linux KVM unit-test compilation issues surfaced by PR CI before the
+  site/download installer hardening can merge.
+- Fixed macOS PR CI's clean-checkout Rust unit gate by creating a minimal
+  frontend dist before `capsem-app`'s Tauri test build runs.
+- Fixed macOS PR CI codesigning races during `nextest` discovery by
+  serializing the ad-hoc signing runner and preserving its build log on
+  workflow failures.
+- Fixed PR install E2E's clean-checkout host setup so missing VM assets can be
+  built with `uv`, checked through pnpm-backed doctor paths, and signed with
+  `minisign`.
+- Fixed PR CI coverage drift by aligning the workflow's Rust coverage floor
+  with the documented `just test` gate.
+- Fixed clean-checkout install E2E asset alias creation by copying hash-named
+  assets when Linux protected-hardlink rules reject Docker-produced files.
+- Fixed PR install E2E's Docker test runner to include the project dev
+  dependency group before invoking pytest inside the installed-package
+  container.
+- Fixed macOS PR CI's Python coverage step so it collects top-level Python
+  contract tests without accidentally booting VM integration suites.
+- Fixed the shared `just` execution lock on macOS hosts without a `flock`
+  binary by falling back to a Python `fcntl` lock holder.
+- Fixed macOS PR CI's scoped Python coverage floor so the top-level contract
+  lane matches clean-runner coverage while the full `just test` gate stays at
+  90%.
+- Fixed macOS PR CI's no-VM Python integration lane so clean runners execute
+  only suites without generated asset/signing prerequisites while still
+  import-checking every integration suite.
+- Fixed Linux PR CI so hosted ARM runners compile the KVM backend and test
+  binaries without hanging in live KVM probes or unbounded hosted-runner test
+  execution; release CI remains the real-KVM exercise gate.
+- Fixed ordinary CI hardening gaps: Linux KVM diagnostics no longer emit red
+  success annotations, Rust integration coverage is release-blocking, coverage
+  summary errors are not hidden by `tee`, and Codecov test analytics use the
+  supported uploader.
 
-## [1.1.1778456247] - 2026-05-11
+## [1.1.1778542197] - 2026-05-11
 
 ### Changed
 - Disabled the unsupported desktop self-updater surface for the next release:
@@ -116,6 +155,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS `.pkg` and Linux `.deb` package flows now carry signed
   `manifest.json` snapshots plus all host helper binaries, and release CI
   verifies package payload signatures before publishing.
+- Release install E2E now consumes clean-checkout VM assets, locally signs the
+  package manifest, and repacks the Linux `.deb` in place so CI installs the
+  tested package instead of the unrepacked Tauri artifact.
+- Linux release app builds now install `minisign` before package payload
+  manifest signing, matching the clean install E2E gate and preventing
+  release-only `minisign: command not found` failures.
 - Setup, `capsem update --assets`, service startup, status, and doctor
   diagnostics now use verified manifest loading so unsigned or invalid
   manifests cannot silently downgrade asset verification.
