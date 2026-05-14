@@ -482,12 +482,16 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     assert test_install, "test-install recipe missing"
     body = test_install.group("body")
 
-    assert 'just build-assets "$INSTALL_ARCH"' in body
-    assert 'b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS' in body
-    assert 'python3 scripts/gen_manifest.py "{{assets_dir}}" Cargo.toml' in body
-    assert 'python3 scripts/create_hash_assets.py "{{assets_dir}}"' in body
-    assert 'bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"' in body
-    assert 'bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub' in body
+    assert 'bash scripts/prepare-install-assets.sh "{{assets_dir}}" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"' in body
     assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"' in body
     assert "uv run --group dev python -m pytest tests/capsem-install/" in body
     assert 'scripts/repack-deb.sh "$DEB" /cargo-target/debug assets' not in body
+
+    prep_script = (REPO_ROOT / "scripts" / "prepare-install-assets.sh").read_text()
+    assert "Build assets on the host first: just build-assets $INSTALL_ARCH" in prep_script
+    assert 'just build-assets "$INSTALL_ARCH"' not in prep_script
+    assert 'b3sum "$INSTALL_ARCH/vmlinuz" "$INSTALL_ARCH/initrd.img" "$INSTALL_ARCH/rootfs.squashfs" > B3SUMS' in prep_script
+    assert 'python3 scripts/gen_manifest.py "$ASSETS_DIR" "$CARGO_TOML"' in prep_script
+    assert 'python3 scripts/create_hash_assets.py "$ASSETS_DIR"' in prep_script
+    assert 'bash scripts/sync-dev-assets.sh "$ASSETS_DIR" "$ASSETS_DIR"' in prep_script
+    assert 'bash scripts/verify-local-manifest-signature.sh "$ASSETS_DIR" config/manifest-sign.pub' in prep_script

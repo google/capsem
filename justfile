@@ -243,25 +243,10 @@ build-assets arch="": _install-tools _clean-stale
     set -euo pipefail
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
     if [[ -n "{{arch}}" ]]; then
-        arches=("{{arch}}")
-        echo "=== Cleaning assets for {{arch}} ==="
-        rm -rf "{{assets_dir}}/{{arch}}"
+        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}" --arch "{{arch}}"
     else
-        arches=(arm64 x86_64)
-        echo "=== Cleaning all assets ==="
-        rm -rf "{{assets_dir}}/arm64" "{{assets_dir}}/x86_64"
-        rm -f "{{assets_dir}}/manifest.json" "{{assets_dir}}/B3SUMS"
+        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}"
     fi
-    for a in "${arches[@]}"; do
-        echo "=== Building kernel for $a ==="
-        uv run capsem-builder build guest/ --arch "$a" --template kernel --output "{{assets_dir}}/"
-        echo ""
-        echo "=== Building rootfs for $a ==="
-        uv run capsem-builder build guest/ --arch "$a" --template rootfs --output "{{assets_dir}}/"
-        echo ""
-    done
-    echo "=== Generating checksums ==="
-    uv run python3 -c 'from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path(".")); generate_checksums(Path("{{assets_dir}}"), v); print(f"manifest.json generated (v{v})")'
     just _docker-gc
 
 # Run vulnerability audits (cargo audit + pnpm audit). Fast standalone gate.
@@ -1100,7 +1085,7 @@ test-install:
         "cd /src && cargo build {{host_crates}}"
     echo "Preparing clean-checkout assets..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && INSTALL_ARCH="{{test_install_arch}}" && just build-assets "$INSTALL_ARCH" && arch_name="{{assets_dir}}" && b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS && python3 scripts/gen_manifest.py "{{assets_dir}}" Cargo.toml && python3 scripts/create_hash_assets.py "{{assets_dir}}" && bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}" && bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub'
+        'cd /src && bash scripts/prepare-install-assets.sh "{{assets_dir}}" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
     echo "Building frontend..."
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
         "cd /src/frontend && pnpm install && pnpm build"

@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus-user-session \
     sudo \
     python3-pip \
+    b3sum \
     minisign \
     && rm -rf /var/lib/apt/lists/*
 
