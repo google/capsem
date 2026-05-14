@@ -11,9 +11,9 @@ def test_write_in_a_absent_in_b(multi_vm_env):
     """File written in VM-A does not exist in VM-B."""
     client, vm_a, vm_b, _ = multi_vm_env
     path = f"/root/iso-{uuid.uuid4().hex[:8]}.txt"
-    client.post(f"/write_file/{vm_a}", {"path": path, "content": "only-in-a"})
+    client.write_file(vm_a, path, "only-in-a")
 
-    resp = client.post(f"/read_file/{vm_b}", {"path": path})
+    resp = client.read_file(vm_b, path)
     assert resp is None or "error" in str(resp).lower(), (
         f"VM-B should not see file from VM-A: {resp}"
     )
@@ -23,11 +23,11 @@ def test_same_path_different_content(multi_vm_env):
     """Same path in two VMs holds different content."""
     client, vm_a, vm_b, _ = multi_vm_env
     path = "/root/shared-name.txt"
-    client.post(f"/write_file/{vm_a}", {"path": path, "content": "content-a"})
-    client.post(f"/write_file/{vm_b}", {"path": path, "content": "content-b"})
+    client.write_file(vm_a, path, "content-a")
+    client.write_file(vm_b, path, "content-b")
 
-    resp_a = client.post(f"/read_file/{vm_a}", {"path": path})
-    resp_b = client.post(f"/read_file/{vm_b}", {"path": path})
+    resp_a = client.read_file(vm_a, path)
+    resp_b = client.read_file(vm_b, path)
     assert resp_a.get("content") == "content-a"
     assert resp_b.get("content") == "content-b"
 
@@ -36,11 +36,11 @@ def test_delete_b_file_persists_in_a(multi_vm_env):
     """Deleting VM-B does not affect files in VM-A."""
     client, vm_a, _, _ = multi_vm_env
     path = f"/root/persist-{uuid.uuid4().hex[:8]}.txt"
-    client.post(f"/write_file/{vm_a}", {"path": path, "content": "survives"})
+    client.write_file(vm_a, path, "survives")
 
     # VM-B deletion happens in other tests or can be simulated
     # For now, just verify A's file survives regardless
-    resp = client.post(f"/read_file/{vm_a}", {"path": path})
+    resp = client.read_file(vm_a, path)
     assert resp.get("content") == "survives"
 
 

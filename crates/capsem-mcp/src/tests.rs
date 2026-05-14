@@ -846,7 +846,7 @@ fn fork_body_without_description() {
 }
 
 // -----------------------------------------------------------------------
-// build_persist_body / build_purge_body / build_read_file_body
+// build_persist_body / build_purge_body
 // -----------------------------------------------------------------------
 
 #[test]
@@ -873,17 +873,6 @@ fn purge_body_all_true_preserved() {
     let p = PurgeParams { all: Some(true) };
     let body = build_purge_body(&p);
     assert_eq!(body["all"], true);
-}
-
-#[test]
-fn read_file_body_contains_path_only() {
-    let p = FileReadParams {
-        id: "vm-1".into(),
-        path: "/etc/hostname".into(),
-    };
-    let body = build_read_file_body(&p);
-    assert_eq!(body["path"], "/etc/hostname");
-    assert!(body.get("id").is_none());
 }
 
 // -----------------------------------------------------------------------

@@ -49,7 +49,7 @@ class TestExecImmediatelyAfterProvision:
         client.delete(f"/delete/{vm_id}")
 
     def test_write_file_immediately_after_provision(self, service_env):
-        """POST /write_file/{id} must succeed right after POST /provision."""
+        """POST /files/{id}/content must succeed right after POST /provision."""
         client = service_env.client()
         name = vm_name("wi")
         resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
@@ -57,9 +57,10 @@ class TestExecImmediatelyAfterProvision:
         vm_id = resp.get("id", name)
 
         # Immediately write -- server must wait for VM readiness.
-        write_resp = client.post(
-            f"/write_file/{vm_id}",
-            {"path": "/root/race-test.txt", "content": "race-check"},
+        write_resp = client.write_file(
+            vm_id,
+            "/root/race-test.txt",
+            "race-check",
             timeout=HTTP_TIMEOUT,
         )
         assert write_resp is not None, "write_file returned None"
@@ -68,7 +69,7 @@ class TestExecImmediatelyAfterProvision:
         client.delete(f"/delete/{vm_id}")
 
     def test_read_file_immediately_after_provision(self, service_env):
-        """POST /write_file + /read_file must succeed right after POST /provision."""
+        """POST+GET /files/{id}/content must succeed right after POST /provision."""
         client = service_env.client()
         name = vm_name("ri")
         resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
@@ -76,16 +77,17 @@ class TestExecImmediatelyAfterProvision:
         vm_id = resp.get("id", name)
 
         # Immediately write then read -- server must wait for VM readiness.
-        write_resp = client.post(
-            f"/write_file/{vm_id}",
-            {"path": "/root/read-probe.txt", "content": "probe-data"},
+        write_resp = client.write_file(
+            vm_id,
+            "/root/read-probe.txt",
+            "probe-data",
             timeout=HTTP_TIMEOUT,
         )
         assert write_resp is not None, "write_file returned None"
 
-        read_resp = client.post(
-            f"/read_file/{vm_id}",
-            {"path": "/root/read-probe.txt"},
+        read_resp = client.read_file(
+            vm_id,
+            "/root/read-probe.txt",
             timeout=HTTP_TIMEOUT,
         )
         assert read_resp is not None, "read_file returned None"

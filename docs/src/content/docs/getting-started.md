@@ -63,12 +63,12 @@ Boot a sandboxed VM and get a shell:
 capsem shell
 ```
 
-This creates a temporary Linux session with an air-gapped network. You get a terminal inside the sandbox with Python 3, Node.js, git, and 30+ packages pre-installed. The session is destroyed when you exit.
+This creates a temporary Linux session with an air-gapped network. You get a terminal inside the VM session with Python 3, Node.js, git, and 30+ packages pre-installed. The session is destroyed when you exit.
 
 For a persistent session that survives suspend/resume cycles:
 
 ```sh
-capsem create -n mybox
+capsem create mybox
 capsem shell mybox
 ```
 

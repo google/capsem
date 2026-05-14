@@ -1274,14 +1274,6 @@ fn exec_request_shell_metacharacters() {
 }
 
 #[test]
-fn write_file_request_path_traversal() {
-    let json = serde_json::json!({"path": "../../etc/passwd", "content": "evil"});
-    let req: WriteFileRequest = serde_json::from_value(json).unwrap();
-    assert_eq!(req.path, "../../etc/passwd");
-    // Note: no validation at DTO level -- relies on guest-side enforcement
-}
-
-#[test]
 fn inspect_request_sql_injection() {
     let json = serde_json::json!({"sql": "SELECT * FROM net_events; DROP TABLE net_events; --"});
     let req: InspectRequest = serde_json::from_value(json).unwrap();
