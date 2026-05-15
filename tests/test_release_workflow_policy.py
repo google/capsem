@@ -508,6 +508,7 @@ def test_cut_release_prepares_local_tag_without_pushing():
     body = cut_release.group("body")
 
     assert 'git tag "$TAG"' in body
+    assert "uv.lock" in body
     assert 'git push origin main "$TAG"' not in body
     assert 'git push origin HEAD:main' in body
     assert 'git push origin $TAG' in body
