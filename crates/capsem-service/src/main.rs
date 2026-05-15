@@ -126,6 +126,7 @@ fn load_startup_manifest_for_assets(
     capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
 }
 
+#[derive(Clone)]
 struct InstanceInfo {
     id: String,
     pid: u32,
@@ -1950,9 +1951,12 @@ async fn provision_attempt(
     }
 }
 
-/// Attach live telemetry from session.db to a SandboxInfo.
-/// Shared by handle_list (all VMs) and handle_info (single VM).
-fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
+/// Attach durable telemetry from session.db to a SandboxInfo.
+///
+/// Used by single-VM detail paths only. `/list` is a hot status path and must
+/// not scan per-VM SQLite files; live counters belong in capsem-process and
+/// should arrive through typed IPC snapshots.
+fn enrich_telemetry_from_session_db(info: &mut SandboxInfo, session_dir: &std::path::Path) {
     let db_path = session_dir.join("session.db");
     if let Ok(reader) = capsem_logger::DbReader::open(&db_path) {
         if let Ok(stats) = reader.session_stats() {
@@ -1974,13 +1978,21 @@ fn enrich_telemetry(info: &mut SandboxInfo, session_dir: &std::path::Path) {
     }
 }
 
+fn attach_list_live_metrics_placeholder(_info: &mut SandboxInfo, _id: &str) {
+    // FIXME(otel-sprint): Populate `/list` from capsem-process live
+    // VmMetricsSnapshot over typed service/process IPC. Do not read
+    // session.db here; this handler is a hot path and fans out across VMs.
+}
+
 async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListResponse> {
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
-    // Running instances (with live telemetry)
+    // Running instances. Keep this path in-memory only; durable session.db
+    // telemetry is intentionally reserved for single-VM/detail paths.
     {
-        let instances = state.instances.lock().unwrap();
-        for i in instances.values() {
+        let running: Vec<InstanceInfo> =
+            state.instances.lock().unwrap().values().cloned().collect();
+        for i in running {
             let mut info = SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
             info.name = if i.persistent {
                 Some(i.id.clone())
@@ -1993,7 +2005,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.base_assets = i.base_assets.clone();
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-            enrich_telemetry(&mut info, &i.session_dir);
+            attach_list_live_metrics_placeholder(&mut info, &i.id);
             sandboxes.push(info);
         }
     }
@@ -2149,7 +2161,7 @@ async fn handle_info(
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
-            enrich_telemetry(&mut info, &dir);
+            enrich_telemetry_from_session_db(&mut info, &dir);
             return Ok(Json(info));
         }
     }

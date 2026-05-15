@@ -2165,6 +2165,57 @@ async fn handle_list_includes_uptime_for_running_vms() {
     assert!(list.sandboxes[0].uptime_secs.is_some());
 }
 
+#[tokio::test]
+async fn handle_list_does_not_scan_session_db_hot_path() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions/list-hotpath");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    drop(writer);
+
+    state.instances.lock().unwrap().insert(
+        "list-hotpath".into(),
+        InstanceInfo {
+            id: "list-hotpath".into(),
+            pid: std::process::id(),
+            uds_path: state.run_dir.join("instances/list-hotpath.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: None,
+        },
+    );
+
+    let Json(list) = handle_list(State(state)).await;
+    let vm = list
+        .sandboxes
+        .iter()
+        .find(|sandbox| sandbox.id == "list-hotpath")
+        .expect("running VM should be listed");
+
+    assert!(
+        vm.total_requests.is_none(),
+        "/list must not populate SQLite-backed network counters"
+    );
+    assert!(
+        vm.model_call_count.is_none(),
+        "/list must not populate SQLite-backed model counters"
+    );
+    assert!(
+        vm.total_mcp_calls.is_none(),
+        "/list must not populate SQLite-backed MCP counters"
+    );
+    assert!(
+        vm.total_file_events.is_none(),
+        "/list must not populate SQLite-backed file counters"
+    );
+}
+
 // -----------------------------------------------------------------------
 // handle_stats with tempdir
 // -----------------------------------------------------------------------

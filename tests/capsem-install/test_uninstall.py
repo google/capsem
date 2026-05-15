@@ -3,14 +3,34 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from .conftest import (
     CAPSEM_DIR,
     INSTALL_DIR,
     BINARIES,
     run_capsem,
+    _resolve_assets_src,
+    _resolve_bin_src,
 )
+
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "simulate-install.sh"
+
+
+def _restore_runtime_from_current_build() -> None:
+    subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            str(_resolve_bin_src()),
+            str(_resolve_assets_src()),
+        ],
+        check=True,
+        timeout=60,
+    )
 
 
 class TestUninstall:
@@ -29,42 +49,49 @@ class TestUninstall:
         persistent.mkdir(parents=True, exist_ok=True)
         (persistent / "state.vz").write_text("saved")
 
-        result = run_capsem("uninstall", "--yes", timeout=15)
-        assert result.returncode == 0, (
-            f"uninstall failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        )
+        try:
+            result = run_capsem("uninstall", "--yes", timeout=15)
+            assert result.returncode == 0, (
+                f"uninstall failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
 
-        assert CAPSEM_DIR.exists(), "~/.capsem should remain after runtime uninstall"
-        assert not INSTALL_DIR.exists(), "~/.capsem/bin should be removed after uninstall"
-        assert durable.exists(), "user config should be preserved"
-        assert persistent.exists(), "persistent VM state should be preserved"
+            assert CAPSEM_DIR.exists(), "~/.capsem should remain after runtime uninstall"
+            assert not INSTALL_DIR.exists(), "~/.capsem/bin should be removed after uninstall"
+            assert durable.exists(), "user config should be preserved"
+            assert persistent.exists(), "persistent VM state should be preserved"
+        finally:
+            if not (INSTALL_DIR / "capsem").exists():
+                _restore_runtime_from_current_build()
 
     def test_uninstall_when_nothing_installed(self, clean_state):
         """Uninstall with no ~/.capsem gives clean message."""
-        # Remove capsem dir entirely. Overlayfs workdirs may be mode 000, so
-        # walk and chmod before rmtree.
-        import shutil
-        import stat as _stat
-        if CAPSEM_DIR.exists():
-            for root, dirs, _files in os.walk(CAPSEM_DIR):
-                for d in dirs:
-                    p = Path(root) / d
-                    try:
-                        p.chmod(_stat.S_IRWXU)
-                    except OSError:
-                        pass
-            shutil.rmtree(CAPSEM_DIR)
+        try:
+            # Remove capsem dir entirely. Overlayfs workdirs may be mode 000, so
+            # walk and chmod before rmtree.
+            import shutil
+            import stat as _stat
+            if CAPSEM_DIR.exists():
+                for root, dirs, _files in os.walk(CAPSEM_DIR):
+                    for d in dirs:
+                        p = Path(root) / d
+                        try:
+                            p.chmod(_stat.S_IRWXU)
+                        except OSError:
+                            pass
+                shutil.rmtree(CAPSEM_DIR)
 
-        # We need the binary to exist somewhere to run it
-        # This test may need to be skipped if binary is in ~/.capsem/bin
-        if not Path("/usr/local/bin/capsem").exists():
-            import pytest
+            # We need the binary to exist somewhere to run it. Even when this
+            # path skips, restore ~/.capsem/bin so later install tests do not
+            # inherit the intentionally deleted product tree.
+            if not Path("/usr/local/bin/capsem").exists():
+                pytest.skip("capsem binary is in ~/.capsem/bin which was removed")
 
-            pytest.skip("capsem binary is in ~/.capsem/bin which was removed")
-
-        result = run_capsem("uninstall", "--yes", timeout=10)
-        assert result.returncode == 0
-        assert "nothing to uninstall" in result.stdout.lower()
+            result = run_capsem("uninstall", "--yes", timeout=10)
+            assert result.returncode == 0
+            assert "nothing to uninstall" in result.stdout.lower()
+        finally:
+            if not (INSTALL_DIR / "capsem").exists():
+                _restore_runtime_from_current_build()
 
     def test_product_purge_removes_durable_state(self, installed_layout, clean_state):
         """Whole-product purge removes runtime and durable user state."""
@@ -75,9 +102,13 @@ class TestUninstall:
         persistent.mkdir(parents=True, exist_ok=True)
         (persistent / "state.vz").write_text("saved")
 
-        result = run_capsem("purge", "--product", "--yes", timeout=20)
-        assert result.returncode == 0, (
-            f"product purge failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        )
+        try:
+            result = run_capsem("purge", "--product", "--yes", timeout=20)
+            assert result.returncode == 0, (
+                f"product purge failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
 
-        assert not CAPSEM_DIR.exists(), "product purge should remove all ~/.capsem state"
+            assert not CAPSEM_DIR.exists(), "product purge should remove all ~/.capsem state"
+        finally:
+            if not (INSTALL_DIR / "capsem").exists():
+                _restore_runtime_from_current_build()

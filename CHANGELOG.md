@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   notarization and stapling.
 - Added `capsem purge --product` for explicit whole-product resets that remove
   runtime files plus durable Capsem state after confirmation.
+- Added an OpenTelemetry metrics handoff for the follow-up sprint, including
+  the service/process IPC boundary, the live VM counter source of truth, and
+  the split between JSON status surfaces and `/metrics`.
 
 ### Changed
 - Changed `capsem uninstall` to remove the installed runtime while preserving
@@ -91,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added black-box simulated install coverage for reinstalling after
   `capsem uninstall` and reinstalling over a corrupted helper binary, both
   gated by `capsem status --json` runtime-layout issue codes.
+- Changed service `/list` to avoid per-VM `session.db` telemetry scans on the
+  hot status path. `/info` keeps the historical SQLite enrichment for now,
+  while live list metrics are deferred to the OpenTelemetry sprint.
+- Changed the full release gate so benchmark/doctor E2E checks run in the
+  serial stage instead of racing the parallel Python shard, keeping the
+  expensive VM and benchmark paths deterministic.
 
 ### Fixed
 - Fixed first-run CLI auto-launch when `capsem-service` exits before binding
@@ -128,6 +137,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed PR install E2E's Docker test runner to include the project dev
   dependency group before invoking pytest inside the installed-package
   container.
+- Fixed release-gate flakiness in gateway and install harness tests by making
+  the mock Unix-socket gateway concurrent, restoring runtime fixtures after
+  destructive uninstall/purge tests, and localizing the large-payload MITM
+  upstream instead of relying on external network behavior.
 - Fixed macOS PR CI's Python coverage step so it collects top-level Python
   contract tests without accidentally booting VM integration suites.
 - Fixed the shared `just` execution lock on macOS hosts without a `flock`

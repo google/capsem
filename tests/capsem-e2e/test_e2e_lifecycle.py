@@ -143,6 +143,7 @@ class TestDelete:
 
 class TestDoctor:
 
+    @pytest.mark.serial
     def test_doctor_passes(self, service):
         """capsem doctor must pass — it boots a fresh VM and runs diagnostics."""
         r = service.cli_ok("doctor", timeout=120)

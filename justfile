@@ -368,6 +368,11 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     # fixtures on the same worker. Any concurrency flake here is a Capsem-side
     # bug.
     #
+    # Serial/timing tests are intentionally excluded from this phase and run
+    # in Stage 6. They have their own load profiles and timing gates; mixing
+    # them into n=4 turns the gates into host-contention measurements instead
+    # of product regressions.
+    #
     # --ignore=tests/capsem-recipes -- recipe meta-tests invoke `cargo build
     #   --workspace` via subprocess, which atomically replaces the codesigned
     #   binaries concurrent VM tests need. All their assertions are already
@@ -385,7 +390,7 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     # absent it means an earlier stage silently dropped its output, and
     # we want that to fail loudly here rather than manifest as a pile of
     # individually-skipped tests whose absence goes unnoticed.
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile -m "not benchmark and not serial" \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
@@ -404,11 +409,14 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     echo "=== Integration test ==="
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
 
-    echo "=== Benchmarks ==="
-    # Records /tmp/capsem-benchmark.json to benchmarks/capsem-bench/data_<ver>_<arch>.json
-    # on every run so we accumulate a baseline. No gate yet -- will grow
-    # per-category tolerances once ~5-10 clean runs are on disk per arch.
-    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
+    echo "=== Serial timing + benchmarks ==="
+    # Runs host-side timing gates and diagnostics serially, plus records
+    # /tmp/capsem-benchmark.json to benchmarks/capsem-bench/data_<ver>_<arch>.json
+    # on every run so we accumulate a baseline.
+    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest \
+        tests/capsem-serial/ \
+        tests/capsem-e2e/test_e2e_lifecycle.py::TestDoctor::test_doctor_passes \
+        -v --tb=short -m "serial or benchmark"
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux release (Docker) ==="

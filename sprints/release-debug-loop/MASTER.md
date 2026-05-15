@@ -1,6 +1,6 @@
 # Release Startup Reliability Master
 
-Last updated: 2026-05-14
+Last updated: 2026-05-15
 
 ## Mission
 
@@ -66,11 +66,10 @@ structure.
 
 ## Current Active Work
 
-S6 is active. The current S6 slice upgrades wizard/dashboard startup truth:
-explicit service-offline and asset-state messaging (`unknown`/`checking`/
-`updating`/`error`), saved-VM dependency surfacing, create-action blocking on
-service + assets, and retry setup affordances when service marks asset errors
-retryable.
+S7 implementation scope is closed and the full release gate passed before
+merging latest `origin/main`. Release hardening removed per-VM `session.db`
+scans from service `/list`; live VM counters are deferred to the OpenTelemetry
+metrics sprint and documented in `opentelemetry-metrics-handoff.md`.
 
 S0 is in review. S0 output:
 

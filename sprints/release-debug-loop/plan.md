@@ -19,6 +19,7 @@ Sprint control:
 - `sprints/release-debug-loop/plan.md` - implementation plan and proof matrix.
 - `sprints/release-debug-loop/TRACKER.md` - live execution checklist and coverage ledger.
 - `sprints/release-debug-loop/BUG_HITLIST.md` - original symptom queue mapped into the new sprint model.
+- `sprints/release-debug-loop/opentelemetry-metrics-handoff.md` - follow-up metrics architecture handoff; `/list` must not read `session.db` on the hot path.
 
 Likely implementation areas:
 

@@ -1,35 +1,35 @@
 {
   "version": "0.3.0",
-  "timestamp": 1778793396.2906783,
-  "hostname": "bench-8d46dcfe",
+  "timestamp": 1778847188.3102887,
+  "hostname": "bench-a2108b03",
   "disk": {
     "directory": "/root",
     "size_mb": 256,
     "seq_write": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 113.7,
-      "throughput_mbps": 2251.3
+      "duration_ms": 130.4,
+      "throughput_mbps": 1962.8
     },
     "seq_read": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 56.4,
-      "throughput_mbps": 4539.3
+      "duration_ms": 61.0,
+      "throughput_mbps": 4199.1
     },
     "rand_write_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 1050.9,
-      "iops": 9515.7,
-      "throughput_mbps": 37.2
+      "duration_ms": 1089.4,
+      "iops": 9179.6,
+      "throughput_mbps": 35.9
     },
     "rand_read_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 99.6,
-      "iops": 100430.6,
-      "throughput_mbps": 392.3
+      "duration_ms": 114.0,
+      "iops": 87720.1,
+      "throughput_mbps": 342.7
     }
   },
   "rootfs": {
@@ -44,17 +44,17 @@
       "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex/codex",
       "size_bytes": 185736064,
       "block_size": 1048576,
-      "duration_ms": 216.5,
-      "throughput_mbps": 818.3
+      "duration_ms": 241.5,
+      "throughput_mbps": 733.5
     },
     "files_found": 3321,
     "rand_read_4k": {
       "count": 5000,
-      "files_sampled": 2559,
+      "files_sampled": 2591,
       "block_size": 4096,
-      "duration_ms": 458.6,
-      "iops": 10902.6,
-      "throughput_mbps": 42.6
+      "duration_ms": 639.0,
+      "iops": 7825.2,
+      "throughput_mbps": 30.6
     }
   },
   "startup": {
@@ -66,13 +66,13 @@
           "--version"
         ],
         "timings_ms": [
-          9.1,
-          7.7,
-          7.0
+          9.3,
+          6.7,
+          7.2
         ],
-        "min_ms": 7.0,
-        "mean_ms": 7.9,
-        "max_ms": 9.1
+        "min_ms": 6.7,
+        "mean_ms": 7.7,
+        "max_ms": 9.3
       },
       "node": {
         "command": [
@@ -80,13 +80,13 @@
           "--version"
         ],
         "timings_ms": [
-          132.3,
-          134.5,
-          134.5
+          128.0,
+          130.2,
+          126.9
         ],
-        "min_ms": 132.3,
-        "mean_ms": 133.8,
-        "max_ms": 134.5
+        "min_ms": 126.9,
+        "mean_ms": 128.4,
+        "max_ms": 130.2
       },
       "claude": {
         "command": [
@@ -94,13 +94,13 @@
           "--version"
         ],
         "timings_ms": [
-          293.6,
-          293.1,
-          288.4
+          342.4,
+          335.8,
+          283.9
         ],
-        "min_ms": 288.4,
-        "mean_ms": 291.7,
-        "max_ms": 293.6
+        "min_ms": 283.9,
+        "mean_ms": 320.7,
+        "max_ms": 342.4
       },
       "gemini": {
         "command": [
@@ -108,13 +108,13 @@
           "--version"
         ],
         "timings_ms": [
-          769.4,
-          761.4,
-          761.5
+          808.6,
+          853.0,
+          805.8
         ],
-        "min_ms": 761.4,
-        "mean_ms": 764.1,
-        "max_ms": 769.4
+        "min_ms": 805.8,
+        "mean_ms": 822.5,
+        "max_ms": 853.0
       },
       "codex": {
         "command": [
@@ -122,13 +122,13 @@
           "--version"
         ],
         "timings_ms": [
-          237.1,
-          241.5,
-          241.1
+          293.4,
+          240.6,
+          289.3
         ],
-        "min_ms": 237.1,
-        "mean_ms": 239.9,
-        "max_ms": 241.5
+        "min_ms": 240.6,
+        "mean_ms": 274.4,
+        "max_ms": 293.4
       }
     }
   },
@@ -138,63 +138,63 @@
     "concurrency": 5,
     "successful": 50,
     "failed": 0,
-    "total_duration_ms": 1226.1,
-    "requests_per_sec": 40.8,
-    "transfer_bytes": 4028703,
+    "total_duration_ms": 765.8,
+    "requests_per_sec": 65.3,
+    "transfer_bytes": 4030888,
     "latency_ms": {
-      "min": 94.0,
-      "max": 231.6,
-      "mean": 117.9,
-      "p50": 104.9,
-      "p95": 216.0,
-      "p99": 229.6
+      "min": 53.5,
+      "max": 198.1,
+      "mean": 75.2,
+      "p50": 60.6,
+      "p95": 194.3,
+      "p99": 197.4
     }
   },
   "throughput": {
     "url": "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf",
     "http_code": 200,
     "size_bytes": 9984968,
-    "duration_s": 0.475,
-    "throughput_mbps": 20.06
+    "duration_s": 0.412,
+    "throughput_mbps": 23.11
   },
   "snapshot": {
     "10_files": {
-      "create_ms": 791.2,
+      "create_ms": 876.1,
       "create_ok": true,
-      "list_ms": 315.8,
+      "list_ms": 379.8,
       "list_ok": true,
-      "changes_ms": 316.0,
+      "changes_ms": 369.3,
       "changes_ok": true,
-      "revert_ms": 321.3,
+      "revert_ms": 408.9,
       "revert_ok": true,
-      "delete_ms": 321.2,
+      "delete_ms": 352.6,
       "delete_ok": true
     },
     "100_files": {
-      "create_ms": 324.6,
+      "create_ms": 376.3,
       "create_ok": true,
-      "list_ms": 317.6,
+      "list_ms": 359.1,
       "list_ok": true,
-      "changes_ms": 319.3,
+      "changes_ms": 397.3,
       "changes_ok": true,
-      "revert_ms": 321.9,
+      "revert_ms": 368.5,
       "revert_ok": true,
-      "delete_ms": 319.2,
+      "delete_ms": 353.6,
       "delete_ok": true
     },
     "500_files": {
-      "create_ms": 318.2,
+      "create_ms": 380.1,
       "create_ok": true,
-      "list_ms": 318.9,
+      "list_ms": 354.6,
       "list_ok": true,
-      "changes_ms": 336.7,
+      "changes_ms": 391.0,
       "changes_ok": true,
-      "revert_ms": 326.4,
+      "revert_ms": 403.1,
       "revert_ok": true,
-      "delete_ms": 330.1,
+      "delete_ms": 389.2,
       "delete_ok": true
     }
   },
-  "host_recorded_at": 1778793411.024279,
+  "host_recorded_at": 1778847203.7783208,
   "arch": "arm64"
 }
