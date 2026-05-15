@@ -81,8 +81,9 @@ then proved install E2E itself passed (`57 passed, 29 skipped`) but hit a
 host-side `actions/setup-node` pnpm-cache post-job failure; the Docker-based
 install lane now disables that unnecessary host cache. A later macOS `test`
 rerun showed the cargo normalizer still trusted a false-positive
-`cargo --version`, so CI now always installs a dedicated cargo shim and reruns
-normalization after Python setup. CI must be re-run green before release.
+`cargo --version`, and the next rerun showed `rustc` had the same proxy issue,
+so CI now always installs dedicated `cargo`, `rustc`, and `rustdoc` shims and
+reruns normalization after Python setup. CI must be re-run green before release.
 
 Release publication is also now explicit/manual: `just cut-release` creates the
 release commit and local tag only; pushing `main`, pushing `vX.Y.Z`, and running
