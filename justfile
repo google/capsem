@@ -1172,7 +1172,7 @@ cut-release: test _stamp-version
     uv run python3 scripts/extract-release-notes.py
     # Commit and tag locally. The actual push is deliberate/manual so the
     # release commit and immutable tag are visible before CI starts publishing.
-    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md LATEST_RELEASE.md
+    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml uv.lock CHANGELOG.md LATEST_RELEASE.md
     git commit -m "release: v${NEW}"
     git tag "$TAG"
     echo "Release commit and local tag created: $TAG"
