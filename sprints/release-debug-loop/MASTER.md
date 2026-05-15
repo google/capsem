@@ -71,6 +71,11 @@ merging latest `origin/main`. Release hardening removed per-VM `session.db`
 scans from service `/list`; live VM counters are deferred to the OpenTelemetry
 metrics sprint and documented in `opentelemetry-metrics-handoff.md`.
 
+PR #53 is open and mergeable, but release remains held on GitHub CI. The first
+macOS `test` lane failed before product tests because the runner resolved
+`cargo` to `rustup-init`; PR and release workflows now normalize the cargo
+proxy after Rust toolchain setup and CI must be re-run green before release.
+
 S0 is in review. S0 output:
 
 - `startup-info.md`

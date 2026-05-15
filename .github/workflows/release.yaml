@@ -116,6 +116,9 @@ jobs:
         with:
           targets: ${{ matrix.rust-target }}
 
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
+
       - name: Build VM assets (kernel + rootfs)
         run: |
           just build-kernel ${{ matrix.arch }}
@@ -138,6 +141,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools
+
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -288,6 +294,10 @@ jobs:
           cp -r assets/arm64 assets/current
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-app-macos
@@ -535,6 +545,10 @@ jobs:
           cp -r assets/${{ matrix.arch }} assets/current
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-app-linux-${{ matrix.arch }}

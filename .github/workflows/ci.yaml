@@ -28,6 +28,9 @@ jobs:
         with:
           components: llvm-tools
 
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
+
       - uses: Swatinem/rust-cache@v2
 
       # Collect KVM diagnostics only. GitHub-hosted runners don't always expose
@@ -117,6 +120,9 @@ jobs:
         with:
           targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
           components: llvm-tools
+
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
 
       - uses: Swatinem/rust-cache@v2
 

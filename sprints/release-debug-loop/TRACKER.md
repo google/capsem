@@ -5,11 +5,16 @@ Last updated: 2026-05-15
 ## Active Sprint
 
 S7 - Update/Uninstall/Purge Integration (done; full release gate passed after
-merging latest `origin/main`)
+merging latest `origin/main`; PR CI cargo-proxy hardening in progress)
 
 Release hardening note: `/list` no longer reads per-VM `session.db` telemetry
 on the hot status path. Live metrics are deferred to the OpenTelemetry sprint
 and captured in `opentelemetry-metrics-handoff.md`.
+
+PR CI note: pull request #53 exposed a macOS runner toolchain regression where
+`cargo install cargo-audit --locked` resolved `cargo` to `rustup-init` and
+failed before product tests ran. The workflow now normalizes the cargo proxy
+after `dtolnay/rust-toolchain` in PR and release lanes, then re-runs CI.
 
 S1, S2, S3, and S4 are closed for their current scope. The live sudo-backed
 `capsem uninstall -> just install -> capsem status` proof remains the final
@@ -257,6 +262,7 @@ dependencies, UI consumption, and update path.
 - 2026-05-15: Removed `/list` SQLite telemetry fan-out from the hot status path, left `/info` enrichment intact, and documented the live OpenTelemetry metrics replacement contract in `opentelemetry-metrics-handoff.md`. Verified the focused service contracts with `cargo test -p capsem-service handle_list -- --nocapture` and `cargo test -p capsem-service handle_info -- --nocapture`.
 - 2026-05-15: Closed the S7 full release gate before merging current `origin/main`. `just test` exited 0 after audits/frontend checks, Rust coverage, Python parallel suite (`1369 passed, 70 skipped`), build-chain serial (`23 passed`), injection (`5 passed`), in-VM diagnostics (`94 passed, 2 skipped`), telemetry checks (`40 passed`), serial timing/benchmarks (`12 passed`), Linux package build, and installed-package E2E (`57 passed, 29 skipped`).
 - 2026-05-15: Merged latest `origin/main` and reconciled main's CLI/API hardening with the release-debug branch. Kept typed `capsem status --json`, removed stale test reliance on `create -n` / `rm` / `ls`, normalized `/root/...` to the workspace root for the hardened files API, and re-ran the full `just test` gate successfully: Python parallel suite (`1369 passed, 70 skipped`), build-chain serial (`23 passed`), injection (`5 passed`), in-VM diagnostics (`94 passed, 2 skipped`), telemetry checks (`40 passed`), serial timing/benchmarks (`12 passed`), Linux package build, and installed-package E2E (`57 passed, 29 skipped`).
+- 2026-05-15: Opened PR #53. The first macOS `test` CI job failed before running product tests because the runner's `cargo` proxy invoked `rustup-init` (`unexpected argument 'install'`) during `cargo install cargo-audit --locked`; `test-linux` passed. Added `scripts/ci/normalize-cargo.sh` and wired it after each Rust toolchain setup in PR and release workflows to repair broken cargo proxies without hiding product test failures.
 
 ## Coverage Ledger
 
