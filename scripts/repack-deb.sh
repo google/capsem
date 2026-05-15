@@ -88,12 +88,9 @@ echo "=== Adding postinst script ==="
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 
-# Stamp build timestamp into version so each build is seen as newer
-BUILD_TS=$(date +%s)
-CONTROL_FILE="$WORK_DIR/deb/DEBIAN/control"
-CONTROL_TMP=$(mktemp)
-sed "s/^Version: \(.*\)/Version: \1.$BUILD_TS/" "$CONTROL_FILE" > "$CONTROL_TMP"
-mv "$CONTROL_TMP" "$CONTROL_FILE"
+# Keep the package version exact. Release validation compares the Debian
+# control metadata to the immutable tag version, and local install paths stamp
+# a fresh version before packaging when they need upgrade ordering.
 
 echo "=== Repacking .deb ==="
 dpkg-deb -b "$WORK_DIR/deb" "$OUTPUT_DEB"

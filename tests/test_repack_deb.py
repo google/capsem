@@ -209,8 +209,8 @@ def test_path_with_embedded_newline_fails(tmp_path):
     )
 
 
-def test_version_gets_build_timestamp_stamped(tmp_path):
-    """DEBIAN/control's Version field gains a numeric suffix so repeat installs see a newer package."""
+def test_version_is_preserved_exactly(tmp_path):
+    """DEBIAN/control's Version field must stay aligned with the release tag."""
     fixture = _build_fixture_deb(tmp_path, version="0.0.1")
     bin_dir = tmp_path / "bin"
     _seed_binaries(bin_dir)
@@ -226,14 +226,7 @@ def test_version_gets_build_timestamp_stamped(tmp_path):
         None,
     )
     assert version_line is not None, f"no Version: line in control: {control!r}"
-    # Expect the original "0.0.1" plus a dotted numeric build stamp.
-    assert version_line.startswith("Version: 0.0.1."), (
-        f"Version should be 0.0.1.<ts>, got: {version_line!r}"
-    )
-    suffix = version_line[len("Version: 0.0.1."):]
-    assert suffix.isdigit() and len(suffix) >= 9, (
-        f"expected unix-ish timestamp suffix, got: {suffix!r}"
-    )
+    assert version_line == "Version: 0.0.1"
 
 
 def test_output_defaults_to_overwriting_input(tmp_path):

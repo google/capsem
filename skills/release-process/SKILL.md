@@ -184,6 +184,12 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   `spctl -a -vv -t install` against the built `.pkg`. If a local macOS host
   reports Code Signing subsystem errors for multiple known-good releases, treat
   the host as suspect, but keep the CI macOS gate release-blocking.
+- **Package metadata versions must match the release tag exactly.** The release
+  validators compare `.deb` control metadata and `.pkg` distribution metadata
+  to `GITHUB_REF_NAME#v`. Do not append a build timestamp in repackaging
+  scripts; local install paths already stamp a fresh version before packaging
+  when they need upgrade ordering. macOS `.pkg` manifest validation must also
+  expand into a fresh directory or remove the previous expansion first.
 - **`latest.json` is optional in `gh release create`.** Tauri only generates updater `latest.json` for bundle types that produce `.tar.gz` + `.sig` artifacts (AppImage, not deb). With deb-only builds, no `latest.json` exists. The create-release step must handle this gracefully.
 - **AppImage was dropped after 14 failed releases.** linuxdeploy (a FUSE2 AppImage) cannot run on Ubuntu 24.04 CI runners (FUSE3 only). Tested: `libfuse2` install, `APPIMAGE_EXTRACT_AND_RUN=1` env var, both together -- none worked reliably. If AppImage support is needed in the future, the approach would be to pre-extract linuxdeploy (`--appimage-extract`) and run the extracted binary directly, bypassing FUSE entirely.
 

@@ -415,27 +415,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           EXPANDED="$RUNNER_TEMP/capsem-pkg-expanded"
-          pkgutil --expand-full "packages/Capsem-$VERSION.pkg" "$EXPANDED"
-          MANIFEST=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json' -print -quit)
-          SIG=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json.minisig' -print -quit)
-          if [ -z "$MANIFEST" ] || [ -z "$SIG" ]; then
-            echo "::error::.pkg payload missing manifest.json or manifest.json.minisig"
-            exit 1
-          fi
-          minisign -Vm "$MANIFEST" -x "$SIG" -p config/manifest-sign.pub
-          python3 - "$MANIFEST" <<'PY'
-          import json, sys
-          data = json.load(open(sys.argv[1]))
-          arches = data["assets"]["releases"][data["assets"]["current"]]["arches"]
-          missing = {"arm64", "x86_64"} - set(arches)
-          if missing:
-              raise SystemExit(f"manifest missing arch maps: {sorted(missing)}")
-          PY
-
-      - name: Verify .pkg payload manifest
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          EXPANDED="$RUNNER_TEMP/capsem-pkg-expanded"
+          rm -rf "$EXPANDED"
           pkgutil --expand-full "packages/Capsem-$VERSION.pkg" "$EXPANDED"
           MANIFEST=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json' -print -quit)
           SIG=$(find "$EXPANDED" -path '*/usr/local/share/capsem/assets/manifest.json.minisig' -print -quit)

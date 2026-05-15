@@ -236,6 +236,19 @@ def test_macos_pkg_signature_and_gatekeeper_are_release_blocking():
     assert "spctl -a -vv -t install" in body
 
 
+def test_macos_pkg_payload_manifest_validation_is_single_use():
+    """The pkg expansion dir must be fresh so validation is deterministic."""
+    text = _workflow_text()
+    build_macos = re.search(
+        r"(?ms)^  build-app-macos:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert build_macos, "build-app-macos job missing"
+    body = build_macos.group("body")
+    assert body.count("- name: Verify .pkg payload manifest") == 1
+    assert 'rm -rf "$EXPANDED"' in body
+
+
 def test_linux_app_manifest_signing_installs_minisign_before_use():
     """Linux release app jobs must install minisign before signing manifests."""
     text = _workflow_text()

@@ -108,10 +108,10 @@ cat > "$WORK_DIR/welcome.html" <<'WELCOME_EOF'
 </html>
 WELCOME_EOF
 
-# Stamp version into distribution XML (append build timestamp for uniqueness)
-BUILD_TS=$(date +%s)
-PKG_VERSION="$VERSION.$BUILD_TS"
-sed "s/__VERSION__/$PKG_VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
+# Keep the package metadata aligned with the immutable release tag. Local
+# install paths stamp a fresh version before packaging when they need upgrade
+# ordering.
+sed "s/__VERSION__/$VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
 
 # Build the distribution .pkg (wraps component with UI)
 productbuild \

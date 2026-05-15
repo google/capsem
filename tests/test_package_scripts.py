@@ -87,7 +87,20 @@ printf pkg > "$out"
     (tool_dir / "productbuild").write_text(
         """#!/bin/sh
 set -eu
-out="${@: -1}"
+distribution=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --distribution) distribution="$2"; shift 2 ;;
+    --resources|--package-path) shift 2 ;;
+    *) out="$1"; shift ;;
+  esac
+done
+test -n "$distribution"
+grep 'version="1.1.0"' "$distribution" >/dev/null
+if grep 'version="1.1.0\\.' "$distribution" >/dev/null; then
+  echo "unexpected timestamp suffix in pkg distribution" >&2
+  exit 1
+fi
 mkdir -p "$(dirname "$out")"
 printf product > "$out"
 """
