@@ -66,7 +66,7 @@ structure.
 
 ## Current Active Work
 
-S7 implementation scope is closed and the full release gate passed before
+S7 implementation scope is closed and the full release gate passed after
 merging latest `origin/main`. Release hardening removed per-VM `session.db`
 scans from service `/list`; live VM counters are deferred to the OpenTelemetry
 metrics sprint and documented in `opentelemetry-metrics-handoff.md`.

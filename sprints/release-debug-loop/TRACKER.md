@@ -4,8 +4,8 @@ Last updated: 2026-05-15
 
 ## Active Sprint
 
-S7 - Update/Uninstall/Purge Integration (done; full release gate passed before
-main rebase/merge)
+S7 - Update/Uninstall/Purge Integration (done; full release gate passed after
+merging latest `origin/main`)
 
 Release hardening note: `/list` no longer reads per-VM `session.db` telemetry
 on the hot status path. Live metrics are deferred to the OpenTelemetry sprint
@@ -256,6 +256,7 @@ dependencies, UI consumption, and update path.
 - 2026-05-14: Closed focused S7 implementation. `capsem purge --product` now performs explicit whole-product reset without changing the default session purge path, product purge skips update-cache refresh, runtime replacement preserves durable user state and saved-VM asset blobs, and focused tests passed (`cargo test -p capsem purge -- --nocapture` => 6 passed; targeted S7 install harness tests => 4 passed).
 - 2026-05-15: Removed `/list` SQLite telemetry fan-out from the hot status path, left `/info` enrichment intact, and documented the live OpenTelemetry metrics replacement contract in `opentelemetry-metrics-handoff.md`. Verified the focused service contracts with `cargo test -p capsem-service handle_list -- --nocapture` and `cargo test -p capsem-service handle_info -- --nocapture`.
 - 2026-05-15: Closed the S7 full release gate before merging current `origin/main`. `just test` exited 0 after audits/frontend checks, Rust coverage, Python parallel suite (`1369 passed, 70 skipped`), build-chain serial (`23 passed`), injection (`5 passed`), in-VM diagnostics (`94 passed, 2 skipped`), telemetry checks (`40 passed`), serial timing/benchmarks (`12 passed`), Linux package build, and installed-package E2E (`57 passed, 29 skipped`).
+- 2026-05-15: Merged latest `origin/main` and reconciled main's CLI/API hardening with the release-debug branch. Kept typed `capsem status --json`, removed stale test reliance on `create -n` / `rm` / `ls`, normalized `/root/...` to the workspace root for the hardened files API, and re-ran the full `just test` gate successfully: Python parallel suite (`1369 passed, 70 skipped`), build-chain serial (`23 passed`), injection (`5 passed`), in-VM diagnostics (`94 passed, 2 skipped`), telemetry checks (`40 passed`), serial timing/benchmarks (`12 passed`), Linux package build, and installed-package E2E (`57 passed, 29 skipped`).
 
 ## Coverage Ledger
 
@@ -266,7 +267,7 @@ dependencies, UI consumption, and update path.
 - UI/product: B4 has focused frontend interaction coverage for local MCP disable/re-enable; S6 has focused dashboard/onboarding coverage for service offline, unknown/checking/updating/error assets, saved-VM dependency gaps, retry setup, refresh status, and blocked-empty startup states.
 - Telemetry/observability: failed-gate evidence bundle exists for `capsem status --json`, grouped status checks, optional `capsem debug`, redacted run-state breadcrumbs, install-layout evidence, app/tray evidence, and saved-VM state plus saved-VM asset-reference fields; it has fake-binary and installed-layout dirty coverage and is wired into `just install`; UI rendering proof landed in S6.
 - Performance: not a release blocker unless service asset supervisor introduces startup regressions; measure startup latency if status polling/download supervision becomes heavy.
-- Missing/deferred: live sudo-backed `capsem uninstall -> just install -> capsem status` remains useful manual release evidence, but the automated full `just test` gate is green for the current branch before merging latest `origin/main`. True package update-over-existing remains deferred because binary self-update is not yet wired.
+- Missing/deferred: live sudo-backed `capsem uninstall -> just install -> capsem status` remains useful manual release evidence, but the automated full `just test` gate is green for the current branch after merging latest `origin/main`. True package update-over-existing remains deferred because binary self-update is not yet wired.
 
 ## Superseded Work To Reconcile
 
