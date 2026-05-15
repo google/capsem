@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1778855131] - 2026-05-15
+
 ### Added
 - Added a dedicated marketing FAQ page with a hypervisor-vs-container answer
   as the first FAQ.
