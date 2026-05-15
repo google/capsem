@@ -74,7 +74,10 @@ metrics sprint and documented in `opentelemetry-metrics-handoff.md`.
 PR #53 is open and mergeable, but release remains held on GitHub CI. The first
 macOS `test` lane failed before product tests because the runner resolved
 `cargo` to `rustup-init`; PR and release workflows now normalize the cargo
-proxy after Rust toolchain setup and CI must be re-run green before release.
+proxy after Rust toolchain setup. The rerun then exposed that PR install E2E
+was missing clean-checkout VM assets before `just test-install`; PR CI now
+builds the arm64 install assets explicitly before the package install gate. CI
+must be re-run green before release.
 
 S0 is in review. S0 output:
 

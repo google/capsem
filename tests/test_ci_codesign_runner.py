@@ -41,10 +41,14 @@ def test_pr_install_e2e_sets_up_asset_build_prerequisites():
     assert "astral-sh/setup-uv@v5" in install_job
     assert "uv sync" in install_job
     assert "b3sum minisign" in install_job
+    assert "dtolnay/rust-toolchain@stable" in install_job
+    assert "Normalize cargo proxy" in install_job
+    assert "bash scripts/build-assets.sh --assets-dir assets --arch arm64" in install_job
     assert install_job.index("pnpm/action-setup@v5") < install_job.index("just test-install")
     assert install_job.index("actions/setup-node@v5") < install_job.index("just test-install")
     assert install_job.index("uv sync") < install_job.index("just test-install")
     assert install_job.index("b3sum minisign") < install_job.index("just test-install")
+    assert install_job.index("bash scripts/build-assets.sh --assets-dir assets --arch arm64") < install_job.index("just test-install")
 
 
 def test_ci_rust_coverage_floor_matches_just_test_gate():

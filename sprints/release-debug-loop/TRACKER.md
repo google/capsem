@@ -14,7 +14,10 @@ and captured in `opentelemetry-metrics-handoff.md`.
 PR CI note: pull request #53 exposed a macOS runner toolchain regression where
 `cargo install cargo-audit --locked` resolved `cargo` to `rustup-init` and
 failed before product tests ran. The workflow now normalizes the cargo proxy
-after `dtolnay/rust-toolchain` in PR and release lanes, then re-runs CI.
+after `dtolnay/rust-toolchain` in PR and release lanes. The next PR CI run
+then reached real install E2E and exposed that PR install E2E was not
+materializing clean-checkout VM assets before `just test-install`; PR CI now
+builds arm64 install assets explicitly before the package install gate.
 
 S1, S2, S3, and S4 are closed for their current scope. The live sudo-backed
 `capsem uninstall -> just install -> capsem status` proof remains the final
@@ -263,6 +266,7 @@ dependencies, UI consumption, and update path.
 - 2026-05-15: Closed the S7 full release gate before merging current `origin/main`. `just test` exited 0 after audits/frontend checks, Rust coverage, Python parallel suite (`1369 passed, 70 skipped`), build-chain serial (`23 passed`), injection (`5 passed`), in-VM diagnostics (`94 passed, 2 skipped`), telemetry checks (`40 passed`), serial timing/benchmarks (`12 passed`), Linux package build, and installed-package E2E (`57 passed, 29 skipped`).
 - 2026-05-15: Merged latest `origin/main` and reconciled main's CLI/API hardening with the release-debug branch. Kept typed `capsem status --json`, removed stale test reliance on `create -n` / `rm` / `ls`, normalized `/root/...` to the workspace root for the hardened files API, and re-ran the full `just test` gate successfully: Python parallel suite (`1369 passed, 70 skipped`), build-chain serial (`23 passed`), injection (`5 passed`), in-VM diagnostics (`94 passed, 2 skipped`), telemetry checks (`40 passed`), serial timing/benchmarks (`12 passed`), Linux package build, and installed-package E2E (`57 passed, 29 skipped`).
 - 2026-05-15: Opened PR #53. The first macOS `test` CI job failed before running product tests because the runner's `cargo` proxy invoked `rustup-init` (`unexpected argument 'install'`) during `cargo install cargo-audit --locked`; `test-linux` passed. Added `scripts/ci/normalize-cargo.sh` and wired it after each Rust toolchain setup in PR and release workflows to repair broken cargo proxies without hiding product test failures.
+- 2026-05-15: The rerun cleared the cargo-proxy failure and reached real gates: `test-linux` passed, macOS `test` advanced through dependency audit/install-tools into unit coverage, and `test-install` failed in clean-checkout asset preparation with `ERROR: missing asset: assets/arm64/vmlinuz`. Added a PR CI `Build install VM assets` step (`bash scripts/build-assets.sh --assets-dir assets --arch arm64`) before `just test-install` and a static workflow regression test.
 
 ## Coverage Ledger
 
