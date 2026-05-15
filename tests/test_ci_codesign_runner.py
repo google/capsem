@@ -47,6 +47,7 @@ def test_pr_install_e2e_sets_up_asset_build_prerequisites():
     assert "b3sum minisign" in install_job
     assert "dtolnay/rust-toolchain@stable" in install_job
     assert "Normalize cargo proxy" in install_job
+    assert "Normalize cargo proxy after Python setup" in workflow
     assert "bash scripts/build-assets.sh --assets-dir assets --arch arm64" in install_job
     assert install_job.index("pnpm/action-setup@v5") < install_job.index("just test-install")
     assert install_job.index("actions/setup-node@v5") < install_job.index("just test-install")

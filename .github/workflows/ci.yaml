@@ -139,6 +139,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
 
+      - name: Normalize cargo proxy after Python setup
+        run: bash scripts/ci/normalize-cargo.sh
+
       - name: Dependency audit
         run: |
           cargo install cargo-audit --locked
