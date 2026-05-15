@@ -152,11 +152,12 @@ enum McpCommands {
 enum SessionCommands {
     /// Create and boot a new session
     ///
-    /// Sessions are ephemeral by default and destroyed on delete. Use -n <name> to
-    /// create a persistent session that survives suspend/resume cycles.
+    /// Sessions are ephemeral by default and destroyed on delete. Pass a
+    /// positional name to create a persistent session that survives
+    /// suspend/resume cycles.
     Create {
         /// Name for the session (makes it persistent -- "if you name it, you keep it")
-        #[arg(short = 'n', long)]
+        #[arg(value_name = "NAME")]
         name: Option<String>,
         /// RAM in GB
         #[arg(long, default_value_t = 4)]
@@ -168,23 +169,19 @@ enum SessionCommands {
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
         /// Clone state from an existing persistent session
-        #[arg(long, alias = "image")]
+        #[arg(long)]
         from: Option<String>,
     },
     /// Open an interactive shell in a session
     ///
     /// With no arguments, creates a temporary session (destroyed on exit).
-    /// Pass a session name/ID or --name to attach to an existing running session.
+    /// Pass a session name/ID to attach to an existing running session.
     Shell {
-        /// Find by name (for persistent sessions)
-        #[arg(short = 'n', long)]
-        name: Option<String>,
         /// Name or ID of the session (positional)
         #[arg(value_name = "SESSION")]
         session: Option<String>,
     },
     /// Resume a suspended session or attach to a running one
-    #[command(alias = "attach")]
     Resume {
         /// Name of the persistent session
         name: String,
@@ -246,7 +243,6 @@ enum SessionCommands {
         dst: String,
     },
     /// List all sessions (running + suspended persistent)
-    #[command(alias = "ls")]
     List {
         /// Print only IDs, one per line (for scripting)
         #[arg(short, long)]
@@ -273,7 +269,6 @@ enum SessionCommands {
         tail: Option<usize>,
     },
     /// Delete a session and all its state
-    #[command(alias = "rm")]
     Delete {
         /// Name or ID of the session
         #[arg(value_name = "SESSION")]
@@ -556,7 +551,7 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
 
     let stream = tokio::net::UnixStream::connect(&sock_path)
         .await
-        .context("failed to connect to sandbox")?;
+        .context("failed to connect to VM session")?;
     let mut std_stream = stream.into_std()?;
     capsem_core::ipc_handshake::negotiate_initiator(
         &mut std_stream,
@@ -977,18 +972,15 @@ async fn main() -> Result<()> {
             resp.into_result()?;
             println!("Session suspended.");
         }
-        Commands::Session(SessionCommands::Shell { name, session }) => {
-            let target = name.as_ref().or(session.as_ref());
-            match target {
+        Commands::Session(SessionCommands::Shell { session }) => {
+            match session {
                 Some(t) => {
-                    client::validate_id(t)?;
-                    run_shell(t, &run_dir).await?;
+                    client::validate_id(t.as_str())?;
+                    run_shell(t.as_str(), &run_dir).await?;
                 }
                 None => {
                     // No args: create ephemeral session, attach, destroy on exit
-                    println!(
-                        "[!] Temporary session. Use `capsem create -n <name>` for persistent."
-                    );
+                    println!("[!] Temporary session. Use `capsem create <name>` for persistent.");
                     let req = ProvisionRequest {
                         name: None,
                         ram_mb: 4 * 1024,
@@ -1078,7 +1070,7 @@ async fn main() -> Result<()> {
                 if defunct > 0 {
                     println!();
                     println!(
-                        "{} defunct sandbox(es). Run `capsem logs <name>` to debug.",
+                        "{} defunct session(s). Run `capsem logs <name>` to debug.",
                         defunct
                     );
                 }
@@ -1808,7 +1800,7 @@ mod tests {
 
     #[test]
     fn parse_create_with_name() {
-        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
+        let cli = Cli::parse_from(["capsem", "create", "my-vm"]);
         match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { name, ram, cpu, .. }) => {
                 assert_eq!(name, Some("my-vm".into()));
@@ -1852,12 +1844,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_attach_alias_for_resume() {
-        let cli = Cli::parse_from(["capsem", "attach", "mydev"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
-            _ => panic!("expected Resume via attach alias"),
-        }
+    fn parse_attach_alias_rejected() {
+        let cli = Cli::try_parse_from(["capsem", "attach", "mydev"]);
+        assert!(cli.is_err(), "attach alias should be rejected");
     }
 
     #[test]
@@ -1875,24 +1864,17 @@ mod tests {
     fn parse_shell_positional() {
         let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { session, name }) => {
+            Commands::Session(SessionCommands::Shell { session }) => {
                 assert_eq!(session, Some("my-vm".into()));
-                assert_eq!(name, None);
             }
             _ => panic!("expected Shell"),
         }
     }
 
     #[test]
-    fn parse_shell_by_name() {
-        let cli = Cli::parse_from(["capsem", "shell", "-n", "mydev"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { name, session }) => {
-                assert_eq!(name, Some("mydev".into()));
-                assert_eq!(session, None);
-            }
-            _ => panic!("expected Shell"),
-        }
+    fn parse_shell_with_name_flag_rejected() {
+        let cli = Cli::try_parse_from(["capsem", "shell", "-n", "mydev"]);
+        assert!(cli.is_err(), "shell -n should be rejected");
     }
 
     #[test]
@@ -1900,8 +1882,7 @@ mod tests {
         // Bare `capsem shell` = temp session + auto-destroy
         let cli = Cli::parse_from(["capsem", "shell"]);
         match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { name, session }) => {
-                assert_eq!(name, None);
+            Commands::Session(SessionCommands::Shell { session }) => {
                 assert_eq!(session, None);
             }
             _ => panic!("expected Shell"),
@@ -2021,6 +2002,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_ls_alias_rejected() {
+        let cli = Cli::try_parse_from(["capsem", "ls"]);
+        assert!(cli.is_err(), "ls alias should be rejected");
+    }
+
+    #[test]
     fn parse_status() {
         // `capsem status` is now the service status command
         let cli = Cli::parse_from(["capsem", "status"]);
@@ -2106,6 +2093,12 @@ mod tests {
             Commands::Session(SessionCommands::Delete { session }) => assert_eq!(session, "vm-123"),
             _ => panic!("expected Delete"),
         }
+    }
+
+    #[test]
+    fn parse_rm_alias_rejected() {
+        let cli = Cli::try_parse_from(["capsem", "rm", "vm-123"]);
+        assert!(cli.is_err(), "rm alias should be rejected");
     }
 
     #[test]
@@ -2468,20 +2461,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_create_with_from_image_alias() {
-        // --image is a backward-compat alias for --from
-        let cli = Cli::parse_from(["capsem", "create", "--image", "old-img"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { from, .. }) => {
-                assert_eq!(from, Some("old-img".into()));
-            }
-            _ => panic!("expected Create with --image alias"),
-        }
+    fn parse_create_with_image_alias_rejected() {
+        let cli = Cli::try_parse_from(["capsem", "create", "--image", "old-img"]);
+        assert!(cli.is_err(), "--image alias should be rejected");
     }
 
     #[test]
     fn parse_create_with_name_and_from() {
-        let cli = Cli::parse_from(["capsem", "create", "-n", "my-session", "--from", "my-src"]);
+        let cli = Cli::parse_from(["capsem", "create", "my-session", "--from", "my-src"]);
         match cli.command.unwrap() {
             Commands::Session(SessionCommands::Create { name, from, .. }) => {
                 assert_eq!(name, Some("my-session".into()));
@@ -2489,5 +2476,11 @@ mod tests {
             }
             _ => panic!("expected Create with name and --from"),
         }
+    }
+
+    #[test]
+    fn parse_create_with_name_flag_rejected() {
+        let cli = Cli::try_parse_from(["capsem", "create", "-n", "my-vm"]);
+        assert!(cli.is_err(), "create -n should be rejected");
     }
 }

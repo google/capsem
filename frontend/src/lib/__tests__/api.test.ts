@@ -54,6 +54,16 @@ function textResponse(text: string, status = 200) {
   });
 }
 
+function blobResponse(text: string, status = 200, contentType = 'text/plain') {
+  const blob = new Blob([text], { type: contentType });
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    blob: () => Promise.resolve(blob),
+    text: () => Promise.resolve(text),
+  });
+}
+
 describe('api', () => {
   beforeEach(() => {
     mockFetch.mockReset();
@@ -222,20 +232,22 @@ describe('api', () => {
       expect(result.exit_code).toBe(0);
     });
 
-    it('readFile sends POST /read_file/{id}', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ content: 'file contents' }));
+    it('readFile sends GET /files/{id}/content', async () => {
+      mockFetch.mockReturnValueOnce(blobResponse('file contents'));
       const result = await api.readFile('vm-1', '/etc/hosts');
       expect(result.content).toBe('file contents');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/files/vm-1/content?path=etc%2Fhosts');
+      expect(call[1].method).toBeUndefined();
     });
 
-    it('writeFile sends POST /write_file/{id}', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
+    it('writeFile sends POST /files/{id}/content', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ success: true, size: 4 }));
       await api.writeFile('vm-1', '/tmp/test', 'data');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/write_file/vm-1');
-      const body = JSON.parse(call[1].body);
-      expect(body.path).toBe('/tmp/test');
-      expect(body.content).toBe('data');
+      expect(call[0]).toContain('/files/vm-1/content?path=tmp%2Ftest');
+      expect(call[1].method).toBe('POST');
+      expect(call[1].headers['Content-Type']).toBe('application/octet-stream');
     });
 
     it('inspectQuery sends POST /inspect/{id}', async () => {

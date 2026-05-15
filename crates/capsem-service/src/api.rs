@@ -273,12 +273,6 @@ pub struct ExecResponse {
     pub exit_code: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WriteFileRequest {
-    pub path: String,
-    pub content: String, // Base64 or plain text? For now let's assume plain text or base64 if we detect it.
-}
-
 // ── Files API types (host-side VirtioFS) ─────────────────────────────
 
 /// A single entry in a file listing.
@@ -307,22 +301,10 @@ pub struct FileListResponse {
 }
 
 /// Response for POST /files/{id}/content (upload).
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct UploadResponse {
     pub success: bool,
     pub size: u64,
-}
-
-// ── Legacy vsock file I/O types ──────────────────────────────────────
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ReadFileRequest {
-    pub path: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ReadFileResponse {
-    pub content: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -708,25 +690,19 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // File I/O
+    // Files API
     // -----------------------------------------------------------------------
 
     #[test]
-    fn write_file_request_roundtrip() {
-        let json = json!({"path": "/tmp/f.txt", "content": "data"});
-        let r: WriteFileRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(r.path, "/tmp/f.txt");
-        assert_eq!(r.content, "data");
-    }
-
-    #[test]
-    fn read_file_response_roundtrip() {
-        let r = ReadFileResponse {
-            content: "file contents".into(),
+    fn upload_response_roundtrip() {
+        let r = UploadResponse {
+            success: true,
+            size: 4,
         };
         let json = serde_json::to_string(&r).unwrap();
-        let r2: ReadFileResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(r2.content, "file contents");
+        let r2: UploadResponse = serde_json::from_str(&json).unwrap();
+        assert!(r2.success);
+        assert_eq!(r2.size, 4);
     }
 
     // -----------------------------------------------------------------------

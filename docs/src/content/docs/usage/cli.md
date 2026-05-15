@@ -14,15 +14,15 @@ graph TD
     subgraph "Session Commands"
         CREATE["create"]
         SHELL["shell"]
-        RESUME["resume / attach"]
+        RESUME["resume"]
         SUSPEND["suspend"]
         RESTART["restart"]
         EXEC["exec"]
         RUN["run"]
-        LIST["list / ls"]
+        LIST["list"]
         INFO["info"]
         LOGS["logs"]
-        DELETE["delete / rm"]
+        DELETE["delete"]
         FORK["fork"]
         PERSIST["persist"]
         PURGE["purge"]
@@ -49,23 +49,23 @@ graph TD
 
 ### create
 
-Create and boot a new session. Sessions are ephemeral by default. Use `-n <name>` to make it persistent.
+Create and boot a new session. Sessions are ephemeral by default. Pass a positional name to make it persistent.
 
 ```sh
 capsem create                          # ephemeral session
-capsem create -n mybox                 # persistent session
-capsem create -n mybox --ram 8 --cpu 4 # custom resources
+capsem create mybox                    # persistent session
+capsem create mybox --ram 8 --cpu 4    # custom resources
 capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-n, --name <NAME>` | -- | Name for the session (makes it persistent) |
+| `[NAME]` | -- | Name for the session (makes it persistent) |
 | `--ram <GB>` | 4 | RAM in GB |
 | `--cpu <CORES>` | 4 | CPU cores |
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable) |
-| `--from <NAME>` | -- | Clone state from existing persistent session (alias: `--image`) |
+| `--from <NAME>` | -- | Clone state from existing persistent session |
 
 ### shell
 
@@ -74,13 +74,11 @@ Open an interactive shell. With no arguments, creates a temporary session that i
 ```sh
 capsem shell              # temp session (destroyed on exit)
 capsem shell mybox        # attach to existing session
-capsem shell -n mybox     # find by name
 capsem shell abc123       # find by ID
 ```
 
-| Flag | Description |
-|------|-------------|
-| `-n, --name <NAME>` | Find by name (persistent sessions) |
+| Arg | Description |
+|-----|-------------|
 | `[SESSION]` | Name or ID of an existing session |
 
 ### resume
@@ -89,7 +87,6 @@ Resume a suspended session or attach to a running one.
 
 ```sh
 capsem resume mybox
-capsem attach mybox       # alias
 ```
 
 | Arg | Description |
@@ -157,7 +154,6 @@ List all sessions (running + suspended persistent).
 
 ```sh
 capsem list
-capsem ls                 # alias
 capsem list -q            # IDs only (for scripting)
 ```
 
@@ -203,7 +199,6 @@ Delete a session and all its state permanently.
 
 ```sh
 capsem delete mybox
-capsem rm mybox           # alias
 ```
 
 | Arg | Description |
@@ -347,7 +342,7 @@ stateDiagram-v2
 | Concept | Description |
 |---------|-------------|
 | **Ephemeral** | Default. Destroyed on delete. Created by `create` (no name) or `shell` (no args) |
-| **Persistent** | Survives suspend/resume. Created by `create -n <name>` or `persist` |
+| **Persistent** | Survives suspend/resume. Created by `create <name>` or `persist` |
 | **Suspended** | RAM + CPU state saved to disk. Resume with `resume` |
 | **Forked** | Point-in-time copy. Use as template with `create --from` |
 

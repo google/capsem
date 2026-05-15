@@ -33,7 +33,12 @@ pub fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
             prev_slash = false;
         }
     }
-    let trimmed = collapsed.trim_start_matches('/');
+    let workspace_alias = if let Some(rest) = collapsed.strip_prefix("/root/") {
+        rest
+    } else {
+        collapsed.as_str()
+    };
+    let trimmed = workspace_alias.trim_start_matches('/');
     if trimmed.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -140,6 +145,18 @@ mod tests {
     fn sanitize_strips_leading_slash() {
         let result = sanitize_file_path("/foo/bar");
         assert_eq!(result.unwrap(), "foo/bar");
+    }
+
+    #[test]
+    fn sanitize_maps_absolute_guest_root_to_workspace_root() {
+        let result = sanitize_file_path("/root/foo/bar.txt");
+        assert_eq!(result.unwrap(), "foo/bar.txt");
+    }
+
+    #[test]
+    fn sanitize_preserves_relative_root_directory() {
+        let result = sanitize_file_path("root/foo/bar.txt");
+        assert_eq!(result.unwrap(), "root/foo/bar.txt");
     }
 
     #[test]

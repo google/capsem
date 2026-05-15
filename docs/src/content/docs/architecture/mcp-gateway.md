@@ -70,8 +70,8 @@ sequenceDiagram
 | `capsem_info` | VM details (ID, PID, status, persistent) | `GET /info/{id}` |
 | `capsem_exec` | Run shell command inside VM (timeout param) | `POST /exec/{id}` |
 | `capsem_run` | One-shot: provision + exec + destroy | `POST /run` |
-| `capsem_read_file` | Read file from guest filesystem | `GET /read_file/{id}` |
-| `capsem_write_file` | Write file to guest filesystem | `POST /write_file/{id}` |
+| `capsem_read_file` | Read file from VM workspace | `GET /files/{id}/content?path=<relpath>` |
+| `capsem_write_file` | Write file to VM workspace | `POST /files/{id}/content?path=<relpath>` |
 | `capsem_stop` | Stop VM (persistent: preserve, ephemeral: destroy) | `POST /stop/{id}` |
 | `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /suspend/{id}` |
 | `capsem_resume` | Resume stopped persistent VM | `POST /resume/{name}` |

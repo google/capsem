@@ -145,18 +145,8 @@ export interface InspectResponse {
   rows: Record<string, string | number | null>[];
 }
 
-// POST /read_file/{id}
-export interface ReadFileRequest {
-  path: string;
-}
-
+// Compatibility shape used by api.readFile(), now backed by GET /files/{id}/content.
 export interface ReadFileResponse {
-  content: string;
-}
-
-// POST /write_file/{id}
-export interface WriteFileRequest {
-  path: string;
   content: string;
 }
 

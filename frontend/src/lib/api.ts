@@ -337,12 +337,12 @@ export async function inspectQuery(id: string, sql: string): Promise<InspectResp
 }
 
 export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
-  const resp = await _post(`/read_file/${encodeURIComponent(id)}`, { path });
-  return await resp.json();
+  const result = await getFileContent(id, path);
+  return { content: result.text };
 }
 
 export async function writeFile(id: string, path: string, content: string): Promise<void> {
-  await _post(`/write_file/${encodeURIComponent(id)}`, { path, content });
+  await uploadFile(id, path, content);
 }
 
 // -- Config --

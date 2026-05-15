@@ -28,6 +28,7 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -60,6 +61,7 @@ MOCK_VMS = {
         "version": "0.16.1",
     },
 }
+MOCK_FILES = {}
 
 
 class MockServiceHandler(BaseHTTPRequestHandler):
@@ -92,6 +94,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         self._send_json({"error": msg}, status=status)
 
     def do_GET(self):
+        parsed = urlparse(self.clean_path)
         if self.clean_path == "/list" or self.clean_path.startswith("/list?"):
             sandboxes = []
             for vm in MOCK_VMS.values():
@@ -118,11 +121,30 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 self._send_error(404, f"sandbox {vm_id} not found")
         elif self.clean_path.startswith("/logs/"):
             self._send_json({"logs": "mock boot log\n", "serial_logs": None, "process_logs": None})
+        elif parsed.path.startswith("/files/") and parsed.path.endswith("/content"):
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) >= 3:
+                vm_id = parts[1]
+                query = parse_qs(parsed.query)
+                rel_path = query.get("path", [""])[0]
+                key = (vm_id, rel_path)
+                if key not in MOCK_FILES:
+                    self._send_error(404, "file not found")
+                    return
+                data = MOCK_FILES[key]
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self._send_error(404, f"unknown endpoint: {self.clean_path}")
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
     def do_POST(self):
         body = self._read_body()
+        parsed = urlparse(self.clean_path)
         if self.clean_path == "/provision":
             data = json.loads(body) if body else {}
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
@@ -133,10 +155,16 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_json({"stdout": f"mock: {cmd}\n", "stderr": "", "exit_code": 0})
         elif self.clean_path.startswith("/stop/"):
             self._send_json({"ok": True})
-        elif self.clean_path.startswith("/write_file/"):
-            self._send_json({"success": True})
-        elif self.clean_path.startswith("/read_file/"):
-            self._send_json({"content": "mock file content"})
+        elif parsed.path.startswith("/files/") and parsed.path.endswith("/content"):
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) >= 3:
+                vm_id = parts[1]
+                query = parse_qs(parsed.query)
+                rel_path = query.get("path", [""])[0]
+                MOCK_FILES[(vm_id, rel_path)] = body
+                self._send_json({"success": True, "size": len(body)})
+            else:
+                self._send_error(404, f"unknown endpoint: {self.clean_path}")
         elif self.clean_path.startswith("/inspect/"):
             self._send_json({"columns": [], "rows": []})
         elif self.clean_path.startswith("/persist/"):

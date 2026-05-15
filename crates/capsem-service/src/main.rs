@@ -2828,106 +2828,6 @@ async fn handle_exec(
     }
 }
 
-async fn handle_write_file(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<WriteFileRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let uds_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.uds_path.clone()
-    };
-
-    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let id_val = state.next_job_id();
-    let data = payload.content.into_bytes();
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::WriteFile {
-            id: id_val,
-            path: payload.path,
-            data,
-        },
-        Some(30),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    match res {
-        ProcessToService::WriteFileResult { success, error, .. } => {
-            if success {
-                Ok(Json(json!({ "success": true })))
-            } else {
-                Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error.unwrap_or_else(|| "unknown write error".into()),
-                ))
-            }
-        }
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for write_file".to_string(),
-        )),
-    }
-}
-
-async fn handle_read_file(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<ReadFileRequest>,
-) -> Result<Json<ReadFileResponse>, AppError> {
-    let path = &payload.path;
-    let uds_path = {
-        let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
-        i.uds_path.clone()
-    };
-
-    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let id_val = state.next_job_id();
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::ReadFile {
-            id: id_val,
-            path: path.clone(),
-        },
-        Some(30),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    match res {
-        ProcessToService::ReadFileResult { data, error, .. } => {
-            if let Some(d) = data {
-                Ok(Json(ReadFileResponse {
-                    content: String::from_utf8(d)
-                        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-                }))
-            } else {
-                Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error.unwrap_or_else(|| "unknown read error".into()),
-                ))
-            }
-        }
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for read_file".to_string(),
-        )),
-    }
-}
-
 async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
@@ -5208,8 +5108,6 @@ async fn main() -> Result<()> {
         .route("/logs/{id}", get(handle_logs))
         .route("/inspect/{id}", post(handle_inspect))
         .route("/exec/{id}", post(handle_exec))
-        .route("/write_file/{id}", post(handle_write_file))
-        .route("/read_file/{id}", post(handle_read_file))
         .route("/stop/{id}", post(handle_stop))
         .route("/suspend/{id}", post(handle_suspend))
         .route("/delete/{id}", delete(handle_delete))

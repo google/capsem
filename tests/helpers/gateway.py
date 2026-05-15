@@ -12,6 +12,7 @@ import tempfile
 import time
 
 from pathlib import Path
+from urllib.parse import quote
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
@@ -213,3 +214,74 @@ class TcpHttpClient:
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return int(result.stdout.strip()) if result.stdout.strip() else 0
+
+    @staticmethod
+    def _sanitize_path(raw):
+        raw = str(raw)
+        if raw.startswith("/root/"):
+            raw = raw[len("/root/"):]
+        cleaned = "".join(
+            ch for ch in raw
+            if ch.isascii() and (ch.isalnum() or ch in "._-/")
+        )
+        while "//" in cleaned:
+            cleaned = cleaned.replace("//", "/")
+        cleaned = cleaned.lstrip("/")
+        if not cleaned:
+            raise ValueError("empty path after sanitization")
+        if ".." in cleaned:
+            raise ValueError("path traversal rejected")
+        return cleaned
+
+    @classmethod
+    def _files_content_path(cls, vm_id, path):
+        sanitized = cls._sanitize_path(path)
+        encoded = quote(sanitized, safe="")
+        return f"/files/{vm_id}/content?path={encoded}"
+
+    def write_file(self, vm_id, path, content, timeout=60):
+        endpoint = self._files_content_path(vm_id, path)
+        data = content.encode("utf-8") if isinstance(content, str) else bytes(content)
+        cmd = [
+            "curl", "-s", "-S",
+            "-X", "POST",
+            "-H", f"Authorization: Bearer {self.token}",
+            "-H", "Content-Type: application/octet-stream",
+            "--max-time", str(timeout),
+            "--data-binary", "@-",
+            f"{self.base_url}{endpoint}",
+        ]
+        result = subprocess.run(cmd, input=data, capture_output=True, timeout=timeout + 5)
+        if result.returncode != 0:
+            raise ConnectionError(f"curl failed (rc={result.returncode}): {result.stderr.decode(errors='replace')}")
+        if not result.stdout.strip():
+            return None
+        return json.loads(result.stdout)
+
+    def read_file(self, vm_id, path, timeout=60):
+        endpoint = self._files_content_path(vm_id, path)
+        cmd = [
+            "curl", "-s", "-S", "-o", "-", "-w", "\n__STATUS__%{http_code}",
+            "--max-time", str(timeout),
+            "-H", f"Authorization: Bearer {self.token}",
+            f"{self.base_url}{endpoint}",
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout + 5)
+        if result.returncode != 0:
+            raise ConnectionError(f"curl failed (rc={result.returncode}): {result.stderr.decode(errors='replace')}")
+        raw = result.stdout
+        sep = b"\n__STATUS__"
+        idx = raw.rfind(sep)
+        if idx == -1:
+            return None
+        status = int(raw[idx + len(sep):].decode(errors="replace"))
+        body = raw[:idx]
+        if 200 <= status < 300:
+            return {"content": body.decode("utf-8", errors="replace")}
+        try:
+            parsed = json.loads(body.decode("utf-8", errors="replace"))
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        return {"error": body.decode("utf-8", errors="replace")}
