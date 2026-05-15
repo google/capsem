@@ -27,7 +27,7 @@
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
 #   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
 #                       (hard clean + native package install + status capture + guest DNS/HTTPS gate)
-#   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
+#   cut-release      -> test + _stamp-version (commits changelog and creates a local tag)
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
 # First-time setup:
@@ -38,7 +38,7 @@
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
 # Local install:      just install       (hard clean + native package install + status/VM network gate)
-# Releases:           just cut-release   (test + bump, tag, push, CI)
+# Releases:           just cut-release   (test + bump + local tag; push main/tag manually)
 # Dep maintenance:    just update-deps   (cargo update + pnpm update)
 #                     just update-prices (refresh genai-prices.json)
 #                     just update-fixture <src> (rebuild test.db fixture)
@@ -1155,8 +1155,10 @@ release tag="":
     echo "=== Release $TAG published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
-# Stamp version, commit, tag, push, and wait for CI to publish.
-# Runs test first (all validation gates) to avoid burning tags on issues only CI would catch.
+# Stamp version, commit, and tag locally.
+# Runs test first (all validation gates) before creating the local tag.
+# Prepare a release commit and local immutable tag. Push main + tag manually,
+# then use `just release <tag>` to watch the tag-triggered release workflow.
 cut-release: test _stamp-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1168,13 +1170,17 @@ cut-release: test _stamp-version
     sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
     # Extract latest release notes for the frontend boot screen
     uv run python3 scripts/extract-release-notes.py
-    # Commit, tag, push
+    # Commit and tag locally. The actual push is deliberate/manual so the
+    # release commit and immutable tag are visible before CI starts publishing.
     git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md LATEST_RELEASE.md
     git commit -m "release: v${NEW}"
     git tag "$TAG"
-    git push origin main "$TAG"
-    echo "Tag $TAG pushed. Waiting for CI..."
-    just release "$TAG"
+    echo "Release commit and local tag created: $TAG"
+    echo ""
+    echo "Manual publish commands:"
+    echo "  git push origin HEAD:main"
+    echo "  git push origin $TAG"
+    echo "  just release $TAG"
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install

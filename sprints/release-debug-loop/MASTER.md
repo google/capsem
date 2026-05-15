@@ -77,7 +77,14 @@ macOS `test` lane failed before product tests because the runner resolved
 proxy after Rust toolchain setup. The rerun then exposed that PR install E2E
 was missing clean-checkout VM assets before `just test-install`; PR CI now
 builds the arm64 install assets explicitly before the package install gate. CI
-must be re-run green before release.
+then proved install E2E itself passed (`57 passed, 29 skipped`) but hit a
+host-side `actions/setup-node` pnpm-cache post-job failure; the Docker-based
+install lane now disables that unnecessary host cache. CI must be re-run green
+before release.
+
+Release publication is also now explicit/manual: `just cut-release` creates the
+release commit and local tag only; pushing `main`, pushing `vX.Y.Z`, and running
+`just release vX.Y.Z` are separate deliberate release-control steps.
 
 S0 is in review. S0 output:
 

@@ -495,3 +495,20 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     assert 'python3 scripts/create_hash_assets.py "$ASSETS_DIR"' in prep_script
     assert 'bash scripts/sync-dev-assets.sh "$ASSETS_DIR" "$ASSETS_DIR"' in prep_script
     assert 'bash scripts/verify-local-manifest-signature.sh "$ASSETS_DIR" config/manifest-sign.pub' in prep_script
+
+
+def test_cut_release_prepares_local_tag_without_pushing():
+    """Release push/tag publication is a deliberate manual step."""
+    justfile = (REPO_ROOT / "justfile").read_text()
+    cut_release = re.search(
+        r"(?ms)^cut-release: test _stamp-version\n(?P<body>.*?)(?=^# Check dev tools)",
+        justfile,
+    )
+    assert cut_release, "cut-release recipe missing"
+    body = cut_release.group("body")
+
+    assert 'git tag "$TAG"' in body
+    assert 'git push origin main "$TAG"' not in body
+    assert 'git push origin HEAD:main' in body
+    assert 'git push origin $TAG' in body
+    assert 'just release $TAG' in body

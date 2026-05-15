@@ -37,7 +37,11 @@ def test_pr_install_e2e_sets_up_asset_build_prerequisites():
     assert "pnpm/action-setup@v5" in install_job
     assert "actions/setup-node@v5" in install_job
     assert "node-version: 24" in install_job
-    assert "cache-dependency-path: frontend/pnpm-lock.yaml" in install_job
+    node_section = install_job.split("actions/setup-node@v5", 1)[1].split(
+        "astral-sh/setup-uv@v5", 1
+    )[0]
+    assert "cache: pnpm" not in node_section
+    assert "cache-dependency-path: frontend/pnpm-lock.yaml" not in node_section
     assert "astral-sh/setup-uv@v5" in install_job
     assert "uv sync" in install_job
     assert "b3sum minisign" in install_job

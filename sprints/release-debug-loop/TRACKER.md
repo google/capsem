@@ -19,6 +19,10 @@ then reached real install E2E and exposed that PR install E2E was not
 materializing clean-checkout VM assets before `just test-install`; PR CI now
 builds arm64 install assets explicitly before the package install gate.
 
+Release tagging note: `just cut-release` now prepares the release commit and
+local tag only. Publishing is a manual `git push origin HEAD:main`, then
+`git push origin vX.Y.Z`, then `just release vX.Y.Z` to watch CI.
+
 S1, S2, S3, and S4 are closed for their current scope. The live sudo-backed
 `capsem uninstall -> just install -> capsem status` proof remains the final
 meta-sprint gate, not a local-unit substitute.
@@ -267,6 +271,8 @@ dependencies, UI consumption, and update path.
 - 2026-05-15: Merged latest `origin/main` and reconciled main's CLI/API hardening with the release-debug branch. Kept typed `capsem status --json`, removed stale test reliance on `create -n` / `rm` / `ls`, normalized `/root/...` to the workspace root for the hardened files API, and re-ran the full `just test` gate successfully: Python parallel suite (`1369 passed, 70 skipped`), build-chain serial (`23 passed`), injection (`5 passed`), in-VM diagnostics (`94 passed, 2 skipped`), telemetry checks (`40 passed`), serial timing/benchmarks (`12 passed`), Linux package build, and installed-package E2E (`57 passed, 29 skipped`).
 - 2026-05-15: Opened PR #53. The first macOS `test` CI job failed before running product tests because the runner's `cargo` proxy invoked `rustup-init` (`unexpected argument 'install'`) during `cargo install cargo-audit --locked`; `test-linux` passed. Added `scripts/ci/normalize-cargo.sh` and wired it after each Rust toolchain setup in PR and release workflows to repair broken cargo proxies without hiding product test failures.
 - 2026-05-15: The rerun cleared the cargo-proxy failure and reached real gates: `test-linux` passed, macOS `test` advanced through dependency audit/install-tools into unit coverage, and `test-install` failed in clean-checkout asset preparation with `ERROR: missing asset: assets/arm64/vmlinuz`. Added a PR CI `Build install VM assets` step (`bash scripts/build-assets.sh --assets-dir assets --arch arm64`) before `just test-install` and a static workflow regression test.
+- 2026-05-15: The next `test-install` run built assets, built the package, and passed install E2E (`57 passed, 29 skipped`), but the job stayed red because `actions/setup-node@v5` failed during post-job pnpm cache save. Removed host pnpm caching from the Docker-based install lane; the lane does not need host node cache because frontend/package work runs inside the install-test container.
+- 2026-05-15: Updated release documentation and `just cut-release` to make tag publication manual. `cut-release` now runs the release prep and creates a local tag, then prints the required manual push/watch commands; `tests/test_release_workflow_policy.py::test_cut_release_prepares_local_tag_without_pushing` locks that behavior.
 
 ## Coverage Ledger
 

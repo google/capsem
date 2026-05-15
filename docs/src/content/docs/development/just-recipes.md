@@ -118,9 +118,18 @@ changes rootfs packages or image build inputs. Day-to-day, `just shell` and
 
 | Recipe | What it does |
 |--------|-------------|
-| `just cut-release` | Run tests, bump version, stamp changelog, tag, push, wait for CI |
+| `just cut-release` | Run tests, bump version, stamp changelog, commit, and create a local release tag |
 | `just release [tag]` | Wait for CI to build + publish an existing tag |
 | `just install` | Build release package and install locally |
+
+`just cut-release` intentionally does not push. After inspecting the generated
+release commit and local tag, publish deliberately:
+
+```bash
+git push origin HEAD:main
+git push origin vX.Y.Z
+just release vX.Y.Z
+```
 
 ## Cleanup
 
