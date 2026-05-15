@@ -269,26 +269,6 @@ def test_install_e2e_downloads_built_assets_before_running_recipe():
     assert "minisign" in body
 
 
-def test_linux_app_manifest_signing_installs_minisign_before_use():
-    """Linux app builds must install minisign before signing manifests."""
-    text = _workflow_text()
-    build_linux = re.search(
-        r"(?ms)^  build-app-linux:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
-        text,
-    )
-    assert build_linux, "build-app-linux job missing"
-    sign_step = re.search(
-        r"(?ms)- name: Sign package payload manifest\n(?P<body>.*?)(?=\n      - name:|\n      - uses:|\Z)",
-        build_linux.group("body"),
-    )
-    assert sign_step, "Linux package manifest signing step missing"
-    body = sign_step.group("body")
-
-    assert "apt-get install" in body
-    assert "minisign" in body
-    assert body.index("apt-get install") < body.index("minisign -S")
-
-
 def test_policy_hook_openapi_artifact_is_tracked_and_valid():
     """Clean checkouts must include the checked-in Policy Hook OpenAPI spec."""
     artifact = REPO_ROOT / "config" / "policy-hook-openapi.json"
@@ -397,6 +377,101 @@ def test_local_cross_compile_validates_one_fresh_deb_artifact():
     assert 'dpkg -i \\"\\$DEB\\"' in body
 
 
+def _just_install_body() -> str:
+    justfile = (REPO_ROOT / "justfile").read_text()
+    install = re.search(
+        r"(?ms)^install:.*?(?=^# Run install e2e tests in Docker)",
+        justfile,
+    )
+    assert install, "install recipe missing"
+    return install.group(0)
+
+
+def test_local_install_removes_old_runtime_before_installing_package():
+    """`just install` must prove the old runtime is gone before reinstalling."""
+    body = _just_install_body()
+
+    assert 'echo "=== Clean uninstalling existing local Capsem ==="' in body
+    assert 'CAPSEM_SETTINGS_BACKUP="$(mktemp -d' in body
+    for setting in ("user.toml", "corp.toml", "corp-source.json"):
+        assert setting in body
+    assert '"$HOME/.capsem/bin/capsem" uninstall --yes' in body
+    assert '"$ROOT/target/release/capsem" uninstall --yes' in body
+    assert "assert_clean_uninstall" in body
+    assert 'LaunchAgent still exists after uninstall' in body
+    assert 'runtime bin dir still exists after uninstall' in body
+    assert 'runtime run-state still exists after uninstall' in body
+    assert '! -name persistent' in body
+    assert '! -name persistent_registry.json' in body
+
+    clean_pos = body.index("=== Clean uninstalling existing local Capsem ===")
+    assert_pos = body.index("\n    assert_clean_uninstall", clean_pos)
+    mac_install_pos = body.index('sudo installer -pkg "$PKG" -target /')
+    linux_install_pos = body.index('sudo apt install -y "$DEB"')
+    assert clean_pos < assert_pos < mac_install_pos
+    assert clean_pos < assert_pos < linux_install_pos
+
+
+def test_local_install_uses_same_native_install_commands_as_install_sh():
+    """The local installer path should match what users run from install.sh."""
+    body = _just_install_body()
+    install_sh = (REPO_ROOT / "site" / "public" / "install.sh").read_text()
+
+    assert 'sudo installer -pkg "$PKG_PATH" -target /' in install_sh
+    assert 'sudo installer -pkg "$PKG" -target /' in body
+    assert 'open -W "$PKG"' not in body
+
+    assert 'sudo apt install -y "$DEB_PATH"' in install_sh
+    assert 'sudo apt install -y "$DEB"' in body
+    assert "sudo dpkg -i" not in body
+
+
+def test_local_install_removes_stale_tauri_bundle_before_rebuild():
+    """Root-owned or stale app bundles must not break the repeatable install loop."""
+    body = _just_install_body()
+
+    assert 'remove_stale_path "target/release/bundle/macos/Capsem.app"' in body
+    assert 'sudo rm -rf "$path"' in body
+    assert body.index('remove_stale_path "target/release/bundle/macos/Capsem.app"') < body.index(
+        "cargo tauri build --bundles app"
+    )
+
+
+def test_local_install_verifies_fresh_install_and_guest_network():
+    """Service-only health is insufficient; the installed VM must resolve and curl."""
+    body = _just_install_body()
+
+    for binary in (
+        "capsem",
+        "capsem-service",
+        "capsem-process",
+        "capsem-mcp",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-gateway",
+        "capsem-tray",
+    ):
+        assert f'assert_executable "$HOME/.capsem/bin/{binary}"' in body
+
+    assert "WARNING: Service not responding" not in body
+    assert 'BUILT_VERSION=$("$ROOT/target/release/capsem" version)' in body
+    assert 'INSTALLED_VERSION=$("$HOME/.capsem/bin/capsem" version)' in body
+    assert 'curl -fsS --unix-socket "$HOME/.capsem/run/service.sock"' in body
+    assert 'curl -fsS "http://127.0.0.1:$GATEWAY_PORT/health"' in body
+    assert "python3 scripts/capture-install-status.py \\" in body
+    assert '--capsem-bin "$HOME/.capsem/bin/capsem"' in body
+    assert "--label just-install" in body
+    assert '"$HOME/.capsem/bin/capsem" run' in body
+    assert "getent hosts elie.net" in body
+    assert "getent hosts generativelanguage.googleapis.com" in body
+    assert "curl -fsS --connect-timeout 10 https://elie.net" in body
+
+    gateway_pos = body.index("=== Verifying gateway health ===")
+    status_pos = body.index("=== Capturing installed status ===")
+    guest_pos = body.index("=== Verifying guest DNS and HTTPS ===")
+    assert gateway_pos < status_pos < guest_pos
+
+
 def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     """Release install E2E starts from a clean checkout, so assets must be materialized."""
     justfile = (REPO_ROOT / "justfile").read_text()
@@ -407,12 +482,33 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     assert test_install, "test-install recipe missing"
     body = test_install.group("body")
 
-    assert 'just build-assets "$INSTALL_ARCH"' in body
-    assert 'b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS' in body
-    assert 'python3 scripts/gen_manifest.py "{{assets_dir}}" Cargo.toml' in body
-    assert 'python3 scripts/create_hash_assets.py "{{assets_dir}}"' in body
-    assert 'bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"' in body
-    assert 'bash scripts/verify-local-manifest-signature.sh "{{assets_dir}}" config/manifest-sign.pub' in body
+    assert 'bash scripts/prepare-install-assets.sh "{{assets_dir}}" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"' in body
     assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"' in body
     assert "uv run --group dev python -m pytest tests/capsem-install/" in body
     assert 'scripts/repack-deb.sh "$DEB" /cargo-target/debug assets' not in body
+
+    prep_script = (REPO_ROOT / "scripts" / "prepare-install-assets.sh").read_text()
+    assert "Build assets on the host first: just build-assets $INSTALL_ARCH" in prep_script
+    assert 'just build-assets "$INSTALL_ARCH"' not in prep_script
+    assert 'b3sum "$INSTALL_ARCH/vmlinuz" "$INSTALL_ARCH/initrd.img" "$INSTALL_ARCH/rootfs.squashfs" > B3SUMS' in prep_script
+    assert 'python3 scripts/gen_manifest.py "$ASSETS_DIR" "$CARGO_TOML"' in prep_script
+    assert 'python3 scripts/create_hash_assets.py "$ASSETS_DIR"' in prep_script
+    assert 'bash scripts/sync-dev-assets.sh "$ASSETS_DIR" "$ASSETS_DIR"' in prep_script
+    assert 'bash scripts/verify-local-manifest-signature.sh "$ASSETS_DIR" config/manifest-sign.pub' in prep_script
+
+
+def test_cut_release_prepares_local_tag_without_pushing():
+    """Release push/tag publication is a deliberate manual step."""
+    justfile = (REPO_ROOT / "justfile").read_text()
+    cut_release = re.search(
+        r"(?ms)^cut-release: test _stamp-version\n(?P<body>.*?)(?=^# Check dev tools)",
+        justfile,
+    )
+    assert cut_release, "cut-release recipe missing"
+    body = cut_release.group("body")
+
+    assert 'git tag "$TAG"' in body
+    assert 'git push origin main "$TAG"' not in body
+    assert 'git push origin HEAD:main' in body
+    assert 'git push origin $TAG' in body
+    assert 'just release $TAG' in body

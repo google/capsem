@@ -123,6 +123,12 @@ pub fn build_server_list_with_builtin(
                 .and_then(|s| s.parse::<u32>().ok())
                 .map(|n| n.clamp(1, 16))
                 .or(default_pool);
+            let enabled = corp_config
+                .server_enabled
+                .get("local")
+                .copied()
+                .or_else(|| user_config.server_enabled.get("local").copied())
+                .unwrap_or(true);
 
             servers.push(McpServerDef {
                 name: "local".to_string(),
@@ -132,7 +138,7 @@ pub fn build_server_list_with_builtin(
                 env: builtin_env,
                 headers: std::collections::HashMap::new(),
                 bearer_token: None,
-                enabled: true,
+                enabled,
                 source: "builtin".to_string(),
                 pool_size,
                 pool_safe_tools,

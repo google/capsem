@@ -252,7 +252,7 @@ class TestSettingMetadata:
         assert meta.action is None
         # MCP tool-specific
         assert meta.origin is None
-        # MCP server-specific (legacy)
+        # MCP server-specific
         assert meta.transport is None
         assert meta.command is None
         assert meta.url is None

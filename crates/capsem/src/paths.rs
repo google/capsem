@@ -14,8 +14,12 @@ pub fn capsem_home() -> Result<PathBuf> {
 /// Resolved paths for capsem binaries and assets.
 #[derive(Debug)]
 pub struct CapsemPaths {
+    pub cli_bin: PathBuf,
     pub service_bin: PathBuf,
     pub process_bin: PathBuf,
+    pub mcp_bin: PathBuf,
+    pub mcp_aggregator_bin: PathBuf,
+    pub mcp_builtin_bin: PathBuf,
     pub gateway_bin: PathBuf,
     pub tray_bin: PathBuf,
     pub assets_dir: PathBuf,
@@ -32,8 +36,12 @@ pub fn discover_paths() -> Result<CapsemPaths> {
         .ok_or_else(|| anyhow::anyhow!("executable path has no parent: {}", exe_path.display()))?;
 
     Ok(CapsemPaths {
+        cli_bin: bin_dir.join("capsem"),
         service_bin: bin_dir.join("capsem-service"),
         process_bin: bin_dir.join("capsem-process"),
+        mcp_bin: bin_dir.join("capsem-mcp"),
+        mcp_aggregator_bin: bin_dir.join("capsem-mcp-aggregator"),
+        mcp_builtin_bin: bin_dir.join("capsem-mcp-builtin"),
         gateway_bin: bin_dir.join("capsem-gateway"),
         tray_bin: bin_dir.join("capsem-tray"),
         assets_dir: capsem_core::paths::capsem_assets_dir(),
@@ -164,6 +172,9 @@ mod tests {
         let exe_dir = exe.parent().unwrap();
         assert_eq!(paths.service_bin.parent().unwrap(), exe_dir);
         assert_eq!(paths.process_bin.parent().unwrap(), exe_dir);
+        assert_eq!(paths.mcp_bin.parent().unwrap(), exe_dir);
+        assert_eq!(paths.mcp_aggregator_bin.parent().unwrap(), exe_dir);
+        assert_eq!(paths.mcp_builtin_bin.parent().unwrap(), exe_dir);
     }
 
     #[test]
@@ -200,12 +211,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn discover_paths_mcp_helper_bin_names() {
+        let paths = discover_paths().unwrap();
+        assert_eq!(
+            paths.mcp_bin.file_name().unwrap().to_str().unwrap(),
+            "capsem-mcp"
+        );
+        assert_eq!(
+            paths
+                .mcp_aggregator_bin
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "capsem-mcp-aggregator"
+        );
+        assert_eq!(
+            paths.mcp_builtin_bin.file_name().unwrap().to_str().unwrap(),
+            "capsem-mcp-builtin"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Installed layout contract: what simulate-install.sh produces
     // must be what discover_paths + service startup consume.
     //
     // Layout:
-    //   ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}
+    //   ~/.capsem/bin/capsem{,-service,-process,-mcp,-mcp-aggregator,-mcp-builtin,-gateway,-tray}
     //   ~/.capsem/assets/manifest.json
     //   ~/.capsem/assets/manifest.json.minisig
     //   ~/.capsem/assets/{arch}/{vmlinuz-<hash16>,initrd-<hash16>.img,rootfs-<hash16>.squashfs}

@@ -114,26 +114,89 @@
 
   let creatingTemp = $state(false);
   let actionError = $state<string | null>(null);
+  let setupRetrying = $state(false);
+  let setupRetryError = $state<string | null>(null);
 
+  let serviceReady = $derived(vmStore.serviceStatus === 'running');
   let assetsReady = $derived(vmStore.assetHealth?.ready === true);
+  let canCreateSessions = $derived(serviceReady && assetsReady);
+  let startupBlocked = $derived(!initialLoading && !canCreateSessions);
   let assetStatus = $derived.by(() => {
+    if (!serviceReady) {
+      return {
+        title: 'Capsem service is offline',
+        message: 'Start or recover the service before creating sessions.',
+        details: [] as string[],
+        showRetry: false,
+        severity: 'error' as const,
+      };
+    }
+
     if (!vmStore.assetHealth) {
       return {
         title: 'VM asset status is unknown',
         message: 'Waiting for the service to report rootfs and manifest readiness.',
+        details: [] as string[],
+        showRetry: false,
+        severity: 'warning' as const,
       };
     }
+
+    const savedVmDependencyDetails = (vmStore.assetHealth.saved_vm_dependencies ?? []).map(dep =>
+      `${dep.vm} missing ${dep.missing.join(', ')} (${dep.recovery_hint})`,
+    );
+
     if (!vmStore.assetHealth.ready) {
+      if (vmStore.assetHealth.state === 'checking') {
+        return {
+          title: 'VM assets are being checked',
+          message: 'Waiting for the service to verify rootfs and manifest readiness.',
+          details: savedVmDependencyDetails,
+          showRetry: false,
+          severity: 'warning' as const,
+        };
+      }
+      if (vmStore.assetHealth.state === 'updating') {
+        const progress = vmStore.assetHealth.progress
+          ? `Updating ${vmStore.assetHealth.progress.logical_name}.`
+          : 'Required VM assets are updating.';
+        return {
+          title: 'VM assets are updating',
+          message: progress,
+          details: savedVmDependencyDetails,
+          showRetry: false,
+          severity: 'warning' as const,
+        };
+      }
+      if (vmStore.assetHealth.state === 'error') {
+        return {
+          title: 'VM assets need attention',
+          message: vmStore.assetHealth.error ?? 'The service could not prepare required VM assets.',
+          details: savedVmDependencyDetails,
+          showRetry: vmStore.assetHealth.retryable,
+          severity: 'error' as const,
+        };
+      }
       const missing = vmStore.assetHealth.missing.length > 0
         ? `Missing: ${vmStore.assetHealth.missing.join(', ')}.`
         : 'Required VM assets are not ready.';
       return {
         title: 'VM assets are missing',
-        message: `${missing} Run capsem setup to download.`,
+        message: `${missing} The service will keep trying in the background.`,
+        details: savedVmDependencyDetails,
+        showRetry: false,
+        severity: 'warning' as const,
       };
     }
     return null;
   });
+
+  function emptySessionText(kind: 'ephemeral' | 'persistent'): string {
+    if (startupBlocked) {
+      return 'Session list unavailable until startup checks pass';
+    }
+    return kind === 'ephemeral' ? 'No ephemeral sessions' : 'No persistent sessions';
+  }
 
   function parseApiError(e: unknown): string {
     if (!(e instanceof Error)) return 'An unexpected error occurred';
@@ -166,6 +229,20 @@
       actionError = parseApiError(e);
     } finally {
       creatingTemp = false;
+    }
+  }
+
+  async function retrySetup(): Promise<void> {
+    if (setupRetrying) return;
+    setupRetrying = true;
+    setupRetryError = null;
+    try {
+      await api.retrySetup();
+      await vmStore.refresh();
+    } catch (e) {
+      setupRetryError = parseApiError(e);
+    } finally {
+      setupRetrying = false;
     }
   }
 </script>
@@ -263,7 +340,7 @@
         type="button"
         class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
         onclick={() => vmStore.showCreateModal = true}
-        disabled={creatingTemp || !assetsReady}
+        disabled={creatingTemp || !canCreateSessions}
       >
         <Plus size={16} weight="bold" />
         Customize Session...
@@ -272,7 +349,7 @@
         type="button"
         class="inline-flex items-center gap-x-2 bg-primary text-primary-foreground hover:bg-primary-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
         onclick={createTemporary}
-        disabled={creatingTemp || !assetsReady}
+        disabled={creatingTemp || !canCreateSessions}
       >
         <BracketsAngle size={16} weight="bold" />
         {creatingTemp ? 'Creating...' : 'Quick Session'}
@@ -282,13 +359,42 @@
 
   <!-- Asset health warning -->
   {#if assetStatus}
-    <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-warning/30 bg-warning/10 text-sm">
-      <Warning size={18} class="text-warning mt-0.5 shrink-0" />
+    <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg text-sm border {assetStatus.severity === 'error' ? 'border-destructive/30 bg-destructive/10' : 'border-warning/30 bg-warning/10'}">
+      <Warning size={18} class="{assetStatus.severity === 'error' ? 'text-destructive' : 'text-warning'} mt-0.5 shrink-0" />
       <div>
         <p class="font-medium text-foreground">{assetStatus.title}</p>
         <p class="text-muted-foreground-1 mt-0.5">
           {assetStatus.message}
         </p>
+        {#if assetStatus.details.length > 0}
+          <ul class="mt-2 space-y-1">
+            {#each assetStatus.details as detail}
+              <li class="text-xs text-muted-foreground">{detail}</li>
+            {/each}
+          </ul>
+        {/if}
+        <div class="mt-3 flex items-center gap-2">
+          {#if assetStatus.showRetry}
+            <button
+              type="button"
+              class="py-1 px-3 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={setupRetrying}
+              onclick={retrySetup}
+            >
+              {setupRetrying ? 'Retrying...' : 'Retry setup'}
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="py-1 px-3 text-xs font-medium rounded-lg bg-layer border border-layer-line text-layer-foreground hover:bg-layer-hover transition-colors"
+            onclick={() => vmStore.refresh()}
+          >
+            Refresh status
+          </button>
+        </div>
+        {#if setupRetryError}
+          <p class="mt-2 text-xs text-destructive">{setupRetryError}</p>
+        {/if}
       </div>
     </div>
   {/if}
@@ -321,7 +427,7 @@
     </div>
   {:else if ephemeralVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">No ephemeral sessions</p>
+      <p class="text-muted-foreground-1 text-sm">{emptySessionText('ephemeral')}</p>
     </div>
   {:else}
     {@render sessionTable(ephemeralVms)}
@@ -336,7 +442,7 @@
     </div>
   {:else if persistentVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">No persistent sessions</p>
+      <p class="text-muted-foreground-1 text-sm">{emptySessionText('persistent')}</p>
     </div>
   {:else}
     {@render sessionTable(persistentVms)}

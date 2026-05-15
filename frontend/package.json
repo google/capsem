@@ -28,10 +28,10 @@
     "@tailwindcss/vite": "^4.2.2",
     "@testing-library/svelte": "^5.3.1",
     "@vitest/coverage-v8": "4.1.4",
-    "astro": "^6.1.8",
+    "astro": "^6.1.10",
     "jsdom": "^29.1.1",
     "marked": "^18.0.2",
-    "svelte": "^5.55.2",
+    "svelte": "^5.55.7",
     "svelte-check": "^4.4.6",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
@@ -45,7 +45,8 @@
     "overrides": {
       "yaml": ">=2.8.3",
       "postcss": ">=8.5.10",
-      "fast-uri": ">=3.1.2"
+      "fast-uri": ">=3.1.2",
+      "devalue": ">=5.8.1"
     }
   }
 }

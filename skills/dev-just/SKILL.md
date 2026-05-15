@@ -40,7 +40,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just build-host-image` | Build/refresh the `capsem-host-builder` Docker image |
 | `just install` | Build release .pkg/.deb + install it locally (postinstall handles codesign, PATH, service registration) |
 | `just release [tag]` | Wait for CI to build + publish a pushed tag |
-| `just cut-release` | Run test, bump version, stamp changelog, tag, push, wait for CI |
+| `just cut-release` | Run test, bump version, stamp changelog, commit, and create a local tag |
 | `just clean` | Remove all build artifacts |
 | `just clean all` | clean + Docker prune (full reset) |
 
@@ -61,7 +61,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
 | Install / postinst / systemd flow | `just test-install` |
 | Pre-release | `just test` |
-| Ship | `just cut-release` |
+| Ship | `just cut-release`, then manually push `main` and the tag |
 
 ## Dependency chains
 

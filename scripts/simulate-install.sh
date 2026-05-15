@@ -41,12 +41,18 @@ mkdir -p "$ASSETS_DST"
 # Copy binaries
 for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
     src="$BIN_SRC/$bin"
+    dst="$INSTALL_DIR/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2
         exit 1
     fi
-    cp "$src" "$INSTALL_DIR/$bin"
-    chmod 755 "$INSTALL_DIR/$bin"
+    # Replace existing paths atomically-ish: postinst may have left these as
+    # symlinks to /usr/bin/*, and writing through those can hit ETXTBSY if a
+    # service process still has the target mapped. Unlink first so we always
+    # lay down a fresh inode in ~/.capsem/bin.
+    rm -f "$dst"
+    cp "$src" "$dst"
+    chmod 755 "$dst"
 done
 
 # Copy assets: manifest + the per-arch hash-named files. Matches the layout

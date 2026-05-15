@@ -71,6 +71,7 @@ CLI_ONLY: dict[str, str] = {
     "setup":        "first-time setup wizard",
     "update":       "self-updater",
     "doctor":       "boots a VM and runs capsem-doctor; could be MCP later",
+    "debug":        "host-side debug report generator; no MCP tool yet",
     "completions":  "shell completions generator",
     "uninstall":    "system uninstaller",
     "install":      "registers the LaunchAgent / systemd unit",

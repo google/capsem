@@ -674,6 +674,17 @@ export async function lintConfig(): Promise<ConfigIssue[]> {
   return await resp.json();
 }
 
+export type DebugReport = {
+  text: string;
+  json: unknown;
+};
+
+/** Build a redacted pasteable debug report for bug reports. */
+export async function getDebugReport(): Promise<DebugReport> {
+  const resp = await _get('/debug/report');
+  return await resp.json();
+}
+
 // -- MCP config (mutations via settings API) --
 
 /** Get MCP policy from settings. */

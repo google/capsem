@@ -25,6 +25,7 @@ use crate::status::StatusCache;
 #[derive(Parser, Debug)]
 #[command(
     name = "capsem-gateway",
+    version,
     about = "TCP-to-UDS gateway for capsem-service"
 )]
 struct Args {
@@ -67,7 +68,11 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let run_dir = capsem_core::paths::capsem_run_dir();
+    let args = Args::parse();
+    let run_dir = args
+        .run_dir
+        .clone()
+        .unwrap_or_else(capsem_core::paths::capsem_run_dir);
     let _ = std::fs::create_dir_all(&run_dir);
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-gateway",
@@ -91,16 +96,6 @@ async fn main() -> Result<()> {
             "gateway panic"
         );
     }));
-
-    let args = Args::parse();
-
-    // Resolve run_dir in priority: --run-dir, then the shared capsem_run_dir
-    // helper (CAPSEM_RUN_DIR > <capsem_home>/run). Must match capsem-service
-    // so parent and child read/write the same gateway.{token,port,pid} files.
-    let run_dir = args
-        .run_dir
-        .clone()
-        .unwrap_or_else(capsem_core::paths::capsem_run_dir);
 
     // Companion guards: refuse to run without a live parent service, and
     // refuse if another gateway already holds the singleton lock for this

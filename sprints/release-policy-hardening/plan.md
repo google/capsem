@@ -22,8 +22,8 @@ Actions release workflow, Python image builder, minisign, Docker install tests.
 
 1. T7 is the pre-sprint transfer board. Every `swarm-findings/*.md` has now
    been read, FD01-FD14 subtasks exist in `T7-active-review-followups.md`, and
-   each P0/P1 finding has an owner row in T0-T12. Keep its downstream
-   blocker checkboxes open as T8-T12 resolve or deliberately defer them.
+   each P0/P1 finding has an owner row in T0-T13. Keep its downstream
+   blocker checkboxes open as T8-T13 resolve or deliberately defer them.
 2. T0.1 manifest contract first. It decides whether package manifests are final
    release manifests or signed asset-compatibility snapshots.
 3. T1.1 release manifest metadata preservation before any T0.2 package
@@ -49,11 +49,14 @@ Actions release workflow, Python image builder, minisign, Docker install tests.
 14. T11 local release candidate gate runs only after T10 is green, then builds
     and installs the package locally with Elie + Codex sign-off.
 15. T12 CI green release landing runs only after T11 is signed off.
+16. T13 kernel/netfilter recovery gate runs immediately when full-suite
+    regression appears and must return full `just test` green before any new
+    sprint scope starts.
 
 ## Cross-Track Verification Gate
 
 - [x] `git diff --check`
-- [x] T7 pre-sprint proof: FD01-FD14 are read, owner rows exist in T0-T12, and
+- [x] T7 pre-sprint proof: FD01-FD14 are read, owner rows exist in T0-T13, and
   no P0/P1 finding remains only in a finding doc.
 - [x] `cargo test -p capsem-core asset_manager -- --nocapture`
 - [x] `cargo test -p capsem-core policy_hook -- --nocapture`
@@ -103,8 +106,12 @@ Actions release workflow, Python image builder, minisign, Docker install tests.
   sign-off remains open before T12.
 - [ ] T12 CI release proof: tag `v1.1.1778456247`, CI green, live assets verified,
   downloaded package install proof recorded.
+- [x] T13 kernel/netfilter proof: guest `iptables` tables exist, redirect rules
+  install successfully, focused network-policy/session tests pass, and full
+  `just test` is green (re-verified locally on 2026-05-14).
 - [x] Docker/systemd install e2e inside `just test` (33 passed, 31 skipped).
-- [x] Final gate: `just test` (full local suite passed on 2026-05-11).
+- [x] Final gate: `just test` (full local suite passed on 2026-05-11 and was
+  re-verified on 2026-05-14).
 
 ## T4 Docs Proof, 2026-05-10
 

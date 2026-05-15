@@ -3,6 +3,7 @@
   import { themeStore, PRELINE_THEMES, FONT_SIZES, FONT_FAMILIES, UI_FONT_SIZES } from '../../stores/theme.svelte.ts';
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
+  import { getDebugReport } from '../../api';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import SettingsSection from '../settings/SettingsSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
@@ -19,6 +20,7 @@
   import Moon from 'phosphor-svelte/lib/Moon';
   import Export from 'phosphor-svelte/lib/Export';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
+  import ClipboardText from 'phosphor-svelte/lib/ClipboardText';
 
   const appVersion = __APP_VERSION__;
 
@@ -80,6 +82,8 @@
 
   let importInput = $state<HTMLInputElement>(null!);
   let importMessage = $state<{ text: string; error: boolean } | null>(null);
+  let debugCopyBusy = $state(false);
+  let debugCopyMessage = $state<{ text: string; error: boolean } | null>(null);
 
   async function handleSave() {
     await settingsStore.save();
@@ -107,6 +111,26 @@
       importMessage = { text: String(err instanceof Error ? err.message : err), error: true };
     }
     input.value = '';
+  }
+
+  async function handleCopyDebugInfo() {
+    debugCopyBusy = true;
+    debugCopyMessage = null;
+    try {
+      const report = await getDebugReport();
+      const payload = report.json ?? report.text;
+      await navigator.clipboard.writeText(
+        typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
+      );
+      debugCopyMessage = { text: 'Copied debug report.', error: false };
+    } catch (err) {
+      debugCopyMessage = {
+        text: String(err instanceof Error ? err.message : err),
+        error: true,
+      };
+    } finally {
+      debugCopyBusy = false;
+    }
   }
 </script>
 
@@ -367,6 +391,33 @@
           <div class="flex items-center justify-between p-4">
             <p class="text-sm text-foreground">Version</p>
             <p class="text-sm text-muted-foreground-1">{appVersion}</p>
+          </div>
+        </div>
+
+        <!-- Debug report -->
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Debug</h3>
+        <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+          <div class="p-4">
+            <div class="flex items-center justify-between gap-x-4">
+              <div>
+                <p class="text-sm font-medium text-foreground">Debug report</p>
+                <p class="text-xs text-muted-foreground-1 mt-0.5">Redacted version, runtime, and asset fingerprints for bug reports</p>
+              </div>
+              <button
+                type="button"
+                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={debugCopyBusy}
+                onclick={handleCopyDebugInfo}
+              >
+                <ClipboardText size={16} />
+                {debugCopyBusy ? 'Collecting...' : 'Copy debug report'}
+              </button>
+            </div>
+            {#if debugCopyMessage}
+              <p class="text-xs mt-2 {debugCopyMessage.error ? 'text-destructive-foreground' : 'text-muted-foreground-1'}">
+                {debugCopyMessage.text}
+              </p>
+            {/if}
           </div>
         </div>
 

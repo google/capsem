@@ -245,7 +245,10 @@ fn provision_request_from_omitted_when_none() {
 
 #[test]
 fn list_response_empty_serde() {
-    let resp = ListResponse { sessions: vec![] };
+    let resp = ListResponse {
+        sessions: vec![],
+        asset_health: None,
+    };
     let json = serde_json::to_string(&resp).unwrap();
     // Wire format uses "sandboxes" key
     assert!(json.contains("sandboxes"));
@@ -308,6 +311,7 @@ fn list_response_with_entries() {
                 last_error: None,
             },
         ],
+        asset_health: None,
     };
     let json = serde_json::to_string(&resp).unwrap();
     let resp2: ListResponse = serde_json::from_str(&json).unwrap();

@@ -199,8 +199,10 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
 
-class UnixStreamServer(socketserver.UnixStreamServer):
+class UnixStreamServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     allow_reuse_address = True
+    daemon_threads = True
+    request_queue_size = 128
 
 
 class MockServiceServer:

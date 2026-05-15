@@ -28,6 +28,9 @@ jobs:
         with:
           components: llvm-tools
 
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
+
       - uses: Swatinem/rust-cache@v2
 
       # Collect KVM diagnostics only. GitHub-hosted runners don't always expose
@@ -118,6 +121,9 @@ jobs:
           targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
           components: llvm-tools
 
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
+
       - uses: Swatinem/rust-cache@v2
 
       - uses: pnpm/action-setup@v5
@@ -132,6 +138,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
+
+      - name: Normalize cargo proxy after Python setup
+        run: bash scripts/ci/normalize-cargo.sh
 
       - name: Dependency audit
         run: |
@@ -293,6 +302,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+          components: llvm-tools
+
+      - name: Normalize cargo proxy
+        run: bash scripts/ci/normalize-cargo.sh
+
       - uses: extractions/setup-just@v3
 
       - uses: pnpm/action-setup@v5
@@ -301,8 +318,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
@@ -311,6 +326,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends b3sum minisign
+
+      - name: Build install VM assets
+        run: bash scripts/build-assets.sh --assets-dir assets --arch arm64
 
       - name: Build host builder Docker image
         run: just build-host-image

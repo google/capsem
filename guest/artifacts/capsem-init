@@ -272,11 +272,31 @@ IPTABLES=iptables
 if [ -x /newroot/usr/sbin/iptables-legacy ]; then
     IPTABLES=iptables-legacy
 fi
-chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p udp --dport 53    -j REDIRECT --to-port 1053
-chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053
-chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443
-chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080
-chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080
+if ! chroot /newroot "$IPTABLES" -t nat -L OUTPUT -n >/dev/null 2>&1; then
+    echo "[capsem-init] FATAL: iptables nat table unavailable; kernel netfilter support is missing"
+    chroot /newroot "$IPTABLES" -t nat -L -n 2>&1 || true
+    exit 1
+fi
+if ! chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p udp --dport 53    -j REDIRECT --to-port 1053; then
+    echo "[capsem-init] FATAL: failed to install DNS UDP redirect (53 -> 1053)"
+    exit 1
+fi
+if ! chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053; then
+    echo "[capsem-init] FATAL: failed to install DNS TCP redirect (53 -> 1053)"
+    exit 1
+fi
+if ! chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443; then
+    echo "[capsem-init] FATAL: failed to install HTTPS redirect (443 -> 10443)"
+    exit 1
+fi
+if ! chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080; then
+    echo "[capsem-init] FATAL: failed to install HTTP redirect (80 -> 10080)"
+    exit 1
+fi
+if ! chroot /newroot "$IPTABLES" -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080; then
+    echo "[capsem-init] FATAL: failed to install Ollama redirect (11434 -> 10080)"
+    exit 1
+fi
 echo "[capsem-init] network ready"
 boot_mark "network"
 

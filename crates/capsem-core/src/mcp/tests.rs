@@ -458,6 +458,59 @@ fn build_server_list_enabled_override() {
     assert!(!s.enabled);
 }
 
+#[test]
+fn build_server_list_builtin_local_honors_enabled_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let user = McpUserConfig {
+        server_enabled: {
+            let mut m = HashMap::new();
+            m.insert("local".into(), false);
+            m
+        },
+        ..Default::default()
+    };
+    let corp = McpUserConfig::default();
+
+    let list = build_server_list_with_builtin(&user, &corp, Some(&builtin), HashMap::new());
+    let local = list.iter().find(|s| s.name == "local").unwrap();
+    assert!(
+        !local.enabled,
+        "mcp.servers.local.enabled=false must disable the built-in local MCP server"
+    );
+}
+
+#[test]
+fn build_server_list_builtin_local_corp_override_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let user = McpUserConfig {
+        server_enabled: {
+            let mut m = HashMap::new();
+            m.insert("local".into(), true);
+            m
+        },
+        ..Default::default()
+    };
+    let corp = McpUserConfig {
+        server_enabled: {
+            let mut m = HashMap::new();
+            m.insert("local".into(), false);
+            m
+        },
+        ..Default::default()
+    };
+
+    let list = build_server_list_with_builtin(&user, &corp, Some(&builtin), HashMap::new());
+    let local = list.iter().find(|s| s.name == "local").unwrap();
+    assert!(
+        !local.enabled,
+        "corp mcp.servers.local.enabled=false must override user local=true"
+    );
+}
+
 // ── original parse tests ────────────────────────────────────────
 
 #[test]

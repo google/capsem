@@ -15,8 +15,30 @@ export interface TokenResponse {
 
 export interface AssetHealth {
   ready: boolean;
+  state: 'checking' | 'updating' | 'ready' | 'error' | 'unknown';
   version?: string;
+  arch?: string;
   missing: string[];
+  progress?: AssetProgress;
+  error?: string;
+  retry_count: number;
+  retryable: boolean;
+  saved_vm_dependencies?: SavedVmAssetDependency[];
+}
+
+export interface SavedVmAssetDependency {
+  vm: string;
+  asset_version: string;
+  arch: string;
+  missing: string[];
+  recovery_hint: string;
+}
+
+export interface AssetProgress {
+  logical_name: string;
+  bytes_done: number;
+  bytes_total?: number;
+  done: boolean;
 }
 
 // GET /status

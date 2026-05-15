@@ -37,21 +37,24 @@ checkouts disagreeing about what was actually shipped.
 - Do not reuse a version string or tag name. For the `1.1.{unix_timestamp}`
   release line, choose a later timestamp and let the old tag remain historical.
 
-### Automated (preferred)
+### Prepare release commit and local tag
 
 ```bash
 just cut-release
 ```
 
-Runs `test` (all tests including integration, cross-compile, benchmarks), then bumps patch version, stamps changelog, commits, tags, pushes, waits for CI.
+Runs `test` (all tests including integration, cross-compile, benchmarks), then
+bumps the version, stamps the changelog, creates the release commit, and creates
+a local `vX.Y.Z` tag. It does **not** push. Push the branch and tag manually
+after checking the local commit/tag.
 
-### Manual
+### Manual publish
 
-1. Bump version in both `Cargo.toml` (workspace) and `crates/capsem-app/tauri.conf.json`
-2. Move `[Unreleased]` changelog items into `[X.Y.Z] - YYYY-MM-DD`
-3. Create/update release page at `docs/src/content/docs/releases/<major>-<minor>.md`
-4. `scripts/preflight.sh` then `just test`
-5. Commit, tag `vX.Y.Z`, push both
+1. Confirm the release tag does not already exist remotely:
+   `git ls-remote origin "refs/tags/vX.Y.Z"`
+2. Push the release commit to `main`: `git push origin HEAD:main`
+3. Push the immutable tag: `git push origin vX.Y.Z`
+4. Watch the tag workflow: `just release vX.Y.Z`
 
 Never reuse or move a tag. Always increment the version number, and always tag
 forward.

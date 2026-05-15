@@ -4,35 +4,39 @@ use super::*;
 
 #[test]
 fn ambient_trace_id_from_capsem_env_takes_precedence() {
-    // Setting CAPSEM_TRACE_ID always wins, regardless of TRACEPARENT.
-    // Use a unique value so test ordering can't poison the OnceLock.
-    // SAFETY: setenv on the std::env wrapper is documented unsafe in
-    // multi-threaded programs; this test is single-threaded and we
-    // restore the env on exit.
-    unsafe {
-        std::env::set_var("CAPSEM_TRACE_ID", "deadbeefcafef00d");
-    }
-    let id = ambient_capsem_trace_id();
-    unsafe {
-        std::env::remove_var("CAPSEM_TRACE_ID");
-    }
+    let id = ambient_capsem_trace_id_from_inputs(
+        Some("deadbeefcafef00d"),
+        Some("00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"),
+    );
     assert_eq!(id.as_deref(), Some("deadbeefcafef00d"));
 }
 
 #[test]
 fn ambient_trace_id_returns_none_without_env() {
-    unsafe {
-        std::env::remove_var("CAPSEM_TRACE_ID");
-    }
-    // Without CAPSEM_TRACE_ID and without TRACEPARENT, returns None.
-    // (PARENT_TRACEPARENT is a OnceLock; only init() can set it. We can't
-    // set it from a test without leaking into other tests, so the
-    // pre-init path is implicitly the case here.)
-    let id = ambient_capsem_trace_id();
-    // If a prior init() in this test process set the OnceLock, the
-    // assertion would be Some(...). That's a test-order coupling we
-    // tolerate -- the contract under test is "env wins".
-    if let Some(id) = id {
-        assert_eq!(id.len(), 16, "fallback trace id should be 16 hex chars");
-    }
+    let id = ambient_capsem_trace_id_from_inputs(None, None);
+    assert_eq!(id, None);
+}
+
+#[test]
+fn ambient_trace_id_falls_back_to_parent_traceparent() {
+    let id = ambient_capsem_trace_id_from_inputs(
+        None,
+        Some("00-11112222333344445555666677778888-0123456789abcdef-01"),
+    );
+    assert_eq!(id.as_deref(), Some("5555666677778888"));
+}
+
+#[test]
+fn ambient_trace_id_ignores_empty_env_and_uses_parent() {
+    let id = ambient_capsem_trace_id_from_inputs(
+        Some(""),
+        Some("00-1234567890abcdef1234567890abcdef-fedcba0987654321-01"),
+    );
+    assert_eq!(id.as_deref(), Some("1234567890abcdef"));
+}
+
+#[test]
+fn ambient_trace_id_rejects_short_parent_trace_id() {
+    let id = ambient_capsem_trace_id_from_inputs(None, Some("00-deadbeef-bbbbbbbbbbbbbbbb-01"));
+    assert_eq!(id, None);
 }

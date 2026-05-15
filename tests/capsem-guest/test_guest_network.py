@@ -26,8 +26,13 @@ class TestGuestNetwork:
     def test_iptables_redirect(self, guest_env):
         """Guest has iptables REDIRECT to proxy port."""
         client, name = guest_env
-        resp = client.post(f"/exec/{name}", {"command": "iptables-legacy -t nat -L -n 2>/dev/null || iptables -t nat -L -n 2>/dev/null || true"})
+        resp = client.post(
+            f"/exec/{name}",
+            {"command": "iptables-legacy -t nat -L -n 2>&1 || iptables -t nat -L -n 2>&1"},
+        )
         stdout = resp.get("stdout", "") if resp else ""
+        exit_code = resp.get("exit_code") if resp else None
+        assert exit_code == 0, f"iptables table unavailable:\n{stdout}"
         # Should have REDIRECT rules for HTTPS interception
         assert "REDIRECT" in stdout or "redirect" in stdout or len(stdout) > 0
 

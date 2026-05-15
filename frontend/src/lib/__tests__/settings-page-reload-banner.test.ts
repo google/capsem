@@ -26,6 +26,7 @@ vi.mock('../api', () => ({
   getSettings: vi.fn(async () => mockResponse),
   saveSettings: vi.fn(async () => mockResponse),
   applyPreset: vi.fn(async () => mockResponse),
+  getDebugReport: vi.fn(async () => ({ text: 'Capsem Debug Report' })),
   reloadConfig: vi.fn(async () => {
     reloadCalls += 1;
     return {

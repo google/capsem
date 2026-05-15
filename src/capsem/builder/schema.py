@@ -151,7 +151,7 @@ class SettingMetadata(BaseModel):
     - Common: domains, choices, min, max, rules, env_vars, mask, validator, etc.
     - Action-specific: action (ActionKind)
     - MCP tool-specific: origin (McpToolOrigin)
-    - MCP server-specific (legacy): transport, command, url, args, env, headers
+    - MCP server-specific: transport, command, url, args, env, headers
     """
 
     # -- Common fields (from Rust SettingMetadata) --
@@ -179,7 +179,7 @@ class SettingMetadata(BaseModel):
     # -- MCP tool-specific --
     origin: McpToolOrigin | None = None
 
-    # -- MCP server-specific (legacy, kept for backward compat) --
+    # -- MCP server-specific --
     transport: McpTransport | None = None
     command: str | None = None
     url: str | None = None

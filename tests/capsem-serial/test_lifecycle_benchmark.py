@@ -17,7 +17,7 @@ import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
-pytestmark = pytest.mark.serial
+pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 

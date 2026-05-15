@@ -69,6 +69,16 @@ just run "capsem-doctor -x"           # Stop on first failure
 
 The test suite is layered L1-L7. Failures at lower layers explain failures at higher layers -- fix from the bottom up.
 
+## Filing a bug
+
+When reporting an installed-release issue, include a debug report first:
+
+```bash
+capsem debug
+```
+
+The same report is available in Settings -> About as **Copy debug report**. It includes the binary version, build hash, setup-state flags, VM asset hashes, and redacted service/gateway log tails needed to map the report back to a specific release payload.
+
 ## Inspecting session data
 
 Every VM session records telemetry to a SQLite database:

@@ -7,6 +7,7 @@
 /// - Telemetry records correct decisions, methods, and status codes
 ///
 /// Requires internet access (the proxy connects upstream to real servers).
+use std::ffi::OsString;
 use std::os::unix::io::IntoRawFd;
 use std::sync::Arc;
 
@@ -23,6 +24,29 @@ use tokio_rustls::TlsConnector;
 
 const CA_KEY: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../config/capsem-ca.crt");
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: String) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
 
 /// Build a NetworkPolicy from allow/block lists for integration tests.
 fn make_proxy_config(
@@ -1672,25 +1696,54 @@ async fn mitm_proxy_classifies_unknown_first_byte() {
 
 #[tokio::test]
 async fn mitm_proxy_streams_large_payload() {
-    let (config, db) = make_proxy_config(&["httpbin.org"], &[], false);
+    const DOMAIN: &str = "large-payload.capsem.test";
+    let payload_size = 1024 * 1024;
+    let large_body = vec![b'A'; payload_size];
+    let expected_body = large_body.clone();
+
+    let (upstream_port, upstream_task) = spawn_fake_upstream(move |mut sock| {
+        Box::pin(async move {
+            let bytes = read_http11_request(&mut sock).await;
+            let head_end = bytes
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| i + 4)
+                .unwrap_or(0);
+            assert_eq!(
+                &bytes[head_end..],
+                expected_body.as_slice(),
+                "local upstream received truncated or mutated request body",
+            );
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let _ = sock.shutdown().await;
+            bytes
+        })
+    })
+    .await;
+
+    let _override_guard = EnvVarGuard::set(
+        "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+        format!("{DOMAIN}:443=http://127.0.0.1:{upstream_port}"),
+    );
+
+    let (config, db) = make_proxy_config(&[DOMAIN], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from("httpbin.org").unwrap();
+    let domain = ServerName::try_from(DOMAIN).unwrap();
     let tls = connector.connect(domain, tcp).await.unwrap();
 
     let io = TokioIo::new(tls);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(conn);
 
-    let payload_size = 1024 * 1024;
-    let large_body = vec![b'A'; payload_size];
-
     let req = hyper::Request::builder()
         .method("POST")
         .uri("/post")
-        .header("host", "httpbin.org")
+        .header("host", DOMAIN)
         .body(Full::new(Bytes::from(large_body)))
         .unwrap();
 
@@ -1703,6 +1756,7 @@ async fn mitm_proxy_streams_large_payload() {
     let _ = resp.into_body().collect().await;
 
     drop(sender);
+    upstream_task.await.unwrap();
     proxy_task.await.unwrap();
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

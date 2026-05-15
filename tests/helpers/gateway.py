@@ -217,6 +217,9 @@ class TcpHttpClient:
 
     @staticmethod
     def _sanitize_path(raw):
+        raw = str(raw)
+        if raw.startswith("/root/"):
+            raw = raw[len("/root/"):]
         cleaned = "".join(
             ch for ch in raw
             if ch.isascii() and (ch.isalnum() or ch in "._-/")

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::mcp::policy::McpUserConfig;
+
 use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
     is_policy_rule_key, parse_policy_rule_key, PolicyRuleConfig, PolicyRuleType, SettingValue,
@@ -368,7 +370,12 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
     }
 
     // 2. User overrides
-    let user_toml = match user_config_path() {
+    let user_path = user_config_path();
+    let user_file = user_path
+        .as_ref()
+        .and_then(|path| load_settings_file(path).ok())
+        .unwrap_or_default();
+    let user_toml = match user_path {
         Some(path) => std::fs::read_to_string(&path).unwrap_or_default(),
         None => String::new(),
     };
@@ -377,7 +384,9 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
     }
 
     // 3. Corp overrides (highest priority, corp_locked)
-    let corp_toml = std::fs::read_to_string(corp_config_path()).unwrap_or_default();
+    let corp_path = corp_config_path();
+    let corp_file = load_settings_file(&corp_path).unwrap_or_default();
+    let corp_toml = std::fs::read_to_string(&corp_path).unwrap_or_default();
     for mut s in parse_mcp_section(&corp_toml, PolicySource::Corp) {
         s.corp_locked = true;
         by_key.insert(s.key.clone(), s);
@@ -386,9 +395,37 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
     // Also mark defaults/user entries as corp_locked if corp has the same key
     // (already handled by overwrite above -- corp entry replaces user/default)
 
-    let mut servers: Vec<McpServerDef> = by_key.into_values().collect();
+    let user_mcp = user_file.mcp.as_ref();
+    let corp_mcp = corp_file.mcp.as_ref();
+    let mut servers: Vec<McpServerDef> = by_key
+        .into_values()
+        .map(|mut server| {
+            apply_mcp_server_enabled_overrides(&mut server, user_mcp, corp_mcp);
+            server
+        })
+        .collect();
     servers.sort_by(|a, b| a.key.cmp(&b.key));
     servers
+}
+
+fn apply_mcp_server_enabled_overrides(
+    server: &mut McpServerDef,
+    user_mcp: Option<&McpUserConfig>,
+    corp_mcp: Option<&McpUserConfig>,
+) {
+    if let Some(enabled) = mcp_server_enabled_override(corp_mcp, server) {
+        server.enabled = enabled;
+    } else if let Some(enabled) = mcp_server_enabled_override(user_mcp, server) {
+        server.enabled = enabled;
+    }
+}
+
+fn mcp_server_enabled_override(mcp: Option<&McpUserConfig>, server: &McpServerDef) -> Option<bool> {
+    let mcp = mcp?;
+    mcp.server_enabled
+        .get(&server.key)
+        .or_else(|| mcp.server_enabled.get(&server.name))
+        .copied()
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +482,7 @@ pub fn batch_update_settings_json(
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
     let mut policy_changes = Vec::new();
+    let mut mcp_server_enabled_changes = Vec::new();
 
     // Validate all changes upfront
     let mut errors = Vec::new();
@@ -489,6 +527,23 @@ pub fn batch_update_settings_json(
                 }
                 Err(e) => errors.push(e),
             }
+            continue;
+        }
+
+        if let Some(server_name) = parse_mcp_server_enabled_key(id) {
+            if mcp_server_enabled_is_corp_locked(&corp_file, server_name) {
+                errors.push(format!("corp-locked: {id}"));
+                continue;
+            }
+            let Some(enabled) = value.as_bool() else {
+                errors.push(format!("invalid value for {id}: expected bool"));
+                continue;
+            };
+            mcp_server_enabled_changes.push((id.clone(), server_name.to_string(), enabled));
+            continue;
+        }
+        if id.starts_with("mcp.servers.") {
+            errors.push(format!("unsupported MCP server setting: {id}"));
             continue;
         }
 
@@ -538,6 +593,14 @@ pub fn batch_update_settings_json(
         );
         applied.push(id.clone());
     }
+    for (id, server_name, enabled) in mcp_server_enabled_changes {
+        user_file
+            .mcp
+            .get_or_insert_with(McpUserConfig::default)
+            .server_enabled
+            .insert(server_name, enabled);
+        applied.push(id);
+    }
     for (id, rule) in policy_changes {
         match rule {
             Some(rule) => user_file.policy.upsert_rule_key(&id, rule)?,
@@ -549,6 +612,19 @@ pub fn batch_update_settings_json(
     write_settings_file(&user_path, &user_file)?;
     applied.sort();
     Ok(applied)
+}
+
+fn parse_mcp_server_enabled_key(id: &str) -> Option<&str> {
+    let rest = id.strip_prefix("mcp.servers.")?;
+    rest.strip_suffix(".enabled")
+        .filter(|server| !server.is_empty())
+}
+
+fn mcp_server_enabled_is_corp_locked(corp_file: &SettingsFile, server_name: &str) -> bool {
+    corp_file
+        .mcp
+        .as_ref()
+        .is_some_and(|mcp| mcp.server_enabled.contains_key(server_name))
 }
 
 fn is_release_editable_policy_rule_type(rule_type: PolicyRuleType) -> bool {

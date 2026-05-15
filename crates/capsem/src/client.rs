@@ -111,6 +111,53 @@ pub struct SessionInfo {
 pub struct ListResponse {
     #[serde(rename = "sandboxes")]
     pub sessions: Vec<SessionInfo>,
+    #[serde(default)]
+    pub asset_health: Option<AssetHealth>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetProgress {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+    pub done: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetHealth {
+    pub ready: bool,
+    #[serde(default = "default_asset_state")]
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    #[serde(default)]
+    pub missing: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<AssetProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default)]
+    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmAssetDependency {
+    pub vm: String,
+    pub asset_version: String,
+    pub arch: String,
+    pub missing: Vec<String>,
+    pub recovery_hint: String,
+}
+
+fn default_asset_state() -> String {
+    "unknown".to_string()
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -429,7 +476,19 @@ impl UdsClient {
             .spawn()
             .context("failed to spawn capsem-service")?;
 
-        match self.connect_with_timeout(ConnectMode::AwaitStartup).await {
+        let connect = self.connect_with_timeout(ConnectMode::AwaitStartup);
+        tokio::pin!(connect);
+
+        match tokio::select! {
+            result = &mut connect => result,
+            status = child.wait() => status
+                .context("failed to wait for capsem-service startup")
+                .and_then(|status| {
+                    Err(anyhow::anyhow!(
+                        "capsem-service exited before becoming ready: {status}"
+                    ))
+                }),
+        } {
             Ok(stream) => {
                 info!("Service spawned and responding");
                 tokio::spawn(async move {
@@ -437,7 +496,10 @@ impl UdsClient {
                 });
                 Ok(stream)
             }
-            Err(e) => Err(e).context("capsem-service failed to start"),
+            Err(e) => {
+                let _ = child.kill().await;
+                Err(e).context("capsem-service failed to start")
+            }
         }
     }
 

@@ -462,6 +462,10 @@ pub(super) fn inject_mcp_servers_json(json_str: &str, servers: &[McpServerDef]) 
 
     if let Some(server_map) = mcp_servers.as_object_mut() {
         for s in servers {
+            if !s.enabled {
+                server_map.remove(&s.key);
+                continue;
+            }
             if s.transport == McpTransport::Stdio {
                 if let Some(cmd) = &s.command {
                     server_map.insert(s.key.clone(), serde_json::json!({"command": cmd}));
@@ -498,6 +502,10 @@ pub(super) fn inject_mcp_servers_toml(toml_str: &str, servers: &[McpServerDef]) 
         .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
     if let Some(server_map) = mcp.as_table_mut() {
         for s in servers {
+            if !s.enabled {
+                server_map.remove(&s.key);
+                continue;
+            }
             if s.transport == McpTransport::Stdio {
                 if let Some(cmd) = &s.command {
                     let mut entry = toml::map::Map::new();
