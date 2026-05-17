@@ -71,6 +71,7 @@ Out of scope (for this sprint doc phase):
 3. Preserve context first: ensure all profile sprint docs and decisions are linked.
 4. Reconcile code second: keep only intentional Profile V2 and supporting fixes.
 5. Verify incrementally: targeted tests -> suite slices -> full gate.
+6. Restore smoke gates with durable ordering/runtime fixes, not skip-based bypasses.
 
 ## Done Criteria
 - `MASTER.md`, `plan.md`, `tracker.md` are synchronized.
@@ -78,6 +79,7 @@ Out of scope (for this sprint doc phase):
 - Profile sprint document references (S00-S06 + audit/meta) are explicitly documented.
 - Dirty overlay keep/drop/review workflow is defined with verification gates.
 - Committed delta is replayed slice-by-slice with file-level decisions, not applied wholesale.
+- `just smoke` passes from a clean frontend dist after Profile V2 runtime rescue.
 - No concurrency assumptions remain.
 
 ## Proof Matrix
@@ -87,3 +89,4 @@ Out of scope (for this sprint doc phase):
 - E2E/VM or integration: doctor/network-dependent cases called out with capability gating
 - Telemetry/observability: net/dns/policy event coverage retained
 - Performance: benchmark changes classified as keep/drop/noise
+- Smoke gate: `rm -rf frontend/dist && just smoke` proves frontend build ordering, doctor, injection, integration, telemetry audit, Python service/gateway/MCP/CLI groups, state transitions, and resume/suspend durability.

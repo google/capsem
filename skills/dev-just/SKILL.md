@@ -71,9 +71,9 @@ ui               -> _ensure-setup + _pnpm-install + run-service
 run-service      -> _check-assets + _pack-initrd + _ensure-service
 exec             -> run-service
 build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-builder kernel + rootfs)
-build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app)
-smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
-test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
+build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app)
+smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
+test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
                     + _check-assets + _pack-initrd
 bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
 test-gateway-e2e -> _check-assets + _pack-initrd + _sign
@@ -83,6 +83,11 @@ cut-release      -> test + _stamp-version
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).
+
+`_ensure-service` honors `CAPSEM_HOME` / `CAPSEM_RUN_DIR` for isolated
+smoke/test runs and assigns the gateway an ephemeral port in that mode. This
+keeps test services from colliding with the user's installed gateway on the
+default developer port.
 
 ## Docker disk management
 
@@ -101,6 +106,7 @@ For a full manual reset: `just clean all` (removes all build artifacts + aggress
 
 `tauri::generate_context!()` reads `tauri.conf.json` `frontendDist: ../../frontend/dist` and **bakes every file under that directory into the Rust binary** during `cargo build`. Consequences:
 
+- Recipes that compile the full workspace (`just smoke`, `just test`) must build `_frontend-dist` before `cargo clippy --workspace --all-targets`; otherwise `capsem-app` fails during macro expansion if `frontend/dist` is missing.
 - Rebuilding only the frontend (`pnpm run build`) has **zero effect** on a running `./target/**/capsem-app` -- the binary still carries the old bundle.
 - After any edit to `frontend/**`, you must `cargo build -p capsem-app` for the change to reach the Tauri app.
 - `just ui` (`cargo tauri dev`) sidesteps this by serving `http://localhost:5173` directly -- no embedding happens in dev mode.

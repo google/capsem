@@ -23,6 +23,7 @@ pub struct ServiceStatus {
     pub running: bool,
     pub pid: Option<u32>,
     pub unit_path: Option<PathBuf>,
+    pub service_unit_required: bool,
 }
 
 /// Generate a macOS LaunchAgent plist for capsem-service.
@@ -224,6 +225,7 @@ pub async fn service_status() -> Result<ServiceStatus> {
             running,
             pid,
             unit_path: None,
+            service_unit_required: false,
         });
     }
 
@@ -244,6 +246,7 @@ pub async fn service_status() -> Result<ServiceStatus> {
         running,
         pid,
         unit_path,
+        service_unit_required: true,
     })
 }
 
@@ -855,5 +858,6 @@ mod tests {
         assert!(!status.installed);
         assert!(!status.running);
         assert!(status.unit_path.is_none());
+        assert!(!status.service_unit_required);
     }
 }

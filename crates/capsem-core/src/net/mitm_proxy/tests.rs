@@ -2293,7 +2293,7 @@ async fn policy_v2_http_ask_placeholder_confirmer_allows_upstream_dispatch() {
             .await;
     let config = make_config_with_policy_v2(
         allow_local_http_policy(port),
-        policy_v2_from_toml(&format!(
+        policy_v2_from_toml(
             r#"
 [policy.http.ask_openai_path]
 on = "http.request"
@@ -2301,8 +2301,8 @@ if = 'request.host == "127.0.0.1" && request.path.matches("^/openai(/|$)")'
 decision = "ask"
 priority = 10
 reason = "Ask before fetching this path"
-"#
-        )),
+"#,
+        ),
     );
     let (mut sender, proxy_task, _conn_task) =
         open_direct_plain_http_request_conn(&config, "127.0.0.1", port, None).await;

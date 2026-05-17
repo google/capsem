@@ -14,11 +14,11 @@
 #   run-service      -> _check-assets + _pack-initrd + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
 #   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-builder)
-#   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
+#   build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app, in lockstep)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
-#   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
+#   smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
 #                       (audit, doctor --fast, injection, integration, parallel pytest groups)
-#   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
+#   test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
 #                       + _check-assets + _pack-initrd (everything: audit, cov, cross-compile,
 #                       frontend, python, injection, integration, bench, test-install)
 #   bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
@@ -140,6 +140,12 @@ _ensure-service: _sign
         ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
         echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
     fi
+    GATEWAY_ARGS=(--gateway-binary {{gateway_binary}})
+    if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
+        # Isolated smoke/test services must not contend with a locally
+        # installed gateway on the default developer port.
+        GATEWAY_ARGS+=(--gateway-port 0)
+    fi
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
@@ -147,6 +153,7 @@ _ensure-service: _sign
     RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
+        "${GATEWAY_ARGS[@]}" \
         --foreground 3>&- &
     SVC_PID=$!
     echo "$SVC_PID" > "$PIDFILE"
@@ -180,14 +187,9 @@ dev-frontend: _pnpm-install
 # on the running binary. This recipe keeps the two in lockstep.
 #   just build-ui          # debug binary at ./target/debug/capsem-app
 #   just build-ui release  # release binary at ./target/release/capsem-app
-build-ui profile="debug": _pnpm-install
+build-ui profile="debug": _frontend-dist
     #!/bin/bash
     set -euo pipefail
-    echo "=== Frontend build ==="
-    cd frontend
-    pnpm run build
-    cd ..
-    echo ""
     echo "=== capsem-app ({{profile}}) build ==="
     if [[ "{{profile}}" == "release" ]]; then
         cargo build -p capsem-app --release
@@ -306,7 +308,7 @@ test-artifacts:
     echo "  cat $DIR/.../service.log | less"
     echo "  cat $DIR/.../sessions/<vm>/process.log | less"
 
-test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd
+test: _install-tools _clean-stale _frontend-dist _generate-settings _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
@@ -333,7 +335,6 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
         cd frontend
         pnpm run check
         pnpm run test
-        pnpm run build
     ) & PID_FE=$!
     FAIL=0
     wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
@@ -622,7 +623,7 @@ _generate-settings:
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
 # Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
-smoke: _install-tools _pnpm-install _check-assets _pack-initrd
+smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     #!/bin/bash
     set -euo pipefail
     # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
@@ -1448,10 +1449,14 @@ _pnpm-install:
     # test-install below.
     cd frontend && CI=true pnpm install --frozen-lockfile
 
-_frontend: _pnpm-install
+_frontend-dist: _pnpm-install
+    # Tauri's generate_context! macro reads frontend/dist at Rust compile time.
+    # Keep this before any workspace clippy/test/build that includes capsem-app.
     cd frontend && pnpm build
 
-_compile: _frontend _clean-stale
+_frontend: _frontend-dist
+
+_compile: _clean-stale _frontend
     cargo build -p capsem
 
 _sign-release: _compile

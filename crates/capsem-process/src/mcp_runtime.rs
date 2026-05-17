@@ -50,6 +50,23 @@ pub(crate) struct RuntimePolicyState {
 }
 
 pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyState {
+    let legacy = legacy_policies_from_disk_if_user_file_exists();
+    load_runtime_policy_state_with_legacy(session_dir, legacy.as_ref())
+}
+
+fn legacy_policies_from_disk_if_user_file_exists(
+) -> Option<capsem_core::net::policy_config::MergedPolicies> {
+    let user_path = capsem_core::net::policy_config::user_config_path()?;
+    if !user_path.is_file() {
+        return None;
+    }
+    Some(capsem_core::net::policy_config::MergedPolicies::from_disk())
+}
+
+fn load_runtime_policy_state_with_legacy(
+    session_dir: &Path,
+    legacy: Option<&capsem_core::net::policy_config::MergedPolicies>,
+) -> RuntimePolicyState {
     let effective = load_effective_vm_settings_with_fallback(session_dir);
 
     let mut default_allow = match effective.as_ref().map(|e| e.vm.value.network) {
@@ -94,9 +111,18 @@ pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyStat
         .as_ref()
         .map(policy_v2_from_effective_rules)
         .unwrap_or_default();
+    let guest_config = legacy
+        .map(|policies| policies.guest.clone())
+        .unwrap_or_default();
+    let network_policy = legacy
+        .map(|policies| policies.network.clone())
+        .unwrap_or(network_policy);
+    let domain_policy = legacy
+        .map(|policies| policies.domain.clone())
+        .unwrap_or(domain_policy);
 
     RuntimePolicyState {
-        guest_config: GuestConfig::default(),
+        guest_config,
         network_policy,
         domain_policy,
         mcp_policy,

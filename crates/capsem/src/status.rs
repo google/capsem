@@ -730,7 +730,7 @@ fn checks_report_from_issues(
                     )
                 })
                 .collect(),
-            false,
+            !service.service_unit_required,
         ),
         setup: StatusCheckReport::from_issues(
             issues
@@ -1032,6 +1032,10 @@ pub(crate) fn check_service_unit(
     service: &service_install::ServiceStatus,
     paths: &crate::paths::CapsemPaths,
 ) -> Vec<HealthIssue> {
+    if !service.service_unit_required {
+        return Vec::new();
+    }
+
     if !service.installed {
         return vec![HealthIssue::ServiceUnitMissing];
     }

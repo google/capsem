@@ -66,11 +66,12 @@ Rescue inventory:
 - Clean branch created
 - Profile V2 and rescue sprint documents copied onto `profile-v2`
 - Dirty overlay inventory classified in `rescue-manifest.md`
-- Core settings profiles, policy confirmation, `/settings*`, debug-report provenance, service runtime VM-effective attachment, capsem-process effective-policy consumption, framed MCP `ask` confirmation, HTTP `ask` confirmation, model `ask` confirmation, model request rewrite, Profile V2 corp-config install, gateway non-VM parity, and VM/MITM Profile V2 policy parity slices replayed on `profile-v2`
+- Core settings profiles, policy confirmation, `/settings*`, debug-report provenance, service runtime VM-effective attachment, capsem-process effective-policy consumption, framed MCP `ask` confirmation, HTTP `ask` confirmation, model `ask` confirmation, model request rewrite, Profile V2 corp-config install, gateway non-VM parity, VM/MITM Profile V2 policy parity, and `just smoke` ordering/runtime rescue slices replayed on `profile-v2`
+- `just smoke` passed on 2026-05-17 after the smoke rescue slice (`rm -rf frontend/dist && just smoke`, 229s)
 - Committed delta classification remains release-held and must be replayed by slice
 
 ## Release Holds
 - Do not claim migration complete until keep/drop/review manifest exists.
-- Do not claim verification restored until remaining broad gates are re-run.
+- Do not claim final verification restored until remaining broad gates beyond smoke, especially `just test`, are re-run.
 - Do not resume feature delivery on this line until reconciliation pass is complete.
-- Ambiguous E2E skip/test loosenings and broad VM gates remain held after the focused VM/MITM parity slice.
+- Ambiguous E2E skip/test loosenings remain held after the focused VM/MITM parity and full smoke gates.

@@ -9,7 +9,7 @@ use capsem_core::mcp::policy::McpUserConfig;
 
 use super::{
     build_builtin_env, build_servers_with_builtin, insert_builtin_domain_policy_env,
-    load_runtime_policy_state,
+    load_runtime_policy_state_with_legacy,
 };
 
 #[test]
@@ -249,7 +249,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
 
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
 
-    let runtime = load_runtime_policy_state(&session_dir);
+    let runtime = load_runtime_policy_state_with_legacy(&session_dir, None);
 
     assert!(!runtime.network_policy.default_allow_read);
     assert!(!runtime.network_policy.default_allow_write);
@@ -306,9 +306,62 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
 }
 
 #[test]
+fn load_runtime_policy_state_preserves_legacy_guest_boot_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let user = capsem_core::net::policy_config::SettingsFile::default();
+    let legacy = capsem_core::net::policy_config::MergedPolicies::from_files(
+        &user,
+        &capsem_core::net::policy_config::SettingsFile::default(),
+    );
+
+    let runtime = load_runtime_policy_state_with_legacy(&session_dir, Some(&legacy));
+    let env = runtime
+        .guest_config
+        .env
+        .as_ref()
+        .expect("legacy guest env should be carried into Profile V2 runtime");
+    assert_eq!(
+        env.get("SSL_CERT_FILE").map(String::as_str),
+        Some("/etc/ssl/certs/ca-certificates.crt")
+    );
+    assert_eq!(
+        env.get("CAPSEM_WEB_ALLOW_READ").map(String::as_str),
+        Some("0")
+    );
+
+    let files = runtime
+        .guest_config
+        .files
+        .as_ref()
+        .expect("legacy boot files should be carried into Profile V2 runtime");
+    let paths = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(paths.contains("/root/.gemini/settings.json"));
+    assert!(paths.contains("/root/.codex/config.toml"));
+    assert!(paths.contains("/root/.claude.json"));
+    assert!(
+        runtime
+            .domain_policy
+            .allowed_patterns()
+            .contains(&"elie.net".to_string()),
+        "legacy custom_allow domains must stay visible to built-in MCP HTTP tools"
+    );
+}
+
+#[test]
 fn load_runtime_policy_state_falls_back_when_vm_effective_attachment_missing() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = load_runtime_policy_state(dir.path());
+    let runtime = load_runtime_policy_state_with_legacy(dir.path(), None);
 
     assert!(runtime.network_policy.default_allow_read);
     assert!(runtime.network_policy.default_allow_write);
@@ -363,7 +416,7 @@ fn load_runtime_policy_state_drops_legacy_dns_query_callback() {
 
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
 
-    let runtime = load_runtime_policy_state(&session_dir);
+    let runtime = load_runtime_policy_state_with_legacy(&session_dir, None);
 
     let dns_rules = runtime
         .policy_v2

@@ -77,18 +77,19 @@ Initial grouping:
 3. Service settings runtime: service API, debug provenance, asset-location startup, default VM sizing, VM effective settings attachments, and process-side effective policy consumption ported.
 4. MCP/HTTP/model policy runtime: framed MITM MCP `ask`, HTTP head-hook `ask`, model request/response/tool `ask` confirmation, and model request rewrite ported with focused tests.
 5. Policy runtime: focused VM/MITM Profile V2 parity for framed MCP, HTTP/DNS, and model paths.
-6. Test recovery: focused unit/contract tests first, then service/gateway integration, then E2E/VM gates.
-7. Frontend/CLI/docs: only after backend contracts are verified.
+6. Smoke gate recovery: frontend-dist ordering, test-isolated service/gateway startup, status/doctor isolation, runtime guest boot compatibility, and smoke test contracts restored without skips.
+7. Test recovery: focused unit/contract tests first, then service/gateway integration, then E2E/VM gates.
+8. Frontend/CLI/docs: only after backend contracts are verified.
 
 ## Verification Gates
 
 - Context preservation: `git status --short`, document inventory review.
 - Core model: `cargo test -p capsem-core settings_profiles`.
 - Policy runtime: focused `capsem-core` policy tests plus gateway/service Python tests that do not require VM networking.
-- E2E/VM: focused Profile V2 VM/MITM suites pass; broad gates and any skips must remain review-tagged until separately accepted.
+- E2E/VM: focused Profile V2 VM/MITM suites pass; `rm -rf frontend/dist && just smoke` passes; any skip/loosened behavior must remain review-tagged until separately accepted.
 
 ## Active Holds
 
 - Migration is not complete until committed-delta file-level replay decisions are made as each slice is ported.
-- Verification is not restored until the remaining broad gates pass on `profile-v2`.
+- Smoke verification is restored on `profile-v2`; final release verification still requires remaining broad gates beyond smoke, especially `just test`.
 - Test edits that weaken policy enforcement or redaction expectations are blocked until revalidated against product intent.

@@ -131,6 +131,7 @@ fn status_report_contains_service_and_typed_issues() {
         running: false,
         pid: None,
         unit_path: Some(std::path::PathBuf::from("/tmp/capsem.service")),
+        service_unit_required: true,
     };
     let issues = vec![super::HealthIssue::ServiceNotRunning];
 
@@ -173,6 +174,7 @@ fn status_report_groups_issue_codes_by_install_surface() {
         running: true,
         pid: Some(42),
         unit_path: None,
+        service_unit_required: true,
     };
     let issues = vec![
         super::HealthIssue::HostBinaryMissing {
@@ -205,6 +207,7 @@ fn status_report_preserves_service_asset_updating_state() {
         running: true,
         pid: Some(42),
         unit_path: None,
+        service_unit_required: true,
     };
     let asset_health = crate::client::AssetHealth {
         ready: false,
@@ -248,6 +251,7 @@ fn status_report_blocks_on_saved_vm_asset_dependencies() {
         running: true,
         pid: Some(42),
         unit_path: None,
+        service_unit_required: true,
     };
     let asset_health = crate::client::AssetHealth {
         ready: true,
@@ -492,6 +496,7 @@ fn service_unit_check_reports_missing_unit() {
         running: false,
         pid: None,
         unit_path: None,
+        service_unit_required: true,
     };
 
     let issues = super::check_service_unit(&service, &paths);
@@ -523,6 +528,7 @@ fn service_unit_check_reports_stale_paths() {
         running: false,
         pid: None,
         unit_path: Some(unit_path.clone()),
+        service_unit_required: true,
     };
 
     let issues = super::check_service_unit(&service, &paths);
@@ -580,10 +586,41 @@ fn service_unit_check_accepts_escaped_paths() {
         running: false,
         pid: None,
         unit_path: Some(unit_path),
+        service_unit_required: true,
     };
 
     let issues = super::check_service_unit(&service, &paths);
     assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+}
+
+#[test]
+fn service_unit_check_skips_isolated_dev_service() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = crate::paths::CapsemPaths {
+        cli_bin: dir.path().join("capsem"),
+        service_bin: dir.path().join("capsem-service"),
+        process_bin: dir.path().join("capsem-process"),
+        mcp_bin: dir.path().join("capsem-mcp"),
+        mcp_aggregator_bin: dir.path().join("capsem-mcp-aggregator"),
+        mcp_builtin_bin: dir.path().join("capsem-mcp-builtin"),
+        gateway_bin: dir.path().join("capsem-gateway"),
+        tray_bin: dir.path().join("capsem-tray"),
+        assets_dir: dir.path().join("assets"),
+    };
+    let service = crate::service_install::ServiceStatus {
+        installed: false,
+        running: true,
+        pid: Some(42),
+        unit_path: None,
+        service_unit_required: false,
+    };
+
+    let issues = super::check_service_unit(&service, &paths);
+    assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+
+    let report = super::status_report_from_parts(&service, &issues);
+    assert_eq!(report.checks.service_unit.state, "skipped");
+    assert!(report.checks.service_unit.issue_codes.is_empty());
 }
 
 #[test]

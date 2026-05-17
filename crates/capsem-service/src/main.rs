@@ -345,7 +345,7 @@ impl ServiceState {
     }
 
     fn current_service_settings(&self) -> capsem_core::settings_profiles::ServiceSettings {
-        capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path())
+        capsem_core::settings_profiles::load_service_settings_or_default(service_settings_path())
             .unwrap_or_else(|error| {
                 warn!(
                     error = %error,

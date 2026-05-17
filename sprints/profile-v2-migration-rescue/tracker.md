@@ -30,6 +30,7 @@
 - [x] Port model Policy V2 `model.request` rewrite support and redacted upstream dispatch
 - [x] Port Profile V2 corp-config install path and verify non-VM gateway parity
 - [x] Recover focused VM/MITM Profile V2 parity for HTTP/DNS, model, and framed MCP paths
+- [x] Restore long-term `just smoke` ordering and Profile V2 VM compatibility gate
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -98,6 +99,19 @@
 - Proof: `uv run pytest tests/capsem-e2e/test_framed_mcp_mitm.py -q` passed 15 VM tests.
 - Proof: `uv run pytest tests/capsem-e2e/test_policy_v2_http_dns_mitm.py -q` passed 2 VM tests.
 - Proof: `uv run pytest tests/capsem-e2e/test_model_policy_mitm.py -q` passed 4 VM tests.
+- Smoke restoration used long-term ordering instead of skip-based fixes: `just smoke`/`just test`/`build-ui` now build `frontend/dist` before Rust workspace clippy/test/build phases that compile `capsem-app` and run Tauri `generate_context!`.
+- Test-isolated smoke services now bind the gateway to an ephemeral port, and `capsem status`/doctor skip persistent service-unit checks when `CAPSEM_HOME`/`CAPSEM_RUN_DIR` isolation means no installed service unit is required.
+- capsem-process now preserves the legacy guest boot contract from an existing isolated `user.toml` while still loading Profile V2 `vm-effective-settings.toml` for rules/MCP defaults. This keeps AI CLI config files, CA env vars, legacy network/domain defaults, and Profile V2 policy attachments coherent during the migration window.
+- Gateway MITM telemetry coverage now installs an explicit Profile V2 DNS/HTTP deny fixture instead of depending on the ambient default egress profile. Winter fork smoke keeps the documented compact-image budget (<100 MB actual allocated blocks) rather than a brittle package-cache threshold.
+- Proof: `cargo fmt --check` passed.
+- Proof: `cargo test -p capsem --bin capsem status::` passed 29 focused status tests.
+- Proof: `cargo test -p capsem --bin capsem service_install::` passed 18 focused service-install tests.
+- Proof: `cargo test -p capsem-process --bin capsem-process mcp_runtime` passed 8 focused runtime compatibility tests.
+- Proof: `cargo clippy -p capsem-core --tests -- -D warnings` passed.
+- Proof: `cargo clippy -p capsem-service --all-targets -- -D warnings` passed.
+- Proof: `uv run pytest tests/capsem-gateway/test_mitm_policy.py::test_mitm_policy_telemetry -q` passed.
+- Proof: `uv run pytest tests/capsem-mcp/test_winter_is_coming.py::test_winter_is_coming -q` passed.
+- Proof: `rm -rf frontend/dist && just smoke` passed in 229s, including doctor (`307 passed, 4 skipped, 1 deselected`), injection (`5 passed`), integration diagnostics (`94 passed, 2 skipped`) and telemetry audit (`40 passed, 3 warnings`), Python gateway/MCP/service/CLI groups (`91 passed`, `62 passed, 50 skipped, 20 deselected`, `140 passed, 5 skipped`), state transitions (`12 passed`), and resume/suspend durability (`7 passed`).
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -112,10 +126,10 @@
 - Adversarial:
   policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction; model request rewrite fails closed for unsupported targets, no regex match, and non-UTF-8 bodies
 - E2E/VM or integration:
-  Focused VM/MITM suites passed for framed MCP (15), HTTP/DNS Policy V2 (2), and model Policy V2 (4). NAT/egress skips classified as `needs-review`; broad VM gates still release-held; one MCP service VM-call test previously timed out waiting for exec-ready and remains VM-gate debt.
+  Focused VM/MITM suites passed for framed MCP (15), HTTP/DNS Policy V2 (2), and model Policy V2 (4). Full `just smoke` passed after ordering/runtime rescue. NAT/egress skips classified as `needs-review`; full `just test` remains pending for final release confidence.
 - Telemetry/observability:
-  debug report now surfaces resolver-trace summary; lifecycle/net telemetry setup changes require split review before port
+  debug report now surfaces resolver-trace summary; `just smoke` telemetry audit passed (`40 passed`, `3 warnings` for missing live Gemini key); lifecycle/net telemetry setup changes require split review before port
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  Broad E2E/VM gates and full-gate rerun pending; ambiguous environment skips remain unaccepted until separately reviewed.
+  Full `just test` and ambiguous environment skips remain unaccepted until separately reviewed.
