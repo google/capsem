@@ -19,6 +19,7 @@
 - [x] Define migration commit sequence (context/docs -> code -> tests)
 - [x] Execute first reconciliation pass on highest-risk files (`settings_profiles` core)
 - [x] Re-run targeted verification gate for `settings_profiles` core
+- [x] Port `policy_confirm` confirmation contract and targeted tests
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -30,6 +31,9 @@
 - `origin/main..b3862ae7` is too mixed for wholesale cherry-pick; replay by slice.
 - Core `settings_profiles` module ported as the first product slice.
 - Proof: `cargo test -p capsem-core settings_profiles` passed 118 matching tests.
+- `policy_confirm` requires the source-line `RetryOpts: Clone` support change in `capsem-proto`; ported with the confirmation slice because `poll_until` consumes retry options.
+- Proof: `cargo test -p capsem-core policy_confirm` passed 10 matching tests.
+- Proof: `cargo test -p capsem-proto poll` passed 5 matching tests.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -38,7 +42,7 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` and debug report tests pending later slices
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report tests pending later slices
 - Functional:
   migration sequence defined; no functional gate run yet
 - Adversarial:

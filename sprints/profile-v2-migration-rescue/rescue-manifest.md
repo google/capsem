@@ -63,7 +63,7 @@ Initial grouping:
 | --- | --- | --- | --- |
 | `sprints/policy-settings-profiles/**` | keep | Product design, requirements, tracker, and S00-S19 execution notes. | Copied and committed in context checkpoint. |
 | `crates/capsem-core/src/settings_profiles/**` | keep | Core typed service/profile model, resolver, trace, corp directives, rule ownership. | Ported as first product-code slice; `cargo test -p capsem-core settings_profiles` passed. |
-| `crates/capsem-core/src/net/policy_confirm.rs` and tests | keep | S06-pre confirmation contract. | Port after settings profile core or with policy runtime slice. |
+| `crates/capsem-core/src/net/policy_confirm.rs` and tests | keep | S06-pre confirmation contract. | Ported with `RetryOpts: Clone` support; `cargo test -p capsem-core policy_confirm` passed. |
 | `crates/capsem-core/src/net/mitm_proxy/**` policy-v2 changes | keep | HTTP/model/MCP policy enforcement, rewrite, and telemetry behavior. | Port by focused subsystem slice with tests. |
 | `crates/capsem-service/**`, `crates/capsem/src/**`, `crates/capsem-process/**`, `crates/capsem-gateway/**` | needs-review | Mixes real Profile V2 service/runtime integration with debug-report, status, asset, install, and IPC changes. | Replay by sub-sprint; no wholesale apply. |
 | `frontend/**` | needs-review | Mixes settings/profile UI model changes with dependency and test churn. | Defer until backend contracts are stable. |

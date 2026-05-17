@@ -8,5 +8,6 @@ pub mod mitm_proxy;
 pub mod parsers;
 pub mod policy;
 pub mod policy_config;
+pub mod policy_confirm;
 pub mod policy_hook;
 pub mod policy_hook_spec;
