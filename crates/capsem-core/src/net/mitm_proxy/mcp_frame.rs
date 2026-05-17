@@ -143,8 +143,12 @@ where
             let policy = endpoint.policy.read().await.clone();
             let policy_v2 = endpoint.policy_v2.read().await.clone();
             let decision_provider =
-                LocalMcpDecisionProvider::audit_only_arcs(Arc::clone(&policy), policy_v2);
-            let request_decision = decision_provider.decide(&decision_request);
+                LocalMcpDecisionProvider::audit_only_arcs(Arc::clone(&policy), policy_v2)
+                    .with_confirmer(Arc::clone(&endpoint.confirmer))
+                    .with_confirm_opts(endpoint.confirm_opts.clone());
+            let request_decision = decision_provider
+                .resolve_ask_request(decision_provider.decide(&decision_request), &decision_request)
+                .await;
 
             ::metrics::counter!(
                 metrics::PARSER_EVENTS_TOTAL,
@@ -265,6 +269,9 @@ where
                     &response,
                     request_decision,
                 );
+                let final_decision = decision_provider
+                    .resolve_ask_response(final_decision, &response_decision_request, &response)
+                    .await;
                 let response = match final_decision.action {
                     McpPolicyAction::Ask | McpPolicyAction::Block => {
                         policy_blocked_response(
@@ -635,6 +642,8 @@ struct McpPolicyDecision {
     reason: String,
     rewrite_target: Option<String>,
     rewrite_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    policy_v2_rule_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -732,11 +741,13 @@ async fn log_mcp_call_with_policy(
     .await;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct LocalMcpDecisionProvider {
     policy: Arc<McpPolicy>,
     policy_v2: Arc<PolicyConfig>,
     mode: McpPolicyMode,
+    confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
+    confirm_opts: capsem_proto::poll::RetryOpts,
 }
 
 impl LocalMcpDecisionProvider {
@@ -750,6 +761,15 @@ impl LocalMcpDecisionProvider {
         Self::audit_only_arcs(Arc::new(policy), policy_v2)
     }
 
+    #[cfg(test)]
+    fn audit_only_with_policy_v2_and_confirmer(
+        policy: McpPolicy,
+        policy_v2: Arc<PolicyConfig>,
+        confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
+    ) -> Self {
+        Self::audit_only_arcs(Arc::new(policy), policy_v2).with_confirmer(confirmer)
+    }
+
     fn audit_only_arc(policy: Arc<McpPolicy>) -> Self {
         Self::audit_only_arcs(policy, Arc::new(PolicyConfig::default()))
     }
@@ -759,7 +779,19 @@ impl LocalMcpDecisionProvider {
             policy,
             policy_v2,
             mode: McpPolicyMode::AuditOnly,
+            confirmer: Arc::new(crate::net::policy_confirm::PlaceholderConfirmer),
+            confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-mcp"),
         }
+    }
+
+    fn with_confirmer(mut self, confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>) -> Self {
+        self.confirmer = confirmer;
+        self
+    }
+
+    fn with_confirm_opts(mut self, opts: capsem_proto::poll::RetryOpts) -> Self {
+        self.confirm_opts = opts;
+        self
     }
 
     fn decide(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
@@ -819,6 +851,71 @@ impl LocalMcpDecisionProvider {
             }
         }
         policy_v2_decision.unwrap_or(base)
+    }
+
+    async fn resolve_ask_request(
+        &self,
+        decision: McpPolicyDecision,
+        request: &McpDecisionRequest,
+    ) -> McpPolicyDecision {
+        if !matches!(decision.action, McpPolicyAction::Ask) {
+            return decision;
+        }
+        let Some(rule_name) = decision.policy_v2_rule_name.as_deref() else {
+            return decision;
+        };
+        let args = crate::net::policy_confirm::ConfirmArgs {
+            callback: PolicyCallback::McpRequest,
+            rule_id: mcp_policy_v2_rule_id(rule_name),
+            args_snapshot: subject_snapshot_mcp_request(request),
+            trace_id: None,
+            session_id: None,
+            reason: Some(decision.reason.clone()),
+        };
+        let action = match crate::net::policy_confirm::confirm_with_backoff(
+            &self.confirmer,
+            args,
+            &self.confirm_opts,
+        )
+        .await
+        {
+            crate::net::policy_confirm::Decision::Accept => McpPolicyAction::Allow,
+            crate::net::policy_confirm::Decision::Deny => McpPolicyAction::Block,
+        };
+        McpPolicyDecision { action, ..decision }
+    }
+
+    async fn resolve_ask_response(
+        &self,
+        decision: McpPolicyDecision,
+        request: &McpDecisionRequest,
+        response: &JsonRpcResponse,
+    ) -> McpPolicyDecision {
+        if !matches!(decision.action, McpPolicyAction::Ask) {
+            return decision;
+        }
+        let Some(rule_name) = decision.policy_v2_rule_name.as_deref() else {
+            return decision;
+        };
+        let args = crate::net::policy_confirm::ConfirmArgs {
+            callback: PolicyCallback::McpResponse,
+            rule_id: mcp_policy_v2_rule_id(rule_name),
+            args_snapshot: subject_snapshot_mcp_response(request, response),
+            trace_id: None,
+            session_id: None,
+            reason: Some(decision.reason.clone()),
+        };
+        let action = match crate::net::policy_confirm::confirm_with_backoff(
+            &self.confirmer,
+            args,
+            &self.confirm_opts,
+        )
+        .await
+        {
+            crate::net::policy_confirm::Decision::Accept => McpPolicyAction::Allow,
+            crate::net::policy_confirm::Decision::Deny => McpPolicyAction::Block,
+        };
+        McpPolicyDecision { action, ..decision }
     }
 
     fn decide_tool_call(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
@@ -983,6 +1080,7 @@ impl LocalMcpDecisionProvider {
             ),
         };
         decision.mode = McpPolicyMode::Enforce;
+        decision.policy_v2_rule_name = Some(name.to_string());
         decision
     }
 
@@ -994,6 +1092,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target: None,
             rewrite_value: None,
+            policy_v2_rule_name: None,
         }
     }
 
@@ -1005,6 +1104,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target: None,
             rewrite_value: None,
+            policy_v2_rule_name: None,
         }
     }
 
@@ -1016,6 +1116,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target: None,
             rewrite_value: None,
+            policy_v2_rule_name: None,
         }
     }
 
@@ -1033,6 +1134,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target,
             rewrite_value,
+            policy_v2_rule_name: None,
         }
     }
 }
@@ -1061,6 +1163,7 @@ fn disallowed_notification_decision(request: &JsonRpcRequest) -> McpPolicyDecisi
         reason: format!("MCP notification method {} is not allowed", request.method),
         rewrite_target: None,
         rewrite_value: None,
+        policy_v2_rule_name: None,
     }
 }
 
@@ -1553,6 +1656,90 @@ async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, out: &OutboundFrame)
     let bytes = capsem_proto::encode_mcp_frame(out.stream_id, 0, &out.process_name, &out.payload)?;
     writer.write_all(&bytes).await.context("write MCP frame")?;
     writer.flush().await.context("flush MCP frame")
+}
+
+const MCP_SNAPSHOT_FIELD_MAX_BYTES: usize = 256;
+
+fn mcp_policy_v2_rule_id(rule_name: &str) -> String {
+    format!("security.rules.mcp.{rule_name}")
+}
+
+fn mcp_truncate_for_snapshot(value: &str) -> String {
+    if value.len() <= MCP_SNAPSHOT_FIELD_MAX_BYTES {
+        return value.to_string();
+    }
+    let mut cut = MCP_SNAPSHOT_FIELD_MAX_BYTES;
+    while cut > 0 && !value.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut out = String::with_capacity(cut + 16);
+    out.push_str(&value[..cut]);
+    out.push_str("...[truncated]");
+    out
+}
+
+fn subject_snapshot_mcp_request(request: &McpDecisionRequest) -> serde_json::Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "method".into(),
+        mcp_truncate_for_snapshot(&request.method).into(),
+    );
+    payload.insert(
+        "method_kind".into(),
+        mcp_truncate_for_snapshot(&request.method_kind).into(),
+    );
+    if let Some(server) = request.server_name.as_deref() {
+        payload.insert(
+            "server_name".into(),
+            mcp_truncate_for_snapshot(server).into(),
+        );
+    }
+    if let Some(tool) = request.tool_name.as_deref() {
+        payload.insert("tool_name".into(), mcp_truncate_for_snapshot(tool).into());
+    }
+    if let Some(resource) = request.resource_uri.as_deref() {
+        payload.insert(
+            "resource_uri".into(),
+            mcp_truncate_for_snapshot(resource).into(),
+        );
+    }
+    if let Some(prompt) = request.prompt_name.as_deref() {
+        payload.insert(
+            "prompt_name".into(),
+            mcp_truncate_for_snapshot(prompt).into(),
+        );
+    }
+    payload.insert(
+        "arguments_present".into(),
+        serde_json::Value::Bool(request.arguments.is_some()),
+    );
+    serde_json::json!({ "request": payload })
+}
+
+fn subject_snapshot_mcp_response(
+    request: &McpDecisionRequest,
+    response: &JsonRpcResponse,
+) -> serde_json::Value {
+    let mut request_payload = serde_json::Map::new();
+    request_payload.insert(
+        "method".into(),
+        mcp_truncate_for_snapshot(&request.method).into(),
+    );
+    if let Some(server) = request.server_name.as_deref() {
+        request_payload.insert(
+            "server_name".into(),
+            mcp_truncate_for_snapshot(server).into(),
+        );
+    }
+    if let Some(tool) = request.tool_name.as_deref() {
+        request_payload.insert("tool_name".into(), mcp_truncate_for_snapshot(tool).into());
+    }
+    serde_json::json!({
+        "request": request_payload,
+        "response": {
+            "is_error": response.error.is_some(),
+        },
+    })
 }
 
 #[cfg(test)]

@@ -24,6 +24,7 @@
 - [x] Port debug-report settings/profile provenance without regressing main's rich debug schema
 - [x] Port service runtime Profile V2 asset locations, VM defaults, and vm-effective attachments
 - [x] Port capsem-process runtime consumption of vm-effective settings
+- [x] Port MCP Policy V2 `ask` confirmation resolution in the framed MITM path
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -53,9 +54,12 @@
 - Proof: `cargo test -p capsem-service handle_asset_status_exposes_service_asset_locations` passed.
 - Proof: `cargo test -p capsem-service settings` passed 15 focused settings/runtime tests.
 - capsem-process now builds runtime network defaults, MCP defaults/tool decisions, and Policy V2 rules from the session-attached `vm-effective-settings.toml`, with a default-profile fallback when attachments are missing/corrupt.
-- Process runtime conversion intentionally omits the source-line confirmer/ask authority wiring because the clean branch's MITM endpoint does not yet expose that integration point; it remains a follow-up policy-runtime slice.
 - Proof: `cargo test -p capsem-process mcp_runtime` passed 7 focused conversion tests.
 - Proof: `cargo test -p capsem-process` passed 97 tests.
+- Framed MCP Policy V2 `ask` decisions now resolve through the shared confirmer/backoff contract before request dispatch and before response surfacing. Placeholder confirmation preserves current allow-by-default behavior; focused mock-confirmer tests cover deny mapping, response asks, canonical rule ids, and redacted snapshots.
+- Proof: `cargo test -p capsem-core mcp_frame` passed 52 matching tests.
+- Proof: `cargo test -p capsem-core policy_confirm` passed 10 matching tests after the MCP integration.
+- Proof: `cargo test -p capsem-process` passed 97 tests after the MCP endpoint constructor change.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -64,11 +68,11 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling
 - Adversarial:
-  policy enforcement/redaction test weakenings are blocked as `needs-review`
+  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests
 - E2E/VM or integration:
   NAT/egress skips classified as `needs-review`; VM gates still release-held
 - Telemetry/observability:
@@ -76,4 +80,4 @@
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  confirmer-backed `ask` resolution, deeper MITM/gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending
+  deeper MITM/gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending

@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use capsem_logger::{DbReader, DbWriter};
 use capsem_proto::MCP_FRAME_FLAG_NOTIFICATION;
 use tokio::io::AsyncWriteExt;
@@ -18,6 +19,9 @@ use crate::mcp::policy::{
 use crate::mcp::types::McpToolDef;
 use crate::net::mitm_proxy::{McpEndpointState, McpTimeouts};
 use crate::net::policy_config::{PolicyConfig, SettingsFile};
+use crate::net::policy_confirm::{
+    ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision,
+};
 
 use super::*;
 
@@ -89,6 +93,36 @@ fn policy_with_rules(rules: Vec<McpDecisionRule>) -> McpPolicy {
     McpPolicy {
         audit_rules: rules,
         ..McpPolicy::new()
+    }
+}
+
+struct MockConfirmer {
+    decision: ConfirmDecision,
+    calls: std::sync::Mutex<Vec<ConfirmArgs>>,
+}
+
+impl MockConfirmer {
+    fn new(decision: ConfirmDecision) -> Arc<Self> {
+        Arc::new(Self {
+            decision,
+            calls: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    fn calls(&self) -> Vec<ConfirmArgs> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl Confirmer for MockConfirmer {
+    async fn confirm(&self, args: ConfirmArgs) -> ConfirmDecision {
+        self.calls.lock().unwrap().push(args);
+        self.decision
+    }
+
+    fn kind(&self) -> ConfirmerKind {
+        ConfirmerKind::Automated
     }
 }
 
@@ -445,8 +479,8 @@ fn local_decision_provider_marks_blocked_tool_as_audit_deny() {
     assert!(decision.reason.contains("block"));
 }
 
-#[test]
-fn local_decision_provider_applies_policy_v2_mcp_request_rules() {
+#[tokio::test]
+async fn local_decision_provider_applies_policy_v2_mcp_request_rules() {
     let settings: SettingsFile = toml::from_str(
         r#"
 [policy.mcp.block_prod_token]
@@ -489,11 +523,133 @@ reason = "Production issue creation needs approval"
     )
     .unwrap();
     let summary = interpret_mcp_method(&req);
-    let decision = provider.decide(&McpDecisionRequest::from_request("codex", &req, &summary));
+    let request = McpDecisionRequest::from_request("codex", &req, &summary);
+    let decision = provider
+        .resolve_ask_request(provider.decide(&request), &request)
+        .await;
     assert_eq!(decision.mode, McpPolicyMode::Enforce);
-    assert_eq!(decision.action, McpPolicyAction::Ask);
+    assert_eq!(decision.action, McpPolicyAction::Allow);
     assert_eq!(decision.rule, "policy.mcp.ask_prod_issue");
     assert_eq!(decision.reason, "Production issue creation needs approval");
+}
+
+#[tokio::test]
+async fn policy_v2_mcp_request_ask_with_deny_confirmer_blocks() {
+    let settings: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.ask_prod_issue]
+on = "mcp.request"
+if = 'method == "tools/call" && tool.name == "github__create_issue" && arguments.issue == "prod"'
+decision = "ask"
+priority = 10
+reason = "Production issue creation needs approval"
+"#,
+    )
+    .unwrap();
+    let confirmer = MockConfirmer::new(ConfirmDecision::Deny);
+    let provider = LocalMcpDecisionProvider::audit_only_with_policy_v2_and_confirmer(
+        McpPolicy::new(),
+        Arc::new(settings.policy),
+        confirmer.clone() as Arc<dyn Confirmer>,
+    );
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"github__create_issue","arguments":{"issue":"prod","prod_token":"secret"}}}"#,
+    )
+    .unwrap();
+    let summary = interpret_mcp_method(&req);
+    let request = McpDecisionRequest::from_request("codex", &req, &summary);
+
+    let decision = provider
+        .resolve_ask_request(provider.decide(&request), &request)
+        .await;
+
+    assert_eq!(decision.mode, McpPolicyMode::Enforce);
+    assert_eq!(decision.action, McpPolicyAction::Block);
+    assert_eq!(decision.rule, "policy.mcp.ask_prod_issue");
+    let calls = confirmer.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].rule_id, "security.rules.mcp.ask_prod_issue");
+    assert_eq!(
+        calls[0].callback,
+        crate::net::policy_config::PolicyCallback::McpRequest
+    );
+    assert_eq!(
+        calls[0]
+            .args_snapshot
+            .get("request")
+            .and_then(|value| value.get("tool_name")),
+        Some(&serde_json::json!("github__create_issue"))
+    );
+    let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
+    assert!(
+        !snapshot.contains("prod_token") && !snapshot.contains("secret"),
+        "confirm snapshots must not expose MCP argument contents: {snapshot}"
+    );
+}
+
+#[tokio::test]
+async fn policy_v2_mcp_response_ask_with_accept_and_deny_confirmer_resolves() {
+    let settings: SettingsFile = toml::from_str(
+        r#"
+[policy.mcp.ask_tool_response]
+on = "mcp.response"
+if = 'method == "tools/call" && tool.name == "github__create_issue"'
+decision = "ask"
+priority = 10
+reason = "Confirm before surfacing tool response"
+"#,
+    )
+    .unwrap();
+    let request = decision_request(
+        "codex",
+        br#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"github__create_issue","arguments":{"issue":"prod"}}}"#,
+    );
+    let response = JsonRpcResponse::ok(
+        Some(serde_json::json!(4)),
+        serde_json::json!({"content":[{"type":"text","text":"created"}]}),
+    );
+
+    let accept_confirmer = MockConfirmer::new(ConfirmDecision::Accept);
+    let accept_provider = LocalMcpDecisionProvider::audit_only_with_policy_v2_and_confirmer(
+        McpPolicy::new(),
+        Arc::new(settings.policy.clone()),
+        accept_confirmer.clone() as Arc<dyn Confirmer>,
+    );
+    let base = accept_provider.decide(&request);
+    let decision = accept_provider
+        .resolve_ask_response(
+            accept_provider.decide_response(&request, &response, base),
+            &request,
+            &response,
+        )
+        .await;
+    assert_eq!(decision.action, McpPolicyAction::Allow);
+    assert_eq!(decision.rule, "policy.mcp.ask_tool_response");
+    assert_eq!(
+        accept_confirmer.calls()[0].callback,
+        crate::net::policy_config::PolicyCallback::McpResponse
+    );
+
+    let deny_confirmer = MockConfirmer::new(ConfirmDecision::Deny);
+    let deny_provider = LocalMcpDecisionProvider::audit_only_with_policy_v2_and_confirmer(
+        McpPolicy::new(),
+        Arc::new(settings.policy),
+        deny_confirmer.clone() as Arc<dyn Confirmer>,
+    );
+    let base = deny_provider.decide(&request);
+    let decision = deny_provider
+        .resolve_ask_response(
+            deny_provider.decide_response(&request, &response, base),
+            &request,
+            &response,
+        )
+        .await;
+    assert_eq!(decision.action, McpPolicyAction::Block);
+    assert_eq!(decision.rule, "policy.mcp.ask_tool_response");
+    assert_eq!(
+        deny_confirmer.calls()[0].rule_id,
+        "security.rules.mcp.ask_tool_response"
+    );
 }
 
 #[test]
@@ -1364,7 +1520,7 @@ reason = "Safe repository search"
 }
 
 #[tokio::test]
-async fn framed_session_asks_policy_v2_mcp_request_rule_without_dispatch() {
+async fn framed_session_accepts_policy_v2_mcp_request_ask_with_placeholder_confirmer() {
     let settings: SettingsFile = toml::from_str(
         r#"
 [policy.mcp.ask_prod_issue]
@@ -1404,10 +1560,15 @@ reason = "Production issue creation needs approval"
     )
     .await;
     let response = read_response_frame(&mut client).await;
-    assert!(response
-        .error
-        .as_ref()
-        .is_some_and(|error| error.message.contains("blocked by policy")));
+    assert!(response.error.is_none());
+    assert_eq!(
+        response
+            .result
+            .as_ref()
+            .and_then(|result| result.get("tool"))
+            .and_then(|value| value.as_str()),
+        Some("github__create_issue")
+    );
     client.shutdown().await.unwrap();
     drop(client);
 
@@ -1422,14 +1583,17 @@ reason = "Production issue creation needs approval"
         .find(|call| call.request_id.as_deref() == Some("32"))
         .expect("Policy V2 ask request should be logged");
 
-    assert_eq!(call.decision, "denied");
+    assert_eq!(call.decision, "allowed");
     assert_eq!(call.policy_mode.as_deref(), Some("enforce"));
-    assert_eq!(call.policy_action.as_deref(), Some("ask"));
+    assert_eq!(call.policy_action.as_deref(), Some("allow"));
     assert_eq!(
         call.policy_rule.as_deref(),
         Some("policy.mcp.ask_prod_issue")
     );
-    assert!(call.response_preview.is_none());
+    assert!(call
+        .response_preview
+        .as_deref()
+        .is_some_and(|preview| { preview.contains("github__create_issue") }));
 }
 
 #[tokio::test]
