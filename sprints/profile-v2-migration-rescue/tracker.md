@@ -17,8 +17,8 @@
 - [x] Produce rescue manifest linking changed files to intent and action
 - [x] Separate generated artifacts/noise from source changes
 - [x] Define migration commit sequence (context/docs -> code -> tests)
-- [ ] Execute first reconciliation pass on highest-risk files
-- [ ] Re-run targeted verification gates for reconciled slices
+- [x] Execute first reconciliation pass on highest-risk files (`settings_profiles` core)
+- [x] Re-run targeted verification gate for `settings_profiles` core
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -28,6 +28,8 @@
 - Branch created from `origin/main` at `dc137f99`; source line remains reference-only.
 - Dirty overlay manifest: `sprints/profile-v2-migration-rescue/rescue-manifest.md`.
 - `origin/main..b3862ae7` is too mixed for wholesale cherry-pick; replay by slice.
+- Core `settings_profiles` module ported as the first product slice.
+- Proof: `cargo test -p capsem-core settings_profiles` passed 118 matching tests.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -36,7 +38,7 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  keep candidates identified for `settings_profiles`, `policy_confirm`, and debug report tests; execution pending code port
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` and debug report tests pending later slices
 - Functional:
   migration sequence defined; no functional gate run yet
 - Adversarial:

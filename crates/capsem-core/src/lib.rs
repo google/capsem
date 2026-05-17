@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod net;
 pub mod paths;
 pub mod session;
+pub mod settings_profiles;
 pub mod setup_state;
 pub mod telemetry;
 pub mod uds;
