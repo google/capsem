@@ -2917,40 +2917,508 @@ struct ReloadConfigFailure {
 // Settings endpoints
 // ---------------------------------------------------------------------------
 
-/// GET /settings -- unified settings tree + issues + presets.
-async fn handle_get_settings() -> Result<Json<serde_json::Value>, AppError> {
-    let resp = capsem_core::net::policy_config::load_settings_response();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+#[derive(Debug, Clone, Serialize)]
+struct SettingsIssue {
+    path: String,
+    severity: String,
+    message: String,
 }
 
-/// POST /settings -- batch-update settings and return the refreshed tree.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyRuleUpdate {
+    #[serde(rename = "on")]
+    callback: String,
+    #[serde(rename = "if")]
+    condition: String,
+    decision: capsem_core::settings_profiles::RuleDecision,
+    #[serde(default = "default_profile_rule_priority")]
+    priority: i32,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    rewrite_target: Option<String>,
+    #[serde(default)]
+    rewrite_value: Option<String>,
+}
+
+fn default_profile_rule_priority() -> i32 {
+    1
+}
+
+fn service_settings_path() -> PathBuf {
+    capsem_core::paths::capsem_home().join("service.toml")
+}
+
+fn load_service_profiles_state() -> Result<
+    (
+        capsem_core::settings_profiles::ServiceSettings,
+        capsem_core::settings_profiles::ProfileCatalog,
+        capsem_core::settings_profiles::EffectiveVmSettings,
+        capsem_core::settings_profiles::ResolverTrace,
+    ),
+    String,
+> {
+    let settings_path = service_settings_path();
+    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
+        .map_err(|e| format!("load {}: {e}", settings_path.display()))?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| format!("discover profiles: {e}"))?;
+    let (effective, trace) =
+        capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+            &settings,
+            Some(&settings.profiles.default_profile),
+        )
+        .map_err(|e| {
+            format!(
+                "resolve effective profile '{}': {e}",
+                settings.profiles.default_profile
+            )
+        })?;
+    Ok((settings, catalog, effective, trace))
+}
+
+fn rule_type_from_callback(callback: &str) -> Option<&'static str> {
+    match callback {
+        "mcp.request" | "mcp.response" => Some("mcp"),
+        "http.request" | "http.read" | "http.write" | "http.response" => Some("http"),
+        "dns.request" | "dns.response" => Some("dns"),
+        "model.request" | "model.response" | "model.tool_call" | "model.tool_response" => {
+            Some("model")
+        }
+        "hook.decision" => Some("hook"),
+        _ => None,
+    }
+}
+
+fn split_policy_key(key: &str) -> Result<(String, String), String> {
+    let mut parts = key.split('.');
+    let prefix = parts.next();
+    let rule_type = parts.next();
+    let rule_name = parts.next();
+    if prefix != Some("policy")
+        || rule_type.is_none()
+        || rule_name.is_none()
+        || parts.next().is_some()
+    {
+        return Err(format!(
+            "unsupported settings key '{key}'; only policy.<type>.<rule_name> is accepted"
+        ));
+    }
+    let rule_type = rule_type.unwrap_or_default();
+    if !matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") {
+        return Err(format!("unsupported policy rule type in key '{key}'"));
+    }
+    let rule_name = rule_name.unwrap_or_default();
+    if rule_name.is_empty()
+        || !rule_name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Err(format!("invalid policy rule name in key '{key}'"));
+    }
+    Ok((rule_type.to_string(), rule_name.to_string()))
+}
+
+fn profile_rule_from_update(
+    update: PolicyRuleUpdate,
+) -> capsem_core::settings_profiles::ProfileRule {
+    capsem_core::settings_profiles::ProfileRule {
+        callback: update.callback,
+        condition: update.condition,
+        decision: update.decision,
+        priority: update.priority,
+        reason: update.reason,
+        rewrite_target: update.rewrite_target,
+        rewrite_value: update.rewrite_value,
+    }
+}
+
+fn map_policy_callback(
+    callback: &str,
+) -> Result<capsem_core::net::policy_config::PolicyCallback, String> {
+    use capsem_core::net::policy_config::PolicyCallback;
+    match callback {
+        "mcp.request" => Ok(PolicyCallback::McpRequest),
+        "mcp.response" => Ok(PolicyCallback::McpResponse),
+        "http.request" => Ok(PolicyCallback::HttpRequest),
+        "http.response" => Ok(PolicyCallback::HttpResponse),
+        "dns.request" => Ok(PolicyCallback::DnsQuery),
+        "dns.response" => Ok(PolicyCallback::DnsResponse),
+        "model.request" => Ok(PolicyCallback::ModelRequest),
+        "model.response" => Ok(PolicyCallback::ModelResponse),
+        "model.tool_call" => Ok(PolicyCallback::ModelToolCall),
+        "model.tool_response" => Ok(PolicyCallback::ModelToolResponse),
+        "hook.decision" => Ok(PolicyCallback::HookDecision),
+        _ => Err(format!("unsupported policy callback '{callback}'")),
+    }
+}
+
+fn map_policy_decision(
+    decision: capsem_core::settings_profiles::RuleDecision,
+) -> capsem_core::net::policy_config::PolicyDecisionKind {
+    use capsem_core::net::policy_config::PolicyDecisionKind;
+    match decision {
+        capsem_core::settings_profiles::RuleDecision::Allow => PolicyDecisionKind::Allow,
+        capsem_core::settings_profiles::RuleDecision::Ask => PolicyDecisionKind::Ask,
+        capsem_core::settings_profiles::RuleDecision::Block => PolicyDecisionKind::Block,
+        capsem_core::settings_profiles::RuleDecision::Rewrite => PolicyDecisionKind::Rewrite,
+    }
+}
+
+fn validate_policy_rule_update(
+    rule_type: &str,
+    rule_name: &str,
+    update: &PolicyRuleUpdate,
+) -> Result<(), String> {
+    let callback = map_policy_callback(&update.callback)?;
+    let callback_type = match callback {
+        capsem_core::net::policy_config::PolicyCallback::McpRequest
+        | capsem_core::net::policy_config::PolicyCallback::McpResponse => "mcp",
+        capsem_core::net::policy_config::PolicyCallback::HttpRequest
+        | capsem_core::net::policy_config::PolicyCallback::HttpResponse => "http",
+        capsem_core::net::policy_config::PolicyCallback::DnsQuery
+        | capsem_core::net::policy_config::PolicyCallback::DnsResponse => "dns",
+        capsem_core::net::policy_config::PolicyCallback::ModelRequest
+        | capsem_core::net::policy_config::PolicyCallback::ModelResponse
+        | capsem_core::net::policy_config::PolicyCallback::ModelToolCall
+        | capsem_core::net::policy_config::PolicyCallback::ModelToolResponse => "model",
+        capsem_core::net::policy_config::PolicyCallback::HookDecision => "hook",
+    };
+    if callback_type != rule_type {
+        return Err(format!(
+            "policy rule 'policy.{rule_type}.{rule_name}' uses callback for a different policy type"
+        ));
+    }
+    // The old runtime validator still catches malformed CEL for callbacks
+    // already supported on main. S06a moves model requests to `request.data`;
+    // until that runtime slice lands, skip this compatibility validator for
+    // that one new vocabulary path and let the profile model own structure.
+    if update.callback == "model.request" && update.condition.contains("request.data") {
+        return Ok(());
+    }
+
+    let policy_rule = capsem_core::net::policy_config::PolicyRuleConfig {
+        on: callback,
+        condition: update.condition.clone(),
+        decision: map_policy_decision(update.decision),
+        priority: update.priority,
+        reason: update.reason.clone(),
+        rewrite_target: update.rewrite_target.clone(),
+        rewrite_value: update.rewrite_value.clone(),
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+    };
+    policy_rule
+        .validate()
+        .map_err(|e| format!("invalid policy rule policy.{rule_type}.{rule_name}: {e}"))?;
+    Ok(())
+}
+
+fn upsert_profile_rule(
+    profile: &mut capsem_core::settings_profiles::Profile,
+    rule_type: &str,
+    rule_name: String,
+    rule: capsem_core::settings_profiles::ProfileRule,
+) {
+    match rule_type {
+        "mcp" => {
+            profile.security.rules.mcp.insert(rule_name, rule);
+        }
+        "http" => {
+            profile.security.rules.http.insert(rule_name, rule);
+        }
+        "dns" => {
+            profile.security.rules.dns.insert(rule_name, rule);
+        }
+        "model" => {
+            profile.security.rules.model.insert(rule_name, rule);
+        }
+        "hook" => {
+            profile.security.rules.hook.insert(rule_name, rule);
+        }
+        _ => {}
+    }
+}
+
+fn remove_profile_rule(
+    profile: &mut capsem_core::settings_profiles::Profile,
+    rule_type: &str,
+    rule_name: &str,
+) {
+    match rule_type {
+        "mcp" => {
+            profile.security.rules.mcp.remove(rule_name);
+        }
+        "http" => {
+            profile.security.rules.http.remove(rule_name);
+        }
+        "dns" => {
+            profile.security.rules.dns.remove(rule_name);
+        }
+        "model" => {
+            profile.security.rules.model.remove(rule_name);
+        }
+        "hook" => {
+            profile.security.rules.hook.remove(rule_name);
+        }
+        _ => {}
+    }
+}
+
+fn policy_json_from_effective(
+    effective: &capsem_core::settings_profiles::EffectiveVmSettings,
+) -> serde_json::Value {
+    let mut policy = serde_json::Map::new();
+    for rule in &effective.rules {
+        if rule.derived {
+            continue;
+        }
+        let Some(rule_type) = rule_type_from_callback(&rule.callback) else {
+            continue;
+        };
+        let rule_name = rule
+            .id
+            .split_once('.')
+            .map(|(_, name)| name)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(rule.id.as_str())
+            .to_string();
+
+        let rule_json = json!({
+            "on": rule.callback,
+            "if": rule.condition,
+            "decision": rule.decision,
+            "priority": rule.priority,
+            "reason": rule.reason,
+            "rewrite_target": rule.rewrite_target,
+            "rewrite_value": rule.rewrite_value,
+        });
+        let entry = policy
+            .entry(rule_type.to_string())
+            .or_insert_with(|| json!({}));
+        if let Some(map) = entry.as_object_mut() {
+            map.insert(rule_name, rule_json);
+        }
+    }
+    serde_json::Value::Object(policy)
+}
+
+fn profile_presets_json(
+    catalog: &capsem_core::settings_profiles::ProfileCatalog,
+) -> serde_json::Value {
+    let mut presets = catalog
+        .list()
+        .map(|record| {
+            json!({
+                "id": record.profile.id,
+                "name": record.profile.name,
+                "description": record.profile.description,
+                "settings": {
+                    "profiles.default_profile": record.profile.id,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    presets.sort_by(|left, right| {
+        left["name"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["name"].as_str().unwrap_or_default())
+    });
+    serde_json::Value::Array(presets)
+}
+
+fn settings_response_json() -> serde_json::Value {
+    match load_service_profiles_state() {
+        Ok((settings, catalog, effective, trace)) => {
+            let snapshot =
+                capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_parts_with_trace(
+                    &settings,
+                    &catalog,
+                    Some(&effective),
+                    Some(&trace),
+                );
+            json!({
+                "profile_presets": profile_presets_json(&catalog),
+                "effective_rules": policy_json_from_effective(&effective),
+                "settings_profiles": snapshot,
+                "mode": "settings_profiles_v2",
+            })
+        }
+        Err(error) => json!({
+            "profile_presets": [],
+            "effective_rules": {},
+            "settings_profiles": capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_error(error),
+            "mode": "settings_profiles_v2",
+        }),
+    }
+}
+
+/// GET /settings -- typed settings-profiles snapshot + rules/presets.
+async fn handle_get_settings() -> Json<serde_json::Value> {
+    Json(settings_response_json())
+}
+
+/// POST /settings -- batch-update policy rules and return refreshed typed state.
 async fn handle_save_settings(
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    capsem_core::net::policy_config::batch_update_settings_json(&raw)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let resp = capsem_core::net::policy_config::load_settings_response();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+    let settings_path = service_settings_path();
+    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("load {}: {e}", settings_path.display()),
+            )
+        })?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let selected_id = settings.profiles.default_profile.clone();
+    let selected = catalog.get(&selected_id).ok_or_else(|| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("default profile '{selected_id}' not found"),
+        )
+    })?;
+
+    let mut profile = selected.profile.clone();
+    for (key, value) in raw {
+        let (rule_type, rule_name) =
+            split_policy_key(&key).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+        if value.is_null() {
+            remove_profile_rule(&mut profile, &rule_type, &rule_name);
+            continue;
+        }
+        let update: PolicyRuleUpdate = serde_json::from_value(value).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid policy rule '{key}': {e}"),
+            )
+        })?;
+        validate_policy_rule_update(&rule_type, &rule_name, &update)
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+        upsert_profile_rule(
+            &mut profile,
+            &rule_type,
+            rule_name,
+            profile_rule_from_update(update),
+        );
+    }
+    profile.validate().map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("profile validation failed: {e}"),
+        )
+    })?;
+
+    match selected.source {
+        capsem_core::settings_profiles::ProfileSource::User => {
+            capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
+                .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
+        }
+        capsem_core::settings_profiles::ProfileSource::BuiltIn => {
+            capsem_core::settings_profiles::create_user_profile(&settings.profiles, profile)
+                .map_err(|e| {
+                    AppError(
+                        StatusCode::BAD_REQUEST,
+                        format!("create profile override: {e}"),
+                    )
+                })?;
+        }
+        capsem_core::settings_profiles::ProfileSource::Base
+        | capsem_core::settings_profiles::ProfileSource::Corp => {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "default profile '{}' is locked ({:?}); switch to a user-editable profile first",
+                    selected.profile.id, selected.source
+                ),
+            ));
+        }
+    }
+
+    Ok(Json(settings_response_json()))
 }
 
 /// GET /settings/presets -- list security presets.
-async fn handle_get_presets() -> Result<Json<serde_json::Value>, AppError> {
-    let presets = capsem_core::net::policy_config::security_presets();
-    Ok(Json(serde_json::to_value(presets).unwrap_or_default()))
+async fn handle_get_presets() -> Json<serde_json::Value> {
+    match load_service_profiles_state() {
+        Ok((_, catalog, _, _)) => Json(profile_presets_json(&catalog)),
+        Err(error) => Json(json!([{
+            "id": "settings-profiles-error",
+            "name": "Settings Profiles Error",
+            "description": error,
+            "settings": {},
+        }])),
+    }
 }
 
-/// POST /settings/presets/{id} -- apply a security preset, return refreshed tree.
+/// POST /settings/presets/{id} -- apply a profile preset and return refreshed typed state.
 async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    capsem_core::net::policy_config::apply_preset(&id)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let resp = capsem_core::net::policy_config::load_settings_response();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+    let settings_path = service_settings_path();
+    let mut settings = capsem_core::settings_profiles::load_service_settings_or_default(
+        &settings_path,
+    )
+    .map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("load {}: {e}", settings_path.display()),
+        )
+    })?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    if catalog.get(&id).is_none() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!("unknown profile preset '{id}'"),
+        ));
+    }
+    settings.profiles.default_profile = id;
+    capsem_core::settings_profiles::write_service_settings(&settings_path, &settings).map_err(
+        |e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("write {}: {e}", settings_path.display()),
+            )
+        },
+    )?;
+    Ok(Json(settings_response_json()))
 }
 
 /// POST /settings/lint -- validate config and return issues.
-async fn handle_lint_config() -> Result<Json<serde_json::Value>, AppError> {
-    let issues = capsem_core::net::policy_config::load_merged_lint();
-    Ok(Json(serde_json::to_value(issues).unwrap_or_default()))
+async fn handle_lint_config() -> Json<serde_json::Value> {
+    let mut issues: Vec<SettingsIssue> = Vec::new();
+    let settings_path = service_settings_path();
+    match capsem_core::settings_profiles::load_service_settings_or_default(&settings_path) {
+        Ok(settings) => {
+            if let Err(error) =
+                capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+            {
+                issues.push(SettingsIssue {
+                    path: "profiles".to_string(),
+                    severity: "error".to_string(),
+                    message: error.to_string(),
+                });
+            }
+            if let Err(error) = capsem_core::settings_profiles::resolve_effective_vm_settings(
+                &settings.profiles,
+                Some(&settings.profiles.default_profile),
+            ) {
+                issues.push(SettingsIssue {
+                    path: "profiles.default_profile".to_string(),
+                    severity: "error".to_string(),
+                    message: error.to_string(),
+                });
+            }
+        }
+        Err(error) => issues.push(SettingsIssue {
+            path: settings_path.display().to_string(),
+            severity: "error".to_string(),
+            message: error.to_string(),
+        }),
+    }
+    Json(serde_json::to_value(issues).unwrap_or_default())
 }
 
 /// POST /settings/validate-key -- validate an API key against a provider endpoint.

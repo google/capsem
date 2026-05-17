@@ -20,6 +20,7 @@
 - [x] Execute first reconciliation pass on highest-risk files (`settings_profiles` core)
 - [x] Re-run targeted verification gate for `settings_profiles` core
 - [x] Port `policy_confirm` confirmation contract and targeted tests
+- [x] Port `/settings*` service endpoint surface to typed settings-profiles payload
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -34,6 +35,10 @@
 - `policy_confirm` requires the source-line `RetryOpts: Clone` support change in `capsem-proto`; ported with the confirmation slice because `poll_until` consumes retry options.
 - Proof: `cargo test -p capsem-core policy_confirm` passed 10 matching tests.
 - Proof: `cargo test -p capsem-proto poll` passed 5 matching tests.
+- Service `/settings*` now returns `settings_profiles_v2`, profile presets, and effective rules. The handler keeps temporary validation through the old policy-config grammar where compatible, but bridges `model.request` + `request.data` until the S06a runtime slice lands.
+- Proof: `cargo test -p capsem-service settings` passed 7 focused tests.
+- Proof: `cargo test -p capsem-service handle_` passed 24 handler tests.
+- Proof: `uv run pytest tests/capsem-service/test_svc_settings.py -q` passed 10 tests after building `capsem-process`, `capsem-service`, `capsem-gateway`, and `capsem-tray`.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -44,7 +49,7 @@
 - Unit/contract:
   `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report tests pending later slices
 - Functional:
-  migration sequence defined; no functional gate run yet
+  `/settings*` service handler and Python integration tests passed for typed settings payload
 - Adversarial:
   policy enforcement/redaction test weakenings are blocked as `needs-review`
 - E2E/VM or integration:

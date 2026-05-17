@@ -2269,59 +2269,64 @@ async fn handle_stats_returns_global_data() {
 // -----------------------------------------------------------------------
 
 struct SettingsEnvGuard {
-    previous_user: Option<std::ffi::OsString>,
-    previous_corp: Option<std::ffi::OsString>,
+    previous_capsem_home: Option<std::ffi::OsString>,
 }
 
 impl Drop for SettingsEnvGuard {
     fn drop(&mut self) {
-        if let Some(previous_user) = self.previous_user.take() {
-            std::env::set_var("CAPSEM_USER_CONFIG", previous_user);
+        if let Some(previous_capsem_home) = self.previous_capsem_home.take() {
+            std::env::set_var("CAPSEM_HOME", previous_capsem_home);
         } else {
-            std::env::remove_var("CAPSEM_USER_CONFIG");
-        }
-
-        if let Some(previous_corp) = self.previous_corp.take() {
-            std::env::set_var("CAPSEM_CORP_CONFIG", previous_corp);
-        } else {
-            std::env::remove_var("CAPSEM_CORP_CONFIG");
+            std::env::remove_var("CAPSEM_HOME");
         }
     }
 }
 
-fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
-    let user_path = dir.path().join("user.toml");
-    let corp_path = dir.path().join("corp.toml");
-    capsem_core::net::policy_config::write_settings_file(
-        &user_path,
-        &capsem_core::net::policy_config::SettingsFile::default(),
-    )
-    .unwrap();
-    capsem_core::net::policy_config::write_settings_file(
-        &corp_path,
-        &capsem_core::net::policy_config::SettingsFile::default(),
-    )
-    .unwrap();
+fn install_settings_profiles_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
+    let capsem_home = dir.path().join("home");
+    let settings_path = capsem_home.join("service.toml");
+    let base_dir = capsem_home.join("profiles").join("base");
+    let corp_dir = capsem_home.join("profiles").join("corp");
+    let user_dir = capsem_home.join("profiles").join("user");
+    std::fs::create_dir_all(&base_dir).unwrap();
+    std::fs::create_dir_all(&corp_dir).unwrap();
+    std::fs::create_dir_all(&user_dir).unwrap();
+
+    let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+    settings.profiles.base_dirs = vec![base_dir];
+    settings.profiles.corp_dirs = vec![corp_dir];
+    settings.profiles.user_dirs = vec![user_dir.clone()];
+    settings.profiles.default_profile =
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string();
+    capsem_core::settings_profiles::write_service_settings(&settings_path, &settings).unwrap();
+
+    let user_profile_path = user_dir.join(format!(
+        "{}.toml",
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID
+    ));
 
     let guard = SettingsEnvGuard {
-        previous_user: std::env::var_os("CAPSEM_USER_CONFIG"),
-        previous_corp: std::env::var_os("CAPSEM_CORP_CONFIG"),
+        previous_capsem_home: std::env::var_os("CAPSEM_HOME"),
     };
-    std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
-    std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
-    (guard, user_path, corp_path)
+    std::env::set_var("CAPSEM_HOME", &capsem_home);
+    (guard, settings_path, user_profile_path)
 }
 
 #[tokio::test]
-async fn handle_get_settings_returns_tree() {
-    let Json(val) = handle_get_settings().await.unwrap();
-    assert!(val.get("tree").is_some(), "response must have 'tree'");
-    assert!(val.get("issues").is_some(), "response must have 'issues'");
-    assert!(val.get("presets").is_some(), "response must have 'presets'");
-    assert!(val.get("policy").is_some(), "response must have 'policy'");
-    assert!(val["tree"].is_array());
-    assert!(val["issues"].is_array());
-    assert!(val["presets"].is_array());
+async fn handle_get_settings_returns_typed_payload() {
+    let Json(val) = handle_get_settings().await;
+    assert!(
+        val.get("profile_presets").is_some(),
+        "response must have 'profile_presets'"
+    );
+    assert!(
+        val.get("effective_rules").is_some(),
+        "response must have 'effective_rules'"
+    );
+    assert!(val.get("settings_profiles").is_some());
+    assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
+    assert!(val["profile_presets"].is_array());
+    assert!(val["effective_rules"].is_object());
 }
 
 #[tokio::test]
@@ -2340,7 +2345,11 @@ async fn handle_policy_hook_spec_exports_spec0_contract() {
 
 #[tokio::test]
 async fn handle_get_presets_returns_list() {
-    let Json(val) = handle_get_presets().await.unwrap();
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_get_presets().await;
     let arr = val.as_array().expect("presets should be an array");
     assert!(!arr.is_empty(), "should have at least one preset");
     assert!(arr[0].get("id").is_some());
@@ -2350,7 +2359,11 @@ async fn handle_get_presets_returns_list() {
 
 #[tokio::test]
 async fn handle_lint_config_returns_array() {
-    let Json(val) = handle_lint_config().await.unwrap();
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_lint_config().await;
     assert!(val.is_array(), "lint response should be an array");
 }
 
@@ -2369,7 +2382,7 @@ async fn handle_save_settings_accepts_policy_rule_object() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let (_env_guard, service_path, user_profile_path) = install_settings_profiles_env(&dir);
 
     let mut changes = HashMap::new();
     changes.insert(
@@ -2387,11 +2400,12 @@ async fn handle_save_settings_accepts_policy_rule_object() {
 
     let Json(val) = result.expect("policy rule save should succeed");
     assert_eq!(
-        val["policy"]["http"]["block_openai_github"]["priority"],
+        val["effective_rules"]["http"]["block_openai_github"]["priority"],
         serde_json::json!(10)
     );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    assert!(loaded.policy.http.contains_key("block_openai_github"));
+    assert!(service_path.exists());
+    let profile_text = std::fs::read_to_string(&user_profile_path).unwrap();
+    assert!(profile_text.contains("[security.rules.http.block_openai_github]"));
 }
 
 #[tokio::test]
@@ -2399,7 +2413,7 @@ async fn handle_save_settings_accepts_mcp_policy_rule_object() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
 
     let mut changes = HashMap::new();
     changes.insert(
@@ -2417,11 +2431,11 @@ async fn handle_save_settings_accepts_mcp_policy_rule_object() {
 
     let Json(val) = result.expect("MCP policy rule save should succeed");
     assert_eq!(
-        val["policy"]["mcp"]["block_prod_token"]["decision"],
+        val["effective_rules"]["mcp"]["block_prod_token"]["decision"],
         serde_json::json!("block")
     );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    assert!(loaded.policy.mcp.contains_key("block_prod_token"));
+    let profile_text = std::fs::read_to_string(&user_profile_path).unwrap();
+    assert!(profile_text.contains("[security.rules.mcp.block_prod_token]"));
 }
 
 #[tokio::test]
@@ -2429,14 +2443,14 @@ async fn handle_save_settings_accepts_model_policy_rule_object() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
 
     let mut changes = HashMap::new();
     changes.insert(
         "policy.model.block_secret_prompt".into(),
         serde_json::json!({
             "on": "model.request",
-            "if": "provider == 'openai' && model == 'gpt-4o-mini' && request.body.contains('prod-secret')",
+            "if": "provider == 'openai' && model == 'gpt-4o-mini' && request.data.contains('prod-secret')",
             "decision": "block",
             "priority": 10,
             "reason": "Keep secret-bearing prompts local"
@@ -2447,11 +2461,11 @@ async fn handle_save_settings_accepts_model_policy_rule_object() {
 
     let Json(val) = result.expect("model policy rule save should succeed");
     assert_eq!(
-        val["policy"]["model"]["block_secret_prompt"]["decision"],
+        val["effective_rules"]["model"]["block_secret_prompt"]["decision"],
         serde_json::json!("block")
     );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    assert!(loaded.policy.model.contains_key("block_secret_prompt"));
+    let profile_text = std::fs::read_to_string(&user_profile_path).unwrap();
+    assert!(profile_text.contains("[security.rules.model.block_secret_prompt]"));
 }
 
 #[tokio::test]
@@ -2459,7 +2473,7 @@ async fn handle_save_settings_rejects_policy_rule_callback_mismatch() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
 
     let mut changes = HashMap::new();
     changes.insert(
@@ -2482,10 +2496,9 @@ async fn handle_save_settings_rejects_policy_rule_callback_mismatch() {
         "error should explain callback mismatch, got: {}",
         err.1
     );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
     assert!(
-        loaded.policy.model.is_empty(),
-        "rejected model policy update must not mutate user config"
+        !user_profile_path.exists(),
+        "rejected model policy update must not create user profile override"
     );
 }
 
@@ -2494,7 +2507,7 @@ async fn handle_save_settings_rejects_invalid_policy_condition() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
 
     let mut changes = HashMap::new();
     changes.insert(
@@ -2517,10 +2530,9 @@ async fn handle_save_settings_rejects_invalid_policy_condition() {
         "error should explain CEL validation failure, got: {}",
         err.1
     );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
     assert!(
-        loaded.policy.http.is_empty(),
-        "rejected policy update must not mutate user config"
+        !user_profile_path.exists(),
+        "rejected policy update must not create user profile override"
     );
 }
 
