@@ -5830,7 +5830,7 @@ priority = 10
 
 [policy.model.block_secret_prompt]
 on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o" && system_prompt.contains("PROD_SECRET")'
+if = 'provider == "openai" && model == "gpt-4o" && request.data.contains("PROD_SECRET")'
 decision = "block"
 priority = 10
 

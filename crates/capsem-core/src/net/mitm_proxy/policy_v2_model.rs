@@ -54,14 +54,6 @@ impl LastModelPolicyV2Decision {
             )),
         }
     }
-
-    fn unsupported_rewrite(mut self) -> Self {
-        let existing = self.policy_reason.take().unwrap_or_default();
-        self.policy_reason = Some(format!(
-            "{existing}; model.request rewrite is not implemented yet"
-        ));
-        self
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,9 +147,23 @@ pub async fn evaluate_model_request_policy(
                     return Some(ModelRequestPolicyOutcome::Deny(decision));
                 }
                 PolicyDecisionKind::Rewrite => {
-                    return Some(ModelRequestPolicyOutcome::Deny(
-                        decision.unsupported_rewrite(),
-                    ));
+                    match rewrite_model_request_body(matched.name, matched.rule, body) {
+                        Ok(rewritten) => {
+                            return Some(ModelRequestPolicyOutcome::RewriteBody {
+                                decision,
+                                body: rewritten,
+                            });
+                        }
+                        Err(error) => {
+                            return Some(ModelRequestPolicyOutcome::Deny(
+                                LastModelPolicyV2Decision::from_failure(
+                                    matched.name,
+                                    matched.rule,
+                                    error,
+                                ),
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -651,6 +657,39 @@ fn parse_error_json_response(request_meta: &RequestMeta, body: &[u8]) -> ModelRe
     }
 }
 
+fn rewrite_model_request_body(
+    name: &str,
+    rule: &PolicyRuleConfig,
+    body: &[u8],
+) -> Result<Vec<u8>, String> {
+    let target = rule
+        .rewrite_target
+        .as_deref()
+        .ok_or_else(|| "rewrite decision missing rewrite_target".to_string())?;
+    let replacement = rule
+        .rewrite_value
+        .as_deref()
+        .ok_or_else(|| "rewrite decision missing rewrite_value".to_string())?;
+    let (field, regex) = parse_regex_rewrite_target(target)?;
+    match field.as_str() {
+        "request.data" | "request.body" => {}
+        field => {
+            return Err(format!(
+                "unsupported model.request rewrite target '{field}': v1 supports 'request.data'"
+            ));
+        }
+    }
+    let body_text = std::str::from_utf8(body)
+        .map_err(|error| format!("model.request body is not UTF-8 text: {error}"))?;
+    let rewritten = regex.replace_all(body_text, replacement).to_string();
+    if rewritten == body_text {
+        return Err(format!(
+            "policy.model.{name} rewrite_target did not match model request body"
+        ));
+    }
+    Ok(rewritten.into_bytes())
+}
+
 fn rewrite_model_response_body(
     name: &str,
     rule: &PolicyRuleConfig,
@@ -890,7 +929,7 @@ impl PolicySubject for ModelRequestPolicySubject {
                 .system_prompt_preview
                 .as_deref()
                 .map(|value| PolicySubjectValue::String(Cow::Borrowed(value))),
-            "request.body" => Some(PolicySubjectValue::String(Cow::Borrowed(
+            "request.data" | "request.body" => Some(PolicySubjectValue::String(Cow::Borrowed(
                 self.body.as_str(),
             ))),
             "request.headers" => {

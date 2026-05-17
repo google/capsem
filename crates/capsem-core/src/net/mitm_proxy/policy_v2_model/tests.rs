@@ -206,7 +206,7 @@ priority = 10
 }
 
 #[tokio::test]
-async fn model_request_policy_ask_accepts_with_placeholder_and_rewrite_fails_closed() {
+async fn model_request_policy_ask_accepts_with_placeholder_and_rewrite_redacts_body() {
     let ask_policy = policy_from_toml(
         r#"
 [policy.model.ask_openai]
@@ -249,15 +249,148 @@ rewrite_value = "[redacted-${suffix}]"
     )
     .await
     .expect("rewrite rule should match");
-    let ModelRequestPolicyOutcome::Deny(rewrite_decision) = rewrite else {
-        panic!("unsupported model rewrite should fail closed");
+    let ModelRequestPolicyOutcome::RewriteBody {
+        decision: rewrite_decision,
+        body: rewritten,
+    } = rewrite
+    else {
+        panic!("model rewrite should return rewritten body");
     };
+    let rewritten = String::from_utf8(rewritten).unwrap();
+    assert!(
+        rewritten.contains("[redacted-token]"),
+        "rewritten body must contain the redacted capture, got: {rewritten}"
+    );
+    assert!(
+        !rewritten.contains("rewrite-token"),
+        "rewritten body must not contain the original secret, got: {rewritten}"
+    );
     assert_eq!(rewrite_decision.policy_action.as_deref(), Some("rewrite"));
-    assert!(rewrite_decision
+}
+
+#[tokio::test]
+async fn model_request_policy_rewrite_supports_canonical_request_data_target() {
+    let rewrite_policy = policy_from_toml(
+        r#"
+[policy.model.rewrite_openai]
+on = "model.request"
+if = 'provider == "openai" && model == "gpt-4o" && request.data.contains("rewrite-token")'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.data =~ "rewrite-(?P<suffix>[a-z]+)"'
+rewrite_value = "[redacted-${suffix}]"
+"#,
+    );
+    let rewrite = evaluate_model_request_policy_test(
+        &rewrite_policy,
+        ProviderKind::OpenAi,
+        &http::HeaderMap::new(),
+        openai_body("gpt-4o", "rewrite-token").as_bytes(),
+    )
+    .await
+    .expect("canonical rewrite rule should match");
+    let ModelRequestPolicyOutcome::RewriteBody { body, .. } = rewrite else {
+        panic!("canonical request.data rewrite should return rewritten body");
+    };
+    let rewritten = String::from_utf8(body).unwrap();
+    assert!(rewritten.contains("[redacted-token]"));
+    assert!(!rewritten.contains("rewrite-token"));
+}
+
+#[tokio::test]
+async fn model_request_policy_rewrite_unsupported_target_fails_closed() {
+    let rewrite_policy = policy_from_toml(
+        r#"
+[policy.model.unsupported_target]
+on = "model.request"
+if = 'provider == "openai" && model == "gpt-4o"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.headers =~ "."'
+rewrite_value = "x"
+"#,
+    );
+    let outcome = evaluate_model_request_policy_test(
+        &rewrite_policy,
+        ProviderKind::OpenAi,
+        &http::HeaderMap::new(),
+        openai_body("gpt-4o", "ignored").as_bytes(),
+    )
+    .await
+    .expect("rule should match");
+    let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
+        panic!("unsupported rewrite target should fail closed");
+    };
+    assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
+    assert!(decision
         .policy_reason
         .as_deref()
         .unwrap_or_default()
-        .contains("not implemented"));
+        .contains("unsupported model.request rewrite target"));
+}
+
+#[tokio::test]
+async fn model_request_policy_rewrite_no_match_fails_closed() {
+    let rewrite_policy = policy_from_toml(
+        r#"
+[policy.model.no_match]
+on = "model.request"
+if = 'provider == "openai" && model == "gpt-4o"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.data =~ "this-string-is-not-in-the-body"'
+rewrite_value = "x"
+"#,
+    );
+    let outcome = evaluate_model_request_policy_test(
+        &rewrite_policy,
+        ProviderKind::OpenAi,
+        &http::HeaderMap::new(),
+        openai_body("gpt-4o", "real-content").as_bytes(),
+    )
+    .await
+    .expect("rule should match");
+    let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
+        panic!("non-matching rewrite should fail closed");
+    };
+    assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
+    assert!(decision
+        .policy_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("did not match model request body"));
+}
+
+#[tokio::test]
+async fn model_request_policy_rewrite_non_utf8_body_fails_closed() {
+    let rewrite_policy = policy_from_toml(
+        r#"
+[policy.model.binary_body]
+on = "model.request"
+if = 'provider == "openai"'
+decision = "rewrite"
+priority = 10
+rewrite_target = 'request.data =~ "x"'
+rewrite_value = "y"
+"#,
+    );
+    let outcome = evaluate_model_request_policy_test(
+        &rewrite_policy,
+        ProviderKind::OpenAi,
+        &http::HeaderMap::new(),
+        &[0xFF, 0xFE, 0xFD, 0xFC],
+    )
+    .await
+    .expect("rule should match by provider");
+    let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
+        panic!("non-UTF-8 rewrite body should fail closed");
+    };
+    assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
+    assert!(decision
+        .policy_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("not UTF-8"));
 }
 
 #[tokio::test]

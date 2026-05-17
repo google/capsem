@@ -1642,19 +1642,21 @@ reason = "Ask before sending this model request"
 }
 
 #[tokio::test]
-async fn policy_v2_model_request_rewrite_fails_closed_without_leaking_body() {
-    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+async fn policy_v2_model_request_rewrite_redacts_upstream_and_telemetry() {
+    let (port, upstream_task) =
+        spawn_http_fixture_response(200, "OK", vec![("content-type", "text/plain")], "rewritten")
+            .await;
     let config = make_config_with_policy_v2(
         allow_local_http_policy(port),
         policy_v2_from_toml(
             r#"
 [policy.model.rewrite_secret]
 on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o" && request.body.contains("rewrite-secret")'
+if = 'provider == "openai" && model == "gpt-4o" && request.data.contains("rewrite-secret")'
 decision = "rewrite"
 priority = 10
 reason = "Rewrite secret-bearing model request"
-rewrite_target = 'request.body =~ "rewrite-secret-(?P<suffix>[a-z]+)"'
+rewrite_target = 'request.data =~ "rewrite-secret-(?P<suffix>[a-z]+)"'
 rewrite_value = "[redacted-${suffix}]"
 "#,
         ),
@@ -1670,17 +1672,25 @@ rewrite_value = "[redacted-${suffix}]"
         "rewrite-secret-token",
     )
     .await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.rewrite_secret"));
+    assert_eq!(status, 200);
+    assert_eq!(response_body, "rewritten");
     drop(sender);
     let _ = proxy_task.await;
-    upstream_task.await.unwrap();
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.contains("[redacted-token]"),
+        "rewritten model request should dispatch the redacted body upstream"
+    );
+    assert!(
+        !upstream_request.contains("rewrite-secret-token"),
+        "rewritten model request must not dispatch the original secret upstream"
+    );
 
     tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
     let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1);
     let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
+    assert_eq!(event.decision, Decision::Allowed);
     assert!(event.bytes_sent > 0);
     assert_eq!(event.policy_action.as_deref(), Some("rewrite"));
     assert_eq!(
@@ -1693,7 +1703,15 @@ rewrite_value = "[redacted-${suffix}]"
             .as_deref()
             .unwrap_or_default()
             .contains("rewrite-secret-token"),
-        "unsupported model request rewrite must fail closed without telemetry leakage"
+        "model request rewrite telemetry must not retain the original secret"
+    );
+    assert!(
+        event
+            .request_body_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains("[redacted-token]"),
+        "model request rewrite telemetry should record the redacted request preview"
     );
 }
 

@@ -373,6 +373,7 @@ fn field_allowed(callback: PolicyCallback, field: &str) -> bool {
                 "provider",
                 "model",
                 "system_prompt",
+                "request.data",
                 "request.body",
                 "messages_count",
                 "tools_count",

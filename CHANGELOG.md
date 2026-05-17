@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   confirmer/backoff contract before model request dispatch, model response
   surfacing, and tool-call/tool-response delivery, with redacted metadata-only
   confirmation snapshots.
+- Added model Policy V2 `model.request` body rewrite support for
+  `request.data` rules, forwarding only the rewritten bytes upstream and
+  recording rewritten request previews in telemetry.
 
 ## [1.1.1778860037] - 2026-05-15
 

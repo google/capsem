@@ -27,6 +27,7 @@
 - [x] Port MCP Policy V2 `ask` confirmation resolution in the framed MITM path
 - [x] Port HTTP Policy V2 `ask` confirmation resolution in the MITM hook path
 - [x] Port model Policy V2 `ask` confirmation resolution in MITM model request/response paths
+- [x] Port model Policy V2 `model.request` rewrite support and redacted upstream dispatch
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -71,6 +72,10 @@
 - Proof: `cargo test -p capsem-core policy_confirm` passed 10 confirmation-contract tests after model integration.
 - Proof: `cargo test -p capsem-process` passed 97 tests after the MITM proxy constructor change.
 - Proof: `cargo fmt --check` and `git diff --check` passed.
+- Model Policy V2 `model.request` rewrite now rewrites outbound request bodies before upstream dispatch. `request.data` is accepted in validated model-request conditions and rewrite targets, while the current `request.body` spelling remains a runtime compatibility alias. Fail-closed coverage rejects unsupported rewrite targets, non-matching rewrite regexes, and non-UTF-8 request bodies.
+- Proof: `cargo test -p capsem-core policy_v2_model` passed 32 focused model Policy V2 tests, including the full MITM rewrite fixture that verifies redacted upstream dispatch and redacted telemetry.
+- Proof: `cargo test -p capsem-core policy_v2_accepts_documented_cel_condition_shapes` passed the documented condition allowlist test for `request.data`.
+- Proof: `cargo fmt --check` passed after the rewrite slice.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -79,11 +84,11 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; model Policy V2 confirmation passed 28 focused tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; model Policy V2 confirmation/rewrite passed 32 focused tests; policy condition allowlist accepts documented `request.data`; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery; model request rewrite forwards redacted bytes upstream before telemetry records the request preview
 - Adversarial:
-  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction
+  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction; model request rewrite fails closed for unsupported targets, no regex match, and non-UTF-8 bodies
 - E2E/VM or integration:
   NAT/egress skips classified as `needs-review`; VM gates still release-held
 - Telemetry/observability:
@@ -91,4 +96,4 @@
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  model request rewrite parity, deeper gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending
+  deeper gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending
