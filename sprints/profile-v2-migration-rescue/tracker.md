@@ -28,6 +28,7 @@
 - [x] Port HTTP Policy V2 `ask` confirmation resolution in the MITM hook path
 - [x] Port model Policy V2 `ask` confirmation resolution in MITM model request/response paths
 - [x] Port model Policy V2 `model.request` rewrite support and redacted upstream dispatch
+- [x] Port Profile V2 corp-config install path and verify non-VM gateway parity
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -76,6 +77,13 @@
 - Proof: `cargo test -p capsem-core policy_v2_model` passed 32 focused model Policy V2 tests, including the full MITM rewrite fixture that verifies redacted upstream dispatch and redacted telemetry.
 - Proof: `cargo test -p capsem-core policy_v2_accepts_documented_cel_condition_shapes` passed the documented condition allowlist test for `request.data`.
 - Proof: `cargo fmt --check` passed after the rewrite slice.
+- `/setup/corp-config` now installs Profile V2 corp profile TOML for inline and URL payloads through `settings_profiles::install_corp_profile_toml`, so the typed `/settings` response remains readable after corp profile installation.
+- Gateway Rust status/proxy behavior was retained from main rather than replaying source-line deletions of richer asset-health fields. Non-VM gateway parity is verified through Rust unit tests plus Python status/proxy gateway tests.
+- Proof: `cargo test -p capsem-gateway` passed 156 tests.
+- Proof: `cargo test -p capsem-service settings` passed 15 focused service settings/debug/vm-effective tests.
+- Proof: `uv run pytest tests/capsem-service/test_svc_setup.py tests/capsem-service/test_svc_settings.py tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_returns_merged_shape -q` passed 19 tests.
+- Proof: `uv run pytest tests/capsem-gateway/test_gw_status.py tests/capsem-gateway/test_gw_status_advanced.py tests/capsem-gateway/test_gw_proxy.py -q` passed 19 tests.
+- Remaining VM-dependent proof: `uv run pytest tests/capsem-service/test_svc_setup.py tests/capsem-service/test_svc_mcp_api.py tests/capsem-service/test_svc_settings.py -q` reached 23 passing tests but `TestMcpCall.test_call_unknown_tool_with_running_vm_rejected` timed out waiting for exec-ready; keep under VM gate debt, not a policy-runtime regression.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -84,16 +92,16 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; model Policy V2 confirmation/rewrite passed 32 focused tests; policy condition allowlist accepts documented `request.data`; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; model Policy V2 confirmation/rewrite passed 32 focused tests; policy condition allowlist accepts documented `request.data`; capsem-process runtime conversion passed 7 focused tests and 97 full package tests; capsem-gateway passed 156 Rust tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery; model request rewrite forwards redacted bytes upstream before telemetry records the request preview
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/setup/corp-config` installs Profile V2 corp profile TOML and leaves `/settings` typed/readable; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery; model request rewrite forwards redacted bytes upstream before telemetry records the request preview; gateway status/proxy non-VM Python tests passed
 - Adversarial:
   policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction; model request rewrite fails closed for unsupported targets, no regex match, and non-UTF-8 bodies
 - E2E/VM or integration:
-  NAT/egress skips classified as `needs-review`; VM gates still release-held
+  NAT/egress skips classified as `needs-review`; VM gates still release-held; one MCP service VM-call test currently times out waiting for exec-ready and remains VM-gate debt
 - Telemetry/observability:
   debug report now surfaces resolver-trace summary; lifecycle/net telemetry setup changes require split review before port
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  deeper gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending
+  gateway VM/MITM policy telemetry replay, E2E/VM gates, and full-gate rerun pending

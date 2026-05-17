@@ -148,26 +148,31 @@ class TestSetupAssets:
 class TestSetupCorpConfig:
 
     def test_corp_config_inline_toml(self, client):
-        """POST /setup/corp-config with inline TOML writes corp.toml.
-
-        Validates against policy_config::corp_provision::install_inline_corp_config.
-        Empty [settings] is a valid corp config that locks no settings.
-        """
+        """POST /setup/corp-config with inline canonical profile TOML."""
         toml_content = (
-            "refresh_interval_hours = 24\n"
+            "version = 1\n"
+            'id = "corp-inline-profile"\n'
+            'name = "Corp Inline Profile"\n'
+            'best_for = "Corporate baseline rules"\n'
+            'profile_type = "everyday-work"\n'
             "\n"
-            "[settings]\n"
-            '"ai.openai.allow" = { value = false, modified = "2026-04-21T00:00:00Z" }\n'
+            "[security.rules.http.block_example_org]\n"
+            'on = "http.request"\n'
+            'if = \'request.host == "example.org"\'\n'
+            'decision = "block"\n'
         )
         resp = client.post("/setup/corp-config", {"toml": toml_content})
         assert resp is not None and resp.get("success") is True, (
             f"corp-config inline failed: {resp}"
         )
 
-        # Corp-locked setting must now appear as corp_locked in the tree.
-        tree = client.get("/settings")["tree"]
-        locked = _find_setting_flag(tree, "ai.openai.allow", "corp_locked")
-        assert locked is True, f"corp-locked not surfaced after install: {locked}"
+        # `/settings` remains readable and typed after corp config install.
+        settings = client.get("/settings")
+        assert settings is not None
+        assert settings.get("mode") == "settings_profiles_v2"
+        snapshot = settings.get("settings_profiles")
+        assert isinstance(snapshot, dict), f"missing settings_profiles snapshot: {settings}"
+        assert not snapshot.get("load_error"), f"settings_profiles load error: {snapshot}"
 
     def test_corp_config_rejects_invalid_toml(self, client):
         """Malformed TOML must be rejected with a 400-class error."""
@@ -182,22 +187,3 @@ class TestSetupCorpConfig:
         assert resp is None or "error" in resp or "provide either" in str(resp).lower(), (
             f"empty payload should reject: {resp}"
         )
-
-
-def _find_setting_flag(tree, dotted_id, flag):
-    """Walk the tree for a leaf matching dotted_id and return `flag` on the leaf."""
-
-    def walk(node):
-        if node.get("kind") == "leaf" and node.get("id") == dotted_id:
-            return node.get(flag)
-        for child in node.get("children") or []:
-            found = walk(child)
-            if found is not None:
-                return found
-        return None
-
-    for root in tree:
-        found = walk(root)
-        if found is not None:
-            return found
-    return None

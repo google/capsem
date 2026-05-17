@@ -66,11 +66,11 @@ Rescue inventory:
 - Clean branch created
 - Profile V2 and rescue sprint documents copied onto `profile-v2`
 - Dirty overlay inventory classified in `rescue-manifest.md`
-- Core settings profiles, policy confirmation, `/settings*`, debug-report provenance, service runtime VM-effective attachment, capsem-process effective-policy consumption, framed MCP `ask` confirmation, HTTP `ask` confirmation, model `ask` confirmation, and model request rewrite slices replayed on `profile-v2`
+- Core settings profiles, policy confirmation, `/settings*`, debug-report provenance, service runtime VM-effective attachment, capsem-process effective-policy consumption, framed MCP `ask` confirmation, HTTP `ask` confirmation, model `ask` confirmation, model request rewrite, Profile V2 corp-config install, and gateway non-VM parity slices replayed on `profile-v2`
 - Committed delta classification remains release-held and must be replayed by slice
 
 ## Release Holds
 - Do not claim migration complete until keep/drop/review manifest exists.
 - Do not claim verification restored until targeted and broad gates are re-run.
 - Do not resume feature delivery on this line until reconciliation pass is complete.
-- Gateway parity, ambiguous E2E skip/test loosenings, and VM gates remain held after the MCP/HTTP/model policy runtime slices.
+- Gateway VM/MITM parity, ambiguous E2E skip/test loosenings, and VM gates remain held after the non-VM gateway/profile-runtime slices.

@@ -3768,21 +3768,41 @@ fn asset_locations_status_json(
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    use capsem_core::net::policy_config::corp_provision;
-
     let capsem_dir = capsem_core::paths::capsem_home_opt()
         .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
 
     if let Some(source) = &payload.source {
-        // Use the existing provision function which handles fetch + install
-        corp_provision::provision_from_source(&capsem_dir, source)
+        let response = reqwest::Client::new()
+            .get(source)
+            .header("User-Agent", "capsem")
+            .send()
             .await
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("failed to fetch corp profile: {e}"),
+                )
+            })?;
+        if !response.status().is_success() {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "corp profile fetch failed: HTTP {} for {source}",
+                    response.status()
+                ),
+            ));
+        }
+        let body = response.text().await.map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("failed to read corp profile body: {e}"),
+            )
+        })?;
+        capsem_core::settings_profiles::install_corp_profile_toml(&capsem_dir, &body)
             .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
     } else if let Some(toml_content) = &payload.toml {
-        corp_provision::validate_corp_toml(toml_content)
+        capsem_core::settings_profiles::install_corp_profile_toml(&capsem_dir, toml_content)
             .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-        corp_provision::install_inline_corp_config(&capsem_dir, toml_content)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     } else {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
