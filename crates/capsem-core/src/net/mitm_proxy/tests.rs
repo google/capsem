@@ -2274,34 +2274,46 @@ reason = "Do not fetch this path"
 }
 
 #[tokio::test]
-async fn policy_v2_http_ask_fails_closed_without_upstream_dispatch() {
+async fn policy_v2_http_ask_placeholder_confirmer_allows_upstream_dispatch() {
+    let (port, upstream_task) =
+        spawn_http_fixture_response(200, "OK", vec![("content-type", "text/plain")], "confirmed")
+            .await;
     let config = make_config_with_policy_v2(
-        allow_test_domain_policy(),
+        allow_local_http_policy(port),
         policy_v2_from_toml(&format!(
             r#"
 [policy.http.ask_openai_path]
 on = "http.request"
-if = 'request.host == "{TEST_DOMAIN}" && request.path.matches("^/openai(/|$)")'
+if = 'request.host == "127.0.0.1" && request.path.matches("^/openai(/|$)")'
 decision = "ask"
 priority = 10
 reason = "Ask before fetching this path"
 "#
         )),
     );
-    let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
+    let (mut sender, proxy_task, _conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, None).await;
 
-    let status = send_get(&mut sender, TEST_DOMAIN, "/openai/capsem").await;
-    assert_eq!(status, 403, "Policy V2 ask should fail closed for now");
+    let status = send_get(&mut sender, "127.0.0.1", "/openai/capsem").await;
+    assert_eq!(
+        status, 200,
+        "placeholder-confirmed Policy V2 ask should dispatch upstream"
+    );
     drop(sender);
     let _ = proxy_task.await;
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.contains("GET /openai/capsem"),
+        "ask accept path must reach upstream, got: {upstream_request}"
+    );
 
     tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
     let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1);
     let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.status_code, Some(403));
-    assert_eq!(event.policy_action.as_deref(), Some("ask"));
+    assert_eq!(event.decision, Decision::Allowed);
+    assert_eq!(event.status_code, Some(200));
+    assert_eq!(event.policy_action.as_deref(), Some("allow"));
     assert_eq!(
         event.policy_rule.as_deref(),
         Some("policy.http.ask_openai_path")

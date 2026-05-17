@@ -25,6 +25,7 @@
 - [x] Port service runtime Profile V2 asset locations, VM defaults, and vm-effective attachments
 - [x] Port capsem-process runtime consumption of vm-effective settings
 - [x] Port MCP Policy V2 `ask` confirmation resolution in the framed MITM path
+- [x] Port HTTP Policy V2 `ask` confirmation resolution in the MITM hook path
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -60,6 +61,10 @@
 - Proof: `cargo test -p capsem-core mcp_frame` passed 52 matching tests.
 - Proof: `cargo test -p capsem-core policy_confirm` passed 10 matching tests after the MCP integration.
 - Proof: `cargo test -p capsem-process` passed 97 tests after the MCP endpoint constructor change.
+- HTTP Policy V2 `ask` decisions now resolve through the shared confirmer/backoff contract in the MITM head hook for both `http.request` and `http.response`. Placeholder confirmation keeps current allow-by-default runtime behavior, while mock-confirmer tests lock deny mapping and no-header snapshot exposure.
+- Proof: `cargo test -p capsem-core policy_v2_http_hook` passed 9 focused hook tests.
+- Proof: `cargo test -p capsem-core policy_v2_http_ask_placeholder_confirmer_allows_upstream_dispatch` passed the full MITM fixture path.
+- Proof: `cargo test -p capsem-core policy_v2_http` passed 14 focused HTTP Policy V2 tests.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -68,11 +73,11 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing
 - Adversarial:
-  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests
+  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests
 - E2E/VM or integration:
   NAT/egress skips classified as `needs-review`; VM gates still release-held
 - Telemetry/observability:
@@ -80,4 +85,4 @@
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  deeper MITM/gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending
+  model Policy V2 confirmer/rewrite parity, deeper gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending

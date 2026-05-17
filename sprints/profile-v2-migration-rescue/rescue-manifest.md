@@ -64,8 +64,8 @@ Initial grouping:
 | `sprints/policy-settings-profiles/**` | keep | Product design, requirements, tracker, and S00-S19 execution notes. | Copied and committed in context checkpoint. |
 | `crates/capsem-core/src/settings_profiles/**` | keep | Core typed service/profile model, resolver, trace, corp directives, rule ownership. | Ported as first product-code slice; `cargo test -p capsem-core settings_profiles` passed. |
 | `crates/capsem-core/src/net/policy_confirm.rs` and tests | keep | S06-pre confirmation contract. | Ported with `RetryOpts: Clone` support; `cargo test -p capsem-core policy_confirm` passed. |
-| `crates/capsem-core/src/net/mitm_proxy/**` policy-v2 changes | keep | HTTP/model/MCP policy enforcement, rewrite, ask confirmation, and telemetry behavior. | MCP `ask` confirmation is ported in the framed MITM path with focused tests; deeper HTTP/model/gateway parity still needs focused subsystem replay. |
-| `crates/capsem-service/**`, `crates/capsem/src/**`, `crates/capsem-process/**`, `crates/capsem-gateway/**` | needs-review | Mixes real Profile V2 service/runtime integration with debug-report, status, asset, install, and IPC changes. | `/settings*`, debug-report provenance, service asset-location startup, default VM sizing, `/setup/assets` provenance, vm-effective session attachments, capsem-process vm-effective consumption, and framed MCP confirmer integration ported and tested; gateway/deeper policy runtime changes still require replay by sub-sprint. |
+| `crates/capsem-core/src/net/mitm_proxy/**` policy-v2 changes | keep | HTTP/model/MCP policy enforcement, rewrite, ask confirmation, and telemetry behavior. | MCP and HTTP `ask` confirmation are ported with focused tests; model/gateway parity still needs focused subsystem replay. |
+| `crates/capsem-service/**`, `crates/capsem/src/**`, `crates/capsem-process/**`, `crates/capsem-gateway/**` | needs-review | Mixes real Profile V2 service/runtime integration with debug-report, status, asset, install, and IPC changes. | `/settings*`, debug-report provenance, service asset-location startup, default VM sizing, `/setup/assets` provenance, vm-effective session attachments, capsem-process vm-effective consumption, and MCP/HTTP confirmer integration ported and tested; gateway/deeper policy runtime changes still require replay by sub-sprint. |
 | `frontend/**` | needs-review | Mixes settings/profile UI model changes with dependency and test churn. | Defer until backend contracts are stable. |
 | `tests/**` | needs-review | Contains needed contract/E2E coverage and some drift/skips. | Port only tests that prove retained behavior. |
 | `.github/**`, release docs, `LATEST_RELEASE.md`, `B3SUMS`, benchmark JSON, generated artifacts | drop unless separately justified | Mostly release-line and generated artifact churn unrelated to Profile V2 rescue. | Do not port in Profile V2 branch. |
@@ -75,8 +75,8 @@ Initial grouping:
 1. Context preservation: sprint docs and this manifest only.
 2. Core Profile V2 model: `settings_profiles` module and unit/contract tests.
 3. Service settings runtime: service API, debug provenance, asset-location startup, default VM sizing, VM effective settings attachments, and process-side effective policy consumption ported.
-4. MCP policy runtime: framed MITM `ask` confirmation ported with request/response focused tests.
-5. Policy runtime: remaining rules, model/http rewrite, gateway parity, and telemetry.
+4. MCP/HTTP policy runtime: framed MITM MCP `ask` and HTTP head-hook `ask` confirmation ported with request/response focused tests.
+5. Policy runtime: remaining model rewrite/confirmer parity, gateway parity, and telemetry.
 6. Test recovery: focused unit/contract tests first, then service/gateway integration, then E2E/VM gates.
 7. Frontend/CLI/docs: only after backend contracts are verified.
 

@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added framed MCP Policy V2 `ask` confirmation resolution through the shared
   confirmer/backoff contract before request dispatch and response surfacing,
   with redacted confirmation snapshots.
+- Added HTTP Policy V2 `ask` confirmation resolution through the same
+  confirmer/backoff contract before upstream request dispatch or guest response
+  surfacing.
 
 ## [1.1.1778860037] - 2026-05-15
 

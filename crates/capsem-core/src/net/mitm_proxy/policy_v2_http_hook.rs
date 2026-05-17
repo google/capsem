@@ -49,11 +49,30 @@ impl LastHttpPolicyV2Decision {
 
 pub struct PolicyV2HttpHook {
     policy_v2: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>,
+    confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
+    confirm_opts: capsem_proto::poll::RetryOpts,
 }
 
 impl PolicyV2HttpHook {
     pub fn new(policy_v2: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>) -> Self {
-        Self { policy_v2 }
+        Self {
+            policy_v2,
+            confirmer: Arc::new(crate::net::policy_confirm::PlaceholderConfirmer),
+            confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-http"),
+        }
+    }
+
+    pub fn with_confirmer(
+        mut self,
+        confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
+    ) -> Self {
+        self.confirmer = confirmer;
+        self
+    }
+
+    pub fn with_confirm_opts(mut self, opts: capsem_proto::poll::RetryOpts) -> Self {
+        self.confirm_opts = opts;
+        self
     }
 }
 
@@ -79,6 +98,8 @@ impl Hook for PolicyV2HttpHook {
         'a: 'b,
     {
         let policy_v2 = Arc::clone(&self.policy_v2);
+        let confirmer = Arc::clone(&self.confirmer);
+        let confirm_opts = self.confirm_opts.clone();
         Box::pin(async move {
             match ev {
                 Event::RawRequestHead(parts) => {
@@ -113,7 +134,20 @@ impl Hook for PolicyV2HttpHook {
                     *ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default) =
                         decision.clone();
 
-                    match matched.rule.decision {
+                    let resolved = resolve_policy_v2_action(
+                        matched.rule.decision,
+                        PolicyCallback::HttpRequest,
+                        matched.name,
+                        matched.rule.reason.clone(),
+                        || subject_snapshot_http_request(&subject),
+                        &confirmer,
+                        &confirm_opts,
+                    )
+                    .await;
+                    ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default)
+                        .policy_action = Some(policy_action(resolved).to_string());
+
+                    match resolved {
                         PolicyDecisionKind::Allow => HookOutcome::Continue,
                         PolicyDecisionKind::Ask | PolicyDecisionKind::Block => reject(&format!(
                             "capsem: HTTP request blocked by policy: {}\n",
@@ -174,7 +208,20 @@ impl Hook for PolicyV2HttpHook {
                     *ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default) =
                         decision.clone();
 
-                    match matched.rule.decision {
+                    let resolved = resolve_policy_v2_action(
+                        matched.rule.decision,
+                        PolicyCallback::HttpResponse,
+                        matched.name,
+                        matched.rule.reason.clone(),
+                        || subject_snapshot_http_response(&subject),
+                        &confirmer,
+                        &confirm_opts,
+                    )
+                    .await;
+                    ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default)
+                        .policy_action = Some(policy_action(resolved).to_string());
+
+                    match resolved {
                         PolicyDecisionKind::Allow => HookOutcome::Continue,
                         PolicyDecisionKind::Ask | PolicyDecisionKind::Block => reject(&format!(
                             "capsem: HTTP response blocked by policy: {}\n",
@@ -706,6 +753,76 @@ fn reject(message: &str) -> HookOutcome {
         .body(body)
         .expect("static response build");
     HookOutcome::Stop(StopAction::Reject(response))
+}
+
+async fn resolve_policy_v2_action(
+    declared: PolicyDecisionKind,
+    callback: PolicyCallback,
+    rule_name: &str,
+    reason: Option<String>,
+    snapshot: impl FnOnce() -> serde_json::Value,
+    confirmer: &Arc<dyn crate::net::policy_confirm::Confirmer>,
+    confirm_opts: &capsem_proto::poll::RetryOpts,
+) -> PolicyDecisionKind {
+    if !matches!(declared, PolicyDecisionKind::Ask) {
+        return declared;
+    }
+    let args = crate::net::policy_confirm::ConfirmArgs {
+        callback,
+        rule_id: http_policy_v2_rule_id(rule_name),
+        args_snapshot: snapshot(),
+        trace_id: None,
+        session_id: None,
+        reason,
+    };
+    match crate::net::policy_confirm::confirm_with_backoff(confirmer, args, confirm_opts).await {
+        crate::net::policy_confirm::Decision::Accept => PolicyDecisionKind::Allow,
+        crate::net::policy_confirm::Decision::Deny => PolicyDecisionKind::Block,
+    }
+}
+
+fn http_policy_v2_rule_id(rule_name: &str) -> String {
+    format!("security.rules.http.{rule_name}")
+}
+
+const SNAPSHOT_FIELD_MAX_BYTES: usize = 1024;
+
+fn truncate_for_snapshot(value: &str) -> String {
+    if value.len() <= SNAPSHOT_FIELD_MAX_BYTES {
+        return value.to_string();
+    }
+    let mut cut = SNAPSHOT_FIELD_MAX_BYTES;
+    while cut > 0 && !value.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut out = String::with_capacity(cut + 16);
+    out.push_str(&value[..cut]);
+    out.push_str("...[truncated]");
+    out
+}
+
+fn subject_snapshot_http_request(subject: &HttpRequestPolicySubject) -> serde_json::Value {
+    serde_json::json!({
+        "request": {
+            "host": truncate_for_snapshot(&subject.host),
+            "method": subject.method,
+            "path": truncate_for_snapshot(&subject.path),
+            "scheme": subject.scheme,
+        }
+    })
+}
+
+fn subject_snapshot_http_response(subject: &HttpResponsePolicySubject) -> serde_json::Value {
+    serde_json::json!({
+        "request": {
+            "host": truncate_for_snapshot(&subject.request.host),
+            "method": subject.request.method,
+            "path": truncate_for_snapshot(&subject.request.path),
+        },
+        "response": {
+            "status": subject.status,
+        }
+    })
 }
 
 #[cfg(test)]

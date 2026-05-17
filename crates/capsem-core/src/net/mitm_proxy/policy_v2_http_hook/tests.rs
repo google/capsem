@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use crate::net::mitm_proxy::hooks::{ConnMeta, HookState};
 use crate::net::mitm_proxy::pipeline::{DispatchOutcome, Pipeline};
 use crate::net::mitm_proxy::protocol::Protocol;
 use crate::net::policy_config::SettingsFile;
+use crate::net::policy_confirm::{
+    ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision,
+};
 
 use super::*;
 
@@ -13,6 +18,46 @@ fn pipeline_for(toml_text: &str) -> Pipeline {
     Pipeline::builder()
         .register(Arc::new(PolicyV2HttpHook::new(policy)))
         .build()
+}
+
+fn pipeline_for_confirmer(toml_text: &str, confirmer: Arc<dyn Confirmer>) -> Pipeline {
+    let settings: SettingsFile = toml::from_str(toml_text).unwrap();
+    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(settings.policy)));
+    Pipeline::builder()
+        .register(Arc::new(
+            PolicyV2HttpHook::new(policy).with_confirmer(confirmer),
+        ))
+        .build()
+}
+
+struct MockConfirmer {
+    decision: ConfirmDecision,
+    calls: std::sync::Mutex<Vec<ConfirmArgs>>,
+}
+
+impl MockConfirmer {
+    fn new(decision: ConfirmDecision) -> Arc<Self> {
+        Arc::new(Self {
+            decision,
+            calls: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    fn calls(&self) -> Vec<ConfirmArgs> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl Confirmer for MockConfirmer {
+    async fn confirm(&self, args: ConfirmArgs) -> ConfirmDecision {
+        self.calls.lock().unwrap().push(args);
+        self.decision
+    }
+
+    fn kind(&self) -> ConfirmerKind {
+        ConfirmerKind::Automated
+    }
 }
 
 fn request_parts() -> http::request::Parts {
@@ -80,6 +125,90 @@ reason = "Do not fetch OpenAI-owned GitHub code"
         decision.policy_reason.as_deref(),
         Some("Do not fetch OpenAI-owned GitHub code")
     );
+}
+
+#[tokio::test]
+async fn http_policy_v2_request_ask_accept_confirmer_continues() {
+    let confirmer = MockConfirmer::new(ConfirmDecision::Accept);
+    let pipeline = pipeline_for_confirmer(
+        r#"
+[policy.http.ask_openai_github]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openai(/|$)")'
+decision = "ask"
+priority = 10
+reason = "Ask before fetching OpenAI-owned GitHub code"
+"#,
+        confirmer.clone() as Arc<dyn Confirmer>,
+    );
+    let mut parts = request_parts();
+    let mut state = HookState::default();
+
+    let outcome = pipeline
+        .dispatch(Event::RawRequestHead(&mut parts), &mut state, None, &conn())
+        .await;
+
+    assert!(matches!(outcome, DispatchOutcome::Completed));
+    let decision = state
+        .peek::<LastHttpPolicyV2Decision>()
+        .expect("Policy V2 HTTP decision should be stashed");
+    assert_eq!(decision.policy_action.as_deref(), Some("allow"));
+    assert_eq!(
+        decision.policy_rule.as_deref(),
+        Some("policy.http.ask_openai_github")
+    );
+    let calls = confirmer.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].rule_id, "security.rules.http.ask_openai_github");
+    assert_eq!(
+        calls[0].callback,
+        crate::net::policy_config::PolicyCallback::HttpRequest
+    );
+    assert_eq!(
+        calls[0]
+            .args_snapshot
+            .get("request")
+            .and_then(|value| value.get("path")),
+        Some(&serde_json::json!("/openai/capsem"))
+    );
+    let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
+    assert!(
+        !snapshot.contains("Bearer secret") && !snapshot.contains("authorization"),
+        "HTTP confirm snapshots must not expose request headers: {snapshot}"
+    );
+}
+
+#[tokio::test]
+async fn http_policy_v2_request_ask_deny_confirmer_blocks() {
+    let confirmer = MockConfirmer::new(ConfirmDecision::Deny);
+    let pipeline = pipeline_for_confirmer(
+        r#"
+[policy.http.ask_openai_github]
+on = "http.request"
+if = 'request.host == "github.com" && request.path.matches("^/openai(/|$)")'
+decision = "ask"
+priority = 10
+reason = "Ask before fetching OpenAI-owned GitHub code"
+"#,
+        confirmer.clone() as Arc<dyn Confirmer>,
+    );
+    let mut parts = request_parts();
+    let mut state = HookState::default();
+
+    let outcome = pipeline
+        .dispatch(Event::RawRequestHead(&mut parts), &mut state, None, &conn())
+        .await;
+
+    assert!(matches!(outcome, DispatchOutcome::Stopped(_)));
+    let decision = state
+        .peek::<LastHttpPolicyV2Decision>()
+        .expect("Policy V2 HTTP decision should be stashed");
+    assert_eq!(decision.policy_action.as_deref(), Some("block"));
+    assert_eq!(
+        decision.policy_rule.as_deref(),
+        Some("policy.http.ask_openai_github")
+    );
+    assert_eq!(confirmer.calls().len(), 1);
 }
 
 #[tokio::test]
@@ -204,6 +333,74 @@ strip_response_headers = ["Set-Cookie", "X-Secret-Token"]
     assert_eq!(
         decision.policy_rule.as_deref(),
         Some("policy.http.strip_response_credentials")
+    );
+}
+
+#[tokio::test]
+async fn http_policy_v2_response_ask_confirmer_resolves() {
+    let toml = r#"
+[policy.http.ask_redirect]
+on = "http.response"
+if = 'response.status == "302"'
+decision = "ask"
+priority = 10
+reason = "Ask before returning redirects"
+"#;
+
+    let accept_confirmer = MockConfirmer::new(ConfirmDecision::Accept);
+    let accept_pipeline =
+        pipeline_for_confirmer(toml, accept_confirmer.clone() as Arc<dyn Confirmer>);
+    let mut accept_parts = response_parts();
+    let mut accept_state = HookState::default();
+    let outcome = accept_pipeline
+        .dispatch(
+            Event::RawResponseHead(&mut accept_parts),
+            &mut accept_state,
+            None,
+            &conn(),
+        )
+        .await;
+    assert!(matches!(outcome, DispatchOutcome::Completed));
+    assert_eq!(
+        accept_state
+            .peek::<LastHttpPolicyV2Decision>()
+            .and_then(|decision| decision.policy_action.as_deref()),
+        Some("allow")
+    );
+    assert_eq!(
+        accept_confirmer.calls()[0].callback,
+        crate::net::policy_config::PolicyCallback::HttpResponse
+    );
+    assert_eq!(
+        accept_confirmer.calls()[0]
+            .args_snapshot
+            .get("response")
+            .and_then(|value| value.get("status")),
+        Some(&serde_json::json!("302"))
+    );
+
+    let deny_confirmer = MockConfirmer::new(ConfirmDecision::Deny);
+    let deny_pipeline = pipeline_for_confirmer(toml, deny_confirmer.clone() as Arc<dyn Confirmer>);
+    let mut deny_parts = response_parts();
+    let mut deny_state = HookState::default();
+    let outcome = deny_pipeline
+        .dispatch(
+            Event::RawResponseHead(&mut deny_parts),
+            &mut deny_state,
+            None,
+            &conn(),
+        )
+        .await;
+    assert!(matches!(outcome, DispatchOutcome::Stopped(_)));
+    assert_eq!(
+        deny_state
+            .peek::<LastHttpPolicyV2Decision>()
+            .and_then(|decision| decision.policy_action.as_deref()),
+        Some("block")
+    );
+    assert_eq!(
+        deny_confirmer.calls()[0].rule_id,
+        "security.rules.http.ask_redirect"
     );
 }
 
