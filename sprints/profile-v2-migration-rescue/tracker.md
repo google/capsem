@@ -23,6 +23,7 @@
 - [x] Port `/settings*` service endpoint surface to typed settings-profiles payload
 - [x] Port debug-report settings/profile provenance without regressing main's rich debug schema
 - [x] Port service runtime Profile V2 asset locations, VM defaults, and vm-effective attachments
+- [x] Port capsem-process runtime consumption of vm-effective settings
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -51,6 +52,10 @@
 - Proof: `cargo test -p capsem-service startup_` passed 5 startup/manifest tests.
 - Proof: `cargo test -p capsem-service handle_asset_status_exposes_service_asset_locations` passed.
 - Proof: `cargo test -p capsem-service settings` passed 15 focused settings/runtime tests.
+- capsem-process now builds runtime network defaults, MCP defaults/tool decisions, and Policy V2 rules from the session-attached `vm-effective-settings.toml`, with a default-profile fallback when attachments are missing/corrupt.
+- Process runtime conversion intentionally omits the source-line confirmer/ask authority wiring because the clean branch's MITM endpoint does not yet expose that integration point; it remains a follow-up policy-runtime slice.
+- Proof: `cargo test -p capsem-process mcp_runtime` passed 7 focused conversion tests.
+- Proof: `cargo test -p capsem-process` passed 97 tests.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -59,9 +64,9 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state
 - Adversarial:
   policy enforcement/redaction test weakenings are blocked as `needs-review`
 - E2E/VM or integration:
@@ -71,4 +76,4 @@
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  committed delta file-level replay, product-code port, and full-gate rerun pending
+  confirmer-backed `ask` resolution, deeper MITM/gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending

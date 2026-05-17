@@ -337,43 +337,28 @@ async fn run_async_main_loop(
         }
     }
 
-    // Load settings files once and derive everything from them.
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
-    let snap_settings = capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf);
-    let guest_config = merged.guest.clone();
+    let runtime_policy = mcp_runtime::load_runtime_policy_state(&session_dir);
+    let guest_config = runtime_policy.guest_config.clone();
 
     let net_state = Arc::new(capsem_core::create_net_state_with_policy(
         &args.id,
         Arc::clone(&db),
-        merged.network.clone(),
+        runtime_policy.network_policy.clone(),
     )?);
     // Locate the builtin MCP server binary next to our own binary.
     let builtin_bin = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mcp_servers = mcp_runtime::build_servers_with_builtin(
-        &user_sf.mcp.clone().unwrap_or_default(),
-        &corp_sf.mcp.clone().unwrap_or_default(),
+        &runtime_policy.mcp_user,
+        &runtime_policy.mcp_corp,
         builtin_bin.as_deref(),
         &session_dir,
-        &merged.domain,
+        &runtime_policy.domain_policy,
     );
-    let snap_auto_max = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.auto_max")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(10) as usize;
-    let snap_manual_max = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.manual_max")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(12) as usize;
-    let snap_interval = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.auto_interval")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(300) as u64;
+    let snap_auto_max = runtime_policy.snapshot_auto_max;
+    let snap_manual_max = runtime_policy.snapshot_manual_max;
+    let snap_interval = runtime_policy.snapshot_interval_secs;
 
     let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
         session_dir.clone(),
@@ -455,9 +440,15 @@ async fn run_async_main_loop(
 
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
-    let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.mcp)));
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.policy)));
-    let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(merged.domain)));
+    let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(
+        runtime_policy.mcp_policy.clone(),
+    )));
+    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
+        runtime_policy.policy_v2.clone(),
+    )));
+    let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(
+        runtime_policy.domain_policy.clone(),
+    )));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),

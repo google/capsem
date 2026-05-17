@@ -1,10 +1,16 @@
 use std::collections::HashMap;
 
+use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
+use capsem_core::net::policy_config::PolicyCallback;
+use capsem_core::settings_profiles::{CapabilityMode, EffectiveRule, RuleDecision};
 
 use capsem_core::mcp::policy::McpUserConfig;
 
-use super::{build_builtin_env, build_servers_with_builtin, insert_builtin_domain_policy_env};
+use super::{
+    build_builtin_env, build_servers_with_builtin, insert_builtin_domain_policy_env,
+    load_runtime_policy_state,
+};
 
 #[test]
 fn builtin_domain_policy_env_carries_allow_and_block_lists() {
@@ -107,4 +113,151 @@ fn build_servers_with_builtin_preserves_local_session_and_domain_env() {
         local.env.get("CAPSEM_DOMAIN_BLOCK").map(String::as_str),
         Some("blocked.test")
     );
+}
+
+#[test]
+fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let mut effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    effective.security.value.capabilities.network_egress = CapabilityMode::Block;
+    effective.security.value.capabilities.mcp_tools = CapabilityMode::Ask;
+    let provenance = effective.profile.provenance.clone();
+
+    effective.rules.push(EffectiveRule {
+        id: "mcp.block-prod-delete".to_string(),
+        callback: "mcp.request".to_string(),
+        condition: "method == \"tools/call\" && tool.name == \"github__delete_repo\"".to_string(),
+        decision: RuleDecision::Block,
+        priority: 1,
+        rewrite_target: None,
+        rewrite_value: None,
+        reason: Some("Block delete repo".to_string()),
+        derived: false,
+        provenance: provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "http.block-secret-content".to_string(),
+        callback: "http.response".to_string(),
+        condition: "response.text.contains(\"secret\")".to_string(),
+        decision: RuleDecision::Block,
+        priority: 1,
+        rewrite_target: None,
+        rewrite_value: None,
+        reason: Some("Block leaked secret".to_string()),
+        derived: false,
+        provenance,
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let runtime = load_runtime_policy_state(&session_dir);
+
+    assert!(!runtime.network_policy.default_allow_read);
+    assert!(!runtime.network_policy.default_allow_write);
+    assert_eq!(runtime.mcp_policy.default_tool_decision, ToolDecision::Warn);
+    assert_eq!(
+        runtime
+            .mcp_policy
+            .tool_decisions
+            .get("github__delete_repo")
+            .copied(),
+        Some(ToolDecision::Block)
+    );
+
+    let mcp_rules = runtime
+        .policy_v2
+        .rules_for_callback(PolicyCallback::McpRequest);
+    assert_eq!(mcp_rules.len(), 1);
+    assert_eq!(mcp_rules[0].0, "block-prod-delete");
+    assert_eq!(
+        mcp_rules[0].1.decision,
+        capsem_core::net::policy_config::PolicyDecisionKind::Block
+    );
+
+    let http_rules = runtime
+        .policy_v2
+        .rules_for_callback(PolicyCallback::HttpResponse);
+    assert_eq!(http_rules.len(), 1);
+    assert!(http_rules[0]
+        .1
+        .condition
+        .contains("response.text.contains(\"secret\")"));
+}
+
+#[test]
+fn load_runtime_policy_state_falls_back_when_vm_effective_attachment_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = load_runtime_policy_state(dir.path());
+
+    assert!(runtime.network_policy.default_allow_read);
+    assert!(runtime.network_policy.default_allow_write);
+    assert_eq!(runtime.mcp_policy.default_tool_decision, ToolDecision::Warn);
+}
+
+#[test]
+fn load_runtime_policy_state_drops_legacy_dns_query_callback() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let mut effective =
+        capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None).unwrap();
+    let provenance = effective.profile.provenance.clone();
+
+    effective.rules.push(EffectiveRule {
+        id: "dns.legacy".to_string(),
+        callback: "dns.query".to_string(),
+        condition: "qname == \"example.com\"".to_string(),
+        decision: RuleDecision::Block,
+        priority: 1,
+        rewrite_target: None,
+        rewrite_value: None,
+        reason: Some("legacy callback must not enter runtime".to_string()),
+        derived: false,
+        provenance: provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "dns.modern".to_string(),
+        callback: "dns.request".to_string(),
+        condition: "qname == \"example.com\"".to_string(),
+        decision: RuleDecision::Block,
+        priority: 1,
+        rewrite_target: None,
+        rewrite_value: None,
+        reason: Some("modern callback survives runtime conversion".to_string()),
+        derived: false,
+        provenance,
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let runtime = load_runtime_policy_state(&session_dir);
+
+    let dns_rules = runtime
+        .policy_v2
+        .rules_for_callback(PolicyCallback::DnsQuery);
+    assert_eq!(
+        dns_rules.len(),
+        1,
+        "legacy dns.query must be dropped while dns.request survives"
+    );
+    assert_eq!(dns_rules[0].0, "modern");
 }

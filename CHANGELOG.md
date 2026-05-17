@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Profile V2 service-settings runtime wiring for service asset locations,
   default VM sizing, and per-session `vm-effective-settings` plus resolver
   trace attachments.
+- Added capsem-process consumption of session-attached Profile V2 effective
+  settings for network defaults, MCP defaults, and Policy V2 runtime rules.
 
 ## [1.1.1778860037] - 2026-05-15
 
