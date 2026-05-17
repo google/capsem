@@ -28,6 +28,25 @@ def _start_service() -> ServiceInstance:
     return svc
 
 
+def _example_com_allow_rules() -> dict:
+    return {
+        "policy.dns.allow_e2e_example_com": {
+            "on": "dns.request",
+            "if": 'qname == "example.com"',
+            "decision": "allow",
+            "priority": 900,
+            "reason": "E2E allow example.com DNS",
+        },
+        "policy.http.allow_e2e_example_com": {
+            "on": "http.request",
+            "if": 'request.host == "example.com"',
+            "decision": "allow",
+            "priority": 900,
+            "reason": "E2E allow example.com HTTP",
+        },
+    }
+
+
 def _create_vm(svc: ServiceInstance, prefix: str) -> str:
     vm = f"{prefix}-{uuid.uuid4().hex[:8]}"
     svc.client().post(
@@ -81,9 +100,7 @@ def test_guest_http_policy_v2_block_and_header_strip_records_session_db():
         saved = svc.client().post(
             "/settings",
             {
-                "security.web.allow_read": False,
-                "security.web.allow_write": False,
-                "security.web.custom_allow": "example.com",
+                **_example_com_allow_rules(),
                 "policy.http.block_e2e_path_query_header": {
                     "on": "http.request",
                     "if": (
@@ -125,15 +142,15 @@ def test_guest_http_policy_v2_block_and_header_strip_records_session_db():
             },
             timeout=30,
         )
-        assert saved["policy"]["http"]["block_e2e_path_query_header"]["decision"] == "block"
+        assert saved["effective_rules"]["http"]["block_e2e_path_query_header"]["decision"] == "block"
         assert (
-            saved["policy"]["http"]["rewrite_e2e_strip_authorization"][
+            saved["effective_rules"]["http"]["rewrite_e2e_strip_authorization"][
                 "strip_request_headers"
             ]
             == ["authorization"]
         )
         assert (
-            saved["policy"]["http"]["rewrite_e2e_strip_response_server"][
+            saved["effective_rules"]["http"]["rewrite_e2e_strip_response_server"][
                 "strip_response_headers"
             ]
             == ["server"]
@@ -325,17 +342,15 @@ def test_guest_dns_policy_v2_block_and_rewrite_records_session_db():
         saved = svc.client().post(
             "/settings",
             {
-                "security.web.allow_read": True,
-                "security.web.allow_write": True,
                 "policy.dns.block_e2e_dns": {
-                    "on": "dns.query",
+                    "on": "dns.request",
                     "if": 'qname == "block-dns-e2e.capsem.test" && qtype == "A"',
                     "decision": "block",
                     "priority": 10,
                     "reason": "E2E DNS block",
                 },
                 "policy.dns.rewrite_e2e_dns": {
-                    "on": "dns.query",
+                    "on": "dns.request",
                     "if": 'qname == "rewrite-dns-e2e.capsem.test" && qtype == "A"',
                     "decision": "rewrite",
                     "priority": 20,
@@ -346,8 +361,8 @@ def test_guest_dns_policy_v2_block_and_rewrite_records_session_db():
             },
             timeout=30,
         )
-        assert saved["policy"]["dns"]["block_e2e_dns"]["decision"] == "block"
-        assert saved["policy"]["dns"]["rewrite_e2e_dns"]["decision"] == "rewrite"
+        assert saved["effective_rules"]["dns"]["block_e2e_dns"]["decision"] == "block"
+        assert saved["effective_rules"]["dns"]["rewrite_e2e_dns"]["decision"] == "rewrite"
 
         vm = _create_vm(svc, "dns-policy-v2")
         db_path = _session_db(svc, vm)

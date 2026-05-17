@@ -7,6 +7,10 @@ fn service_settings_defaults_validate() {
     assert_eq!(settings.profiles.default_profile, EVERYDAY_WORK_PROFILE_ID);
     assert!(!settings.telemetry.enabled);
     assert!(!settings.remote_policy.enabled);
+    assert_eq!(
+        settings.profiles.user_dirs,
+        vec![crate::paths::capsem_home().join("profiles")]
+    );
 }
 
 #[test]
@@ -1007,6 +1011,8 @@ fn resolve_effective_vm_settings_includes_profile_and_derived_rules() {
             priority: 500,
             rewrite_target: None,
             rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
             reason: Some("Ask before shell tool use.".to_string()),
         },
     );

@@ -31,10 +31,14 @@ fn builtin_domain_policy_env_carries_allow_and_block_lists() {
         env.get("CAPSEM_DOMAIN_BLOCK").map(String::as_str),
         Some("blocked.test")
     );
+    assert_eq!(
+        env.get("CAPSEM_DOMAIN_DEFAULT").map(String::as_str),
+        Some("deny")
+    );
 }
 
 #[test]
-fn builtin_domain_policy_env_leaves_open_policy_unset() {
+fn builtin_domain_policy_env_leaves_open_policy_lists_unset() {
     let policy = DomainPolicy::new(&[], &[], Action::Allow);
     let mut env = HashMap::new();
 
@@ -42,6 +46,10 @@ fn builtin_domain_policy_env_leaves_open_policy_unset() {
 
     assert!(!env.contains_key("CAPSEM_DOMAIN_ALLOW"));
     assert!(!env.contains_key("CAPSEM_DOMAIN_BLOCK"));
+    assert_eq!(
+        env.get("CAPSEM_DOMAIN_DEFAULT").map(String::as_str),
+        Some("allow")
+    );
 }
 
 #[test]
@@ -69,6 +77,10 @@ fn build_builtin_env_includes_session_paths_and_domain_policy() {
     assert_eq!(
         env.get("CAPSEM_DOMAIN_BLOCK").map(String::as_str),
         Some("blocked.test")
+    );
+    assert_eq!(
+        env.get("CAPSEM_DOMAIN_DEFAULT").map(String::as_str),
+        Some("deny")
     );
 }
 
@@ -113,6 +125,10 @@ fn build_servers_with_builtin_preserves_local_session_and_domain_env() {
         local.env.get("CAPSEM_DOMAIN_BLOCK").map(String::as_str),
         Some("blocked.test")
     );
+    assert_eq!(
+        local.env.get("CAPSEM_DOMAIN_DEFAULT").map(String::as_str),
+        Some("deny")
+    );
 }
 
 #[test]
@@ -136,7 +152,26 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         priority: 1,
         rewrite_target: None,
         rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
         reason: Some("Block delete repo".to_string()),
+        derived: false,
+        provenance: provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "mcp.block-any-dangerous-tool".to_string(),
+        callback: "mcp.request".to_string(),
+        condition: "tool.name == \"danger__run\"".to_string(),
+        decision: RuleDecision::Block,
+        priority: 1,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Block dangerous tool".to_string()),
         derived: false,
         provenance: provenance.clone(),
         owner_setting_path: None,
@@ -151,9 +186,62 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         priority: 1,
         rewrite_target: None,
         rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
         reason: Some("Block leaked secret".to_string()),
         derived: false,
         provenance,
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "http.allow-example-domain".to_string(),
+        callback: "http.request".to_string(),
+        condition: "request.host == \"example.com\"".to_string(),
+        decision: RuleDecision::Allow,
+        priority: 900,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Allow example.com".to_string()),
+        derived: false,
+        provenance: effective.profile.provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "http.block-example-secret-path".to_string(),
+        callback: "http.request".to_string(),
+        condition: "request.host == \"example.com\" && request.path == \"/secret\"".to_string(),
+        decision: RuleDecision::Block,
+        priority: 10,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Block one path only".to_string()),
+        derived: false,
+        provenance: effective.profile.provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "http.block-bad-domain".to_string(),
+        callback: "http.request".to_string(),
+        condition: "request.host == \"bad.example\"".to_string(),
+        decision: RuleDecision::Block,
+        priority: 10,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Block bad.example".to_string()),
+        derived: false,
+        provenance: effective.profile.provenance.clone(),
         owner_setting_path: None,
         owner_setting_label: None,
         editable: true,
@@ -166,22 +254,44 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
     assert!(!runtime.network_policy.default_allow_read);
     assert!(!runtime.network_policy.default_allow_write);
     assert_eq!(runtime.mcp_policy.default_tool_decision, ToolDecision::Warn);
+    assert!(
+        !runtime
+            .mcp_policy
+            .tool_decisions
+            .contains_key("github__delete_repo"),
+        "conditional Profile V2 rules must stay in the exact policy engine"
+    );
     assert_eq!(
         runtime
             .mcp_policy
             .tool_decisions
-            .get("github__delete_repo")
+            .get("danger__run")
             .copied(),
         Some(ToolDecision::Block)
+    );
+    assert_eq!(
+        runtime.domain_policy.allowed_patterns(),
+        vec!["example.com".to_string()]
+    );
+    assert_eq!(
+        runtime.domain_policy.blocked_patterns(),
+        vec!["bad.example".to_string()]
     );
 
     let mcp_rules = runtime
         .policy_v2
         .rules_for_callback(PolicyCallback::McpRequest);
-    assert_eq!(mcp_rules.len(), 1);
-    assert_eq!(mcp_rules[0].0, "block-prod-delete");
+    assert_eq!(mcp_rules.len(), 2);
+    assert!(mcp_rules
+        .iter()
+        .any(|(name, _)| *name == "block-prod-delete"));
     assert_eq!(
-        mcp_rules[0].1.decision,
+        mcp_rules
+            .iter()
+            .find(|(name, _)| *name == "block-prod-delete")
+            .unwrap()
+            .1
+            .decision,
         capsem_core::net::policy_config::PolicyDecisionKind::Block
     );
 
@@ -224,6 +334,8 @@ fn load_runtime_policy_state_drops_legacy_dns_query_callback() {
         priority: 1,
         rewrite_target: None,
         rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
         reason: Some("legacy callback must not enter runtime".to_string()),
         derived: false,
         provenance: provenance.clone(),
@@ -239,6 +351,8 @@ fn load_runtime_policy_state_drops_legacy_dns_query_callback() {
         priority: 1,
         rewrite_target: None,
         rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
         reason: Some("modern callback survives runtime conversion".to_string()),
         derived: false,
         provenance,

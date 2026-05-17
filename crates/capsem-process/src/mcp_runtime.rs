@@ -56,20 +56,28 @@ pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyStat
         Some(VmNetworkMode::Disabled) => false,
         Some(VmNetworkMode::Proxied | VmNetworkMode::Direct) | None => true,
     };
-    if matches!(
-        effective
-            .as_ref()
-            .map(|e| e.security.value.capabilities.network_egress),
-        Some(CapabilityMode::Block)
-    ) {
-        default_allow = false;
+    if let Some(mode) = effective
+        .as_ref()
+        .map(|e| e.security.value.capabilities.network_egress)
+    {
+        default_allow = !matches!(mode, CapabilityMode::Block);
     }
 
     let network_policy = NetworkPolicy::new(Vec::new(), default_allow, default_allow);
+    let domain_default_allow = effective
+        .as_ref()
+        .map(|effective| {
+            matches!(
+                effective.security.value.capabilities.network_egress,
+                CapabilityMode::Allow | CapabilityMode::Audit
+            )
+        })
+        .unwrap_or(default_allow);
+    let (domain_allow, domain_block) = domain_policy_lists_from_effective(effective.as_ref());
     let domain_policy = DomainPolicy::new(
-        &[],
-        &[],
-        if default_allow {
+        &domain_allow,
+        &domain_block,
+        if domain_default_allow {
             Action::Allow
         } else {
             Action::Deny
@@ -98,6 +106,61 @@ pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyStat
         snapshot_auto_max: DEFAULT_SNAPSHOT_AUTO_MAX,
         snapshot_manual_max: DEFAULT_SNAPSHOT_MANUAL_MAX,
         snapshot_interval_secs: DEFAULT_SNAPSHOT_INTERVAL_SECS,
+    }
+}
+
+fn domain_policy_lists_from_effective(
+    effective: Option<&settings_profiles::EffectiveVmSettings>,
+) -> (Vec<String>, Vec<String>) {
+    let mut allow = Vec::new();
+    let mut block = Vec::new();
+    let Some(effective) = effective else {
+        return (allow, block);
+    };
+
+    for rule in &effective.rules {
+        let Some(domain) = domain_from_simple_network_condition(rule) else {
+            continue;
+        };
+        match rule.decision {
+            RuleDecision::Allow => push_unique(&mut allow, domain),
+            RuleDecision::Ask | RuleDecision::Block => push_unique(&mut block, domain),
+            RuleDecision::Rewrite => {}
+        }
+    }
+    (allow, block)
+}
+
+fn domain_from_simple_network_condition(rule: &EffectiveRule) -> Option<String> {
+    match rule.callback.as_str() {
+        "dns.request" => extract_condition_eq(&rule.condition, "qname"),
+        "http.request" | "http.read" | "http.write" | "http.response" => {
+            extract_condition_eq(&rule.condition, "request.host")
+        }
+        _ => None,
+    }
+}
+
+fn extract_condition_eq(condition: &str, field: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let prefix = format!("{field} == {quote}");
+        if let Some(rest) = condition.trim().strip_prefix(&prefix) {
+            let end = rest.find(quote)?;
+            if !rest[end + quote.len_utf8()..].trim().is_empty() {
+                continue;
+            }
+            let value = rest[..end].trim();
+            if !value.is_empty() {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+    }
+    None
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
     }
 }
 
@@ -196,8 +259,8 @@ fn policy_v2_from_effective_rules(
             reason: rule.reason.clone(),
             rewrite_target: rule.rewrite_target.clone(),
             rewrite_value: rule.rewrite_value.clone(),
-            strip_request_headers: Vec::new(),
-            strip_response_headers: Vec::new(),
+            strip_request_headers: rule.strip_request_headers.clone(),
+            strip_response_headers: rule.strip_response_headers.clone(),
         };
         if let Err(error) = policy_rule.validate() {
             warn!(
@@ -264,8 +327,8 @@ fn policy_rules_mut(
 }
 
 fn mcp_tool_name_from_condition(condition: &str) -> Option<String> {
-    let tool_idx = condition.find("tool.name")?;
-    let after_name = &condition[tool_idx + "tool.name".len()..];
+    let condition = condition.trim();
+    let after_name = condition.strip_prefix("tool.name")?;
     let eq_idx = after_name.find("==")?;
     let value = after_name[eq_idx + 2..].trim_start();
     let mut chars = value.chars();
@@ -275,6 +338,9 @@ fn mcp_tool_name_from_condition(condition: &str) -> Option<String> {
     }
     let tail = &value[quote.len_utf8()..];
     let end = tail.find(quote)?;
+    if !tail[end + quote.len_utf8()..].trim().is_empty() {
+        return None;
+    }
     let name = tail[..end].trim();
     if name.is_empty() {
         None
@@ -319,6 +385,15 @@ pub(crate) fn insert_builtin_domain_policy_env(
     env: &mut HashMap<String, String>,
     policy: &DomainPolicy,
 ) {
+    env.insert(
+        "CAPSEM_DOMAIN_DEFAULT".to_string(),
+        match policy.default_action() {
+            Action::Allow => "allow",
+            Action::Deny => "deny",
+        }
+        .to_string(),
+    );
+
     let allowed = policy.allowed_patterns();
     if !allowed.is_empty() {
         env.insert("CAPSEM_DOMAIN_ALLOW".to_string(), allowed.join(","));

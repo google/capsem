@@ -141,6 +141,11 @@ impl DomainPolicy {
         self.blocked.len()
     }
 
+    /// Return the default action used when no allow/block pattern matches.
+    pub fn default_action(&self) -> Action {
+        self.default_action
+    }
+
     /// Return the list of blocked patterns (for display/logging).
     pub fn blocked_patterns(&self) -> Vec<String> {
         self.blocked

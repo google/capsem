@@ -30,6 +30,32 @@ def _start_service(extra_env=None) -> ServiceInstance:
     return svc
 
 
+def _openai_allow_rules() -> dict:
+    return {
+        "policy.dns.allow_e2e_openai_api": {
+            "on": "dns.request",
+            "if": 'qname == "api.openai.com"',
+            "decision": "allow",
+            "priority": 900,
+            "reason": "E2E allow OpenAI DNS",
+        },
+        "policy.http.allow_e2e_openai_api": {
+            "on": "http.request",
+            "if": 'request.host == "api.openai.com"',
+            "decision": "allow",
+            "priority": 900,
+            "reason": "E2E allow OpenAI HTTP",
+        },
+        "policy.model.allow_e2e_openai_requests": {
+            "on": "model.request",
+            "if": 'provider == "openai"',
+            "decision": "allow",
+            "priority": 900,
+            "reason": "E2E allow OpenAI model requests",
+        },
+    }
+
+
 def _create_vm(svc: ServiceInstance, prefix: str) -> str:
     vm = f"{prefix}-{uuid.uuid4().hex[:8]}"
     svc.client().post(
@@ -137,9 +163,7 @@ def test_guest_model_request_policy_block_records_session_db_no_leak():
         saved = svc.client().post(
             "/settings",
             {
-                "security.web.allow_write": True,
-                "ai.openai.allow": True,
-                "ai.openai.domains": "api.openai.com, *.openai.com",
+                **_openai_allow_rules(),
                 "policy.model.block_e2e_openai": {
                     "on": "model.request",
                     "if": (
@@ -156,8 +180,8 @@ def test_guest_model_request_policy_block_records_session_db_no_leak():
         assert saved is not None
         assert "error" not in saved, saved
         assert (
-            saved["policy"]["model"]["block_e2e_openai"]["decision"] == "block"
-        ), saved["policy"]
+            saved["effective_rules"]["model"]["block_e2e_openai"]["decision"] == "block"
+        ), saved["effective_rules"]
 
         vm = _create_vm(svc, "model-policy")
         db_path = _session_db(svc, vm)
@@ -243,16 +267,28 @@ print(json.dumps({{"returncode": proc.returncode, "stdout": proc.stdout, "stderr
         svc.stop()
 
 
-def test_guest_model_request_policy_ask_and_rewrite_fail_closed_no_leak():
-    svc = _start_service()
+def test_guest_model_request_policy_ask_allows_and_rewrite_no_leak():
+    upstream = _OpenAiFixtureServer(
+        lambda body_text: (
+            {"ok": True, "body": body_text}
+            if "[redacted-model-secret]" in body_text
+            else {"ok": True}
+        )
+    )
+    upstream.__enter__()
+    svc = _start_service(
+        {
+            "CAPSEM_TEST_UPSTREAM_OVERRIDES": (
+                f"api.openai.com:443=http://127.0.0.1:{upstream.port}"
+            )
+        }
+    )
     vm = None
     try:
         saved = svc.client().post(
             "/settings",
             {
-                "security.web.allow_write": True,
-                "ai.openai.allow": True,
-                "ai.openai.domains": "api.openai.com, *.openai.com",
+                **_openai_allow_rules(),
                 "policy.model.ask_e2e_openai": {
                     "on": "model.request",
                     "if": (
@@ -271,15 +307,15 @@ def test_guest_model_request_policy_ask_and_rewrite_fail_closed_no_leak():
                     ),
                     "decision": "rewrite",
                     "priority": 20,
-                    "reason": "E2E model request rewrite fail closed",
+                    "reason": "E2E model request rewrite",
                     "rewrite_target": 'request.body =~ "rewrite-model-secret"',
                     "rewrite_value": "[redacted-model-secret]",
                 },
             },
             timeout=30,
         )
-        assert saved["policy"]["model"]["ask_e2e_openai"]["decision"] == "ask"
-        assert saved["policy"]["model"]["rewrite_e2e_openai"]["decision"] == "rewrite"
+        assert saved["effective_rules"]["model"]["ask_e2e_openai"]["decision"] == "ask"
+        assert saved["effective_rules"]["model"]["rewrite_e2e_openai"]["decision"] == "rewrite"
 
         vm = _create_vm(svc, "model-policy-ask")
         db_path = _session_db(svc, vm)
@@ -338,14 +374,17 @@ print(json.dumps({{
         payload = json.loads(response["stdout"].strip().splitlines()[-1])
 
         assert payload["ask"]["returncode"] == 0, payload
-        assert "HTTP_STATUS:403" in payload["ask"]["stdout"], payload
-        assert "policy.model.ask_e2e_openai" in payload["ask"]["stdout"], payload
+        assert "HTTP_STATUS:200" in payload["ask"]["stdout"], payload
         assert "ask-model-secret" not in payload["ask"]["stdout"], payload
 
         assert payload["rewrite"]["returncode"] == 0, payload
-        assert "HTTP_STATUS:403" in payload["rewrite"]["stdout"], payload
-        assert "policy.model.rewrite_e2e_openai" in payload["rewrite"]["stdout"], payload
+        assert "HTTP_STATUS:200" in payload["rewrite"]["stdout"], payload
+        assert "[redacted-model-secret]" in payload["rewrite"]["stdout"], payload
         assert "rewrite-model-secret" not in payload["rewrite"]["stdout"], payload
+        assert len(upstream.seen_bodies) == 2
+        assert "ask-model-secret" in upstream.seen_bodies[0]
+        assert "[redacted-model-secret]" in upstream.seen_bodies[1]
+        assert "rewrite-model-secret" not in upstream.seen_bodies[1]
 
         ask_row = _wait_for_row(
             db_path,
@@ -357,13 +396,13 @@ print(json.dumps({{
             """,
             lambda row: row["policy_rule"] == "policy.model.ask_e2e_openai",
         )
-        assert ask_row["decision"] == "denied"
-        assert ask_row["status_code"] == 403
+        assert ask_row["decision"] == "allowed"
+        assert ask_row["status_code"] == 200
         assert ask_row["bytes_sent"] > 0
         assert ask_row["policy_mode"] == "enforce"
-        assert ask_row["policy_action"] == "ask"
+        assert ask_row["policy_action"] == "allow"
         assert ask_row["policy_reason"] == "E2E model policy ask"
-        assert "ask-model-secret" not in (ask_row["request_body_preview"] or "")
+        assert "ask-model-secret" in (ask_row["request_body_preview"] or "")
 
         rewrite_row = _wait_for_row(
             db_path,
@@ -375,12 +414,15 @@ print(json.dumps({{
             """,
             lambda row: row["policy_rule"] == "policy.model.rewrite_e2e_openai",
         )
-        assert rewrite_row["decision"] == "denied"
-        assert rewrite_row["status_code"] == 403
+        assert rewrite_row["decision"] == "allowed"
+        assert rewrite_row["status_code"] == 200
         assert rewrite_row["bytes_sent"] > 0
         assert rewrite_row["policy_mode"] == "enforce"
         assert rewrite_row["policy_action"] == "rewrite"
-        assert "not implemented yet" in rewrite_row["policy_reason"]
+        assert rewrite_row["policy_reason"] == "E2E model request rewrite"
+        assert "[redacted-model-secret]" in (
+            rewrite_row["request_body_preview"] or ""
+        )
         assert "rewrite-model-secret" not in (
             rewrite_row["request_body_preview"] or ""
         )
@@ -388,6 +430,7 @@ print(json.dumps({{
         if vm is not None:
             _delete_vm(svc, vm)
         svc.stop()
+        upstream.__exit__(None, None, None)
 
 
 def test_guest_model_tool_response_policy_block_and_rewrite_no_leak():
@@ -397,9 +440,7 @@ def test_guest_model_tool_response_policy_block_and_rewrite_no_leak():
         saved = svc.client().post(
             "/settings",
             {
-                "security.web.allow_write": True,
-                "ai.openai.allow": True,
-                "ai.openai.domains": "api.openai.com, *.openai.com",
+                **_openai_allow_rules(),
                 "policy.model.block_e2e_tool_response": {
                     "on": "model.tool_response",
                     "if": (
@@ -427,9 +468,9 @@ def test_guest_model_tool_response_policy_block_and_rewrite_no_leak():
             },
             timeout=30,
         )
-        assert saved["policy"]["model"]["block_e2e_tool_response"]["decision"] == "block"
+        assert saved["effective_rules"]["model"]["block_e2e_tool_response"]["decision"] == "block"
         assert (
-            saved["policy"]["model"]["rewrite_e2e_tool_response"]["decision"]
+            saved["effective_rules"]["model"]["rewrite_e2e_tool_response"]["decision"]
             == "rewrite"
         )
 
@@ -713,9 +754,7 @@ def test_guest_model_response_and_tool_call_policy_with_fixture_upstream_no_leak
             saved = svc.client().post(
                 "/settings",
                 {
-                    "security.web.allow_write": True,
-                    "ai.openai.allow": True,
-                    "ai.openai.domains": "api.openai.com, *.openai.com",
+                    **_openai_allow_rules(),
                     "policy.model.block_e2e_model_response": {
                         "on": "model.response",
                         "if": (
@@ -768,19 +807,19 @@ def test_guest_model_response_and_tool_call_policy_with_fixture_upstream_no_leak
                 timeout=30,
             )
             assert (
-                saved["policy"]["model"]["block_e2e_model_response"]["decision"]
+                saved["effective_rules"]["model"]["block_e2e_model_response"]["decision"]
                 == "block"
             )
             assert (
-                saved["policy"]["model"]["rewrite_e2e_tool_call"]["decision"]
+                saved["effective_rules"]["model"]["rewrite_e2e_tool_call"]["decision"]
                 == "rewrite"
             )
             assert (
-                saved["policy"]["model"]["rewrite_e2e_model_response"]["decision"]
+                saved["effective_rules"]["model"]["rewrite_e2e_model_response"]["decision"]
                 == "rewrite"
             )
             assert (
-                saved["policy"]["model"]["block_e2e_tool_call"]["decision"]
+                saved["effective_rules"]["model"]["block_e2e_tool_call"]["decision"]
                 == "block"
             )
 

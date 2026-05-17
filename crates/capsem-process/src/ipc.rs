@@ -501,23 +501,20 @@ pub(crate) async fn handle_ipc_connection(
             }
             ServiceToProcess::ReloadConfig => {
                 info!("Reloading policies from disk");
-                let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-                let merged =
-                    capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
-                let user_mcp = user_sf.mcp.clone().unwrap_or_default();
-                let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
+                let runtime_state =
+                    crate::mcp_runtime::load_runtime_policy_state(&mcp_runtime.session_dir);
                 let servers = crate::mcp_runtime::build_servers_with_builtin(
-                    &user_mcp,
-                    &corp_mcp,
+                    &runtime_state.mcp_user,
+                    &runtime_state.mcp_corp,
                     mcp_runtime.builtin_binary.as_deref(),
                     &mcp_runtime.session_dir,
-                    &merged.domain,
+                    &runtime_state.domain_policy,
                 );
 
-                let new_domain = Arc::new(merged.domain);
-                let new_network = Arc::new(merged.network);
-                let new_mcp = Arc::new(merged.mcp);
-                let new_policy_v2 = Arc::new(merged.policy);
+                let new_domain = Arc::new(runtime_state.domain_policy);
+                let new_network = Arc::new(runtime_state.network_policy);
+                let new_mcp = Arc::new(runtime_state.mcp_policy);
+                let new_policy_v2 = Arc::new(runtime_state.policy_v2);
 
                 *net_state.policy.write().unwrap() = new_network;
                 *mcp_runtime.domain_policy.write().unwrap() = Arc::clone(&new_domain);
@@ -632,23 +629,19 @@ pub(crate) async fn handle_ipc_connection(
                 let mcp = Arc::clone(&mcp_runtime);
                 let ipc_tx_out = ipc_tx_out.clone();
                 tokio::spawn(async move {
-                    // Reload config from disk and refresh aggregator.
-                    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-                    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(
-                        &user_sf, &corp_sf,
-                    );
-                    let user_mcp = user_sf.mcp.clone().unwrap_or_default();
-                    let corp_mcp = corp_sf.mcp.clone().unwrap_or_default();
+                    // Reload the session-effective Profile V2 state and refresh aggregator.
+                    let runtime_state =
+                        crate::mcp_runtime::load_runtime_policy_state(&mcp.session_dir);
                     let servers = crate::mcp_runtime::build_servers_with_builtin(
-                        &user_mcp,
-                        &corp_mcp,
+                        &runtime_state.mcp_user,
+                        &runtime_state.mcp_corp,
                         mcp.builtin_binary.as_deref(),
                         &mcp.session_dir,
-                        &merged.domain,
+                        &runtime_state.domain_policy,
                     );
-                    *mcp.domain_policy.write().unwrap() = Arc::new(merged.domain);
-                    *mcp.policy.write().await = Arc::new(merged.mcp);
-                    *mcp.policy_v2.write().await = Arc::new(merged.policy);
+                    *mcp.domain_policy.write().unwrap() = Arc::new(runtime_state.domain_policy);
+                    *mcp.policy.write().await = Arc::new(runtime_state.mcp_policy);
+                    *mcp.policy_v2.write().await = Arc::new(runtime_state.policy_v2);
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(

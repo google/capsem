@@ -29,6 +29,7 @@
 - [x] Port model Policy V2 `ask` confirmation resolution in MITM model request/response paths
 - [x] Port model Policy V2 `model.request` rewrite support and redacted upstream dispatch
 - [x] Port Profile V2 corp-config install path and verify non-VM gateway parity
+- [x] Recover focused VM/MITM Profile V2 parity for HTTP/DNS, model, and framed MCP paths
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -84,6 +85,19 @@
 - Proof: `uv run pytest tests/capsem-service/test_svc_setup.py tests/capsem-service/test_svc_settings.py tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_returns_merged_shape -q` passed 19 tests.
 - Proof: `uv run pytest tests/capsem-gateway/test_gw_status.py tests/capsem-gateway/test_gw_status_advanced.py tests/capsem-gateway/test_gw_proxy.py -q` passed 19 tests.
 - Remaining VM-dependent proof: `uv run pytest tests/capsem-service/test_svc_setup.py tests/capsem-service/test_svc_mcp_api.py tests/capsem-service/test_svc_settings.py -q` reached 23 passing tests but `TestMcpCall.test_call_unknown_tool_with_running_vm_rejected` timed out waiting for exec-ready; keep under VM gate debt, not a policy-runtime regression.
+- VM/MITM parity recovery replaced legacy V1 `security.web.*`/AI allowlist setup in focused e2e tests with Profile V2 effective rules. The process reload path now refreshes running sessions from `vm-effective-settings.toml`, so live MCP/HTTP/DNS/model policy updates use the same Profile V2 source of truth as newly provisioned sessions.
+- Profile V2-to-legacy bridge fixes: conditional MCP tool rules and conditional HTTP host rules no longer collapse into broad per-tool/domain allow/block lists; only pure `tool.name == ...`, `request.host == ...`, and `qname == ...` rules feed the builtin fast-path lists.
+- Builtin MCP HTTP tools now receive `CAPSEM_DOMAIN_DEFAULT`, preserving `network_egress = ask/block` as default-deny even when allow/block lists are empty.
+- Default user profile discovery now resolves under `CAPSEM_HOME`/`HOME` instead of reading a literal `./~/.capsem/profiles` directory, preventing accidental local profile artifacts from contaminating tests or runtime defaults.
+- Proof: `cargo check -p capsem-core -p capsem-service -p capsem-process -p capsem-mcp-builtin` passed.
+- Proof: `cargo test -p capsem-core settings_profiles --lib` passed 118 focused tests.
+- Proof: `cargo test -p capsem-core domain_policy --lib` passed 57 matching tests.
+- Proof: `cargo test -p capsem-core mcp_frame --lib` passed 52 matching tests.
+- Proof: `cargo test -p capsem-process mcp_runtime` passed 7 focused runtime conversion tests.
+- Proof: `uv run python -m py_compile tests/capsem-e2e/test_framed_mcp_mitm.py tests/helpers/service.py` passed.
+- Proof: `uv run pytest tests/capsem-e2e/test_framed_mcp_mitm.py -q` passed 15 VM tests.
+- Proof: `uv run pytest tests/capsem-e2e/test_policy_v2_http_dns_mitm.py -q` passed 2 VM tests.
+- Proof: `uv run pytest tests/capsem-e2e/test_model_policy_mitm.py -q` passed 4 VM tests.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -92,16 +106,16 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; model Policy V2 confirmation/rewrite passed 32 focused tests; policy condition allowlist accepts documented `request.data`; capsem-process runtime conversion passed 7 focused tests and 97 full package tests; capsem-gateway passed 156 Rust tests
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; model Policy V2 confirmation/rewrite passed 32 focused tests; policy condition allowlist accepts documented `request.data`; capsem-process runtime conversion passed 7 focused tests and 97 full package tests; domain policy/default-env behavior passed 57 matching core tests; capsem-gateway passed 156 Rust tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload; `/setup/corp-config` installs Profile V2 corp profile TOML and leaves `/settings` typed/readable; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery; model request rewrite forwards redacted bytes upstream before telemetry records the request preview; gateway status/proxy non-VM Python tests passed
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/setup/corp-config` installs Profile V2 corp profile TOML and leaves `/settings` typed/readable; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state and reloads running sessions from it; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery; model request rewrite forwards redacted bytes upstream before telemetry records the request preview; gateway status/proxy non-VM Python tests passed
 - Adversarial:
   policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction; model request rewrite fails closed for unsupported targets, no regex match, and non-UTF-8 bodies
 - E2E/VM or integration:
-  NAT/egress skips classified as `needs-review`; VM gates still release-held; one MCP service VM-call test currently times out waiting for exec-ready and remains VM-gate debt
+  Focused VM/MITM suites passed for framed MCP (15), HTTP/DNS Policy V2 (2), and model Policy V2 (4). NAT/egress skips classified as `needs-review`; broad VM gates still release-held; one MCP service VM-call test previously timed out waiting for exec-ready and remains VM-gate debt.
 - Telemetry/observability:
   debug report now surfaces resolver-trace summary; lifecycle/net telemetry setup changes require split review before port
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  gateway VM/MITM policy telemetry replay, E2E/VM gates, and full-gate rerun pending
+  Broad E2E/VM gates and full-gate rerun pending; ambiguous environment skips remain unaccepted until separately reviewed.

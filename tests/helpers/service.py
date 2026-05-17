@@ -19,7 +19,7 @@ SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
 PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
-ASSETS_DIR = PROJECT_ROOT / "assets"
+ASSETS_DIR = Path(os.environ.get("CAPSEM_ASSETS_DIR", PROJECT_ROOT / "assets"))
 
 
 ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
@@ -172,12 +172,15 @@ def _rotate_artifacts(root, keep):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self, extra_env=None):
+    def __init__(self, extra_env=None, service_toml=None, pass_assets_dir=True, assets_dir=None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.proc = None
         self._log_file = None
         self.extra_env = extra_env or {}
+        self.service_toml = service_toml
+        self.pass_assets_dir = pass_assets_dir
+        self.assets_dir = Path(assets_dir) if assets_dir is not None else None
 
     def start(self):
         # Sign binaries before spawning (macOS needs virtualization entitlement)
@@ -187,7 +190,7 @@ class ServiceInstance:
         sign_binary(TRAY_BINARY)
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-        assets_dir = ASSETS_DIR / arch
+        assets_dir = self.assets_dir or (ASSETS_DIR / arch)
 
         env = os.environ.copy()
         env["RUST_LOG"] = "debug"
@@ -200,21 +203,32 @@ class ServiceInstance:
         print(f"SERVICE LOG: {log_path}")
         self._log_file = open(log_path, "w")
 
+        if self.service_toml is not None:
+            (self.tmp_dir / "service.toml").write_text(self.service_toml)
+
         # Deliberately omit --tray-binary: the tray is a user-facing macOS
         # menu bar icon and spawning it on every test instance flashes the
         # menu bar dozens of times during a full suite run. Companion
         # lifecycle tests exercise the tray via their own spawn.
+        cmd = [
+            str(SERVICE_BINARY),
+            "--uds-path",
+            str(self.uds_path),
+            "--process-binary",
+            str(PROCESS_BINARY),
+            "--gateway-binary",
+            str(GATEWAY_BINARY),
+            "--gateway-port",
+            "0",
+            "--parent-pid",
+            str(os.getpid()),
+            "--foreground",
+        ]
+        if self.pass_assets_dir:
+            cmd += ["--assets-dir", str(assets_dir)]
+
         self.proc = subprocess.Popen(
-            [
-                str(SERVICE_BINARY),
-                "--uds-path", str(self.uds_path),
-                "--assets-dir", str(assets_dir),
-                "--process-binary", str(PROCESS_BINARY),
-                "--gateway-binary", str(GATEWAY_BINARY),
-                "--gateway-port", "0",
-                "--parent-pid", str(os.getpid()),
-                "--foreground",
-            ],
+            cmd,
             env=env,
             stdout=self._log_file,
             stderr=self._log_file,
@@ -222,6 +236,15 @@ class ServiceInstance:
 
         start = time.time()
         while time.time() - start < 15:
+            if self.proc.poll() is not None:
+                code = self.proc.returncode
+                log_text = log_path.read_text() if log_path.exists() else ""
+                self.stop()
+                if log_text:
+                    print(f"\n--- SERVICE LOG ---\n{log_text}\n---", file=sys.stderr)
+                raise RuntimeError(
+                    f"capsem-service exited before accepting connections (exit={code})"
+                )
             if self.uds_path.exists():
                 # Socket file exists -- verify server is actually accepting connections
                 try:
@@ -236,9 +259,10 @@ class ServiceInstance:
                     pass
             time.sleep(0.5)
 
+        log_text = log_path.read_text() if log_path.exists() else ""
         self.stop()
-        if log_path.exists():
-            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        if log_text:
+            print(f"\n--- SERVICE LOG ---\n{log_text}\n---", file=sys.stderr)
         raise RuntimeError("capsem-service failed to accept connections within 15s")
 
     def client(self):

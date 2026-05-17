@@ -64,8 +64,8 @@ Initial grouping:
 | `sprints/policy-settings-profiles/**` | keep | Product design, requirements, tracker, and S00-S19 execution notes. | Copied and committed in context checkpoint. |
 | `crates/capsem-core/src/settings_profiles/**` | keep | Core typed service/profile model, resolver, trace, corp directives, rule ownership. | Ported as first product-code slice; `cargo test -p capsem-core settings_profiles` passed. |
 | `crates/capsem-core/src/net/policy_confirm.rs` and tests | keep | S06-pre confirmation contract. | Ported with `RetryOpts: Clone` support; `cargo test -p capsem-core policy_confirm` passed. |
-| `crates/capsem-core/src/net/mitm_proxy/**` policy-v2 changes | keep | HTTP/model/MCP policy enforcement, rewrite, ask confirmation, and telemetry behavior. | MCP, HTTP, and model `ask` confirmation plus model request rewrite are ported with focused tests; gateway VM/MITM telemetry still needs focused subsystem replay. |
-| `crates/capsem-service/**`, `crates/capsem/src/**`, `crates/capsem-process/**`, `crates/capsem-gateway/**` | needs-review | Mixes real Profile V2 service/runtime integration with debug-report, status, asset, install, and IPC changes. | `/settings*`, debug-report provenance, service asset-location startup, default VM sizing, `/setup/assets` provenance, vm-effective session attachments, capsem-process vm-effective consumption, MCP/HTTP/model confirmer integration, model rewrite, Profile V2 corp-config install, and non-VM gateway status/proxy parity ported/tested; gateway VM/MITM telemetry still requires replay by sub-sprint. |
+| `crates/capsem-core/src/net/mitm_proxy/**` policy-v2 changes | keep | HTTP/model/MCP policy enforcement, rewrite, ask confirmation, and telemetry behavior. | MCP, HTTP, and model `ask` confirmation plus model request rewrite are ported with focused tests; focused VM/MITM Profile V2 suites now pass for framed MCP, HTTP/DNS, and model paths. |
+| `crates/capsem-service/**`, `crates/capsem/src/**`, `crates/capsem-process/**`, `crates/capsem-gateway/**` | needs-review | Mixes real Profile V2 service/runtime integration with debug-report, status, asset, install, and IPC changes. | `/settings*`, debug-report provenance, service asset-location startup, default VM sizing, `/setup/assets` provenance, vm-effective session attachments, capsem-process vm-effective consumption/reload, MCP/HTTP/model confirmer integration, model rewrite, Profile V2 corp-config install, non-VM gateway status/proxy parity, and focused VM/MITM Profile V2 parity ported/tested. |
 | `frontend/**` | needs-review | Mixes settings/profile UI model changes with dependency and test churn. | Defer until backend contracts are stable. |
 | `tests/**` | needs-review | Contains needed contract/E2E coverage and some drift/skips. | Port only tests that prove retained behavior. |
 | `.github/**`, release docs, `LATEST_RELEASE.md`, `B3SUMS`, benchmark JSON, generated artifacts | drop unless separately justified | Mostly release-line and generated artifact churn unrelated to Profile V2 rescue. | Do not port in Profile V2 branch. |
@@ -76,7 +76,7 @@ Initial grouping:
 2. Core Profile V2 model: `settings_profiles` module and unit/contract tests.
 3. Service settings runtime: service API, debug provenance, asset-location startup, default VM sizing, VM effective settings attachments, and process-side effective policy consumption ported.
 4. MCP/HTTP/model policy runtime: framed MITM MCP `ask`, HTTP head-hook `ask`, model request/response/tool `ask` confirmation, and model request rewrite ported with focused tests.
-5. Policy runtime: remaining gateway VM/MITM telemetry parity.
+5. Policy runtime: focused VM/MITM Profile V2 parity for framed MCP, HTTP/DNS, and model paths.
 6. Test recovery: focused unit/contract tests first, then service/gateway integration, then E2E/VM gates.
 7. Frontend/CLI/docs: only after backend contracts are verified.
 
@@ -85,10 +85,10 @@ Initial grouping:
 - Context preservation: `git status --short`, document inventory review.
 - Core model: `cargo test -p capsem-core settings_profiles`.
 - Policy runtime: focused `capsem-core` policy tests plus gateway/service Python tests that do not require VM networking.
-- E2E/VM: run only after capability gates are documented; skips must remain review-tagged.
+- E2E/VM: focused Profile V2 VM/MITM suites pass; broad gates and any skips must remain review-tagged until separately accepted.
 
 ## Active Holds
 
 - Migration is not complete until committed-delta file-level replay decisions are made as each slice is ported.
-- Verification is not restored until the targeted and broad gates pass on `profile-v2`.
+- Verification is not restored until the remaining broad gates pass on `profile-v2`.
 - Test edits that weaken policy enforcement or redaction expectations are blocked until revalidated against product intent.

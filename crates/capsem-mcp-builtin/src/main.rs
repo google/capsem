@@ -8,6 +8,7 @@
 //! - CAPSEM_SESSION_DIR: Session directory (parent of workspace). Enables snapshot tools.
 //! - CAPSEM_DOMAIN_ALLOW: Comma-separated allowed domain patterns
 //! - CAPSEM_DOMAIN_BLOCK: Comma-separated blocked domain patterns
+//! - CAPSEM_DOMAIN_DEFAULT: Default domain action, "allow" or "deny"
 //! - CAPSEM_SESSION_DB: Path to session DB for telemetry (optional)
 
 use std::path::PathBuf;
@@ -466,10 +467,15 @@ async fn main() -> Result<()> {
         .filter(|s| !s.is_empty())
         .map(String::from)
         .collect();
-    let default_action = if allow.is_empty() && block.is_empty() {
-        Action::Allow
-    } else {
-        Action::Deny
+    let default_action = match std::env::var("CAPSEM_DOMAIN_DEFAULT")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "allow" => Action::Allow,
+        "deny" => Action::Deny,
+        _ if allow.is_empty() && block.is_empty() => Action::Allow,
+        _ => Action::Deny,
     };
     let domain_policy = Arc::new(DomainPolicy::new(&allow, &block, default_action));
 

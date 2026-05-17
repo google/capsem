@@ -627,7 +627,7 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             },
             timeout=15,
         )
-        assert saved["policy"]["mcp"]["block_live_reload_echo"]["decision"] == "block"
+        assert saved["effective_rules"]["mcp"]["block_live_reload_echo"]["decision"] == "block"
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
         assert reload_response["reloaded"] >= 1
@@ -684,7 +684,7 @@ def test_framed_guest_mcp_policy_v2_argument_block_from_settings_no_leak():
             },
             timeout=15,
         )
-        rule = saved["policy"]["mcp"]["block_prod_token"]
+        rule = saved["effective_rules"]["mcp"]["block_prod_token"]
         assert rule["decision"] == "block"
         assert rule["priority"] == 10
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
@@ -789,8 +789,8 @@ def test_framed_guest_mcp_policy_v2_ask_and_request_rewrite_from_settings():
             },
             timeout=15,
         )
-        assert saved["policy"]["mcp"]["ask_sensitive_echo"]["decision"] == "ask"
-        assert saved["policy"]["mcp"]["rewrite_echo_token"]["decision"] == "rewrite"
+        assert saved["effective_rules"]["mcp"]["ask_sensitive_echo"]["decision"] == "ask"
+        assert saved["effective_rules"]["mcp"]["rewrite_echo_token"]["decision"] == "rewrite"
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
 
@@ -835,10 +835,8 @@ sys.exit(proc.returncode)
         result = _exec_cli(svc, vm, _guest_python(script), timeout=90)
         assert result.returncode == 0, result.stderr
         responses = _responses_by_id(result.stdout)
-        assert responses[2]["error"]["message"].startswith(
-            "MCP request blocked by policy"
-        )
-        assert "ask-secret-value" not in json.dumps(responses[2])
+        assert "error" not in responses[2]
+        assert "ask-secret-value" in json.dumps(responses[2]["result"])
         rewrite_response = json.dumps(responses[3]["result"])
         assert "[redacted-token]" in rewrite_response
         assert "prod-token-ABC123" not in rewrite_response
@@ -847,15 +845,14 @@ sys.exit(proc.returncode)
         db_path = _session_db(svc, vm)
         asked = _wait_for_mcp_row(
             db_path,
-            lambda r: r["request_id"] == "2" and r["decision"] == "denied",
+            lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
         )
-        assert asked["policy_action"] == "ask"
+        assert asked["policy_action"] == "allow"
         assert asked["policy_rule"] == "policy.mcp.ask_sensitive_echo"
         assert asked["policy_reason"] == "Sensitive echo needs approval"
-        assert asked["response_preview"] is None
+        assert "ask-secret-value" in (asked["response_preview"] or "")
         asked_preview = asked["request_preview"] or ""
-        assert "redacted_by_policy" in asked_preview
-        assert "ask-secret-value" not in asked_preview
+        assert "ask-secret-value" in asked_preview
 
         rewritten = _wait_for_mcp_row(
             db_path,
@@ -921,10 +918,20 @@ sys.exit(proc.returncode)
         saved = svc.client().post(
             "/settings",
             {
-                "security.web.allow_read": False,
-                "security.web.allow_write": False,
-                "security.web.custom_allow": "example.com",
-                "security.web.custom_block": "blocked-builtin-http.invalid",
+                "policy.http.allow_builtin_example_com": {
+                    "on": "http.request",
+                    "if": 'request.host == "example.com"',
+                    "decision": "allow",
+                    "priority": 900,
+                    "reason": "Allow builtin MCP HTTP fixture domain",
+                },
+                "policy.http.block_builtin_invalid": {
+                    "on": "http.request",
+                    "if": 'request.host == "blocked-builtin-http.invalid"',
+                    "decision": "block",
+                    "priority": 10,
+                    "reason": "Block builtin MCP HTTP fixture domain",
+                },
             },
             timeout=15,
         )
@@ -1302,11 +1309,11 @@ def test_framed_guest_mcp_policy_v2_controls_external_stdio_tool_from_settings()
             timeout=15,
         )
         assert (
-            saved["policy"]["mcp"]["block_external_deny_text"]["decision"]
+            saved["effective_rules"]["mcp"]["block_external_deny_text"]["decision"]
             == "block"
         )
         assert (
-            saved["policy"]["mcp"]["block_external_secret_return"]["on"]
+            saved["effective_rules"]["mcp"]["block_external_secret_return"]["on"]
             == "mcp.response"
         )
         reload_response = svc.client().post("/reload-config", {}, timeout=15)

@@ -341,10 +341,25 @@ impl ServiceState {
             return Ok(());
         }
 
+        self.refresh_vm_effective_settings(session_dir)
+    }
+
+    fn current_service_settings(&self) -> capsem_core::settings_profiles::ServiceSettings {
+        capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path())
+            .unwrap_or_else(|error| {
+                warn!(
+                    error = %error,
+                    "failed to reload service settings from disk, using startup snapshot"
+                );
+                self.service_settings.clone()
+            })
+    }
+
+    fn refresh_vm_effective_settings(&self, session_dir: &FsPath) -> Result<()> {
+        let settings = self.current_service_settings();
         let (effective, trace) =
             capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-                &self.service_settings,
-                None,
+                &settings, None,
             )?;
         capsem_core::settings_profiles::write_vm_effective_settings(session_dir, &effective)
             .context("persist vm-effective settings")?;
@@ -355,9 +370,9 @@ impl ServiceState {
 
     fn resolve_vm_runtime_defaults(&self) -> VmRuntimeDefaults {
         let fallback_vm = capsem_core::settings_profiles::VmProfileSettings::default();
+        let settings = self.current_service_settings();
         match capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-            &self.service_settings,
-            None,
+            &settings, None,
         ) {
             Ok((effective, _trace)) => VmRuntimeDefaults {
                 ram_mb: effective.vm.value.memory_mib as u64,
@@ -3003,55 +3018,64 @@ async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
     // Collect paths to broadcast to.
-    let uds_paths = {
+    let reload_targets = {
         let instances = state.instances.lock().unwrap();
         instances
             .iter()
-            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
+            .map(|(id, info)| (id.clone(), info.uds_path.clone(), info.session_dir.clone()))
             .collect::<Vec<_>>()
     };
 
-    let results = futures::future::join_all(uds_paths.iter().map(|(id, uds_path)| {
-        let id = id.clone();
-        async move {
-            match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, Some(5)).await {
-                Ok(ProcessToService::ReloadConfigResult {
-                    success: true,
-                    error: _,
-                }) => None,
-                Ok(ProcessToService::ReloadConfigResult {
-                    success: false,
-                    error,
-                }) => Some(ReloadConfigFailure {
-                    session_id: id,
-                    message: error.unwrap_or_else(|| "reload failed".to_string()),
-                }),
-                Ok(ProcessToService::Pong) => None,
-                Ok(_) => Some(ReloadConfigFailure {
-                    session_id: id,
-                    message: "unexpected response".to_string(),
-                }),
-                Err(e) => Some(ReloadConfigFailure {
-                    session_id: id,
-                    message: e,
-                }),
+    let results =
+        futures::future::join_all(reload_targets.iter().map(|(id, uds_path, session_dir)| {
+            let id = id.clone();
+            let session_dir = session_dir.clone();
+            let state = state.clone();
+            async move {
+                if let Err(error) = state.refresh_vm_effective_settings(&session_dir) {
+                    return Some(ReloadConfigFailure {
+                        session_id: id,
+                        message: format!("refresh vm-effective settings: {error}"),
+                    });
+                }
+                match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, Some(5)).await {
+                    Ok(ProcessToService::ReloadConfigResult {
+                        success: true,
+                        error: _,
+                    }) => None,
+                    Ok(ProcessToService::ReloadConfigResult {
+                        success: false,
+                        error,
+                    }) => Some(ReloadConfigFailure {
+                        session_id: id,
+                        message: error.unwrap_or_else(|| "reload failed".to_string()),
+                    }),
+                    Ok(ProcessToService::Pong) => None,
+                    Ok(_) => Some(ReloadConfigFailure {
+                        session_id: id,
+                        message: "unexpected response".to_string(),
+                    }),
+                    Err(e) => Some(ReloadConfigFailure {
+                        session_id: id,
+                        message: e,
+                    }),
+                }
             }
-        }
-    }))
-    .await;
+        }))
+        .await;
     let failures: Vec<ReloadConfigFailure> = results.into_iter().flatten().collect();
     let failed_session_ids: Vec<String> = failures
         .iter()
         .map(|failure| failure.session_id.clone())
         .collect();
-    let reloaded = uds_paths.len().saturating_sub(failures.len());
+    let reloaded = reload_targets.len().saturating_sub(failures.len());
 
     if failures.is_empty() {
         Ok((
             StatusCode::OK,
             Json(serde_json::json!({
                 "success": true,
-                "reloaded": uds_paths.len(),
+                "reloaded": reload_targets.len(),
                 "failed_session_count": 0,
                 "failed_session_ids": [],
                 "failures": [],
@@ -3111,6 +3135,10 @@ struct PolicyRuleUpdate {
     rewrite_target: Option<String>,
     #[serde(default)]
     rewrite_value: Option<String>,
+    #[serde(default)]
+    strip_request_headers: Vec<String>,
+    #[serde(default)]
+    strip_response_headers: Vec<String>,
 }
 
 fn default_profile_rule_priority() -> i32 {
@@ -3202,7 +3230,25 @@ fn profile_rule_from_update(
         reason: update.reason,
         rewrite_target: update.rewrite_target,
         rewrite_value: update.rewrite_value,
+        strip_request_headers: normalize_header_names(update.strip_request_headers),
+        strip_response_headers: normalize_header_names(update.strip_response_headers),
     }
+}
+
+fn normalize_header_names(headers: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for header in headers {
+        let trimmed = header.trim();
+        let Ok(name) = axum::http::header::HeaderName::from_bytes(trimmed.as_bytes()) else {
+            continue;
+        };
+        let name = name.as_str().to_string();
+        if seen.insert(name.clone()) {
+            normalized.push(name);
+        }
+    }
+    normalized
 }
 
 fn map_policy_callback(
@@ -3277,8 +3323,8 @@ fn validate_policy_rule_update(
         reason: update.reason.clone(),
         rewrite_target: update.rewrite_target.clone(),
         rewrite_value: update.rewrite_value.clone(),
-        strip_request_headers: Vec::new(),
-        strip_response_headers: Vec::new(),
+        strip_request_headers: update.strip_request_headers.clone(),
+        strip_response_headers: update.strip_response_headers.clone(),
     };
     policy_rule
         .validate()
@@ -3364,6 +3410,8 @@ fn policy_json_from_effective(
             "reason": rule.reason,
             "rewrite_target": rule.rewrite_target,
             "rewrite_value": rule.rewrite_value,
+            "strip_request_headers": rule.strip_request_headers,
+            "strip_response_headers": rule.strip_response_headers,
         });
         let entry = policy
             .entry(rule_type.to_string())

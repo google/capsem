@@ -32,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 
+### Fixed
+- Fixed running VM reloads to refresh Profile V2 effective policy from each
+  session attachment, including MCP builtin domain policy and Policy V2 rules.
+- Fixed Profile V2 conditional MCP/HTTP rules so narrow argument/path rules no
+  longer collapse into broad legacy tool/domain allow-block lists.
+- Fixed default user profile discovery to resolve under `CAPSEM_HOME`/`HOME`
+  instead of a literal `./~` directory, keeping local artifacts out of runtime
+  and test profile resolution.
+
 ## [1.1.1778860037] - 2026-05-15
 
 ## [1.1.1778855131] - 2026-05-15

@@ -1150,6 +1150,10 @@ pub struct ProfileRule {
     pub rewrite_target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewrite_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strip_request_headers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strip_response_headers: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -1189,6 +1193,8 @@ impl ProfileRule {
             .rewrite_value
             .as_deref()
             .is_some_and(|value| !value.trim().is_empty());
+        let has_header_strip =
+            !self.strip_request_headers.is_empty() || !self.strip_response_headers.is_empty();
         match self.decision {
             RuleDecision::Rewrite => {
                 if has_target != has_value {
@@ -1197,23 +1203,37 @@ impl ProfileRule {
                         "rewrite decisions require both rewrite_target and rewrite_value",
                     )?;
                 }
-                if !has_target {
+                if !has_target && !has_header_strip {
                     validation_error(
                         path,
-                        "rewrite decisions require rewrite_target and rewrite_value",
+                        "rewrite decisions require rewrite_target and rewrite_value or header strip fields",
                     )?;
                 }
-                validate_rewrite_target_and_value(
-                    &format!("{path}.rewrite_target"),
-                    self.rewrite_target.as_deref().unwrap_or_default(),
-                    self.rewrite_value.as_deref().unwrap_or_default(),
+                if has_target {
+                    validate_rewrite_target_and_value(
+                        &format!("{path}.rewrite_target"),
+                        self.rewrite_target.as_deref().unwrap_or_default(),
+                        self.rewrite_value.as_deref().unwrap_or_default(),
+                    )?;
+                }
+                validate_header_names(
+                    &format!("{path}.strip_request_headers"),
+                    &self.strip_request_headers,
+                )?;
+                validate_header_names(
+                    &format!("{path}.strip_response_headers"),
+                    &self.strip_response_headers,
                 )?;
             }
             RuleDecision::Allow | RuleDecision::Ask | RuleDecision::Block => {
-                if self.rewrite_target.is_some() || self.rewrite_value.is_some() {
+                if self.rewrite_target.is_some()
+                    || self.rewrite_value.is_some()
+                    || !self.strip_request_headers.is_empty()
+                    || !self.strip_response_headers.is_empty()
+                {
                     validation_error(
                         path,
-                        "only rewrite decisions may include rewrite_target/rewrite_value",
+                        "only rewrite decisions may include rewrite_target/rewrite_value or header strip fields",
                     )?;
                 }
             }
@@ -1779,6 +1799,10 @@ pub struct EffectiveRule {
     pub rewrite_target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewrite_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strip_request_headers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strip_response_headers: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub derived: bool,
@@ -2512,6 +2536,8 @@ fn derived_provider_toggle_rules(
                     priority: 0,
                     rewrite_target: None,
                     rewrite_value: None,
+                    strip_request_headers: Vec::new(),
+                    strip_response_headers: Vec::new(),
                     reason: Some(format!(
                         "Derived from ai.providers.{provider_id}.enabled = {}",
                         provider.enabled
@@ -2565,6 +2591,8 @@ fn derived_mcp_allowed_tools_rules(
                 priority: 0,
                 rewrite_target: None,
                 rewrite_value: None,
+                strip_request_headers: Vec::new(),
+                strip_response_headers: Vec::new(),
                 reason: Some(format!(
                     "Derived from mcp.connectors.{connector_id}.allowed_tools"
                 )),
@@ -2602,6 +2630,8 @@ fn push_nested_rules_from(
                 priority: rule.priority,
                 rewrite_target: rule.rewrite_target.clone(),
                 rewrite_value: rule.rewrite_value.clone(),
+                strip_request_headers: rule.strip_request_headers.clone(),
+                strip_response_headers: rule.strip_response_headers.clone(),
                 reason: rule.reason.clone(),
                 derived: false,
                 provenance: provenance(
@@ -2630,6 +2660,8 @@ fn effective_rule_with_corp_provenance(
         priority: rule.priority,
         rewrite_target: rule.rewrite_target.clone(),
         rewrite_value: rule.rewrite_value.clone(),
+        strip_request_headers: rule.strip_request_headers.clone(),
+        strip_response_headers: rule.strip_response_headers.clone(),
         reason: rule.reason.clone(),
         derived: false,
         provenance: Provenance {
@@ -2720,6 +2752,8 @@ fn effective_rule_from(
         priority: rule.priority,
         rewrite_target: rule.rewrite_target.clone(),
         rewrite_value: rule.rewrite_value.clone(),
+        strip_request_headers: rule.strip_request_headers.clone(),
+        strip_response_headers: rule.strip_response_headers.clone(),
         reason: rule.reason.clone(),
         derived: false,
         provenance: provenance(
@@ -2793,6 +2827,8 @@ fn derived_catch_all_rules(record: &ProfileRecord) -> Vec<EffectiveRule> {
             priority: RULE_CATCH_ALL_PRIORITY,
             rewrite_target: None,
             rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
             reason: Some(format!("Catch-all from {capability_path} = {mode:?}")),
             derived: true,
             provenance: provenance(
@@ -2961,7 +2997,7 @@ fn default_base_profile_dirs() -> Vec<PathBuf> {
 }
 
 fn default_user_profile_dirs() -> Vec<PathBuf> {
-    vec![PathBuf::from("~/.capsem/profiles")]
+    vec![crate::paths::capsem_home().join("profiles")]
 }
 
 fn default_telemetry_batch_max_events() -> u16 {
@@ -3264,6 +3300,22 @@ fn replacement_capture_references(path: &str, value: &str) -> Result<Vec<String>
         .captures_iter(value)
         .filter_map(|caps| caps.get(1).map(|capture| capture.as_str().to_string()))
         .collect())
+}
+
+fn validate_header_names(path: &str, headers: &[String]) -> Result<()> {
+    for header in headers {
+        let trimmed = header.trim();
+        if trimmed.is_empty() {
+            validation_error(path, "HTTP header name cannot be empty")?;
+        }
+        http::header::HeaderName::from_bytes(trimmed.as_bytes()).map_err(|_| {
+            SettingsProfilesError::Validation {
+                path: path.to_string(),
+                message: format!("invalid HTTP header name '{header}'"),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 fn validate_string_ids(path: &str, values: &[String]) -> Result<()> {
