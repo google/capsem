@@ -22,6 +22,7 @@ pub struct DebugReportInput {
     pub capsem_home: PathBuf,
     pub run_dir: PathBuf,
     pub assets_dir: PathBuf,
+    pub asset_locations: Option<capsem_core::settings_profiles::ResolvedServiceAssetLocations>,
     pub manifest: Option<capsem_core::asset_manager::ManifestV2>,
     pub running_vm_count: usize,
     pub total_vm_count: usize,
@@ -29,6 +30,7 @@ pub struct DebugReportInput {
     pub defunct_sessions: Vec<DefunctSessionReport>,
     pub install: Option<InstallReportInput>,
     pub process_pids: Vec<ProcessReportInput>,
+    pub settings_profiles: Option<capsem_core::settings_profiles::SettingsProfilesDebugSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -288,6 +290,9 @@ pub fn build_debug_report(input: DebugReportInput) -> Result<DebugReport> {
     lines.push(format!("capsem_home: {}", paths.capsem_home));
     lines.push(format!("run_dir: {}", paths.run_dir));
     lines.push(format!("assets_dir: {}", paths.assets_dir));
+    if let Some(locations) = input.asset_locations.as_ref() {
+        append_asset_locations_report(&mut lines, locations);
+    }
     lines.push(String::new());
     lines.push("[runtime]".to_string());
     append_runtime_report(&mut lines, &runtime);
@@ -307,6 +312,9 @@ pub fn build_debug_report(input: DebugReportInput) -> Result<DebugReport> {
     lines.push(String::new());
     lines.push("[setup]".to_string());
     append_setup_report(&mut lines, &setup);
+    lines.push(String::new());
+    lines.push("[settings_profiles]".to_string());
+    append_settings_profiles_report(&mut lines, input.settings_profiles.as_ref());
     lines.push(String::new());
     lines.push("[assets]".to_string());
     append_asset_report(&mut lines, &assets);
@@ -773,6 +781,37 @@ fn append_runtime_report(lines: &mut Vec<String>, runtime: &RuntimeReport) {
     ));
 }
 
+fn append_asset_locations_report(
+    lines: &mut Vec<String>,
+    locations: &capsem_core::settings_profiles::ResolvedServiceAssetLocations,
+) {
+    lines.push(format!(
+        "resolved_assets_dir: {}",
+        redact_path_for_report(&locations.assets_dir)
+    ));
+    lines.push(format!(
+        "resolved_assets_dir_origin: {}",
+        locations.assets_dir_origin.as_str()
+    ));
+    let image_roots = locations
+        .image_roots
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    lines.push(format!(
+        "resolved_image_roots: {}",
+        join_redacted_paths(&image_roots)
+    ));
+    lines.push(format!(
+        "resolved_image_roots_origin: {}",
+        locations.image_roots_origin.as_str()
+    ));
+    lines.push(format!(
+        "resolved_manifest_source: {}",
+        locations.manifest.source.as_str()
+    ));
+}
+
 fn append_host_report(
     lines: &mut Vec<String>,
     host: &HostReport,
@@ -847,6 +886,194 @@ fn append_setup_report(lines: &mut Vec<String>, setup: &SetupReport) {
     lines.push(format!("needs_onboarding: {}", setup.needs_onboarding));
     lines.push(format!("providers_done: {}", setup.providers_done));
     lines.push(format!("vm_verified: {}", setup.vm_verified));
+}
+
+fn append_settings_profiles_report(
+    lines: &mut Vec<String>,
+    snapshot: Option<&capsem_core::settings_profiles::SettingsProfilesDebugSnapshot>,
+) {
+    let Some(snapshot) = snapshot else {
+        lines.push("present: false".to_string());
+        return;
+    };
+
+    lines.push("present: true".to_string());
+    if let Some(error) = &snapshot.load_error {
+        lines.push(format!("load_error: {error}"));
+        return;
+    }
+
+    if let Some(service) = &snapshot.service {
+        lines.push(format!("default_profile: {}", service.default_profile));
+        lines.push(format!(
+            "profile_base_dirs: {}",
+            join_redacted_paths(&service.base_dirs)
+        ));
+        lines.push(format!(
+            "profile_corp_dirs: {}",
+            join_redacted_paths(&service.corp_dirs)
+        ));
+        lines.push(format!(
+            "profile_user_dirs: {}",
+            join_redacted_paths(&service.user_dirs)
+        ));
+        lines.push(format!(
+            "manifest_source: {}",
+            service.manifest_source.as_str()
+        ));
+        lines.push(format!(
+            "manifest_path: {}",
+            redacted_optional_path(service.manifest_path.as_deref())
+        ));
+        lines.push(format!(
+            "manifest_url: {}",
+            service.manifest_url.as_deref().unwrap_or("<none>")
+        ));
+        lines.push(format!(
+            "manifest_signature_path: {}",
+            redacted_optional_path(service.manifest_signature_path.as_deref())
+        ));
+        lines.push(format!(
+            "manifest_signature_url: {}",
+            service
+                .manifest_signature_url
+                .as_deref()
+                .unwrap_or("<none>")
+        ));
+        lines.push(format!(
+            "assets_dir: {}",
+            redacted_optional_path(service.assets_dir.as_deref())
+        ));
+        lines.push(format!(
+            "image_roots: {}",
+            join_redacted_paths(&service.image_roots)
+        ));
+        lines.push(format!(
+            "asset_download_base_url: {}",
+            service
+                .asset_download_base_url
+                .as_deref()
+                .unwrap_or("<none>")
+        ));
+        lines.push(format!(
+            "allow_user_profiles: {}",
+            service.allow_user_profiles
+        ));
+        lines.push(format!("allow_user_fork: {}", service.allow_user_fork));
+        lines.push(format!("allow_user_delete: {}", service.allow_user_delete));
+        lines.push(format!("telemetry_enabled: {}", service.telemetry_enabled));
+        lines.push(format!(
+            "telemetry_endpoint_configured: {}",
+            service.telemetry_endpoint_configured
+        ));
+        lines.push(format!(
+            "telemetry_endpoint: {}",
+            service.telemetry_endpoint.as_deref().unwrap_or("<none>")
+        ));
+        lines.push(format!(
+            "remote_policy_enabled: {}",
+            service.remote_policy_enabled
+        ));
+        lines.push(format!(
+            "remote_policy_endpoint_configured: {}",
+            service.remote_policy_endpoint_configured
+        ));
+        lines.push(format!(
+            "remote_policy_endpoint: {}",
+            service
+                .remote_policy_endpoint
+                .as_deref()
+                .unwrap_or("<none>")
+        ));
+        lines.push(format!(
+            "credential_ids: {}",
+            join_or_none(&service.credential_ids)
+        ));
+    }
+
+    let selected = snapshot
+        .selected_profile_id
+        .as_deref()
+        .unwrap_or("<unresolved>");
+    lines.push(format!("selected_profile: {selected}"));
+    for profile in &snapshot.profiles {
+        let path = profile
+            .path
+            .as_deref()
+            .map(|path| redact_path_for_report(Path::new(path)))
+            .unwrap_or_else(|| "<built-in>".to_string());
+        lines.push(format!(
+            "profile: {} source={} locked={} type={:?} path={}",
+            profile.id,
+            profile.source.as_str(),
+            profile.locked,
+            profile.profile_type,
+            path
+        ));
+    }
+
+    if let Some(effective) = &snapshot.effective {
+        lines.push(format!("effective_profile: {}", effective.profile_id));
+        lines.push(format!(
+            "effective_vm: memory_mib={} cpus={} network={:?}",
+            effective.vm_memory_mib, effective.vm_cpus, effective.vm_network
+        ));
+        lines.push(format!(
+            "effective_mcp_connectors: {}",
+            join_or_none(&effective.mcp_connector_ids)
+        ));
+        lines.push(format!(
+            "effective_enabled_mcp_connectors: {}",
+            join_or_none(&effective.enabled_mcp_connector_ids)
+        ));
+        lines.push(format!(
+            "effective_skill_groups: {}",
+            join_or_none(&effective.skill_groups)
+        ));
+        lines.push(format!(
+            "effective_enabled_skills: {}",
+            join_or_none(&effective.enabled_skills)
+        ));
+        lines.push(format!(
+            "effective_disabled_skills: {}",
+            join_or_none(&effective.disabled_skills)
+        ));
+        lines.push(format!("effective_rule_count: {}", effective.rule_count));
+        lines.push(format!(
+            "effective_derived_rule_count: {}",
+            effective.derived_rule_count
+        ));
+        lines.push(format!(
+            "effective_raw_rule_count: {}",
+            effective.raw_rule_count
+        ));
+    }
+
+    if let Some(trace) = &snapshot.resolver_trace {
+        lines.push(format!("resolver_trace_event_count: {}", trace.event_count));
+        lines.push(format!(
+            "resolver_trace_corp_event_count: {}",
+            trace.corp_event_count
+        ));
+        lines.push(format!(
+            "resolver_trace_locked_paths: {}",
+            join_or_none(&trace.locked_paths)
+        ));
+        lines.push(format!(
+            "resolver_trace_rejected_paths: {}",
+            join_or_none(&trace.rejected_paths)
+        ));
+        for event in &trace.last_events {
+            lines.push(format!(
+                "resolver_trace_event: step={} op={:?} source={:?} profile={} path={}",
+                event.step,
+                event.operation,
+                event.source_kind,
+                event.source_profile_id.as_deref().unwrap_or("<none>"),
+                event.path,
+            ));
+        }
+    }
 }
 
 fn append_asset_report(lines: &mut Vec<String>, assets: &AssetsReport) {
@@ -1161,6 +1388,27 @@ fn redact_user_segment(value: &str, idx: usize, prefix_len: usize) -> String {
         out.replace_range(idx..abs_end, "~/");
     }
     out
+}
+
+fn join_redacted_paths(paths: &[String]) -> String {
+    let values = paths
+        .iter()
+        .map(|path| redact_path_for_report(Path::new(path)))
+        .collect::<Vec<_>>();
+    join_or_none(&values)
+}
+
+fn redacted_optional_path(path: Option<&str>) -> String {
+    path.map(|path| redact_path_for_report(Path::new(path)))
+        .unwrap_or_else(|| "<none>".to_string())
+}
+
+fn join_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "<none>".to_string()
+    } else {
+        values.join(",")
+    }
 }
 
 fn redact_log_line(value: &str) -> String {

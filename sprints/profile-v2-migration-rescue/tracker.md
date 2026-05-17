@@ -21,6 +21,7 @@
 - [x] Re-run targeted verification gate for `settings_profiles` core
 - [x] Port `policy_confirm` confirmation contract and targeted tests
 - [x] Port `/settings*` service endpoint surface to typed settings-profiles payload
+- [x] Port debug-report settings/profile provenance without regressing main's rich debug schema
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -39,6 +40,10 @@
 - Proof: `cargo test -p capsem-service settings` passed 7 focused tests.
 - Proof: `cargo test -p capsem-service handle_` passed 24 handler tests.
 - Proof: `uv run pytest tests/capsem-service/test_svc_settings.py -q` passed 10 tests after building `capsem-process`, `capsem-service`, `capsem-gateway`, and `capsem-tray`.
+- Debug report provenance port was additive: kept main's status/setup/host/assets/log JSON report intact and added a redacted `[settings_profiles]` text section plus resolved asset-location origins.
+- Proof: `cargo test -p capsem-service debug_report --lib` passed 7 focused renderer tests.
+- Proof: `cargo test -p capsem-service handle_debug_report_returns_pasteable_text` passed the service handler path.
+- Proof: `cargo fmt --check` passed.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -47,15 +52,15 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report tests pending later slices
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage
 - Adversarial:
   policy enforcement/redaction test weakenings are blocked as `needs-review`
 - E2E/VM or integration:
   NAT/egress skips classified as `needs-review`; VM gates still release-held
 - Telemetry/observability:
-  lifecycle/net telemetry setup changes require split review before port
+  debug report now surfaces resolver-trace summary; lifecycle/net telemetry setup changes require split review before port
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:

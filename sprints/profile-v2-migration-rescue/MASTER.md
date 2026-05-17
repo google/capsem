@@ -66,6 +66,7 @@ Rescue inventory:
 - Clean branch created
 - Profile V2 and rescue sprint documents copied onto `profile-v2`
 - Dirty overlay inventory classified in `rescue-manifest.md`
+- Core settings profiles, policy confirmation, `/settings*`, and debug-report provenance slices replayed on `profile-v2`
 - Committed delta classification remains release-held and must be replayed by slice
 
 ## Release Holds

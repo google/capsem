@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added Profile V2 settings/profile provenance to the redacted service debug
+  report, including selected profile, profile roots, effective VM summary,
+  resolver trace summary, and credential-id-only reporting.
+
 ## [1.1.1778860037] - 2026-05-15
 
 ## [1.1.1778855131] - 2026-05-15

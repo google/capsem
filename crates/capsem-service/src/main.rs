@@ -2102,6 +2102,10 @@ async fn handle_debug_report(
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("capsem-service"));
     let process_pids = debug_report::default_process_report_inputs(&state.run_dir, &current_exe);
+    let capsem_home = capsem_core::paths::capsem_home();
+    let asset_locations =
+        build_debug_asset_locations_snapshot(&capsem_home, state.assets_dir.clone());
+    let settings_profiles = build_settings_profiles_debug_snapshot(&capsem_home);
 
     let report = debug_report::build_debug_report(debug_report::DebugReportInput {
         generated_at,
@@ -2111,9 +2115,10 @@ async fn handle_debug_report(
             .to_string(),
         build_ts: option_env!("CAPSEM_BUILD_TS").unwrap_or("dev").to_string(),
         platform: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
-        capsem_home: capsem_core::paths::capsem_home(),
+        capsem_home,
         run_dir: state.run_dir.clone(),
         assets_dir: state.assets_dir.clone(),
+        asset_locations,
         manifest: state.manifest.as_ref().map(|m| m.as_ref().clone()),
         running_vm_count,
         total_vm_count,
@@ -2121,6 +2126,7 @@ async fn handle_debug_report(
         defunct_sessions,
         install,
         process_pids,
+        settings_profiles: Some(settings_profiles),
     })
     .map_err(|e| {
         AppError(
@@ -2130,6 +2136,51 @@ async fn handle_debug_report(
     })?;
 
     Ok(Json(report))
+}
+
+fn build_debug_asset_locations_snapshot(
+    capsem_home: &FsPath,
+    fallback_assets_dir: PathBuf,
+) -> Option<capsem_core::settings_profiles::ResolvedServiceAssetLocations> {
+    let service_settings_path = capsem_home.join("service.toml");
+    let settings =
+        capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path)
+            .ok()?;
+    capsem_core::settings_profiles::resolve_service_asset_locations(
+        &settings,
+        None,
+        None,
+        fallback_assets_dir,
+    )
+    .ok()
+}
+
+fn build_settings_profiles_debug_snapshot(
+    capsem_home: &FsPath,
+) -> capsem_core::settings_profiles::SettingsProfilesDebugSnapshot {
+    let service_settings_path = capsem_home.join("service.toml");
+    let result = (|| {
+        let settings = capsem_core::settings_profiles::load_service_settings_or_default(
+            &service_settings_path,
+        )?;
+        let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)?;
+        let (effective, trace) =
+            capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+                &settings, None,
+            )?;
+        Ok::<_, capsem_core::settings_profiles::SettingsProfilesError>(
+            capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_parts_with_trace(
+                &settings,
+                &catalog,
+                Some(&effective),
+                Some(&trace),
+            ),
+        )
+    })();
+
+    result.unwrap_or_else(|error| {
+        capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_error(error.to_string())
+    })
 }
 
 async fn handle_info(

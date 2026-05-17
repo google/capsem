@@ -77,6 +77,7 @@ fn attributes_the_installed_initrd() {
         capsem_home: dir.path().join(".capsem"),
         run_dir: dir.path().join(".capsem/run"),
         assets_dir: assets_dir.clone(),
+        asset_locations: None,
         manifest: Some(manifest),
         running_vm_count: 1,
         total_vm_count: 2,
@@ -84,6 +85,7 @@ fn attributes_the_installed_initrd() {
         defunct_sessions: Vec::new(),
         install: None,
         process_pids: Vec::new(),
+        settings_profiles: None,
     })
     .unwrap();
 
@@ -158,6 +160,7 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
         capsem_home: capsem_home.clone(),
         run_dir,
         assets_dir,
+        asset_locations: None,
         manifest: Some(manifest),
         running_vm_count: 1,
         total_vm_count: 2,
@@ -185,6 +188,7 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
                 executable_path: None,
             },
         ],
+        settings_profiles: None,
     })
     .unwrap();
 
@@ -283,6 +287,7 @@ fn missing_assets_are_reported_without_panicking() {
         capsem_home: dir.path().join(".capsem"),
         run_dir: dir.path().join(".capsem/run"),
         assets_dir,
+        asset_locations: None,
         manifest: Some(manifest),
         running_vm_count: 0,
         total_vm_count: 0,
@@ -290,6 +295,7 @@ fn missing_assets_are_reported_without_panicking() {
         defunct_sessions: Vec::new(),
         install: None,
         process_pids: Vec::new(),
+        settings_profiles: None,
     })
     .unwrap();
 
@@ -297,4 +303,178 @@ fn missing_assets_are_reported_without_panicking() {
     assert!(report
         .text
         .contains("initrd_actual_hash_matches_manifest: false"));
+}
+
+#[test]
+fn includes_settings_profiles_without_leaking_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+    settings.profiles.base_dirs = vec![dir.path().join("profiles/base")];
+    settings.profiles.user_dirs = vec![dir.path().join("profiles/user")];
+    settings.assets.assets_dir = Some(dir.path().join("corp/assets"));
+    settings.assets.image_roots = vec![dir.path().join("corp/images")];
+    settings.assets.download_base_url = Some("https://assets.example.test/capsem".to_string());
+    settings.assets.manifest.source = capsem_core::settings_profiles::ManifestSource::RemoteUrl;
+    settings.assets.manifest.url = Some("https://assets.example.test/manifest.json".to_string());
+    settings.assets.manifest.signature_url =
+        Some("https://assets.example.test/manifest.json.minisig".to_string());
+    settings.telemetry.enabled = true;
+    settings.telemetry.endpoint = Some("https://otel.example.test/v1/traces".to_string());
+    settings.remote_policy.enabled = true;
+    settings.remote_policy.endpoint = Some("https://policy.example.test/decision".to_string());
+    settings.remote_policy.auth_token = Some("policy-token-should-not-leak".to_string());
+    settings.credentials.items.insert(
+        "openai".to_string(),
+        capsem_core::settings_profiles::TomlCredential {
+            description: Some("OpenAI".to_string()),
+            value: "sk-secret-should-not-leak".to_string(),
+        },
+    );
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles).unwrap();
+    let (effective, trace) =
+        capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(&settings, None)
+            .unwrap();
+    let snapshot =
+        capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_parts_with_trace(
+            &settings,
+            &catalog,
+            Some(&effective),
+            Some(&trace),
+        );
+    let asset_locations = capsem_core::settings_profiles::resolve_service_asset_locations(
+        &settings,
+        None,
+        None,
+        dir.path().join("assets"),
+    )
+    .unwrap();
+
+    let report = build_debug_report(DebugReportInput {
+        generated_at: "2026-05-12T12:00:00Z".into(),
+        version: "1.1.1778542197".into(),
+        build_hash: "1d95b80.1778545863".into(),
+        build_ts: "dev".into(),
+        platform: "macos/aarch64".into(),
+        capsem_home: dir.path().join(".capsem"),
+        run_dir: dir.path().join(".capsem/run"),
+        assets_dir: dir.path().join("assets"),
+        asset_locations: Some(asset_locations),
+        manifest: None,
+        running_vm_count: 0,
+        total_vm_count: 0,
+        status_issues: Vec::new(),
+        defunct_sessions: Vec::new(),
+        install: None,
+        process_pids: Vec::new(),
+        settings_profiles: Some(snapshot),
+    })
+    .unwrap();
+
+    assert!(report.text.contains("[settings_profiles]"));
+    assert!(report.text.contains("default_profile: everyday-work"));
+    assert!(report.text.contains("selected_profile: everyday-work"));
+    assert!(report
+        .text
+        .contains("profile: everyday-work source=built-in locked=true"));
+    assert!(report.text.contains("manifest_source: remote-url"));
+    assert!(report
+        .text
+        .contains("manifest_url: https://assets.example.test/manifest.json"));
+    assert!(report
+        .text
+        .contains("asset_download_base_url: https://assets.example.test/capsem"));
+    assert!(report.text.contains("assets_dir: "));
+    assert!(report
+        .text
+        .contains("resolved_assets_dir_origin: service_settings"));
+    assert!(report.text.contains("image_roots: "));
+    assert!(report
+        .text
+        .contains("resolved_image_roots_origin: service_settings"));
+    assert!(report
+        .text
+        .contains("telemetry_endpoint: https://otel.example.test/v1/traces"));
+    assert!(report
+        .text
+        .contains("remote_policy_endpoint: https://policy.example.test/decision"));
+    assert!(report.text.contains("credential_ids: openai"));
+    assert!(!report.text.contains("sk-secret-should-not-leak"));
+    assert!(!report.text.contains("policy-token-should-not-leak"));
+}
+
+#[test]
+fn includes_settings_profiles_load_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let snapshot = capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_error(
+        "profiles.default_profile: profile id cannot be empty",
+    );
+
+    let report = build_debug_report(DebugReportInput {
+        generated_at: "2026-05-12T12:00:00Z".into(),
+        version: "1.1.1778542197".into(),
+        build_hash: "1d95b80.1778545863".into(),
+        build_ts: "dev".into(),
+        platform: "macos/aarch64".into(),
+        capsem_home: dir.path().join(".capsem"),
+        run_dir: dir.path().join(".capsem/run"),
+        assets_dir: dir.path().join("assets"),
+        asset_locations: None,
+        manifest: None,
+        running_vm_count: 0,
+        total_vm_count: 0,
+        status_issues: Vec::new(),
+        defunct_sessions: Vec::new(),
+        install: None,
+        process_pids: Vec::new(),
+        settings_profiles: Some(snapshot),
+    })
+    .unwrap();
+
+    assert!(report.text.contains("[settings_profiles]"));
+    assert!(report.text.contains("present: true"));
+    assert!(report
+        .text
+        .contains("load_error: profiles.default_profile: profile id cannot be empty"));
+}
+
+#[test]
+fn settings_profiles_section_includes_resolver_trace_summary_when_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = capsem_core::settings_profiles::ServiceSettings::default();
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles).unwrap();
+    let (effective, trace) =
+        capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(&settings, None)
+            .unwrap();
+    let snapshot =
+        capsem_core::settings_profiles::SettingsProfilesDebugSnapshot::from_parts_with_trace(
+            &settings,
+            &catalog,
+            Some(&effective),
+            Some(&trace),
+        );
+
+    let report = build_debug_report(DebugReportInput {
+        generated_at: "2026-05-12T12:00:00Z".into(),
+        version: "1.1.1778542197".into(),
+        build_hash: "1d95b80.1778545863".into(),
+        build_ts: "dev".into(),
+        platform: "macos/aarch64".into(),
+        capsem_home: dir.path().join(".capsem"),
+        run_dir: dir.path().join(".capsem/run"),
+        assets_dir: dir.path().join("assets"),
+        asset_locations: None,
+        manifest: None,
+        running_vm_count: 0,
+        total_vm_count: 0,
+        status_issues: Vec::new(),
+        defunct_sessions: Vec::new(),
+        install: None,
+        process_pids: Vec::new(),
+        settings_profiles: Some(snapshot),
+    })
+    .unwrap();
+
+    assert!(report.text.contains("resolver_trace_event_count:"));
+    assert!(report.text.contains("resolver_trace_corp_event_count: 0"));
+    assert!(report.text.contains("resolver_trace_event:"));
 }
