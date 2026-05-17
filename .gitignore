@@ -59,6 +59,8 @@ worktrees/
 
 # VM assets (built by capsem-builder or linked to the local asset cache)
 /assets
+# Accidental literal-home artifacts from misresolved profile paths
+/~/
 
 # Built packages (.pkg, .deb)
 packages/
