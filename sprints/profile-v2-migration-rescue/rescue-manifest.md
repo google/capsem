@@ -65,7 +65,7 @@ Initial grouping:
 | `crates/capsem-core/src/settings_profiles/**` | keep | Core typed service/profile model, resolver, trace, corp directives, rule ownership. | Ported as first product-code slice; `cargo test -p capsem-core settings_profiles` passed. |
 | `crates/capsem-core/src/net/policy_confirm.rs` and tests | keep | S06-pre confirmation contract. | Ported with `RetryOpts: Clone` support; `cargo test -p capsem-core policy_confirm` passed. |
 | `crates/capsem-core/src/net/mitm_proxy/**` policy-v2 changes | keep | HTTP/model/MCP policy enforcement, rewrite, and telemetry behavior. | Port by focused subsystem slice with tests. |
-| `crates/capsem-service/**`, `crates/capsem/src/**`, `crates/capsem-process/**`, `crates/capsem-gateway/**` | needs-review | Mixes real Profile V2 service/runtime integration with debug-report, status, asset, install, and IPC changes. | `/settings*` service endpoint slice and debug-report settings/profile provenance slice ported and tested; remaining service/process/runtime changes still require replay by sub-sprint. |
+| `crates/capsem-service/**`, `crates/capsem/src/**`, `crates/capsem-process/**`, `crates/capsem-gateway/**` | needs-review | Mixes real Profile V2 service/runtime integration with debug-report, status, asset, install, and IPC changes. | `/settings*`, debug-report provenance, service asset-location startup, default VM sizing, `/setup/assets` provenance, and vm-effective session attachments ported and tested; process/gateway policy runtime changes still require replay by sub-sprint. |
 | `frontend/**` | needs-review | Mixes settings/profile UI model changes with dependency and test churn. | Defer until backend contracts are stable. |
 | `tests/**` | needs-review | Contains needed contract/E2E coverage and some drift/skips. | Port only tests that prove retained behavior. |
 | `.github/**`, release docs, `LATEST_RELEASE.md`, `B3SUMS`, benchmark JSON, generated artifacts | drop unless separately justified | Mostly release-line and generated artifact churn unrelated to Profile V2 rescue. | Do not port in Profile V2 branch. |
@@ -74,7 +74,7 @@ Initial grouping:
 
 1. Context preservation: sprint docs and this manifest only.
 2. Core Profile V2 model: `settings_profiles` module and unit/contract tests.
-3. Service settings runtime: service API and debug provenance ported; VM effective settings assembly remains for focused runtime slice.
+3. Service settings runtime: service API, debug provenance, asset-location startup, default VM sizing, and VM effective settings attachments ported; process-side consumption remains for focused policy/runtime slice.
 4. Policy runtime: confirmation, rules, model/http/mcp rewrite and telemetry.
 5. Test recovery: focused unit/contract tests first, then service/gateway integration, then E2E/VM gates.
 6. Frontend/CLI/docs: only after backend contracts are verified.

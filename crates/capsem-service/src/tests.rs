@@ -60,6 +60,57 @@ fn startup_manifest_loader_rejects_invalid_signature() {
 }
 
 #[test]
+fn startup_local_manifest_source_requires_signature() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("custom-manifest.json");
+    std::fs::write(&manifest_path, UNSIGNED_MANIFEST).unwrap();
+
+    let locations = capsem_core::settings_profiles::ResolvedServiceAssetLocations {
+        assets_dir: dir.path().join("assets"),
+        assets_dir_origin: capsem_core::settings_profiles::ServiceSettingOrigin::ServiceSettings,
+        image_roots: Vec::new(),
+        image_roots_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
+        manifest: capsem_core::settings_profiles::ManifestLocationSettings {
+            source: capsem_core::settings_profiles::ManifestSource::LocalFile,
+            path: Some(manifest_path),
+            url: None,
+            signature_path: None,
+            signature_url: None,
+        },
+        download_base_url: None,
+    };
+
+    let err = load_startup_manifest_for_asset_locations(&locations).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("manifest signature missing"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn startup_remote_manifest_source_uses_cached_assets_manifest_without_network_fetch() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let locations = capsem_core::settings_profiles::ResolvedServiceAssetLocations {
+        assets_dir: dir.path().join("assets"),
+        assets_dir_origin: capsem_core::settings_profiles::ServiceSettingOrigin::ServiceSettings,
+        image_roots: Vec::new(),
+        image_roots_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
+        manifest: capsem_core::settings_profiles::ManifestLocationSettings {
+            source: capsem_core::settings_profiles::ManifestSource::RemoteUrl,
+            path: None,
+            url: Some("https://assets.example.test/manifest.json".to_string()),
+            signature_path: None,
+            signature_url: Some("https://assets.example.test/manifest.json.minisig".to_string()),
+        },
+        download_base_url: Some("https://assets.example.test/capsem".to_string()),
+    };
+
+    let loaded = load_startup_manifest_for_asset_locations(&locations).unwrap();
+    assert!(loaded.is_none());
+}
+
+#[test]
 fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     assert!(
         PROCESS_ENV_ALLOWLIST.contains(&"CAPSEM_HOME"),
@@ -673,6 +724,29 @@ fn test_asset_supervisor(
     ))
 }
 
+fn test_asset_locations(
+    assets_dir: PathBuf,
+) -> capsem_core::settings_profiles::ResolvedServiceAssetLocations {
+    capsem_core::settings_profiles::ResolvedServiceAssetLocations {
+        assets_dir,
+        assets_dir_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
+        image_roots: Vec::new(),
+        image_roots_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
+        manifest: capsem_core::settings_profiles::ManifestLocationSettings::default(),
+        download_base_url: None,
+    }
+}
+
+fn test_service_settings(run_dir: &FsPath) -> capsem_core::settings_profiles::ServiceSettings {
+    let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+    settings.profiles.base_dirs = vec![run_dir.join("profiles/base")];
+    settings.profiles.corp_dirs = vec![run_dir.join("profiles/corp")];
+    settings.profiles.user_dirs = vec![run_dir.join("profiles/user")];
+    settings.profiles.default_profile =
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string();
+    settings
+}
+
 fn make_test_state() -> Arc<ServiceState> {
     let registry_path = PathBuf::from("/tmp/capsem-test-svc/persistent_registry.json");
     let assets_dir = PathBuf::from("/nonexistent/assets");
@@ -683,6 +757,8 @@ fn make_test_state() -> Arc<ServiceState> {
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: assets_dir.clone(),
+        asset_locations: test_asset_locations(assets_dir.clone()),
+        service_settings: test_service_settings(FsPath::new("/tmp/capsem-test-svc")),
         run_dir: PathBuf::from("/tmp/capsem-test-svc"),
         job_counter: AtomicU64::new(1),
         manifest: manifest.clone(),
@@ -720,6 +796,118 @@ async fn handle_list_exposes_service_asset_supervisor_state() {
     assert_eq!(
         assets.missing,
         vec!["vmlinuz", "initrd.img", "rootfs.squashfs"]
+    );
+}
+
+#[tokio::test]
+async fn handle_asset_status_exposes_service_asset_locations() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    state.asset_supervisor.refresh_local_state();
+
+    let Json(status) = handle_asset_status(State(state)).await;
+
+    assert_eq!(
+        status["asset_locations"]["assets_dir_origin"],
+        serde_json::json!("default")
+    );
+    assert_eq!(
+        status["asset_locations"]["manifest_source"],
+        serde_json::json!("installed")
+    );
+}
+
+#[test]
+fn ensure_vm_effective_settings_writes_default_profile_attachment() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions").join("vm-effective");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    let loaded = capsem_core::settings_profiles::load_vm_effective_settings(&session_dir).unwrap();
+
+    assert_eq!(
+        loaded.profile_id,
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID
+    );
+}
+
+#[test]
+fn ensure_vm_effective_settings_regenerates_corrupt_file() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions").join("vm-corrupt-effective");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(
+        capsem_core::settings_profiles::vm_effective_settings_path(&session_dir),
+        "not = [valid",
+    )
+    .unwrap();
+
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    let loaded = capsem_core::settings_profiles::load_vm_effective_settings(&session_dir).unwrap();
+
+    assert_eq!(
+        loaded.profile_id,
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID
+    );
+}
+
+#[test]
+fn ensure_vm_effective_settings_attaches_trace_alongside_settings() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions").join("vm-effective-trace");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+
+    let trace = capsem_core::settings_profiles::load_vm_effective_trace(&session_dir).unwrap();
+    assert!(
+        !trace.events.is_empty(),
+        "trace should contain at least the schema-default + profile events"
+    );
+    let head = trace.events.first().unwrap();
+    assert_eq!(
+        head.source_kind,
+        capsem_core::settings_profiles::ResolverTraceSourceKind::Default
+    );
+}
+
+#[test]
+fn ensure_vm_effective_settings_regenerates_corrupt_trace_file() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions").join("vm-corrupt-trace");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    std::fs::write(
+        capsem_core::settings_profiles::vm_effective_trace_path(&session_dir),
+        "{ broken json",
+    )
+    .unwrap();
+
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    let trace = capsem_core::settings_profiles::load_vm_effective_trace(&session_dir).unwrap();
+    assert!(!trace.events.is_empty());
+}
+
+#[test]
+fn ensure_vm_effective_settings_regenerates_pair_when_trace_missing() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir
+        .path()
+        .join("sessions")
+        .join("vm-effective-trace-missing");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    std::fs::remove_file(capsem_core::settings_profiles::vm_effective_trace_path(
+        &session_dir,
+    ))
+    .unwrap();
+
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    assert!(capsem_core::settings_profiles::vm_effective_trace_path(&session_dir).is_file());
+    let loaded = capsem_core::settings_profiles::load_vm_effective_settings(&session_dir).unwrap();
+    assert_eq!(
+        loaded.profile_id,
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID
     );
 }
 
@@ -1172,6 +1360,8 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: assets_dir.clone(),
+        asset_locations: test_asset_locations(assets_dir.clone()),
+        service_settings: test_service_settings(&run_dir),
         run_dir,
         job_counter: AtomicU64::new(1),
         manifest: manifest.clone(),
@@ -1662,6 +1852,8 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: assets_dir.clone(),
+        asset_locations: test_asset_locations(assets_dir.clone()),
+        service_settings: test_service_settings(dir.path()),
         run_dir: dir.path().to_path_buf(),
         job_counter: AtomicU64::new(1),
         manifest: manifest.clone(),
@@ -2549,6 +2741,8 @@ fn make_test_state_with_tempdir_at(
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
         assets_dir: assets_dir.clone(),
+        asset_locations: test_asset_locations(assets_dir.clone()),
+        service_settings: test_service_settings(&run_dir),
         run_dir,
         job_counter: AtomicU64::new(1),
         manifest: manifest.clone(),

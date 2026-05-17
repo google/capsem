@@ -87,6 +87,8 @@ struct ServiceState {
     persistent_registry: Mutex<PersistentRegistry>,
     process_binary: PathBuf,
     assets_dir: PathBuf,
+    asset_locations: capsem_core::settings_profiles::ResolvedServiceAssetLocations,
+    service_settings: capsem_core::settings_profiles::ServiceSettings,
     run_dir: PathBuf,
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
@@ -124,6 +126,76 @@ fn load_startup_manifest_for_assets(
     assets_dir: &FsPath,
 ) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
     capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
+}
+
+fn load_startup_manifest_for_asset_locations(
+    locations: &capsem_core::settings_profiles::ResolvedServiceAssetLocations,
+) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
+    match locations.manifest.source {
+        capsem_core::settings_profiles::ManifestSource::Installed => {
+            load_startup_manifest_for_assets(&locations.assets_dir)
+        }
+        capsem_core::settings_profiles::ManifestSource::LocalFile => {
+            let manifest_path = locations
+                .manifest
+                .path
+                .as_deref()
+                .context("assets.manifest.path is required for local-file source")?;
+            load_startup_manifest_from_file(
+                manifest_path,
+                locations.manifest.signature_path.as_deref(),
+            )
+            .map(Some)
+        }
+        capsem_core::settings_profiles::ManifestSource::RemoteUrl => {
+            info!(
+                manifest_url = locations.manifest.url.as_deref().unwrap_or(""),
+                assets_dir = %locations.assets_dir.display(),
+                "using cached local asset manifest for remote asset source at startup"
+            );
+            load_startup_manifest_for_assets(&locations.assets_dir)
+        }
+    }
+}
+
+fn load_startup_manifest_from_file(
+    manifest_path: &FsPath,
+    signature_path: Option<&FsPath>,
+) -> Result<capsem_core::asset_manager::ManifestV2> {
+    let manifest_bytes = std::fs::read(manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let signature_path = signature_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_manifest_signature_path(manifest_path));
+    if !signature_path.is_file() {
+        anyhow::bail!(
+            "manifest signature missing at {} (required in release builds)",
+            signature_path.display()
+        );
+    }
+    let sig_text = std::fs::read_to_string(&signature_path)
+        .with_context(|| format!("read {}", signature_path.display()))?;
+    let dev_pub = manifest_path
+        .parent()
+        .map(|p| p.join("manifest-sign.dev.pub"));
+    capsem_core::asset_manager::verify_manifest_with_baked_or_dev_key(
+        &manifest_bytes,
+        &sig_text,
+        dev_pub.as_deref(),
+    )
+    .with_context(|| format!("verify {}", signature_path.display()))?;
+    let content = std::str::from_utf8(&manifest_bytes).context("manifest is not valid UTF-8")?;
+    capsem_core::asset_manager::ManifestV2::from_json(content)
+}
+
+fn default_manifest_signature_path(manifest_path: &FsPath) -> PathBuf {
+    let mut path = manifest_path.to_path_buf();
+    let name = manifest_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("manifest.json");
+    path.set_file_name(format!("{name}.minisig"));
+    path
 }
 
 #[derive(Clone)]
@@ -171,29 +243,13 @@ pub struct ProvisionOptions<'a> {
 /// without losing earlier failures to the cull.
 const MAX_FAILED_SESSIONS: usize = 32;
 
-const DEFAULT_MAX_CONCURRENT_VMS: u32 = 10;
-const DEFAULT_RAM_GB: u32 = 4;
-const DEFAULT_CPU_COUNT: u32 = 4;
+const DEFAULT_MAX_CONCURRENT_VMS: usize = 10;
 
 #[derive(Debug, Clone, Copy)]
-struct LegacyAwareVmSettings {
-    max_concurrent_vms: u32,
-    ram_gb: u32,
-    cpu_count: u32,
-}
-
-impl LegacyAwareVmSettings {
-    fn service_defaults() -> Self {
-        Self {
-            max_concurrent_vms: DEFAULT_MAX_CONCURRENT_VMS,
-            ram_gb: DEFAULT_RAM_GB,
-            cpu_count: DEFAULT_CPU_COUNT,
-        }
-    }
-
-    fn effective_ram_mb(&self) -> u64 {
-        self.ram_gb as u64 * 1024
-    }
+struct VmRuntimeDefaults {
+    ram_mb: u64,
+    cpus: u32,
+    max_concurrent_vms: usize,
 }
 
 /// Result of [`ServiceState::preserve_failed_session_dir_outcome`].
@@ -246,6 +302,80 @@ impl ServiceState {
 
     fn next_job_id(&self) -> u64 {
         self.job_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Ensure a session directory has coherent Profile V2 effective-settings
+    /// and resolver-trace attachments. Existing readable pairs are preserved
+    /// for fork/resume provenance; missing or corrupt pairs are regenerated.
+    fn ensure_vm_effective_settings(&self, session_dir: &FsPath) -> Result<()> {
+        let effective_path =
+            capsem_core::settings_profiles::vm_effective_settings_path(session_dir);
+        let trace_path = capsem_core::settings_profiles::vm_effective_trace_path(session_dir);
+
+        let settings_ok = effective_path.is_file()
+            && match capsem_core::settings_profiles::load_vm_effective_settings(session_dir) {
+                Ok(_) => true,
+                Err(error) => {
+                    warn!(
+                        path = %effective_path.display(),
+                        error = %error,
+                        "existing vm-effective settings unreadable, regenerating"
+                    );
+                    false
+                }
+            };
+        let trace_ok = trace_path.is_file()
+            && match capsem_core::settings_profiles::load_vm_effective_trace(session_dir) {
+                Ok(_) => true,
+                Err(error) => {
+                    warn!(
+                        path = %trace_path.display(),
+                        error = %error,
+                        "existing vm-effective trace unreadable, regenerating"
+                    );
+                    false
+                }
+            };
+
+        if settings_ok && trace_ok {
+            return Ok(());
+        }
+
+        let (effective, trace) =
+            capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+                &self.service_settings,
+                None,
+            )?;
+        capsem_core::settings_profiles::write_vm_effective_settings(session_dir, &effective)
+            .context("persist vm-effective settings")?;
+        capsem_core::settings_profiles::write_vm_effective_trace(session_dir, &trace)
+            .context("persist vm-effective trace")?;
+        Ok(())
+    }
+
+    fn resolve_vm_runtime_defaults(&self) -> VmRuntimeDefaults {
+        let fallback_vm = capsem_core::settings_profiles::VmProfileSettings::default();
+        match capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+            &self.service_settings,
+            None,
+        ) {
+            Ok((effective, _trace)) => VmRuntimeDefaults {
+                ram_mb: effective.vm.value.memory_mib as u64,
+                cpus: effective.vm.value.cpus as u32,
+                max_concurrent_vms: DEFAULT_MAX_CONCURRENT_VMS,
+            },
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "failed to resolve vm-effective defaults, using built-in profile defaults"
+                );
+                VmRuntimeDefaults {
+                    ram_mb: fallback_vm.memory_mib as u64,
+                    cpus: fallback_vm.cpus as u32,
+                    max_concurrent_vms: DEFAULT_MAX_CONCURRENT_VMS,
+                }
+            }
+        }
     }
 
     /// Probe instance PIDs and evict entries whose process is gone.
@@ -449,8 +579,8 @@ impl ServiceState {
             description,
         } = options;
 
-        let vm_settings = LegacyAwareVmSettings::service_defaults();
-        let max_concurrent_vms = vm_settings.max_concurrent_vms as usize;
+        let vm_defaults = self.resolve_vm_runtime_defaults();
+        let max_concurrent_vms = vm_defaults.max_concurrent_vms;
 
         if !(1..=8).contains(&cpus) {
             return Err(anyhow!("cpus must be between 1 and 8"));
@@ -584,6 +714,8 @@ impl ServiceState {
             capsem_core::auto_snapshot::clone_sandbox_state(&entry.session_dir, &session_dir)
                 .context("failed to clone sandbox state")?;
         }
+        self.ensure_vm_effective_settings(&session_dir)
+            .context("attach vm-effective settings to session")?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -891,6 +1023,8 @@ impl ServiceState {
         if !resolved.rootfs.exists() {
             return Err(anyhow!("rootfs not found at {}", resolved.rootfs.display()));
         }
+        self.ensure_vm_effective_settings(&entry.session_dir)
+            .context("attach vm-effective settings to resumed session")?;
 
         let process_log_path = entry.session_dir.join("process.log");
         let process_log_file = std::fs::OpenOptions::new()
@@ -1655,6 +1789,15 @@ async fn handle_fork(
         )
     })?;
 
+    state
+        .ensure_vm_effective_settings(&new_session_dir)
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("fork: failed to attach vm-effective settings: {e:#}"),
+            )
+        })?;
+
     // Register as persistent VM
     {
         let mut registry = state.persistent_registry.lock().unwrap();
@@ -1751,14 +1894,10 @@ async fn handle_provision(
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     });
 
-    // Missing ram_mb/cpus fall back to legacy-free service defaults. This keeps
-    // "new ephemeral VM" callers (tray, MCP one-shots) honoring the user's
-    // configured defaults without having to fetch settings first.
-    let vm_settings = LegacyAwareVmSettings::service_defaults();
-    let ram_mb = payload
-        .ram_mb
-        .unwrap_or_else(|| vm_settings.effective_ram_mb());
-    let cpus = payload.cpus.unwrap_or(vm_settings.cpu_count);
+    // Missing ram_mb/cpus fall back to the resolved default profile VM settings.
+    let vm_defaults = state.resolve_vm_runtime_defaults();
+    let ram_mb = payload.ram_mb.unwrap_or(vm_defaults.ram_mb);
+    let cpus = payload.cpus.unwrap_or(vm_defaults.cpus);
 
     // Retry budget for the launchd-cleanup transient. Failed attempts
     // fast-fail in ~500ms (capsem-process spawn -> validateWithError
@@ -2103,8 +2242,6 @@ async fn handle_debug_report(
         .unwrap_or_else(|| PathBuf::from("capsem-service"));
     let process_pids = debug_report::default_process_report_inputs(&state.run_dir, &current_exe);
     let capsem_home = capsem_core::paths::capsem_home();
-    let asset_locations =
-        build_debug_asset_locations_snapshot(&capsem_home, state.assets_dir.clone());
     let settings_profiles = build_settings_profiles_debug_snapshot(&capsem_home);
 
     let report = debug_report::build_debug_report(debug_report::DebugReportInput {
@@ -2118,7 +2255,7 @@ async fn handle_debug_report(
         capsem_home,
         run_dir: state.run_dir.clone(),
         assets_dir: state.assets_dir.clone(),
-        asset_locations,
+        asset_locations: Some(state.asset_locations.clone()),
         manifest: state.manifest.as_ref().map(|m| m.as_ref().clone()),
         running_vm_count,
         total_vm_count,
@@ -2136,23 +2273,6 @@ async fn handle_debug_report(
     })?;
 
     Ok(Json(report))
-}
-
-fn build_debug_asset_locations_snapshot(
-    capsem_home: &FsPath,
-    fallback_assets_dir: PathBuf,
-) -> Option<capsem_core::settings_profiles::ResolvedServiceAssetLocations> {
-    let service_settings_path = capsem_home.join("service.toml");
-    let settings =
-        capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path)
-            .ok()?;
-    capsem_core::settings_profiles::resolve_service_asset_locations(
-        &settings,
-        None,
-        None,
-        fallback_assets_dir,
-    )
-    .ok()
 }
 
 fn build_settings_profiles_debug_snapshot(
@@ -3603,6 +3723,7 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
                 "ready": health.ready,
                 "state": health.state,
                 "downloading": health.state == AssetHealthState::Updating,
+                "asset_locations": asset_locations_status_json(&state.asset_locations),
                 "asset_version": health.version.unwrap_or(resolved.asset_version),
                 "arch": health.arch,
                 "missing": health.missing,
@@ -3617,12 +3738,30 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
             "ready": false,
             "state": "error",
             "downloading": false,
+            "asset_locations": asset_locations_status_json(&state.asset_locations),
             "error": e.to_string(),
             "retryable": false,
             "retry_count": health.retry_count,
             "assets": [],
         })),
     }
+}
+
+fn asset_locations_status_json(
+    locations: &capsem_core::settings_profiles::ResolvedServiceAssetLocations,
+) -> serde_json::Value {
+    json!({
+        "assets_dir": locations.assets_dir.display().to_string(),
+        "assets_dir_origin": locations.assets_dir_origin.as_str(),
+        "image_roots": locations
+            .image_roots
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>(),
+        "image_roots_origin": locations.image_roots_origin.as_str(),
+        "manifest_source": locations.manifest.source.as_str(),
+        "download_base_url": locations.download_base_url,
+    })
 }
 
 /// POST /setup/corp-config -- apply corporate config from URL or inline TOML.
@@ -5170,15 +5309,10 @@ async fn handle_run(
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     };
 
-    // Resolve ram/cpu from merged VM settings if the caller didn't specify,
-    // matching handle_provision. Keeps `capsem run` settings-driven.
-    let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
-    let ram_mb = payload
-        .ram_mb
-        .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
-    let cpus = payload
-        .cpus
-        .unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+    // Resolve ram/cpu from the default profile VM settings if omitted.
+    let vm_defaults = state.resolve_vm_runtime_defaults();
+    let ram_mb = payload.ram_mb.unwrap_or(vm_defaults.ram_mb);
+    let cpus = payload.cpus.unwrap_or(vm_defaults.cpus);
 
     let ram_bytes = ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
@@ -5485,15 +5619,24 @@ async fn main() -> Result<()> {
     let process_binary = args
         .process_binary
         .unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
-    let assets_base_dir = args
-        .assets_dir
-        .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
+    let service_settings_path = service_settings_path();
+    let service_settings =
+        capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path)
+            .with_context(|| format!("load {}", service_settings_path.display()))?;
+    let asset_locations = capsem_core::settings_profiles::resolve_service_asset_locations(
+        &service_settings,
+        args.assets_dir.clone(),
+        Some(capsem_core::paths::capsem_assets_dir()),
+        run_dir.parent().unwrap().join("assets"),
+    )
+    .context("resolve service asset locations")?;
+    let assets_base_dir = asset_locations.assets_dir.clone();
 
     // Load v2 manifest if available. In dev mode with no manifest, use None.
     // If a manifest exists, verify its minisign signature before trusting
     // asset hashes or cleanup metadata.
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let manifest = load_startup_manifest_for_assets(&assets_base_dir)
+    let manifest = load_startup_manifest_for_asset_locations(&asset_locations)
         .context("load verified asset manifest")?
         .map(|m| {
             info!(asset_version = %m.assets.current, "loaded verified manifest");
@@ -5543,6 +5686,8 @@ async fn main() -> Result<()> {
         persistent_registry: Mutex::new(persistent_registry),
         process_binary: process_binary.clone(),
         assets_dir: assets_base_dir,
+        asset_locations,
+        service_settings,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         manifest,
