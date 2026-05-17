@@ -92,6 +92,8 @@ pub struct MitmProxyConfig {
     /// here so the low-privilege aggregator remains DB-free while MITM
     /// owns policy, timeouts, and `mcp_calls` telemetry.
     pub mcp_endpoint: Option<Arc<McpEndpointState>>,
+    pub confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
+    pub confirm_opts: capsem_proto::poll::RetryOpts,
 }
 
 /// Build the default (empty) hook pipeline. T1 slices 2 + 3 will
@@ -958,7 +960,11 @@ async fn handle_request(
                 provider,
                 &original_headers,
                 &body_bytes,
-            ) {
+                &config.confirmer,
+                &config.confirm_opts,
+            )
+            .await
+            {
                 match outcome {
                     policy_v2_model::ModelRequestPolicyOutcome::Continue(decision) => {
                         request_policy_v2_decision.policy_mode = decision.policy_mode;
@@ -1451,7 +1457,11 @@ async fn handle_request(
                 provider,
                 &request_meta,
                 &response_body,
-            ) {
+                &config.confirmer,
+                &config.confirm_opts,
+            )
+            .await
+            {
                 match outcome {
                     policy_v2_model::ModelResponsePolicyOutcome::Continue(decision) => {
                         effective_policy_v2_decision.policy_mode = decision.policy_mode;

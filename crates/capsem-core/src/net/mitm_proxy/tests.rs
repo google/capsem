@@ -60,6 +60,8 @@ fn make_config_with_policy_v2(
         telemetry,
         pipeline,
         mcp_endpoint: None,
+        confirmer: Arc::new(crate::net::policy_confirm::PlaceholderConfirmer),
+        confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-model-test"),
     })
 }
 
@@ -1592,8 +1594,14 @@ priority = 10
 }
 
 #[tokio::test]
-async fn policy_v2_model_request_ask_fails_closed_without_upstream_dispatch() {
-    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+async fn policy_v2_model_request_ask_placeholder_confirmer_allows_upstream_dispatch() {
+    let (port, upstream_task) = spawn_http_fixture_response(
+        200,
+        "OK",
+        vec![("content-type", "application/json")],
+        r#"{"id":"resp","choices":[]}"#,
+    )
+    .await;
     let config = make_config_with_policy_v2(
         allow_local_http_policy(port),
         policy_v2_from_toml(
@@ -1613,28 +1621,24 @@ reason = "Ask before sending this model request"
 
     let (status, response_body) =
         send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "ask-secret").await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.ask_gpt4o"));
+    assert_eq!(status, 200);
+    assert!(response_body.contains(r#""id":"resp""#));
     drop(sender);
     let _ = proxy_task.await;
-    upstream_task.await.unwrap();
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.contains("ask-secret"),
+        "placeholder-confirmed model ask should dispatch the original request upstream"
+    );
 
     tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
     let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1);
     let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
+    assert_eq!(event.decision, Decision::Allowed);
     assert!(event.bytes_sent > 0);
-    assert_eq!(event.policy_action.as_deref(), Some("ask"));
+    assert_eq!(event.policy_action.as_deref(), Some("allow"));
     assert_eq!(event.policy_rule.as_deref(), Some("policy.model.ask_gpt4o"));
-    assert!(
-        !event
-            .request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("ask-secret"),
-        "ask fail-closed telemetry must not retain the blocked body"
-    );
 }
 
 #[tokio::test]
@@ -1897,7 +1901,7 @@ reason = "Do not deliver unsafe model tool calls"
 }
 
 #[tokio::test]
-async fn policy_v2_model_tool_call_ask_fails_closed_without_guest_delivery() {
+async fn policy_v2_model_tool_call_ask_placeholder_confirmer_allows_guest_delivery() {
     let (port, upstream_task) = spawn_http_fixture_response_owned(
         200,
         "OK",
@@ -1929,11 +1933,10 @@ reason = "Ask before delivering model tool calls"
 
     let (status, response_body) =
         send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "safe").await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.ask_secret_tool_call"));
+    assert_eq!(status, 200);
     assert!(
-        !response_body.contains("tool-call-secret"),
-        "ask fail-closed model tool call must not reach the guest"
+        response_body.contains("tool-call-secret"),
+        "placeholder-confirmed model tool call ask should reach the guest"
     );
     drop(sender);
     let _ = proxy_task.await;
@@ -1943,19 +1946,11 @@ reason = "Ask before delivering model tool calls"
     let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1);
     let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.policy_action.as_deref(), Some("ask"));
+    assert_eq!(event.decision, Decision::Allowed);
+    assert_eq!(event.policy_action.as_deref(), Some("allow"));
     assert_eq!(
         event.policy_rule.as_deref(),
         Some("policy.model.ask_secret_tool_call")
-    );
-    assert!(
-        !event
-            .response_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("tool-call-secret"),
-        "ask fail-closed telemetry must not retain upstream tool-call arguments"
     );
 }
 

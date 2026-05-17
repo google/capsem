@@ -8,6 +8,9 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
+use std::sync::Arc;
+
+use capsem_proto::poll::RetryOpts;
 
 use crate::net::ai_traffic::events;
 use crate::net::ai_traffic::provider::ProviderKind;
@@ -17,6 +20,7 @@ use crate::net::policy_config::{
     PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig, PolicySubject,
     PolicySubjectValue,
 };
+use crate::net::policy_confirm::{ConfirmArgs, Confirmer, Decision};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LastModelPolicyV2Decision {
@@ -118,11 +122,13 @@ pub fn has_model_response_rules(policy: &PolicyConfig) -> bool {
             .is_empty()
 }
 
-pub fn evaluate_model_request_policy(
+pub async fn evaluate_model_request_policy(
     policy: &PolicyConfig,
     provider: ProviderKind,
     headers: &http::HeaderMap,
     body: &[u8],
+    confirmer: &Arc<dyn Confirmer>,
+    confirm_opts: &RetryOpts,
 ) -> Option<ModelRequestPolicyOutcome> {
     let request_meta = request_parser::parse_request(provider, body);
     let request_subject =
@@ -131,8 +137,19 @@ pub fn evaluate_model_request_policy(
         .find_matching_rule(PolicyCallback::ModelRequest, &request_subject)
     {
         Ok(Some(matched)) => {
-            let decision = LastModelPolicyV2Decision::from_match(matched.name, matched.rule);
-            match matched.rule.decision {
+            let mut decision = LastModelPolicyV2Decision::from_match(matched.name, matched.rule);
+            let resolved = resolve_model_ask(
+                matched.rule.decision,
+                PolicyCallback::ModelRequest,
+                matched.name,
+                matched.rule.reason.clone(),
+                || subject_snapshot_model_request(&request_subject),
+                confirmer,
+                confirm_opts,
+            )
+            .await;
+            decision.policy_action = Some(policy_action(resolved).to_string());
+            match resolved {
                 PolicyDecisionKind::Allow => Some(ModelRequestPolicyOutcome::Continue(decision)),
                 PolicyDecisionKind::Ask | PolicyDecisionKind::Block => {
                     return Some(ModelRequestPolicyOutcome::Deny(decision));
@@ -152,8 +169,15 @@ pub fn evaluate_model_request_policy(
         }
     };
 
-    if let Some(outcome) =
-        evaluate_model_tool_response_policy(policy, provider, &request_meta, body)
+    if let Some(outcome) = evaluate_model_tool_response_policy(
+        policy,
+        provider,
+        &request_meta,
+        body,
+        confirmer,
+        confirm_opts,
+    )
+    .await
     {
         return Some(outcome);
     }
@@ -161,11 +185,13 @@ pub fn evaluate_model_request_policy(
     request_outcome
 }
 
-fn evaluate_model_tool_response_policy(
+async fn evaluate_model_tool_response_policy(
     policy: &PolicyConfig,
     provider: ProviderKind,
     request_meta: &RequestMeta,
     body: &[u8],
+    confirmer: &Arc<dyn Confirmer>,
+    confirm_opts: &RetryOpts,
 ) -> Option<ModelRequestPolicyOutcome> {
     if policy
         .rules_for_callback(PolicyCallback::ModelToolResponse)
@@ -190,7 +216,17 @@ fn evaluate_model_tool_response_policy(
             }
         };
 
-        match matched.rule.decision {
+        let resolved = resolve_model_ask(
+            matched.rule.decision,
+            PolicyCallback::ModelToolResponse,
+            matched.name,
+            matched.rule.reason.clone(),
+            || subject_snapshot_model_tool_response(&subject),
+            confirmer,
+            confirm_opts,
+        )
+        .await;
+        match resolved {
             PolicyDecisionKind::Allow => {
                 update_best_policy_match(&mut allow_match, matched.name, matched.rule);
             }
@@ -204,9 +240,9 @@ fn evaluate_model_tool_response_policy(
     }
 
     if let Some((name, rule)) = deny_match {
-        return Some(ModelRequestPolicyOutcome::Deny(
-            LastModelPolicyV2Decision::from_match(name, rule),
-        ));
+        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        decision.policy_action = Some("block".to_string());
+        return Some(ModelRequestPolicyOutcome::Deny(decision));
     }
 
     if !rewrite_matches.is_empty() {
@@ -236,7 +272,9 @@ fn evaluate_model_tool_response_policy(
     }
 
     allow_match.map(|(name, rule)| {
-        ModelRequestPolicyOutcome::Continue(LastModelPolicyV2Decision::from_match(name, rule))
+        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        decision.policy_action = Some("allow".to_string());
+        ModelRequestPolicyOutcome::Continue(decision)
     })
 }
 
@@ -258,11 +296,13 @@ fn update_best_policy_match<'a>(
     }
 }
 
-pub fn evaluate_model_response_policy(
+pub async fn evaluate_model_response_policy(
     policy: &PolicyConfig,
     provider: ProviderKind,
     request_meta: &RequestMeta,
     body: &[u8],
+    confirmer: &Arc<dyn Confirmer>,
+    confirm_opts: &RetryOpts,
 ) -> Option<ModelResponsePolicyOutcome> {
     let meta = parse_model_response(provider, request_meta, body);
     let mut allow_match = None;
@@ -275,17 +315,29 @@ pub fn evaluate_model_response_policy(
     {
         let subject = ModelResponsePolicySubject::new(provider, request_meta, &meta);
         match policy.find_matching_rule(PolicyCallback::ModelResponse, &subject) {
-            Ok(Some(matched)) => match matched.rule.decision {
-                PolicyDecisionKind::Allow => {
-                    update_best_policy_match(&mut allow_match, matched.name, matched.rule);
+            Ok(Some(matched)) => {
+                let resolved = resolve_model_ask(
+                    matched.rule.decision,
+                    PolicyCallback::ModelResponse,
+                    matched.name,
+                    matched.rule.reason.clone(),
+                    || subject_snapshot_model_response(&subject),
+                    confirmer,
+                    confirm_opts,
+                )
+                .await;
+                match resolved {
+                    PolicyDecisionKind::Allow => {
+                        update_best_policy_match(&mut allow_match, matched.name, matched.rule);
+                    }
+                    PolicyDecisionKind::Ask | PolicyDecisionKind::Block => {
+                        update_best_policy_match(&mut deny_match, matched.name, matched.rule);
+                    }
+                    PolicyDecisionKind::Rewrite => {
+                        rewrite_matches.push((matched.name, matched.rule, RewriteSource::Response));
+                    }
                 }
-                PolicyDecisionKind::Ask | PolicyDecisionKind::Block => {
-                    update_best_policy_match(&mut deny_match, matched.name, matched.rule);
-                }
-                PolicyDecisionKind::Rewrite => {
-                    rewrite_matches.push((matched.name, matched.rule, RewriteSource::Response));
-                }
-            },
+            }
             Ok(None) => {}
             Err(error) => {
                 return Some(ModelResponsePolicyOutcome::Deny(
@@ -306,7 +358,17 @@ pub fn evaluate_model_response_policy(
                 ));
             }
         };
-        match matched.rule.decision {
+        let resolved = resolve_model_ask(
+            matched.rule.decision,
+            PolicyCallback::ModelToolCall,
+            matched.name,
+            matched.rule.reason.clone(),
+            || subject_snapshot_model_tool_call(&subject),
+            confirmer,
+            confirm_opts,
+        )
+        .await;
+        match resolved {
             PolicyDecisionKind::Allow => {
                 update_best_policy_match(&mut allow_match, matched.name, matched.rule);
             }
@@ -320,9 +382,9 @@ pub fn evaluate_model_response_policy(
     }
 
     if let Some((name, rule)) = deny_match {
-        return Some(ModelResponsePolicyOutcome::Deny(
-            LastModelPolicyV2Decision::from_match(name, rule),
-        ));
+        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        decision.policy_action = Some("block".to_string());
+        return Some(ModelResponsePolicyOutcome::Deny(decision));
     }
 
     if !rewrite_matches.is_empty() {
@@ -354,7 +416,9 @@ pub fn evaluate_model_response_policy(
     }
 
     allow_match.map(|(name, rule)| {
-        ModelResponsePolicyOutcome::Continue(LastModelPolicyV2Decision::from_match(name, rule))
+        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        decision.policy_action = Some("allow".to_string());
+        ModelResponsePolicyOutcome::Continue(decision)
     })
 }
 
@@ -1031,6 +1095,141 @@ fn policy_action(decision: PolicyDecisionKind) -> &'static str {
         PolicyDecisionKind::Block => "block",
         PolicyDecisionKind::Rewrite => "rewrite",
     }
+}
+
+async fn resolve_model_ask(
+    declared: PolicyDecisionKind,
+    callback: PolicyCallback,
+    rule_name: &str,
+    reason: Option<String>,
+    snapshot: impl FnOnce() -> serde_json::Value,
+    confirmer: &Arc<dyn Confirmer>,
+    confirm_opts: &RetryOpts,
+) -> PolicyDecisionKind {
+    if !matches!(declared, PolicyDecisionKind::Ask) {
+        return declared;
+    }
+    let args = ConfirmArgs {
+        callback,
+        rule_id: model_policy_v2_rule_id(rule_name),
+        args_snapshot: snapshot(),
+        trace_id: None,
+        session_id: None,
+        reason,
+    };
+    match crate::net::policy_confirm::confirm_with_backoff(confirmer, args, confirm_opts).await {
+        Decision::Accept => PolicyDecisionKind::Allow,
+        Decision::Deny => PolicyDecisionKind::Block,
+    }
+}
+
+fn model_policy_v2_rule_id(rule_name: &str) -> String {
+    format!("security.rules.model.{rule_name}")
+}
+
+fn subject_snapshot_model_request(subject: &ModelRequestPolicySubject) -> serde_json::Value {
+    let mut request = serde_json::Map::new();
+    request.insert("provider".into(), subject.provider.into());
+    if let Some(model) = subject.request_meta.model.as_deref() {
+        request.insert("model".into(), model.into());
+    }
+    request.insert(
+        "messages_count".into(),
+        serde_json::Value::Number(subject.request_meta.messages_count.into()),
+    );
+    request.insert(
+        "tools_count".into(),
+        serde_json::Value::Number(subject.request_meta.tools_count.into()),
+    );
+    request.insert(
+        "body_bytes".into(),
+        serde_json::Value::Number(subject.body.len().into()),
+    );
+    request.insert(
+        "system_prompt_present".into(),
+        serde_json::Value::Bool(subject.request_meta.system_prompt_preview.is_some()),
+    );
+    serde_json::json!({ "request": request })
+}
+
+fn subject_snapshot_model_tool_response(
+    subject: &ModelToolResponsePolicySubject<'_>,
+) -> serde_json::Value {
+    let mut tool_response = serde_json::Map::new();
+    tool_response.insert("provider".into(), subject.provider.into());
+    if let Some(model) = subject.request_meta.model.as_deref() {
+        tool_response.insert("model".into(), model.into());
+    }
+    tool_response.insert(
+        "tool_call_id".into(),
+        subject.tool_result.call_id.as_str().into(),
+    );
+    tool_response.insert(
+        "content_bytes".into(),
+        serde_json::Value::Number(subject.tool_result.content_preview.len().into()),
+    );
+    tool_response.insert(
+        "is_error".into(),
+        serde_json::Value::Bool(subject.tool_result.is_error),
+    );
+    serde_json::json!({ "tool_response": tool_response })
+}
+
+fn subject_snapshot_model_response(subject: &ModelResponsePolicySubject<'_>) -> serde_json::Value {
+    let mut request = serde_json::Map::new();
+    request.insert("provider".into(), subject.provider.into());
+    if let Some(model) = subject
+        .response_meta
+        .model
+        .as_deref()
+        .or(subject.request_meta.model.as_deref())
+    {
+        request.insert("model".into(), model.into());
+    }
+
+    let mut response = serde_json::Map::new();
+    response.insert(
+        "text_bytes".into(),
+        serde_json::Value::Number(subject.response_meta.text.len().into()),
+    );
+    response.insert(
+        "thinking_bytes".into(),
+        serde_json::Value::Number(subject.response_meta.thinking.len().into()),
+    );
+    response.insert(
+        "tool_call_count".into(),
+        serde_json::Value::Number(subject.response_meta.tool_calls.len().into()),
+    );
+    if let Some(reason) = subject.response_meta.stop_reason.as_deref() {
+        response.insert("stop_reason".into(), reason.into());
+    }
+    serde_json::json!({
+        "request": request,
+        "response": response,
+    })
+}
+
+fn subject_snapshot_model_tool_call(subject: &ModelToolCallPolicySubject<'_>) -> serde_json::Value {
+    let mut tool_call = serde_json::Map::new();
+    tool_call.insert("provider".into(), subject.provider.into());
+    if let Some(model) = subject
+        .response_meta
+        .model
+        .as_deref()
+        .or(subject.request_meta.model.as_deref())
+    {
+        tool_call.insert("model".into(), model.into());
+    }
+    tool_call.insert("tool_name".into(), subject.tool_call.name.as_str().into());
+    tool_call.insert(
+        "tool_call_id".into(),
+        subject.tool_call.call_id.as_str().into(),
+    );
+    tool_call.insert(
+        "arguments_bytes".into(),
+        serde_json::Value::Number(subject.tool_call.arguments.len().into()),
+    );
+    serde_json::json!({ "tool_call": tool_call })
 }
 
 #[cfg(test)]

@@ -489,6 +489,8 @@ async fn run_async_main_loop(
         telemetry: telemetry_deps,
         pipeline: mitm_pipeline,
         mcp_endpoint: Some(mcp_endpoint),
+        confirmer: Arc::new(capsem_core::net::policy_confirm::PlaceholderConfirmer),
+        confirm_opts: capsem_core::net::policy_confirm::default_confirm_backoff("confirm-model"),
     });
 
     // T3.2 -- DNS handler shares the same `NetworkPolicy` as the MITM

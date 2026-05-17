@@ -26,6 +26,7 @@
 - [x] Port capsem-process runtime consumption of vm-effective settings
 - [x] Port MCP Policy V2 `ask` confirmation resolution in the framed MITM path
 - [x] Port HTTP Policy V2 `ask` confirmation resolution in the MITM hook path
+- [x] Port model Policy V2 `ask` confirmation resolution in MITM model request/response paths
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -65,6 +66,11 @@
 - Proof: `cargo test -p capsem-core policy_v2_http_hook` passed 9 focused hook tests.
 - Proof: `cargo test -p capsem-core policy_v2_http_ask_placeholder_confirmer_allows_upstream_dispatch` passed the full MITM fixture path.
 - Proof: `cargo test -p capsem-core policy_v2_http` passed 14 focused HTTP Policy V2 tests.
+- Model Policy V2 `ask` decisions now resolve through the shared confirmer/backoff contract before model request dispatch, model response surfacing, tool-call delivery, and tool-response forwarding. Placeholder confirmation preserves current allow-by-default runtime behavior; mock-confirmer tests cover deny mapping, canonical rule ids, and redacted metadata-only snapshots that omit request bodies, response text, tool arguments, and tool-response content.
+- Proof: `cargo test -p capsem-core policy_v2_model` passed 28 focused model Policy V2 tests.
+- Proof: `cargo test -p capsem-core policy_confirm` passed 10 confirmation-contract tests after model integration.
+- Proof: `cargo test -p capsem-process` passed 97 tests after the MITM proxy constructor change.
+- Proof: `cargo fmt --check` and `git diff --check` passed.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -73,11 +79,11 @@
 
 ## Coverage Ledger
 - Unit/contract:
-  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
+  `settings_profiles` core passed 118 matching Rust tests; `policy_confirm` passed 10 matching Rust tests; `capsem-proto` poll tests passed 5 tests; debug report provenance passed 7 focused renderer tests; service vm-effective attachment tests passed 5 focused tests; framed MCP Policy V2 confirmation passed 52 focused `mcp_frame` tests; HTTP Policy V2 confirmation passed 9 hook tests and 14 focused HTTP Policy V2 tests; model Policy V2 confirmation passed 28 focused tests; capsem-process runtime conversion passed 7 focused tests and 97 full package tests
 - Functional:
-  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing
+  `/settings*` service handler and Python integration tests passed for typed settings payload; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery
 - Adversarial:
-  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests
+  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction
 - E2E/VM or integration:
   NAT/egress skips classified as `needs-review`; VM gates still release-held
 - Telemetry/observability:
@@ -85,4 +91,4 @@
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  model Policy V2 confirmer/rewrite parity, deeper gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending
+  model request rewrite parity, deeper gateway policy runtime replay, E2E/VM gates, and full-gate rerun pending

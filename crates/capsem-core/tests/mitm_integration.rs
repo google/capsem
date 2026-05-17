@@ -113,6 +113,10 @@ fn make_proxy_config_full(
         telemetry,
         pipeline,
         mcp_endpoint: None,
+        confirmer: Arc::new(capsem_core::net::policy_confirm::PlaceholderConfirmer),
+        confirm_opts: capsem_core::net::policy_confirm::default_confirm_backoff(
+            "confirm-model-test",
+        ),
     });
     (config, db)
 }

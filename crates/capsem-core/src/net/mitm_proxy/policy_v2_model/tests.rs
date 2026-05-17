@@ -1,7 +1,13 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
 
 use super::*;
 use crate::net::policy_config::{PolicyRuleConfig, SettingsFile};
+use crate::net::policy_confirm::{
+    ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision, PlaceholderConfirmer,
+};
 
 fn policy_from_toml(toml_text: &str) -> PolicyConfig {
     toml::from_str::<SettingsFile>(toml_text).unwrap().policy
@@ -16,6 +22,58 @@ fn headers(pairs: &[(&str, &str)]) -> http::HeaderMap {
         );
     }
     headers
+}
+
+async fn evaluate_model_request_policy_test(
+    policy: &PolicyConfig,
+    provider: ProviderKind,
+    headers: &http::HeaderMap,
+    body: &[u8],
+) -> Option<ModelRequestPolicyOutcome> {
+    let confirmer: Arc<dyn Confirmer> = Arc::new(PlaceholderConfirmer);
+    let opts = crate::net::policy_confirm::default_confirm_backoff("confirm-model-test");
+    evaluate_model_request_policy(policy, provider, headers, body, &confirmer, &opts).await
+}
+
+async fn evaluate_model_response_policy_test(
+    policy: &PolicyConfig,
+    provider: ProviderKind,
+    request_meta: &RequestMeta,
+    body: &[u8],
+) -> Option<ModelResponsePolicyOutcome> {
+    let confirmer: Arc<dyn Confirmer> = Arc::new(PlaceholderConfirmer);
+    let opts = crate::net::policy_confirm::default_confirm_backoff("confirm-model-test");
+    evaluate_model_response_policy(policy, provider, request_meta, body, &confirmer, &opts).await
+}
+
+struct MockConfirmer {
+    decision: ConfirmDecision,
+    calls: std::sync::Mutex<Vec<ConfirmArgs>>,
+}
+
+impl MockConfirmer {
+    fn new(decision: ConfirmDecision) -> Arc<Self> {
+        Arc::new(Self {
+            decision,
+            calls: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    fn calls(&self) -> Vec<ConfirmArgs> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl Confirmer for MockConfirmer {
+    async fn confirm(&self, args: ConfirmArgs) -> ConfirmDecision {
+        self.calls.lock().unwrap().push(args);
+        self.decision
+    }
+
+    fn kind(&self) -> ConfirmerKind {
+        ConfirmerKind::Automated
+    }
 }
 
 fn openai_body(model: &str, secret: &str) -> String {
@@ -76,8 +134,8 @@ fn openai_two_tool_call_response_body(
     )
 }
 
-#[test]
-fn model_request_policy_matches_provider_model_counts_body_and_header() {
+#[tokio::test]
+async fn model_request_policy_matches_provider_model_counts_body_and_header() {
     let policy = policy_from_toml(
         r#"
 [policy.model.allow_openai_with_header]
@@ -91,9 +149,14 @@ reason = "allow matched model request fields"
     let headers = headers(&[("authorization", "Bearer test-token")]);
     let body = openai_body("gpt-4o", "unit-secret");
 
-    let outcome =
-        evaluate_model_request_policy(&policy, ProviderKind::OpenAi, &headers, body.as_bytes())
-            .expect("rule should match");
+    let outcome = evaluate_model_request_policy_test(
+        &policy,
+        ProviderKind::OpenAi,
+        &headers,
+        body.as_bytes(),
+    )
+    .await
+    .expect("rule should match");
 
     let ModelRequestPolicyOutcome::Continue(decision) = outcome else {
         panic!("allow rule should continue");
@@ -110,8 +173,8 @@ reason = "allow matched model request fields"
     );
 }
 
-#[test]
-fn model_request_policy_uses_truncated_json_model_fallback() {
+#[tokio::test]
+async fn model_request_policy_uses_truncated_json_model_fallback() {
     let policy = policy_from_toml(
         r#"
 [policy.model.block_truncated]
@@ -123,9 +186,14 @@ priority = 10
     );
     let body = br#"{"model":"gpt-4o-mini","messages":[{"role":"user","content":"fallback-secret"}"#;
 
-    let outcome =
-        evaluate_model_request_policy(&policy, ProviderKind::OpenAi, &http::HeaderMap::new(), body)
-            .expect("fallback model rule should match");
+    let outcome = evaluate_model_request_policy_test(
+        &policy,
+        ProviderKind::OpenAi,
+        &http::HeaderMap::new(),
+        body,
+    )
+    .await
+    .expect("fallback model rule should match");
 
     let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
         panic!("block rule should deny");
@@ -137,8 +205,8 @@ priority = 10
     );
 }
 
-#[test]
-fn model_request_policy_ask_and_rewrite_fail_closed() {
+#[tokio::test]
+async fn model_request_policy_ask_accepts_with_placeholder_and_rewrite_fails_closed() {
     let ask_policy = policy_from_toml(
         r#"
 [policy.model.ask_openai]
@@ -149,17 +217,18 @@ priority = 10
 "#,
     );
     let body = openai_body("gpt-4o", "ask-secret");
-    let ask = evaluate_model_request_policy(
+    let ask = evaluate_model_request_policy_test(
         &ask_policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         body.as_bytes(),
     )
+    .await
     .expect("ask rule should match");
-    let ModelRequestPolicyOutcome::Deny(ask_decision) = ask else {
-        panic!("ask rule should fail closed");
+    let ModelRequestPolicyOutcome::Continue(ask_decision) = ask else {
+        panic!("placeholder-confirmed ask rule should continue");
     };
-    assert_eq!(ask_decision.policy_action.as_deref(), Some("ask"));
+    assert_eq!(ask_decision.policy_action.as_deref(), Some("allow"));
 
     let rewrite_policy = policy_from_toml(
         r#"
@@ -172,12 +241,13 @@ rewrite_target = 'request.body =~ "rewrite-(?P<suffix>[a-z]+)"'
 rewrite_value = "[redacted-${suffix}]"
 "#,
     );
-    let rewrite = evaluate_model_request_policy(
+    let rewrite = evaluate_model_request_policy_test(
         &rewrite_policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         openai_body("gpt-4o", "rewrite-token").as_bytes(),
     )
+    .await
     .expect("rewrite rule should match");
     let ModelRequestPolicyOutcome::Deny(rewrite_decision) = rewrite else {
         panic!("unsupported model rewrite should fail closed");
@@ -190,8 +260,58 @@ rewrite_value = "[redacted-${suffix}]"
         .contains("not implemented"));
 }
 
-#[test]
-fn model_request_policy_returns_none_when_no_rule_matches() {
+#[tokio::test]
+async fn model_request_policy_ask_deny_confirmer_blocks_and_redacts_snapshot() {
+    let policy = policy_from_toml(
+        r#"
+[policy.model.ask_openai]
+on = "model.request"
+if = 'provider == "openai" && model == "gpt-4o" && request.body.contains("ask-secret")'
+decision = "ask"
+priority = 10
+reason = "Ask before sending this model request"
+"#,
+    );
+    let body = openai_body("gpt-4o", "ask-secret");
+    let confirmer = MockConfirmer::new(ConfirmDecision::Deny);
+    let confirmer_dyn = confirmer.clone() as Arc<dyn Confirmer>;
+    let opts = crate::net::policy_confirm::default_confirm_backoff("confirm-model-test");
+
+    let outcome = evaluate_model_request_policy(
+        &policy,
+        ProviderKind::OpenAi,
+        &http::HeaderMap::new(),
+        body.as_bytes(),
+        &confirmer_dyn,
+        &opts,
+    )
+    .await
+    .expect("ask rule should match");
+
+    let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
+        panic!("deny confirmer should block model request ask");
+    };
+    assert_eq!(decision.policy_action.as_deref(), Some("block"));
+    assert_eq!(
+        decision.policy_rule.as_deref(),
+        Some("policy.model.ask_openai")
+    );
+    let calls = confirmer.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].rule_id, "security.rules.model.ask_openai");
+    assert_eq!(
+        calls[0].callback,
+        crate::net::policy_config::PolicyCallback::ModelRequest
+    );
+    let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
+    assert!(
+        !snapshot.contains("ask-secret"),
+        "model confirm snapshots must not echo request body text: {snapshot}"
+    );
+}
+
+#[tokio::test]
+async fn model_request_policy_returns_none_when_no_rule_matches() {
     let policy = policy_from_toml(
         r#"
 [policy.model.block_other_model]
@@ -203,18 +323,19 @@ priority = 10
     );
     let body = openai_body("gpt-4o", "safe");
 
-    let outcome = evaluate_model_request_policy(
+    let outcome = evaluate_model_request_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         body.as_bytes(),
-    );
+    )
+    .await;
 
     assert_eq!(outcome, None);
 }
 
-#[test]
-fn model_request_policy_invalid_runtime_condition_fails_closed() {
+#[tokio::test]
+async fn model_request_policy_invalid_runtime_condition_fails_closed() {
     let mut model = HashMap::new();
     model.insert(
         "bad_regex".to_string(),
@@ -235,12 +356,13 @@ fn model_request_policy_invalid_runtime_condition_fails_closed() {
         ..PolicyConfig::default()
     };
 
-    let outcome = evaluate_model_request_policy(
+    let outcome = evaluate_model_request_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         openai_body("gpt-4o", "invalid-condition").as_bytes(),
     )
+    .await
     .expect("invalid condition should fail closed");
 
     let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
@@ -253,8 +375,8 @@ fn model_request_policy_invalid_runtime_condition_fails_closed() {
     );
 }
 
-#[test]
-fn model_tool_response_policy_blocks_secret_result_before_provider_dispatch() {
+#[tokio::test]
+async fn model_tool_response_policy_blocks_secret_result_before_provider_dispatch() {
     let policy = policy_from_toml(
         r#"
 [policy.model.block_secret_tool_result]
@@ -271,12 +393,13 @@ reason = "Do not send secret tool output to provider"
         "AWS_SECRET_ACCESS_KEY=unit-secret",
     );
 
-    let outcome = evaluate_model_request_policy(
+    let outcome = evaluate_model_request_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         body.as_bytes(),
     )
+    .await
     .expect("tool response rule should match");
 
     let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
@@ -294,8 +417,8 @@ reason = "Do not send secret tool output to provider"
     );
 }
 
-#[test]
-fn model_tool_response_policy_uses_global_priority_across_multiple_results() {
+#[tokio::test]
+async fn model_tool_response_policy_uses_global_priority_across_multiple_results() {
     let policy = policy_from_toml(
         r#"
 [policy.model.allow_first_tool_result]
@@ -321,12 +444,13 @@ reason = "block later secret result"
         "safe output",
     );
 
-    let outcome = evaluate_model_request_policy(
+    let outcome = evaluate_model_request_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         body.as_bytes(),
     )
+    .await
     .expect("later higher-priority tool response rule should match");
 
     let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
@@ -339,8 +463,8 @@ reason = "block later secret result"
     );
 }
 
-#[test]
-fn model_tool_response_policy_does_not_let_one_allowed_result_bypass_another_block() {
+#[tokio::test]
+async fn model_tool_response_policy_does_not_let_one_allowed_result_bypass_another_block() {
     let policy = policy_from_toml(
         r#"
 [policy.model.allow_safe_tool_result]
@@ -366,12 +490,13 @@ reason = "block any secret result"
         "safe output",
     );
 
-    let outcome = evaluate_model_request_policy(
+    let outcome = evaluate_model_request_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         body.as_bytes(),
     )
+    .await
     .expect("secret tool response rule should still deny");
 
     let ModelRequestPolicyOutcome::Deny(decision) = outcome else {
@@ -384,8 +509,8 @@ reason = "block any secret result"
     );
 }
 
-#[test]
-fn model_tool_response_policy_rewrites_secret_result_body() {
+#[tokio::test]
+async fn model_tool_response_policy_rewrites_secret_result_body() {
     let policy = policy_from_toml(
         r#"
 [policy.model.rewrite_secret_tool_result]
@@ -404,12 +529,13 @@ rewrite_value = "AWS_SECRET_ACCESS_KEY=[redacted]"
         "prefix AWS_SECRET_ACCESS_KEY=unit-secret suffix",
     );
 
-    let outcome = evaluate_model_request_policy(
+    let outcome = evaluate_model_request_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &http::HeaderMap::new(),
         body.as_bytes(),
     )
+    .await
     .expect("tool response rewrite rule should match");
 
     let ModelRequestPolicyOutcome::RewriteBody {
@@ -430,8 +556,8 @@ rewrite_value = "AWS_SECRET_ACCESS_KEY=[redacted]"
     assert!(!rewritten.contains("unit-secret"));
 }
 
-#[test]
-fn model_response_policy_blocks_secret_text_before_guest_delivery() {
+#[tokio::test]
+async fn model_response_policy_blocks_secret_text_before_guest_delivery() {
     let policy = policy_from_toml(
         r#"
 [policy.model.block_secret_response]
@@ -448,12 +574,13 @@ reason = "Do not show secret model text"
     );
     let response = openai_response_body("gpt-4o-mini", "hello response-secret");
 
-    let outcome = evaluate_model_response_policy(
+    let outcome = evaluate_model_response_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &request_meta,
         response.as_bytes(),
     )
+    .await
     .expect("model response rule should match");
 
     let ModelResponsePolicyOutcome::Deny(decision) = outcome else {
@@ -467,8 +594,8 @@ reason = "Do not show secret model text"
     );
 }
 
-#[test]
-fn model_response_policy_rewrites_secret_text_body() {
+#[tokio::test]
+async fn model_response_policy_rewrites_secret_text_body() {
     let policy = policy_from_toml(
         r#"
 [policy.model.rewrite_secret_response]
@@ -487,12 +614,13 @@ rewrite_value = "[redacted-response]"
     );
     let response = openai_response_body("gpt-4o-mini", "hello response-secret");
 
-    let outcome = evaluate_model_response_policy(
+    let outcome = evaluate_model_response_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &request_meta,
         response.as_bytes(),
     )
+    .await
     .expect("model response rewrite rule should match");
 
     let ModelResponsePolicyOutcome::RewriteBody {
@@ -508,8 +636,8 @@ rewrite_value = "[redacted-response]"
     assert!(!rewritten.contains("response-secret"));
 }
 
-#[test]
-fn model_tool_call_policy_blocks_provider_emitted_call_before_guest_delivery() {
+#[tokio::test]
+async fn model_tool_call_policy_blocks_provider_emitted_call_before_guest_delivery() {
     let policy = policy_from_toml(
         r#"
 [policy.model.block_secret_tool_call]
@@ -531,12 +659,13 @@ reason = "Do not let model request secret-leaking tool"
         r#"{"secret":"tool-call-secret"}"#,
     );
 
-    let outcome = evaluate_model_response_policy(
+    let outcome = evaluate_model_response_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &request_meta,
         response.as_bytes(),
     )
+    .await
     .expect("model tool-call rule should match");
 
     let ModelResponsePolicyOutcome::Deny(decision) = outcome else {
@@ -549,8 +678,70 @@ reason = "Do not let model request secret-leaking tool"
     );
 }
 
-#[test]
-fn model_tool_call_policy_does_not_let_one_allowed_call_bypass_another_block() {
+#[tokio::test]
+async fn model_tool_call_policy_ask_deny_confirmer_blocks_and_redacts_snapshot() {
+    let policy = policy_from_toml(
+        r#"
+[policy.model.ask_secret_tool_call]
+on = "model.tool_call"
+if = 'provider == "openai" && tool.name == "leak_secret" && tool.arguments.secret.contains("tool-call-secret")'
+decision = "ask"
+priority = 10
+reason = "Ask before delivering model tool calls"
+"#,
+    );
+    let request_meta = request_parser::parse_request(
+        ProviderKind::OpenAi,
+        openai_body("gpt-4o-mini", "safe").as_bytes(),
+    );
+    let response = openai_tool_call_response_body(
+        "gpt-4o-mini",
+        "call_secret",
+        "leak_secret",
+        r#"{"secret":"tool-call-secret"}"#,
+    );
+    let confirmer = MockConfirmer::new(ConfirmDecision::Deny);
+    let confirmer_dyn = confirmer.clone() as Arc<dyn Confirmer>;
+    let opts = crate::net::policy_confirm::default_confirm_backoff("confirm-model-test");
+
+    let outcome = evaluate_model_response_policy(
+        &policy,
+        ProviderKind::OpenAi,
+        &request_meta,
+        response.as_bytes(),
+        &confirmer_dyn,
+        &opts,
+    )
+    .await
+    .expect("model tool-call ask rule should match");
+
+    let ModelResponsePolicyOutcome::Deny(decision) = outcome else {
+        panic!("deny confirmer should block model tool-call ask");
+    };
+    assert_eq!(decision.policy_action.as_deref(), Some("block"));
+    assert_eq!(
+        decision.policy_rule.as_deref(),
+        Some("policy.model.ask_secret_tool_call")
+    );
+    let calls = confirmer.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].rule_id,
+        "security.rules.model.ask_secret_tool_call"
+    );
+    assert_eq!(
+        calls[0].callback,
+        crate::net::policy_config::PolicyCallback::ModelToolCall
+    );
+    let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
+    assert!(
+        !snapshot.contains("tool-call-secret"),
+        "model tool-call confirm snapshots must not echo arguments: {snapshot}"
+    );
+}
+
+#[tokio::test]
+async fn model_tool_call_policy_does_not_let_one_allowed_call_bypass_another_block() {
     let policy = policy_from_toml(
         r#"
 [policy.model.allow_safe_tool_call]
@@ -582,12 +773,13 @@ reason = "secret call"
         r#"{"city":"NYC"}"#,
     );
 
-    let outcome = evaluate_model_response_policy(
+    let outcome = evaluate_model_response_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &request_meta,
         response.as_bytes(),
     )
+    .await
     .expect("unsafe sibling tool-call rule should match");
 
     let ModelResponsePolicyOutcome::Deny(decision) = outcome else {
@@ -600,8 +792,8 @@ reason = "secret call"
     );
 }
 
-#[test]
-fn model_tool_call_policy_rewrites_provider_emitted_arguments() {
+#[tokio::test]
+async fn model_tool_call_policy_rewrites_provider_emitted_arguments() {
     let policy = policy_from_toml(
         r#"
 [policy.model.rewrite_secret_tool_call]
@@ -625,12 +817,13 @@ rewrite_value = "[redacted-tool-call]"
         r#"{"secret":"tool-call-secret"}"#,
     );
 
-    let outcome = evaluate_model_response_policy(
+    let outcome = evaluate_model_response_policy_test(
         &policy,
         ProviderKind::OpenAi,
         &request_meta,
         response.as_bytes(),
     )
+    .await
     .expect("model tool-call rewrite rule should match");
 
     let ModelResponsePolicyOutcome::RewriteBody {

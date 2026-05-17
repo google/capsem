@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added HTTP Policy V2 `ask` confirmation resolution through the same
   confirmer/backoff contract before upstream request dispatch or guest response
   surfacing.
+- Added model Policy V2 `ask` confirmation resolution through the shared
+  confirmer/backoff contract before model request dispatch, model response
+  surfacing, and tool-call/tool-response delivery, with redacted metadata-only
+  confirmation snapshots.
 
 ## [1.1.1778860037] - 2026-05-15
 
