@@ -11,7 +11,8 @@ through CLI command families.
 - Add `capsem profile catalog`, `capsem profile revisions <id>`,
   `capsem profile install/update/remove <id> [--revision ...]`, and status
   output using the canonical `ProfileRevisionStatus` enum values:
-  `active`, `deprecated`, `removed`, and `revoked`.
+  `active`, `deprecated`, and `revoked`. A missing revision is rendered as
+  absent/unknown, not as `removed`.
 - Extend `capsem profile show/resolve` to print package/tool contracts, resolved
   VM asset identity, asset readiness, and revoke/deprecation warnings.
 - Extend VM create/start commands to accept `--profile <id>` and optional

@@ -17,8 +17,9 @@ binding visible.
 - [ ] Add manifest profile catalog status: profile ids, installed revisions,
       current catalog revision, lifecycle status, binary compatibility, and
       payload verification state. Lifecycle status uses the canonical
-      `ProfileRevisionStatus` enum (`active`, `deprecated`, `removed`,
-      `revoked`) and renders the exact enum value plus user-facing explanation.
+      `ProfileRevisionStatus` enum (`active`, `deprecated`, `revoked`) and
+      renders the exact enum value plus user-facing explanation. There is no
+      `removed` status; absent revisions are reported as absent/unknown.
 - [ ] Add selected/resolved package/tool contract and VM asset readiness.
 - [ ] Add persistent VM pin rendering: profile id/revision, package contract
       hash, pinned asset hashes, and drift/deprecated/revoked warnings.

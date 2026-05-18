@@ -18,8 +18,8 @@ Prove the redesign is releaseable.
   rules enforce through VM-effective settings.
 - Prove fresh install still works after v1 removal.
 - Prove asset cleanup preserves files referenced by installed active/deprecated
-  profile revisions and existing VM pins, and removes unreferenced
-  removed/revoked profile assets.
+  profile revisions and existing VM pins, and removes unreferenced revoked
+  profile assets.
 - Prove rollback and revocation behavior:
   stale signed manifest cannot downgrade an installed active profile; revoked
   profile revisions cannot create new VMs; existing revoked VM behavior matches
@@ -28,8 +28,9 @@ Prove the redesign is releaseable.
   `ProfileRevisionStatus` is the only representation for profile revision
   lifecycle state across manifest parsing, Rust models, Pydantic admin models,
   UDS/HTTP payloads, CLI output, UI models, status/debug reports, and docs. All
-  four values (`active`, `deprecated`, `removed`, `revoked`) have golden tests
-  and user-facing semantics.
+  three values (`active`, `deprecated`, `revoked`) have golden tests and
+  user-facing semantics. `removed` is not accepted as a status; absent revisions
+  are modeled as absent/unknown.
 - Prove first-use download safety under concurrency:
   two simultaneous VM creates for the same profile revision do not corrupt
   partial files, duplicate network work unnecessarily, or race cleanup.
@@ -86,8 +87,9 @@ Prove the redesign is releaseable.
   `capsem-admin` profile/image/manifest workflows.
 - Adversarial: complete for malformed manifests/profiles, bad signatures,
   truncated hashes, unauthorized profile signing key, unsupported arch,
-  incompatible binary, revoked/deprecated/removed revisions, partial downloads,
-  cleanup races, path traversal, bad URL schemes, and stale catalogs.
+  incompatible binary, revoked/deprecated revisions, absent/unknown revisions,
+  partial downloads, cleanup races, path traversal, bad URL schemes, and stale
+  catalogs.
 - E2E/VM: complete for profile-backed VM boot, package/tool contract proof,
   enforcement through VM-effective settings, resume after catalog update, and
   cleanup safety with at least one persistent VM pin. At least one release-gate

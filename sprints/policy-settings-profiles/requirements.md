@@ -23,9 +23,10 @@ optional stretch work inside the credential brokerage sprint.
 The signed manifest is the profile catalog. The binary owns the baked-in
 manifest signing trust root. The manifest lists profile ids, immutable
 revisions, lifecycle status, binary compatibility, profile payload locations,
-payload hashes/signatures, and update/remove/revoke state. Profiles then declare
-the package/tool contract and VM asset locations/signatures/hashes for that
-revision. Debug output must explicitly show where the manifest came from, which
+payload hashes/signatures, update/revoke state, and catalog absence. Profiles
+then declare the package/tool contract and VM asset
+locations/signatures/hashes for that revision. Debug output must explicitly
+show where the manifest came from, which
 profile revision is installed/selected, the package/tool contract, boot asset
 identity/readiness, telemetry endpoint, and remote decision endpoint.
 
@@ -106,10 +107,11 @@ not a loose string and must not be replaced by ad hoc boolean flags.
 - `active`: install/update and allow new VMs.
 - `deprecated`: keep usable for existing installs/VMs, warn, avoid as a new
   default.
-- `removed`: stop offering/installing; local cleanup may remove when no VM pins
-  it.
-- `revoked`: block new use and surface high-severity warnings for existing VMs
-  pinned to it.
+- `revoked`: block install/update and block VM launch. Surface high-severity
+  warnings for existing VMs pinned to it.
+
+There is no `removed` status. A revision absent from the manifest is absent; a
+listed revision that must not be installed or launched is `revoked`.
 
 Downloads are lazy: Capsem downloads profile-owned VM assets at first profile
 use or explicit prefetch, not unconditionally for every catalog profile. Cleanup

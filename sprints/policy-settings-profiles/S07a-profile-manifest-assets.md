@@ -26,8 +26,8 @@ Capsem binary version.
   exact asset hashes. Existing VMs do not move when a profile revision changes
   unless the user explicitly rebases/migrates them.
 - Asset cleanup preserves files referenced by existing VM pins and by installed
-  active/deprecated profile revisions. Removed/revoked profile revisions do not
-  keep assets alive unless an existing VM still pins them.
+  active/deprecated profile revisions. Revoked revisions and absent catalog
+  revisions do not keep assets alive unless an existing VM still pins them.
 
 ## Manifest Contract
 
@@ -66,9 +66,10 @@ Required rules:
   values are:
   - `active`: install/update and allow new VMs.
   - `deprecated`: keep installed, warn, allow existing VMs, avoid as default.
-  - `removed`: stop offering/installing; local cleanup may remove when unpinned.
-  - `revoked`: block new use and surface a high-severity warning for existing
-    VMs pinned to it.
+  - `revoked`: block install/update and block VM launch. Surface a
+    high-severity warning for existing VMs pinned to it.
+- There is no `removed` status. A revision absent from the manifest is absent;
+  a listed revision that must not be installed or launched is `revoked`.
 - Unknown status strings are rejected. Do not model status as a loose string or
   boolean flags such as `is_active` / `is_revoked`.
 - Profile payload identity is verified before the profile is installed or used.

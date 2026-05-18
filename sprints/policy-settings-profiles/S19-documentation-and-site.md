@@ -58,7 +58,7 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
     using it to create, validate, build, verify, generate, check, and sign
     profile catalogs.
   - deploying signed profile manifests and profile payloads.
-  - rolling out profile revisions, deprecations, removals, and revocations.
+  - rolling out active, deprecated, and revoked profile revisions.
   - lazy first-use VM asset download and asset cleanup retention.
   - forbidding user profile creation/fork/delete.
   - creating custom profiles.
@@ -150,7 +150,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       declarations.
 - [ ] Write signed profile catalog reference with manifest examples for
       profile ids, revisions, the `ProfileRevisionStatus` enum
-      (`active`, `deprecated`, `removed`, `revoked`), payload hashes/signatures,
+      (`active`, `deprecated`, `revoked`), payload hashes/signatures,
       and compatibility.
 - [ ] Write enterprise profile-format page under the corporate deployment docs:
       explain the profile TOML/JSON Schema contract, package/tool contracts,
@@ -237,8 +237,10 @@ tables:
 |---|---|
 | `active` | Install/update this revision and allow new VMs. This is the normal offered state. |
 | `deprecated` | Keep installed, warn, allow existing VMs, and avoid as the default/current recommendation. |
-| `removed` | Stop offering or installing this revision; cleanup may remove its assets once no installed active/deprecated revision or existing VM pin references them. |
-| `revoked` | Block new VM creation and show a high-severity warning for existing VMs pinned to it. Existing VM override behavior must match the S07a contract and be logged. |
+| `revoked` | Block install/update and block VM launch. Show a high-severity warning for existing VMs pinned to it. Existing VM override behavior, if any, must match the S07a contract and be logged. |
+
+There is no `removed` status. A revision missing from the manifest is absent; a
+listed revision that must not be installed or launched is `revoked`.
 
 ## Coverage Ledger
 

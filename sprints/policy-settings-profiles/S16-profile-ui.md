@@ -9,7 +9,8 @@ readiness, and profile-backed VM creation first-class in the UI.
 
 - Add profile selector.
 - Add catalog/profile list with the canonical `ProfileRevisionStatus` enum:
-  `active`, `deprecated`, `removed`, and `revoked`.
+  `active`, `deprecated`, and `revoked`. Do not display `removed` as a status;
+  absent revisions are simply not offered.
 - Add profile revision view: installed revision, catalog current revision,
   update availability, binary compatibility, payload verification state.
 - Add create, fork, delete flows for user-authored profiles, while clearly

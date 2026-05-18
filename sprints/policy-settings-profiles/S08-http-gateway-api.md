@@ -13,8 +13,8 @@ state and profile-backed VM creation.
 - Test app settings, profile CRUD, profile catalog/revision state, profile
   package/tool contracts, asset readiness, resolve, MCP, and skills over HTTP.
 - Mirror the UDS `ProfileRevisionStatus` enum exactly in HTTP response models:
-  `active`, `deprecated`, `removed`, and `revoked`. Do not invent gateway-only
-  status names or boolean substitutes.
+  `active`, `deprecated`, and `revoked`. Do not invent gateway-only status
+  names, `removed`, or boolean substitutes.
 - Add/extend VM create HTTP surface so callers can pass `profile_id` and
   optional `profile_revision`. Response must echo resolved profile id/revision,
   package contract hash, pinned asset hashes, and asset readiness/download
