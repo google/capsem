@@ -3773,6 +3773,20 @@ async fn handle_reconcile_profile_catalog(
             }
         }
     }
+    let absent_outcomes =
+        capsem_core::settings_profiles::reconcile_absent_installed_profiles_from_manifest(
+            &settings.profiles,
+            &manifest,
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("reconcile absent profile catalog entries: {error}"),
+            )
+        })?;
+    for outcome in absent_outcomes {
+        outcomes.push(profile_reconcile_outcome_json(outcome, &mut summary));
+    }
 
     Ok(Json(json!({
         "mode": "settings_profiles_v2",
@@ -3789,6 +3803,7 @@ struct ProfileCatalogReconcileSummary {
     deprecated_not_installed: usize,
     revoked_removed: usize,
     revoked_not_installed: usize,
+    absent_removed: usize,
     errors: usize,
 }
 
@@ -3860,6 +3875,17 @@ fn profile_reconcile_outcome_json(
                 "profile_id": profile_id,
                 "revision": revision,
                 "outcome": "revoked_not_installed",
+            })
+        }
+        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::AbsentRemoved {
+            profile_id,
+            revision,
+        } => {
+            summary.absent_removed += 1;
+            json!({
+                "profile_id": profile_id,
+                "revision": revision,
+                "outcome": "absent_removed",
             })
         }
     }

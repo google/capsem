@@ -59,6 +59,10 @@ Landed:
 - Native CLI route `capsem profile reconcile-catalog --manifest <path>
   --pubkey <path> [--json]` now calls the same service reconciler and prints a
   compact lifecycle summary or the raw JSON result.
+- Catalog reconciliation now removes launchable installed profile state when a
+  local installed profile id is absent from the signed manifest, reporting the
+  lifecycle outcome as `absent_removed` while preserving the archived payload
+  for the retention/VM-pin cleanup slice.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -76,9 +80,10 @@ Push order from here:
    lifecycle reconciler for active/deprecated/revoked records. UDS/gateway
    `POST /profiles/catalog/reconcile` now runs manifest-wide current-revision
    install/update plus deprecated/revoked local-state handling, and `capsem
-   profile reconcile-catalog` gives operators a native CLI entry point.
+   profile reconcile-catalog` gives operators a native CLI entry point. Absent
+   installed profile ids now lose launchable current state during reconcile.
    Remaining: manifest source fetch/scheduling, richer catalog/revision CLI
-   verbs, UI clients, and absent catalog profile cleanup.
+   verbs, and UI clients.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
@@ -589,8 +594,10 @@ This sprint creates the contract consumed by later sprints:
       reconciler across catalog current revisions and non-active records,
       returning a typed outcome summary. The native CLI can now call this route
       through `capsem profile reconcile-catalog --manifest <path> --pubkey
-      <path> [--json]`. Remaining: manifest source fetch/scheduling, richer
-      catalog/revision CLI verbs, UI clients, and absent-profile cleanup.
+      <path> [--json]`. Absent installed profile ids are now removed from
+      launchable current state and reported as `absent_removed`. Remaining:
+      manifest source fetch/scheduling, richer catalog/revision CLI verbs, and
+      UI clients.
 - [~] Add profile-driven asset resolution and first-use download. Service
       startup now builds an `AssetRequirement` from the default profile's
       `vm.assets.<arch>` declaration, rejects old manifest-backed release
@@ -646,13 +653,18 @@ This sprint creates the contract consumed by later sprints:
   active-current manifest validation. Runtime asset supervisor coverage now runs
   `cargo test -p capsem-service asset_supervisor --lib` (7 tests passed),
   covering profile URL download, missing assets, retryable failures, and
-  background reconciliation; `cargo test -p capsem-service` (252 tests passed)
+  background reconciliation; `cargo test -p capsem-service` (253 tests passed)
   covers startup fail-closed behavior, service asset status without legacy
   manifest fields, profile-derived saved-VM base hashes, installed profile
   revision sidecar/payload-hash pinning, service API profile catalog
-  reconcile install/revoke summaries, and debug/status shape. `cargo test -p
-  capsem` (240 tests passed) covers the first native CLI parser contract for
-  `profile reconcile-catalog --manifest --pubkey [--json]`. Remaining:
+  reconcile install/revoke/absent-removal summaries, and debug/status shape.
+  Focused reconciliation coverage now includes `cargo test -p capsem-core
+  reconcile_ --lib` (6 tests passed) and `cargo test -p capsem-service
+  handle_reconcile_profile_catalog` (3 service tests passed). Full package
+  checks after the slice passed with `cargo test -p capsem-service` (108
+  library + 145 service tests) and `cargo test -p capsem` (241 tests). The
+  CLI coverage includes parser and compact-summary rendering for `profile
+  reconcile-catalog --manifest --pubkey [--json]`. Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar
   validation, profile payload downloads, and per-asset cross-process locks.

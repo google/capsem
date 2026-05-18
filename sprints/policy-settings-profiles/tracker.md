@@ -383,7 +383,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   revision install and revoked installed revision removal through
   `POST /profiles/catalog/reconcile`, including per-revision error summaries.
   The native CLI parser now covers `capsem profile reconcile-catalog
-  --manifest --pubkey [--json]`.
+  --manifest --pubkey [--json]`. Absent installed profile cleanup now has a
+  core contract test for removing launchable current state while preserving the
+  archived payload plus service-route coverage for the `absent_removed`
+  summary/outcome.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -391,9 +394,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   rendering with resolver-trace summary, service startup +
   asset settings, verified profile payload materialization into the corp
   profile root and installed revision payload storage, service API profile
-  catalog reconcile install/revoke summaries, native CLI-to-service wiring for
-  `profile reconcile-catalog`, `/setup/assets` provenance, mitm_proxy
-  integration test for model.request rewrite redaction.
+  catalog reconcile install/revoke/absent-removal summaries, native
+  CLI-to-service wiring for `profile reconcile-catalog`, `/setup/assets`
+  provenance, mitm_proxy integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -447,6 +450,13 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   capsem-service` **108** + **144** passed;
   after the native profile catalog reconcile CLI hook, `cargo test -p capsem`
   **240** passed;
+  after absent installed profile cleanup, `cargo test -p capsem-core
+  reconcile_ --lib` **6** passed and `cargo test -p capsem-service
+  handle_reconcile_profile_catalog` **3** passed;
+  package gates after absent cleanup: `cargo test -p capsem-service`
+  **108** + **145** passed and `cargo test -p capsem` **241** passed;
+  `cargo test -p capsem-core --lib` **1612** passed / 0 failed / 1 ignored
+  after absent installed profile cleanup;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

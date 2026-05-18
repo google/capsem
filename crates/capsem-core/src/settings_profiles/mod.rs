@@ -292,6 +292,10 @@ pub enum ProfileRevisionReconcileOutcome {
         profile_id: String,
         revision: String,
     },
+    AbsentRemoved {
+        profile_id: String,
+        revision: String,
+    },
 }
 
 pub async fn reconcile_profile_revision_from_manifest(
@@ -345,6 +349,27 @@ pub async fn reconcile_profile_revision_from_manifest(
             })
         }
     }
+}
+
+pub fn reconcile_absent_installed_profiles_from_manifest(
+    roots: &ProfileRootSettings,
+    manifest: &crate::profile_manifest::ProfileManifest,
+) -> Result<Vec<ProfileRevisionReconcileOutcome>> {
+    roots.validate("profiles")?;
+    let installed = list_installed_profile_revisions(roots)?;
+    let manifest_profiles = manifest.profiles.keys().collect::<BTreeSet<_>>();
+    let mut outcomes = Vec::new();
+    for record in installed {
+        if manifest_profiles.contains(&record.profile_id) {
+            continue;
+        }
+        remove_launchable_installed_profile_revision(roots, &record.profile_id)?;
+        outcomes.push(ProfileRevisionReconcileOutcome::AbsentRemoved {
+            profile_id: record.profile_id,
+            revision: record.revision,
+        });
+    }
+    Ok(outcomes)
 }
 
 pub fn install_verified_profile_payload(
@@ -467,6 +492,44 @@ pub fn load_installed_profile_revision(
     }
     validate_profile_id("installed_profile_revision.profile_id", &record.profile_id)?;
     Ok(Some(record))
+}
+
+fn list_installed_profile_revisions(
+    roots: &ProfileRootSettings,
+) -> Result<Vec<InstalledProfileRevisionRecord>> {
+    let Some(corp_dir) = roots.corp_dirs.first() else {
+        return Ok(Vec::new());
+    };
+    let catalog_profiles_dir = corp_dir.join(".catalog").join("profiles");
+    if !catalog_profiles_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries = fs::read_dir(&catalog_profiles_dir)
+        .map_err(|source| SettingsProfilesError::ReadFile {
+            path: catalog_profiles_dir.clone(),
+            details: source.to_string(),
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|source| SettingsProfilesError::ReadFile {
+            path: catalog_profiles_dir.clone(),
+            details: source.to_string(),
+        })?;
+    entries.sort_by_key(|entry| entry.path());
+
+    let mut installed = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(profile_id) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Some(record) = load_installed_profile_revision(roots, profile_id)? {
+            installed.push(record);
+        }
+    }
+    Ok(installed)
 }
 
 fn corp_profile_revision_current_path(corp_dir: &Path, profile_id: &str) -> PathBuf {

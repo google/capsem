@@ -1471,6 +1471,71 @@ async fn reconcile_profile_revision_from_manifest_removes_revoked_current_revisi
 }
 
 #[test]
+fn reconcile_absent_installed_profiles_removes_launchable_profile() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&corp_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    fs::write(
+        corp_dir.join("everyday-work.toml"),
+        toml::to_string_pretty(&Profile::everyday_work()).unwrap(),
+    )
+    .unwrap();
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    fs::create_dir_all(record_dir.join("2026.0520.1")).unwrap();
+    fs::write(record_dir.join("2026.0520.1").join("profile.json"), "{}").unwrap();
+    fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(
+        r#"{
+          "format": 1,
+          "profiles": {
+            "coding": {
+              "current_revision": "2026.0520.1",
+              "revisions": {
+                "2026.0520.1": {
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/coding/profile.json",
+                  "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                  "profile_signature_url": "https://assets.capsem.dev/coding/profile.json.minisig"
+                }
+              }
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let outcomes = reconcile_absent_installed_profiles_from_manifest(&roots, &manifest).unwrap();
+
+    assert_eq!(
+        outcomes,
+        vec![ProfileRevisionReconcileOutcome::AbsentRemoved {
+            profile_id: EVERYDAY_WORK_PROFILE_ID.to_string(),
+            revision: "2026.0520.1".to_string()
+        }]
+    );
+    assert!(!corp_dir.join("everyday-work.toml").exists());
+    assert!(!record_dir.join("current.json").exists());
+    assert!(record_dir.join("2026.0520.1").join("profile.json").exists());
+}
+
+#[test]
 fn user_profile_fork_from_builtin_profile() {
     let temp = tempfile::tempdir().unwrap();
     let base_dir = temp.path().join("base");

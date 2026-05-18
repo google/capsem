@@ -765,15 +765,7 @@ fn command_refreshes_update_cache(command: Option<&Commands>) -> bool {
 }
 
 fn print_profile_catalog_reconcile_summary(result: &serde_json::Value) {
-    let summary = &result["summary"];
-    println!(
-        "Profile catalog reconciled: installed={} unchanged={} deprecated_kept={} revoked_removed={} errors={}",
-        summary["installed"].as_u64().unwrap_or(0),
-        summary["unchanged"].as_u64().unwrap_or(0),
-        summary["deprecated_kept"].as_u64().unwrap_or(0),
-        summary["revoked_removed"].as_u64().unwrap_or(0),
-        summary["errors"].as_u64().unwrap_or(0),
-    );
+    println!("{}", profile_catalog_reconcile_summary_line(result));
     if let Some(outcomes) = result["outcomes"].as_array() {
         for outcome in outcomes {
             let profile_id = outcome["profile_id"].as_str().unwrap_or("-");
@@ -786,6 +778,19 @@ fn print_profile_catalog_reconcile_summary(result: &serde_json::Value) {
             }
         }
     }
+}
+
+fn profile_catalog_reconcile_summary_line(result: &serde_json::Value) -> String {
+    let summary = &result["summary"];
+    format!(
+        "Profile catalog reconciled: installed={} unchanged={} deprecated_kept={} revoked_removed={} absent_removed={} errors={}",
+        summary["installed"].as_u64().unwrap_or(0),
+        summary["unchanged"].as_u64().unwrap_or(0),
+        summary["deprecated_kept"].as_u64().unwrap_or(0),
+        summary["revoked_removed"].as_u64().unwrap_or(0),
+        summary["absent_removed"].as_u64().unwrap_or(0),
+        summary["errors"].as_u64().unwrap_or(0),
+    )
 }
 
 #[tokio::main]
@@ -2327,6 +2332,25 @@ mod tests {
             }
             _ => panic!("expected profile reconcile-catalog"),
         }
+    }
+
+    #[test]
+    fn profile_catalog_reconcile_summary_line_includes_absent_removed() {
+        let result = serde_json::json!({
+            "summary": {
+                "installed": 1,
+                "unchanged": 2,
+                "deprecated_kept": 3,
+                "revoked_removed": 4,
+                "absent_removed": 5,
+                "errors": 6
+            }
+        });
+
+        assert_eq!(
+            profile_catalog_reconcile_summary_line(&result),
+            "Profile catalog reconciled: installed=1 unchanged=2 deprecated_kept=3 revoked_removed=4 absent_removed=5 errors=6"
+        );
     }
 
     #[test]

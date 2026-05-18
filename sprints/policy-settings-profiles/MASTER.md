@@ -205,6 +205,10 @@ Landed S07a foundation:
 - Native profile catalog reconcile CLI. `capsem profile reconcile-catalog
   --manifest <path> --pubkey <path> [--json]` now calls the service reconciler
   and renders either a compact install/deprecate/revoke summary or raw JSON.
+- Absent installed profile cleanup. Catalog reconciliation now removes
+  launchable current state for installed profile ids missing from the signed
+  manifest and reports `absent_removed`, while preserving archived payloads for
+  the retention/VM-pin cleanup slice.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.
@@ -220,8 +224,9 @@ Remaining S07a push order:
    lifecycle reconciler have landed; service UDS/gateway reconciliation has
    landed for current active revisions plus deprecated/revoked local-state
    handling, and the first native CLI hook can apply a catalog file through the
-   service. Manifest source fetch/scheduling, richer catalog/revision CLI
-   verbs, UI clients, and absent-profile cleanup remain.
+   service. Absent installed profile ids now lose launchable state during
+   reconcile. Manifest source fetch/scheduling, richer catalog/revision CLI
+   verbs, and UI clients remain.
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
    pinned asset metadata. Landed for runtime/registry/API with installed
    revision/payload-hash capture when catalog materialization has written the
@@ -307,6 +312,15 @@ Latest focused verification after the rescue/push transition:
   tests after the service profile catalog reconcile route.
 - `cargo test -p capsem` passed with 240 tests after the native profile
   catalog reconcile CLI parser/client hook.
+- `cargo test -p capsem-core reconcile_ --lib` passed with 6 focused
+  reconciliation tests and `cargo test -p capsem-service
+  handle_reconcile_profile_catalog` passed with 3 service tests after absent
+  installed profile cleanup.
+- `cargo test -p capsem-service` passed with 108 library tests + 145 service
+  tests and `cargo test -p capsem` passed with 241 tests after the absent
+  cleanup and CLI summary coverage.
+- `cargo test -p capsem-core --lib` passed with 1612 tests + 1 ignored after
+  absent installed profile cleanup.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

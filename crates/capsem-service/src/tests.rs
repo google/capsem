@@ -2980,6 +2980,66 @@ async fn handle_reconcile_profile_catalog_removes_revoked_installed_revision() {
     assert!(!record_dir.join("current.json").exists());
 }
 
+#[tokio::test]
+async fn handle_reconcile_profile_catalog_removes_absent_installed_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let home = dir.path().join("home");
+    let corp_dir = home.join("profiles").join("corp");
+    std::fs::write(corp_dir.join("everyday-work.toml"), "runtime profile").unwrap();
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    std::fs::create_dir_all(record_dir.join("2026.0520.1")).unwrap();
+    std::fs::write(record_dir.join("2026.0520.1").join("profile.json"), "{}").unwrap();
+    std::fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+    let manifest_json = r#"{
+      "format": 1,
+      "profiles": {
+        "coding": {
+          "current_revision": "2026.0520.1",
+          "revisions": {
+            "2026.0520.1": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///definitely/not/read/profile.json",
+              "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "profile_signature_url": "file:///definitely/not/read/profile.json.minisig"
+            }
+          }
+        }
+      }
+    }"#;
+
+    let Json(val) = handle_reconcile_profile_catalog(Json(ProfileCatalogReconcileRequest {
+        manifest_json: manifest_json.to_string(),
+        profile_payload_pubkey: "unused".to_string(),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(val["summary"]["absent_removed"], serde_json::json!(1));
+    assert_eq!(val["summary"]["errors"], serde_json::json!(1));
+    assert!(val["outcomes"].as_array().unwrap().iter().any(|outcome| {
+        outcome["outcome"] == serde_json::json!("absent_removed")
+            && outcome["profile_id"] == serde_json::json!("everyday-work")
+            && outcome["revision"] == serde_json::json!("2026.0520.1")
+    }));
+    assert!(!corp_dir.join("everyday-work.toml").exists());
+    assert!(!record_dir.join("current.json").exists());
+    assert!(record_dir.join("2026.0520.1").join("profile.json").exists());
+}
+
 fn custom_profile(id: &str, name: &str) -> capsem_core::settings_profiles::Profile {
     let mut profile = capsem_core::settings_profiles::Profile::everyday_work();
     profile.id = id.to_string();
