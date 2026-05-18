@@ -775,7 +775,7 @@ impl Profile {
             mcp: McpConnectorsProfileSettings::default(),
             skills: SkillsProfileSettings::default(),
             vm: VmProfileSettings::default(),
-            security: SecurityProfileSettings::default(),
+            security: everyday_work_security_settings(),
         }
     }
 
@@ -1092,6 +1092,63 @@ impl SecurityRules {
             && self.model.is_empty()
             && self.hook.is_empty()
     }
+}
+
+fn everyday_work_security_settings() -> SecurityProfileSettings {
+    let mut security = SecurityProfileSettings::default();
+    for domain in [
+        "elie.net",
+        "*.elie.net",
+        "en.wikipedia.org",
+        "*.wikipedia.org",
+    ] {
+        let name = safe_rule_name(domain);
+        security.rules.dns.insert(
+            format!("allow_{name}"),
+            ProfileRule {
+                callback: "dns.request".to_string(),
+                condition: format!("qname == '{domain}'"),
+                decision: RuleDecision::Allow,
+                priority: 1,
+                rewrite_target: None,
+                rewrite_value: None,
+                strip_request_headers: Vec::new(),
+                strip_response_headers: Vec::new(),
+                reason: Some("Everyday Work default read allowlist".to_string()),
+            },
+        );
+        security.rules.http.insert(
+            format!("allow_{name}"),
+            ProfileRule {
+                callback: "http.request".to_string(),
+                condition: format!("request.host == '{domain}'"),
+                decision: RuleDecision::Allow,
+                priority: 1,
+                rewrite_target: None,
+                rewrite_value: None,
+                strip_request_headers: Vec::new(),
+                strip_response_headers: Vec::new(),
+                reason: Some("Everyday Work default read allowlist".to_string()),
+            },
+        );
+    }
+    security
+}
+
+fn safe_rule_name(input: &str) -> String {
+    input
+        .replace('*', "wildcard")
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

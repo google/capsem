@@ -104,6 +104,75 @@ def _integration_block_domain() -> str:
     return deny_domain
 
 
+def _toml_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def _install_integration_v2_profile() -> dict[Path, Optional[bytes]]:
+    """Install a temporary Profile V2 service selection for this smoke run."""
+    block_domain = _integration_block_domain()
+    profile_dir = CAPSEM_HOME / "profiles"
+    profile_path = profile_dir / "integration-smoke.toml"
+    service_path = CAPSEM_HOME / "service.toml"
+    snapshot = {
+        profile_path: profile_path.read_bytes() if profile_path.exists() else None,
+        service_path: service_path.read_bytes() if service_path.exists() else None,
+    }
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(
+        f"""
+version = 1
+id = "integration-smoke"
+name = "Integration Smoke"
+description = "Profile V2 policy fixture for smoke and integration diagnostics."
+best_for = "Deterministic VM smoke tests."
+profile_type = "coding"
+extends_profile_id = "everyday-work"
+
+[security.rules.dns.block_integration_domain]
+on = "dns.request"
+if = "qname == '{block_domain}'"
+decision = "block"
+priority = 1
+reason = "Integration smoke blocked domain."
+
+[security.rules.http.block_integration_domain]
+on = "http.request"
+if = "request.host == '{block_domain}'"
+decision = "block"
+priority = 1
+reason = "Integration smoke blocked domain."
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    service_path.parent.mkdir(parents=True, exist_ok=True)
+    service_path.write_text(
+        f"""
+version = 1
+
+[profiles]
+user_dirs = [{_toml_string(str(profile_dir))}]
+default_profile = "integration-smoke"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return snapshot
+
+
+def _restore_integration_v2_profile(snapshot: dict[Path, Optional[bytes]]) -> None:
+    for path, previous in snapshot.items():
+        if previous is None:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(previous)
+
+
 def _vm_command(include_gemini_probe: bool) -> str:
     """Build the compound command executed inside the VM.
 
@@ -203,23 +272,14 @@ def _kill_dev_service() -> None:
         pass
 
 
-def _start_service_with_test_config(
-    assets_dir: str, user_config: str, corp_config: str
-) -> subprocess.Popen:
-    """Spawn `capsem-service --foreground` with test config env vars.
-
-    The service forwards CAPSEM_{USER,CORP}_CONFIG to each `capsem-process`
-    it spawns, so the per-VM network policy picks up `example.com`
-    and the other overrides from `config/integration-test-user.toml`.
-    """
+def _start_service_with_test_config(assets_dir: str) -> subprocess.Popen:
+    """Spawn `capsem-service --foreground` against the temporary V2 profile."""
     project_root = Path(__file__).resolve().parent.parent
     service_bin = project_root / "target/debug/capsem-service"
     process_bin = project_root / "target/debug/capsem-process"
 
     env = {
         **os.environ,
-        "CAPSEM_USER_CONFIG": str(project_root / user_config),
-        "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
         "RUST_LOG": "capsem=info",
     }
 
@@ -271,24 +331,20 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_USER_CONFIG": "config/integration-test-user.toml",
-        "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
     google_key = _gemini_api_key()
 
-    # Restart the dev service with CAPSEM_{USER,CORP}_CONFIG in its env so
-    # the policy rules from `config/integration-test-user.toml` actually
-    # reach the VM. Without this, the service inherits whatever env
-    # `_ensure-service` was launched with (usually nothing), and the
-    # per-VM policy falls back to `~/.capsem/user.toml` -- which is the
-    # user's real config, not the isolated test config.
+    # Restart the dev service with a Profile V2 fixture selected in
+    # service.toml. capsem-process intentionally no longer reads legacy
+    # CAPSEM_USER_CONFIG/CAPSEM_CORP_CONFIG policy files.
     _kill_dev_service()
-    service_proc = _start_service_with_test_config(
-        assets_dir,
-        "config/integration-test-user.toml",
-        "config/integration-test-corp.toml",
-    )
+    profile_snapshot = _install_integration_v2_profile()
+    try:
+        service_proc = _start_service_with_test_config(assets_dir)
+    except Exception:
+        _restore_integration_v2_profile(profile_snapshot)
+        raise
 
     # Snapshot session dirs before so we can find the new one after.
     existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
@@ -318,6 +374,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
             SERVICE_PIDFILE.unlink()
         except FileNotFoundError:
             pass
+        _restore_integration_v2_profile(profile_snapshot)
     exit_code = proc.returncode
     if proc.stdout.strip():
         print(proc.stdout.strip())
@@ -971,16 +1028,15 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_USER_CONFIG": "config/integration-test-user.toml",
-        "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
     _kill_dev_service()
-    service_proc = _start_service_with_test_config(
-        assets_dir,
-        "config/integration-test-user.toml",
-        "config/integration-test-corp.toml",
-    )
+    profile_snapshot = _install_integration_v2_profile()
+    try:
+        service_proc = _start_service_with_test_config(assets_dir)
+    except Exception:
+        _restore_integration_v2_profile(profile_snapshot)
+        raise
     try:
         print("  Invocation 1: writing sentinel file...")
         proc1 = subprocess.run(
@@ -1020,6 +1076,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
             SERVICE_PIDFILE.unlink()
         except FileNotFoundError:
             pass
+        _restore_integration_v2_profile(profile_snapshot)
 
 
 def main():

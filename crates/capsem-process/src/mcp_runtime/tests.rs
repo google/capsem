@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
+use std::sync::{Mutex, OnceLock};
 
 use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
@@ -9,8 +11,42 @@ use capsem_core::mcp::policy::McpUserConfig;
 
 use super::{
     build_builtin_env, build_servers_with_builtin, insert_builtin_domain_policy_env,
-    load_runtime_policy_state_with_legacy,
+    load_runtime_policy_state, load_runtime_policy_state_from_effective,
 };
+
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct EnvGuard {
+    key: &'static str,
+    old: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let old = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, old }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let old = std::env::var_os(key);
+        std::env::remove_var(key);
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(old) = &self.old {
+            std::env::set_var(self.key, old);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
 
 #[test]
 fn builtin_domain_policy_env_carries_allow_and_block_lists() {
@@ -249,7 +285,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
 
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
 
-    let runtime = load_runtime_policy_state_with_legacy(&session_dir, None);
+    let runtime = load_runtime_policy_state_from_effective(&session_dir);
 
     assert!(!runtime.network_policy.default_allow_read);
     assert!(!runtime.network_policy.default_allow_write);
@@ -269,13 +305,34 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
             .copied(),
         Some(ToolDecision::Block)
     );
-    assert_eq!(
-        runtime.domain_policy.allowed_patterns(),
-        vec!["example.com".to_string()]
-    );
+    assert!(runtime
+        .domain_policy
+        .allowed_patterns()
+        .contains(&"example.com".to_string()));
     assert_eq!(
         runtime.domain_policy.blocked_patterns(),
         vec!["bad.example".to_string()]
+    );
+    assert!(
+        runtime
+            .network_policy
+            .evaluate("example.com", "GET")
+            .allowed,
+        "simple V2 domain allow rules must feed the coarse network policy"
+    );
+    assert!(
+        runtime
+            .network_policy
+            .is_fully_blocked("bad.example")
+            .is_some(),
+        "simple V2 domain block rules must feed DNS-level full-block policy"
+    );
+    assert!(
+        runtime
+            .network_policy
+            .is_fully_blocked("example.com")
+            .is_none(),
+        "path-scoped V2 HTTP blocks must not become full-domain DNS blocks"
     );
 
     let mcp_rules = runtime
@@ -306,7 +363,56 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
 }
 
 #[test]
-fn load_runtime_policy_state_preserves_legacy_guest_boot_contract() {
+fn load_runtime_policy_state_ignores_global_legacy_user_toml() {
+    let _lock = env_lock().lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    std::fs::create_dir_all(&capsem_home).unwrap();
+    let _home = EnvGuard::set("CAPSEM_HOME", &capsem_home);
+    let _user = EnvGuard::remove("CAPSEM_USER_CONFIG");
+    let _corp = EnvGuard::remove("CAPSEM_CORP_CONFIG");
+
+    std::fs::write(
+        capsem_home.join("user.toml"),
+        r#"
+[settings]
+"security.web.allow_read" = { value = true, modified = "2026-05-17T00:00:00Z" }
+"security.web.allow_write" = { value = true, modified = "2026-05-17T00:00:00Z" }
+"security.web.custom_allow" = { value = "legacy-only.test", modified = "2026-05-17T00:00:00Z" }
+"#,
+    )
+    .unwrap();
+
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let mut effective =
+        capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None).unwrap();
+    effective.security.value.capabilities.network_egress = CapabilityMode::Block;
+    effective.rules.clear();
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let runtime = load_runtime_policy_state(&session_dir);
+
+    assert!(
+        !runtime.network_policy.default_allow_read,
+        "V2 network_egress=block must win over legacy allow_read"
+    );
+    assert!(
+        !runtime.network_policy.default_allow_write,
+        "V2 network_egress=block must win over legacy allow_write"
+    );
+    assert!(
+        !runtime
+            .domain_policy
+            .allowed_patterns()
+            .contains(&"legacy-only.test".to_string()),
+        "global user.toml custom_allow must not leak into Profile V2 runtime"
+    );
+}
+
+#[test]
+fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settings() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -316,55 +422,102 @@ fn load_runtime_policy_state_preserves_legacy_guest_boot_contract() {
         .expect("default effective profile should resolve");
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
 
-    let user = capsem_core::net::policy_config::SettingsFile::default();
-    let legacy = capsem_core::net::policy_config::MergedPolicies::from_files(
-        &user,
-        &capsem_core::net::policy_config::SettingsFile::default(),
-    );
-
-    let runtime = load_runtime_policy_state_with_legacy(&session_dir, Some(&legacy));
+    let runtime = load_runtime_policy_state_from_effective(&session_dir);
     let env = runtime
         .guest_config
         .env
         .as_ref()
-        .expect("legacy guest env should be carried into Profile V2 runtime");
+        .expect("Profile V2 guest env should be built without legacy settings");
     assert_eq!(
         env.get("SSL_CERT_FILE").map(String::as_str),
         Some("/etc/ssl/certs/ca-certificates.crt")
     );
     assert_eq!(
         env.get("CAPSEM_WEB_ALLOW_READ").map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        env.get("CAPSEM_WEB_ALLOW_WRITE").map(String::as_str),
         Some("0")
+    );
+    assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
+    assert_eq!(env.get("LANG").map(String::as_str), Some("C"));
+    assert!(
+        env.get("PATH")
+            .map(|path| path.split(':').any(|entry| entry == "/opt/ai-clis/bin"))
+            .unwrap_or(false),
+        "PATH must include /opt/ai-clis/bin for npm-installed AI CLIs"
     );
 
     let files = runtime
         .guest_config
         .files
         .as_ref()
-        .expect("legacy boot files should be carried into Profile V2 runtime");
+        .expect("Profile V2 guest boot files should be built without legacy settings");
     let paths = files
         .iter()
         .map(|file| file.path.as_str())
         .collect::<std::collections::BTreeSet<_>>();
     assert!(paths.contains("/root/.gemini/settings.json"));
+    assert!(paths.contains("/root/.gemini/installation_id"));
     assert!(paths.contains("/root/.codex/config.toml"));
     assert!(paths.contains("/root/.claude.json"));
-    assert!(
-        runtime
-            .domain_policy
-            .allowed_patterns()
-            .contains(&"elie.net".to_string()),
-        "legacy custom_allow domains must stay visible to built-in MCP HTTP tools"
+
+    let gemini_settings = files
+        .iter()
+        .find(|file| file.path == "/root/.gemini/settings.json")
+        .expect("gemini settings should be present");
+    let gemini_json: serde_json::Value = serde_json::from_str(&gemini_settings.content).unwrap();
+    assert_eq!(
+        gemini_json["mcpServers"]["local"]["command"].as_str(),
+        Some("/run/capsem-mcp-server")
     );
+
+    let claude_state = files
+        .iter()
+        .find(|file| file.path == "/root/.claude.json")
+        .expect("claude state should be present");
+    let claude_json: serde_json::Value = serde_json::from_str(&claude_state.content).unwrap();
+    assert_eq!(
+        claude_json["mcpServers"]["local"]["command"].as_str(),
+        Some("/run/capsem-mcp-server")
+    );
+}
+
+#[test]
+fn process_runtime_source_has_no_v1_policy_bridge() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/mcp_runtime.rs"),
+    )
+    .unwrap();
+    for forbidden in [
+        "MergedPolicies::from_disk",
+        "user_config_path",
+        "legacy_policies_from_disk_if_user_file_exists",
+        "load_runtime_policy_state_with_legacy",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "capsem-process runtime must not contain V1 policy bridge token {forbidden:?}"
+        );
+    }
 }
 
 #[test]
 fn load_runtime_policy_state_falls_back_when_vm_effective_attachment_missing() {
     let dir = tempfile::tempdir().unwrap();
-    let runtime = load_runtime_policy_state_with_legacy(dir.path(), None);
+    let runtime = load_runtime_policy_state_from_effective(dir.path());
 
     assert!(runtime.network_policy.default_allow_read);
-    assert!(runtime.network_policy.default_allow_write);
+    assert!(!runtime.network_policy.default_allow_write);
+    assert!(runtime
+        .domain_policy
+        .allowed_patterns()
+        .contains(&"elie.net".to_string()));
+    assert!(runtime
+        .domain_policy
+        .allowed_patterns()
+        .contains(&"*.elie.net".to_string()));
     assert_eq!(runtime.mcp_policy.default_tool_decision, ToolDecision::Warn);
 }
 
@@ -416,15 +569,14 @@ fn load_runtime_policy_state_drops_legacy_dns_query_callback() {
 
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
 
-    let runtime = load_runtime_policy_state_with_legacy(&session_dir, None);
+    let runtime = load_runtime_policy_state_from_effective(&session_dir);
 
     let dns_rules = runtime
         .policy_v2
         .rules_for_callback(PolicyCallback::DnsQuery);
-    assert_eq!(
-        dns_rules.len(),
-        1,
+    assert!(
+        !dns_rules.iter().any(|(name, _)| *name == "legacy"),
         "legacy dns.query must be dropped while dns.request survives"
     );
-    assert_eq!(dns_rules[0].0, "modern");
+    assert!(dns_rules.iter().any(|(name, _)| *name == "modern"));
 }

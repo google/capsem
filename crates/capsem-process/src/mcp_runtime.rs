@@ -7,9 +7,9 @@ use capsem_core::mcp::policy::McpUserConfig;
 use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy::NetworkPolicy;
+use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
 use capsem_core::net::policy_config::{
-    GuestConfig, PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
+    GuestConfig, GuestFile, PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
 };
 use capsem_core::settings_profiles::{
     self, CapabilityMode, EffectiveRule, RuleDecision, VmNetworkMode,
@@ -50,37 +50,19 @@ pub(crate) struct RuntimePolicyState {
 }
 
 pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyState {
-    let legacy = legacy_policies_from_disk_if_user_file_exists();
-    load_runtime_policy_state_with_legacy(session_dir, legacy.as_ref())
+    load_runtime_policy_state_from_effective(session_dir)
 }
 
-fn legacy_policies_from_disk_if_user_file_exists(
-) -> Option<capsem_core::net::policy_config::MergedPolicies> {
-    let user_path = capsem_core::net::policy_config::user_config_path()?;
-    if !user_path.is_file() {
-        return None;
-    }
-    Some(capsem_core::net::policy_config::MergedPolicies::from_disk())
-}
-
-fn load_runtime_policy_state_with_legacy(
-    session_dir: &Path,
-    legacy: Option<&capsem_core::net::policy_config::MergedPolicies>,
-) -> RuntimePolicyState {
+fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicyState {
     let effective = load_effective_vm_settings_with_fallback(session_dir);
 
-    let mut default_allow = match effective.as_ref().map(|e| e.vm.value.network) {
-        Some(VmNetworkMode::Disabled) => false,
-        Some(VmNetworkMode::Proxied | VmNetworkMode::Direct) | None => true,
-    };
-    if let Some(mode) = effective
-        .as_ref()
-        .map(|e| e.security.value.capabilities.network_egress)
-    {
-        default_allow = !matches!(mode, CapabilityMode::Block);
-    }
-
-    let network_policy = NetworkPolicy::new(Vec::new(), default_allow, default_allow);
+    let (default_allow_read, default_allow_write) =
+        network_defaults_from_effective(effective.as_ref());
+    let network_policy = NetworkPolicy::new(
+        network_policy_rules_from_effective(effective.as_ref()),
+        default_allow_read,
+        default_allow_write,
+    );
     let domain_default_allow = effective
         .as_ref()
         .map(|effective| {
@@ -89,7 +71,7 @@ fn load_runtime_policy_state_with_legacy(
                 CapabilityMode::Allow | CapabilityMode::Audit
             )
         })
-        .unwrap_or(default_allow);
+        .unwrap_or(false);
     let (domain_allow, domain_block) = domain_policy_lists_from_effective(effective.as_ref());
     let domain_policy = DomainPolicy::new(
         &domain_allow,
@@ -111,15 +93,7 @@ fn load_runtime_policy_state_with_legacy(
         .as_ref()
         .map(policy_v2_from_effective_rules)
         .unwrap_or_default();
-    let guest_config = legacy
-        .map(|policies| policies.guest.clone())
-        .unwrap_or_default();
-    let network_policy = legacy
-        .map(|policies| policies.network.clone())
-        .unwrap_or(network_policy);
-    let domain_policy = legacy
-        .map(|policies| policies.domain.clone())
-        .unwrap_or(domain_policy);
+    let guest_config = guest_config_from_effective(effective.as_ref());
 
     RuntimePolicyState {
         guest_config,
@@ -132,6 +106,128 @@ fn load_runtime_policy_state_with_legacy(
         snapshot_auto_max: DEFAULT_SNAPSHOT_AUTO_MAX,
         snapshot_manual_max: DEFAULT_SNAPSHOT_MANUAL_MAX,
         snapshot_interval_secs: DEFAULT_SNAPSHOT_INTERVAL_SECS,
+    }
+}
+
+fn network_defaults_from_effective(
+    effective: Option<&settings_profiles::EffectiveVmSettings>,
+) -> (bool, bool) {
+    if matches!(
+        effective.map(|effective| effective.vm.value.network),
+        Some(VmNetworkMode::Disabled)
+    ) {
+        return (false, false);
+    }
+
+    match effective
+        .map(|effective| effective.security.value.capabilities.network_egress)
+        .unwrap_or(CapabilityMode::Ask)
+    {
+        CapabilityMode::Allow | CapabilityMode::Audit => (true, true),
+        CapabilityMode::Ask => (true, false),
+        CapabilityMode::Block => (false, false),
+    }
+}
+
+fn guest_config_from_effective(
+    effective: Option<&settings_profiles::EffectiveVmSettings>,
+) -> GuestConfig {
+    let (default_allow_read, default_allow_write) = network_defaults_from_effective(effective);
+
+    let provider_allowed = |name: &str| {
+        effective
+            .and_then(|effective| effective.ai.value.providers.get(name))
+            .map(|provider| provider.enabled)
+            .unwrap_or(default_allow_read)
+    };
+
+    let mut env = HashMap::new();
+    env.insert(
+        "REQUESTS_CA_BUNDLE".to_string(),
+        "/etc/ssl/certs/ca-certificates.crt".to_string(),
+    );
+    env.insert(
+        "NODE_EXTRA_CA_CERTS".to_string(),
+        "/etc/ssl/certs/ca-certificates.crt".to_string(),
+    );
+    env.insert(
+        "SSL_CERT_FILE".to_string(),
+        "/etc/ssl/certs/ca-certificates.crt".to_string(),
+    );
+    env.insert("TERM".to_string(), "xterm-256color".to_string());
+    env.insert("HOME".to_string(), "/root".to_string());
+    env.insert(
+        "PATH".to_string(),
+        "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+    );
+    env.insert("LANG".to_string(), "C".to_string());
+    env.insert(
+        "CAPSEM_WEB_ALLOW_READ".to_string(),
+        if default_allow_read { "1" } else { "0" }.to_string(),
+    );
+    env.insert(
+        "CAPSEM_WEB_ALLOW_WRITE".to_string(),
+        if default_allow_write { "1" } else { "0" }.to_string(),
+    );
+    env.insert(
+        "CAPSEM_OPENAI_ALLOWED".to_string(),
+        if provider_allowed("openai") { "1" } else { "0" }.to_string(),
+    );
+    env.insert(
+        "CAPSEM_ANTHROPIC_ALLOWED".to_string(),
+        if provider_allowed("anthropic") {
+            "1"
+        } else {
+            "0"
+        }
+        .to_string(),
+    );
+    env.insert(
+        "CAPSEM_GOOGLE_ALLOWED".to_string(),
+        if provider_allowed("google") { "1" } else { "0" }.to_string(),
+    );
+
+    let files = vec![
+        GuestFile {
+            path: "/root/.gemini/settings.json".to_string(),
+            content: r#"{"homeDirectoryWarningDismissed":true,"general":{"disableAutoUpdate":true,"disableUpdateNag":true},"ui":{"hideTips":true,"hideBanner":false},"privacy":{"usageStatisticsEnabled":false,"sessionRetention":"none"},"telemetry":{"enabled":false},"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust.enabled":false},"ide":{"hasSeenNudge":true},"tools":{"sandbox":false},"mcpServers":{"local":{"command":"/run/capsem-mcp-server"}}}"#.to_string(),
+            mode: 0o600,
+        },
+        GuestFile {
+            path: "/root/.gemini/installation_id".to_string(),
+            content: "capsem-sandbox-00000000-0000-0000-0000-000000000000".to_string(),
+            mode: 0o600,
+        },
+        GuestFile {
+            path: "/root/.gemini/projects.json".to_string(),
+            content: r#"{"projects":{"/root":"root"}}"#.to_string(),
+            mode: 0o600,
+        },
+        GuestFile {
+            path: "/root/.gemini/trustedFolders.json".to_string(),
+            content: r#"{"/root":"TRUST_FOLDER"}"#.to_string(),
+            mode: 0o600,
+        },
+        GuestFile {
+            path: "/root/.codex/config.toml".to_string(),
+            content: "[mcp_servers.local]\ncommand = \"/run/capsem-mcp-server\"\n".to_string(),
+            mode: 0o600,
+        },
+        GuestFile {
+            path: "/root/.claude/settings.json".to_string(),
+            content: r#"{"permissions":{"defaultMode":"bypassPermissions"},"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1"},"mcpServers":{"local":{"command":"/run/capsem-mcp-server"}}}"#.to_string(),
+            mode: 0o600,
+        },
+        GuestFile {
+            path: "/root/.claude.json".to_string(),
+            content: r#"{"hasCompletedOnboarding":true,"hasTrustDialogAccepted":true,"hasTrustDialogHooksAccepted":true,"shiftEnterKeyBindingInstalled":true,"theme":"dark","numStartups":1,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"projects":{"/root":{"allowedTools":[],"hasTrustDialogAccepted":true,"projectOnboardingSeenCount":1}},"mcpServers":{"local":{"command":"/run/capsem-mcp-server"}}}"#.to_string(),
+            mode: 0o600,
+        },
+    ];
+
+    GuestConfig {
+        env: Some(env),
+        files: Some(files),
     }
 }
 
@@ -155,6 +251,40 @@ fn domain_policy_lists_from_effective(
         }
     }
     (allow, block)
+}
+
+fn network_policy_rules_from_effective(
+    effective: Option<&settings_profiles::EffectiveVmSettings>,
+) -> Vec<PolicyRule> {
+    let Some(effective) = effective else {
+        return Vec::new();
+    };
+
+    let mut rules = effective
+        .rules
+        .iter()
+        .enumerate()
+        .filter_map(|(index, rule)| {
+            let domain = domain_from_simple_network_condition(rule)?;
+            let (allow_read, allow_write) = match rule.decision {
+                RuleDecision::Allow => (true, true),
+                RuleDecision::Ask | RuleDecision::Block => (false, false),
+                RuleDecision::Rewrite => return None,
+            };
+            Some((
+                rule.priority,
+                index,
+                PolicyRule {
+                    matcher: DomainMatcher::parse(&domain),
+                    allow_read,
+                    allow_write,
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    rules.sort_by_key(|(priority, index, _)| (*priority, *index));
+    rules.into_iter().map(|(_, _, rule)| rule).collect()
 }
 
 fn domain_from_simple_network_condition(rule: &EffectiveRule) -> Option<String> {

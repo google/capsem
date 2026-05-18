@@ -67,11 +67,16 @@ Rescue inventory:
 - Profile V2 and rescue sprint documents copied onto `profile-v2`
 - Dirty overlay inventory classified in `rescue-manifest.md`
 - Core settings profiles, policy confirmation, `/settings*`, debug-report provenance, service runtime VM-effective attachment, capsem-process effective-policy consumption, framed MCP `ask` confirmation, HTTP `ask` confirmation, model `ask` confirmation, model request rewrite, Profile V2 corp-config install, gateway non-VM parity, VM/MITM Profile V2 policy parity, and `just smoke` ordering/runtime rescue slices replayed on `profile-v2`
-- `just smoke` passed on 2026-05-17 after the smoke rescue slice (`rm -rf frontend/dist && just smoke`, 229s)
+- S00-S19 merged-code audit added at `sprints/profile-v2-migration-rescue/audit.md`
+- capsem-process V1 `user.toml`/`MergedPolicies` runtime bridge removed; focused RED/GREEN guardrails now assert Profile V2-only runtime authority, guest boot assembly, and DNS/full-block `NetworkPolicy` conversion
+- Smoke integration now uses a temporary Profile V2 service/profile fixture instead of removed `CAPSEM_USER_CONFIG`/`CAPSEM_CORP_CONFIG` runtime policy plumbing
+- `just smoke` passed on 2026-05-17 after the Profile V2 runtime/DNS rescue (`just smoke`, 224s)
 - Committed delta classification remains release-held and must be replayed by slice
 
 ## Release Holds
 - Do not claim migration complete until keep/drop/review manifest exists.
+- Do not claim S01 complete until setup/install/docs and old policy-config runtime/type surfaces are replaced or explicitly quarantined.
+- Do not claim S07-S19 complete; `audit.md` currently marks most public API/UI/CLI/OTel/docs surfaces as partial or gap.
 - Do not claim final verification restored until remaining broad gates beyond smoke, especially `just test`, are re-run.
 - Do not resume feature delivery on this line until reconciliation pass is complete.
 - Ambiguous E2E skip/test loosenings remain held after the focused VM/MITM parity and full smoke gates.
