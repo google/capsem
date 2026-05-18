@@ -65,8 +65,11 @@ a valid claim -- mark it `[ ]` instead.
   full route proof remain open.
 14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
     -- started. Typed manifest v3 profile catalog/status parser landed in
-    `capsem-core::profile_manifest`; remaining work adds package/tool
-    contracts, asset declarations, first-use download, retention, and VM pins.
+    `capsem-core::profile_manifest`; typed profile package/tool contracts and
+    per-arch VM asset declarations now parse, validate, serialize through
+    VM-effective settings, and merge through profile inheritance. Remaining
+    work promotes the formal schema/admin validators, installs profile
+    payloads from the manifest, adds first-use download, retention, and VM pins.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image

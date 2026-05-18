@@ -743,6 +743,10 @@ pub struct Profile {
     #[serde(default)]
     pub skills: SkillsProfileSettings,
     #[serde(default)]
+    pub packages: ProfilePackageContract,
+    #[serde(default)]
+    pub tools: BTreeMap<String, ProfileToolContract>,
+    #[serde(default)]
     pub vm: VmProfileSettings,
     #[serde(default)]
     pub security: SecurityProfileSettings,
@@ -774,6 +778,8 @@ impl Profile {
             ai: AiProvidersProfileSettings::default(),
             mcp: McpConnectorsProfileSettings::default(),
             skills: SkillsProfileSettings::default(),
+            packages: ProfilePackageContract::default(),
+            tools: BTreeMap::new(),
             vm: VmProfileSettings::default(),
             security: everyday_work_security_settings(),
         }
@@ -810,6 +816,8 @@ impl Profile {
         self.ai.validate("ai")?;
         self.mcp.validate("mcp")?;
         self.skills.validate("skills")?;
+        self.packages.validate("packages")?;
+        validate_tool_contracts("tools", &self.tools)?;
         self.vm.validate("vm")?;
         self.security.validate("security")?;
         Ok(())
@@ -986,6 +994,77 @@ impl SkillsProfileSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ProfilePackageContract {
+    #[serde(default)]
+    pub runtimes: BTreeMap<String, String>,
+    #[serde(default)]
+    pub python_modules: BTreeMap<String, String>,
+    #[serde(default)]
+    pub node_packages: BTreeMap<String, String>,
+    #[serde(default)]
+    pub system: SystemPackageContract,
+}
+
+impl ProfilePackageContract {
+    fn validate(&self, path: &str) -> Result<()> {
+        validate_package_version_map(&format!("{path}.runtimes"), &self.runtimes)?;
+        validate_package_version_map(&format!("{path}.python_modules"), &self.python_modules)?;
+        validate_package_version_map(&format!("{path}.node_packages"), &self.node_packages)?;
+        self.system.validate(&format!("{path}.system"))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SystemPackageContract {
+    #[serde(default)]
+    pub distro: String,
+    #[serde(default)]
+    pub release: String,
+    #[serde(default)]
+    pub apt: BTreeMap<String, String>,
+}
+
+impl SystemPackageContract {
+    fn validate(&self, path: &str) -> Result<()> {
+        validate_optional_non_empty_string(&format!("{path}.distro"), &self.distro)?;
+        validate_optional_non_empty_string(&format!("{path}.release"), &self.release)?;
+        if self.distro.is_empty() != self.release.is_empty() {
+            validation_error(
+                path,
+                "system package contract requires both distro and release",
+            )?;
+        }
+        validate_package_version_map(&format!("{path}.apt"), &self.apt)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileToolContract {
+    pub version: String,
+    pub required: bool,
+    pub source: ProfileToolSource,
+}
+
+impl ProfileToolContract {
+    fn validate(&self, path: &str) -> Result<()> {
+        validate_required_non_empty_string(&format!("{path}.version"), &self.version)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileToolSource {
+    Guest,
+    Host,
+    Profile,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct VmProfileSettings {
@@ -999,6 +1078,8 @@ pub struct VmProfileSettings {
     pub track_rootfs_dependencies: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rootfs_image: Option<PathBuf>,
+    #[serde(default)]
+    pub assets: BTreeMap<String, VmArchAssets>,
 }
 
 impl Default for VmProfileSettings {
@@ -1009,6 +1090,7 @@ impl Default for VmProfileSettings {
             network: VmNetworkMode::Proxied,
             track_rootfs_dependencies: true,
             rootfs_image: None,
+            assets: BTreeMap::new(),
         }
     }
 }
@@ -1032,6 +1114,50 @@ impl VmProfileSettings {
                 )?;
             }
         }
+        for (arch, assets) in &self.assets {
+            validate_arch_id(&format!("{path}.assets"), arch)?;
+            assets.validate(&format!("{path}.assets.{arch}"))?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct VmArchAssets {
+    pub kernel: VmAssetDeclaration,
+    pub initrd: VmAssetDeclaration,
+    pub rootfs: VmAssetDeclaration,
+}
+
+impl VmArchAssets {
+    fn validate(&self, path: &str) -> Result<()> {
+        self.kernel.validate(&format!("{path}.kernel"))?;
+        self.initrd.validate(&format!("{path}.initrd"))?;
+        self.rootfs.validate(&format!("{path}.rootfs"))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct VmAssetDeclaration {
+    pub url: String,
+    pub hash: String,
+    pub signature_url: String,
+    pub size: u64,
+    pub content_type: String,
+}
+
+impl VmAssetDeclaration {
+    fn validate(&self, path: &str) -> Result<()> {
+        validate_profile_asset_location(&format!("{path}.url"), &self.url)?;
+        validate_profile_hash(&format!("{path}.hash"), &self.hash)?;
+        validate_profile_asset_location(&format!("{path}.signature_url"), &self.signature_url)?;
+        if self.size == 0 {
+            validation_error(&format!("{path}.size"), "size must be greater than zero")?;
+        }
+        validate_required_non_empty_string(&format!("{path}.content_type"), &self.content_type)?;
         Ok(())
     }
 }
@@ -1503,6 +1629,34 @@ pub fn profile_setting_descriptors() -> Vec<SettingDescriptor> {
             sensitive: false,
         },
         SettingDescriptor {
+            path: "packages",
+            label: "Package contract",
+            description: "Guest package and runtime versions required by this profile.",
+            scope: SettingScope::Profile,
+            widget: SettingWidget::InfoBox,
+            default_value: json!({}),
+            sensitive: false,
+        },
+        SettingDescriptor {
+            path: "tools",
+            label: "Tool contract",
+            description: "Guest, host, or profile-provided tools required by this profile.",
+            scope: SettingScope::Profile,
+            widget: SettingWidget::InfoBox,
+            default_value: json!({}),
+            sensitive: false,
+        },
+        SettingDescriptor {
+            path: "vm.assets",
+            label: "VM assets",
+            description:
+                "Per-architecture kernel, initrd, and rootfs assets required by this profile.",
+            scope: SettingScope::Profile,
+            widget: SettingWidget::InfoBox,
+            default_value: json!({}),
+            sensitive: false,
+        },
+        SettingDescriptor {
             path: "security.rules",
             label: "Rules",
             description: "Advanced policy rule tables by type.",
@@ -1814,6 +1968,8 @@ pub struct EffectiveVmSettings {
     pub ai: EffectiveSection<AiProvidersProfileSettings>,
     pub mcp: EffectiveSection<McpConnectorsProfileSettings>,
     pub skills: EffectiveSection<SkillsProfileSettings>,
+    pub packages: EffectiveSection<ProfilePackageContract>,
+    pub tools: EffectiveSection<BTreeMap<String, ProfileToolContract>>,
     pub vm: EffectiveSection<VmProfileSettings>,
     pub security: EffectiveSection<SecurityProfileSettings>,
     pub rules: Vec<EffectiveRule>,
@@ -2288,6 +2444,20 @@ fn effective_settings_from_merged(
             ),
             inherited_from: ancestor_ids.clone(),
         },
+        packages: EffectiveSection {
+            value: merged_profile.packages.clone(),
+            provenance: provenance(
+                leaf,
+                "packages",
+                &section_reason("profile package contract"),
+            ),
+            inherited_from: ancestor_ids.clone(),
+        },
+        tools: EffectiveSection {
+            value: merged_profile.tools.clone(),
+            provenance: provenance(leaf, "tools", &section_reason("profile tool contract")),
+            inherited_from: ancestor_ids.clone(),
+        },
         vm: EffectiveSection {
             value: merged_profile.vm.clone(),
             provenance: provenance(leaf, "vm", &section_reason("profile-scoped VM settings")),
@@ -2325,11 +2495,13 @@ fn merge_profile_chain(chain: &[&ProfileRecord]) -> Profile {
 
         acc.general = child.general.clone();
         acc.appearance = child.appearance.clone();
-        acc.vm = child.vm.clone();
+        acc.vm = merge_vm_profile_settings(&acc.vm, &child.vm);
         acc.security.capabilities = child.security.capabilities.clone();
 
         merge_btreemap(&mut acc.ai.providers, &child.ai.providers);
         merge_btreemap(&mut acc.mcp.connectors, &child.mcp.connectors);
+        merge_package_contract(&mut acc.packages, &child.packages);
+        merge_btreemap(&mut acc.tools, &child.tools);
         merge_btreemap(&mut acc.security.rules.mcp, &child.security.rules.mcp);
         merge_btreemap(&mut acc.security.rules.http, &child.security.rules.http);
         merge_btreemap(&mut acc.security.rules.dns, &child.security.rules.dns);
@@ -2424,6 +2596,30 @@ fn merge_btreemap<V: Clone>(acc: &mut BTreeMap<String, V>, child: &BTreeMap<Stri
     for (key, value) in child {
         acc.insert(key.clone(), value.clone());
     }
+}
+
+fn merge_package_contract(acc: &mut ProfilePackageContract, child: &ProfilePackageContract) {
+    merge_btreemap(&mut acc.runtimes, &child.runtimes);
+    merge_btreemap(&mut acc.python_modules, &child.python_modules);
+    merge_btreemap(&mut acc.node_packages, &child.node_packages);
+    if !child.system.distro.is_empty() {
+        acc.system.distro = child.system.distro.clone();
+    }
+    if !child.system.release.is_empty() {
+        acc.system.release = child.system.release.clone();
+    }
+    merge_btreemap(&mut acc.system.apt, &child.system.apt);
+}
+
+fn merge_vm_profile_settings(
+    parent: &VmProfileSettings,
+    child: &VmProfileSettings,
+) -> VmProfileSettings {
+    let mut merged = child.clone();
+    let mut assets = parent.assets.clone();
+    merge_btreemap(&mut assets, &child.assets);
+    merged.assets = assets;
+    merged
 }
 
 /// Union with dedup. Child entries override their previous
@@ -3217,6 +3413,96 @@ fn validate_config_id(path: &str, value: &str) -> Result<()> {
             path,
             "id may only contain lowercase letters, digits, '-', '_', and '.'",
         )
+    }
+}
+
+fn validate_arch_id(path: &str, value: &str) -> Result<()> {
+    match value {
+        "arm64" | "x86_64" => Ok(()),
+        _ => validation_error(path, "arch must be 'arm64' or 'x86_64'"),
+    }
+}
+
+fn validate_tool_contracts(
+    path: &str,
+    tools: &BTreeMap<String, ProfileToolContract>,
+) -> Result<()> {
+    for (name, tool) in tools {
+        validate_config_id(path, name)?;
+        tool.validate(&format!("{path}.{name}"))?;
+    }
+    Ok(())
+}
+
+fn validate_package_version_map(path: &str, values: &BTreeMap<String, String>) -> Result<()> {
+    for (name, version) in values {
+        validate_package_name(path, name)?;
+        validate_required_non_empty_string(&format!("{path}.{name}"), version)?;
+    }
+    Ok(())
+}
+
+fn validate_package_name(path: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        validation_error(path, "package name cannot be empty")?;
+    }
+    if value.contains("..") || value.contains('\\') {
+        validation_error(path, "package name cannot contain path traversal")?;
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '@' | '/' | '-' | '_' | '.' | '+'))
+    {
+        Ok(())
+    } else {
+        validation_error(
+            path,
+            "package name may only contain ASCII letters, digits, '@', '/', '-', '_', '.', and '+'",
+        )
+    }
+}
+
+fn validate_optional_non_empty_string(path: &str, value: &str) -> Result<()> {
+    if value.is_empty() || !value.trim().is_empty() {
+        Ok(())
+    } else {
+        validation_error(path, "value cannot be only whitespace")
+    }
+}
+
+fn validate_required_non_empty_string(path: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        validation_error(path, "value cannot be empty")?;
+    }
+    Ok(())
+}
+
+fn validate_profile_asset_location(path: &str, value: &str) -> Result<()> {
+    let value = value.trim();
+    if value.is_empty() {
+        validation_error(path, "asset location cannot be empty")?;
+    }
+    if !value.starts_with("https://") && !value.starts_with("file://") {
+        validation_error(path, "asset location must start with https:// or file://")?;
+    }
+    if value.contains("..") || value.contains('\\') {
+        validation_error(path, "asset location cannot contain path traversal")?;
+    }
+    Ok(())
+}
+
+fn validate_profile_hash(path: &str, value: &str) -> Result<()> {
+    let Some(hex) = value.strip_prefix("blake3:") else {
+        return validation_error(path, "hash must be canonical blake3:<64 lowercase hex>");
+    };
+    if hex.len() == 64
+        && hex
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    {
+        Ok(())
+    } else {
+        validation_error(path, "hash must be canonical blake3:<64 lowercase hex>")
     }
 }
 

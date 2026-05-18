@@ -437,6 +437,183 @@ reason = "Secrets must not leave the VM."
 }
 
 #[test]
+fn profile_parse_toml_with_package_tool_and_asset_contracts() {
+    let profile = Profile::from_toml_str(
+        r#"
+version = 1
+id = "coding"
+name = "For Coding"
+description = "Technical default profile."
+best_for = "Coding sessions with repository tools."
+profile_type = "coding"
+
+[packages.runtimes]
+python = "3.12.3"
+node = "22.1.0"
+uv = "0.4.30"
+
+[packages.python_modules]
+requests = "2.32.3"
+numpy = "1.26.4"
+
+[packages.node_packages]
+"@modelcontextprotocol/sdk" = "1.2.3"
+playwright = "1.44.0"
+
+[packages.system]
+distro = "debian"
+release = "bookworm"
+
+[packages.system.apt]
+curl = "8.11.1-1"
+ca-certificates = "20240203"
+
+[tools.capsem_doctor]
+version = "2026.05.18"
+required = true
+source = "guest"
+
+[tools.uv]
+version = "0.4.30"
+required = true
+source = "guest"
+
+[vm.assets.arm64.kernel]
+url = "https://assets.capsem.dev/profiles/coding/2026.0520.1/arm64/vmlinuz"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "https://assets.capsem.dev/profiles/coding/2026.0520.1/arm64/vmlinuz.minisig"
+size = 7797248
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "https://assets.capsem.dev/profiles/coding/2026.0520.1/arm64/initrd.img"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "https://assets.capsem.dev/profiles/coding/2026.0520.1/arm64/initrd.img.minisig"
+size = 2270154
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "https://assets.capsem.dev/profiles/coding/2026.0520.1/arm64/rootfs.squashfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "https://assets.capsem.dev/profiles/coding/2026.0520.1/arm64/rootfs.squashfs.minisig"
+size = 454230016
+content_type = "application/vnd.squashfs"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(profile.packages.runtimes["python"], "3.12.3");
+    assert_eq!(
+        profile.packages.node_packages["@modelcontextprotocol/sdk"],
+        "1.2.3"
+    );
+    assert_eq!(profile.packages.system.distro, "debian");
+    assert_eq!(
+        profile.tools["capsem_doctor"].source,
+        ProfileToolSource::Guest
+    );
+
+    let arm64 = &profile.vm.assets["arm64"];
+    assert_eq!(arm64.kernel.size, 7_797_248);
+    assert_eq!(
+        arm64.initrd.hash.as_str(),
+        "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(arm64.rootfs.content_type, "application/vnd.squashfs");
+}
+
+#[test]
+fn profile_rejects_asset_hashes_that_are_not_canonical_blake3() {
+    let error = Profile::from_toml_str(
+        r#"
+version = 1
+id = "coding"
+name = "For Coding"
+best_for = "Coding."
+
+[vm.assets.arm64.kernel]
+url = "https://assets.capsem.dev/kernel"
+hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "https://assets.capsem.dev/kernel.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "https://assets.capsem.dev/initrd"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "https://assets.capsem.dev/initrd.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "https://assets.capsem.dev/rootfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "https://assets.capsem.dev/rootfs.minisig"
+size = 1
+content_type = "application/vnd.squashfs"
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("canonical blake3"));
+}
+
+#[test]
+fn profile_rejects_asset_locations_with_path_traversal() {
+    let error = Profile::from_toml_str(
+        r#"
+version = 1
+id = "coding"
+name = "For Coding"
+best_for = "Coding."
+
+[vm.assets.arm64.kernel]
+url = "file:///tmp/capsem/../kernel"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "file:///tmp/capsem/kernel.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "file:///tmp/capsem/initrd"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "file:///tmp/capsem/initrd.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "file:///tmp/capsem/rootfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "file:///tmp/capsem/rootfs.minisig"
+size = 1
+content_type = "application/vnd.squashfs"
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("path traversal"));
+}
+
+#[test]
+fn profile_rejects_tool_contract_without_version() {
+    let error = Profile::from_toml_str(
+        r#"
+version = 1
+id = "coding"
+name = "For Coding"
+best_for = "Coding."
+
+[tools.capsem_doctor]
+required = true
+source = "guest"
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("missing field `version`"));
+}
+
+#[test]
 fn profile_rejects_invalid_rule_names() {
     let error = Profile::from_toml_str(
         r#"
@@ -1136,6 +1313,9 @@ fn profile_descriptors_cover_security_and_ui_builder_inputs() {
         .map(|descriptor| descriptor.path)
         .collect::<Vec<_>>();
     assert!(profile_paths.contains(&"extends_profile_id"));
+    assert!(profile_paths.contains(&"packages"));
+    assert!(profile_paths.contains(&"tools"));
+    assert!(profile_paths.contains(&"vm.assets"));
     assert!(profile_paths.contains(&"security.capabilities"));
     assert!(profile_paths.contains(&"security.rules"));
 }
@@ -1633,6 +1813,111 @@ enabled = ["shared-skill", "child-skill"]
             "child-skill".to_string()
         ]
     );
+}
+
+#[test]
+fn layered_merge_unions_package_tool_and_asset_contracts_by_key() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+
+    write_profile(
+        &base_dir,
+        "parent",
+        r#"
+version = 1
+id = "parent"
+name = "Parent"
+best_for = "Parent."
+profile_type = "coding"
+
+[packages.runtimes]
+python = "3.12.3"
+node = "22.1.0"
+
+[tools.capsem_doctor]
+version = "2026.05.18"
+required = true
+source = "guest"
+
+[vm.assets.arm64.kernel]
+url = "https://assets.capsem.dev/parent/arm64/vmlinuz"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "https://assets.capsem.dev/parent/arm64/vmlinuz.minisig"
+size = 10
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "https://assets.capsem.dev/parent/arm64/initrd.img"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "https://assets.capsem.dev/parent/arm64/initrd.img.minisig"
+size = 11
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "https://assets.capsem.dev/parent/arm64/rootfs.squashfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "https://assets.capsem.dev/parent/arm64/rootfs.squashfs.minisig"
+size = 12
+content_type = "application/vnd.squashfs"
+"#,
+    );
+    write_profile(
+        &base_dir,
+        "child",
+        r#"
+version = 1
+id = "child"
+name = "Child"
+best_for = "Child."
+profile_type = "coding"
+extends_profile_id = "parent"
+
+[packages.runtimes]
+python = "3.13.0"
+uv = "0.4.30"
+
+[tools.uv]
+version = "0.4.30"
+required = true
+source = "guest"
+
+[vm.assets.x86_64.kernel]
+url = "https://assets.capsem.dev/child/x86_64/vmlinuz"
+hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+signature_url = "https://assets.capsem.dev/child/x86_64/vmlinuz.minisig"
+size = 20
+content_type = "application/octet-stream"
+
+[vm.assets.x86_64.initrd]
+url = "https://assets.capsem.dev/child/x86_64/initrd.img"
+hash = "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+signature_url = "https://assets.capsem.dev/child/x86_64/initrd.img.minisig"
+size = 21
+content_type = "application/octet-stream"
+
+[vm.assets.x86_64.rootfs]
+url = "https://assets.capsem.dev/child/x86_64/rootfs.squashfs"
+hash = "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+signature_url = "https://assets.capsem.dev/child/x86_64/rootfs.squashfs.minisig"
+size = 22
+content_type = "application/vnd.squashfs"
+"#,
+    );
+
+    let roots = test_roots(base_dir, user_dir);
+    let effective = resolve_effective_vm_settings(&roots, Some("child")).unwrap();
+
+    assert_eq!(effective.packages.value.runtimes["python"], "3.13.0");
+    assert_eq!(effective.packages.value.runtimes["node"], "22.1.0");
+    assert_eq!(effective.packages.value.runtimes["uv"], "0.4.30");
+    assert!(effective.tools.value.contains_key("capsem_doctor"));
+    assert!(effective.tools.value.contains_key("uv"));
+    assert_eq!(effective.vm.value.assets["arm64"].rootfs.size, 12);
+    assert_eq!(effective.vm.value.assets["x86_64"].rootfs.size, 22);
+    assert_eq!(effective.packages.inherited_from, vec!["parent"]);
+    assert_eq!(effective.tools.inherited_from, vec!["parent"]);
 }
 
 #[test]

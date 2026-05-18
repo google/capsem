@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UDS Rules API before mirroring it through the HTTP gateway.
 - Added Profile V2 service tests proving profile creation cannot shadow locked
   profile roots and settings saves follow the currently selected user profile.
+- Added typed Profile V2 package/tool contracts and per-architecture VM asset
+  declarations, including canonical BLAKE3 hash validation, path-traversal
+  rejection, VM-effective serialization, and inherited resolver merge coverage.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

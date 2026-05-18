@@ -471,10 +471,16 @@ This sprint creates the contract consumed by later sprints:
       preferring `TypeAdapter.validate_json()` / `model_validate_json()` when
       JSON bytes are available; Rust validates against the standard JSON Schema
       artifact before semantic trust-chain checks.
-- [ ] Extend profile TOML schema with typed packages/tools and per-arch VM
-      asset declarations.
-- [ ] Add resolver tests for inherited package/tool contracts and asset
-      declarations.
+- [~] Extend profile TOML schema with typed packages/tools and per-arch VM
+      asset declarations. Initial Rust `Profile`/`VmProfileSettings` fields,
+      validators, descriptors, and VM-effective serialization landed for
+      package maps, tool contracts, per-arch `kernel`/`initrd`/`rootfs` asset
+      records, canonical `blake3:<64 lowercase hex>` hashes, and
+      `https://`/`file://` path-traversal rejection.
+- [~] Add resolver tests for inherited package/tool contracts and asset
+      declarations. Initial focused resolver coverage proves runtime/package
+      maps, tool contracts, and per-arch assets merge by key through the
+      existing ancestor-chain resolver.
 - [ ] Add profile payload install/update/delete/revoke logic from manifest
       records.
 - [ ] Add profile-driven asset resolution and first-use download.
@@ -496,15 +502,18 @@ This sprint creates the contract consumed by later sprints:
 ## Coverage Ledger
 
 - Unit/contract: initial manifest v3 parser/status validator landed with
-  `cargo test -p capsem-core profile_manifest` (9 tests passed). Remaining:
-  JSON Schema Draft 2020-12
+  `cargo test -p capsem-core profile_manifest` (9 tests passed). The first
+  profile contract slice landed with `cargo test -p capsem-core
+  settings_profiles` (123 tests passed), including package/tool/asset TOML
+  parsing, missing tool-version rejection, canonical asset-hash rejection,
+  asset path-traversal rejection, descriptor coverage, and inherited
+  package/tool/asset merge behavior. Remaining: JSON Schema Draft 2020-12
   validation for `capsem.profile.v2`, Pydantic `validate_json()` /
   `model_dump_json()` fixture parity for Python admin models, valid/invalid
-  schema fixture parity across Rust and Python validators, profile package/tool
-  parser, asset declaration parser, resolver inheritance/override behavior,
-  per-arch asset selection, rollback/stale-manifest rejection,
-  signature-key identity, canonical hash format, and v2 manifest
-  compatibility/fail-closed behavior.
+  schema fixture parity across Rust and Python validators, per-arch asset
+  selection against host arch, rollback/stale-manifest rejection,
+  signature-key identity, full package version grammar validation, and v2
+  manifest compatibility/fail-closed behavior.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
   profile update; pre-S07a VM registry entries render explicit compatibility
