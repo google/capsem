@@ -211,6 +211,58 @@ priority = 10
 }
 
 #[test]
+fn policy_v2_cel_allows_method_like_text_inside_string_literals() {
+    let policy = policy_from_toml(
+        r#"
+[policy.http.block_literal_method_text]
+on = "http.request"
+if = 'request.path == "/literal.contains(value)" && request.query != "debug.matches(nope)"'
+decision = "block"
+priority = 10
+"#,
+    );
+
+    let subject = serde_json::json!({
+        "request": {
+            "path": "/literal.contains(value)",
+            "query": "release"
+        }
+    });
+    let hit = policy
+        .find_matching_rule(PolicyCallback::HttpRequest, &subject)
+        .unwrap()
+        .expect("quoted method-looking text should be treated as a string literal");
+    assert_eq!(hit.name, "block_literal_method_text");
+}
+
+#[test]
+fn policy_v2_cel_does_not_match_not_equal_against_missing_fields() {
+    let policy = policy_from_toml(
+        r#"
+[policy.http.block_missing_auth]
+on = "http.request"
+if = 'request.headers.authorization != "Bearer allowed"'
+decision = "block"
+priority = 10
+"#,
+    );
+
+    let subject = serde_json::json!({
+        "request": {
+            "headers": {}
+        }
+    });
+
+    assert!(
+        policy
+            .find_matching_rule(PolicyCallback::HttpRequest, &subject)
+            .unwrap()
+            .is_none(),
+        "missing fields must not satisfy != comparisons by accident"
+    );
+}
+
+#[test]
 fn policy_v2_evaluates_http_response_body_headers_and_request_context() {
     let policy = policy_from_toml(
         r#"

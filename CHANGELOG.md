@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a `net::policy_v2` runtime import surface plus CEL, gzip model-response,
   and builder config/defaults tests to keep Profile V2 policy enforcement and
   image-generated settings aligned.
+- Added hardening coverage for HTTP gzip decompression, CEL quoted-literal
+  parsing, and builder image/defaults alignment.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under
@@ -42,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `service.toml` and profile roots.
 
 ### Fixed
+- Fixed HTTP gzip handling so comma-separated `Content-Encoding` token lists are
+  recognized case-insensitively and malformed gzip headers with reserved flags
+  pass through instead of dropping bytes.
+- Fixed Policy V2 CEL parsing so method-looking text inside quoted string
+  literals is not mistaken for `.contains()`/`.matches()` calls.
 - Fixed `just smoke`, `just test`, and `build-ui` ordering so Tauri frontend
   assets are built before Rust workspace compile/clippy/test phases that need
   `frontend/dist`.

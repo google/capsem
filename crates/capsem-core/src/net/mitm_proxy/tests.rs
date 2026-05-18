@@ -1200,6 +1200,22 @@ fn gzip_bytes(body: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
+#[test]
+fn response_uses_gzip_content_encoding_accepts_token_lists_case_insensitively() {
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_ENCODING,
+        http::HeaderValue::from_static("br, GZip"),
+    );
+    assert!(response_uses_gzip_content_encoding(&headers));
+
+    headers.insert(
+        http::header::CONTENT_ENCODING,
+        http::HeaderValue::from_static("identity"),
+    );
+    assert!(!response_uses_gzip_content_encoding(&headers));
+}
+
 async fn spawn_http_no_touch_fixture() -> (u16, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();

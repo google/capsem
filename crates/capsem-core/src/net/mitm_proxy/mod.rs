@@ -1397,12 +1397,7 @@ async fn handle_request(
     // is just three field accesses on the parts struct and stays
     // inline here -- moving it to an async Hook would re-introduce
     // the kind of plumbing the slice removed.
-    let is_gzip = resp_parts
-        .headers
-        .get("content-encoding")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("gzip"))
-        .unwrap_or(false);
+    let is_gzip = response_uses_gzip_content_encoding(&resp_parts.headers);
     if is_gzip {
         resp_parts.headers.remove("content-encoding");
         resp_parts.headers.remove("content-length");
@@ -1588,6 +1583,18 @@ async fn handle_request(
 
     let response = hyper::Response::from_parts(resp_parts, chunk_dispatched.boxed());
     Ok(response)
+}
+
+fn response_uses_gzip_content_encoding(headers: &http::HeaderMap) -> bool {
+    headers
+        .get(http::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("gzip"))
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

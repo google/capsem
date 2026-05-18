@@ -181,7 +181,7 @@ fn parse_method_call<'a>(
     method: &str,
 ) -> Result<Option<(&'a str, &'a str)>, String> {
     let needle = format!(".{method}(");
-    let Some(index) = atom.find(&needle) else {
+    let Some(index) = find_unquoted(atom, &needle)? else {
         return Ok(None);
     };
     let field = atom[..index].trim();
@@ -193,6 +193,43 @@ fn parse_method_call<'a>(
         return Err(format!("CEL {method}() call is missing its receiver"));
     }
     Ok(Some((field, argument.trim())))
+}
+
+fn find_unquoted(haystack: &str, needle: &str) -> Result<Option<usize>, String> {
+    let mut quote = None;
+    let mut escaped = false;
+    let bytes = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let ch = bytes[i] as char;
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            i += 1;
+            continue;
+        }
+        if bytes[i..].starts_with(needle) {
+            return Ok(Some(i));
+        }
+        i += 1;
+    }
+
+    if quote.is_some() {
+        return Err("policy condition has an unterminated string literal".into());
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

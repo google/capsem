@@ -489,6 +489,27 @@ class TestGuestConfigBuildAndDefaultsAlignment:
         assert resources["max_body_capture"]["default"] == source.max_body_capture
         assert resources["max_sessions"]["default"] == source.max_sessions
 
+    def test_disabled_ai_provider_not_installed_but_still_described_in_defaults(self, real_config):
+        provider = real_config.ai_providers["google"].model_copy(
+            update={"enabled": False}
+        )
+        providers = dict(real_config.ai_providers)
+        providers["google"] = provider
+        config = real_config.model_copy(update={"ai_providers": providers})
+
+        ctx = generate_build_context("Dockerfile.rootfs.j2", config, "arm64")
+        defaults = generate_defaults_json(config)
+
+        assert provider.install is not None
+        for package in provider.install.packages:
+            assert package not in ctx["npm_packages"]
+            assert package not in ctx["curl_installs"]
+
+        google_defaults = defaults["settings"]["ai"]["google"]
+        assert google_defaults["allow"]["default"] is False
+        assert google_defaults["api_key"]["meta"]["env_vars"] == provider.api_key.env_vars
+        assert google_defaults["domains"]["default"] == ", ".join(provider.network.domains)
+
 
 # ---------------------------------------------------------------------------
 # Edge cases
