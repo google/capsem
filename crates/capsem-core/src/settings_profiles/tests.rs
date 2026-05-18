@@ -33,11 +33,6 @@ assets_dir = "/opt/capsem/assets"
 image_roots = ["/opt/capsem/images", "/Users/test/.capsem/images"]
 download_base_url = "https://assets.example.test/capsem"
 
-[assets.manifest]
-source = "remote-url"
-url = "https://assets.example.test/manifest.json"
-signature_url = "https://assets.example.test/manifest.json.minisig"
-
 [credentials]
 backend = "toml"
 
@@ -67,10 +62,6 @@ failure_mode = "fail-closed"
         Some("https://otel.example.test/v1/traces")
     );
     assert_eq!(settings.remote_policy.timeout_ms, 2000);
-    assert_eq!(
-        settings.assets.manifest.url.as_deref(),
-        Some("https://assets.example.test/manifest.json")
-    );
     assert_eq!(
         settings.assets.download_base_url.as_deref(),
         Some("https://assets.example.test/capsem")
@@ -145,7 +136,7 @@ value = "   "
 }
 
 #[test]
-fn service_settings_accept_local_manifest_and_custom_image_roots() {
+fn service_settings_accept_custom_image_roots() {
     let settings = ServiceSettings::from_toml_str(
         r#"
 [profiles]
@@ -154,20 +145,10 @@ base_dirs = ["/opt/capsem/profiles/base"]
 [assets]
 assets_dir = "/opt/capsem/assets"
 image_roots = ["/opt/capsem/images"]
-
-[assets.manifest]
-source = "local-file"
-path = "/opt/capsem/manifests/manifest.json"
-signature_path = "/opt/capsem/manifests/manifest.json.minisig"
 "#,
     )
     .unwrap();
 
-    assert_eq!(settings.assets.manifest.source, ManifestSource::LocalFile);
-    assert_eq!(
-        settings.assets.manifest.path.as_deref(),
-        Some(Path::new("/opt/capsem/manifests/manifest.json"))
-    );
     assert_eq!(
         settings.assets.image_roots,
         vec![PathBuf::from("/opt/capsem/images")]
@@ -175,7 +156,7 @@ signature_path = "/opt/capsem/manifests/manifest.json.minisig"
 }
 
 #[test]
-fn service_settings_reject_remote_manifest_without_url() {
+fn service_settings_rejects_legacy_manifest_settings() {
     let error = ServiceSettings::from_toml_str(
         r#"
 [assets.manifest]
@@ -184,22 +165,7 @@ source = "remote-url"
     )
     .unwrap_err();
 
-    assert!(error.to_string().contains("assets.manifest.url"));
-}
-
-#[test]
-fn service_settings_reject_local_manifest_with_remote_url() {
-    let error = ServiceSettings::from_toml_str(
-        r#"
-[assets.manifest]
-source = "local-file"
-path = "/opt/capsem/manifest.json"
-url = "https://assets.example.test/manifest.json"
-"#,
-    )
-    .unwrap_err();
-
-    assert!(error.to_string().contains("assets.manifest.url"));
+    assert!(error.to_string().contains("unknown field"));
 }
 
 #[test]
@@ -233,7 +199,6 @@ fn service_asset_resolution_uses_service_assets_dir_without_cli_override() {
         resolved.assets_dir_origin,
         ServiceSettingOrigin::ServiceSettings
     );
-    assert_eq!(resolved.manifest.source, ManifestSource::Installed);
 }
 
 #[test]
@@ -254,18 +219,13 @@ fn service_asset_resolution_prefers_cli_assets_dir_over_service_settings() {
 }
 
 #[test]
-fn service_asset_resolution_preserves_manifest_image_roots_and_download_endpoint() {
+fn service_asset_resolution_preserves_image_roots_and_download_endpoint() {
     let settings = ServiceSettings::from_toml_str(
         r#"
 [assets]
 assets_dir = "/corp/capsem/assets"
 image_roots = ["/corp/capsem/images", "/shared/capsem/images"]
 download_base_url = "https://assets.example.test/capsem"
-
-[assets.manifest]
-source = "remote-url"
-url = "https://assets.example.test/manifest.json"
-signature_url = "https://assets.example.test/manifest.json.minisig"
 "#,
     )
     .unwrap();
@@ -284,11 +244,6 @@ signature_url = "https://assets.example.test/manifest.json.minisig"
     assert_eq!(
         resolved.image_roots_origin,
         ServiceSettingOrigin::ServiceSettings
-    );
-    assert_eq!(resolved.manifest.source, ManifestSource::RemoteUrl);
-    assert_eq!(
-        resolved.manifest.url.as_deref(),
-        Some("https://assets.example.test/manifest.json")
     );
     assert_eq!(
         resolved.download_base_url.as_deref(),
@@ -1302,9 +1257,8 @@ fn profile_descriptors_cover_security_and_ui_builder_inputs() {
         .into_iter()
         .map(|descriptor| descriptor.path)
         .collect::<Vec<_>>();
-    assert!(service_paths.contains(&"assets.manifest.source"));
-    assert!(service_paths.contains(&"assets.manifest.url"));
     assert!(service_paths.contains(&"assets.image_roots"));
+    assert!(service_paths.contains(&"assets.download_base_url"));
     assert!(service_paths.contains(&"telemetry.endpoint"));
     assert!(service_paths.contains(&"remote_policy.endpoint"));
 

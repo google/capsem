@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{bail, Result};
-use capsem_core::asset_manager::{hash_filename, ManifestV2, ResolvedAssets};
+use capsem_core::asset_manager::{hash_filename, ResolvedAssets};
 
 use crate::api::SavedVmAssetDependency;
 use crate::registry::{PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets};
@@ -10,27 +10,6 @@ use crate::registry::{PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets};
 const LOGICAL_KERNEL: &str = "vmlinuz";
 const LOGICAL_INITRD: &str = "initrd.img";
 const LOGICAL_ROOTFS: &str = "rootfs.squashfs";
-const CURRENT_GUEST_ABI: &str = "capsem-guest-v2";
-
-pub fn current_base_assets(
-    manifest: Option<&ManifestV2>,
-    binary_version: &str,
-    arch: &str,
-) -> Result<Option<SavedVmBaseAssets>> {
-    let Some(manifest) = manifest else {
-        return Ok(None);
-    };
-    let metadata = manifest.resolve_metadata(binary_version, arch)?;
-    Ok(Some(SavedVmBaseAssets {
-        asset_version: metadata.asset_version,
-        arch: metadata.arch,
-        kernel_hash: metadata.kernel_hash,
-        initrd_hash: metadata.initrd_hash,
-        rootfs_hash: metadata.rootfs_hash,
-        guest_abi: Some(CURRENT_GUEST_ABI.to_string()),
-    }))
-}
-
 pub fn referenced_asset_filenames(entry: &PersistentVmEntry) -> Vec<String> {
     entry
         .base_assets

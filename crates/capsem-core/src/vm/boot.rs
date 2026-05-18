@@ -63,6 +63,9 @@ pub struct BootOptions<'a> {
     pub kernel_override: Option<&'a Path>,
     pub initrd_override: Option<&'a Path>,
     pub rootfs_override: Option<&'a Path>,
+    pub expected_kernel_hash: Option<&'a str>,
+    pub expected_initrd_hash: Option<&'a str>,
+    pub expected_rootfs_hash: Option<&'a str>,
     pub cmdline: &'a str,
     /// Path to a sparse host file attached as the second virtio-blk device
     /// (`/dev/vdb` in the guest). In VirtioFS mode this is the system-overlay
@@ -98,6 +101,9 @@ pub fn boot_vm(
         kernel_override,
         initrd_override,
         rootfs_override,
+        expected_kernel_hash,
+        expected_initrd_hash,
+        expected_rootfs_hash,
         cmdline,
         system_overlay_disk,
         virtiofs_shares,
@@ -153,44 +159,23 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        // Load expected asset hashes from the manifest on disk. Tamper model:
-        // the binary ships with the release minisign pubkey baked in; the
-        // manifest on disk is verified against that pubkey before its asset
-        // hashes are trusted. Release builds hard-fail if the manifest exists
-        // but is unsigned or signature-invalid (can't verify == can't trust).
-        // Debug builds allow unsigned manifests so dev loops with locally
-        // built assets keep working.
-        let require_sig = !cfg!(debug_assertions);
-        let manifest = match crate::asset_manager::load_verified_manifest_for_assets(
-            assets,
-            require_sig,
+        if let (Some(kernel), Some(initrd), Some(rootfs)) = (
+            expected_kernel_hash,
+            expected_initrd_hash,
+            expected_rootfs_hash,
         ) {
-            Ok(m) => m,
-            Err(e) => {
-                if require_sig {
-                    return Err(e).context("manifest verification failed (release build)");
-                }
-                warn!("[boot-audit] manifest verification failed; proceeding without expected hashes: {e:#}");
-                None
-            }
-        };
-        let expected_hashes = manifest
-            .and_then(|m| m.expected_hashes_current(crate::asset_manager::host_manifest_arch()));
-        match expected_hashes {
-            Some(ref h) => info!(
-                "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
-                &h.kernel[..16],
-                &h.initrd[..16],
-                &h.rootfs[..16],
-            ),
-            None => info!(
-                "[boot-audit] asset hash verification disabled (no manifest match for arch={})",
-                crate::asset_manager::host_manifest_arch()
-            ),
+            info!(
+                "[boot-audit] profile asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
+                &kernel[..16.min(kernel.len())],
+                &initrd[..16.min(initrd.len())],
+                &rootfs[..16.min(rootfs.len())],
+            );
+        } else {
+            info!("[boot-audit] asset hash verification disabled (development assets)");
         }
 
-        if let Some(ref h) = expected_hashes {
-            builder = builder.expected_kernel_hash(&h.kernel);
+        if let Some(hash) = expected_kernel_hash {
+            builder = builder.expected_kernel_hash(hash);
         }
 
         let initrd_path = initrd_override
@@ -202,8 +187,8 @@ pub fn boot_vm(
                 initrd_path.display()
             );
             builder = builder.initrd_path(initrd_path);
-            if let Some(ref h) = expected_hashes {
-                builder = builder.expected_initrd_hash(&h.initrd);
+            if let Some(hash) = expected_initrd_hash {
+                builder = builder.expected_initrd_hash(hash);
             }
         } else {
             info!(
@@ -225,8 +210,8 @@ pub fn boot_vm(
                 rootfs.exists()
             );
             builder = builder.disk_path(rootfs);
-            if let Some(ref h) = expected_hashes {
-                builder = builder.expected_disk_hash(&h.rootfs);
+            if let Some(hash) = expected_rootfs_hash {
+                builder = builder.expected_disk_hash(hash);
             }
         } else {
             info!("[boot-audit] rootfs: none");

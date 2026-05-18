@@ -12,7 +12,7 @@ Design the typed service settings model before coding it.
 - Validators and error messages.
 - Credential storage fields.
 - Profile root settings.
-- Asset, manifest, and custom image location settings.
+- Asset and custom image location settings.
 - Observability plugin settings.
 - Remote policy plugin settings.
 - UI descriptor strategy.
@@ -31,8 +31,6 @@ The Rust-owned shape lives in `capsem-core::settings_profiles`:
 - `ProfileRootSettings`
 - `CredentialSettings`
 - `AssetLocationSettings`
-- `ManifestLocationSettings`
-- `ManifestSource`
 - `TelemetrySettings`
 - `RemotePolicySettings`
 - `service_setting_descriptors()`
@@ -41,14 +39,16 @@ Design decisions closed:
 
 - Service settings are service/app scoped, not profile scoped.
 - Profile roots, corp/user governance toggles, telemetry endpoint, remote policy
-  endpoint, credential storage, manifest source, asset directory, image roots,
-  and asset download endpoint are service settings.
-- Manifest source supports installed defaults, local file, and remote URL.
+  endpoint, credential storage, asset directory, image roots, and asset download
+  endpoint are service settings.
+- Old asset-manifest source settings were removed in S07a; profile payloads now
+  declare VM assets and the signed profile catalog is the only manifest-shaped
+  runtime contract.
 - TOML credentials are acceptable for cutover; keychain remains stretch work in
   credential brokerage.
 - UI descriptors are Rust-owned and generated/exposed from the typed model, not
   handwritten `config/defaults.json`.
-- Debug/status must expose configured manifest/image/asset locations and
+- Debug/status must expose configured image/asset locations and
   telemetry/remote policy endpoints, with secrets redacted.
 
 Implementation/open follow-ups move to later sprints:

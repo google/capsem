@@ -65,6 +65,12 @@ struct Args {
     #[arg(long)]
     initrd: Option<PathBuf>,
     #[arg(long)]
+    expected_kernel_hash: Option<String>,
+    #[arg(long)]
+    expected_initrd_hash: Option<String>,
+    #[arg(long)]
+    expected_rootfs_hash: Option<String>,
+    #[arg(long)]
     session_dir: PathBuf,
     #[arg(long, default_value_t = 2)]
     cpus: u32,
@@ -184,6 +190,9 @@ fn main() -> Result<()> {
         kernel_override: args.kernel.as_deref(),
         initrd_override: args.initrd.as_deref(),
         rootfs_override: Some(&args.rootfs),
+        expected_kernel_hash: args.expected_kernel_hash.as_deref(),
+        expected_initrd_hash: args.expected_initrd_hash.as_deref(),
+        expected_rootfs_hash: args.expected_rootfs_hash.as_deref(),
         cmdline: "console=hvc0 ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1",
         system_overlay_disk: Some(&system_img),
         virtiofs_shares: &virtiofs_shares,

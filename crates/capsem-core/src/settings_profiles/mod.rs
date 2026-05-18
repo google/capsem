@@ -279,7 +279,6 @@ pub struct ResolvedServiceAssetLocations {
     pub assets_dir_origin: ServiceSettingOrigin,
     pub image_roots: Vec<PathBuf>,
     pub image_roots_origin: ServiceSettingOrigin,
-    pub manifest: ManifestLocationSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub download_base_url: Option<String>,
 }
@@ -319,7 +318,6 @@ pub fn resolve_service_asset_locations(
         assets_dir_origin,
         image_roots,
         image_roots_origin,
-        manifest: settings.assets.manifest.clone(),
         download_base_url: settings.assets.download_base_url.clone(),
     })
 }
@@ -327,8 +325,6 @@ pub fn resolve_service_asset_locations(
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AssetLocationSettings {
-    #[serde(default)]
-    pub manifest: ManifestLocationSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets_dir: Option<PathBuf>,
     #[serde(default)]
@@ -339,7 +335,6 @@ pub struct AssetLocationSettings {
 
 impl AssetLocationSettings {
     fn validate(&self, path: &str) -> Result<()> {
-        self.manifest.validate(&format!("{path}.manifest"))?;
         if let Some(assets_dir) = &self.assets_dir {
             validate_path(&format!("{path}.assets_dir"), assets_dir)?;
         }
@@ -348,82 +343,6 @@ impl AssetLocationSettings {
             validate_endpoint(&format!("{path}.download_base_url"), endpoint)?;
         }
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestLocationSettings {
-    #[serde(default)]
-    pub source: ManifestSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signature_path: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signature_url: Option<String>,
-}
-
-impl Default for ManifestLocationSettings {
-    fn default() -> Self {
-        Self {
-            source: ManifestSource::Installed,
-            path: None,
-            url: None,
-            signature_path: None,
-            signature_url: None,
-        }
-    }
-}
-
-impl ManifestLocationSettings {
-    fn validate(&self, path: &str) -> Result<()> {
-        match self.source {
-            ManifestSource::Installed => {
-                reject_present_path(path, "path", self.path.as_ref())?;
-                reject_present_path(path, "signature_path", self.signature_path.as_ref())?;
-                reject_present_endpoint(path, "url", self.url.as_deref())?;
-                reject_present_endpoint(path, "signature_url", self.signature_url.as_deref())?;
-            }
-            ManifestSource::LocalFile => {
-                validate_required_path(path, "path", self.path.as_ref())?;
-                if let Some(signature_path) = &self.signature_path {
-                    validate_path(&format!("{path}.signature_path"), signature_path)?;
-                }
-                reject_present_endpoint(path, "url", self.url.as_deref())?;
-                reject_present_endpoint(path, "signature_url", self.signature_url.as_deref())?;
-            }
-            ManifestSource::RemoteUrl => {
-                validate_required_endpoint(path, "url", self.url.as_deref())?;
-                if let Some(signature_url) = self.signature_url.as_deref() {
-                    validate_endpoint(&format!("{path}.signature_url"), signature_url)?;
-                }
-                reject_present_path(path, "path", self.path.as_ref())?;
-                reject_present_path(path, "signature_path", self.signature_path.as_ref())?;
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum ManifestSource {
-    #[default]
-    Installed,
-    LocalFile,
-    RemoteUrl,
-}
-
-impl ManifestSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Installed => "installed",
-            Self::LocalFile => "local-file",
-            Self::RemoteUrl => "remote-url",
-        }
     }
 }
 
@@ -1498,33 +1417,6 @@ pub fn service_setting_descriptors() -> Vec<SettingDescriptor> {
             sensitive: true,
         },
         SettingDescriptor {
-            path: "assets.manifest.source",
-            label: "Manifest source",
-            description: "Where Capsem reads the asset manifest from.",
-            scope: SettingScope::Service,
-            widget: SettingWidget::Select,
-            default_value: json!("installed"),
-            sensitive: false,
-        },
-        SettingDescriptor {
-            path: "assets.manifest.path",
-            label: "Manifest path",
-            description: "Local asset manifest path when using a local manifest.",
-            scope: SettingScope::Service,
-            widget: SettingWidget::Text,
-            default_value: serde_json::Value::Null,
-            sensitive: false,
-        },
-        SettingDescriptor {
-            path: "assets.manifest.url",
-            label: "Manifest URL",
-            description: "Remote asset manifest endpoint when using a remote manifest.",
-            scope: SettingScope::Service,
-            widget: SettingWidget::Endpoint,
-            default_value: serde_json::Value::Null,
-            sensitive: false,
-        },
-        SettingDescriptor {
             path: "assets.assets_dir",
             label: "Assets directory",
             description: "Directory for downloaded or installed VM boot assets.",
@@ -2127,15 +2019,6 @@ pub struct ServiceSettingsDebugSummary {
     pub base_dirs: Vec<String>,
     pub corp_dirs: Vec<String>,
     pub user_dirs: Vec<String>,
-    pub manifest_source: ManifestSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_signature_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_signature_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assets_dir: Option<String>,
     pub image_roots: Vec<String>,
@@ -2162,21 +2045,6 @@ impl ServiceSettingsDebugSummary {
             base_dirs: paths_to_strings(&settings.profiles.base_dirs),
             corp_dirs: paths_to_strings(&settings.profiles.corp_dirs),
             user_dirs: paths_to_strings(&settings.profiles.user_dirs),
-            manifest_source: settings.assets.manifest.source,
-            manifest_path: settings
-                .assets
-                .manifest
-                .path
-                .as_ref()
-                .map(|path| path.display().to_string()),
-            manifest_url: settings.assets.manifest.url.clone(),
-            manifest_signature_path: settings
-                .assets
-                .manifest
-                .signature_path
-                .as_ref()
-                .map(|path| path.display().to_string()),
-            manifest_signature_url: settings.assets.manifest.signature_url.clone(),
             assets_dir: settings
                 .assets
                 .assets_dir
@@ -3317,26 +3185,6 @@ fn validate_path(path: &str, path_value: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_required_path(path: &str, field: &str, value: Option<&PathBuf>) -> Result<()> {
-    match value {
-        Some(path_value) => validate_path(&format!("{path}.{field}"), path_value),
-        None => validation_error(
-            &format!("{path}.{field}"),
-            &format!("{field} is required for this source"),
-        ),
-    }
-}
-
-fn reject_present_path(path: &str, field: &str, value: Option<&PathBuf>) -> Result<()> {
-    if value.is_some() {
-        validation_error(
-            &format!("{path}.{field}"),
-            &format!("{field} is not valid for this source"),
-        )?;
-    }
-    Ok(())
-}
-
 fn validate_optional_endpoint(path: &str, enabled: bool, endpoint: Option<&str>) -> Result<()> {
     match (enabled, endpoint) {
         (true, Some(value)) => validate_endpoint(&format!("{path}.endpoint"), value),
@@ -3349,26 +3197,6 @@ fn validate_optional_endpoint(path: &str, enabled: bool, endpoint: Option<&str>)
         }
         _ => Ok(()),
     }
-}
-
-fn validate_required_endpoint(path: &str, field: &str, value: Option<&str>) -> Result<()> {
-    match value {
-        Some(endpoint) => validate_endpoint(&format!("{path}.{field}"), endpoint),
-        None => validation_error(
-            &format!("{path}.{field}"),
-            &format!("{field} is required for this source"),
-        ),
-    }
-}
-
-fn reject_present_endpoint(path: &str, field: &str, value: Option<&str>) -> Result<()> {
-    if value.is_some() {
-        validation_error(
-            &format!("{path}.{field}"),
-            &format!("{field} is not valid for this source"),
-        )?;
-    }
-    Ok(())
 }
 
 fn validate_endpoint(path: &str, endpoint: &str) -> Result<()> {

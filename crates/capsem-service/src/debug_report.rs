@@ -165,7 +165,6 @@ pub struct StatusIssuesInput {
     pub gateway_port_file_exists: bool,
     pub gateway_token_file_exists: bool,
     pub assets_dir_exists: bool,
-    pub manifest_present: bool,
     pub resolved_assets: std::result::Result<StatusResolvedAssets, String>,
     pub defunct_session_count: usize,
 }
@@ -360,10 +359,6 @@ pub fn status_issues(input: StatusIssuesInput) -> Vec<String> {
     if !input.assets_dir_exists {
         issues.push("Assets directory not found".into());
         return issues;
-    }
-
-    if !input.manifest_present {
-        issues.push("Manifest file not found in assets directory".into());
     }
 
     match input.resolved_assets {
@@ -806,10 +801,6 @@ fn append_asset_locations_report(
         "resolved_image_roots_origin: {}",
         locations.image_roots_origin.as_str()
     ));
-    lines.push(format!(
-        "resolved_manifest_source: {}",
-        locations.manifest.source.as_str()
-    ));
 }
 
 fn append_host_report(
@@ -916,29 +907,6 @@ fn append_settings_profiles_report(
         lines.push(format!(
             "profile_user_dirs: {}",
             join_redacted_paths(&service.user_dirs)
-        ));
-        lines.push(format!(
-            "manifest_source: {}",
-            service.manifest_source.as_str()
-        ));
-        lines.push(format!(
-            "manifest_path: {}",
-            redacted_optional_path(service.manifest_path.as_deref())
-        ));
-        lines.push(format!(
-            "manifest_url: {}",
-            service.manifest_url.as_deref().unwrap_or("<none>")
-        ));
-        lines.push(format!(
-            "manifest_signature_path: {}",
-            redacted_optional_path(service.manifest_signature_path.as_deref())
-        ));
-        lines.push(format!(
-            "manifest_signature_url: {}",
-            service
-                .manifest_signature_url
-                .as_deref()
-                .unwrap_or("<none>")
         ));
         lines.push(format!(
             "assets_dir: {}",

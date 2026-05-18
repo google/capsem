@@ -418,6 +418,9 @@ These decisions must be closed before implementation can be called airtight:
 - Add manifest parsing for profile catalog records and revision status.
 - Remove asset-only manifest handling from the profile-backed release/runtime
   path; do not add migration or compatibility behavior for old manifests.
+  Landed: service startup, setup welcome, asset health, service settings, and
+  process boot hash verification no longer load or configure old asset
+  manifests.
 - Add profile payload download/install/update logic.
 - Extend profile schema and effective settings with packages/tools and VM asset
   declarations.
@@ -495,12 +498,22 @@ This sprint creates the contract consumed by later sprints:
       existing ancestor-chain resolver.
 - [ ] Add profile payload install/update/delete/revoke logic from manifest
       records.
-- [ ] Add profile-driven asset resolution and first-use download.
-- [ ] Add atomic first-use download locking and verification-before-rename for
-      profile payloads and VM assets.
+- [~] Add profile-driven asset resolution and first-use download. Service
+      startup now builds an `AssetRequirement` from the default profile's
+      `vm.assets.<arch>` declaration, rejects old manifest-backed release
+      startup, downloads missing VM assets from profile URLs, and forwards
+      expected profile hashes into `capsem-process`.
+- [~] Add atomic first-use download locking and verification-before-rename for
+      profile payloads and VM assets. Initial VM-asset path has supervisor
+      serialization, temp-file cleanup, streaming hash verification, and rename
+      after hash match; remaining work adds cross-process/per-asset locks and
+      profile payload downloads.
 - [ ] Add cleanup retention for installed profile revisions plus existing VM
       pins.
-- [ ] Add persistent VM profile/revision/package/asset pin metadata.
+- [~] Add persistent VM profile/revision/package/asset pin metadata. VM base
+      asset hashes are now derived from profile asset declarations instead of
+      the asset manifest; remaining work adds explicit `profile_id`,
+      `profile_revision`, and package contract fields to registry records.
 - [ ] Add explicit unsupported/unbound handling for pre-S07a registry records.
 - [ ] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
@@ -516,10 +529,11 @@ This sprint creates the contract consumed by later sprints:
 - Unit/contract: initial profile manifest parser/status validator landed with
   `cargo test -p capsem-core profile_manifest` (9 tests passed). The first
   profile contract slice landed with `cargo test -p capsem-core
-  settings_profiles` (123 tests passed), including package/tool/asset TOML
+  settings_profiles` (122 tests passed), including package/tool/asset TOML
   parsing, missing tool-version rejection, canonical asset-hash rejection,
   asset path-traversal rejection, descriptor coverage, and inherited
-  package/tool/asset merge behavior. Formal schema coverage landed with
+  package/tool/asset merge behavior; it now also rejects legacy
+  `[assets.manifest]` service settings. Formal schema coverage landed with
   `cargo test -p capsem-core --test profile_schema` (3 tests passed), compiling
   the Draft 2020-12 artifact and checking valid/invalid golden fixtures.
   Rust schema helper coverage now runs `cargo test -p capsem-core --test
@@ -529,14 +543,20 @@ This sprint creates the contract consumed by later sprints:
   tests/test_profiles.py` (8 tests passed), covering Pydantic-only JSON
   round-trips, TOML parse-then-Pydantic validation, invalid fixture rejection,
   `ProfileRevisionStatus = active|deprecated|revoked` with no `removed`, and
-  active-current manifest validation. Remaining: cross-language schema fixture
-  parity, per-arch asset selection against host arch, rollback/stale-manifest
-  rejection, signature-key identity, full package version grammar validation,
-  and fail-closed rejection of old asset-only manifests on profile-backed paths.
+  active-current manifest validation. Runtime asset supervisor coverage now runs
+  `cargo test -p capsem-service asset_supervisor --lib` (7 tests passed),
+  covering profile URL download, missing assets, retryable failures, and
+  background reconciliation; `cargo test -p capsem-service` (245 tests passed)
+  covers startup fail-closed behavior, service asset status without legacy
+  manifest fields, profile-derived saved-VM base hashes, and debug/status
+  shape. Remaining: cross-language schema fixture parity, rollback/stale
+  catalog rejection, signature-key identity, full package version grammar
+  validation, profile payload downloads, and per-asset cross-process locks.
 - Functional: profile install/update/remove/revoke from manifest; selected
-  profile VM creation pins revision and assets; resume preserves VM pins after a
-  profile update; unpinned pre-S07a VM registry entries render explicit
-  unsupported/unbound state instead of rebinding to the current default.
+  profile VM creation pins explicit profile revision and assets; resume
+  preserves VM pins after a profile update; unpinned pre-S07a VM registry
+  entries render explicit unsupported/unbound state instead of rebinding to the
+  current default.
 - Adversarial: bad profile id/revision, unknown fields/tables, wrong schema
   id/version, manifest/payload id mismatch, missing parent revision for a
   catalog-published inherited profile, downgrade attempts, bad signature/hash,

@@ -662,7 +662,8 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                 | ProcessToService::McpServersResult { .. }
                 | ProcessToService::McpToolsResult { .. }
                 | ProcessToService::McpRefreshResult { .. }
-                | ProcessToService::McpCallToolResult { .. } => {}
+                | ProcessToService::McpCallToolResult { .. }
+                | ProcessToService::MetricsSnapshot { .. } => {}
             }
         }
     });

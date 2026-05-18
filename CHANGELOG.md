@@ -62,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed the signed profile catalog manifest to the canonical
   `ProfileManifest` / `format = 1` contract, removing the transitional
   generation naming and old asset-manifest compatibility language.
+- Changed VM asset readiness to be profile-driven: service startup now resolves
+  boot assets from the selected profile's per-architecture declarations,
+  downloads missing assets from profile URLs, and forwards expected hashes to
+  `capsem-process` for boot-time verification.
+- Removed legacy `assets.manifest.*` service settings and setup-time asset
+  manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

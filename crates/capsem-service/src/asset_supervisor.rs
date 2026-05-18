@@ -2,20 +2,38 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
-use capsem_core::asset_manager::{DownloadProgress, ManifestV2, ResolvedAssets};
+use anyhow::{bail, Context, Result};
+use capsem_core::asset_manager::{
+    hash_filename, DownloadProgress, ExpectedAssetHashes, ResolvedAssets,
+};
+use capsem_core::settings_profiles::{EffectiveVmSettings, VmArchAssets, VmAssetDeclaration};
+use futures::StreamExt;
+use tokio::io::AsyncWriteExt;
 
 use crate::api::{AssetHealth, AssetHealthState, AssetProgress};
+use crate::registry::SavedVmBaseAssets;
 
 #[derive(Debug)]
 pub struct AssetSupervisor {
     assets_dir: PathBuf,
-    manifest: Option<Arc<ManifestV2>>,
-    binary_version: String,
-    arch: String,
+    requirement: AssetRequirement,
     check_interval: Duration,
     state: Mutex<AssetHealth>,
     run_lock: tokio::sync::Mutex<()>,
+}
+
+#[derive(Debug, Clone)]
+pub enum AssetRequirement {
+    Profile(ProfileAssetRequirement),
+    DevLogical { arch: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct ProfileAssetRequirement {
+    profile_id: String,
+    revision: Option<String>,
+    arch: String,
+    assets: VmArchAssets,
 }
 
 #[derive(Debug)]
@@ -29,16 +47,12 @@ struct LocalAssetStatus {
 impl AssetSupervisor {
     pub fn new(
         assets_dir: PathBuf,
-        manifest: Option<Arc<ManifestV2>>,
-        binary_version: String,
-        arch: String,
+        requirement: AssetRequirement,
         check_interval: Duration,
     ) -> Self {
         Self {
             assets_dir,
-            manifest,
-            binary_version,
-            arch,
+            requirement,
             check_interval,
             state: Mutex::new(AssetHealth {
                 ready: false,
@@ -72,6 +86,20 @@ impl AssetSupervisor {
 
     pub fn resolve_asset_paths(&self) -> Result<ResolvedAssets> {
         self.inspect_required_assets().map(|status| status.resolved)
+    }
+
+    pub fn expected_hashes(&self) -> Option<ExpectedAssetHashes> {
+        match &self.requirement {
+            AssetRequirement::Profile(required) => Some(required.expected_hashes()),
+            AssetRequirement::DevLogical { .. } => None,
+        }
+    }
+
+    pub fn current_base_assets(&self) -> Option<SavedVmBaseAssets> {
+        match &self.requirement {
+            AssetRequirement::Profile(required) => Some(required.base_assets()),
+            AssetRequirement::DevLogical { .. } => None,
+        }
     }
 
     pub fn refresh_local_state(&self) {
@@ -127,19 +155,18 @@ impl AssetSupervisor {
         };
 
         self.record_updating(status);
-        let Some(manifest) = self.manifest.as_ref().cloned() else {
-            self.record_error("required development assets are missing", false);
-            return;
+        let result = match &self.requirement {
+            AssetRequirement::Profile(required) => {
+                download_missing_profile_assets(required, &self.assets_dir, |progress| {
+                    self.record_download_progress(progress)
+                })
+                .await
+            }
+            AssetRequirement::DevLogical { .. } => {
+                self.record_error("required development assets are missing", false);
+                return;
+            }
         };
-
-        let result = capsem_core::asset_manager::download_missing_assets(
-            &manifest,
-            &self.binary_version,
-            &self.arch,
-            &self.assets_dir,
-            |progress| self.record_download_progress(progress),
-        )
-        .await;
 
         match result {
             Ok(_) => self.refresh_local_state(),
@@ -184,15 +211,22 @@ impl AssetSupervisor {
     }
 
     fn inspect_required_assets(&self) -> Result<LocalAssetStatus> {
-        let resolved = if let Some(manifest) = &self.manifest {
-            manifest.resolve(&self.binary_version, &self.arch, &self.assets_dir)?
-        } else {
-            let base = dev_asset_base(&self.assets_dir, &self.arch);
-            ResolvedAssets {
-                kernel: base.join("vmlinuz"),
-                initrd: base.join("initrd.img"),
-                rootfs: base.join("rootfs.squashfs"),
-                asset_version: "dev".to_string(),
+        let (arch, resolved) = match &self.requirement {
+            AssetRequirement::Profile(required) => (
+                required.arch.clone(),
+                required.resolved_assets(&self.assets_dir),
+            ),
+            AssetRequirement::DevLogical { arch } => {
+                let base = dev_asset_base(&self.assets_dir, arch);
+                (
+                    arch.clone(),
+                    ResolvedAssets {
+                        kernel: base.join("vmlinuz"),
+                        initrd: base.join("initrd.img"),
+                        rootfs: base.join("rootfs.squashfs"),
+                        asset_version: "dev".to_string(),
+                    },
+                )
             }
         };
 
@@ -209,11 +243,195 @@ impl AssetSupervisor {
 
         Ok(LocalAssetStatus {
             version: resolved.asset_version.clone(),
-            arch: self.arch.clone(),
+            arch,
             missing,
             resolved,
         })
     }
+}
+
+impl ProfileAssetRequirement {
+    pub fn new(
+        profile_id: String,
+        revision: Option<String>,
+        arch: String,
+        assets: VmArchAssets,
+    ) -> Self {
+        Self {
+            profile_id,
+            revision,
+            arch,
+            assets,
+        }
+    }
+
+    pub fn from_effective(effective: &EffectiveVmSettings, arch: &str) -> Result<Self> {
+        let assets = effective
+            .vm
+            .value
+            .assets
+            .get(arch)
+            .cloned()
+            .with_context(|| {
+                format!(
+                    "profile {} does not declare VM assets for arch {arch}",
+                    effective.profile_id
+                )
+            })?;
+        Ok(Self::new(
+            effective.profile_id.clone(),
+            None,
+            arch.to_string(),
+            assets,
+        ))
+    }
+
+    fn resolved_assets(&self, base_dir: &Path) -> ResolvedAssets {
+        ResolvedAssets {
+            kernel: self.resolve_one(base_dir, "vmlinuz", &self.assets.kernel),
+            initrd: self.resolve_one(base_dir, "initrd.img", &self.assets.initrd),
+            rootfs: self.resolve_one(base_dir, "rootfs.squashfs", &self.assets.rootfs),
+            asset_version: self.asset_version(),
+        }
+    }
+
+    fn resolve_one(
+        &self,
+        base_dir: &Path,
+        logical_name: &str,
+        asset: &VmAssetDeclaration,
+    ) -> PathBuf {
+        let hash = profile_asset_hash_hex(asset);
+        let filename = hash_filename(logical_name, hash);
+        let flat = base_dir.join(&filename);
+        if flat.exists() {
+            return flat;
+        }
+        base_dir.join(&self.arch).join(filename)
+    }
+
+    pub fn expected_hashes(&self) -> ExpectedAssetHashes {
+        ExpectedAssetHashes {
+            kernel: profile_asset_hash_hex(&self.assets.kernel).to_string(),
+            initrd: profile_asset_hash_hex(&self.assets.initrd).to_string(),
+            rootfs: profile_asset_hash_hex(&self.assets.rootfs).to_string(),
+        }
+    }
+
+    fn base_assets(&self) -> SavedVmBaseAssets {
+        let hashes = self.expected_hashes();
+        SavedVmBaseAssets {
+            asset_version: self.asset_version(),
+            arch: self.arch.clone(),
+            kernel_hash: hashes.kernel,
+            initrd_hash: hashes.initrd,
+            rootfs_hash: hashes.rootfs,
+            guest_abi: Some("capsem-guest-v2".to_string()),
+        }
+    }
+
+    pub fn asset_version(&self) -> String {
+        self.revision
+            .as_ref()
+            .map(|revision| format!("{}@{}", self.profile_id, revision))
+            .unwrap_or_else(|| self.profile_id.clone())
+    }
+}
+
+async fn download_missing_profile_assets(
+    required: &ProfileAssetRequirement,
+    base_dir: &Path,
+    mut on_progress: impl FnMut(DownloadProgress),
+) -> Result<()> {
+    let arch_dir = base_dir.join(&required.arch);
+    tokio::fs::create_dir_all(&arch_dir)
+        .await
+        .with_context(|| format!("create {}", arch_dir.display()))?;
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("build reqwest client")?;
+
+    for (logical_name, asset) in [
+        ("vmlinuz", &required.assets.kernel),
+        ("initrd.img", &required.assets.initrd),
+        ("rootfs.squashfs", &required.assets.rootfs),
+    ] {
+        let hash = profile_asset_hash_hex(asset);
+        let filename = hash_filename(logical_name, hash);
+        let target = arch_dir.join(&filename);
+        if target.exists()
+            && capsem_core::asset_manager::hash_file(&target)
+                .ok()
+                .as_deref()
+                == Some(hash)
+        {
+            on_progress(DownloadProgress {
+                logical_name: logical_name.to_string(),
+                bytes_done: asset.size,
+                bytes_total: Some(asset.size),
+                done: true,
+            });
+            continue;
+        }
+
+        let url = &asset.url;
+        let resp = client
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        if !resp.status().is_success() {
+            bail!("GET {} returned {}", url, resp.status());
+        }
+        let total = resp.content_length().or(Some(asset.size));
+        let tmp = arch_dir.join(format!("{filename}.tmp"));
+        let _ = tokio::fs::remove_file(&tmp).await;
+        let mut file = tokio::fs::File::create(&tmp)
+            .await
+            .with_context(|| format!("create {}", tmp.display()))?;
+        let mut hasher = blake3::Hasher::new();
+        let mut bytes_done = 0_u64;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.with_context(|| format!("stream {url}"))?;
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("write {}", tmp.display()))?;
+            hasher.update(&chunk);
+            bytes_done += chunk.len() as u64;
+            on_progress(DownloadProgress {
+                logical_name: logical_name.to_string(),
+                bytes_done,
+                bytes_total: total,
+                done: false,
+            });
+        }
+        file.flush()
+            .await
+            .with_context(|| format!("flush {}", tmp.display()))?;
+        drop(file);
+
+        let actual = hasher.finalize().to_hex().to_string();
+        if actual != hash {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            bail!("{logical_name}: hash mismatch (expected {hash}, got {actual})");
+        }
+        tokio::fs::rename(&tmp, &target)
+            .await
+            .with_context(|| format!("install {}", target.display()))?;
+        on_progress(DownloadProgress {
+            logical_name: logical_name.to_string(),
+            bytes_done,
+            bytes_total: total,
+            done: true,
+        });
+    }
+    Ok(())
+}
+
+fn profile_asset_hash_hex(asset: &VmAssetDeclaration) -> &str {
+    asset.hash.strip_prefix("blake3:").unwrap_or(&asset.hash)
 }
 
 fn dev_asset_base(assets_dir: &Path, arch: &str) -> PathBuf {

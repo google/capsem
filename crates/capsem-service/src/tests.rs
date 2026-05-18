@@ -3,111 +3,76 @@ use std::sync::atomic::AtomicU64;
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-const UNSIGNED_MANIFEST: &str = r#"{
-    "format": 2,
-    "assets": {
-        "current": "2026.0415.1",
-        "releases": {
-            "2026.0415.1": {
-                "date": "2026-04-15",
-                "deprecated": false,
-                "min_binary": "1.0.0",
-                "arches": {
-                    "arm64": {
-                        "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
-                        "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
-                        "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
-                    }
-                }
-            }
-        }
-    },
-    "binaries": {
-        "current": "1.0.1776269479",
-        "releases": {
-            "1.0.1776269479": {
-                "date": "2026-04-15",
-                "deprecated": false,
-                "min_assets": "2026.0415.1"
-            }
-        }
-    }
-}"#;
-
 #[test]
-fn startup_manifest_loader_rejects_unsigned_manifest() {
+fn startup_asset_requirement_reads_profile_vm_assets() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+    let profile_dir = dir.path().join("profiles/base");
+    std::fs::create_dir_all(&profile_dir).unwrap();
+    std::fs::write(
+        profile_dir.join("everyday-work.toml"),
+        r#"
+version = 1
+id = "everyday-work"
+name = "Everyday Work"
+best_for = "Daily sessions."
+profile_type = "everyday-work"
 
-    let err = load_startup_manifest_for_assets(dir.path()).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("signature missing"),
-        "unexpected error: {err:#}"
-    );
-}
+[vm.assets.arm64.kernel]
+url = "https://assets.example.test/vmlinuz"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "https://assets.example.test/vmlinuz.minisig"
+size = 10
+content_type = "application/octet-stream"
 
-#[test]
-fn startup_manifest_loader_rejects_invalid_signature() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
-    std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
+[vm.assets.arm64.initrd]
+url = "https://assets.example.test/initrd.img"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "https://assets.example.test/initrd.img.minisig"
+size = 11
+content_type = "application/octet-stream"
 
-    let err = load_startup_manifest_for_assets(dir.path()).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("verify"),
-        "unexpected error: {err:#}"
-    );
-}
+[vm.assets.arm64.rootfs]
+url = "https://assets.example.test/rootfs.squashfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "https://assets.example.test/rootfs.squashfs.minisig"
+size = 12
+content_type = "application/vnd.squashfs"
+"#,
+    )
+    .unwrap();
+    let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+    settings.profiles.base_dirs = vec![profile_dir];
+    settings.profiles.default_profile = "everyday-work".to_string();
 
-#[test]
-fn startup_local_manifest_source_requires_signature() {
-    let dir = tempfile::tempdir().unwrap();
-    let manifest_path = dir.path().join("custom-manifest.json");
-    std::fs::write(&manifest_path, UNSIGNED_MANIFEST).unwrap();
+    let requirement = startup_asset_requirement(&settings, "arm64", false).unwrap();
 
-    let locations = capsem_core::settings_profiles::ResolvedServiceAssetLocations {
-        assets_dir: dir.path().join("assets"),
-        assets_dir_origin: capsem_core::settings_profiles::ServiceSettingOrigin::ServiceSettings,
-        image_roots: Vec::new(),
-        image_roots_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
-        manifest: capsem_core::settings_profiles::ManifestLocationSettings {
-            source: capsem_core::settings_profiles::ManifestSource::LocalFile,
-            path: Some(manifest_path),
-            url: None,
-            signature_path: None,
-            signature_url: None,
-        },
-        download_base_url: None,
+    let AssetRequirement::Profile(required) = requirement else {
+        panic!("expected profile-backed asset requirement");
     };
-
-    let err = load_startup_manifest_for_asset_locations(&locations).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("manifest signature missing"),
-        "unexpected error: {err:#}"
-    );
+    assert_eq!(required.asset_version(), "everyday-work");
+    assert_eq!(required.expected_hashes().kernel, "a".repeat(64));
 }
 
 #[test]
-fn startup_remote_manifest_source_uses_cached_assets_manifest_without_network_fetch() {
+fn startup_asset_requirement_rejects_profiles_without_vm_assets_when_dev_fallback_is_disabled() {
     let dir = tempfile::tempdir().unwrap();
+    let profile_dir = dir.path().join("profiles/base");
+    std::fs::create_dir_all(&profile_dir).unwrap();
+    write_profile_fixture(
+        &profile_dir.join("everyday-work.toml"),
+        "everyday-work",
+        "Everyday Work",
+    );
+    let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+    settings.profiles.base_dirs = vec![profile_dir];
+    settings.profiles.default_profile = "everyday-work".to_string();
 
-    let locations = capsem_core::settings_profiles::ResolvedServiceAssetLocations {
-        assets_dir: dir.path().join("assets"),
-        assets_dir_origin: capsem_core::settings_profiles::ServiceSettingOrigin::ServiceSettings,
-        image_roots: Vec::new(),
-        image_roots_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
-        manifest: capsem_core::settings_profiles::ManifestLocationSettings {
-            source: capsem_core::settings_profiles::ManifestSource::RemoteUrl,
-            path: None,
-            url: Some("https://assets.example.test/manifest.json".to_string()),
-            signature_path: None,
-            signature_url: Some("https://assets.example.test/manifest.json.minisig".to_string()),
-        },
-        download_base_url: Some("https://assets.example.test/capsem".to_string()),
-    };
+    let err = startup_asset_requirement(&settings, "arm64", false).unwrap_err();
 
-    let loaded = load_startup_manifest_for_asset_locations(&locations).unwrap();
-    assert!(loaded.is_none());
+    assert!(
+        format!("{err:#}").contains("old asset manifests are not runtime authority"),
+        "unexpected error: {err:#}"
+    );
 }
 
 #[test]
@@ -710,16 +675,12 @@ fn test_magika() -> Mutex<magika::Session> {
     )
 }
 
-fn test_asset_supervisor(
-    assets_dir: PathBuf,
-    manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
-    current_version: &str,
-) -> Arc<AssetSupervisor> {
+fn test_asset_supervisor(assets_dir: PathBuf) -> Arc<AssetSupervisor> {
     Arc::new(AssetSupervisor::new(
         assets_dir,
-        manifest,
-        current_version.to_string(),
-        host_asset_arch().to_string(),
+        AssetRequirement::DevLogical {
+            arch: host_asset_arch().to_string(),
+        },
         std::time::Duration::from_secs(60),
     ))
 }
@@ -732,7 +693,6 @@ fn test_asset_locations(
         assets_dir_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
         image_roots: Vec::new(),
         image_roots_origin: capsem_core::settings_profiles::ServiceSettingOrigin::Default,
-        manifest: capsem_core::settings_profiles::ManifestLocationSettings::default(),
         download_base_url: None,
     }
 }
@@ -750,7 +710,6 @@ fn test_service_settings(run_dir: &FsPath) -> capsem_core::settings_profiles::Se
 fn make_test_state() -> Arc<ServiceState> {
     let registry_path = PathBuf::from("/tmp/capsem-test-svc/persistent_registry.json");
     let assets_dir = PathBuf::from("/nonexistent/assets");
-    let manifest = None;
     let current_version = "0.0.0";
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
@@ -761,8 +720,7 @@ fn make_test_state() -> Arc<ServiceState> {
         service_settings: test_service_settings(FsPath::new("/tmp/capsem-test-svc")),
         run_dir: PathBuf::from("/tmp/capsem-test-svc"),
         job_counter: AtomicU64::new(1),
-        manifest: manifest.clone(),
-        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        asset_supervisor: test_asset_supervisor(assets_dir),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -810,10 +768,7 @@ async fn handle_asset_status_exposes_service_asset_locations() {
         status["asset_locations"]["assets_dir_origin"],
         serde_json::json!("default")
     );
-    assert_eq!(
-        status["asset_locations"]["manifest_source"],
-        serde_json::json!("installed")
-    );
+    assert!(status["asset_locations"].get("manifest_source").is_none());
 }
 
 #[test]
@@ -938,14 +893,46 @@ fn test_saved_vm_base_assets() -> capsem_service::registry::SavedVmBaseAssets {
 }
 
 #[test]
-fn saved_vm_current_base_assets_from_manifest_records_boot_hashes() {
-    let manifest = capsem_core::asset_manager::ManifestV2::from_json(UNSIGNED_MANIFEST).unwrap();
-    let base_assets =
-        saved_vm_assets::current_base_assets(Some(&manifest), "1.0.1776269479", "arm64")
-            .unwrap()
-            .unwrap();
+fn saved_vm_current_base_assets_from_profile_records_boot_hashes() {
+    let profile_assets = capsem_core::settings_profiles::VmArchAssets {
+        kernel: capsem_core::settings_profiles::VmAssetDeclaration {
+            url: "https://assets.example.test/vmlinuz".to_string(),
+            hash: "blake3:a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"
+                .to_string(),
+            signature_url: "https://assets.example.test/vmlinuz.minisig".to_string(),
+            size: 7_797_248,
+            content_type: "application/octet-stream".to_string(),
+        },
+        initrd: capsem_core::settings_profiles::VmAssetDeclaration {
+            url: "https://assets.example.test/initrd.img".to_string(),
+            hash: "blake3:cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456"
+                .to_string(),
+            signature_url: "https://assets.example.test/initrd.img.minisig".to_string(),
+            size: 2_270_154,
+            content_type: "application/octet-stream".to_string(),
+        },
+        rootfs: capsem_core::settings_profiles::VmAssetDeclaration {
+            url: "https://assets.example.test/rootfs.squashfs".to_string(),
+            hash: "blake3:b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
+                .to_string(),
+            signature_url: "https://assets.example.test/rootfs.squashfs.minisig".to_string(),
+            size: 454_230_016,
+            content_type: "application/vnd.squashfs".to_string(),
+        },
+    };
+    let supervisor = AssetSupervisor::new(
+        PathBuf::from("/tmp/assets"),
+        AssetRequirement::Profile(ProfileAssetRequirement::new(
+            "everyday-work".to_string(),
+            Some("2026.0415.1".to_string()),
+            "arm64".to_string(),
+            profile_assets,
+        )),
+        std::time::Duration::from_secs(60),
+    );
+    let base_assets = supervisor.current_base_assets().unwrap();
 
-    assert_eq!(base_assets.asset_version, "2026.0415.1");
+    assert_eq!(base_assets.asset_version, "everyday-work@2026.0415.1");
     assert_eq!(base_assets.arch, "arm64");
     assert_eq!(
         base_assets.kernel_hash,
@@ -1368,7 +1355,6 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
     let registry_path = run_dir.join("persistent_registry.json");
     std::fs::create_dir_all(run_dir.join("sessions")).unwrap();
     let assets_dir = PathBuf::from("/nonexistent/assets");
-    let manifest = None;
     let current_version = "0.0.0";
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
@@ -1379,8 +1365,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         service_settings: test_service_settings(&run_dir),
         run_dir,
         job_counter: AtomicU64::new(1),
-        manifest: manifest.clone(),
-        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        asset_supervisor: test_asset_supervisor(assets_dir),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -1860,7 +1845,6 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let registry_path = dir.path().join("persistent_registry.json");
     let assets_dir = dir.path().join("assets");
-    let manifest = None;
     let current_version = "0.0.0";
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
@@ -1871,8 +1855,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         service_settings: test_service_settings(dir.path()),
         run_dir: dir.path().to_path_buf(),
         job_counter: AtomicU64::new(1),
-        manifest: manifest.clone(),
-        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        asset_supervisor: test_asset_supervisor(assets_dir),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -3449,7 +3432,6 @@ fn make_test_state_with_tempdir_at(
     let run_dir = dir.path().join("run");
     let registry_path = run_dir.join("persistent_registry.json");
     let assets_dir = run_dir.join("assets");
-    let manifest = None;
     let current_version = "0.0.0";
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
@@ -3460,8 +3442,7 @@ fn make_test_state_with_tempdir_at(
         service_settings: test_service_settings(&run_dir),
         run_dir,
         job_counter: AtomicU64::new(1),
-        manifest: manifest.clone(),
-        asset_supervisor: test_asset_supervisor(assets_dir, manifest, current_version),
+        asset_supervisor: test_asset_supervisor(assets_dir),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),

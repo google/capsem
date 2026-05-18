@@ -72,9 +72,13 @@ a valid claim -- mark it `[ ]` instead.
     validation gate have landed. Python Pydantic v2 profile/manifest models now
     validate JSON through Pydantic, dump JSON through Pydantic, and bridge TOML
     through immediate Pydantic JSON validation. Rust now validates profile JSON
-    and TOML payloads against the production schema artifact. Remaining work
-    removes old asset-only runtime authority, installs profile payloads from
-    the manifest, adds first-use download, retention, and VM pins.
+    and TOML payloads against the production schema artifact. Service startup
+    now resolves/downloads VM assets from profile declarations, forwards
+    expected profile hashes to `capsem-process`, rejects old asset manifests as
+    runtime authority, and no longer exposes `assets.manifest.*` service
+    settings. Remaining work installs profile payloads from the catalog, adds
+    retention, explicit VM profile/revision/package pins, and pre-S07a
+    unsupported/unbound handling.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image

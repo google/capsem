@@ -314,10 +314,6 @@ fn includes_settings_profiles_without_leaking_credentials() {
     settings.assets.assets_dir = Some(dir.path().join("corp/assets"));
     settings.assets.image_roots = vec![dir.path().join("corp/images")];
     settings.assets.download_base_url = Some("https://assets.example.test/capsem".to_string());
-    settings.assets.manifest.source = capsem_core::settings_profiles::ManifestSource::RemoteUrl;
-    settings.assets.manifest.url = Some("https://assets.example.test/manifest.json".to_string());
-    settings.assets.manifest.signature_url =
-        Some("https://assets.example.test/manifest.json.minisig".to_string());
     settings.telemetry.enabled = true;
     settings.telemetry.endpoint = Some("https://otel.example.test/v1/traces".to_string());
     settings.remote_policy.enabled = true;
@@ -376,10 +372,6 @@ fn includes_settings_profiles_without_leaking_credentials() {
     assert!(report
         .text
         .contains("profile: everyday-work source=built-in locked=true"));
-    assert!(report.text.contains("manifest_source: remote-url"));
-    assert!(report
-        .text
-        .contains("manifest_url: https://assets.example.test/manifest.json"));
     assert!(report
         .text
         .contains("asset_download_base_url: https://assets.example.test/capsem"));

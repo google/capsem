@@ -1,16 +1,19 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{collections::HashMap, ffi::OsString};
 
-use capsem_core::asset_manager::{hash_file, hash_filename, DownloadProgress, ManifestV2};
-use serde_json::json;
+use capsem_core::asset_manager::{hash_file, hash_filename, DownloadProgress};
+use capsem_core::settings_profiles::{VmArchAssets, VmAssetDeclaration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::*;
 
-static RELEASE_URL_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-fn manifest_for(kernel: &[u8], initrd: &[u8], rootfs: &[u8]) -> ManifestV2 {
+fn profile_assets_for(
+    kernel: &[u8],
+    initrd: &[u8],
+    rootfs: &[u8],
+    base_url: &str,
+) -> ProfileAssetRequirement {
     let dir = tempfile::tempdir().unwrap();
     let kernel_path = dir.path().join("kernel");
     let initrd_path = dir.path().join("initrd");
@@ -19,53 +22,41 @@ fn manifest_for(kernel: &[u8], initrd: &[u8], rootfs: &[u8]) -> ManifestV2 {
     std::fs::write(&initrd_path, initrd).unwrap();
     std::fs::write(&rootfs_path, rootfs).unwrap();
 
-    let manifest = json!({
-        "format": 2,
-        "assets": {
-            "current": "2026.0513.1",
-            "releases": {
-                "2026.0513.1": {
-                    "date": "2026-05-13",
-                    "deprecated": false,
-                    "min_binary": "1.0.0",
-                    "arches": {
-                        "arm64": {
-                            "vmlinuz": { "hash": hash_file(&kernel_path).unwrap(), "size": kernel.len() },
-                            "initrd.img": { "hash": hash_file(&initrd_path).unwrap(), "size": initrd.len() },
-                            "rootfs.squashfs": { "hash": hash_file(&rootfs_path).unwrap(), "size": rootfs.len() }
-                        }
-                    }
-                }
-            }
+    let asset = |name: &str, path: &std::path::Path, size: usize| VmAssetDeclaration {
+        url: format!("{base_url}/{name}"),
+        hash: format!("blake3:{}", hash_file(path).unwrap()),
+        signature_url: format!("{base_url}/{name}.minisig"),
+        size: size as u64,
+        content_type: "application/octet-stream".to_string(),
+    };
+
+    ProfileAssetRequirement {
+        profile_id: "everyday-work".to_string(),
+        revision: Some("2026.0513.1".to_string()),
+        arch: "arm64".to_string(),
+        assets: VmArchAssets {
+            kernel: asset("vmlinuz", &kernel_path, kernel.len()),
+            initrd: asset("initrd.img", &initrd_path, initrd.len()),
+            rootfs: asset("rootfs.squashfs", &rootfs_path, rootfs.len()),
         },
-        "binaries": {
-            "current": "1.0.0",
-            "releases": {
-                "1.0.0": {
-                    "date": "2026-05-13",
-                    "deprecated": false,
-                    "min_assets": "2026.0513.1"
-                }
-            }
-        }
-    });
-    ManifestV2::from_json(&manifest.to_string()).unwrap()
+    }
 }
 
-fn supervisor_for(manifest: ManifestV2, assets_dir: &std::path::Path) -> AssetSupervisor {
-    supervisor_for_with_interval(manifest, assets_dir, Duration::from_secs(60))
+fn supervisor_for(
+    required: ProfileAssetRequirement,
+    assets_dir: &std::path::Path,
+) -> AssetSupervisor {
+    supervisor_for_with_interval(required, assets_dir, Duration::from_secs(60))
 }
 
 fn supervisor_for_with_interval(
-    manifest: ManifestV2,
+    required: ProfileAssetRequirement,
     assets_dir: &std::path::Path,
     check_interval: Duration,
 ) -> AssetSupervisor {
     AssetSupervisor::new(
         assets_dir.to_path_buf(),
-        Some(Arc::new(manifest)),
-        "1.0.0".to_string(),
-        "arm64".to_string(),
+        AssetRequirement::Profile(required),
         check_interval,
     )
 }
@@ -109,32 +100,23 @@ async fn start_asset_server(
     (format!("http://{addr}"), handle)
 }
 
-fn set_release_url(url: &str) -> Option<OsString> {
-    let old = std::env::var_os("CAPSEM_RELEASE_URL");
-    std::env::set_var("CAPSEM_RELEASE_URL", url);
-    old
-}
-
-fn restore_release_url(old: Option<OsString>) {
-    if let Some(old) = old {
-        std::env::set_var("CAPSEM_RELEASE_URL", old);
-    } else {
-        std::env::remove_var("CAPSEM_RELEASE_URL");
-    }
-}
-
 #[test]
 fn local_check_reports_updating_when_required_assets_are_missing() {
     let dir = tempfile::tempdir().unwrap();
-    let manifest = manifest_for(b"kernel", b"initrd", b"rootfs");
-    let supervisor = supervisor_for(manifest, dir.path());
+    let required = profile_assets_for(
+        b"kernel",
+        b"initrd",
+        b"rootfs",
+        "https://assets.example.test",
+    );
+    let supervisor = supervisor_for(required, dir.path());
 
     supervisor.refresh_local_state();
 
     let health = supervisor.snapshot();
     assert_eq!(health.state, AssetHealthState::Updating);
     assert!(!health.ready);
-    assert_eq!(health.version.as_deref(), Some("2026.0513.1"));
+    assert_eq!(health.version.as_deref(), Some("everyday-work@2026.0513.1"));
     assert_eq!(health.arch.as_deref(), Some("arm64"));
     assert_eq!(
         health.missing,
@@ -145,18 +127,25 @@ fn local_check_reports_updating_when_required_assets_are_missing() {
 #[test]
 fn local_check_reports_ready_when_required_assets_are_present() {
     let dir = tempfile::tempdir().unwrap();
-    let manifest = manifest_for(b"kernel", b"initrd", b"rootfs");
-    let release = manifest.assets.releases.get("2026.0513.1").unwrap();
-    let arch_assets = release.arches.get("arm64").unwrap();
-    for (name, bytes) in [
-        ("vmlinuz", b"kernel".as_slice()),
-        ("initrd.img", b"initrd".as_slice()),
-        ("rootfs.squashfs", b"rootfs".as_slice()),
+    let required = profile_assets_for(
+        b"kernel",
+        b"initrd",
+        b"rootfs",
+        "https://assets.example.test",
+    );
+    for (name, bytes, asset) in [
+        ("vmlinuz", b"kernel".as_slice(), &required.assets.kernel),
+        ("initrd.img", b"initrd".as_slice(), &required.assets.initrd),
+        (
+            "rootfs.squashfs",
+            b"rootfs".as_slice(),
+            &required.assets.rootfs,
+        ),
     ] {
-        let entry = arch_assets.get(name).unwrap();
-        std::fs::write(dir.path().join(hash_filename(name, &entry.hash)), bytes).unwrap();
+        let hash = profile_asset_hash_hex(asset);
+        std::fs::write(dir.path().join(hash_filename(name, hash)), bytes).unwrap();
     }
-    let supervisor = supervisor_for(manifest, dir.path());
+    let supervisor = supervisor_for(required, dir.path());
 
     supervisor.refresh_local_state();
 
@@ -171,8 +160,13 @@ fn local_check_reports_ready_when_required_assets_are_present() {
 #[test]
 fn download_progress_is_visible_in_snapshot() {
     let dir = tempfile::tempdir().unwrap();
-    let manifest = manifest_for(b"kernel", b"initrd", b"rootfs");
-    let supervisor = supervisor_for(manifest, dir.path());
+    let required = profile_assets_for(
+        b"kernel",
+        b"initrd",
+        b"rootfs",
+        "https://assets.example.test",
+    );
+    let supervisor = supervisor_for(required, dir.path());
 
     supervisor.record_download_progress(DownloadProgress {
         logical_name: "rootfs.squashfs".to_string(),
@@ -194,8 +188,13 @@ fn download_progress_is_visible_in_snapshot() {
 #[test]
 fn retryable_download_error_is_reported_as_error_state() {
     let dir = tempfile::tempdir().unwrap();
-    let manifest = manifest_for(b"kernel", b"initrd", b"rootfs");
-    let supervisor = supervisor_for(manifest, dir.path());
+    let required = profile_assets_for(
+        b"kernel",
+        b"initrd",
+        b"rootfs",
+        "https://assets.example.test",
+    );
+    let supervisor = supervisor_for(required, dir.path());
 
     supervisor.record_error("GET fixture returned 503", true);
 
@@ -209,36 +208,32 @@ fn retryable_download_error_is_reported_as_error_state() {
 
 #[tokio::test]
 async fn ensure_assets_once_downloads_missing_assets_and_reports_ready() {
-    let _guard = RELEASE_URL_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let manifest = manifest_for(b"kernel", b"initrd", b"rootfs");
-    let release = manifest.assets.releases.get("2026.0513.1").unwrap();
-    let arch_assets = release.arches.get("arm64").unwrap().clone();
     let mut files = HashMap::new();
-    files.insert("v1.0.0/arm64-vmlinuz".to_string(), b"kernel".to_vec());
-    files.insert("v1.0.0/arm64-initrd.img".to_string(), b"initrd".to_vec());
-    files.insert(
-        "v1.0.0/arm64-rootfs.squashfs".to_string(),
-        b"rootfs".to_vec(),
-    );
+    files.insert("vmlinuz".to_string(), b"kernel".to_vec());
+    files.insert("initrd.img".to_string(), b"initrd".to_vec());
+    files.insert("rootfs.squashfs".to_string(), b"rootfs".to_vec());
     let (base_url, server) = start_asset_server(files).await;
-    let old_url = set_release_url(&base_url);
-    let supervisor = supervisor_for(manifest, dir.path());
+    let required = profile_assets_for(b"kernel", b"initrd", b"rootfs", &base_url);
+    let expected_assets = required.assets.clone();
+    let supervisor = supervisor_for(required, dir.path());
 
     supervisor.ensure_assets_once().await;
 
-    restore_release_url(old_url);
     server.abort();
     let health = supervisor.snapshot();
     assert_eq!(health.state, AssetHealthState::Ready);
     assert!(health.ready);
     assert!(health.missing.is_empty());
-    for name in ["vmlinuz", "initrd.img", "rootfs.squashfs"] {
-        let entry = arch_assets.get(name).unwrap();
+    for (name, asset) in [
+        ("vmlinuz", &expected_assets.kernel),
+        ("initrd.img", &expected_assets.initrd),
+        ("rootfs.squashfs", &expected_assets.rootfs),
+    ] {
         assert!(
             dir.path()
                 .join("arm64")
-                .join(hash_filename(name, &entry.hash))
+                .join(hash_filename(name, profile_asset_hash_hex(asset)))
                 .exists(),
             "{name} should be downloaded"
         );
@@ -247,16 +242,13 @@ async fn ensure_assets_once_downloads_missing_assets_and_reports_ready() {
 
 #[tokio::test]
 async fn ensure_assets_once_reports_retryable_error_when_release_source_fails() {
-    let _guard = RELEASE_URL_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let manifest = manifest_for(b"kernel", b"initrd", b"rootfs");
     let (base_url, server) = start_asset_server(HashMap::new()).await;
-    let old_url = set_release_url(&base_url);
-    let supervisor = supervisor_for(manifest, dir.path());
+    let required = profile_assets_for(b"kernel", b"initrd", b"rootfs", &base_url);
+    let supervisor = supervisor_for(required, dir.path());
 
     supervisor.ensure_assets_once().await;
 
-    restore_release_url(old_url);
     server.abort();
     let health = supervisor.snapshot();
     assert_eq!(health.state, AssetHealthState::Error);
@@ -272,20 +264,15 @@ async fn ensure_assets_once_reports_retryable_error_when_release_source_fails() 
 
 #[tokio::test]
 async fn spawned_background_loop_downloads_missing_assets() {
-    let _guard = RELEASE_URL_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let manifest = manifest_for(b"kernel", b"initrd", b"rootfs");
     let mut files = HashMap::new();
-    files.insert("v1.0.0/arm64-vmlinuz".to_string(), b"kernel".to_vec());
-    files.insert("v1.0.0/arm64-initrd.img".to_string(), b"initrd".to_vec());
-    files.insert(
-        "v1.0.0/arm64-rootfs.squashfs".to_string(),
-        b"rootfs".to_vec(),
-    );
+    files.insert("vmlinuz".to_string(), b"kernel".to_vec());
+    files.insert("initrd.img".to_string(), b"initrd".to_vec());
+    files.insert("rootfs.squashfs".to_string(), b"rootfs".to_vec());
     let (base_url, server) = start_asset_server(files).await;
-    let old_url = set_release_url(&base_url);
+    let required = profile_assets_for(b"kernel", b"initrd", b"rootfs", &base_url);
     let supervisor = Arc::new(supervisor_for_with_interval(
-        manifest,
+        required,
         dir.path(),
         Duration::from_millis(10),
     ));
@@ -302,7 +289,6 @@ async fn spawned_background_loop_downloads_missing_assets() {
     .await
     .expect("background supervisor should make assets ready");
 
-    restore_release_url(old_url);
     supervisor_task.abort();
     server.abort();
     let health = supervisor.snapshot();

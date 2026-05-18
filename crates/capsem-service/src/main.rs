@@ -23,7 +23,9 @@ mod startup;
 
 use capsem_service::api;
 use capsem_service::api::*;
-use capsem_service::asset_supervisor::{host_asset_arch, AssetSupervisor};
+use capsem_service::asset_supervisor::{
+    host_asset_arch, AssetRequirement, AssetSupervisor, ProfileAssetRequirement,
+};
 use capsem_service::debug_report;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
 use capsem_service::registry::{PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets};
@@ -89,8 +91,6 @@ struct ServiceState {
     service_settings: capsem_core::settings_profiles::ServiceSettings,
     run_dir: PathBuf,
     job_counter: AtomicU64,
-    /// v2 manifest (None in dev mode where assets use logical names)
-    manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
     /// Service-owned asset state machine and background reconciler.
     asset_supervisor: Arc<AssetSupervisor>,
     current_version: String,
@@ -120,80 +120,33 @@ struct ServiceState {
     shutdown_lock: tokio::sync::Mutex<()>,
 }
 
-fn load_startup_manifest_for_assets(
-    assets_dir: &FsPath,
-) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
-    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
-}
-
-fn load_startup_manifest_for_asset_locations(
-    locations: &capsem_core::settings_profiles::ResolvedServiceAssetLocations,
-) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
-    match locations.manifest.source {
-        capsem_core::settings_profiles::ManifestSource::Installed => {
-            load_startup_manifest_for_assets(&locations.assets_dir)
-        }
-        capsem_core::settings_profiles::ManifestSource::LocalFile => {
-            let manifest_path = locations
-                .manifest
-                .path
-                .as_deref()
-                .context("assets.manifest.path is required for local-file source")?;
-            load_startup_manifest_from_file(
-                manifest_path,
-                locations.manifest.signature_path.as_deref(),
-            )
-            .map(Some)
-        }
-        capsem_core::settings_profiles::ManifestSource::RemoteUrl => {
-            info!(
-                manifest_url = locations.manifest.url.as_deref().unwrap_or(""),
-                assets_dir = %locations.assets_dir.display(),
-                "using cached local asset manifest for remote asset source at startup"
-            );
-            load_startup_manifest_for_assets(&locations.assets_dir)
-        }
-    }
-}
-
-fn load_startup_manifest_from_file(
-    manifest_path: &FsPath,
-    signature_path: Option<&FsPath>,
-) -> Result<capsem_core::asset_manager::ManifestV2> {
-    let manifest_bytes = std::fs::read(manifest_path)
-        .with_context(|| format!("read {}", manifest_path.display()))?;
-    let signature_path = signature_path
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_manifest_signature_path(manifest_path));
-    if !signature_path.is_file() {
-        anyhow::bail!(
-            "manifest signature missing at {} (required in release builds)",
-            signature_path.display()
-        );
-    }
-    let sig_text = std::fs::read_to_string(&signature_path)
-        .with_context(|| format!("read {}", signature_path.display()))?;
-    let dev_pub = manifest_path
-        .parent()
-        .map(|p| p.join("manifest-sign.dev.pub"));
-    capsem_core::asset_manager::verify_manifest_with_baked_or_dev_key(
-        &manifest_bytes,
-        &sig_text,
-        dev_pub.as_deref(),
+fn startup_asset_requirement(
+    service_settings: &capsem_core::settings_profiles::ServiceSettings,
+    arch: &str,
+    allow_dev_logical_assets: bool,
+) -> Result<AssetRequirement> {
+    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+        service_settings,
+        None,
     )
-    .with_context(|| format!("verify {}", signature_path.display()))?;
-    let content = std::str::from_utf8(&manifest_bytes).context("manifest is not valid UTF-8")?;
-    capsem_core::asset_manager::ManifestV2::from_json(content)
-}
-
-fn default_manifest_signature_path(manifest_path: &FsPath) -> PathBuf {
-    let mut path = manifest_path.to_path_buf();
-    let name = manifest_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("manifest.json");
-    path.set_file_name(format!("{name}.minisig"));
-    path
+    .context("resolve default profile for VM assets")?;
+    match ProfileAssetRequirement::from_effective(&effective, arch) {
+        Ok(required) => Ok(AssetRequirement::Profile(required)),
+        Err(err) if allow_dev_logical_assets => {
+            warn!(
+                error = %err,
+                arch,
+                profile_id = %effective.profile_id,
+                "default profile has no VM asset declarations; using explicit development assets"
+            );
+            Ok(AssetRequirement::DevLogical {
+                arch: arch.to_string(),
+            })
+        }
+        Err(err) => Err(err).context(
+            "release startup requires profile VM assets; old asset manifests are not runtime authority",
+        ),
+    }
 }
 
 #[derive(Clone)]
@@ -776,6 +729,16 @@ impl ServiceState {
             child_cmd.env(k, v);
         }
 
+        if let Some(expected) = self.asset_supervisor.expected_hashes() {
+            child_cmd
+                .arg("--expected-kernel-hash")
+                .arg(expected.kernel)
+                .arg("--expected-initrd-hash")
+                .arg(expected.initrd)
+                .arg("--expected-rootfs-hash")
+                .arg(expected.rootfs);
+        }
+
         let mut child = child_cmd
             .env(
                 "RUST_LOG",
@@ -1090,6 +1053,16 @@ impl ServiceState {
             child_cmd.env(k, v);
         }
 
+        if let Some(expected) = self.asset_supervisor.expected_hashes() {
+            child_cmd
+                .arg("--expected-kernel-hash")
+                .arg(expected.kernel)
+                .arg("--expected-initrd-hash")
+                .arg(expected.initrd)
+                .arg("--expected-rootfs-hash")
+                .arg(expected.rootfs);
+        }
+
         let mut child = child_cmd
             .env(
                 "RUST_LOG",
@@ -1232,11 +1205,7 @@ impl ServiceState {
     }
 
     fn current_base_assets(&self) -> Result<Option<SavedVmBaseAssets>> {
-        saved_vm_assets::current_base_assets(
-            self.manifest.as_deref(),
-            &self.current_version,
-            host_asset_arch(),
-        )
+        Ok(self.asset_supervisor.current_base_assets())
     }
 
     fn asset_health_snapshot(&self) -> AssetHealth {
@@ -2234,7 +2203,6 @@ async fn handle_debug_report(
         gateway_port_file_exists: state.run_dir.join("gateway.port").exists(),
         gateway_token_file_exists: state.run_dir.join("gateway.token").exists(),
         assets_dir_exists: state.assets_dir.exists(),
-        manifest_present: state.manifest.is_some(),
         resolved_assets,
         defunct_session_count: defunct_sessions.len(),
     });
@@ -2265,7 +2233,7 @@ async fn handle_debug_report(
         run_dir: state.run_dir.clone(),
         assets_dir: state.assets_dir.clone(),
         asset_locations: Some(state.asset_locations.clone()),
-        manifest: state.manifest.as_ref().map(|m| m.as_ref().clone()),
+        manifest: None,
         running_vm_count,
         total_vm_count,
         status_issues,
@@ -4272,7 +4240,6 @@ fn asset_locations_status_json(
             .map(|path| path.display().to_string())
             .collect::<Vec<_>>(),
         "image_roots_origin": locations.image_roots_origin.as_str(),
-        "manifest_source": locations.manifest.source.as_str(),
         "download_base_url": locations.download_base_url,
     })
 }
@@ -6239,16 +6206,13 @@ async fn main() -> Result<()> {
     .context("resolve service asset locations")?;
     let assets_base_dir = asset_locations.assets_dir.clone();
 
-    // Load v2 manifest if available. In dev mode with no manifest, use None.
-    // If a manifest exists, verify its minisign signature before trusting
-    // asset hashes or cleanup metadata.
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let manifest = load_startup_manifest_for_asset_locations(&asset_locations)
-        .context("load verified asset manifest")?
-        .map(|m| {
-            info!(asset_version = %m.assets.current, "loaded verified manifest");
-            Arc::new(m)
-        });
+    let asset_requirement = startup_asset_requirement(
+        &service_settings,
+        host_asset_arch(),
+        cfg!(debug_assertions) || args.assets_dir.is_some(),
+    )
+    .context("resolve startup VM asset requirement")?;
 
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path);
@@ -6257,27 +6221,9 @@ async fn main() -> Result<()> {
         "loaded persistent VM registry"
     );
 
-    // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files)
-    if let Some(ref m) = manifest {
-        let saved_vm_references =
-            saved_vm_assets::registry_referenced_asset_filenames(&persistent_registry);
-        match capsem_core::asset_manager::cleanup_unused_assets_preserving(
-            &assets_base_dir,
-            m,
-            saved_vm_references,
-        ) {
-            Ok(removed) if !removed.is_empty() => {
-                info!(count = removed.len(), "cleaned up stale assets");
-            }
-            Err(e) => warn!(error = %e, "asset cleanup failed"),
-            _ => {}
-        }
-    }
     let asset_supervisor = Arc::new(AssetSupervisor::new(
         assets_base_dir.clone(),
-        manifest.clone(),
-        current_version.clone(),
-        host_asset_arch().to_string(),
+        asset_requirement,
         std::time::Duration::from_secs(300),
     ));
     asset_supervisor.refresh_local_state();
@@ -6297,7 +6243,6 @@ async fn main() -> Result<()> {
         service_settings,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest,
         asset_supervisor,
         current_version,
         magika: Mutex::new(magika_session),
