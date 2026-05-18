@@ -217,6 +217,10 @@ Landed:
 - Existing service routes include `/settings`, `/settings/presets`,
   `/settings/lint`, `/settings/validate-key`, and MCP routes
   `/mcp/servers`, `/mcp/tools`, `/mcp/policy`, refresh/approve/call.
+- S07 metrics foundation exists in `capsem_proto::metrics` with
+  `ServiceToProcess::GetMetricsSnapshot` and
+  `ProcessToService::MetricsSnapshot` IPC variants; `capsem-process`
+  can return a process-owned default snapshot until S12's accumulator lands.
 
 Gaps:
 - No dedicated profile list/get/create/fork/update/delete/resolve route group.
@@ -224,7 +228,8 @@ Gaps:
 - No dedicated Rules API (`GET /rules`, `POST /rules`,
   `POST /rules/evaluate`, etc.).
 - No `GET /confirm/pending` listing surface.
-- No typed metrics IPC contract from S07 foundation.
+- No live metrics accumulator or public service route consumes the metrics IPC
+  snapshot yet; S12 owns runtime counters and `/list`/`/info` integration.
 
 ### S08 - HTTP Gateway API
 

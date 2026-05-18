@@ -1,5 +1,6 @@
 use anyhow::Result;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_proto::metrics::VmMetricsSnapshot;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +51,7 @@ pub(crate) async fn handle_ipc_connection(
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
     vm_ready: Arc<AtomicBool>,
+    vm_id: String,
 ) -> Result<()> {
     let mut std_stream = stream.into_std()?;
     // First frame on every IPC connection is a Hello -- detect cross-version
@@ -196,6 +198,15 @@ pub(crate) async fn handle_ipc_connection(
                     debug!("Ping received but VM not ready, closing connection");
                     return Ok(());
                 }
+            }
+            ServiceToProcess::GetMetricsSnapshot { id } => {
+                let snapshot = default_metrics_snapshot(&vm_id);
+                capsem_core::try_send!(
+                    "ipc_metrics_snapshot",
+                    ipc_tx_out
+                        .send(ProcessToService::MetricsSnapshot { id, snapshot })
+                        .await
+                );
             }
             ServiceToProcess::TerminalInput { data } => {
                 capsem_core::try_send!(
@@ -736,6 +747,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::ReloadConfig => IpcAction::Reload,
+        ServiceToProcess::GetMetricsSnapshot { .. } => IpcAction::HealthCheck,
         ServiceToProcess::Shutdown => IpcAction::Lifecycle,
         ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
         ServiceToProcess::PrepareSnapshot
@@ -746,6 +758,16 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::McpRefreshTools { .. }
         | ServiceToProcess::McpCallTool { .. } => IpcAction::Job,
     }
+}
+
+fn default_metrics_snapshot(vm_id: &str) -> VmMetricsSnapshot {
+    let captured_at_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    VmMetricsSnapshot::empty(vm_id, false, captured_at_unix_ms)
 }
 
 #[cfg(test)]

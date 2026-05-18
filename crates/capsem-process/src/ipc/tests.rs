@@ -48,6 +48,28 @@ fn classify_ping() {
 }
 
 #[test]
+fn classify_get_metrics_snapshot() {
+    assert_eq!(
+        classify_ipc_message(&ServiceToProcess::GetMetricsSnapshot { id: 9 }),
+        IpcAction::HealthCheck
+    );
+}
+
+#[test]
+fn default_metrics_snapshot_is_process_owned_and_versioned() {
+    let snapshot = default_metrics_snapshot("vm-s07");
+
+    assert_eq!(snapshot.vm_id, "vm-s07");
+    assert_eq!(
+        snapshot.schema_version,
+        capsem_proto::metrics::METRICS_SCHEMA_VERSION
+    );
+    assert_eq!(snapshot.lifecycle.state, "unknown");
+    assert_eq!(snapshot.ask.total_asks, 0);
+    assert!(snapshot.captured_at_unix_ms > 0);
+}
+
+#[test]
 fn classify_terminal_input() {
     assert_eq!(
         classify_ipc_message(&ServiceToProcess::TerminalInput { data: vec![0x41] }),

@@ -55,7 +55,11 @@ a valid claim -- mark it `[ ]` instead.
 10. [x] [S06b - Legacy allowlist migration + rule ownership locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) -- closed. Inventory found that S01's runtime cutover left the legacy v1 settings registry + allowlist builders as test-only dead code, so "migration" boiled down to deletion plus enriching the v2 model. Nine slices landed: 6b.0 deleted v1 (~12k LOC), 6b.1 added ownership metadata fields, 6b.2 enforced priority tiers (corp `[-1000, -1]`, toggle-derived `0`, user `[1, 999]`, catch-all reserved `1000`), 6b.3 added nestable rules under setting hosts, 6b.4 added `http.read` / `http.write` callbacks, 6b.5 added per-type catch-all rules at priority `1000`, 6b.6 added provider-toggle derived rules, 6b.7 added MCP `allowed_tools` derived rules, 6b.8 added the `ensure_rule_editable` mutation gate. 6b.9 documentation scope captured in [S19 spec](S19-documentation-and-site.md).
 11. [ ] [S06c - Ablate legacy NetworkPolicy runtime](#s06c---ablate-legacy-networkpolicy-runtime) -- new sprint, see inline brief below; promotes to a standalone spec when it starts.
 12. [ ] [Post-S06 cleanup milestone](#post-s06-cleanup-milestone) -- `git merge origin/main` -> v2 rename -> full verification gate, in that order.
-13. [ ] [S07 - UDS service API](S07-uds-service-api.md)
+13. [ ] [S07 - UDS service API](S07-uds-service-api.md) -- started; first
+  foundation slice landed `capsem_proto::metrics` plus
+  `ServiceToProcess::GetMetricsSnapshot` /
+  `ProcessToService::MetricsSnapshot`. Profile CRUD, Rules API, confirm
+  listing, skills, and full route proof remain open.
 14. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
 15. [ ] [S09 - CLI integration](S09-cli-integration.md)
 16. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
@@ -279,6 +283,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `confirm_with_backoff` covered by 5 dedicated tests.
   `http.read` / `http.write` callback split covered by **5**
   hook-boundary tests in `policy_v2_http_hook/tests.rs`.
+  S07 metrics proto foundation adds **36** focused `capsem-proto`
+  IPC tests and **18** focused `capsem-process` IPC tests.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -318,6 +324,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   so benchmarks would not represent a meaningful budget.
   Performance work remains pending for later sprints (S12
   in-memory metrics accumulator is the next perf-shaped piece).
+  The S07 metrics snapshot request is classified as read-only
+  `HealthCheck` IPC so it does not enter job/lifecycle dispatch.
 - **Test-gate snapshot** (cargo test, 2026-05-16):
   capsem-core lib **1590** passed / 0 failed / 1 ignored;
   capsem-service **95** + **119** passed; capsem-process **98**

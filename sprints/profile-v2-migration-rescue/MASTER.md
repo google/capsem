@@ -75,6 +75,9 @@ Rescue inventory:
   authority: guard tests assert Rust crates do not embed `defaults.json` or
   `settings-schema.json`, and stale `policy_config`/V1 wording has been removed
   from the builder, frontend mock, and MITM comments.
+- S07 has started with the typed metrics IPC foundation:
+  `capsem_proto::metrics`, `ServiceToProcess::GetMetricsSnapshot`, and
+  `ProcessToService::MetricsSnapshot` compile and round-trip over bincode.
 - `just smoke` passed on 2026-05-17 after the Profile V2 runtime/DNS rescue (`just smoke`, 224s)
 - `just test-install` passed on 2026-05-18 after the asset symlink/mount and file-only copy fixes (`57 passed`, `29 skipped`)
 - Committed delta classification remains release-held and must be replayed by slice

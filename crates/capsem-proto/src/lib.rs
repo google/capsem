@@ -12,6 +12,7 @@
 
 pub mod handshake;
 pub mod ipc;
+pub mod metrics;
 pub mod poll;
 
 pub use handshake::{HandshakeError, Hello};
@@ -39,7 +40,9 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
 /// bincode channel and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
-pub const PROTOCOL_VERSION: u16 = 1;
+///
+/// `2` adds the S07/S12 live metrics snapshot IPC contract.
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
 /// handshake.rs). Computed by `build.rs`. Detects "I added a variant in

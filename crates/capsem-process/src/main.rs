@@ -688,6 +688,7 @@ async fn run_async_main_loop(
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
         let ready_c = Arc::clone(&vm_ready);
+        let vm_id_c = vm_id_ws.clone();
 
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
@@ -699,6 +700,7 @@ async fn run_async_main_loop(
                 net_c,
                 mcp_c,
                 ready_c,
+                vm_id_c,
             )
             .await
             {

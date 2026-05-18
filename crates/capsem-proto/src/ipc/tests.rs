@@ -499,6 +499,39 @@ fn mcp_call_tool_result_roundtrip_bincode() {
 }
 
 #[test]
+fn metrics_snapshot_ipc_roundtrip_bincode() {
+    let request = ServiceToProcess::GetMetricsSnapshot { id: 44 };
+    let request_bytes = bincode::serialize(&request).unwrap();
+    let request2: ServiceToProcess = bincode::deserialize(&request_bytes).unwrap();
+    match request2 {
+        ServiceToProcess::GetMetricsSnapshot { id } => assert_eq!(id, 44),
+        _ => panic!("wrong variant"),
+    }
+
+    let snapshot = crate::metrics::VmMetricsSnapshot::empty("vm-metrics", true, 1_789);
+    assert_eq!(
+        snapshot.schema_version,
+        crate::metrics::METRICS_SCHEMA_VERSION
+    );
+    assert_eq!(snapshot.vm_id, "vm-metrics");
+    assert!(snapshot.persistent);
+    assert_eq!(snapshot.http.http_requests_total, 0);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 0);
+
+    let response = ProcessToService::MetricsSnapshot { id: 44, snapshot };
+    let response_bytes = bincode::serialize(&response).unwrap();
+    let response2: ProcessToService = bincode::deserialize(&response_bytes).unwrap();
+    match response2 {
+        ProcessToService::MetricsSnapshot { id, snapshot } => {
+            assert_eq!(id, 44);
+            assert_eq!(snapshot.vm_id, "vm-metrics");
+            assert_eq!(snapshot.captured_at_unix_ms, 1_789);
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
 fn mcp_servers_result_roundtrip() {
     let msg = ProcessToService::McpServersResult {
         id: 10,

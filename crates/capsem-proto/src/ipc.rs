@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::metrics::VmMetricsSnapshot;
+
 /// Messages sent from capsem-service to capsem-process over the per-VM Unix Domain Socket.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceToProcess {
@@ -23,6 +25,8 @@ pub enum ServiceToProcess {
     ReadFile { id: u64, path: String },
     /// Request the process to reload its configuration from disk.
     ReloadConfig,
+    /// Request the process's bounded live metrics snapshot.
+    GetMetricsSnapshot { id: u64 },
     /// Start streaming terminal output to this IPC connection.
     StartTerminalStream,
     /// Stop streaming terminal output. Sent by `capsem shell` on exit so
@@ -69,6 +73,11 @@ pub enum ProcessToService {
     ReloadConfigResult {
         success: bool,
         error: Option<String>,
+    },
+    /// Response to GetMetricsSnapshot.
+    MetricsSnapshot {
+        id: u64,
+        snapshot: VmMetricsSnapshot,
     },
     /// Output bytes from the guest PTY.
     TerminalOutput { data: Vec<u8> },
