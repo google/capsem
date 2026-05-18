@@ -1,5 +1,5 @@
 use super::*;
-use crate::net::policy_config::PolicyCallback;
+use crate::net::policy_v2::PolicyCallback;
 use capsem_proto::poll::RetryOpts;
 use serde_json::json;
 use std::sync::atomic::{AtomicU32, Ordering};

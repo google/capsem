@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// MCP user/corp config (stored in user.toml / corp.toml under [mcp])
+// MCP user/corp config projected from Profile V2 effective settings
 // ---------------------------------------------------------------------------
 
-/// MCP configuration from user.toml or corp.toml `[mcp]` section.
+/// MCP configuration projected from Profile V2 effective settings.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct McpUserConfig {
     /// Global MCP policy: "allow" (default) or "block".

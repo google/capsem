@@ -61,8 +61,6 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "USER",
     "TMPDIR",
     "CAPSEM_HOME",
-    "CAPSEM_USER_CONFIG",
-    "CAPSEM_CORP_CONFIG",
     // Tunable: bounded MITM MCP endpoint in-flight handler cap.
     "CAPSEM_MCP_INFLIGHT",
     // Tunable: pool size for the local builtin MCP server (rmcp stdio funnel).
@@ -764,10 +762,8 @@ impl ServiceState {
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
-        // CAPSEM_{USER,CORP}_CONFIG are forwarded so the child loads the
-        // same settings tree as the service (tests rely on this to route
-        // policy through an isolated test config without touching the
-        // real ~/.capsem/user.toml).
+        // Profile V2 effective settings are attached to the session; no
+        // host config file is forwarded into the VM process.
         child_cmd.env_clear();
         for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
@@ -1081,10 +1077,8 @@ impl ServiceState {
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
-        // CAPSEM_{USER,CORP}_CONFIG are forwarded so the child loads the
-        // same settings tree as the service (tests rely on this to route
-        // policy through an isolated test config without touching the
-        // real ~/.capsem/user.toml).
+        // Profile V2 effective settings are attached to the session; no
+        // host config file is forwarded into the VM process.
         child_cmd.env_clear();
         for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
@@ -3573,8 +3567,10 @@ async fn handle_get_presets() -> Json<serde_json::Value> {
     }
 }
 
-/// POST /settings/presets/{id} -- apply a profile preset and return refreshed typed state.
-async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+/// POST /settings/presets/{id} -- select a default profile and return refreshed typed state.
+async fn handle_select_profile_preset(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
     let settings_path = service_settings_path();
     let mut settings = capsem_core::settings_profiles::load_service_settings_or_default(
         &settings_path,
@@ -3870,9 +3866,8 @@ async fn handle_mcp_servers() -> Json<serde_json::Value> {
     use capsem_core::mcp::policy::McpUserConfig;
     use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
 
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let user_mcp = user_sf.mcp.unwrap_or_default();
-    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
+    let user_mcp = current_mcp_user_config_from_profiles().unwrap_or_default();
+    let corp_mcp = McpUserConfig::default();
 
     // Include the "local" builtin server if the binary exists.
     let builtin_bin = std::env::current_exe()
@@ -3933,9 +3928,8 @@ async fn handle_mcp_tools() -> Json<serde_json::Value> {
 async fn handle_mcp_policy() -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::mcp::policy::McpUserConfig;
 
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let user_mcp = user_sf.mcp.unwrap_or_default();
-    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
+    let user_mcp = current_mcp_user_config_from_profiles().unwrap_or_default();
+    let corp_mcp = McpUserConfig::default();
 
     let resp = api::McpPolicyInfoResponse {
         global_policy: user_mcp.global_policy.clone(),
@@ -3954,6 +3948,82 @@ async fn handle_mcp_policy() -> Result<Json<serde_json::Value>, AppError> {
             .collect(),
     };
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+}
+
+fn current_mcp_user_config_from_profiles() -> Result<capsem_core::mcp::policy::McpUserConfig, String>
+{
+    let (_, _, effective, _) = load_service_profiles_state()?;
+    Ok(mcp_user_config_from_effective(&effective))
+}
+
+fn mcp_user_config_from_effective(
+    effective: &capsem_core::settings_profiles::EffectiveVmSettings,
+) -> capsem_core::mcp::policy::McpUserConfig {
+    use capsem_core::mcp::policy::{McpUserConfig, ToolDecision};
+    use capsem_core::settings_profiles::{CapabilityMode, RuleDecision};
+
+    let default_tool_permission = Some(match effective.security.value.capabilities.mcp_tools {
+        CapabilityMode::Allow | CapabilityMode::Audit => ToolDecision::Allow,
+        CapabilityMode::Ask => ToolDecision::Warn,
+        CapabilityMode::Block => ToolDecision::Block,
+    });
+
+    let server_enabled = effective
+        .mcp
+        .value
+        .connectors
+        .iter()
+        .map(|(id, connector)| (id.clone(), connector.enabled))
+        .collect::<HashMap<_, _>>();
+
+    let mut tool_permissions = HashMap::new();
+    for rule in &effective.rules {
+        if rule.derived || rule.callback != "mcp.request" {
+            continue;
+        }
+        let Some(tool_name) = mcp_tool_name_from_condition(&rule.condition) else {
+            continue;
+        };
+        let decision = match rule.decision {
+            RuleDecision::Allow => ToolDecision::Allow,
+            RuleDecision::Ask => ToolDecision::Warn,
+            RuleDecision::Block => ToolDecision::Block,
+            RuleDecision::Rewrite => continue,
+        };
+        tool_permissions.entry(tool_name).or_insert(decision);
+    }
+
+    McpUserConfig {
+        global_policy: None,
+        default_tool_permission,
+        health_check_interval_secs: None,
+        servers: Vec::new(),
+        server_enabled,
+        tool_permissions,
+    }
+}
+
+fn mcp_tool_name_from_condition(condition: &str) -> Option<String> {
+    let condition = condition.trim();
+    let after_name = condition.strip_prefix("tool.name")?;
+    let eq_idx = after_name.find("==")?;
+    let value = after_name[eq_idx + 2..].trim_start();
+    let mut chars = value.chars();
+    let quote = chars.next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let tail = &value[quote.len_utf8()..];
+    let end = tail.find(quote)?;
+    if !tail[end + quote.len_utf8()..].trim().is_empty() {
+        return None;
+    }
+    let name = tail[..end].trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 /// GET /policy-hook/spec -- export the Policy Hook Spec0 OpenAPI contract.
@@ -5861,7 +5931,7 @@ async fn main() -> Result<()> {
             get(handle_get_settings).post(handle_save_settings),
         )
         .route("/settings/presets", get(handle_get_presets))
-        .route("/settings/presets/{id}", post(handle_apply_preset))
+        .route("/settings/presets/{id}", post(handle_select_profile_preset))
         .route("/settings/lint", post(handle_lint_config))
         .route("/settings/validate-key", post(handle_validate_key))
         .route("/setup/state", get(handle_get_setup_state))

@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 
 use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy_config::PolicyCallback;
+use capsem_core::net::policy_v2::PolicyCallback;
 use capsem_core::settings_profiles::{CapabilityMode, EffectiveRule, RuleDecision};
 
 use capsem_core::mcp::policy::McpUserConfig;
@@ -349,7 +349,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
             .unwrap()
             .1
             .decision,
-        capsem_core::net::policy_config::PolicyDecisionKind::Block
+        capsem_core::net::policy_v2::PolicyDecisionKind::Block
     );
 
     let http_rules = runtime

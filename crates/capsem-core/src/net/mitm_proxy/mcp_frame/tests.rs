@@ -18,10 +18,10 @@ use crate::mcp::policy::{
 };
 use crate::mcp::types::McpToolDef;
 use crate::net::mitm_proxy::{McpEndpointState, McpTimeouts};
-use crate::net::policy_config::{PolicyConfig, SettingsFile};
 use crate::net::policy_confirm::{
     ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision,
 };
+use crate::net::policy_v2::PolicyConfig;
 
 use super::*;
 
@@ -481,7 +481,7 @@ fn local_decision_provider_marks_blocked_tool_as_audit_deny() {
 
 #[tokio::test]
 async fn local_decision_provider_applies_policy_v2_mcp_request_rules() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.block_prod_token]
 on = "mcp.request"
@@ -499,10 +499,8 @@ reason = "Production issue creation needs approval"
 "#,
     )
     .unwrap();
-    let provider = LocalMcpDecisionProvider::audit_only_with_policy_v2(
-        McpPolicy::new(),
-        Arc::new(settings.policy),
-    );
+    let provider =
+        LocalMcpDecisionProvider::audit_only_with_policy_v2(McpPolicy::new(), Arc::new(policy));
 
     let req = parse_json_rpc_payload(
         br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"github__create_issue","arguments":{"issue":"prod","prod_token":"secret"}}}"#,
@@ -535,7 +533,7 @@ reason = "Production issue creation needs approval"
 
 #[tokio::test]
 async fn policy_v2_mcp_request_ask_with_deny_confirmer_blocks() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.ask_prod_issue]
 on = "mcp.request"
@@ -549,7 +547,7 @@ reason = "Production issue creation needs approval"
     let confirmer = MockConfirmer::new(ConfirmDecision::Deny);
     let provider = LocalMcpDecisionProvider::audit_only_with_policy_v2_and_confirmer(
         McpPolicy::new(),
-        Arc::new(settings.policy),
+        Arc::new(policy),
         confirmer.clone() as Arc<dyn Confirmer>,
     );
     let req = parse_json_rpc_payload(
@@ -571,7 +569,7 @@ reason = "Production issue creation needs approval"
     assert_eq!(calls[0].rule_id, "security.rules.mcp.ask_prod_issue");
     assert_eq!(
         calls[0].callback,
-        crate::net::policy_config::PolicyCallback::McpRequest
+        crate::net::policy_v2::PolicyCallback::McpRequest
     );
     assert_eq!(
         calls[0]
@@ -589,7 +587,7 @@ reason = "Production issue creation needs approval"
 
 #[tokio::test]
 async fn policy_v2_mcp_response_ask_with_accept_and_deny_confirmer_resolves() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.ask_tool_response]
 on = "mcp.response"
@@ -612,7 +610,7 @@ reason = "Confirm before surfacing tool response"
     let accept_confirmer = MockConfirmer::new(ConfirmDecision::Accept);
     let accept_provider = LocalMcpDecisionProvider::audit_only_with_policy_v2_and_confirmer(
         McpPolicy::new(),
-        Arc::new(settings.policy.clone()),
+        Arc::new(policy.clone()),
         accept_confirmer.clone() as Arc<dyn Confirmer>,
     );
     let base = accept_provider.decide(&request);
@@ -627,13 +625,13 @@ reason = "Confirm before surfacing tool response"
     assert_eq!(decision.rule, "policy.mcp.ask_tool_response");
     assert_eq!(
         accept_confirmer.calls()[0].callback,
-        crate::net::policy_config::PolicyCallback::McpResponse
+        crate::net::policy_v2::PolicyCallback::McpResponse
     );
 
     let deny_confirmer = MockConfirmer::new(ConfirmDecision::Deny);
     let deny_provider = LocalMcpDecisionProvider::audit_only_with_policy_v2_and_confirmer(
         McpPolicy::new(),
-        Arc::new(settings.policy),
+        Arc::new(policy),
         deny_confirmer.clone() as Arc<dyn Confirmer>,
     );
     let base = deny_provider.decide(&request);
@@ -654,7 +652,7 @@ reason = "Confirm before surfacing tool response"
 
 #[test]
 fn local_decision_provider_preserves_policy_v2_allow_match() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.allow_safe_search]
 on = "mcp.request"
@@ -665,10 +663,8 @@ reason = "Safe repository search"
 "#,
     )
     .unwrap();
-    let provider = LocalMcpDecisionProvider::audit_only_with_policy_v2(
-        McpPolicy::new(),
-        Arc::new(settings.policy),
-    );
+    let provider =
+        LocalMcpDecisionProvider::audit_only_with_policy_v2(McpPolicy::new(), Arc::new(policy));
 
     let req = parse_json_rpc_payload(
         br#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"github__search_repos","arguments":{"query":"capsem"}}}"#,
@@ -1347,7 +1343,7 @@ async fn framed_session_blocks_request_rule_matrix_and_records_fields() {
 
 #[tokio::test]
 async fn framed_session_blocks_policy_v2_mcp_request_rule_and_records_fields() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.block_prod_token]
 on = "mcp.request"
@@ -1376,7 +1372,7 @@ reason = "Do not send production tokens to MCP tools"
             }
         },
     );
-    *endpoint.policy_v2.write().await = Arc::new(settings.policy);
+    *endpoint.policy_v2.write().await = Arc::new(policy);
 
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let serve_endpoint = Arc::clone(&endpoint);
@@ -1451,7 +1447,7 @@ reason = "Do not send production tokens to MCP tools"
 
 #[tokio::test]
 async fn framed_session_records_policy_v2_allow_rule_fields() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.allow_safe_search]
 on = "mcp.request"
@@ -1466,7 +1462,7 @@ reason = "Safe repository search"
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let config = test_mcp_frame_config(&db_path, McpPolicy::new());
-    *config.endpoint.policy_v2.write().await = Arc::new(settings.policy);
+    *config.endpoint.policy_v2.write().await = Arc::new(policy);
 
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let serve_endpoint = Arc::clone(&config.endpoint);
@@ -1521,7 +1517,7 @@ reason = "Safe repository search"
 
 #[tokio::test]
 async fn framed_session_accepts_policy_v2_mcp_request_ask_with_placeholder_confirmer() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.ask_prod_issue]
 on = "mcp.request"
@@ -1536,7 +1532,7 @@ reason = "Production issue creation needs approval"
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let config = test_mcp_frame_config(&db_path, McpPolicy::new());
-    *config.endpoint.policy_v2.write().await = Arc::new(settings.policy);
+    *config.endpoint.policy_v2.write().await = Arc::new(policy);
 
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let serve_endpoint = Arc::clone(&config.endpoint);
@@ -1598,7 +1594,7 @@ reason = "Production issue creation needs approval"
 
 #[tokio::test]
 async fn framed_session_blocks_policy_v2_mcp_response_rule_and_redacts_result() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.block_secret_response]
 on = "mcp.response"
@@ -1629,7 +1625,7 @@ reason = "Do not return production secrets from MCP tools"
             }
         },
     );
-    *endpoint.policy_v2.write().await = Arc::new(settings.policy);
+    *endpoint.policy_v2.write().await = Arc::new(policy);
 
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let serve_endpoint = Arc::clone(&endpoint);
@@ -1692,7 +1688,7 @@ reason = "Do not return production secrets from MCP tools"
 
 #[tokio::test]
 async fn framed_session_rewrites_policy_v2_mcp_response_and_redacts_telemetry() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.rewrite_secret_response]
 on = "mcp.response"
@@ -1725,7 +1721,7 @@ rewrite_value = "PROD_SECRET=[redacted]"
             }
         },
     );
-    *endpoint.policy_v2.write().await = Arc::new(settings.policy);
+    *endpoint.policy_v2.write().await = Arc::new(policy);
 
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let serve_endpoint = Arc::clone(&endpoint);
@@ -1793,7 +1789,7 @@ rewrite_value = "PROD_SECRET=[redacted]"
 
 #[tokio::test]
 async fn framed_session_rewrites_policy_v2_mcp_request_and_redacts_telemetry() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.rewrite_prod_token_arg]
 on = "mcp.request"
@@ -1831,7 +1827,7 @@ rewrite_value = "[redacted]"
                 }
             }
         });
-    *endpoint.policy_v2.write().await = Arc::new(settings.policy);
+    *endpoint.policy_v2.write().await = Arc::new(policy);
 
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let serve_endpoint = Arc::clone(&endpoint);
@@ -1914,7 +1910,7 @@ rewrite_value = "[redacted]"
 
 #[tokio::test]
 async fn framed_session_rewrite_policy_v2_mcp_request_error_redacts_telemetry() {
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
 [policy.mcp.bad_request_rewrite_target]
 on = "mcp.request"
@@ -1944,7 +1940,7 @@ rewrite_value = "github__redacted"
             }
         },
     );
-    *endpoint.policy_v2.write().await = Arc::new(settings.policy);
+    *endpoint.policy_v2.write().await = Arc::new(policy);
 
     let (mut client, server) = tokio::io::duplex(64 * 1024);
     let serve_endpoint = Arc::clone(&endpoint);

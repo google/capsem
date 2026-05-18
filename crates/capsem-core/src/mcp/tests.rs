@@ -333,7 +333,7 @@ fn build_server_list_empty_name_rejected() {
 #[test]
 fn build_server_list_corp_shadows_user_on_same_name() {
     // AB-002: user manual servers must not shadow corp-defined servers with
-    // the same name. The corp.toml policy is the highest-trust layer; if a
+    // the same name. Corp Profile V2 policy is the highest-trust layer; if a
     // user defines `github` and corp also defines `github`, the corp URL,
     // headers, and bearer token must be the surviving definition.
     let user = McpUserConfig {

@@ -9,8 +9,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use capsem_core::net::policy_config;
-use capsem_core::net::policy_config::corp_provision;
 use capsem_core::setup_state::SetupState;
 
 use crate::client::{self, UdsClient};
@@ -175,9 +173,6 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
         }
     }
 
-    // Load merged settings for corp-awareness
-    let (_user_settings, corp_settings) = policy_config::load_settings_files();
-
     // Step 1: Welcome + asset-manifest readiness checks.
     if opts.force || !state.is_step_done("welcome") {
         step_welcome(&cd, &mut state).await?;
@@ -185,17 +180,17 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
 
     // Step 3: Security preset
     if opts.force || !state.is_step_done("security_preset") {
-        step_security_preset(&cd, &mut state, &opts, &corp_settings)?;
+        step_security_preset(&cd, &mut state, &opts)?;
     }
 
     // Step 4: AI Providers
     if opts.force || !state.is_step_done("providers") {
-        step_providers(&cd, &mut state, &opts, &corp_settings)?;
+        step_providers(&cd, &mut state, &opts)?;
     }
 
     // Step 5: Repositories
     if opts.force || !state.is_step_done("repositories") {
-        step_repositories(&cd, &mut state, &opts, &corp_settings)?;
+        step_repositories(&cd, &mut state, &opts)?;
     }
 
     // Step 6: Summary (guarded like other steps to avoid re-killing the service)
@@ -217,47 +212,34 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn step_corp_config(capsem_dir: &Path, source: &str, state: &mut SetupState) -> Result<()> {
-    println!("[1/6] Corp config provisioning...");
+    println!("[1/6] Corp profile provisioning...");
 
-    let _content = if source.starts_with("http://") || source.starts_with("https://") {
+    let body = if source.starts_with("http://") || source.starts_with("https://") {
         let client = reqwest::Client::new();
-        let (body, etag) = corp_provision::fetch_corp_config(&client, source).await?;
-        let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
-        let cs = corp_provision::CorpSource {
-            url: Some(source.to_string()),
-            file_path: None,
-            fetched_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            etag,
-            content_hash,
-            refresh_interval_hours: corp_provision::parse_refresh_interval(&body),
-        };
-        corp_provision::install_corp_config(capsem_dir, &body, &cs)?;
-        body
+        let response = client
+            .get(source)
+            .header("User-Agent", "capsem")
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch corp profile from {source}"))?;
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "corp profile fetch failed: HTTP {} for {source}",
+                response.status()
+            );
+        }
+        response
+            .text()
+            .await
+            .context("failed to read corp profile body")?
     } else {
-        // Local file path
-        let body = std::fs::read_to_string(source)
-            .with_context(|| format!("cannot read corp config from {}", source))?;
-        corp_provision::validate_corp_toml(&body)?;
-        let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
-        let cs = corp_provision::CorpSource {
-            url: None,
-            file_path: Some(source.to_string()),
-            fetched_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            etag: None,
-            content_hash,
-            refresh_interval_hours: corp_provision::parse_refresh_interval(&body),
-        };
-        corp_provision::install_corp_config(capsem_dir, &body, &cs)?;
-        body
+        std::fs::read_to_string(source)
+            .with_context(|| format!("cannot read corp profile from {}", source))?
     };
+    capsem_core::settings_profiles::install_corp_profile_toml(capsem_dir, &body)
+        .map_err(|e| anyhow::anyhow!(e))?;
 
-    println!("  Corp config installed.");
+    println!("  Corp profile installed.");
     state.corp_config_source = Some(source.to_string());
     state.mark_done("corp_config");
     save_state_to(capsem_dir, state)?;
@@ -302,49 +284,48 @@ fn step_security_preset(
     capsem_dir: &Path,
     state: &mut SetupState,
     opts: &SetupOptions,
-    corp: &policy_config::SettingsFile,
 ) -> Result<()> {
-    println!("[3/6] Security preset...");
+    println!("[3/6] Default profile...");
 
-    let preset_locked = policy_config::is_setting_corp_locked("security.preset", corp);
-
-    if preset_locked {
-        if let Some(entry) = corp.settings.get("security.preset") {
-            println!(
-                "  Security preset configured by your organization: {:?}",
-                entry.value
-            );
-        }
-        state.security_preset = Some("corp-locked".to_string());
-    } else if let Some(ref preset) = opts.preset {
-        println!("  Applying preset: {}", preset);
-        policy_config::apply_preset(preset).map_err(|e| anyhow::anyhow!(e))?;
-        state.security_preset = Some(preset.clone());
+    let selected_profile = if let Some(ref preset) = opts.preset {
+        normalize_setup_profile_id(preset)
     } else if opts.non_interactive {
-        println!("  Using default preset: medium");
-        policy_config::apply_preset("medium").map_err(|e| anyhow::anyhow!(e))?;
-        state.security_preset = Some("medium".to_string());
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string()
     } else {
-        // Interactive: prompt with inquire
-        let choices = vec!["medium", "high"];
-        let preset = inquire::Select::new("Select security preset:", choices)
+        let choices = vec![capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID];
+        inquire::Select::new("Select default profile:", choices)
             .prompt()
-            .context("security preset selection cancelled")?;
-        policy_config::apply_preset(preset).map_err(|e| anyhow::anyhow!(e))?;
-        state.security_preset = Some(preset.to_string());
+            .context("default profile selection cancelled")?
+            .to_string()
+    };
+    let service_path = capsem_dir.join("service.toml");
+    let mut service_settings =
+        capsem_core::settings_profiles::load_service_settings_or_default(&service_path)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&service_settings.profiles)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if catalog.get(&selected_profile).is_none() {
+        anyhow::bail!("unknown profile preset '{selected_profile}'");
     }
+    service_settings.profiles.default_profile = selected_profile.clone();
+    capsem_core::settings_profiles::write_service_settings(&service_path, &service_settings)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    println!("  Using default profile: {selected_profile}");
+    state.security_preset = Some(selected_profile);
 
     state.mark_done("security_preset");
     save_state_to(capsem_dir, state)?;
     Ok(())
 }
 
-fn step_providers(
-    capsem_dir: &Path,
-    state: &mut SetupState,
-    opts: &SetupOptions,
-    _corp: &policy_config::SettingsFile,
-) -> Result<()> {
+fn normalize_setup_profile_id(value: &str) -> String {
+    match value {
+        "medium" | "high" => capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn step_providers(capsem_dir: &Path, state: &mut SetupState, opts: &SetupOptions) -> Result<()> {
     println!("[4/6] AI providers...");
 
     // Detect and write to settings in one shot
@@ -381,7 +362,7 @@ fn step_providers(
 
     if !summary.settings_written.is_empty() {
         println!(
-            "  Wrote {} setting(s) to user.toml.",
+            "  Wrote {} credential(s) to service.toml.",
             summary.settings_written.len()
         );
     }
@@ -396,7 +377,6 @@ fn step_repositories(
     capsem_dir: &Path,
     state: &mut SetupState,
     _opts: &SetupOptions,
-    _corp: &policy_config::SettingsFile,
 ) -> Result<()> {
     println!("[5/6] Repository access...");
 
@@ -577,7 +557,7 @@ mod tests {
             schema_version: 2,
             providers_done: true,
             security_preset: Some("medium".into()),
-            corp_config_source: Some("/tmp/corp.toml".into()),
+            corp_config_source: Some("/tmp/corp-profile.toml".into()),
             ..SetupState::default()
         };
         s.mark_done("welcome");
@@ -590,7 +570,10 @@ mod tests {
         assert!(loaded.is_step_done("providers"));
         assert_eq!(loaded.security_preset.as_deref(), Some("medium"));
         assert!(loaded.providers_done);
-        assert_eq!(loaded.corp_config_source.as_deref(), Some("/tmp/corp.toml"));
+        assert_eq!(
+            loaded.corp_config_source.as_deref(),
+            Some("/tmp/corp-profile.toml")
+        );
     }
 
     #[test]
@@ -717,18 +700,20 @@ mod tests {
     #[tokio::test]
     async fn corp_config_from_local_file_marks_step_done() {
         let d = tmp_dir();
-        let corp_toml = r#"
-[metadata]
+        let corp_profile_toml = r#"
 version = 1
-org = "Test Co"
+id = "test-corp"
+name = "Test Corp"
+best_for = "Managed test sessions."
+profile_type = "coding"
 
-[policy.http.allow_example_docs]
+[security.rules.http.allow_example_docs]
 on = "http.request"
 if = 'request.host == "example.com"'
 decision = "allow"
 "#;
-        let corp_path = d.path().join("corp.toml");
-        std::fs::write(&corp_path, corp_toml).unwrap();
+        let corp_path = d.path().join("corp-profile.toml");
+        std::fs::write(&corp_path, corp_profile_toml).unwrap();
 
         let mut state = SetupState::default();
         step_corp_config(d.path(), corp_path.to_str().unwrap(), &mut state)
@@ -772,7 +757,7 @@ decision = "allow"
             .await
             .expect_err("missing corp-config file should error");
         assert!(
-            err.to_string().contains("cannot read corp config"),
+            err.to_string().contains("cannot read corp profile"),
             "error lost path context: {err}",
         );
         assert!(!state.is_step_done("corp_config"));

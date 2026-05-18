@@ -97,7 +97,7 @@ fn make_proxy_config_full(
         )),
     });
     let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        capsem_core::net::policy_config::PolicyConfig::default(),
+        capsem_core::net::policy_v2::PolicyConfig::default(),
     )));
     let pipeline = mitm_proxy::make_production_pipeline_with_policy_v2(
         Arc::clone(&policy),

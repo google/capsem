@@ -1,8 +1,8 @@
 """Setup / onboarding endpoints: /setup/state, /setup/detect, /setup/complete,
 /setup/assets, /setup/corp-config.
 
-These endpoints read/write under CAPSEM_HOME (setup-state.json, corp.toml,
-corp-source.json) and for /setup/detect also under HOME (~/.gitconfig,
+These endpoints read/write Profile V2 setup state under CAPSEM_HOME
+(setup-state.json, service.toml, profiles/) and for /setup/detect also under HOME (~/.gitconfig,
 ~/.ssh, ~/.anthropic, ~/.claude, ~/.gemini, ~/.config/openai, gh auth token,
 ~/.config/gcloud). The conftest's `service_env` fixture isolates both,
 so mutations here never touch the developer's real config.

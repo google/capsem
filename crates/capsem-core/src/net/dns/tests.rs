@@ -17,7 +17,7 @@ use tokio::net::UdpSocket;
 use super::resolver::DnsResolver;
 use super::server::DnsHandler;
 use crate::net::policy::{DnsRedirect, DomainMatcher, NetworkPolicy, PolicyRule};
-use crate::net::policy_config::{PolicyConfig, SettingsFile};
+use crate::net::policy_v2::PolicyConfig;
 
 fn build_query_bytes(name: &str, qtype: RecordType, id: u16) -> Vec<u8> {
     let mut msg = Message::new(id, MessageType::Query, OpCode::Query);
@@ -86,8 +86,8 @@ fn allow_all_policy() -> NetworkPolicy {
 }
 
 fn policy_v2_from_toml(toml: &str) -> Arc<tokio::sync::RwLock<Arc<PolicyConfig>>> {
-    let settings: SettingsFile = toml::from_str(toml).expect("policy v2 TOML should parse");
-    Arc::new(tokio::sync::RwLock::new(Arc::new(settings.policy)))
+    let policy = PolicyConfig::from_policy_toml_str(toml).expect("policy v2 TOML should parse");
+    Arc::new(tokio::sync::RwLock::new(Arc::new(policy)))
 }
 
 fn block_specific_policy(domain: &str) -> NetworkPolicy {
@@ -336,7 +336,7 @@ async fn policy_v2_dns_live_block_re_evaluates_before_cache_hit() {
     assert_eq!(initial.decision, Decision::Allowed);
     assert_eq!(cache.len(), 1);
 
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
         [policy.dns.block_openai]
         on = "dns.query"
@@ -346,7 +346,7 @@ async fn policy_v2_dns_live_block_re_evaluates_before_cache_hit() {
         "#,
     )
     .unwrap();
-    *policy_v2.write().await = Arc::new(settings.policy);
+    *policy_v2.write().await = Arc::new(policy);
 
     let after_reload = handler.handle(&q).await;
     assert_eq!(after_reload.decision, Decision::Denied);
@@ -377,7 +377,7 @@ async fn policy_v2_dns_live_rewrite_re_evaluates_before_cache_hit() {
     assert_eq!(initial.decision, Decision::Allowed);
     assert_eq!(cache.len(), 1);
 
-    let settings: SettingsFile = toml::from_str(
+    let policy = PolicyConfig::from_policy_toml_str(
         r#"
         [policy.dns.rewrite_openai]
         on = "dns.query"
@@ -389,7 +389,7 @@ async fn policy_v2_dns_live_rewrite_re_evaluates_before_cache_hit() {
         "#,
     )
     .unwrap();
-    *policy_v2.write().await = Arc::new(settings.policy);
+    *policy_v2.write().await = Arc::new(policy);
 
     let after_reload = handler.handle(&q).await;
     assert_eq!(after_reload.decision, Decision::Redirected);

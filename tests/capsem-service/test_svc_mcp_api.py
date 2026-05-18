@@ -1,8 +1,8 @@
 """MCP API endpoints: /mcp/servers, /mcp/tools, /mcp/policy,
 /mcp/tools/refresh, /mcp/tools/{name}/approve, /mcp/tools/{name}/call.
 
-These endpoints read from CAPSEM_HOME (user.toml, corp.toml,
-mcp_tool_cache.json) and for /mcp/tools/{name}/call route through a running
+These endpoints read Profile V2 state from CAPSEM_HOME plus
+mcp_tool_cache.json, and for /mcp/tools/{name}/call route through a running
 capsem-process over IPC. Without a running VM, /mcp/tools/{name}/call hits
 the "no running sessions" path -- the fixture tests that error branch; full
 happy-path coverage would need a downstream MCP aggregator in the guest

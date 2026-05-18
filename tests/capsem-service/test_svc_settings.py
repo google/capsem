@@ -1,7 +1,7 @@
 """Settings endpoints: /settings, /settings/presets, /settings/presets/{id},
 /settings/lint, /settings/validate-key.
 
-These endpoints read and write under CAPSEM_HOME (user.toml, corp.toml).
+These endpoints read and write Profile V2 state under CAPSEM_HOME.
 The conftest's `service_env` fixture isolates CAPSEM_HOME to a tmpdir,
 so mutations here never touch the developer's real ~/.capsem/.
 """
@@ -19,10 +19,10 @@ def isolated_client():
 
     The session-scoped `service_env` is reused by every test in the
     `tests/capsem-service/` worker. Preset application writes keys like
-    `mcp.default_tool_permission = "warn"` into that shared CAPSEM_HOME,
+    Profile V2 settings into that shared CAPSEM_HOME,
     which then leaks into `test_svc_mcp_api.py::test_policy_returns_merged_shape`
     (which expects the unset-default `"allow"`). Any test that mutates
-    user.toml state other tests depend on should use this fixture instead.
+    service/profile state other tests depend on should use this fixture instead.
     """
     svc = ServiceInstance()
     svc.start()
@@ -88,10 +88,10 @@ class TestPresets:
             for key in ("id", "name", "description", "settings"):
                 assert key in preset, f"preset missing '{key}': {preset}"
 
-    def test_apply_preset_returns_refreshed_tree(self, isolated_client):
-        """POST /settings/presets/{id} applies settings and returns typed payload.
+    def test_select_profile_preset_returns_refreshed_tree(self, isolated_client):
+        """POST /settings/presets/{id} selects a profile and returns typed payload.
 
-        Uses `isolated_client` because applying a preset mutates shared
+        Uses `isolated_client` because selecting a preset mutates shared
         CAPSEM_HOME state (default profile selection) that
         leaks into sibling files' assertions about the unset default.
         """

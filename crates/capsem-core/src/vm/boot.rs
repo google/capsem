@@ -16,7 +16,6 @@ use crate::hypervisor::apple_vz::AppleVzHypervisor;
 use crate::hypervisor::kvm::KvmHypervisor;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::mitm_proxy;
-use crate::net::policy_config;
 use crate::vm::guest_config::GuestConfig;
 use crate::{
     decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
@@ -34,8 +33,7 @@ pub const CA_CERT_PEM: &str = include_str!("../../../../config/capsem-ca.crt");
 
 /// Create per-sandbox network state (CA + policy for MITM proxy).
 pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetworkState> {
-    let policy = policy_config::load_merged_network_policy();
-    create_net_state_with_policy(vm_id, db, policy)
+    create_net_state_with_policy(vm_id, db, crate::net::policy::NetworkPolicy::default_dev())
 }
 
 /// Create per-sandbox network state with a pre-loaded policy (avoids redundant disk reads).
@@ -365,8 +363,7 @@ pub fn send_boot_config(
     }
 
     // 2. Send metadata-driven env vars from settings registry.
-    let guest_config =
-        preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
+    let guest_config = preloaded_guest_config.unwrap_or_default();
     let mut env_count: usize = 0;
 
     // Track what we actually send for the injection test manifest.

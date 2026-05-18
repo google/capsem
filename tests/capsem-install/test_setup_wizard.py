@@ -1,7 +1,7 @@
 """Setup wizard tests for WB2.
 
 Tests verify `capsem setup` in non-interactive mode: completes without
-prompts, persists state, respects --force, and writes user.toml.
+prompts, persists state, respects --force, and writes service.toml.
 """
 
 from __future__ import annotations
@@ -22,14 +22,14 @@ from .conftest import (
 )
 
 SETUP_STATE = CAPSEM_DIR / "setup-state.json"
-USER_TOML = CAPSEM_DIR / "user.toml"
+SERVICE_TOML = CAPSEM_DIR / "service.toml"
 
 
 @pytest.fixture
 def clean_setup_state():
     """Remove setup state before and after test."""
     SETUP_STATE.unlink(missing_ok=True)
-    USER_TOML.unlink(missing_ok=True)
+    SERVICE_TOML.unlink(missing_ok=True)
     yield
     SETUP_STATE.unlink(missing_ok=True)
 
@@ -126,18 +126,19 @@ class TestSetupWizard:
         assert after.get("install_completed") is True, "install_completed must persist"
         assert "summary" in after.get("completed_steps", []), "completed steps must persist"
 
-    def test_setup_writes_user_toml(self, installed_layout, clean_state, clean_setup_state):
-        """Security preset writes user.toml."""
+    def test_setup_writes_service_profile_selection(self, installed_layout, clean_state, clean_setup_state):
+        """Security preset writes the Profile V2 service settings."""
         result = run_capsem("setup", "--non-interactive", "--preset", "medium", timeout=30)
         assert result.returncode == 0, (
             f"setup failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
-        # user.toml should exist after applying a preset
-        assert USER_TOML.exists(), "user.toml should be written by apply_preset"
+        assert SERVICE_TOML.exists(), "service.toml should be written by setup"
+        service = tomllib.loads(SERVICE_TOML.read_text())
+        assert service["profiles"]["default_profile"] == "everyday-work"
 
         state = json.loads(SETUP_STATE.read_text())
-        assert state.get("security_preset") == "medium"
+        assert state.get("security_preset") == "everyday-work"
 
 
 class TestSetupWizardHarness:
@@ -199,10 +200,10 @@ class TestSetupWizardHarness:
         )
         assert "No API keys detected. Configure later with `capsem setup --force`." in result.stdout
 
-        # Security preset still writes a valid settings file even with no
+        # Security preset still writes a valid service settings file even with no
         # provider credentials detected.
-        parsed = tomllib.loads(USER_TOML.read_text())
-        assert isinstance(parsed, dict), "user.toml must be valid TOML after setup"
+        parsed = tomllib.loads(SERVICE_TOML.read_text())
+        assert isinstance(parsed, dict), "service.toml must be valid TOML after setup"
 
         state = json.loads(SETUP_STATE.read_text())
         assert state.get("providers_done") is True

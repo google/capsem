@@ -401,7 +401,7 @@ enum MiscCommands {
     /// info into a single redacted tar.gz for bug reports.
     ///
     /// Default output: `~/.capsem/support/capsem-support-<ts>-<host>.tar.gz`.
-    /// Secrets in user.toml/corp.toml and bearer tokens in log lines are
+    /// Secrets in service.toml/profile TOML and bearer tokens in log lines are
     /// stripped by default. The bundle excludes rootfs.img unless
     /// `--include-rootfs` is passed.
     SupportBundle {
@@ -2296,7 +2296,7 @@ mod tests {
             "capsem",
             "setup",
             "--corp-config",
-            "https://example.com/corp.toml",
+            "https://example.com/corp-profile.toml",
             "--non-interactive",
         ]);
         match cli.command.unwrap() {
@@ -2305,7 +2305,10 @@ mod tests {
                 non_interactive,
                 ..
             }) => {
-                assert_eq!(corp_config, Some("https://example.com/corp.toml".into()));
+                assert_eq!(
+                    corp_config,
+                    Some("https://example.com/corp-profile.toml".into())
+                );
                 assert!(non_interactive);
             }
             _ => panic!("expected Setup"),

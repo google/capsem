@@ -910,7 +910,7 @@ max = 32
 
 # -- MCP Servers -------------------------------------------------------------
 # Declarative MCP server definitions. Auto-injected into AI agent configs at boot.
-# Enterprises can add servers via corp.toml [mcp] section.
+# Historical v1 defaults file; Profile V2 MCP connector policy lives in profiles.
 
 [mcp.local]
 name = "Local"

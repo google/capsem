@@ -36,7 +36,7 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         println!("  - Runtime sockets, pid files, and temporary VM state");
         println!();
         println!("This will preserve:");
-        println!("  - user.toml, corp.toml, setup-state.json");
+        println!("  - service.toml, profiles/, setup-state.json");
         println!("  - assets, logs, persistent VM state, and session/audit data");
 
         let confirm = inquire::Confirm::new("Proceed with uninstall?")
@@ -135,7 +135,7 @@ pub async fn run_purge(yes: bool) -> Result<()> {
     if !yes {
         println!("This will permanently remove all Capsem state:");
         println!("  - Runtime binaries and service registration");
-        println!("  - user.toml, corp.toml, setup-state.json");
+        println!("  - service.toml, profiles/, setup-state.json");
         println!("  - assets, logs, session/audit data, and persistent VM state");
         println!();
         println!("This cannot be undone.");
@@ -262,9 +262,8 @@ mod tests {
 
         write(&home.join("bin/capsem"), b"bin");
         write(&home.join("bin/capsem-mcp-builtin"), b"bin");
-        write(&home.join("user.toml"), b"[ai]\n");
-        write(&home.join("corp.toml"), b"[net]\n");
-        write(&home.join("corp-source.json"), b"{}\n");
+        write(&home.join("service.toml"), b"version = 1\n");
+        write(&home.join("profiles/corp/baseline.toml"), b"version = 1\n");
         write(&home.join("setup-state.json"), b"{}\n");
         write(&home.join("assets/arm64/rootfs.squashfs"), b"rootfs");
         write(&home.join("logs/app.log"), b"log");
@@ -291,9 +290,8 @@ mod tests {
         assert!(!run.join("instances").exists());
         assert!(!run.join("sessions").exists());
 
-        assert!(home.join("user.toml").exists());
-        assert!(home.join("corp.toml").exists());
-        assert!(home.join("corp-source.json").exists());
+        assert!(home.join("service.toml").exists());
+        assert!(home.join("profiles/corp/baseline.toml").exists());
         assert!(home.join("setup-state.json").exists());
         assert!(home.join("assets/arm64/rootfs.squashfs").exists());
         assert!(home.join("logs/app.log").exists());
@@ -308,8 +306,8 @@ mod tests {
         let home = dir.path().join("capsem-home");
 
         write(&home.join("bin/capsem"), b"bin");
-        write(&home.join("user.toml"), b"[ai]\n");
-        write(&home.join("corp.toml"), b"[net]\n");
+        write(&home.join("service.toml"), b"version = 1\n");
+        write(&home.join("profiles/corp/baseline.toml"), b"version = 1\n");
         write(&home.join("setup-state.json"), b"{}\n");
         write(&home.join("assets/arm64/rootfs.squashfs"), b"rootfs");
         write(&home.join("logs/app.log"), b"log");

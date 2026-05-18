@@ -5,24 +5,24 @@ use async_trait::async_trait;
 use crate::net::mitm_proxy::hooks::{ConnMeta, HookState};
 use crate::net::mitm_proxy::pipeline::{DispatchOutcome, Pipeline};
 use crate::net::mitm_proxy::protocol::Protocol;
-use crate::net::policy_config::SettingsFile;
 use crate::net::policy_confirm::{
     ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision,
 };
+use crate::net::policy_v2::PolicyConfig;
 
 use super::*;
 
 fn pipeline_for(toml_text: &str) -> Pipeline {
-    let settings: SettingsFile = toml::from_str(toml_text).unwrap();
-    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(settings.policy)));
+    let policy = PolicyConfig::from_policy_toml_str(toml_text).unwrap();
+    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(policy)));
     Pipeline::builder()
         .register(Arc::new(PolicyV2HttpHook::new(policy)))
         .build()
 }
 
 fn pipeline_for_confirmer(toml_text: &str, confirmer: Arc<dyn Confirmer>) -> Pipeline {
-    let settings: SettingsFile = toml::from_str(toml_text).unwrap();
-    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(settings.policy)));
+    let policy = PolicyConfig::from_policy_toml_str(toml_text).unwrap();
+    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(policy)));
     Pipeline::builder()
         .register(Arc::new(
             PolicyV2HttpHook::new(policy).with_confirmer(confirmer),
@@ -162,7 +162,7 @@ reason = "Ask before fetching OpenAI-owned GitHub code"
     assert_eq!(calls[0].rule_id, "security.rules.http.ask_openai_github");
     assert_eq!(
         calls[0].callback,
-        crate::net::policy_config::PolicyCallback::HttpRequest
+        crate::net::policy_v2::PolicyCallback::HttpRequest
     );
     assert_eq!(
         calls[0]
@@ -369,7 +369,7 @@ reason = "Ask before returning redirects"
     );
     assert_eq!(
         accept_confirmer.calls()[0].callback,
-        crate::net::policy_config::PolicyCallback::HttpResponse
+        crate::net::policy_v2::PolicyCallback::HttpResponse
     );
     assert_eq!(
         accept_confirmer.calls()[0]

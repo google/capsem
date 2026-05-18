@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under
   the VM namespace instead of the legacy policy-config namespace.
+- Removed the legacy `net::policy_config` module, v1 settings-file runtime
+  fallbacks, v1 install/setup fixtures, and old `user.toml`/`corp.toml`
+  support-bundle/uninstall preservation paths in favor of Profile V2
+  `service.toml` and profile roots.
 
 ### Fixed
 - Fixed `just smoke`, `just test`, and `build-ui` ordering so Tauri frontend
@@ -44,10 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed isolated smoke/doctor runs to avoid installed gateway-port collisions
   and to skip persistent service-unit checks when a test-scoped service unit is
   intentionally not required.
-- Fixed Profile V2 VM runtime migration compatibility so existing isolated
-  `user.toml` guest boot files, CA environment variables, and legacy
-  network/domain defaults remain available while sessions consume Profile V2
-  `vm-effective-settings.toml`.
+- Fixed Profile V2 VM runtime migration compatibility so sessions consume only
+  Profile V2 `vm-effective-settings.toml` instead of reopening legacy settings
+  files at runtime.
 - Fixed running VM reloads to refresh Profile V2 effective policy from each
   session attachment, including MCP builtin domain policy and Policy V2 rules.
 - Fixed Profile V2 conditional MCP/HTTP rules so narrow argument/path rules no

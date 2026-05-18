@@ -154,7 +154,7 @@ const DEFAULT_MAX_BODY_CAPTURE: usize = 4096;
 /// workflow this protocol path was designed for). Adding a new port
 /// to this list and to the iptables redirects in tandem is the
 /// "configurable allowlist" promise from the T2.2 plan; a config
-/// plumb to `policy_config` is the final form (deferred follow-up).
+/// plumb to Profile V2 effective settings is the final form.
 const DEFAULT_HTTP_UPSTREAM_PORTS: &[u16] = &[80, 11434];
 
 impl NetworkPolicy {

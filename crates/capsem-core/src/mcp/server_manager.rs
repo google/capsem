@@ -648,13 +648,10 @@ mod tests {
         source.insert("CAPSEM_VM_ID".to_string(), "vm-1".to_string());
         source.insert("CAPSEM_TRACE_ID".to_string(), "trace-1".to_string());
         source.insert("TRACEPARENT".to_string(), "00-abc-def-01".to_string());
+        source.insert("CAPSEM_HOME".to_string(), "/tmp/capsem-home".to_string());
         source.insert(
-            "CAPSEM_USER_CONFIG".to_string(),
-            "/tmp/user.toml".to_string(),
-        );
-        source.insert(
-            "CAPSEM_CORP_CONFIG".to_string(),
-            "/tmp/corp.toml".to_string(),
+            "CAPSEM_SERVICE_SETTINGS".to_string(),
+            "/tmp/service.toml".to_string(),
         );
         source.insert(
             "CAPSEM_TEST_UPSTREAM_OVERRIDES".to_string(),
@@ -871,23 +868,15 @@ mod tests {
         );
     }
 
-    /// Live integration test that connects to all HTTP MCP servers from the
-    /// developer's config (user.toml manual servers + auto-detected from
-    /// ~/.claude/settings.json and ~/.gemini/settings.json). Skips if none found.
+    /// Live integration test that connects to all HTTP MCP servers auto-detected
+    /// from ~/.claude/settings.json and ~/.gemini/settings.json. Skips if none found.
     /// Covers bearer_token auth, custom headers, and multi-server catalog building.
     #[tokio::test]
     async fn integration_live_configured_mcp_servers() {
         use crate::mcp::build_server_list;
         use crate::mcp::policy::McpUserConfig;
-        use crate::net::policy_config::{load_settings_file, user_config_path};
 
-        let user_mcp = user_config_path()
-            .and_then(|p| load_settings_file(&p).ok())
-            .and_then(|f| f.mcp)
-            .unwrap_or_default();
-        let corp_mcp = McpUserConfig::default();
-
-        let servers = build_server_list(&user_mcp, &corp_mcp);
+        let servers = build_server_list(&McpUserConfig::default(), &McpUserConfig::default());
         let http_servers: Vec<_> = servers
             .iter()
             .filter(|s| s.enabled && !s.is_stdio())

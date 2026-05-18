@@ -8,6 +8,7 @@ use http_body_util::BodyExt;
 
 use crate::net::cert_authority::CertAuthority;
 use crate::net::policy::NetworkPolicy;
+use crate::net::policy_v2::PolicyConfig;
 
 const CA_KEY: &str = include_str!("../../../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../../../config/capsem-ca.crt");
@@ -24,14 +25,14 @@ fn make_config_with_policy(policy: NetworkPolicy) -> Arc<MitmProxyConfig> {
     make_config_with_policy_v2(
         policy,
         Arc::new(tokio::sync::RwLock::new(Arc::new(
-            crate::net::policy_config::PolicyConfig::default(),
+            crate::net::policy_v2::PolicyConfig::default(),
         ))),
     )
 }
 
 fn make_config_with_policy_v2(
     policy: NetworkPolicy,
-    policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>>,
+    policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_v2::PolicyConfig>>>,
 ) -> Arc<MitmProxyConfig> {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let dir = tempfile::tempdir().unwrap();
@@ -88,9 +89,9 @@ fn allow_test_domain_policy() -> NetworkPolicy {
 
 fn policy_v2_from_toml(
     toml_text: &str,
-) -> Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>> {
-    let settings: crate::net::policy_config::SettingsFile = toml::from_str(toml_text).unwrap();
-    Arc::new(tokio::sync::RwLock::new(Arc::new(settings.policy)))
+) -> Arc<tokio::sync::RwLock<Arc<crate::net::policy_v2::PolicyConfig>>> {
+    let policy = PolicyConfig::from_policy_toml_str(toml_text).unwrap();
+    Arc::new(tokio::sync::RwLock::new(Arc::new(policy)))
 }
 
 fn make_client_hello(hostname: &str) -> Vec<u8> {
@@ -1505,10 +1506,10 @@ async fn policy_v2_model_request_invalid_condition_fails_closed_without_upstream
     let mut model = HashMap::new();
     model.insert(
         "bad_regex".to_string(),
-        crate::net::policy_config::PolicyRuleConfig {
-            on: crate::net::policy_config::PolicyCallback::ModelRequest,
+        crate::net::policy_v2::PolicyRuleConfig {
+            on: crate::net::policy_v2::PolicyCallback::ModelRequest,
             condition: "request.body.matches(\"[\")".to_string(),
-            decision: crate::net::policy_config::PolicyDecisionKind::Allow,
+            decision: crate::net::policy_v2::PolicyDecisionKind::Allow,
             priority: 10,
             reason: None,
             rewrite_target: None,
@@ -1518,9 +1519,9 @@ async fn policy_v2_model_request_invalid_condition_fails_closed_without_upstream
         },
     );
     let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        crate::net::policy_config::PolicyConfig {
+        crate::net::policy_v2::PolicyConfig {
             model,
-            ..crate::net::policy_config::PolicyConfig::default()
+            ..crate::net::policy_v2::PolicyConfig::default()
         },
     )));
     let config = make_config_with_policy_v2(allow_local_http_policy(port), policy_v2);

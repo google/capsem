@@ -4,13 +4,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::*;
-use crate::net::policy_config::{PolicyRuleConfig, SettingsFile};
 use crate::net::policy_confirm::{
     ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision, PlaceholderConfirmer,
 };
+use crate::net::policy_v2::{PolicyConfig, PolicyRuleConfig};
 
 fn policy_from_toml(toml_text: &str) -> PolicyConfig {
-    toml::from_str::<SettingsFile>(toml_text).unwrap().policy
+    PolicyConfig::from_policy_toml_str(toml_text).unwrap()
 }
 
 fn headers(pairs: &[(&str, &str)]) -> http::HeaderMap {
@@ -434,7 +434,7 @@ reason = "Ask before sending this model request"
     assert_eq!(calls[0].rule_id, "security.rules.model.ask_openai");
     assert_eq!(
         calls[0].callback,
-        crate::net::policy_config::PolicyCallback::ModelRequest
+        crate::net::policy_v2::PolicyCallback::ModelRequest
     );
     let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
     assert!(
@@ -864,7 +864,7 @@ reason = "Ask before delivering model tool calls"
     );
     assert_eq!(
         calls[0].callback,
-        crate::net::policy_config::PolicyCallback::ModelToolCall
+        crate::net::policy_v2::PolicyCallback::ModelToolCall
     );
     let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
     assert!(

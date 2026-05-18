@@ -65,43 +65,12 @@ def _gemini_api_key() -> Optional[str]:
     google_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if google_key:
         return google_key
-
-    user_toml = Path.home() / ".capsem" / "user.toml"
-    if user_toml.exists():
-        with open(user_toml) as f:
-            for line in f:
-                if line.strip().startswith("value") and "AIza" in line:
-                    m = re.search(r'value\s*=\s*"(AIza[^"]*)"', line)
-                    if m:
-                        return m.group(1)
     return None
 
 
 def _integration_block_domain() -> str:
-    """Read the first blocked domain from the integration test config."""
-    deny_domain = "example.com"
-    config_path = Path("config/integration-test-user.toml")
-    if not config_path.exists():
-        return deny_domain
-
-    in_custom_block = False
-    with open(config_path, "r") as f:
-        for line in f:
-            stripped = line.strip()
-            if stripped.startswith("[settings."):
-                in_custom_block = stripped == '[settings."security.web.custom_block"]'
-                continue
-
-            # Support the older inline form too:
-            # "security.web.custom_block" = { value = "domain.com", ... }
-            if 'security.web.custom_block' in stripped and 'value =' in stripped:
-                in_custom_block = True
-
-            if in_custom_block and 'value =' in stripped:
-                match = re.search(r'value\s*=\s*"(.*?)"', stripped)
-                if match:
-                    return match.group(1).split(",")[0].strip()
-    return deny_domain
+    """Domain blocked by the temporary Profile V2 smoke profile."""
+    return "example.com"
 
 
 def _toml_string(value: str) -> str:
@@ -335,9 +304,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
 
     google_key = _gemini_api_key()
 
-    # Restart the dev service with a Profile V2 fixture selected in
-    # service.toml. capsem-process intentionally no longer reads legacy
-    # CAPSEM_USER_CONFIG/CAPSEM_CORP_CONFIG policy files.
+    # Restart the dev service with a Profile V2 fixture selected in service.toml.
     _kill_dev_service()
     profile_snapshot = _install_integration_v2_profile()
     try:

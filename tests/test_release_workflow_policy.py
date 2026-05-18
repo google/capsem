@@ -406,7 +406,7 @@ def test_local_install_removes_old_runtime_before_installing_package():
 
     assert 'echo "=== Clean uninstalling existing local Capsem ==="' in body
     assert 'CAPSEM_SETTINGS_BACKUP="$(mktemp -d' in body
-    for setting in ("user.toml", "corp.toml", "corp-source.json"):
+    for setting in ("service.toml", "profiles"):
         assert setting in body
     assert '"$HOME/.capsem/bin/capsem" uninstall --yes' in body
     assert '"$ROOT/target/release/capsem" uninstall --yes' in body

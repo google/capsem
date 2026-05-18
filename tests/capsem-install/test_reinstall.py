@@ -121,7 +121,7 @@ class TestReinstall:
         self, installed_layout, clean_state
     ):
         """The update contract preserves user state across uninstall/install."""
-        durable = CAPSEM_DIR / "user.toml"
+        durable = CAPSEM_DIR / "service.toml"
         durable.write_text("# update preservation sentinel\n")
         persistent = CAPSEM_DIR / "run" / "persistent" / "saved-vm"
         persistent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +137,7 @@ class TestReinstall:
 
         _simulate_install_from_current_build()
 
-        assert durable.exists(), "runtime replacement must preserve user config"
+        assert durable.exists(), "runtime replacement must preserve service settings"
         assert persistent.exists(), "runtime replacement must preserve persistent VM state"
         assert saved_asset.exists(), "runtime replacement must preserve saved-VM assets"
         _assert_status_has_no_runtime_layout_issues()

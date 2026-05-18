@@ -1,7 +1,7 @@
 //! Microbenchmarks for Policy V2 matching and hook wire decoding.
 
-use capsem_core::net::policy_config::{PolicyCallback, PolicyConfig};
 use capsem_core::net::policy_hook_spec::HookDecisionResponse;
+use capsem_core::net::policy_v2::{PolicyCallback, PolicyConfig};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use serde_json::json;
 

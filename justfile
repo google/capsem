@@ -791,6 +791,9 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         if [ -f "$src" ]; then
             mkdir -p "$(dirname "$dst")"
             cp -p "$src" "$dst"
+        elif [ -d "$src" ]; then
+            mkdir -p "$(dirname "$dst")"
+            cp -a "$src/." "$dst/"
         fi
     }
 
@@ -801,6 +804,9 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         if [ -f "$src" ]; then
             mkdir -p "$(dirname "$dst")"
             cp -p "$src" "$dst"
+        elif [ -d "$src" ]; then
+            mkdir -p "$dst"
+            cp -a "$src/." "$dst/"
         fi
     }
 
@@ -859,9 +865,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     cargo build --release {{host_crates}}
 
     echo "=== Clean uninstalling existing local Capsem ==="
-    preserve_setting "user.toml"
-    preserve_setting "corp.toml"
-    preserve_setting "corp-source.json"
+    preserve_setting "service.toml"
+    preserve_setting "profiles"
     if [ -x "$HOME/.capsem/bin/capsem" ]; then
         if "$HOME/.capsem/bin/capsem" uninstall --yes; then
             echo "Existing local Capsem uninstalled."
@@ -916,9 +921,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     fi
 
     echo "=== Restoring preserved settings ==="
-    restore_setting "user.toml"
-    restore_setting "corp.toml"
-    restore_setting "corp-source.json"
+    restore_setting "service.toml"
+    restore_setting "profiles"
 
     echo "=== Verifying installed layout ==="
     assert_executable "$HOME/.capsem/bin/capsem"

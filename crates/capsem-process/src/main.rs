@@ -1191,13 +1191,10 @@ mod tests {
         source.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
         source.insert("RUST_LOG".to_string(), "capsem=debug".to_string());
         source.insert("RUST_BACKTRACE".to_string(), "1".to_string());
+        source.insert("CAPSEM_HOME".to_string(), "/tmp/capsem-home".to_string());
         source.insert(
-            "CAPSEM_USER_CONFIG".to_string(),
-            "/tmp/user.toml".to_string(),
-        );
-        source.insert(
-            "CAPSEM_CORP_CONFIG".to_string(),
-            "/tmp/corp.toml".to_string(),
+            "CAPSEM_SERVICE_SETTINGS".to_string(),
+            "/tmp/service.toml".to_string(),
         );
         source.insert(
             "CAPSEM_TEST_UPSTREAM_OVERRIDES".to_string(),

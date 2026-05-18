@@ -43,7 +43,7 @@ class TestUninstall:
         for name in BINARIES:
             assert (INSTALL_DIR / name).exists()
 
-        durable = CAPSEM_DIR / "user.toml"
+        durable = CAPSEM_DIR / "service.toml"
         durable.write_text("# uninstall preservation sentinel\n")
         persistent = CAPSEM_DIR / "run" / "persistent" / "saved-vm"
         persistent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +57,7 @@ class TestUninstall:
 
             assert CAPSEM_DIR.exists(), "~/.capsem should remain after runtime uninstall"
             assert not INSTALL_DIR.exists(), "~/.capsem/bin should be removed after uninstall"
-            assert durable.exists(), "user config should be preserved"
+            assert durable.exists(), "service settings should be preserved"
             assert persistent.exists(), "persistent VM state should be preserved"
         finally:
             if not (INSTALL_DIR / "capsem").exists():
@@ -95,7 +95,7 @@ class TestUninstall:
 
     def test_product_purge_removes_durable_state(self, installed_layout, clean_state):
         """Whole-product purge removes runtime and durable user state."""
-        (CAPSEM_DIR / "user.toml").write_text("# purge sentinel\n")
+        (CAPSEM_DIR / "service.toml").write_text("# purge sentinel\n")
         (CAPSEM_DIR / "assets" / "arm64").mkdir(parents=True, exist_ok=True)
         (CAPSEM_DIR / "assets" / "arm64" / "old-rootfs.squashfs").write_text("asset")
         persistent = CAPSEM_DIR / "run" / "persistent" / "saved-vm"
