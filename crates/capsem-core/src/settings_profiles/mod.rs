@@ -30,6 +30,8 @@ pub enum SettingsProfilesError {
     ReadFile { path: PathBuf, details: String },
     #[error("failed to write {path:?}: {details}")]
     WriteFile { path: PathBuf, details: String },
+    #[error("failed to remove {path:?}: {details}")]
+    RemoveFile { path: PathBuf, details: String },
     #[error("failed to serialize {kind}: {details}")]
     Serialize { kind: &'static str, details: String },
     #[error("duplicate profile id '{id}' from {first} and {second}")]
@@ -273,6 +275,78 @@ pub struct InstalledProfileRevisionRecord {
     pub payload_hash: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileRevisionReconcileOutcome {
+    Installed(InstalledProfileRevision),
+    Unchanged(InstalledProfileRevisionRecord),
+    DeprecatedKept(InstalledProfileRevisionRecord),
+    DeprecatedNotInstalled {
+        profile_id: String,
+        revision: String,
+    },
+    RevokedRemoved {
+        profile_id: String,
+        revision: String,
+    },
+    RevokedNotInstalled {
+        profile_id: String,
+        revision: String,
+    },
+}
+
+pub async fn reconcile_profile_revision_from_manifest(
+    roots: &ProfileRootSettings,
+    revision: crate::profile_manifest::ResolvedProfileRevision<'_>,
+    profile_payload_pubkey: &str,
+) -> anyhow::Result<ProfileRevisionReconcileOutcome> {
+    roots.validate("profiles")?;
+    match revision.record.status {
+        crate::profile_manifest::ProfileRevisionStatus::Active => {
+            if let Some(installed) = load_installed_profile_revision(roots, revision.profile_id)? {
+                if installed.revision == revision.revision
+                    && installed.payload_hash == revision.record.profile_hash
+                    && installed_profile_revision_is_complete(roots, &installed)?
+                {
+                    return Ok(ProfileRevisionReconcileOutcome::Unchanged(installed));
+                }
+            }
+            let verified = crate::profile_manifest::fetch_installable_profile_payload(
+                revision,
+                profile_payload_pubkey,
+            )
+            .await?;
+            let installed = install_verified_profile_payload(roots, &verified)?;
+            Ok(ProfileRevisionReconcileOutcome::Installed(installed))
+        }
+        crate::profile_manifest::ProfileRevisionStatus::Deprecated => {
+            if let Some(installed) = load_installed_profile_revision(roots, revision.profile_id)? {
+                if installed.revision == revision.revision {
+                    return Ok(ProfileRevisionReconcileOutcome::DeprecatedKept(installed));
+                }
+            }
+            Ok(ProfileRevisionReconcileOutcome::DeprecatedNotInstalled {
+                profile_id: revision.profile_id.to_string(),
+                revision: revision.revision.to_string(),
+            })
+        }
+        crate::profile_manifest::ProfileRevisionStatus::Revoked => {
+            if let Some(installed) = load_installed_profile_revision(roots, revision.profile_id)? {
+                if installed.revision == revision.revision {
+                    remove_launchable_installed_profile_revision(roots, revision.profile_id)?;
+                    return Ok(ProfileRevisionReconcileOutcome::RevokedRemoved {
+                        profile_id: revision.profile_id.to_string(),
+                        revision: revision.revision.to_string(),
+                    });
+                }
+            }
+            Ok(ProfileRevisionReconcileOutcome::RevokedNotInstalled {
+                profile_id: revision.profile_id.to_string(),
+                revision: revision.revision.to_string(),
+            })
+        }
+    }
+}
+
 pub fn install_verified_profile_payload(
     roots: &ProfileRootSettings,
     verified: &crate::profile_manifest::VerifiedProfilePayload,
@@ -401,6 +475,50 @@ fn corp_profile_revision_current_path(corp_dir: &Path, profile_id: &str) -> Path
         .join("profiles")
         .join(profile_id)
         .join("current.json")
+}
+
+fn installed_profile_revision_is_complete(
+    roots: &ProfileRootSettings,
+    installed: &InstalledProfileRevisionRecord,
+) -> Result<bool> {
+    let Some(corp_dir) = roots.corp_dirs.first() else {
+        return Ok(false);
+    };
+    let runtime_profile_path = corp_dir.join(format!("{}.toml", installed.profile_id));
+    let payload_path = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join(&installed.profile_id)
+        .join(&installed.revision)
+        .join("profile.json");
+    Ok(runtime_profile_path.is_file() && payload_path.is_file())
+}
+
+fn remove_launchable_installed_profile_revision(
+    roots: &ProfileRootSettings,
+    profile_id: &str,
+) -> Result<()> {
+    validate_profile_id("profile_id", profile_id)?;
+    let corp_dir = roots
+        .corp_dirs
+        .first()
+        .ok_or_else(|| SettingsProfilesError::Forbidden {
+            message: "no corp profile directory is configured".to_string(),
+        })?;
+    remove_file_if_exists(&corp_dir.join(format!("{profile_id}.toml")))?;
+    remove_file_if_exists(&corp_profile_revision_current_path(corp_dir, profile_id))?;
+    Ok(())
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(SettingsProfilesError::RemoveFile {
+            path: path.to_path_buf(),
+            details: source.to_string(),
+        }),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

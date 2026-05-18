@@ -194,6 +194,10 @@ Landed S07a foundation:
 - Installed payload identity pins. VM pin construction now reads the installed
   profile revision sidecar and records the installed profile payload hash
   whenever the selected profile has been materialized from the signed catalog.
+- Core profile catalog reconciler. A typed core API now installs/updates
+  complete `active` revisions, re-installs incomplete active state, keeps
+  installed `deprecated` revisions for existing VMs, and removes the launchable
+  profile plus current state for installed `revoked` revisions.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.
@@ -205,8 +209,9 @@ Remaining S07a push order:
 
 1. Catalog-driven profile payload install/update/delete/revoke from manifest
    records, including `deprecated` and `revoked` fail-closed semantics.
-   Core verification/fetch/materialization/signature primitives have landed;
-   delete/revoke orchestration remains.
+   Core verification/fetch/materialization/signature primitives and the typed
+   lifecycle reconciler have landed; manifest-wide service orchestration and
+   absent-profile cleanup remain.
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
    pinned asset metadata. Landed for runtime/registry/API with installed
    revision/payload-hash capture when catalog materialization has written the
@@ -292,6 +297,10 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.
 - `cargo test -p capsem-core settings_profiles --lib` passed with 122 tests.
+- `cargo test -p capsem-core settings_profiles --lib` passed with 130 tests
+  after core profile catalog reconciliation.
+- `cargo test -p capsem-core --lib` passed with 1611 tests + 1 ignored after
+  core profile catalog reconciliation.
 - `cargo test -p capsem-core profile_manifest --lib` passed with 12 tests after
   adding lifecycle gates and current/specific revision resolution.
 - `cargo test -p capsem-core profile_manifest --lib` passed with 20 tests after

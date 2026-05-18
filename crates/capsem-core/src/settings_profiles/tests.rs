@@ -1106,6 +1106,370 @@ fn install_verified_profile_payload_requires_corp_profile_root() {
     assert!(format!("{error}").contains("no corp profile directory"));
 }
 
+#[tokio::test]
+async fn reconcile_profile_revision_from_manifest_installs_active_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    let payload_path = temp.path().join("profile.json");
+    let signature_path = temp.path().join("profile.json.minisig");
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let signature = include_str!("../../../../schemas/fixtures/profile-v2-valid.json.minisig");
+    let pubkey = include_str!("../../../../schemas/fixtures/profile-v2-test.pub");
+    fs::write(&payload_path, payload).unwrap();
+    fs::write(&signature_path, signature).unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file://{}",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "file://{}"
+                }}
+              }}
+            }}
+          }}
+        }}"#,
+        payload_path.display(),
+        signature_path.display(),
+    ))
+    .unwrap();
+
+    let outcome = reconcile_profile_revision_from_manifest(
+        &roots,
+        manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+        pubkey,
+    )
+    .await
+    .unwrap();
+
+    let ProfileRevisionReconcileOutcome::Installed(installed) = outcome else {
+        panic!("expected active revision install");
+    };
+    assert_eq!(installed.profile_id, EVERYDAY_WORK_PROFILE_ID);
+    assert_eq!(installed.revision, "2026.0520.1");
+    assert_eq!(installed.payload_hash, profile_hash);
+    assert!(corp_dir.join("everyday-work.toml").exists());
+    assert!(corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work")
+        .join("2026.0520.1")
+        .join("profile.json")
+        .exists());
+    assert!(corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work")
+        .join("current.json")
+        .exists());
+}
+
+#[tokio::test]
+async fn reconcile_profile_revision_from_manifest_reinstalls_incomplete_active_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    let payload_path = temp.path().join("profile.json");
+    let signature_path = temp.path().join("profile.json.minisig");
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let signature = include_str!("../../../../schemas/fixtures/profile-v2-valid.json.minisig");
+    let pubkey = include_str!("../../../../schemas/fixtures/profile-v2-test.pub");
+    fs::write(&payload_path, payload).unwrap();
+    fs::write(&signature_path, signature).unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    fs::create_dir_all(&record_dir).unwrap();
+    fs::write(
+        record_dir.join("current.json"),
+        format!(
+            r#"{{
+              "profile_id": "everyday-work",
+              "revision": "2026.0520.1",
+              "payload_hash": "{profile_hash}"
+            }}"#
+        ),
+    )
+    .unwrap();
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file://{}",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "file://{}"
+                }}
+              }}
+            }}
+          }}
+        }}"#,
+        payload_path.display(),
+        signature_path.display(),
+    ))
+    .unwrap();
+
+    let outcome = reconcile_profile_revision_from_manifest(
+        &roots,
+        manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+        pubkey,
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        outcome,
+        ProfileRevisionReconcileOutcome::Installed(_)
+    ));
+    assert!(corp_dir.join("everyday-work.toml").exists());
+    assert!(record_dir.join("2026.0520.1").join("profile.json").exists());
+}
+
+#[tokio::test]
+async fn reconcile_profile_revision_from_manifest_skips_complete_active_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&corp_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    fs::write(
+        corp_dir.join("everyday-work.toml"),
+        toml::to_string_pretty(&Profile::everyday_work()).unwrap(),
+    )
+    .unwrap();
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work")
+        .join("2026.0520.1");
+    fs::create_dir_all(&record_dir).unwrap();
+    fs::write(record_dir.join("profile.json"), payload).unwrap();
+    fs::write(
+        record_dir.parent().unwrap().join("current.json"),
+        format!(
+            r#"{{
+              "profile_id": "everyday-work",
+              "revision": "2026.0520.1",
+              "payload_hash": "{profile_hash}"
+            }}"#
+        ),
+    )
+    .unwrap();
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file:///definitely/not/read/profile.json",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "file:///definitely/not/read/profile.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}"#
+    ))
+    .unwrap();
+
+    let outcome = reconcile_profile_revision_from_manifest(
+        &roots,
+        manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+        "unused",
+    )
+    .await
+    .unwrap();
+
+    let ProfileRevisionReconcileOutcome::Unchanged(record) = outcome else {
+        panic!("expected complete active revision to be unchanged");
+    };
+    assert_eq!(record.revision, "2026.0520.1");
+    assert_eq!(record.payload_hash, profile_hash);
+}
+
+#[tokio::test]
+async fn reconcile_profile_revision_from_manifest_keeps_installed_deprecated_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&corp_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    fs::write(
+        corp_dir.join("everyday-work.toml"),
+        toml::to_string_pretty(&Profile::everyday_work()).unwrap(),
+    )
+    .unwrap();
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    fs::create_dir_all(&record_dir).unwrap();
+    fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(
+        r#"{
+          "format": 1,
+          "profiles": {
+            "everyday-work": {
+              "current_revision": "2026.0520.2",
+              "revisions": {
+                "2026.0520.1": {
+                  "status": "deprecated",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file:///definitely/not/read/profile.json",
+                  "profile_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                  "profile_signature_url": "file:///definitely/not/read/profile.json.minisig"
+                },
+                "2026.0520.2": {
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile.json",
+                  "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                  "profile_signature_url": "https://assets.capsem.dev/profile.json.minisig"
+                }
+              }
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let outcome = reconcile_profile_revision_from_manifest(
+        &roots,
+        manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+        "unused",
+    )
+    .await
+    .unwrap();
+
+    let ProfileRevisionReconcileOutcome::DeprecatedKept(record) = outcome else {
+        panic!("expected deprecated installed revision to be kept");
+    };
+    assert_eq!(record.revision, "2026.0520.1");
+    assert!(corp_dir.join("everyday-work.toml").exists());
+    assert!(record_dir.join("current.json").exists());
+}
+
+#[tokio::test]
+async fn reconcile_profile_revision_from_manifest_removes_revoked_current_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&corp_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    fs::write(
+        corp_dir.join("everyday-work.toml"),
+        toml::to_string_pretty(&Profile::everyday_work()).unwrap(),
+    )
+    .unwrap();
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    fs::create_dir_all(&record_dir).unwrap();
+    fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(
+        r#"{
+          "format": 1,
+          "profiles": {
+            "everyday-work": {
+              "current_revision": "2026.0520.2",
+              "revisions": {
+                "2026.0520.1": {
+                  "status": "revoked",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file:///definitely/not/read/profile.json",
+                  "profile_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                  "profile_signature_url": "file:///definitely/not/read/profile.json.minisig"
+                },
+                "2026.0520.2": {
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile.json",
+                  "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                  "profile_signature_url": "https://assets.capsem.dev/profile.json.minisig"
+                }
+              }
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let outcome = reconcile_profile_revision_from_manifest(
+        &roots,
+        manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+        "unused",
+    )
+    .await
+    .unwrap();
+
+    let ProfileRevisionReconcileOutcome::RevokedRemoved {
+        profile_id,
+        revision,
+    } = outcome
+    else {
+        panic!("expected revoked current revision removal");
+    };
+    assert_eq!(profile_id, EVERYDAY_WORK_PROFILE_ID);
+    assert_eq!(revision, "2026.0520.1");
+    assert!(!corp_dir.join("everyday-work.toml").exists());
+    assert!(!record_dir.join("current.json").exists());
+}
+
 #[test]
 fn user_profile_fork_from_builtin_profile() {
     let temp = tempfile::tempdir().unwrap();

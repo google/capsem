@@ -48,6 +48,10 @@ Landed:
 - VM profile pins now prefer the installed profile revision sidecar over caller
   hints and include the installed profile payload hash when a catalog-installed
   revision exists.
+- Core catalog reconciliation now installs/updates complete `active` revisions,
+  re-installs incomplete active local state, keeps installed `deprecated`
+  revisions for existing VMs, and removes the launchable profile plus current
+  state for installed `revoked` revisions.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -61,8 +65,10 @@ Push order from here:
    detail/status paths, and covered by focused tests.
 1. [~] Install/update/delete/revoke profile payloads from catalog records.
    Landed: core install guard, runtime profile conversion, corp-root
-   materialization, and installed-revision payload storage. Remaining:
-   update orchestration and deletion/revoke actions.
+   materialization, installed-revision payload storage, and a typed core
+   lifecycle reconciler for active/deprecated/revoked records. Remaining:
+   service scheduling/endpoints for manifest-wide reconciliation and absent
+   catalog profile cleanup.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
@@ -564,8 +570,13 @@ This sprint creates the contract consumed by later sprints:
       declarations. Initial focused resolver coverage proves runtime/package
       maps, tool contracts, and per-arch assets merge by key through the
       existing ancestor-chain resolver.
-- [ ] Add profile payload install/update/delete/revoke logic from manifest
-      records.
+- [~] Add profile payload install/update/delete/revoke logic from manifest
+      records. Core reconciliation now installs or updates complete `active`
+      revisions from signed payload locations, re-installs incomplete local
+      active state, keeps installed `deprecated` revisions, and removes
+      the launchable profile plus current state for installed `revoked`
+      revisions. Remaining: manifest-wide service orchestration and
+      absent-profile cleanup.
 - [~] Add profile-driven asset resolution and first-use download. Service
       startup now builds an `AssetRequirement` from the default profile's
       `vm.assets.<arch>` declaration, rejects old manifest-backed release
@@ -609,8 +620,12 @@ This sprint creates the contract consumed by later sprints:
   the Draft 2020-12 artifact and checking valid/invalid golden fixtures.
   Rust schema helper coverage now runs `cargo test -p capsem-core --test
   profile_schema` (6 tests passed), covering schema compilation, valid/invalid
-  JSON fixtures, JSON helper validation, and TOML-to-schema validation. Python
-  admin model coverage landed with `uv run python -m pytest
+  JSON fixtures, JSON helper validation, and TOML-to-schema validation. Core
+  catalog reconciliation coverage now runs `cargo test -p capsem-core
+  settings_profiles --lib` (130 tests passed), including active install,
+  incomplete active re-install, complete active no-op, deprecated keep, and
+  revoked launchable profile plus current-state removal. Python admin model
+  coverage landed with `uv run python -m pytest
   tests/test_profiles.py` (8 tests passed), covering Pydantic-only JSON
   round-trips, TOML parse-then-Pydantic validation, invalid fixture rejection,
   `ProfileRevisionStatus = active|deprecated|revoked` with no `removed`, and

@@ -374,9 +374,12 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   and VM pinning. Profile payload signature verification reuses the existing
   minisign verifier with tamper coverage; fetch tests prove catalog payload/
   signature locations are read and verified before hash/schema/id/revision
-  checks. VM profile pins add registry roundtrip, package-contract hash,
-  installed sidecar revision/payload-hash capture, API serialization, and fork
-  persistence coverage.
+  checks. Core profile catalog reconciliation covers active install/update,
+  incomplete active re-install, complete active no-op, deprecated installed
+  revision keep, and revoked launchable profile plus current-state removal. VM
+  profile pins add registry roundtrip, package-contract hash, installed sidecar
+  revision/payload-hash capture, API serialization, and fork persistence
+  coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -426,8 +429,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   in-memory metrics accumulator is the next perf-shaped piece).
   The S07 metrics snapshot request is classified as read-only
   `HealthCheck` IPC so it does not enter job/lifecycle dispatch.
-- **Test-gate snapshot** (cargo test, updated 2026-05-18 for S07a
-  telemetry identity):
+- **Test-gate snapshot** (cargo test, updated 2026-05-18 for S07a core
+  profile catalog reconciliation):
   `cargo test -p capsem-logger` **100** + **126** passed;
   `cargo test -p capsem-service` **107** + **140** passed;
   after VM profile pins, `cargo test -p capsem-service` **108** + **141**
@@ -435,7 +438,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   after installed profile payload identity pins, `cargo test -p capsem-service`
   **108** + **142** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
-  `cargo test -p capsem-core settings_profiles --lib` **125** passed;
+  `cargo test -p capsem-core settings_profiles --lib` **130** passed after
+  core profile catalog reconciliation;
+  `cargo test -p capsem-core --lib` **1611** passed / 0 failed / 1 ignored
+  after core profile catalog reconciliation;
   `uv run pytest tests/test_profiles.py -q` **12** passed;
   `cargo test -p capsem-core telemetry --lib` **31** passed;
   `cargo test -p capsem-process --no-run` passed; and
