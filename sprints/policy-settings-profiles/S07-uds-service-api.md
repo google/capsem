@@ -2,13 +2,28 @@
 
 ## Goal
 
-Expose typed settings and profiles through the service UDS API.
+Expose typed settings, profiles, profile catalog state, and profile-backed VM
+creation through the service UDS API.
 
 ## Tasks
 
 - Add service settings endpoints.
 - Add profile list/get/create/fork/update/delete endpoints.
 - Add profile resolve and VM-effective settings endpoints.
+- Reserve the UDS shape for profile catalog/revision endpoints; the backing
+  manifest/profile/assets implementation lands in
+  [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md).
+  The surface lists catalog profiles, lists revisions, shows lifecycle status,
+  shows package/tool contract, shows asset readiness, installs/updates/removes
+  local profile revisions, and surfaces revoke/deprecated warnings.
+- Extend VM create/provision request shape with explicit profile selection:
+  `profile_id` required by UI/CLI flows, `profile_revision` optional for
+  advanced/debug use. Absence may default to the service-selected profile, but
+  responses must always echo the resolved profile id/revision and pinned asset
+  identity.
+- Add profile-backed VM create proof: selected profile resolves, required assets
+  are present or queued for first-use download, and persistent VM registry pins
+  profile id/revision plus asset hashes.
 - Add MCP list/add/delete endpoints in the new model.
 - Add skills list/add/delete endpoints in the new model.
 - Add the Rules API (see below): list / get / add / remove / evaluate
@@ -79,20 +94,25 @@ for the rule engine that do not need a VM.
 ## Coverage Ledger
 
 - Unit/contract: request/response shape tests for every route
-  (settings, profiles, MCP, skills, **rules list/get/add/remove/
-  evaluate**, provenance, typed errors).
+  (settings, profiles, profile catalog/revisions, profile package/tool contract,
+  profile asset readiness, VM create profile selection, MCP, skills,
+  **rules list/get/add/remove/evaluate**, provenance, typed errors).
 - Functional: UDS CRUD and resolve tests, including a roundtrip that
   stages a rule via `POST /rules`, evaluates a synthetic subject via
   `POST /rules/evaluate`, and asserts the same `matched_rule_id`
-  comes back.
+  comes back. Profile-backed VM create test asserts the selected profile
+  revision and pinned asset hashes are echoed.
 - Adversarial: invalid payloads, locked mutations (built-in rule
-  delete attempt, profile lock), concurrent updates, oversize rule
-  bodies, condition strings that fail closed at parse time.
-- E2E/VM: service-level create/fork/delete profile proof. **Rules
+  delete attempt, profile lock), revoked profile selection, unknown profile
+  revision, incompatible binary, asset readiness failure, concurrent updates,
+  oversize rule bodies, condition strings that fail closed at parse time.
+- E2E/VM: service-level create/fork/delete profile proof and service-level
+  profile-backed VM create. **Rules
   API end-to-end** is the prerequisite that un-defers the
   capsem-doctor ask probe -- track it as the slice that gates that
   E2E re-entry.
-- Telemetry: debug report includes UDS-visible config, including
+- Telemetry: debug report includes UDS-visible config, profile catalog state,
+  installed revision, package/tool contract, asset readiness, VM pins, and
   user-authored rules and their provenance.
 - Performance: concurrent update behavior tested; the evaluate route
   must run on the read-only `Arc<PolicyConfig>` snapshot so

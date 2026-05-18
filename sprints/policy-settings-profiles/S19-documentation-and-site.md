@@ -2,10 +2,10 @@
 
 ## Goal
 
-Document the new settings/profile/policy engine and corporate deployment model
-as first-class product documentation, then update the public docs site so users,
-operators, and security reviewers can understand the system without reading
-Rust code.
+Document the new settings/profile/policy engine, signed profile catalog, and
+corporate deployment model as first-class product documentation, then update the
+public docs site so users, operators, and security reviewers can understand the
+system without reading Rust code.
 
 This sprint is release-blocking. The redesign is not done if the architecture,
 security, and configuration pages still describe v1 settings, old security
@@ -15,7 +15,12 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
 
 - Write a clear engine guide:
   - service settings versus VM/session profiles.
-  - profile discovery across base/corp/user roots.
+  - signed manifest as the profile catalog, including profile ids, immutable
+    revisions, lifecycle status, payload identity, and compatibility.
+  - profile discovery/install/update across base/corp/user roots.
+  - profile package/tool contracts and how they map to VM asset requirements.
+  - VM profile/revision/asset pinning and why existing VMs do not silently move
+    when a profile updates.
   - VM-effective settings attachment.
   - canonical rules, derived/generated rules, ownership locks, provenance, and
     "why is this here?"
@@ -29,11 +34,15 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
     into the model.
 - Write corporate system docs:
   - deploying base and corp profile directories.
+  - deploying signed profile manifests and profile payloads.
+  - rolling out profile revisions, deprecations, removals, and revocations.
+  - lazy first-use VM asset download and asset cleanup retention.
   - forbidding user profile creation/fork/delete.
   - creating custom profiles.
   - setting service-scoped telemetry.
   - configuring remote policy decisions.
-  - configuring custom manifest, asset, and image locations.
+  - configuring signed profile catalogs, profile payload hosting, asset
+    locations, and custom images.
   - configuring custom images/rootfs dependencies.
   - credential storage for cutover and brokerage/keychain roadmap.
 - Revamp existing docs pages:
@@ -57,8 +66,11 @@ Under `docs/src/content/docs/`, likely pages:
 - `configuration/service-settings.md` - service TOML, profile roots, telemetry,
   remote policy, credentials, manifest source, asset directory, image roots, and
   asset download endpoint.
-- `configuration/profiles.md` - profile TOML, profile CRUD/forking, VM-effective
-  settings, custom profiles.
+- `configuration/profiles.md` - profile TOML, profile CRUD/forking, package/tool
+  contracts, VM assets, VM-effective settings, custom profiles.
+- `configuration/profile-catalogs.md` - signed manifest profile catalog,
+  revisions, lifecycle status, profile payload signatures, lazy download, and
+  asset retention.
 - `configuration/corporate-deployment.md` - corp roots, governance, locks,
   custom images, rollout patterns.
 - `security/profile-capabilities.md` - credential brokerage, PII, MCP RAG/tools,
@@ -78,10 +90,17 @@ Final paths should follow the actual docs tree present when this sprint starts.
       callbacks, fields, decisions, rewrite rules, priority defaults.
 - [ ] Write service settings reference with TOML examples.
 - [ ] Write profile reference with TOML examples and custom-profile workflow.
+- [ ] Write signed profile catalog reference with manifest examples for
+      profile ids, revisions, active/deprecated/removed/revoked status, payload
+      hashes/signatures, and compatibility.
+- [ ] Write profile package/tool contract and VM asset declaration reference.
+- [ ] Document profile-backed VM create semantics:
+      profile id/revision selection, first-use download, verification,
+      persistent VM pins, and no implicit migration on profile update.
 - [ ] Write corporate deployment guide.
 - [ ] Write telemetry and remote policy configuration guide.
-- [ ] Write custom manifest/assets/images/rootfs dependency guide or update the
-  existing page.
+- [ ] Write custom manifest/profile payload/assets/images/rootfs dependency
+  guide or update the existing page.
 - [ ] Update architecture pages to reflect service/profile/VM-effective
   settings.
 - [ ] Update security pages to reflect capabilities, credential brokerage,
@@ -124,11 +143,13 @@ Final paths should follow the actual docs tree present when this sprint starts.
 
 ## Coverage Ledger
 
-- Unit/contract: docs snippets match typed TOML structs, rule grammar,
+- Unit/contract: docs snippets match typed TOML structs, profile catalog
+  manifest structs, package/tool declarations, asset declarations, rule grammar,
   callback names, and CLI/API names.
 - Functional: docs site builds successfully.
 - Adversarial: docs explicitly cover bad config, forbidden corp actions, bad
-  remote policy endpoint, missing profile roots, and debug-report diagnosis.
+  remote policy endpoint, missing profile roots, bad profile/asset signatures,
+  revoked profiles, missing assets, and debug-report diagnosis.
 - E2E/VM: docs examples are checked against actual CLI/API once those sprints
   exist.
 - Telemetry: docs cover OpenTelemetry endpoint behavior, redaction, retry, and

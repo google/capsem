@@ -1,6 +1,6 @@
 # Policy, Settings, Profiles Master
 
-Last updated: 2026-05-15
+Last updated: 2026-05-18
 
 ## Where this sprint lives
 
@@ -8,8 +8,8 @@ Last updated: 2026-05-15
 [tracker.md "Where this sprint lives"](tracker.md#where-this-sprint-lives);
 the short version:
 
-- Branch: `claude/adoring-joliot-98a4cb`
-- Worktree: `/Users/elie/git/capsem/.claude/worktrees/adoring-joliot-98a4cb`
+- Branch: `profile-v2`
+- Worktree: `/Users/elie/.codex/worktrees/824d/capsem`
 - Verify with `git worktree list` + `git log <branch> --oneline | head`
   before believing any "in flight elsewhere" claim.
 
@@ -17,8 +17,10 @@ the short version:
 
 Replace Capsem's v1 settings/policy stack with typed service settings and
 VM/session profiles. Profiles become the only user-facing "security level"
-concept. The old ad hoc settings registry, standalone `[mcp]` authority, and
-hand-authored `config/defaults.json` runtime/UI source are removed completely.
+concept and the product unit for guest package/tool assumptions plus VM asset
+requirements. The old ad hoc settings registry, standalone `[mcp]` authority,
+and hand-authored `config/defaults.json` runtime/UI source are removed
+completely.
 
 ## Product Contract
 
@@ -31,6 +33,15 @@ hand-authored `config/defaults.json` runtime/UI source are removed completely.
 - **VM-effective settings are attached to a VM/session.** Runtime enforcement,
   debug reports, status, guest materialization, and UI truth read the resolved
   VM-effective profile state.
+- **The signed manifest is the profile catalog.** The binary owns the manifest
+  signing trust root; the manifest lists profile ids, immutable revisions,
+  lifecycle status, payload locations, payload hashes/signatures, and binary
+  compatibility. Profiles then declare package/tool contracts and the VM assets
+  needed to satisfy them.
+- **VMs pin profile revision and assets.** Creating a VM resolves a profile
+  revision, downloads/verifies that revision's assets on first use, and pins the
+  profile id/revision plus exact asset hashes in the VM registry/session state.
+  Profile updates do not silently mutate existing VMs.
 - **No v1 compatibility.** There is no migration layer and no special diagnostic
   layer for old config shapes.
 - **TOML first.** Rust structs plus Serde/TOML parsing and Rust validators define
@@ -51,24 +62,25 @@ the next starts. The `#` column is the execution index;
 | 5 | [S04 - Profile Design](S04-profile-design.md) | Done | Design profile TOML and UX/security model with user review. |
 | 6 | [S05 - Profile Implementation](S05-profile-implementation.md) | Done | Implement profile files, discovery, validation, CRUD primitives. |
 | 7 | [S06-pre - Network Contract + Confirm Wiring](S06-pre-network-contract-and-confirm.md) | Done | Normalize policy network callback/field contracts and wire `ask -> confirm()`. Closed with slices 6a-6e (callback wiring), backoff refactor, adversarial backfill, and [slice 6f - exit tests](tracker.md#slice-6f---exit-tests). Slice 6f's E2E capsem-doctor ask probe is deferred; `policy_confirm_events` table is slice 7+ work. |
-| 8 | [S06 - Assembly And VM-Effective Settings](S06-assembly-vm-effective-settings.md) | Foundational slice only | Resolve profiles/corp governance into VM-attached settings and derived rules. `resolve_effective_vm_settings()` + VM-effective persistence is in HEAD; parent-chain resolution, corp directives, layered resolver, and trace artifact are unstarted. Owned by this branch + worktree -- no parallel work elsewhere. |
-| 9 | [S06a - Model Request Rewrite Support](S06a-model-request-rewrite-support.md) | Not Started | Implement `model.request` rewrite for `request.data` and remove unsupported fail-closed placeholder behavior. |
-| 10 | [S06b - Legacy Allowlist Migration And Rule Ownership Locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) | Not Started | Port legacy allowlist outputs into canonical rules and enforce generated-rule ownership (`managed by <setting>`, uneditable). |
+| 8 | [S06 - Assembly And VM-Effective Settings](S06-assembly-vm-effective-settings.md) | Done | Resolve profiles/corp governance into VM-attached settings and derived rules. Parent-chain validation, layered merge, resolver trace, corp directives, lock/forbid, runtime cutover, and status/debug exposure have landed; in-VM probe remains visible debt. |
+| 9 | [S06a - Model Request Rewrite Support](S06a-model-request-rewrite-support.md) | Done | Implement `model.request` rewrite for `request.data` and remove unsupported fail-closed placeholder behavior. |
+| 10 | [S06b - Legacy Allowlist Migration And Rule Ownership Locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) | Done | Delete legacy allowlist/v1 settings dead code and enforce generated-rule ownership (`managed by <setting>`, uneditable). |
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
-| 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Not Started | `git merge origin/main` -> v2 rename -> full verification gate, in that order. S07 starts on the post-cleanup codebase. |
-| 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, gateway mirror, and full route proof remain open. |
-| 14 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior. |
-| 15 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, and `confirm` CLI command families. |
-| 16 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |
-| 17 | [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md) | Not Started | Make status/debug explain active settings, profiles, derived rules, MCP, skills. |
-| 18 | [S12 - OpenTelemetry Metrics Architecture](S12-observability-plugin.md) | Not Started | Typed per-VM live-metrics architecture: `capsem-proto::metrics`, process-side accumulator, bincode IPC snapshot, service `/metrics/json` + `/metrics`, gateway proxy, UI typed-JSON. Inherits the release-team OTel handoff. |
-| 19 | [S13 - Remote Policy Plugin](S13-remote-policy-plugin.md) | Not Started | Add service plugin for remote policy events/decisions. |
-| 20 | [S14 - Rules UI Components](S14-rules-ui-components.md) | Not Started | One reusable rule editor/renderer + per-type rule blocks (DNS/HTTP/Model/MCP). **The editor is embedded by [S15](S15-confirm-ux.md) for forward-rule decisions -- design it for embedding from the start, pre-fillable from derived rule input.** |
-| 21 | [S15 - Confirm UX (Ask)](S15-confirm-ux.md) | Not Started | Production answer path for `decision = "ask"`: stacked pending-ask queue, UI prompter embedding the S14 rule editor, CLI parity, auto-rule derivation per callback, `policy_confirm_events` integration. Replaces the placeholder confirmer that ships from S06-pre. |
-| 22 | [S16 - Profile UI](S16-profile-ui.md) | Not Started | First-class profile selector/create/fork/delete/edit flows. |
-| 23 | [S17 - Security Capabilities UI](S17-security-capabilities-ui.md) | Not Started | Capability controls above canonical rule editing. |
-| 24 | [S19 - Documentation And Site](S19-documentation-and-site.md) | Not Started | Document the engine, corporate deployment, telemetry, remote policy, custom profiles/images. |
-| 25 | [S18 - Full Verification And Release Gate](S18-full-verification-release-gate.md) | Not Started | Backend/UI/E2E/install proof. Last sprint. |
+| 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
+| 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
+| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | Not Started | Make the signed manifest a profile catalog; add profile package/tool contracts, profile-owned asset declarations, first-use download, retention, and VM profile/revision/asset pins. |
+| 15 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
+| 16 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
+| 17 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |
+| 18 | [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md) | Not Started | Make status/debug explain active settings, profiles, derived rules, MCP, skills, profile catalog state, package contracts, asset readiness, and VM pins. |
+| 19 | [S12 - OpenTelemetry Metrics Architecture](S12-observability-plugin.md) | Not Started | Typed per-VM live-metrics architecture: `capsem-proto::metrics`, process-side accumulator, bincode IPC snapshot, service `/metrics/json` + `/metrics`, gateway proxy, UI typed-JSON. Inherits the release-team OTel handoff. |
+| 20 | [S13 - Remote Policy Plugin](S13-remote-policy-plugin.md) | Not Started | Add service plugin for remote policy events/decisions. |
+| 21 | [S14 - Rules UI Components](S14-rules-ui-components.md) | Not Started | One reusable rule editor/renderer + per-type rule blocks (DNS/HTTP/Model/MCP). **The editor is embedded by [S15](S15-confirm-ux.md) for forward-rule decisions -- design it for embedding from the start, pre-fillable from derived rule input.** |
+| 22 | [S15 - Confirm UX (Ask)](S15-confirm-ux.md) | Not Started | Production answer path for `decision = "ask"`: stacked pending-ask queue, UI prompter embedding the S14 rule editor, CLI parity, auto-rule derivation per callback, `policy_confirm_events` integration. Replaces the placeholder confirmer that ships from S06-pre. |
+| 23 | [S16 - Profile UI](S16-profile-ui.md) | Not Started | First-class profile catalog, selector, revision, package/asset readiness, create/fork/delete/edit, and VM create flows. |
+| 24 | [S17 - Security Capabilities UI](S17-security-capabilities-ui.md) | Not Started | Capability controls above canonical rule editing. |
+| 25 | [S19 - Documentation And Site](S19-documentation-and-site.md) | Not Started | Document the engine, corporate deployment, telemetry, remote policy, signed profile catalogs, package contracts, and profile-owned VM assets. |
+| 26 | [S18 - Full Verification And Release Gate](S18-full-verification-release-gate.md) | Not Started | Backend/UI/E2E/install proof. Last sprint. |
 
 S15 was previously a "Settings UI Redesign" sprint; that scope is now
 folded into the descriptor-driven UI work in S14 / S16 / S17.
@@ -81,6 +93,9 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
 - Do not ship a backend surface without debug report/status coverage for wrong
   settings and profile resolution.
 - Do not wire UI before UDS, HTTP, and CLI contracts are tested.
+- Do not lift profile create/VM create to HTTP/UI until S07a defines the signed
+  profile catalog, profile package/tool contract, profile-owned asset
+  declarations, first-use asset download, and VM profile/revision/asset pinning.
 - Do not start S06 resolver cutover implementation until S06-pre network and
   confirm wiring gate passes.
 - Do not declare model policy rewrite-complete while `model.request` rewrite is
@@ -139,52 +154,29 @@ slots) have all landed. Carry-over from slice 6f:
   `policy_body_inspection_events` schemas, streaming body inspector,
   instant propagation.
 
-Next sprint in the linear path is [S06 - Assembly and VM-effective
-settings](S06-assembly-vm-effective-settings.md). Owned by this
-branch + worktree (see
-[tracker.md "Where this sprint lives"](tracker.md#where-this-sprint-lives)
-for the canonical pinning); the foundational slice
-(`resolve_effective_vm_settings()` + VM-effective persistence) is
-already in HEAD, and the remaining tasks (parent-chain resolution,
-corp directives, layered resolver pipeline, trace artifact) are
-unstarted.
+Current execution is in [S07 - UDS service API](S07-uds-service-api.md).
+Before the gateway/UI layers harden the public contract, insert
+[S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md).
+S07a makes the signed manifest the profile catalog, extends profiles with the
+guest package/tool contract and asset declarations, and makes VM create pin the
+selected profile revision plus verified asset hashes.
 
-**Sequencing into S07 is locked.** After S06 / S06b close (and ideally
-[S06c](tracker.md#s06c---ablate-legacy-networkpolicy-runtime-proposed)
-ablates the legacy `NetworkPolicy` runtime), a focused
-[Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone)
-runs three steps **in this exact order**:
+[S07 - UDS service API](S07-uds-service-api.md) and S07a are the public-contract
+foundation for every later layer. HTTP, CLI, and UI must consume the UDS shapes
+rather than inventing independent profile/asset semantics.
 
-1. `git merge origin/main` -- closes the long-deferred merge debt
-   from the parallel hardening sprint. Doing this first keeps the
-   conflict surface mechanical (pre-rename identifiers on both
-   sides).
-2. V2 rename across the crate (modules, types, files, fields,
-   tests). Now safe because V1 is no longer coexisting (or the
-   `SharedPolicy` / `SharedPolicyConfig` disambiguation is the
-   small worst case).
-3. Full verification gate.
-
-[S07 - UDS service API](S07-uds-service-api.md) starts on the
-post-cleanup codebase. The rationale is that S07 introduces a
-typed public API surface; it should be authored against the
-final type names, not against names that get renamed under it.
-
-**Merge with `origin/main` is NOT free-floating any more.** It is
-the explicit first step of the Post-S06 cleanup milestone. Until S06
-closes, `origin/main` does not get merged. The
-conflict-resolution guidance in [tracker Active Notes](tracker.md#active-notes)
-still applies when the merge runs: prefer main where it overlaps
-with S12's intent (the `/list` SQL-on-hot-path hotfix and related
-fixes), preserve the S06-pre confirmer plumbing and backoff
-refactor.
+**Post-S06 cleanup debt remains visible.** The historical cleanup order is
+still tracked in [tracker.md](tracker.md#post-s06-cleanup-milestone): merge
+`origin/main`, perform the V2 rename, then run the full verification gate. The
+current branch has already advanced into S07, so do not let that cleanup debt
+disappear before release.
 
 
 
 S00 is complete. A first typed replacement model now exists in
 `capsem-core::settings_profiles`: service settings, profile TOML, the built-in
 Everyday Work profile, security capabilities, service-scoped telemetry/remote
-policy settings, service-scoped asset/manifest/image locations, TOML
+policy settings, pre-S07a service-scoped asset/manifest/image locations, TOML
 credentials, profile discovery, user profile CRUD/fork, service settings file
 load/save, VM-effective settings with provenance and derived capability rules,
 VM-effective settings persistence, Rust-owned descriptor metadata, and

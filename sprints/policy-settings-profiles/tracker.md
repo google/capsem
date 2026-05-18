@@ -8,12 +8,8 @@ Do not assume any item is being worked elsewhere unless this section
 is updated with the concrete branch and worktree path, verified by
 `git worktree list` and the listed branch's `git log`.
 
-- **Branch:** `claude/adoring-joliot-98a4cb` (in this repository,
-  origin `https://github.com/google/capsem.git`).
-- **Worktree:** `/Users/elie/git/capsem/.claude/worktrees/adoring-joliot-98a4cb`
-  (this is a Claude Code session-isolation worktree; that's a normal
-  artifact of how the harness spawns sessions, not a "different"
-  workspace from the user's perspective).
+- **Branch:** `profile-v2`.
+- **Worktree:** `/Users/elie/.codex/worktrees/824d/capsem`.
 - **Verifying the state:** `git worktree list` shows every worktree
   on disk. `git log <branch> --oneline | head` shows what each
   branch has actually landed. **Read those two commands before
@@ -54,8 +50,8 @@ a valid claim -- mark it `[ ]` instead.
 9. [x] [S06a - Model request rewrite support](S06a-model-request-rewrite-support.md) -- closed. `evaluate_model_request_policy` now applies the rewrite via `rewrite_model_request_body` against the `request.data` field (unified with the canonical condition vocabulary), forwards the redacted body upstream, and attributes telemetry to the matched rewrite rule. Fail-closed paths: unsupported target, non-UTF-8 body, pattern non-match. The `LastModelPolicyV2Decision::unsupported_rewrite` shim is removed.
 10. [x] [S06b - Legacy allowlist migration + rule ownership locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) -- closed. Inventory found that S01's runtime cutover left the legacy v1 settings registry + allowlist builders as test-only dead code, so "migration" boiled down to deletion plus enriching the v2 model. Nine slices landed: 6b.0 deleted v1 (~12k LOC), 6b.1 added ownership metadata fields, 6b.2 enforced priority tiers (corp `[-1000, -1]`, toggle-derived `0`, user `[1, 999]`, catch-all reserved `1000`), 6b.3 added nestable rules under setting hosts, 6b.4 added `http.read` / `http.write` callbacks, 6b.5 added per-type catch-all rules at priority `1000`, 6b.6 added provider-toggle derived rules, 6b.7 added MCP `allowed_tools` derived rules, 6b.8 added the `ensure_rule_editable` mutation gate. 6b.9 documentation scope captured in [S19 spec](S19-documentation-and-site.md).
 11. [ ] [S06c - Ablate legacy NetworkPolicy runtime](#s06c---ablate-legacy-networkpolicy-runtime) -- new sprint, see inline brief below; promotes to a standalone spec when it starts.
-12. [ ] [Post-S06 cleanup milestone](#post-s06-cleanup-milestone) -- `git merge origin/main` -> v2 rename -> full verification gate, in that order.
-13. [ ] [S07 - UDS service API](S07-uds-service-api.md) -- started; first
+12. [ ] [Post-S06 cleanup milestone](#post-s06-cleanup-milestone) -- deferred cleanup debt: `git merge origin/main` -> v2 rename -> full verification gate.
+13. [~] [S07 - UDS service API](S07-uds-service-api.md) -- started; first
   foundation slice landed `capsem_proto::metrics` plus
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
@@ -65,20 +61,24 @@ a valid claim -- mark it `[ ]` instead.
   boolean catch-all CEL support, and a bounded large-profile evaluation test.
   Profile/settings composition has additional service coverage for create-id
   collisions across locked roots and selected-profile settings saves.
-  Rules create/delete, confirm listing, skills, and full route proof remain
-  open.
-14. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
-15. [ ] [S09 - CLI integration](S09-cli-integration.md)
-16. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
-17. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
-18. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
-19. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
-20. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- rule editor component is consumed by S15.
-21. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
-22. [ ] [S16 - Profile UI](S16-profile-ui.md)
-23. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-24. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
-25. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+  Rules create/delete, confirm listing, skills, profile-backed VM create, and
+  full route proof remain open.
+14. [ ] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
+    -- signed manifest becomes the profile catalog; profiles gain package/tool
+    contracts and asset declarations; VM create pins profile revision and
+    verified asset hashes.
+15. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
+16. [ ] [S09 - CLI integration](S09-cli-integration.md)
+17. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+18. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+19. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
+20. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
+21. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- rule editor component is consumed by S15.
+22. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+23. [ ] [S16 - Profile UI](S16-profile-ui.md)
+24. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+25. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+26. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
@@ -113,7 +113,9 @@ When this sprint starts, promote the inline brief above into
 
 ## Post-S06 cleanup milestone
 
-Runs after S06c closes. Three steps, in this exact order:
+Originally planned to run before S07. The branch has already advanced into S07,
+so this remains explicit cleanup debt before release rather than a hidden
+side-task. When executed, keep the order:
 
 1. **`git merge origin/main`.** Closes the long-deferred merge debt
    from the parallel hardening sprint. Runs before the rename so
@@ -140,8 +142,8 @@ Runs after S06c closes. Three steps, in this exact order:
    `just test`, `just smoke`, `just run "capsem-doctor"`,
    `just inspect-session`. No warnings.
 
-S07 starts on the post-cleanup codebase so its public Rust API
-surface is authored against the final type names.
+Public API work has already started, so any rename fallout must be reconciled
+against the S07/S07a route contracts before S08 HTTP mirroring.
 
 ### Merge conflict guidance (applies in step 1)
 
@@ -168,6 +170,11 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
 - **S07 inherits a proto-types task.** Foundational metrics types
   (`capsem_proto::metrics`) land in S07 so [S12](S12-observability-plugin.md)
   can start with proto already in place. See S12 spec.
+- **S07a is a public-contract bridge.** Before HTTP, CLI, and UI harden profile
+  create/VM create semantics, the signed manifest must become the profile
+  catalog and profiles must carry package/tool contracts plus VM asset
+  declarations. S07a also defines first-use asset download, profile revision
+  status, cleanup retention, and persistent VM profile/revision/asset pins.
 - **S12 architecture: single source of truth.** The in-memory
   per-VM accumulator in `capsem-process` is the only runtime
   source; `session.db` is read on the data path exactly twice in

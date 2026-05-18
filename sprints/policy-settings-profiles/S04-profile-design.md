@@ -16,14 +16,19 @@ runtime policy semantics are unambiguous before implementation completion.
 - Canonical profile rule default priority is `1`.
 - Parent inheritance is required by contract via `extends_profile_id` with
   merge/lock semantics enforced by S05/S06.
+- Profile package/tool contracts and profile-owned VM asset declarations are
+  intentionally added later by
+  [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md)
+  after the signed manifest becomes the profile catalog.
 
 ## Canonical Profile TOML Contract
 
 - Required identity: `id`, `name`, `description`, `best_for`, `profile_type`.
 - Optional: `icon_svg`, `extends_profile_id`, and section-specific optional
   fields.
-- Profile sections: `general`, `appearance`, `ai`, `mcp`, `skills`, `vm`,
-  `security`.
+- Profile sections for the original profile-design slice: `general`,
+  `appearance`, `ai`, `mcp`, `skills`, `vm`, `security`. S07a extends this with
+  `packages`, `tools`, and `vm.assets`.
 - Appearance inheritance behavior for v1:
   - if a child profile omits appearance fields, it inherits from parent profile
     first, then service-level appearance defaults.
