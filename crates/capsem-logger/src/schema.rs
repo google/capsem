@@ -151,6 +151,18 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp
         ON snapshot_events(timestamp);
 
+    CREATE TABLE IF NOT EXISTS session_identity (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        updated_at TEXT NOT NULL,
+        vm_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        user_id TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_identity_profile
+        ON session_identity(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_session_identity_user
+        ON session_identity(user_id);
+
     CREATE TABLE IF NOT EXISTS exec_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TEXT NOT NULL,
@@ -395,6 +407,22 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_exec_events_exec_id ON exec_events(exec_id);
         CREATE INDEX IF NOT EXISTS idx_exec_events_trace_id ON exec_events(trace_id);
         CREATE INDEX IF NOT EXISTS idx_exec_events_source ON exec_events(source);",
+    );
+    // S07a: one durable identity row per session DB. This keeps event writes
+    // lean while making VM/profile/user identity available to telemetry
+    // exports, detail/status paths, and support bundles.
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS session_identity (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            updated_at TEXT NOT NULL,
+            vm_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            user_id TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_identity_profile
+            ON session_identity(profile_id);
+        CREATE INDEX IF NOT EXISTS idx_session_identity_user
+            ON session_identity(user_id);",
     );
     // T3.3: Add dns_events table if not present (for DBs created before
     // T3 landed). The host-side DNS proxy writes one row per resolved
@@ -999,5 +1027,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(origin, "manual");
+    }
+
+    #[test]
+    fn migrate_session_identity_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        migrate(&conn);
+        migrate(&conn);
+        conn.execute(
+            "INSERT INTO session_identity (id, updated_at, vm_id, profile_id, user_id)
+             VALUES (1, '2026-05-18T00:00:00Z', 'vm-1', 'everyday-work', 'elie')",
+            [],
+        )
+        .unwrap();
+        let identity: (String, String, String) = conn
+            .query_row(
+                "SELECT vm_id, profile_id, user_id FROM session_identity WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            identity,
+            (
+                "vm-1".to_string(),
+                "everyday-work".to_string(),
+                "elie".to_string()
+            )
+        );
     }
 }

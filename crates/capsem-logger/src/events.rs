@@ -133,6 +133,23 @@ pub struct SnapshotEvent {
     pub trace_id: Option<String>,
 }
 
+/// Stable identity for the VM/session that owns this telemetry database.
+///
+/// This is stored once per `session.db` rather than duplicated onto every
+/// event row. Events remain hot-path cheap, while exports and detail paths can
+/// still prove which VM, profile, and local user produced the telemetry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TelemetryIdentity {
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
+    pub timestamp: SystemTime,
+    pub vm_id: String,
+    pub profile_id: String,
+    pub user_id: String,
+}
+
 /// A single network connection event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetEvent {

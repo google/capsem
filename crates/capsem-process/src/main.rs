@@ -136,6 +136,14 @@ fn aggregator_child_env(vm_id: &str, trace_id: &str) -> std::collections::HashMa
     for (k, v) in capsem_core::telemetry::child_trace_env(vm_id) {
         env.insert(k, v);
     }
+    for key in [
+        capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV,
+        capsem_core::telemetry::CAPSEM_USER_ID_ENV,
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            env.insert(key.to_string(), value);
+        }
+    }
     env.insert("CAPSEM_TRACE_ID".to_string(), trace_id.to_string());
     env
 }
@@ -330,6 +338,33 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
+    let runtime_policy = mcp_runtime::load_runtime_policy_state(&session_dir);
+    if let Ok(env_profile_id) = std::env::var(capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV) {
+        if env_profile_id != runtime_policy.profile_id {
+            warn!(
+                env_profile_id,
+                effective_profile_id = %runtime_policy.profile_id,
+                "process telemetry profile identity differed from attached vm-effective settings"
+            );
+        }
+    }
+    let user_id = capsem_core::telemetry::host_user_id();
+    db.write(capsem_logger::WriteOp::TelemetryIdentity(
+        capsem_logger::TelemetryIdentity {
+            timestamp: std::time::SystemTime::now(),
+            vm_id: args.id.clone(),
+            profile_id: runtime_policy.profile_id.clone(),
+            user_id: user_id.clone(),
+        },
+    ))
+    .await;
+    info!(
+        vm_id = %args.id,
+        profile_id = %runtime_policy.profile_id,
+        user_id = %user_id,
+        "session telemetry identity attached"
+    );
+
     // Start host file monitor to record fs_events.
     let workspace_dir = session_dir.join("workspace");
     match capsem_core::fs_monitor::FsMonitor::start(
@@ -346,7 +381,6 @@ async fn run_async_main_loop(
         }
     }
 
-    let runtime_policy = mcp_runtime::load_runtime_policy_state(&session_dir);
     let guest_config = runtime_policy.guest_config.clone();
 
     let net_state = Arc::new(capsem_core::create_net_state_with_policy(

@@ -7,6 +7,11 @@ sidebar:
 
 Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
 
+Each database also carries one `session_identity` row. That row is the durable
+identity envelope for the event stream: the VM id, the resolved profile id, and
+the local user id that launched the VM. Event rows keep their hot-path shape and
+join to this identity at export/status time.
+
 ## Schema overview
 
 ```mermaid
@@ -21,6 +26,13 @@ erDiagram
         int bytes_sent
         int bytes_received
         int duration_ms
+    }
+    session_identity {
+        int id PK
+        text updated_at
+        text vm_id
+        text profile_id
+        text user_id
     }
     model_calls {
         int id PK
@@ -105,6 +117,18 @@ erDiagram
 ```
 
 ## Tables
+
+### session_identity
+
+One durable identity row for the VM/session that owns this database.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Always `1` |
+| `updated_at` | TEXT | ISO 8601 time when identity was last attached |
+| `vm_id` | TEXT | Capsem VM/session id |
+| `profile_id` | TEXT | Resolved Profile V2 id pinned to the session |
+| `user_id` | TEXT | Local host user id recorded by the service/process boundary |
 
 ### net_events
 

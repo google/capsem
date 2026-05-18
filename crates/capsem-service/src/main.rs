@@ -319,6 +319,20 @@ impl ServiceState {
         Ok(())
     }
 
+    fn telemetry_identity_env(
+        &self,
+        vm_id: &str,
+        session_dir: &FsPath,
+    ) -> Result<Vec<(String, String)>> {
+        let effective = capsem_core::settings_profiles::load_vm_effective_settings(session_dir)
+            .context("load vm-effective settings for telemetry identity")?;
+        Ok(capsem_core::telemetry::child_identity_env(
+            vm_id,
+            &effective.profile_id,
+            &capsem_core::telemetry::host_user_id(),
+        ))
+    }
+
     fn resolve_vm_runtime_defaults(&self) -> VmRuntimeDefaults {
         let fallback_vm = capsem_core::settings_profiles::VmProfileSettings::default();
         let settings = self.current_service_settings();
@@ -682,6 +696,9 @@ impl ServiceState {
         }
         self.ensure_vm_effective_settings(&session_dir)
             .context("attach vm-effective settings to session")?;
+        let telemetry_env = self
+            .telemetry_identity_env(id, &session_dir)
+            .context("derive process telemetry identity")?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -723,9 +740,8 @@ impl ServiceState {
                 child_cmd.env(key, val);
             }
         }
-        // W4: propagate trace context to the child process.
-        // CAPSEM_VM_ID, CAPSEM_TRACE_ID, TRACEPARENT, TRACESTATE.
-        for (k, v) in capsem_core::telemetry::child_trace_env(id) {
+        // W4/S07a: propagate trace context plus VM/profile/user identity.
+        for (k, v) in telemetry_env {
             child_cmd.env(k, v);
         }
 
@@ -999,6 +1015,9 @@ impl ServiceState {
         }
         self.ensure_vm_effective_settings(&entry.session_dir)
             .context("attach vm-effective settings to resumed session")?;
+        let telemetry_env = self
+            .telemetry_identity_env(name, &entry.session_dir)
+            .context("derive resumed process telemetry identity")?;
 
         let process_log_path = entry.session_dir.join("process.log");
         let process_log_file = std::fs::OpenOptions::new()
@@ -1048,8 +1067,8 @@ impl ServiceState {
                 child_cmd.env(key, val);
             }
         }
-        // W4: propagate trace context (resume path).
-        for (k, v) in capsem_core::telemetry::child_trace_env(name) {
+        // W4/S07a: propagate trace context plus VM/profile/user identity.
+        for (k, v) in telemetry_env {
             child_cmd.env(k, v);
         }
 
@@ -2076,6 +2095,11 @@ async fn provision_attempt(
 fn enrich_telemetry_from_session_db(info: &mut SandboxInfo, session_dir: &std::path::Path) {
     let db_path = session_dir.join("session.db");
     if let Ok(reader) = capsem_logger::DbReader::open(&db_path) {
+        if let Ok(Some(identity)) = reader.session_identity() {
+            info.vm_id = Some(identity.vm_id);
+            info.profile_id = Some(identity.profile_id);
+            info.user_id = Some(identity.user_id);
+        }
         if let Ok(stats) = reader.session_stats() {
             info.total_input_tokens = Some(stats.total_input_tokens);
             info.total_output_tokens = Some(stats.total_output_tokens);
@@ -2338,6 +2362,7 @@ async fn handle_info(
             }
             info.size_bytes =
                 capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
+            enrich_telemetry_from_session_db(&mut info, &entry.session_dir);
             return Ok(Json(info));
         }
     }

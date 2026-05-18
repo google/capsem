@@ -5,7 +5,7 @@ use tracing::warn;
 
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent,
-    PolicyHookEvent, SnapshotEvent,
+    PolicyHookEvent, SnapshotEvent, TelemetryIdentity,
 };
 use crate::schema;
 
@@ -43,6 +43,7 @@ pub enum WriteOp {
     AuditEvent(AuditEvent),
     DnsEvent(DnsEvent),
     PolicyHookEvent(PolicyHookEvent),
+    TelemetryIdentity(TelemetryIdentity),
 }
 
 /// A dedicated writer thread that owns the SQLite connection.
@@ -227,9 +228,33 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::AuditEvent(a) => insert_audit_event(&tx, a)?,
             WriteOp::DnsEvent(d) => insert_dns_event(&tx, d)?,
             WriteOp::PolicyHookEvent(h) => insert_policy_hook_event(&tx, h)?,
+            WriteOp::TelemetryIdentity(i) => insert_telemetry_identity(&tx, i)?,
         }
     }
     tx.commit()
+}
+
+fn insert_telemetry_identity(
+    conn: &Connection,
+    identity: &TelemetryIdentity,
+) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(identity.timestamp).to_string();
+    conn.execute(
+        "INSERT INTO session_identity (id, updated_at, vm_id, profile_id, user_id)
+         VALUES (1, ?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET
+            updated_at = excluded.updated_at,
+            vm_id = excluded.vm_id,
+            profile_id = excluded.profile_id,
+            user_id = excluded.user_id",
+        params![
+            timestamp,
+            identity.vm_id,
+            identity.profile_id,
+            identity.user_id,
+        ],
+    )?;
+    Ok(())
 }
 
 fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()> {

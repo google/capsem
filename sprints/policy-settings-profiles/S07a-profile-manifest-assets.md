@@ -28,9 +28,15 @@ Landed:
 - Removal of old asset-only manifest runtime authority, including
   `assets.manifest.*` service settings and setup-time signed asset manifest
   checks.
+- Durable session telemetry identity: `session.db` records `vm_id`,
+  `profile_id`, and `user_id`; service passes identity into
+  `capsem-process`; `/info` exposes the recorded identity.
 
 Push order from here:
 
+0. [x] Expose telemetry identity for every session: `vm_id`, `profile_id`, and
+   `user_id` must be persisted beside session telemetry, surfaced through
+   detail/status paths, and covered by focused tests.
 1. Install/update/delete/revoke profile payloads from catalog records.
 2. Persist explicit VM `profile_id`, `profile_revision`, package contract hash,
    and pinned asset metadata.

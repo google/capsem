@@ -7,7 +7,7 @@ pub mod writer;
 pub use db::SessionDb;
 pub use events::{
     AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete, FileAction, FileEvent, McpCall,
-    ModelCall, NetEvent, SnapshotEvent, ToolCallEntry, ToolResponseEntry,
+    ModelCall, NetEvent, SnapshotEvent, TelemetryIdentity, ToolCallEntry, ToolResponseEntry,
 };
 pub use reader::{
     validate_select_only, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,

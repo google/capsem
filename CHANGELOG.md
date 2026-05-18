@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boot assets from the selected profile's per-architecture declarations,
   downloads missing assets from profile URLs, and forwards expected hashes to
   `capsem-process` for boot-time verification.
+- Added durable per-session telemetry identity: `session.db` now records the
+  VM id, resolved profile id, and local user id, and `/info` exposes those
+  fields for support/status flows.
 - Removed legacy `assets.manifest.*` service settings and setup-time asset
   manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2

@@ -62,7 +62,15 @@ async fn main() -> Result<()> {
     // panicking.
     let vm_id = std::env::var("CAPSEM_VM_ID").unwrap_or_else(|_| "unknown".into());
     let trace_id = std::env::var("CAPSEM_TRACE_ID").unwrap_or_else(|_| "unknown".into());
-    let root_span = tracing::info_span!("aggregator", vm_id = %vm_id, trace_id = %trace_id);
+    let profile_id = std::env::var("CAPSEM_PROFILE_ID").unwrap_or_else(|_| "unknown".into());
+    let user_id = std::env::var("CAPSEM_USER_ID").unwrap_or_else(|_| "unknown".into());
+    let root_span = tracing::info_span!(
+        "aggregator",
+        vm_id = %vm_id,
+        profile_id = %profile_id,
+        user_id = %user_id,
+        trace_id = %trace_id
+    );
     let _root_span_guard = root_span.enter();
 
     let args = Args::parse();

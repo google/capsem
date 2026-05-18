@@ -16,7 +16,7 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `44 ahead / 0 behind` `origin/main` in this worktree. The rescue
+  `46 ahead / 0 behind` `origin/main` in this worktree. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -41,7 +41,9 @@ order:
 1. Finish S07a's remaining contract gaps: catalog-driven profile payload
    install/update/revoke, explicit VM profile/revision/package pins, retention,
    unsupported/unbound handling for pre-S07a registry entries, and status/debug
-   readiness.
+   readiness. The next inserted stop is telemetry identity: every session must
+   expose the VM id, profile id, and user id as a durable session fact before
+   we keep pushing profile pinning.
 2. Start S07b only after S07a's runtime contract is stable enough for
    `capsem-admin` to generate and validate the same shapes.
 3. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
@@ -354,7 +356,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `http.read` / `http.write` callback split covered by **5**
   hook-boundary tests in `policy_v2_http_hook/tests.rs`.
   S07 metrics proto foundation adds **36** focused `capsem-proto`
-  IPC tests and **18** focused `capsem-process` IPC tests.
+  IPC tests and **18** focused `capsem-process` IPC tests. S07a
+  telemetry identity now has focused logger schema/writer/reader,
+  core env-resolution, and service serialization/enrichment tests.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -386,7 +390,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   summary (event count, corp event count, locked paths,
   rejected paths, last N events). Hook-boundary attribution
   for ask resolves locks the resolved outcome (`allow` /
-  `block`). Persisted-telemetry read-back from a running
+  `block`). S07a adds a durable `session_identity` row to
+  `session.db` with `vm_id`, `profile_id`, and `user_id`, service
+  propagation into `capsem-process`, `/info` exposure, and focused
+  read-back coverage. Persisted policy-decision read-back from a running
   `session.db` (capsem-doctor E2E ask probe) is **deferred**.
   `policy_confirm_events` table remains S06-pre slice 7+ work.
 - **Performance**: no benchmarks added by S06/S06a/S06b; the
@@ -396,7 +403,14 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   in-memory metrics accumulator is the next perf-shaped piece).
   The S07 metrics snapshot request is classified as read-only
   `HealthCheck` IPC so it does not enter job/lifecycle dispatch.
-- **Test-gate snapshot** (cargo test, 2026-05-16):
+- **Test-gate snapshot** (cargo test, updated 2026-05-18 for S07a
+  telemetry identity):
+  `cargo test -p capsem-logger` **100** + **126** passed;
+  `cargo test -p capsem-service` **107** + **140** passed;
+  `cargo test -p capsem-core telemetry --lib` **31** passed;
+  `cargo test -p capsem-process --no-run` passed; and
+  `cargo test -p capsem-mcp-aggregator --no-run` passed.
+  Prior full snapshot (2026-05-16):
   capsem-core lib **1590** passed / 0 failed / 1 ignored;
   capsem-service **95** + **119** passed; capsem-process **98**
   passed; capsem-logger **98** + **126** passed. No warnings on

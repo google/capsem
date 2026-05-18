@@ -126,6 +126,60 @@ fn db_writer_checkpoints_wal_on_drop() {
 }
 
 #[test]
+fn telemetry_identity_roundtrip_updates_single_session_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("identity.db");
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer
+                .write(WriteOp::TelemetryIdentity(
+                    crate::events::TelemetryIdentity {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_779_000_000),
+                        vm_id: "vm-a".to_string(),
+                        profile_id: "everyday-work".to_string(),
+                        user_id: "elie".to_string(),
+                    },
+                ))
+                .await;
+            writer
+                .write(WriteOp::TelemetryIdentity(
+                    crate::events::TelemetryIdentity {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_779_000_001),
+                        vm_id: "vm-a".to_string(),
+                        profile_id: "locked-down".to_string(),
+                        user_id: "elie".to_string(),
+                    },
+                ))
+                .await;
+        });
+    }
+
+    let reader = crate::reader::DbReader::open(&db_path).unwrap();
+    let identity = reader
+        .session_identity()
+        .unwrap()
+        .expect("identity row must exist");
+    assert_eq!(identity.vm_id, "vm-a");
+    assert_eq!(identity.profile_id, "locked-down");
+    assert_eq!(identity.user_id, "elie");
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM session_identity", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(rows, 1, "identity must update in place, not append");
+}
+
+#[test]
 fn snapshot_event_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("snap.db");

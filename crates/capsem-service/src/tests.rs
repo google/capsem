@@ -1865,6 +1865,36 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
 }
 
 #[tokio::test]
+async fn telemetry_identity_env_uses_attached_profile_and_user_id() {
+    let _guard = SETTINGS_ENV_LOCK.lock().await;
+    let previous_user = std::env::var(capsem_core::telemetry::CAPSEM_USER_ID_ENV).ok();
+    std::env::set_var(capsem_core::telemetry::CAPSEM_USER_ID_ENV, "corp-user");
+
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions/vm-ident");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    let env = state
+        .telemetry_identity_env("vm-ident", &session_dir)
+        .unwrap();
+
+    match previous_user {
+        Some(value) => std::env::set_var(capsem_core::telemetry::CAPSEM_USER_ID_ENV, value),
+        None => std::env::remove_var(capsem_core::telemetry::CAPSEM_USER_ID_ENV),
+    }
+
+    assert!(env
+        .iter()
+        .any(|(k, v)| { k == capsem_core::telemetry::CAPSEM_VM_ID_ENV && v == "vm-ident" }));
+    assert!(env.iter().any(|(k, v)| {
+        k == capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV && v == "everyday-work"
+    }));
+    assert!(env
+        .iter()
+        .any(|(k, v)| { k == capsem_core::telemetry::CAPSEM_USER_ID_ENV && v == "corp-user" }));
+}
+
+#[tokio::test]
 async fn handle_fork_creates_persistent_sandbox() {
     let (state, _dir) = make_test_state_with_tempdir();
     // Create a real session dir for the fake instance
@@ -2265,6 +2295,9 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
     assert_eq!(info.id, "test");
     assert_eq!(info.pid, 1);
     assert!(!info.persistent);
+    assert!(info.vm_id.is_none());
+    assert!(info.profile_id.is_none());
+    assert!(info.user_id.is_none());
     assert!(info.total_input_tokens.is_none());
     assert!(info.total_estimated_cost.is_none());
     assert!(info.model_call_count.is_none());
@@ -2275,10 +2308,16 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
 #[test]
 fn sandbox_info_telemetry_fields_serialize_when_present() {
     let mut info = SandboxInfo::new("test".into(), 1, "Running".into(), false);
+    info.vm_id = Some("test".into());
+    info.profile_id = Some("everyday-work".into());
+    info.user_id = Some("elie".into());
     info.total_input_tokens = Some(1000);
     info.total_estimated_cost = Some(0.42);
     info.model_call_count = Some(5);
     let json = serde_json::to_string(&info).unwrap();
+    assert!(json.contains("\"vm_id\":\"test\""));
+    assert!(json.contains("\"profile_id\":\"everyday-work\""));
+    assert!(json.contains("\"user_id\":\"elie\""));
     assert!(json.contains("\"total_input_tokens\":1000"));
     assert!(json.contains("\"total_estimated_cost\":0.42"));
     assert!(json.contains("\"model_call_count\":5"));
@@ -2292,6 +2331,8 @@ fn sandbox_info_telemetry_fields_omitted_when_none() {
     assert!(!json.contains("total_estimated_cost"));
     assert!(!json.contains("model_call_count"));
     assert!(!json.contains("uptime_secs"));
+    assert!(!json.contains("profile_id"));
+    assert!(!json.contains("user_id"));
 }
 
 #[test]
@@ -2301,6 +2342,36 @@ fn sandbox_info_backwards_compatible_deserialization() {
     let info: SandboxInfo = serde_json::from_str(json).unwrap();
     assert_eq!(info.id, "x");
     assert!(info.total_input_tokens.is_none());
+    assert!(info.profile_id.is_none());
+}
+
+#[test]
+fn enrich_telemetry_from_session_db_attaches_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let writer = capsem_logger::DbWriter::open(&dir.path().join("session.db"), 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer
+                .write(capsem_logger::WriteOp::TelemetryIdentity(
+                    capsem_logger::TelemetryIdentity {
+                        timestamp: std::time::SystemTime::now(),
+                        vm_id: "vm-ident".to_string(),
+                        profile_id: "everyday-work".to_string(),
+                        user_id: "elie".to_string(),
+                    },
+                ))
+                .await;
+        });
+    }
+
+    let mut info = SandboxInfo::new("vm-ident".into(), 1, "Running".into(), false);
+    enrich_telemetry_from_session_db(&mut info, dir.path());
+    assert_eq!(info.vm_id.as_deref(), Some("vm-ident"));
+    assert_eq!(info.profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(info.user_id.as_deref(), Some("elie"));
 }
 
 // -----------------------------------------------------------------------

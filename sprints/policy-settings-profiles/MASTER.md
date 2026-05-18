@@ -25,7 +25,7 @@ completely.
 ## Execution Mode
 
 **Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `44 ahead / 0 behind` `origin/main` in this
+is coherent again and sits `46 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
@@ -173,6 +173,10 @@ Landed S07a foundation:
   expected hashes, and old asset-only manifests are not runtime authority.
 - Legacy `assets.manifest.*` service settings and setup-time signed asset
   manifest checks are removed.
+- Durable session telemetry identity. `session.db` records `vm_id`,
+  `profile_id`, and `user_id`; service passes those facts to
+  `capsem-process`; process/aggregator logs include them; `/info` surfaces the
+  stored identity.
 
 Remaining S07a push order:
 
@@ -248,6 +252,13 @@ with source-setting labeling.
 
 Latest focused verification after the rescue/push transition:
 
+- `cargo test -p capsem-logger` passed with 100 unit tests + 126 roundtrip
+  tests.
+- `cargo test -p capsem-service` passed with 107 library tests + 140 service
+  tests.
+- `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
+- `cargo test -p capsem-process --no-run` passed.
+- `cargo test -p capsem-mcp-aggregator --no-run` passed.
 - `cargo test -p capsem-core settings_profiles --lib` passed with 122 tests.
 - `cargo test -p capsem-core profile_manifest --lib` passed with 9 tests.
 - `cargo test -p capsem-core --test profile_schema` passed with 6 tests.

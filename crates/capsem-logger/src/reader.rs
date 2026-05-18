@@ -4,13 +4,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use rusqlite::{params, Connection, OpenFlags, Row};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::events::{
     AuditEvent, Decision, ExecEvent, FileAction, FileEvent, McpCall, ModelCall, NetEvent,
-    ToolCallEntry, ToolResponseEntry,
+    TelemetryIdentity, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
 
@@ -390,6 +390,27 @@ impl DbReader {
                 e
             }
         })
+    }
+
+    /// Read the session's durable VM/profile/user identity, if recorded.
+    pub fn session_identity(&self) -> rusqlite::Result<Option<TelemetryIdentity>> {
+        self.conn
+            .query_row(
+                "SELECT updated_at, vm_id, profile_id, user_id
+                 FROM session_identity WHERE id = 1",
+                [],
+                |row| {
+                    let ts_str: String = row.get(0)?;
+                    Ok(TelemetryIdentity {
+                        timestamp: humantime::parse_rfc3339(&ts_str)
+                            .unwrap_or(SystemTime::UNIX_EPOCH),
+                        vm_id: row.get(1)?,
+                        profile_id: row.get(2)?,
+                        user_id: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
     }
 
     fn query_raw_inner(&self, sql: &str, max_rows: usize) -> Result<String, String> {

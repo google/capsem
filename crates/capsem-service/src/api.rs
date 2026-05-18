@@ -91,6 +91,12 @@ pub struct SandboxInfo {
     pub size_bytes: Option<u64>,
     // -- Telemetry (populated for /info, omitted when absent) --
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub vm_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uptime_secs: Option<u64>,
@@ -138,6 +144,9 @@ impl SandboxInfo {
             forked_from: None,
             description: None,
             size_bytes: None,
+            vm_id: None,
+            profile_id: None,
+            user_id: None,
             created_at: None,
             uptime_secs: None,
             total_input_tokens: None,

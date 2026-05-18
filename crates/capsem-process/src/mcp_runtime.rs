@@ -38,6 +38,7 @@ pub(crate) struct McpRuntime {
 
 #[derive(Clone)]
 pub(crate) struct RuntimePolicyState {
+    pub(crate) profile_id: String,
     pub(crate) guest_config: GuestConfig,
     pub(crate) network_policy: NetworkPolicy,
     pub(crate) domain_policy: DomainPolicy,
@@ -95,8 +96,13 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
         .map(policy_v2_from_effective_rules)
         .unwrap_or_default();
     let guest_config = guest_config_from_effective(effective.as_ref());
+    let profile_id = effective
+        .as_ref()
+        .map(|effective| effective.profile_id.clone())
+        .unwrap_or_else(|| "unknown".to_string());
 
     RuntimePolicyState {
+        profile_id,
         guest_config,
         network_policy,
         domain_policy,

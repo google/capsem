@@ -91,6 +91,10 @@ pub struct TelemetryGuard {
 /// unset (CLI invocations and top-level binaries).
 static PARENT_TRACEPARENT: OnceLock<String> = OnceLock::new();
 
+pub const CAPSEM_VM_ID_ENV: &str = "CAPSEM_VM_ID";
+pub const CAPSEM_PROFILE_ID_ENV: &str = "CAPSEM_PROFILE_ID";
+pub const CAPSEM_USER_ID_ENV: &str = "CAPSEM_USER_ID";
+
 /// Initialize tracing. Call exactly once per binary, in `main()`, before
 /// any `tracing::info!` macro fires.
 ///
@@ -229,7 +233,7 @@ fn ambient_capsem_trace_id_from_inputs(
 /// 16-hex span_id and a 32-hex trace_id derived from `vm_id` + a random
 /// suffix so each VM gets a deterministic-looking trace anchor.
 pub fn child_trace_env(vm_id: &str) -> Vec<(String, String)> {
-    let mut out = vec![("CAPSEM_VM_ID".to_string(), vm_id.to_string())];
+    let mut out = vec![(CAPSEM_VM_ID_ENV.to_string(), vm_id.to_string())];
 
     if let Some(parent_tp) = PARENT_TRACEPARENT.get() {
         // Parent already provided a traceparent -- propagate verbatim.
@@ -254,6 +258,57 @@ pub fn child_trace_env(vm_id: &str) -> Vec<(String, String)> {
     out.push(("TRACEPARENT".to_string(), traceparent));
     out.push(("TRACESTATE".to_string(), String::new()));
     out
+}
+
+/// Build the child-process identity + trace environment.
+///
+/// `CAPSEM_PROFILE_ID` and `CAPSEM_USER_ID` are host telemetry facts for the
+/// child process. They are not forwarded into the guest unless a caller also
+/// passes them through `--env`.
+pub fn child_identity_env(vm_id: &str, profile_id: &str, user_id: &str) -> Vec<(String, String)> {
+    let mut out = child_trace_env(vm_id);
+    out.push((CAPSEM_PROFILE_ID_ENV.to_string(), profile_id.to_string()));
+    out.push((CAPSEM_USER_ID_ENV.to_string(), user_id.to_string()));
+    out
+}
+
+/// Resolve the local user id recorded in session telemetry.
+///
+/// Prefer an explicit `CAPSEM_USER_ID` override for tests/service managers,
+/// then the common host username env vars, then the effective UID.
+pub fn host_user_id() -> String {
+    host_user_id_from_inputs(
+        std::env::var(CAPSEM_USER_ID_ENV).ok().as_deref(),
+        std::env::var("USER").ok().as_deref(),
+        std::env::var("USERNAME").ok().as_deref(),
+        effective_uid(),
+    )
+}
+
+fn host_user_id_from_inputs(
+    explicit: Option<&str>,
+    user: Option<&str>,
+    username: Option<&str>,
+    uid: Option<u32>,
+) -> String {
+    for candidate in [explicit, user, username].into_iter().flatten() {
+        let candidate = candidate.trim();
+        if !candidate.is_empty() {
+            return candidate.to_string();
+        }
+    }
+    uid.map(|uid| format!("uid:{uid}"))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(unix)]
+fn effective_uid() -> Option<u32> {
+    Some(unsafe { libc::geteuid() as u32 })
+}
+
+#[cfg(not(unix))]
+fn effective_uid() -> Option<u32> {
+    None
 }
 
 /// Cheap 16-hex-char id derived from a seed. Uses blake3 for a stable,
