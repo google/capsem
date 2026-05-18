@@ -12,6 +12,9 @@ state and profile-backed VM creation.
 - Add service/gateway mismatch reporting to debug report.
 - Test app settings, profile CRUD, profile catalog/revision state, profile
   package/tool contracts, asset readiness, resolve, MCP, and skills over HTTP.
+- Mirror the UDS `ProfileRevisionStatus` enum exactly in HTTP response models:
+  `active`, `deprecated`, `removed`, and `revoked`. Do not invent gateway-only
+  status names or boolean substitutes.
 - Add/extend VM create HTTP surface so callers can pass `profile_id` and
   optional `profile_revision`. Response must echo resolved profile id/revision,
   package contract hash, pinned asset hashes, and asset readiness/download
@@ -33,8 +36,8 @@ state and profile-backed VM creation.
 
 - Unit/contract: HTTP response shape tests (incl. the Rules API
   routes; assert the typed-error envelope matches UDS). Profile catalog,
-  revision status, asset readiness, download progress, and VM pin payloads must
-  be contract-tested against the UDS shape.
+  `ProfileRevisionStatus` enum values, asset readiness, download progress, and
+  VM pin payloads must be contract-tested against the UDS shape.
 - Functional: HTTP CRUD and resolve tests; a Rules API roundtrip
   (`POST /rules` -> `POST /rules/evaluate` -> assert same
   `matched_rule_id` comes back). HTTP VM create with `profile_id` starts a

@@ -16,6 +16,10 @@ creation through the service UDS API.
   The surface lists catalog profiles, lists revisions, shows lifecycle status,
   shows package/tool contract, shows asset readiness, installs/updates/removes
   local profile revisions, and surfaces revoke/deprecated warnings.
+- Use the canonical `ProfileRevisionStatus` enum from S07a for every catalog
+  revision status field. Do not expose loose strings or derived boolean flags;
+  typed errors and response models must distinguish `active`, `deprecated`,
+  `removed`, and `revoked`.
 - Extend VM create/provision request shape with explicit profile selection:
   `profile_id` required by UI/CLI flows, `profile_revision` optional for
   advanced/debug use. Absence may default to the service-selected profile, but
@@ -96,9 +100,11 @@ for the rule engine that do not need a VM.
 - Unit/contract: request/response shape tests for every route
   (settings, profiles, profile catalog/revisions, profile package/tool contract,
   profile asset readiness, VM create profile selection, MCP, skills,
-  **rules list/get/add/remove/evaluate**, provenance, typed errors). Profile
-  catalog errors must distinguish revoked, deprecated, removed, stale catalog,
-  incompatible binary, unsupported arch, and verification failure.
+  **rules list/get/add/remove/evaluate**, provenance, typed errors).
+  `ProfileRevisionStatus` enum serialization/deserialization is covered for
+  `active`, `deprecated`, `removed`, and `revoked`. Profile catalog errors must
+  distinguish revoked, deprecated, removed, stale catalog, incompatible binary,
+  unsupported arch, and verification failure.
 - Functional: UDS CRUD and resolve tests, including a roundtrip that
   stages a rule via `POST /rules`, evaluates a synthetic subject via
   `POST /rules/evaluate`, and asserts the same `matched_rule_id`

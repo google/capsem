@@ -54,11 +54,16 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
     into the model.
 - Write corporate system docs:
   - deploying base and corp profile directories.
+  - installing `capsem-admin` from PyPI for enterprise/corp administration and
+    using it to create, validate, build, verify, generate, check, and sign
+    profile catalogs.
   - deploying signed profile manifests and profile payloads.
   - rolling out profile revisions, deprecations, removals, and revocations.
   - lazy first-use VM asset download and asset cleanup retention.
   - forbidding user profile creation/fork/delete.
   - creating custom profiles.
+  - building a profile from scratch, including package/tool contracts,
+    per-arch VM asset declarations, custom images, and controls.
   - setting service-scoped telemetry.
   - configuring remote policy decisions.
   - configuring signed profile catalogs, profile payload hosting, asset
@@ -75,6 +80,11 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
   - custom images docs.
   - troubleshooting/debug-report docs.
 - Add or update docs site navigation so the new model has a coherent section.
+- Add a developer documentation lane for `capsem-admin`: how the package is
+  structured, how bootstrap installs it in editable mode, how Pydantic models,
+  JSON Schema artifacts, builder modules, manifest modules, doctor checks, and
+  tests fit together, and how to develop/debug it without using the released
+  PyPI package.
 - Remove or rewrite docs that reference v1 settings authority, old security
   levels, standalone `[mcp]`, or JSON-schema/defaults-json authority.
 
@@ -88,17 +98,32 @@ Under `docs/src/content/docs/`, likely pages:
 - `configuration/service-settings.md` - service TOML, profile roots, telemetry,
   remote policy, credentials, manifest source, asset directory, image roots, and
   asset download endpoint.
+- `getting-started/custom-profiles-images.md` - first successful path for using
+  Capsem with your own controls/images: install/select a profile, build or
+  reference profile-owned assets, validate with `capsem-admin`, publish a
+  manifest, and create a VM pinned to that profile.
 - `configuration/profiles.md` - profile TOML, profile CRUD/forking, package/tool
   contracts, per-arch VM assets, VM-effective settings, custom profiles, and
   the JSON Schema Draft 2020-12 `capsem.profile.v2` schema reference.
+- `configuration/building-profiles.md` - step-by-step profile authoring guide:
+  choose id/revision, declare controls, package/tool contract, assets, status,
+  validate, derive image plan, build/verify assets, and generate manifest.
 - `configuration/profile-catalogs.md` - signed manifest profile catalog,
-  revisions, lifecycle status, profile payload signatures, lazy download, and
-  asset retention.
+  revisions, `ProfileRevisionStatus` enum semantics, profile payload
+  signatures, lazy download, and asset retention.
 - `configuration/capsem-admin.md` - corp-admin CLI workflows for profile
   creation/validation, profile-derived image build/verify, manifest
-  generate/check/sign, bootstrap install, and release package verification.
+  generate/check/sign, PyPI install for enterprise admins, bootstrap editable
+  install for development, and release package verification.
 - `configuration/corporate-deployment.md` - corp roots, governance, locks,
   custom images, rollout patterns.
+- `configuration/corporate-profiles.md` - enterprise profile format guide:
+  how profile payloads work, how statuses affect rollout, how profile-owned
+  packages/assets map to VMs, and how corp admins use `capsem-admin` with them.
+- `development/capsem-admin.md` - developer reference for the admin package:
+  module layout, Pydantic models, JSON I/O boundaries, schema generation,
+  builder integration, doctor integration, test fixtures, bootstrap editable
+  install, and release packaging handoff.
 - `security/profile-capabilities.md` - credential brokerage, PII, MCP RAG/tools,
   network egress, file boundaries, audit posture.
 - Updates to existing `architecture/settings.md`,
@@ -124,17 +149,35 @@ Final paths should follow the actual docs tree present when this sprint starts.
       schema version, bad package versions, and incomplete per-arch asset
       declarations.
 - [ ] Write signed profile catalog reference with manifest examples for
-      profile ids, revisions, active/deprecated/removed/revoked status, payload
-      hashes/signatures, and compatibility.
+      profile ids, revisions, the `ProfileRevisionStatus` enum
+      (`active`, `deprecated`, `removed`, `revoked`), payload hashes/signatures,
+      and compatibility.
+- [ ] Write enterprise profile-format page under the corporate deployment docs:
+      explain the profile TOML/JSON Schema contract, package/tool contracts,
+      per-arch VM assets, status enum semantics, VM pinning, and how
+      `capsem-admin` validates and publishes the profile.
+- [ ] Write "build a profile" guide with a complete worked example:
+      draft profile, add controls, declare package/tool contract, declare or
+      build assets, run `capsem-admin profile validate`, derive/build/verify
+      image assets, generate/check/sign manifest, and create a profile-backed
+      VM.
+- [ ] Write getting-started guide for custom images/controls via profiles:
+      how an operator gets from a custom image requirement to a signed profile
+      catalog and a VM pinned to the resulting profile.
 - [ ] Write profile package/tool contract and VM asset declaration reference.
 - [ ] Write `capsem-admin` reference:
       profile create/validate/schema, image plan/build/verify, manifest
       generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
       reports, omitted `--arch` defaulting to all supported release arches,
-      bootstrap editable install, packaged release usage, and the Pydantic
-      model layer that backs validation/errors/reports through
-      `model_validate_json()` / `TypeAdapter.validate_json()` and
-      `model_dump_json()`.
+      enterprise PyPI install, bootstrap editable development install, packaged
+      release usage, and the Pydantic model layer that backs
+      validation/errors/reports through `model_validate_json()` /
+      `TypeAdapter.validate_json()` and `model_dump_json()`.
+- [ ] Write developer `capsem-admin` internals page:
+      package/module layout, Pydantic model boundaries, JSON Schema artifact,
+      profile/image/manifest/doctor modules, how Justfile/bootstrap integrate,
+      how to run focused tests, how to add a new command, and how release
+      packaging consumes the package.
 - [ ] Document profile-backed VM create semantics:
       profile id/revision selection, first-use download, verification,
       persistent VM pins, and no implicit migration on profile update.
@@ -184,11 +227,25 @@ Final paths should follow the actual docs tree present when this sprint starts.
 - [ ] Build docs site and fix broken links/sidebar issues.
 - [ ] Add docs review checklist to the release gate.
 
+## Profile Status Enum To Document
+
+Use the canonical `ProfileRevisionStatus` enum name and these exact values in
+all docs, examples, CLI snippets, API payloads, UI copy, and troubleshooting
+tables:
+
+| Enum value | Meaning |
+|---|---|
+| `active` | Install/update this revision and allow new VMs. This is the normal offered state. |
+| `deprecated` | Keep installed, warn, allow existing VMs, and avoid as the default/current recommendation. |
+| `removed` | Stop offering or installing this revision; cleanup may remove its assets once no installed active/deprecated revision or existing VM pin references them. |
+| `revoked` | Block new VM creation and show a high-severity warning for existing VMs pinned to it. Existing VM override behavior must match the S07a contract and be logged. |
+
 ## Coverage Ledger
 
 - Unit/contract: docs snippets match typed TOML structs, profile catalog
-  manifest structs, package/tool declarations, asset declarations, rule grammar,
-  callback names, `capsem-admin` commands, and CLI/API names.
+  manifest structs, `ProfileRevisionStatus` enum values, package/tool
+  declarations, asset declarations, rule grammar, callback names,
+  `capsem-admin` commands, and CLI/API names.
 - Functional: docs site builds successfully.
 - Adversarial: docs explicitly cover bad config, forbidden corp actions, bad
   remote policy endpoint, missing profile roots, bad profile/asset signatures,

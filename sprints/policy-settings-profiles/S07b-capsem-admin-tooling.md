@@ -256,13 +256,18 @@ The checker must fail closed for:
 - `bootstrap.sh` installs local admin tooling with the developer editable uv
   workflow (`uv sync` / `uv pip install -e .` as appropriate for the final
   layout). It does not use release packages.
+- Enterprise/corp operator docs install the released `capsem-admin` package
+  from PyPI and use that CLI for profile/catalog/image workflows. Development
+  docs explain the editable bootstrap path and internal package structure
+  separately so corp docs do not teach dev-only install commands.
 - Release packages include the admin CLI and any required Python runtime/wheel
   payload according to the packaging policy chosen for this repo.
 - `just test` / release gates prove the packaged `capsem-admin` binary can run
   `profile validate`, `manifest check --fast`, and `image verify` from the
   installed layout.
 - Docs use `capsem-admin`, not raw `uv run capsem-builder` or standalone Python
-  scripts, for corp-admin workflows.
+  scripts, for corp-admin workflows. Docs must distinguish PyPI-based corp
+  usage from local editable development usage.
 
 ## Tasks
 
@@ -297,7 +302,9 @@ The checker must fail closed for:
 - [ ] Implement image verification against profile package/tool contract.
 - [ ] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests.
-- [ ] Update docs and release gates to use `capsem-admin`.
+- [ ] Update docs and release gates to use `capsem-admin`, including separate
+      enterprise PyPI install/usage docs and developer editable-install/
+      internals docs.
 
 ## Coverage Ledger
 

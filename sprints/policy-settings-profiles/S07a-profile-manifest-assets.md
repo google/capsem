@@ -60,12 +60,17 @@ Required rules:
 - `profile_id` is globally stable and unique inside the manifest.
 - `revision` is immutable. Updating a profile creates a new revision.
 - `current_revision` selects the default revision for new installs/updates.
-- Status is explicit:
+- Status is the typed `ProfileRevisionStatus` enum everywhere: manifest
+  records, Rust models, Pydantic admin models, UDS/HTTP payloads, CLI output,
+  UI models, status/debug reports, docs examples, and tests. The only allowed
+  values are:
   - `active`: install/update and allow new VMs.
   - `deprecated`: keep installed, warn, allow existing VMs, avoid as default.
   - `removed`: stop offering/installing; local cleanup may remove when unpinned.
   - `revoked`: block new use and surface a high-severity warning for existing
     VMs pinned to it.
+- Unknown status strings are rejected. Do not model status as a loose string or
+  boolean flags such as `is_active` / `is_revoked`.
 - Profile payload identity is verified before the profile is installed or used.
 
 ## Normative Profile Payload Schema

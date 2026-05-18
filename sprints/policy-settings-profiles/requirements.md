@@ -97,7 +97,11 @@ move when a newer revision lands.
 
 ## Manifest/Profile Lifecycle Contract
 
-The signed manifest must support profile lifecycle state:
+The signed manifest must support profile lifecycle state through a typed
+`ProfileRevisionStatus` enum. The enum is used everywhere the value crosses a
+boundary: manifest records, Rust structs, Pydantic admin models, UDS/HTTP
+payloads, CLI output, UI models, status/debug reports, docs, and tests. It is
+not a loose string and must not be replaced by ad hoc boolean flags.
 
 - `active`: install/update and allow new VMs.
 - `deprecated`: keep usable for existing installs/VMs, warn, avoid as a new
@@ -115,7 +119,9 @@ active/deprecated profile revisions.
 ## Admin Tooling Contract
 
 The Python admin tooling must be a uv-managed package with a public
-`capsem-admin` CLI. Required flows:
+`capsem-admin` CLI. Enterprise/corp operators install the released package from
+PyPI; developers use bootstrap's editable uv install and the developer docs for
+package internals. Required flows:
 
 - create and validate profile payloads;
 - derive image build plans from profiles;

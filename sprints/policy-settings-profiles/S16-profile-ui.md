@@ -8,7 +8,8 @@ readiness, and profile-backed VM creation first-class in the UI.
 ## Tasks
 
 - Add profile selector.
-- Add catalog/profile list with active/deprecated/removed/revoked states.
+- Add catalog/profile list with the canonical `ProfileRevisionStatus` enum:
+  `active`, `deprecated`, `removed`, and `revoked`.
 - Add profile revision view: installed revision, catalog current revision,
   update availability, binary compatibility, payload verification state.
 - Add create, fork, delete flows for user-authored profiles, while clearly
@@ -24,8 +25,8 @@ readiness, and profile-backed VM creation first-class in the UI.
 
 ## Coverage Ledger
 
-- Unit/contract: profile UI model tests for catalog status, revisions,
-  package/tool contracts, asset readiness, and VM pin fields.
+- Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
+  values, revisions, package/tool contracts, asset readiness, and VM pin fields.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states.
 - Adversarial: locked/forbidden profile actions, revoked profile, incompatible

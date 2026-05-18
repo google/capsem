@@ -10,7 +10,8 @@ through CLI command families.
 - Add `capsem profile list/create/fork/update/delete/show/resolve`.
 - Add `capsem profile catalog`, `capsem profile revisions <id>`,
   `capsem profile install/update/remove <id> [--revision ...]`, and status
-  output for active/deprecated/removed/revoked profile revisions.
+  output using the canonical `ProfileRevisionStatus` enum values:
+  `active`, `deprecated`, `removed`, and `revoked`.
 - Extend `capsem profile show/resolve` to print package/tool contracts, resolved
   VM asset identity, asset readiness, and revoke/deprecation warnings.
 - Extend VM create/start commands to accept `--profile <id>` and optional
@@ -35,9 +36,10 @@ through CLI command families.
 
 - Unit/contract: parser tests; `capsem rules evaluate` parser tests
   (subject from `--subject path.json` vs stdin; rejects missing
-  callback); profile catalog/revision output golden tests; VM create parser
-  tests for `--profile`, `--profile-revision`, download progress, and
-  revoked/incompatible profile errors.
+  callback); profile catalog/revision output golden tests for all
+  `ProfileRevisionStatus` enum values; VM create parser tests for `--profile`,
+  `--profile-revision`, download progress, and revoked/incompatible profile
+  errors.
 - Functional: CLI to service integration tests; `capsem rules add`
   then `capsem rules evaluate` roundtrip; `capsem confirm list` +
   `capsem confirm accept <id>` resolves a real pending ask end to

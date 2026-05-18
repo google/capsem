@@ -24,6 +24,12 @@ Prove the redesign is releaseable.
   stale signed manifest cannot downgrade an installed active profile; revoked
   profile revisions cannot create new VMs; existing revoked VM behavior matches
   the S07a contract and is visible in status/debug.
+- Prove profile status enum consistency:
+  `ProfileRevisionStatus` is the only representation for profile revision
+  lifecycle state across manifest parsing, Rust models, Pydantic admin models,
+  UDS/HTTP payloads, CLI output, UI models, status/debug reports, and docs. All
+  four values (`active`, `deprecated`, `removed`, `revoked`) have golden tests
+  and user-facing semantics.
 - Prove first-use download safety under concurrency:
   two simultaneous VM creates for the same profile revision do not corrupt
   partial files, duplicate network work unnecessarily, or race cleanup.
@@ -71,9 +77,9 @@ Prove the redesign is releaseable.
 - Unit/contract: complete for profile catalog schema, `capsem.profile.v2`
   JSON Schema Draft 2020-12 closure, shared Rust/Python schema fixture parity,
   Pydantic v2 model coverage for every admin data shape, Pydantic-only JSON I/O
-  coverage, signatures/hashes, lifecycle status, package/tool contracts,
-  per-arch assets, rollback protection, resolver inheritance, VM pin metadata,
-  and API/CLI/UI shapes.
+  coverage, signatures/hashes, `ProfileRevisionStatus` enum parity, package/
+  tool contracts, per-arch assets, rollback protection, resolver inheritance,
+  VM pin metadata, and API/CLI/UI shapes.
 - Functional: complete for manifest update, profile install/update/remove/
   revoke, first-use asset download, VM create/resume/fork/delete, cleanup
   retention, explicit profile selection through UDS/HTTP/CLI/UI, and
