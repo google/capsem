@@ -75,6 +75,10 @@ Landed:
   profile state: `current`, `needs_update`, `deprecated`, `revoked`,
   `corrupted`, or `unknown`. `capsem list` and `capsem info` render the same
   typed state. Missing pins are `corrupted`, not silently rebound.
+- Forward-only VM identity gates now reject revisionless pins at construction
+  and reject create-from-source, fork, and persist before durable clone/move
+  work when the source/running VM lacks a signed profile revision pin and
+  pinned asset identity.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -99,9 +103,10 @@ Push order from here:
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
-   payload-hash capture when `.catalog/profiles/<id>/current.json` is present.
-   Remaining: make `profile_revision` mandatory once profile payload
-   install/update resolves signed catalog records on every VM-create path.
+   payload-hash capture when `.catalog/profiles/<id>/current.json` is present;
+   profile pin construction now refuses revisionless pins and requires pinned
+   asset identity. Remaining: make profile payload hash mandatory on all
+   create paths, not only when the installed current sidecar is present.
 3. [~] Add retention/cleanup for installed profile revisions, in-progress
    downloads, and existing VM pins. Landed: retention filename extraction from
    installed current profile payloads and persistent VM profile pins, plus
@@ -110,7 +115,13 @@ Push order from here:
    old asset manifest, removes unreferenced hash-named/legacy asset files, and
    refuses cleanup while the asset supervisor is checking/updating. Remaining:
    cross-process/per-asset download locks and VM-create/download race coverage.
-4. Enforce forward-only VM identity on every VM create/fork/persist/resume path.
+4. [~] Enforce forward-only VM identity on every VM create/fork/persist/resume
+   path. Landed: resume fails closed, create-from-source rejects corrupted
+   source VMs before asset resolution, fork rejects corrupted sources before
+   clone, persist rejects corrupted running VMs before moving session state, and
+   profile pin construction requires signed revision + pinned assets.
+   Remaining: first-use create with an explicit selected catalog revision and
+   mandatory profile payload hash proof.
 5. [~] Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
    Landed: `/list`, `/info`, `capsem list`, and `capsem info` expose VM profile
@@ -650,8 +661,10 @@ This sprint creates the contract consumed by later sprints:
 - [~] Enforce forward-only persistent VM pins. Persistent VM resume now fails
       closed when a registry entry lacks its required profile pin or pinned
       asset identity instead of falling back to the current profile/assets.
-      Remaining work makes catalog-backed revision pins mandatory on every
-      VM-create/fork/persist path before HTTP/UI lift.
+      Create-from-source, fork, and persist now reject missing/revisionless
+      profile pins before cloning or moving durable VM state. Remaining work
+      makes profile payload hash mandatory on every VM-create path before
+      HTTP/UI lift.
 - [~] Report VM profile state in list/status. Landed: `/list`, `/info`,
       `capsem list`, and `capsem info` now surface pinned profile id/revision plus
       current/needs_update/deprecated/revoked/corrupted/unknown state from the
@@ -728,6 +741,14 @@ This sprint creates the contract consumed by later sprints:
   Full package proof for this slice: `cargo test -p capsem-service` (109
   library tests + 149 service tests) and `cargo test -p capsem` (242 CLI
   tests).
+  Forward-only VM identity coverage now adds `cargo test -p capsem-service
+  vm_profile_pin_requires_signed_catalog_revision`, `cargo test -p
+  capsem-service provision_from_source_requires_profile_revision_pin`, `cargo
+  test -p capsem-service handle_fork_rejects_source_without_profile_revision_pin`,
+  and `cargo test -p capsem-service
+  handle_persist_rejects_running_vm_without_profile_revision_pin`.
+  Full service proof for this slice: `cargo test -p capsem-service` (109
+  library tests + 153 service tests).
   Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar

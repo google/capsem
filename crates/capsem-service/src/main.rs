@@ -355,12 +355,22 @@ impl ServiceState {
         let (profile_revision, profile_payload_hash) = installed_revision
             .map(|record| (Some(record.revision), Some(record.payload_hash)))
             .unwrap_or((profile_revision, None));
+        let profile_revision = profile_revision
+            .filter(|revision| !revision.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "VM profile pin requires a signed profile catalog revision; reconcile the profile catalog before creating VMs"
+                )
+            })?;
+        let base_assets = base_assets.ok_or_else(|| {
+            anyhow!("VM profile pin requires pinned asset identity from the signed profile catalog")
+        })?;
         Ok(SavedVmProfilePin {
             profile_id: effective.profile_id,
-            profile_revision,
+            profile_revision: Some(profile_revision),
             profile_payload_hash,
             package_contract_hash: format!("blake3:{}", blake3::hash(&package_json).to_hex()),
-            base_assets,
+            base_assets: Some(base_assets),
         })
     }
 
@@ -650,6 +660,12 @@ impl ServiceState {
         } else {
             None
         };
+        if let Some(ref entry) = source_entry {
+            ensure_required_vm_profile_pin(
+                entry.profile_pin.as_ref(),
+                &format!("source VM \"{}\"", entry.name),
+            )?;
+        }
 
         // If cloning from a source sandbox, inherit its base_version.
         let version = if let Some(ref entry) = source_entry {
@@ -1024,6 +1040,10 @@ impl ServiceState {
                 "persistent VM \"{name}\" is missing required profile pin; recreate the VM from a signed profile"
             ));
         }
+        ensure_required_vm_profile_pin(
+            entry.profile_pin.as_ref(),
+            &format!("persistent VM \"{name}\""),
+        )?;
         if entry.base_assets.is_none() {
             return Err(anyhow!(
                 "persistent VM \"{name}\" is missing required pinned asset identity; recreate the VM from a signed profile"
@@ -1796,6 +1816,8 @@ async fn handle_fork(
             }
         }
     };
+    ensure_required_vm_profile_pin(source_profile_pin.as_ref(), &format!("source VM \"{id}\""))
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Freeze + thaw the guest root filesystem so the ext4 system overlay
     // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
@@ -1899,6 +1921,29 @@ async fn handle_fork(
         name: name.clone(),
         size_bytes,
     }))
+}
+
+fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str) -> Result<()> {
+    let Some(pin) = pin else {
+        return Err(anyhow!(
+            "{subject} is missing required profile pin; required profile revision pin must come from a signed profile"
+        ));
+    };
+    if pin
+        .profile_revision
+        .as_deref()
+        .is_none_or(|revision| revision.trim().is_empty())
+    {
+        return Err(anyhow!(
+            "{subject} is missing required profile revision pin; recreate the VM from a signed profile"
+        ));
+    }
+    if pin.base_assets.is_none() {
+        return Err(anyhow!(
+            "{subject} is missing required pinned asset identity; recreate the VM from a signed profile"
+        ));
+    }
+    Ok(())
 }
 
 /// Outcome of a single provision attempt inside `handle_provision`.
@@ -6193,6 +6238,8 @@ async fn handle_persist(
             i.profile_pin.clone(),
         )
     };
+    ensure_required_vm_profile_pin(profile_pin.as_ref(), &format!("running VM \"{id}\""))
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Move session dir to persistent location
     let new_session_dir = state.run_dir.join("persistent").join(name);

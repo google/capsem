@@ -997,6 +997,18 @@ fn test_saved_vm_base_assets() -> capsem_service::registry::SavedVmBaseAssets {
     }
 }
 
+fn test_saved_vm_profile_pin(
+    base_assets: capsem_service::registry::SavedVmBaseAssets,
+) -> SavedVmProfilePin {
+    SavedVmProfilePin {
+        profile_id: "everyday-work".into(),
+        profile_revision: Some("2026.0520.1".into()),
+        profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+        package_contract_hash: format!("blake3:{}", "d".repeat(64)),
+        base_assets: Some(base_assets),
+    }
+}
+
 #[test]
 fn saved_vm_current_base_assets_from_profile_records_boot_hashes() {
     let profile_assets = capsem_core::settings_profiles::VmArchAssets {
@@ -1116,13 +1128,37 @@ fn vm_profile_pin_uses_installed_profile_revision_sidecar() {
     )
     .unwrap();
 
-    let pin = state.vm_profile_pin(&session_dir, None, None).unwrap();
+    let pin = state
+        .vm_profile_pin(&session_dir, None, Some(test_saved_vm_base_assets()))
+        .unwrap();
 
     assert_eq!(pin.profile_id, "everyday-work");
     assert_eq!(pin.profile_revision.as_deref(), Some("2026.0520.1"));
     assert_eq!(
         pin.profile_payload_hash.as_deref(),
         Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    );
+}
+
+#[test]
+fn vm_profile_pin_requires_signed_catalog_revision() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions/profile-pin-no-revision");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(
+        &capsem_core::settings_profiles::ProfileRootSettings::default(),
+        None,
+    )
+    .unwrap();
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let err = state
+        .vm_profile_pin(&session_dir, None, Some(test_saved_vm_base_assets()))
+        .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("signed profile catalog revision"),
+        "unexpected error: {err:#}"
     );
 }
 
@@ -2246,6 +2282,55 @@ fn provision_persistent_validates_name() {
     );
 }
 
+#[test]
+fn provision_from_source_requires_profile_revision_pin() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        let base_assets = test_saved_vm_base_assets();
+        let mut profile_pin = test_saved_vm_profile_pin(base_assets.clone());
+        profile_pin.profile_revision = None;
+        reg.data.vms.insert(
+            "old-source".into(),
+            PersistentVmEntry {
+                name: "old-source".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: Some(base_assets),
+                profile_pin: Some(profile_pin),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/old-source"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let err = state
+        .provision_sandbox(ProvisionOptions {
+            id: "clone",
+            ram_mb: 2048,
+            cpus: 2,
+            version_override: None,
+            persistent: false,
+            env: None,
+            from: Some("old-source".into()),
+            description: None,
+        })
+        .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("required profile revision pin"),
+        "unexpected error: {err:#}"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Image handler tests (service-level unit tests)
 // -----------------------------------------------------------------------
@@ -2312,6 +2397,7 @@ async fn handle_fork_creates_persistent_sandbox() {
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
     let base_assets = test_saved_vm_base_assets();
+    let source_profile_pin = test_saved_vm_profile_pin(base_assets.clone());
     state.instances.lock().unwrap().insert(
         "fork-src".into(),
         InstanceInfo {
@@ -2327,7 +2413,7 @@ async fn handle_fork_creates_persistent_sandbox() {
             env: None,
             forked_from: None,
             base_assets: Some(base_assets.clone()),
-            profile_pin: None,
+            profile_pin: Some(source_profile_pin),
         },
     );
     let result = handle_fork(
@@ -2351,8 +2437,55 @@ async fn handle_fork_creates_persistent_sandbox() {
     assert_eq!(entry.base_assets, Some(base_assets));
     let pin = entry.profile_pin.as_ref().expect("fork must pin profile");
     assert_eq!(pin.profile_id, "everyday-work");
+    assert_eq!(pin.profile_revision.as_deref(), Some("2026.0520.1"));
     assert!(pin.package_contract_hash.starts_with("blake3:"));
     assert_eq!(pin.base_assets, entry.base_assets);
+}
+
+#[tokio::test]
+async fn handle_fork_rejects_source_without_profile_revision_pin() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions/fork-src-no-pin");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let base_assets = test_saved_vm_base_assets();
+    state.instances.lock().unwrap().insert(
+        "fork-src-no-pin".into(),
+        InstanceInfo {
+            id: "fork-src-no-pin".into(),
+            pid: std::process::id(),
+            uds_path: PathBuf::from("/tmp/fork-src-no-pin.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: Some(base_assets),
+            profile_pin: None,
+        },
+    );
+
+    let err = handle_fork(
+        State(state),
+        Path("fork-src-no-pin".into()),
+        Json(ForkRequest {
+            name: "bad-fork".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(
+        err.1.contains("required profile revision pin"),
+        "unexpected error: {}",
+        err.1
+    );
 }
 
 #[tokio::test]
@@ -2379,6 +2512,8 @@ async fn handle_fork_duplicate_returns_conflict() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let base_assets = test_saved_vm_base_assets();
+    let source_profile_pin = test_saved_vm_profile_pin(base_assets.clone());
     state.instances.lock().unwrap().insert(
         "dup-src".into(),
         InstanceInfo {
@@ -2393,8 +2528,8 @@ async fn handle_fork_duplicate_returns_conflict() {
             persistent: false,
             env: None,
             forked_from: None,
-            base_assets: None,
-            profile_pin: None,
+            base_assets: Some(base_assets),
+            profile_pin: Some(source_profile_pin),
         },
     );
     // state is already Arc<ServiceState> from make_test_state*
@@ -2502,6 +2637,66 @@ async fn handle_fork_from_persistent_registry() {
         source_profile_pin.package_contract_hash
     );
     assert_eq!(fork_pin.base_assets, source_profile_pin.base_assets);
+}
+
+#[tokio::test]
+async fn handle_persist_rejects_running_vm_without_profile_revision_pin() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions/persist-no-pin");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let base_assets = test_saved_vm_base_assets();
+    let mut profile_pin = test_saved_vm_profile_pin(base_assets.clone());
+    profile_pin.profile_revision = None;
+    state.instances.lock().unwrap().insert(
+        "persist-no-pin".into(),
+        InstanceInfo {
+            id: "persist-no-pin".into(),
+            pid: std::process::id(),
+            uds_path: PathBuf::from("/tmp/persist-no-pin.sock"),
+            session_dir: session_dir.clone(),
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: Some(base_assets),
+            profile_pin: Some(profile_pin),
+        },
+    );
+
+    let err = handle_persist(
+        State(state.clone()),
+        Path("persist-no-pin".into()),
+        Json(PersistRequest {
+            name: "persisted-no-pin".into(),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(
+        err.1.contains("required profile revision pin"),
+        "unexpected error: {}",
+        err.1
+    );
+    assert!(
+        session_dir.exists(),
+        "failed persist must not move session dir"
+    );
+    assert!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("persisted-no-pin")
+            .is_none(),
+        "failed persist must not create persistent registry entry"
+    );
 }
 
 #[test]

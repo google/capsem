@@ -25,7 +25,7 @@ completely.
 ## Execution Mode
 
 **Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `65 ahead / 0 behind` `origin/main` in this
+is coherent again and sits `66 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
@@ -92,7 +92,7 @@ the next starts. The `#` column is the execution index;
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
-| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, forward-only resume pin enforcement, and VM list/status profile-state reporting have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling, mandatory catalog revision pins on every create/fork/persist path, and richer catalog clients/debug detail. |
+| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, forward-only resume/create-from-source/fork/persist pin enforcement, and VM list/status profile-state reporting have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
 | 15 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
 | 16 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
 | 17 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
@@ -221,6 +221,10 @@ Landed S07a foundation:
 - Forward-only persistent VM resume. Resume now requires a profile pin and
   pinned asset identity before process spawn; unpinned registry entries no
   longer fall back to the current catalog/default assets.
+- Forward-only VM creation boundaries. Profile pin construction now requires a
+  signed catalog revision plus pinned asset identity, and create-from-source,
+  fork, and persist fail closed before cloning/moving durable state when the
+  source/running VM lacks that revision pin.
 - VM list/status profile state. `/list`, `/info`, `capsem list`, and `capsem
   info` now expose each VM's profile id/revision plus `current`,
   `needs_update`, `deprecated`, `revoked`, `corrupted`, or `unknown` based on
@@ -247,8 +251,9 @@ Remaining S07a push order:
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
    pinned asset metadata. Landed for runtime/registry/API with installed
    revision/payload-hash capture when catalog materialization has written the
-   sidecar; signed catalog install/update still needs to make revision
-   mandatory from catalog records on every VM-create path.
+   sidecar; profile pin construction now requires a signed catalog revision and
+   pinned asset identity. Remaining work makes profile payload hash mandatory on
+   every VM-create path.
 3. Retention and cleanup that preserve active/deprecated installed revisions,
    in-progress downloads, and existing VM pins. Retention filename extraction
    has landed for installed current profile payloads and persistent VM profile
@@ -257,8 +262,10 @@ Remaining S07a push order:
    download locks and VM-create/download race coverage.
 4. Forward-only VM identity enforcement on every create/fork/persist/resume
    path. Resume now rejects registry entries without profile pins or pinned
-   asset identity; remaining work makes catalog-backed revision pins mandatory
-   before any VM record can be created.
+   asset identity. Create-from-source, fork, and persist now reject
+   missing/revisionless pins before asset resolution, clone, or session move
+   work. Remaining work is first-use create with an explicit selected catalog
+   revision plus mandatory profile payload hash proof.
 5. Status/debug readiness for profile catalog state, installed revisions,
    package contracts, asset verification, VM pins, and drift/revocation.
 
@@ -368,6 +375,14 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-service` passed with 109 library tests + 149
   service tests, and `cargo test -p capsem` passed with 242 CLI tests after the
   VM list/status profile-state reporting slice.
+- `cargo test -p capsem-service vm_profile_pin_requires_signed_catalog_revision`,
+  `provision_from_source_requires_profile_revision_pin`,
+  `handle_fork_rejects_source_without_profile_revision_pin`,
+  `handle_persist_rejects_running_vm_without_profile_revision_pin`, and nearby
+  fork/resume positive-path tests passed after forward-only
+  create/fork/persist pin enforcement.
+- `cargo test -p capsem-service` passed with 109 library tests + 153 service
+  tests after forward-only create/fork/persist pin enforcement.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.
