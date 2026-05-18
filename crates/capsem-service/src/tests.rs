@@ -818,6 +818,9 @@ async fn handle_asset_status_exposes_service_asset_locations() {
 
 #[test]
 fn ensure_vm_effective_settings_writes_default_profile_attachment() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
+    let env_dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&env_dir);
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions").join("vm-effective");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -833,6 +836,9 @@ fn ensure_vm_effective_settings_writes_default_profile_attachment() {
 
 #[test]
 fn ensure_vm_effective_settings_regenerates_corrupt_file() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
+    let env_dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&env_dir);
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions").join("vm-corrupt-effective");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -853,6 +859,9 @@ fn ensure_vm_effective_settings_regenerates_corrupt_file() {
 
 #[test]
 fn ensure_vm_effective_settings_attaches_trace_alongside_settings() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
+    let env_dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&env_dir);
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions").join("vm-effective-trace");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -873,6 +882,9 @@ fn ensure_vm_effective_settings_attaches_trace_alongside_settings() {
 
 #[test]
 fn ensure_vm_effective_settings_regenerates_corrupt_trace_file() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
+    let env_dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&env_dir);
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions").join("vm-corrupt-trace");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -890,6 +902,9 @@ fn ensure_vm_effective_settings_regenerates_corrupt_trace_file() {
 
 #[test]
 fn ensure_vm_effective_settings_regenerates_pair_when_trace_missing() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
+    let env_dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&env_dir);
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir
         .path()
@@ -2637,6 +2652,22 @@ fn custom_profile(id: &str, name: &str) -> capsem_core::settings_profiles::Profi
     profile
 }
 
+fn write_profile_fixture(path: &std::path::Path, id: &str, name: &str) {
+    std::fs::write(
+        path,
+        format!(
+            r#"
+version = 1
+id = "{id}"
+name = "{name}"
+best_for = "{name} sessions."
+profile_type = "coding"
+"#
+        ),
+    )
+    .unwrap();
+}
+
 fn test_profile_rule(
     callback: &str,
     condition: &str,
@@ -2677,6 +2708,57 @@ async fn handle_create_profile_persists_user_profile() {
         .unwrap()
         .iter()
         .any(|profile| profile["profile"]["id"] == serde_json::json!("custom")));
+}
+
+#[tokio::test]
+async fn handle_create_profile_rejects_existing_builtin_profile_id() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
+
+    let err = handle_create_profile(Json(custom_profile(
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+        "Builtin Shadow",
+    )))
+    .await
+    .expect_err("create route must not shadow locked built-in profiles");
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("already exists") || err.1.contains("locked"));
+    assert!(
+        !user_profile_path.exists(),
+        "rejected profile create must not write a built-in shadow file"
+    );
+}
+
+#[tokio::test]
+async fn handle_create_profile_rejects_existing_base_profile_id() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let base_profile_path = dir
+        .path()
+        .join("home")
+        .join("profiles")
+        .join("base")
+        .join("base-locked.toml");
+    write_profile_fixture(&base_profile_path, "base-locked", "Base Locked");
+
+    let err = handle_create_profile(Json(custom_profile("base-locked", "User Shadow")))
+        .await
+        .expect_err("create route must not shadow base profiles");
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("already exists") || err.1.contains("locked"));
+    assert!(
+        !dir.path()
+            .join("home")
+            .join("profiles")
+            .join("user")
+            .join("base-locked.toml")
+            .exists(),
+        "rejected profile create must not write a base shadow file"
+    );
 }
 
 #[tokio::test]
@@ -2774,6 +2856,59 @@ async fn handle_delete_profile_rejects_locked_builtin_profile() {
 
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
     assert!(err.1.contains("locked"));
+}
+
+#[tokio::test]
+async fn settings_save_updates_selected_user_profile_after_preset_switch() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, builtin_override_path) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("custom", "Custom")))
+        .await
+        .unwrap();
+    let Json(selected) = handle_select_profile_preset(Path("custom".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(
+        selected["settings_profiles"]["selected_profile_id"],
+        serde_json::json!("custom")
+    );
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        "policy.http.block_custom".into(),
+        serde_json::json!({
+            "on": "http.request",
+            "if": "request.host == 'custom.example.com'",
+            "decision": "block",
+            "priority": 10,
+            "reason": "selected profile rule"
+        }),
+    );
+
+    let Json(val) = handle_save_settings(Json(changes)).await.unwrap();
+
+    assert_eq!(
+        val["settings_profiles"]["selected_profile_id"],
+        serde_json::json!("custom")
+    );
+    assert_eq!(
+        val["settings_profiles"]["effective"]["profile_id"],
+        serde_json::json!("custom")
+    );
+    let custom_profile_path = dir
+        .path()
+        .join("home")
+        .join("profiles")
+        .join("user")
+        .join("custom.toml");
+    let custom_text = std::fs::read_to_string(custom_profile_path).unwrap();
+    assert!(custom_text.contains("[security.rules.http.block_custom]"));
+    assert!(
+        !builtin_override_path.exists(),
+        "saving settings for selected user profile must not create a built-in default override"
+    );
 }
 
 #[tokio::test]

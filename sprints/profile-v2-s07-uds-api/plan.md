@@ -87,6 +87,18 @@ contract with:
 - A bounded large-profile evaluation test so the gateway does not inherit an
   obviously unbounded hot path.
 
+## Profile/Settings Composition Hardening
+
+Before continuing the public API lift, harden the service behavior where
+profile creation and selected settings state meet:
+
+- `POST /profiles` rejects ids that already exist anywhere in the discovered
+  built-in/base/corp/user catalog so create cannot silently shadow a locked
+  profile.
+- `/settings/presets/{id}` followed by `/settings` saves policy edits into the
+  selected user profile, not a stale built-in default override.
+- Focused tests assert no rejected create writes a user shadow file.
+
 ## Testing Proof Matrix
 
 - Unit/contract: capsem-proto metrics/IPC roundtrips.

@@ -3528,6 +3528,18 @@ async fn handle_create_profile(
     Json(profile): Json<capsem_core::settings_profiles::Profile>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let settings = load_service_settings_for_profiles()?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    if let Some(existing) = catalog.get(&profile.id) {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "profile '{}' already exists ({})",
+                profile.id,
+                existing.source.as_str()
+            ),
+        ));
+    }
     let record = capsem_core::settings_profiles::create_user_profile(&settings.profiles, profile)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("create profile: {e}")))?;
     Ok(Json(profile_record_json(&record)))

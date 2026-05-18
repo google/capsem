@@ -27,6 +27,7 @@
 - [x] Add chained Rules API functional proof before HTTP lift.
 - [x] Add generated `http.read`/`http.write` dry-run support and tests.
 - [x] Add bounded large-profile Rules API evaluation performance proof.
+- [x] Add profile/settings composition tests for create collisions and selected-profile saves.
 
 ## Notes
 
@@ -52,12 +53,20 @@
   first failed on missing `HttpRead`/`HttpWrite` callback variants, then exposed
   that generated `if = "true"` catch-all conditions were not accepted by the
   Policy V2 CEL validator.
+  RED proof `cargo test -p capsem-service --bin capsem-service handle_create_profile_rejects_existing_builtin_profile_id -- --nocapture`
+  failed because `POST /profiles` could create a user file shadowing the
+  built-in `everyday-work` profile.
 - Functional:
   `cargo test -p capsem-process ipc -- --nocapture` passed 18 focused process
   IPC tests, including the process-owned default metrics snapshot.
   `cargo test -p capsem-service --bin capsem-service profile -- --nocapture`
-  passed 13 focused service profile/rules tests, including list/get/resolve,
-  create/fork/update/delete handlers, and the chained rules workflow.
+  passed 16 focused service profile/rules tests, including list/get/resolve,
+  create/fork/update/delete handlers, create collision rejection against
+  built-in/base roots, selected-profile settings saves, and the chained rules
+  workflow.
+  `cargo test -p capsem-service --bin capsem-service settings -- --nocapture`
+  passed 14 focused settings/profile tests, including the selected-profile save
+  regression.
   `cargo test -p capsem-service --bin capsem-service rule -- --nocapture`
   passed 11 focused service rules/settings tests, including canonical rule
   list, single-rule provenance lookup, generated `http.read`/`http.write`
@@ -78,6 +87,9 @@
   `handle_update_profile_rejects_path_body_id_mismatch` and
   `handle_delete_profile_rejects_locked_builtin_profile` cover route/body
   mismatch and locked-profile mutation failures.
+  `handle_create_profile_rejects_existing_builtin_profile_id` and
+  `handle_create_profile_rejects_existing_base_profile_id` cover shadow-file
+  prevention across locked profile roots.
   `handle_evaluate_rule_rejects_unknown_callback` covers unsupported dry-run
   callback rejection so `POST /rules/evaluate` fails closed instead of silently
   using a non-runtime callback alias.

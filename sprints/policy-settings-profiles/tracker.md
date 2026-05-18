@@ -63,6 +63,8 @@ a valid claim -- mark it `[ ]` instead.
   list/get/evaluate routes landed. Rules read/evaluate is now hardened with a
   chained service workflow, generated `http.read`/`http.write` dry-run support,
   boolean catch-all CEL support, and a bounded large-profile evaluation test.
+  Profile/settings composition has additional service coverage for create-id
+  collisions across locked roots and selected-profile settings saves.
   Rules create/delete, confirm listing, skills, and full route proof remain
   open.
 14. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)

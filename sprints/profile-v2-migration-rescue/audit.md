@@ -236,6 +236,9 @@ Landed:
   workflow, generated `http.read`/`http.write` dry-run support, boolean
   catch-all CEL support, process-side conversion of non-derived read/write
   callbacks, and a bounded large-profile evaluate test.
+- Profile/settings composition has focused service coverage for rejecting
+  create-id collisions against built-in/base roots and for saving settings into
+  the currently selected user profile after a preset switch.
 
 Gaps:
 - No dedicated skills list/add/delete route group.
