@@ -382,6 +382,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   coverage. Service profile catalog reconciliation covers active current
   revision install and revoked installed revision removal through
   `POST /profiles/catalog/reconcile`, including per-revision error summaries.
+  The native CLI parser now covers `capsem profile reconcile-catalog
+  --manifest --pubkey [--json]`.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -389,8 +391,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   rendering with resolver-trace summary, service startup +
   asset settings, verified profile payload materialization into the corp
   profile root and installed revision payload storage, service API profile
-  catalog reconcile install/revoke summaries, `/setup/assets` provenance,
-  mitm_proxy integration test for model.request rewrite redaction.
+  catalog reconcile install/revoke summaries, native CLI-to-service wiring for
+  `profile reconcile-catalog`, `/setup/assets` provenance, mitm_proxy
+  integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -433,7 +436,7 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   The S07 metrics snapshot request is classified as read-only
   `HealthCheck` IPC so it does not enter job/lifecycle dispatch.
 - **Test-gate snapshot** (cargo test, updated 2026-05-18 for S07a service
-  profile catalog reconciliation):
+  profile catalog reconciliation and the first native CLI hook):
   `cargo test -p capsem-logger` **100** + **126** passed;
   `cargo test -p capsem-service` **107** + **140** passed;
   after VM profile pins, `cargo test -p capsem-service` **108** + **141**
@@ -442,6 +445,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   **108** + **142** passed;
   after the service profile catalog reconcile route, `cargo test -p
   capsem-service` **108** + **144** passed;
+  after the native profile catalog reconcile CLI hook, `cargo test -p capsem`
+  **240** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

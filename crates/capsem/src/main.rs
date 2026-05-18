@@ -81,6 +81,9 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mmcp refresh\x1b[0m  Re-discover tools from all MCP servers
   \x1b[32;1mmcp call\x1b[0m     Call an MCP tool
 
+\x1b[36;1;4mProfiles:\x1b[0m
+  \x1b[32;1mprofile reconcile-catalog\x1b[0m Apply a signed profile catalog manifest
+
 \x1b[36;1;4mMisc:\x1b[0m
   \x1b[32;1msetup\x1b[0m        Run the first-time setup wizard
   \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
@@ -120,6 +123,10 @@ enum Commands {
     #[command(subcommand)]
     Mcp(McpCommands),
 
+    /// Manage Profile V2 catalogs and installed revisions
+    #[command(subcommand)]
+    Profile(ProfileCommands),
+
     #[command(flatten)]
     Misc(MiscCommands),
 }
@@ -145,6 +152,22 @@ enum McpCommands {
         /// JSON arguments
         #[arg(long, default_value = "{}")]
         args: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileCommands {
+    /// Apply a signed profile catalog manifest through the service
+    ReconcileCatalog {
+        /// Profile catalog manifest JSON file
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Minisign public key file used to verify profile payloads
+        #[arg(long)]
+        pubkey: PathBuf,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -739,6 +762,30 @@ fn command_refreshes_update_cache(command: Option<&Commands>) -> bool {
                 ..
             }))
     )
+}
+
+fn print_profile_catalog_reconcile_summary(result: &serde_json::Value) {
+    let summary = &result["summary"];
+    println!(
+        "Profile catalog reconciled: installed={} unchanged={} deprecated_kept={} revoked_removed={} errors={}",
+        summary["installed"].as_u64().unwrap_or(0),
+        summary["unchanged"].as_u64().unwrap_or(0),
+        summary["deprecated_kept"].as_u64().unwrap_or(0),
+        summary["revoked_removed"].as_u64().unwrap_or(0),
+        summary["errors"].as_u64().unwrap_or(0),
+    );
+    if let Some(outcomes) = result["outcomes"].as_array() {
+        for outcome in outcomes {
+            let profile_id = outcome["profile_id"].as_str().unwrap_or("-");
+            let revision = outcome["revision"].as_str().unwrap_or("-");
+            let status = outcome["outcome"].as_str().unwrap_or("unknown");
+            if let Some(error) = outcome["error"].as_str() {
+                println!("  {profile_id}@{revision}: {status} ({error})");
+            } else {
+                println!("  {profile_id}@{revision}: {status}");
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -1424,6 +1471,28 @@ async fn main() -> Result<()> {
                 .await?;
             let result = resp.into_result()?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Commands::Profile(ProfileCommands::ReconcileCatalog {
+            manifest,
+            pubkey,
+            json,
+        }) => {
+            let manifest_json = std::fs::read_to_string(manifest)
+                .with_context(|| format!("read profile catalog manifest {}", manifest.display()))?;
+            let profile_payload_pubkey = std::fs::read_to_string(pubkey)
+                .with_context(|| format!("read profile payload pubkey {}", pubkey.display()))?;
+            let body = serde_json::json!({
+                "manifest_json": manifest_json,
+                "profile_payload_pubkey": profile_payload_pubkey,
+            });
+            let resp: ApiResponse<serde_json::Value> =
+                client.post("/profiles/catalog/reconcile", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_profile_catalog_reconcile_summary(&result);
+            }
         }
         Commands::Misc(MiscCommands::Debug) => {
             status::debug_report(&client).await?;
@@ -2232,6 +2301,32 @@ mod tests {
             cli.command.unwrap(),
             Commands::Misc(MiscCommands::Debug)
         ));
+    }
+
+    #[test]
+    fn parse_profile_reconcile_catalog() {
+        let cli = Cli::parse_from([
+            "capsem",
+            "profile",
+            "reconcile-catalog",
+            "--manifest",
+            "manifest.json",
+            "--pubkey",
+            "profile.pub",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::ReconcileCatalog {
+                manifest,
+                pubkey,
+                json,
+            }) => {
+                assert_eq!(manifest, PathBuf::from("manifest.json"));
+                assert_eq!(pubkey, PathBuf::from("profile.pub"));
+                assert!(json);
+            }
+            _ => panic!("expected profile reconcile-catalog"),
+        }
     }
 
     #[test]

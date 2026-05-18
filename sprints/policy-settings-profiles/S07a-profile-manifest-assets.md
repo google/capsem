@@ -56,6 +56,9 @@ Landed:
   reconciler from the UDS/gateway surface and returns typed per-revision
   outcomes plus summary counts for installed, unchanged, deprecated, revoked,
   and error states.
+- Native CLI route `capsem profile reconcile-catalog --manifest <path>
+  --pubkey <path> [--json]` now calls the same service reconciler and prints a
+  compact lifecycle summary or the raw JSON result.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -72,9 +75,10 @@ Push order from here:
    materialization, installed-revision payload storage, and a typed core
    lifecycle reconciler for active/deprecated/revoked records. UDS/gateway
    `POST /profiles/catalog/reconcile` now runs manifest-wide current-revision
-   install/update plus deprecated/revoked local-state handling. Remaining:
-   manifest source fetch/scheduling, CLI/UI clients, and absent catalog profile
-   cleanup.
+   install/update plus deprecated/revoked local-state handling, and `capsem
+   profile reconcile-catalog` gives operators a native CLI entry point.
+   Remaining: manifest source fetch/scheduling, richer catalog/revision CLI
+   verbs, UI clients, and absent catalog profile cleanup.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
@@ -583,8 +587,10 @@ This sprint creates the contract consumed by later sprints:
       the launchable profile plus current state for installed `revoked`
       revisions. Service `POST /profiles/catalog/reconcile` now applies the
       reconciler across catalog current revisions and non-active records,
-      returning a typed outcome summary. Remaining: manifest source fetch/
-      scheduling, CLI/UI clients, and absent-profile cleanup.
+      returning a typed outcome summary. The native CLI can now call this route
+      through `capsem profile reconcile-catalog --manifest <path> --pubkey
+      <path> [--json]`. Remaining: manifest source fetch/scheduling, richer
+      catalog/revision CLI verbs, UI clients, and absent-profile cleanup.
 - [~] Add profile-driven asset resolution and first-use download. Service
       startup now builds an `AssetRequirement` from the default profile's
       `vm.assets.<arch>` declaration, rejects old manifest-backed release
@@ -644,7 +650,9 @@ This sprint creates the contract consumed by later sprints:
   covers startup fail-closed behavior, service asset status without legacy
   manifest fields, profile-derived saved-VM base hashes, installed profile
   revision sidecar/payload-hash pinning, service API profile catalog
-  reconcile install/revoke summaries, and debug/status shape. Remaining:
+  reconcile install/revoke summaries, and debug/status shape. `cargo test -p
+  capsem` (240 tests passed) covers the first native CLI parser contract for
+  `profile reconcile-catalog --manifest --pubkey [--json]`. Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar
   validation, profile payload downloads, and per-asset cross-process locks.
