@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 
+use capsem_core::profile_payload_schema::{
+    validate_profile_payload_v2_json, validate_profile_payload_v2_toml, ProfilePayloadSchemaError,
+};
 use serde_json::Value;
 
 fn repo_root() -> PathBuf {
@@ -77,4 +80,90 @@ fn profile_v2_schema_rejects_invalid_golden_fixtures() {
             "invalid profile fixture unexpectedly passed: {name}"
         );
     }
+}
+
+#[test]
+fn profile_v2_json_validation_helper_accepts_valid_fixture() {
+    let path = repo_root().join("schemas/fixtures/profile-v2-valid.json");
+    let input = std::fs::read_to_string(&path).unwrap();
+
+    let value = validate_profile_payload_v2_json(&input).unwrap();
+
+    assert_eq!(value["schema"], "capsem.profile.v2");
+}
+
+#[test]
+fn profile_v2_json_validation_helper_reports_invalid_fixture() {
+    let path = repo_root().join("schemas/fixtures/profile-v2-invalid-asset-hash.json");
+    let input = std::fs::read_to_string(&path).unwrap();
+
+    let error = validate_profile_payload_v2_json(&input).unwrap_err();
+
+    assert!(matches!(error, ProfilePayloadSchemaError::Validation(_)));
+    assert!(error.to_string().contains("blake3"));
+}
+
+#[test]
+fn profile_v2_toml_validation_helper_bridges_through_json_schema() {
+    let input = r#"
+schema = "capsem.profile.v2"
+version = 2
+id = "everyday-work"
+revision = "2026.0520.1"
+name = "Everyday Work"
+description = "Balanced defaults for day-to-day work."
+best_for = "Balanced defaults for day-to-day work."
+profile_type = "everyday-work"
+
+[compatibility]
+min_binary = "1.0.0"
+guest_abi = "capsem-guest-v2"
+
+[vm]
+memory_mib = 8192
+cpus = 4
+disk_mib = 32768
+network = "proxied"
+
+[vm.assets.arm64.kernel]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/vmlinuz"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/vmlinuz.minisig"
+size = 7797248
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/initrd.img"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/initrd.img.minisig"
+size = 2270154
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/rootfs.squashfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/rootfs.squashfs.minisig"
+size = 454230016
+content_type = "application/vnd.squashfs"
+
+[packages.runtimes]
+python = "3.12.3"
+
+[packages.system]
+distro = "debian"
+release = "bookworm"
+
+[tools.capsem_doctor]
+version = "2026.05.18"
+required = true
+source = "guest"
+
+[security.capabilities]
+credential_brokerage = "ask"
+"#;
+
+    let value = validate_profile_payload_v2_toml(input).unwrap();
+
+    assert_eq!(value["id"], "everyday-work");
+    assert_eq!(value["vm"]["assets"]["arm64"]["rootfs"]["size"], 454230016);
 }

@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Pydantic v2 Profile V2 payload and manifest models for admin tooling,
   including Pydantic-only JSON validation/dumping helpers, TOML-to-Pydantic
   validation, and the canonical `active`/`deprecated`/`revoked` status enum.
+- Added Rust Profile V2 payload schema validation helpers for JSON and TOML
+  payloads backed by the production Draft 2020-12 schema artifact.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

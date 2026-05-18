@@ -71,9 +71,10 @@ a valid claim -- mark it `[ ]` instead.
     `schemas/capsem.profile.v2.schema.json` artifact and Rust golden fixture
     validation gate have landed. Python Pydantic v2 profile/manifest models now
     validate JSON through Pydantic, dump JSON through Pydantic, and bridge TOML
-    through immediate Pydantic JSON validation. Remaining work wires Rust
-    TOML-to-schema validation, installs profile payloads from the manifest,
-    adds first-use download, retention, and VM pins.
+    through immediate Pydantic JSON validation. Rust now validates profile JSON
+    and TOML payloads against the production schema artifact. Remaining work
+    installs profile payloads from the manifest, adds first-use download,
+    retention, and VM pins.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image

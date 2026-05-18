@@ -478,7 +478,9 @@ This sprint creates the contract consumed by later sprints:
       `capsem.builder.profiles` Pydantic v2 models landed for profile payloads
       and manifest v3, with `extra="forbid"`, Pydantic-only JSON
       input/output helpers, TOML parse-then-Pydantic-JSON validation, status
-      enum coverage, and active-current manifest validation.
+      enum coverage, and active-current manifest validation. Initial Rust
+      `capsem_core::profile_payload_schema` helpers landed for validating
+      profile payload JSON and TOML against the production schema artifact.
 - [~] Extend profile TOML schema with typed packages/tools and per-arch VM
       asset declarations. Initial Rust `Profile`/`VmProfileSettings` fields,
       validators, descriptors, and VM-effective serialization landed for
@@ -518,15 +520,17 @@ This sprint creates the contract consumed by later sprints:
   package/tool/asset merge behavior. Formal schema coverage landed with
   `cargo test -p capsem-core --test profile_schema` (3 tests passed), compiling
   the Draft 2020-12 artifact and checking valid/invalid golden fixtures.
-  Python admin model coverage landed with `uv run python -m pytest
+  Rust schema helper coverage now runs `cargo test -p capsem-core --test
+  profile_schema` (6 tests passed), covering schema compilation, valid/invalid
+  JSON fixtures, JSON helper validation, and TOML-to-schema validation. Python
+  admin model coverage landed with `uv run python -m pytest
   tests/test_profiles.py` (8 tests passed), covering Pydantic-only JSON
   round-trips, TOML parse-then-Pydantic validation, invalid fixture rejection,
   `ProfileRevisionStatus = active|deprecated|revoked` with no `removed`, and
-  active-current manifest validation. Remaining: Rust TOML-to-schema validation
-  wiring, cross-language schema fixture parity, per-arch asset selection
-  against host arch, rollback/stale-manifest rejection, signature-key identity,
-  full package version grammar validation, and v2 manifest
-  compatibility/fail-closed behavior.
+  active-current manifest validation. Remaining: cross-language schema fixture
+  parity, per-arch asset selection against host arch, rollback/stale-manifest
+  rejection, signature-key identity, full package version grammar validation,
+  and v2 manifest compatibility/fail-closed behavior.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
   profile update; pre-S07a VM registry entries render explicit compatibility
