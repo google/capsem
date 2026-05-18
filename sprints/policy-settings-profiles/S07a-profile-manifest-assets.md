@@ -470,11 +470,15 @@ This sprint creates the contract consumed by later sprints:
       Rust `jsonschema` gate that compiles the schema, accepts the valid golden
       profile, and rejects extra-field, bad-hash, and missing-tool-version
       fixtures.
-- [ ] Add Rust and Python validation paths that parse TOML to the JSON-compatible
+- [~] Add Rust and Python validation paths that parse TOML to the JSON-compatible
       data model. Python must immediately validate into Pydantic models,
       preferring `TypeAdapter.validate_json()` / `model_validate_json()` when
       JSON bytes are available; Rust validates against the standard JSON Schema
-      artifact before semantic trust-chain checks.
+      artifact before semantic trust-chain checks. Initial Python
+      `capsem.builder.profiles` Pydantic v2 models landed for profile payloads
+      and manifest v3, with `extra="forbid"`, Pydantic-only JSON
+      input/output helpers, TOML parse-then-Pydantic-JSON validation, status
+      enum coverage, and active-current manifest validation.
 - [~] Extend profile TOML schema with typed packages/tools and per-arch VM
       asset declarations. Initial Rust `Profile`/`VmProfileSettings` fields,
       validators, descriptors, and VM-effective serialization landed for
@@ -514,12 +518,15 @@ This sprint creates the contract consumed by later sprints:
   package/tool/asset merge behavior. Formal schema coverage landed with
   `cargo test -p capsem-core --test profile_schema` (3 tests passed), compiling
   the Draft 2020-12 artifact and checking valid/invalid golden fixtures.
-  Remaining: Pydantic `validate_json()` / `model_dump_json()` fixture parity
-  for Python admin models, Rust TOML-to-schema validation wiring,
-  cross-language schema fixture parity, per-arch asset selection against host
-  arch, rollback/stale-manifest rejection, signature-key identity, full package
-  version grammar validation, and v2 manifest compatibility/fail-closed
-  behavior.
+  Python admin model coverage landed with `uv run python -m pytest
+  tests/test_profiles.py` (8 tests passed), covering Pydantic-only JSON
+  round-trips, TOML parse-then-Pydantic validation, invalid fixture rejection,
+  `ProfileRevisionStatus = active|deprecated|revoked` with no `removed`, and
+  active-current manifest validation. Remaining: Rust TOML-to-schema validation
+  wiring, cross-language schema fixture parity, per-arch asset selection
+  against host arch, rollback/stale-manifest rejection, signature-key identity,
+  full package version grammar validation, and v2 manifest
+  compatibility/fail-closed behavior.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
   profile update; pre-S07a VM registry entries render explicit compatibility
