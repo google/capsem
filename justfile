@@ -1016,6 +1016,17 @@ test-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     IMAGE="capsem-install-test"
+    ASSETS_DECLARED="$PWD/{{assets_dir}}"
+    ASSETS_HOST="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "{{assets_dir}}")"
+    ASSETS_CONTAINER="/src/{{assets_dir}}"
+    EXTRA_ASSETS_MOUNT=()
+    if [ "$ASSETS_HOST" != "$ASSETS_DECLARED" ]; then
+        # Local dev often symlinks repo assets/ to ~/.capsem/assets. That
+        # absolute symlink is dangling inside the Docker container, so mount
+        # the resolved asset tree separately and point install prep at it.
+        ASSETS_CONTAINER="/src/.capsem-assets"
+        EXTRA_ASSETS_MOUNT=(-v "$ASSETS_HOST:$ASSETS_CONTAINER")
+    fi
     # `cross-compile` runs Docker GC after producing artifacts, which can
     # remove this local base image before the install e2e stage starts.
     if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
@@ -1066,6 +1077,7 @@ test-install:
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
         -v "$PWD":/src \
+        "${EXTRA_ASSETS_MOUNT[@]}" \
         -v capsem-install-target:/cargo-target \
         -v capsem-install-cargo:/usr/local/cargo/registry \
         -v capsem-install-rustup:/usr/local/rustup \
@@ -1093,8 +1105,8 @@ test-install:
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo build {{host_crates}}"
     echo "Preparing clean-checkout assets..."
-    docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && bash scripts/prepare-install-assets.sh "{{assets_dir}}" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
+    docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
+        'cd /src && bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
     echo "Building frontend..."
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
         "cd /src/frontend && pnpm install && pnpm build"
@@ -1109,13 +1121,13 @@ test-install:
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
-    docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"'
+    docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
     echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
         'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'
     echo "Running install e2e tests..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 "$CONTAINER" bash -c \
+    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
         "cd /src && uv run --group dev python -m pytest tests/capsem-install/ -v --tb=short"
 
 # Wait for CI to build and publish a tag.

@@ -84,6 +84,7 @@ mv "$DST/manifest.json.tmp" "$DST/manifest.json"
 # prior `just install` run) or when the src/dst arch dir is symlinked.
 for src_file in "$SRC/$ARCH"/*; do
     [[ -e "$src_file" ]] || continue
+    [[ -f "$src_file" ]] || continue
     dst_file="$DST/$ARCH/$(basename "$src_file")"
     if [[ "$src_file" -ef "$dst_file" ]]; then
         continue

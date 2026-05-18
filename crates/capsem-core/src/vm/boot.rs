@@ -17,6 +17,7 @@ use crate::hypervisor::kvm::KvmHypervisor;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::mitm_proxy;
 use crate::net::policy_config;
+use crate::vm::guest_config::GuestConfig;
 use crate::{
     decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
     VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY,
@@ -318,7 +319,7 @@ fn detect_host_timezone() -> Option<String> {
 pub fn send_boot_config(
     file: &mut std::fs::File,
     cli_env: &[(String, String)],
-    preloaded_guest_config: Option<policy_config::GuestConfig>,
+    preloaded_guest_config: Option<GuestConfig>,
 ) -> Result<()> {
     use crate::capsem_proto::{
         validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS,

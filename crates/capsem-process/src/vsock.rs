@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use capsem_core::vm::guest_config::GuestConfig;
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostToGuest};
@@ -34,7 +35,7 @@ pub(crate) struct VsockOptions {
     pub(crate) job_store: Arc<JobStore>,
     pub(crate) session_dir: PathBuf,
     pub(crate) cli_env: Vec<(String, String)>,
-    pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
+    pub(crate) guest_config: GuestConfig,
     pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
     /// T3.2: handler for DNS queries forwarded over vsock port 5007.
     /// Shared by-Arc with main.rs so the same `NetworkPolicy` drives
@@ -1151,7 +1152,7 @@ fn perform_handshake(
     fd: &mut std::fs::File,
     is_restore: bool,
     env: &[(String, String)],
-    conf: Option<capsem_core::net::policy_config::GuestConfig>,
+    conf: Option<GuestConfig>,
 ) -> Result<()> {
     read_control_msg(fd).context("initial Ready read failed")?;
     if is_restore {

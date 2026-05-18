@@ -1,6 +1,6 @@
 # Profile V2 Migration Rescue MASTER
 
-Last updated: 2026-05-17
+Last updated: 2026-05-18
 
 ## Mission
 Preserve all critical Profile V2 design and sprint context (including early S00-S06 work) while safely migrating from a drifted dirty state to a trustworthy baseline for continued development.
@@ -70,13 +70,15 @@ Rescue inventory:
 - S00-S19 merged-code audit added at `sprints/profile-v2-migration-rescue/audit.md`
 - capsem-process V1 `user.toml`/`MergedPolicies` runtime bridge removed; focused RED/GREEN guardrails now assert Profile V2-only runtime authority, guest boot assembly, and DNS/full-block `NetworkPolicy` conversion
 - Smoke integration now uses a temporary Profile V2 service/profile fixture instead of removed `CAPSEM_USER_CONFIG`/`CAPSEM_CORP_CONFIG` runtime policy plumbing
+- S06 hygiene closeout is green: guest boot config is canonical under `vm::guest_config`, the old policy-config guest-config export is guarded against, deterministic default MCP injection no longer reads process-wide V1 config, and Docker install E2E handles symlinked asset roots correctly.
 - `just smoke` passed on 2026-05-17 after the Profile V2 runtime/DNS rescue (`just smoke`, 224s)
+- `just test-install` passed on 2026-05-18 after the asset symlink/mount and file-only copy fixes (`57 passed`, `29 skipped`)
 - Committed delta classification remains release-held and must be replayed by slice
 
 ## Release Holds
 - Do not claim migration complete until keep/drop/review manifest exists.
-- Do not claim S01 complete until setup/install/docs and old policy-config runtime/type surfaces are replaced or explicitly quarantined.
+- Do not claim S01 public cleanup complete until setup/install/docs `user.toml` references are replaced or explicitly quarantined in the S19 docs/API work.
 - Do not claim S07-S19 complete; `audit.md` currently marks most public API/UI/CLI/OTel/docs surfaces as partial or gap.
-- Do not claim final verification restored until remaining broad gates beyond smoke, especially `just test`, are re-run.
+- Do not claim final release readiness until S07-S19 public surfaces and docs are implemented and verified.
 - Do not resume feature delivery on this line until reconciliation pass is complete.
 - Ambiguous E2E skip/test loosenings remain held after the focused VM/MITM parity and full smoke gates.

@@ -1,6 +1,6 @@
 # Profile V2 Migration Audit
 
-Last updated: 2026-05-17
+Last updated: 2026-05-18
 
 ## Audit Standard
 
@@ -24,11 +24,13 @@ typed service/profile settings, VM-effective attachments, Policy V2 runtime
 conversion, confirmation hooks, rewrite support, derived rule ownership, and
 focused VM/MITM parity are present.
 
-The branch is not yet clean Profile V2, but the most dangerous process-runtime
-V1 bridge has now been removed. `capsem-process` no longer reads global
-`user.toml`/`MergedPolicies` for runtime authority; attached Profile V2
-VM-effective settings now drive guest boot files/env, coarse network/DNS
-policy, domain fast paths, MCP defaults, and exact Policy V2 evaluation.
+The S00-S06 backend migration is now clean enough to treat S06 as closed:
+`capsem-process` no longer reads global `user.toml`/`MergedPolicies` for
+runtime authority; attached Profile V2 VM-effective settings drive guest boot
+files/env, coarse network/DNS policy, domain fast paths, MCP defaults, and exact
+Policy V2 evaluation. The guest boot config type now lives under the VM
+namespace, with guardrails preventing the old policy-config namespace from
+reappearing.
 Several public surfaces requested after S06 are still missing: dedicated
 profiles/rules/skills UDS APIs, mirrored gateway APIs, CLI profile/rules/confirm
 commands, credential brokerage, real pending-ask UX, OpenTelemetry metrics
@@ -147,21 +149,28 @@ Open proof:
 
 ### S06 - Assembly and VM-Effective Settings
 
-Status: `PARTIAL`
+Status: `LANDED`
 
 Landed:
 - Service resolves selected/default profile to VM-effective settings.
 - VM-effective TOML and trace are attached to sessions.
 - `capsem-process` loads attached VM-effective rules and falls back to default
   profile when attachments are missing/corrupt.
+- Guest boot env/files are assembled from Profile V2 runtime state and the
+  canonical `GuestConfig`/`GuestFile` types live under
+  `capsem_core::vm::guest_config`, not the legacy policy-config namespace.
 - Focused VM/MITM parity tests passed for framed MCP, HTTP/DNS, and model
   Policy V2.
+- Broad verification reached all `just test` lanes, and the previously failing
+  Docker install lane now passes after the asset symlink/mount fix.
 
-Gaps:
-- Guest boot config now comes from Profile V2 runtime state, but the
-  `GuestConfig` type still lives in the old `net::policy_config` namespace and
-  should be moved before the final V1 removal claim.
-- Full release gate `just test` remains pending.
+Proof:
+- RED/GREEN guard: `guest_boot_config_types_are_not_reexported_from_policy_config`
+  failed before removing the compatibility export and passes now.
+- RED/GREEN guard: `process_runtime_source_has_no_v1_policy_bridge` passes after
+  moving runtime/boot imports to `vm::guest_config`.
+- `just test-install` passed (`57 passed`, `29 skipped`) with assets mounted
+  from the resolved host asset directory.
 
 ### S06-pre - Network Contract and Confirm
 
@@ -353,15 +362,20 @@ Gaps:
 
 ### S18 - Full Verification and Release Gate
 
-Status: `GAP`
+Status: `PARTIAL`
+
+Landed:
+- `just smoke` passed after the Profile V2 runtime/DNS integration rescue.
+- The broad `just test` run reached and passed the non-install lanes; the
+  remaining Docker install lane failure was fixed with a long-term asset mount
+  and file-only install-copy contract.
+- `just test-install` now passes in Docker.
 
 Gaps:
-- `just smoke` passed after the Profile V2 runtime/DNS integration rescue, but
-  `just test` has not been re-run on this branch after the rescue.
-- Fresh-install proof after V1 removal is impossible until V1 setup/install
-  paths are replaced.
 - E2E profile create/fork/delete/select/launch, API/CLI/UI enforcement, and
   credential/PII/skills proofs are not complete.
+- S07-S17 public surfaces remain incomplete, so release readiness is still held
+  even though the S00-S06 backend gate is clean.
 
 ### S19 - Documentation and Site
 
@@ -375,8 +389,8 @@ Gaps:
 
 ## Active Cleanup Plan
 
-1. Remove or quarantine V1 runtime authority from setup/install/docs and old
-   policy-config type surfaces.
-2. Re-run broad gates beyond smoke, especially `just test`.
-3. Continue S07-S19 sprint implementation from the documented gaps, one sprint
+1. Keep setup/install/docs `user.toml` references quarantined until S19 replaces
+   the public documentation and later sprints expose the new user-facing
+   surfaces.
+2. Continue S07-S19 sprint implementation from the documented gaps, one sprint
    at a time.

@@ -360,12 +360,10 @@ fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServer
 ///
 /// Resolution: corp > user > defaults (per key). Corp entries are corp_locked.
 pub fn load_mcp_servers() -> Vec<McpServerDef> {
-    use super::registry::DEFAULTS_JSON;
-
     let mut by_key: HashMap<String, McpServerDef> = HashMap::new();
 
     // 1. Defaults from JSON (lowest priority)
-    for s in parse_mcp_section_json(DEFAULTS_JSON, PolicySource::Default) {
+    for s in load_default_mcp_servers() {
         by_key.insert(s.key.clone(), s);
     }
 
@@ -406,6 +404,12 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
         .collect();
     servers.sort_by(|a, b| a.key.cmp(&b.key));
     servers
+}
+
+pub(crate) fn load_default_mcp_servers() -> Vec<McpServerDef> {
+    use super::registry::DEFAULTS_JSON;
+
+    parse_mcp_section_json(DEFAULTS_JSON, PolicySource::Default)
 }
 
 fn apply_mcp_server_enabled_overrides(

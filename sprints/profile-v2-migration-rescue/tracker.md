@@ -34,6 +34,7 @@
 - [x] Add S00-S19 audit with merged-code evidence and release blockers
 - [x] Remove capsem-process V1 `user.toml`/`MergedPolicies` runtime bridge with RED/GREEN tests
 - [x] Restore Profile V2 DNS/full-block smoke telemetry without reintroducing V1 config plumbing
+- [x] Close S06 hygiene pass: move guest boot config to VM namespace, harden install asset handling, and refresh S00-S06 audit proof
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -126,6 +127,19 @@
 - Proof: `cargo test -p capsem-process` passed 100 tests after the latest runtime conversion.
 - Proof: `cargo check -p capsem-core -p capsem-service -p capsem-process` passed.
 - Proof: `just smoke` passed in 224s after Profile V2 DNS/full-block integration, including doctor (`301 passed, 10 skipped, 1 deselected`), injection (`5 passed`), integration diagnostics (`94 passed, 2 skipped`), telemetry audit (`40 passed, 3 warnings` with `1 denied dns_events for example.com`), Python gateway/MCP/service/CLI groups (`91 passed`, `62 passed, 50 skipped, 20 deselected`, `140 passed, 5 skipped`), state transitions (`12 passed`), and resume/suspend durability (`7 passed`).
+- S06 hygiene closeout moved canonical guest boot config types from the legacy policy-config namespace into `capsem_core::vm::guest_config`; process runtime, vsock, and VM boot now import from the VM namespace directly.
+- Default MCP injection during guest boot config generation now reads only baked-in default registry entries, avoiding process-wide `CAPSEM_USER_CONFIG`/`CAPSEM_CORP_CONFIG` pollution in hermetic tests.
+- Install E2E now resolves the real host asset directory before Docker bind mounting, so a repo `assets` symlink does not become a dangling absolute symlink inside `/src`.
+- `simulate-install.sh` and `sync-dev-assets.sh` copy only regular per-arch asset files, so stale nested arch directories cannot poison install fixture refresh.
+- The fork benchmark image budget now uses the documented compact-image upper bound instead of a package-cache-size assumption.
+- RED proof: `cargo test -p capsem-core guest_boot_config_types_are_not_reexported_from_policy_config --lib -- --nocapture` failed before removing the old `policy_config` compatibility export.
+- GREEN proof: `cargo test -p capsem-core guest_boot_config_types_are_not_reexported_from_policy_config --lib -- --nocapture` passed after removing the export and importing guest boot types from `vm::guest_config`.
+- RED proof: `uv run --group dev python -m pytest tests/test_release_workflow_policy.py::test_simulate_install_copies_only_arch_asset_files -q` failed on the nested `arm64/arm64` source directory before the file-only copy fix.
+- GREEN proof: `uv run --group dev python -m pytest tests/test_release_workflow_policy.py::test_simulate_install_copies_only_arch_asset_files tests/test_release_workflow_policy.py::test_install_e2e_prepares_clean_checkout_assets_before_repack -q` passed after the asset-copy contract fix.
+- Proof: `cargo test -p capsem-core policy_config --lib` passed 415 focused policy-config tests after deterministic default MCP injection and the guest-config namespace guard.
+- Proof: `cargo test -p capsem-process --bin capsem-process process_runtime_source_has_no_v1_policy_bridge -- --nocapture` passed after the namespace cleanup.
+- Proof: `uv run --group dev python -m pytest tests/test_release_workflow_policy.py::test_install_e2e_prepares_clean_checkout_assets_before_repack tests/test_release_workflow_policy.py::test_simulate_install_copies_only_arch_asset_files -q` passed locally after Docker rewrote `.venv`.
+- Proof: `just test-install` passed in Docker (`57 passed`, `29 skipped`) after the asset symlink/mount and file-only copy fixes.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -140,10 +154,10 @@
 - Adversarial:
   policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction; model request rewrite fails closed for unsupported targets, no regex match, and non-UTF-8 bodies
 - E2E/VM or integration:
-  Focused VM/MITM suites passed for framed MCP (15), HTTP/DNS Policy V2 (2), and model Policy V2 (4). Full `just smoke` passed after ordering/runtime and Profile V2 DNS/full-block rescue. NAT/egress skips classified as `needs-review`; full `just test` remains pending for final release confidence.
+  Focused VM/MITM suites passed for framed MCP (15), HTTP/DNS Policy V2 (2), and model Policy V2 (4). Full `just smoke` passed after ordering/runtime and Profile V2 DNS/full-block rescue. Broad `just test` reached and passed all earlier lanes, then the Docker install lane passed separately after the asset fix. NAT/egress skips classified as `needs-review`.
 - Telemetry/observability:
   debug report now surfaces resolver-trace summary; `just smoke` telemetry audit passed (`40 passed`, `3 warnings` for missing live Gemini key); lifecycle/net telemetry setup changes require split review before port
 - Performance:
   generated benchmark outputs classified `drop`
 - Missing/deferred:
-  Full `just test` and ambiguous environment skips remain unaccepted until separately reviewed. S07-S19 surfaces remain tracked in `audit.md`.
+  Ambiguous environment skips remain unaccepted until separately reviewed. S07-S19 surfaces remain tracked in `audit.md`.

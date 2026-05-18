@@ -486,10 +486,8 @@ fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settin
 
 #[test]
 fn process_runtime_source_has_no_v1_policy_bridge() {
-    let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/mcp_runtime.rs"),
-    )
-    .unwrap();
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(manifest_dir.join("src/mcp_runtime.rs")).unwrap();
     for forbidden in [
         "MergedPolicies::from_disk",
         "user_config_path",
@@ -499,6 +497,30 @@ fn process_runtime_source_has_no_v1_policy_bridge() {
         assert!(
             !source.contains(forbidden),
             "capsem-process runtime must not contain V1 policy bridge token {forbidden:?}"
+        );
+    }
+
+    let vsock_source = std::fs::read_to_string(manifest_dir.join("src/vsock.rs")).unwrap();
+    let core_boot_source = std::fs::read_to_string(
+        manifest_dir
+            .parent()
+            .unwrap()
+            .join("capsem-core/src/vm/boot.rs"),
+    )
+    .unwrap();
+    for (path, source) in [
+        ("crates/capsem-process/src/mcp_runtime.rs", source.as_str()),
+        ("crates/capsem-process/src/vsock.rs", vsock_source.as_str()),
+        (
+            "crates/capsem-core/src/vm/boot.rs",
+            core_boot_source.as_str(),
+        ),
+    ] {
+        assert!(
+            !source.contains("net::policy_config::GuestConfig")
+                && !source.contains("net::policy_config::{\n    GuestConfig")
+                && !source.contains("GuestConfig, GuestFile, PolicyCallback"),
+            "{path} must import guest boot config from capsem_core::vm::guest_config, not net::policy_config"
         );
     }
 }

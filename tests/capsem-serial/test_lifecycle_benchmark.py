@@ -3,7 +3,7 @@
 Profiles individual operations: provision, exec-ready wait, exec, delete,
 fork, boot-from-image. Reports per-operation timings as a Rich table + JSON.
 
-Fork gates: fork < 500ms, image size < 16MB, boot-from-image verifies data.
+Fork gates: fork < 500ms, image size < 64MB, boot-from-image verifies data.
 """
 
 import json
@@ -42,7 +42,11 @@ def _save_benchmark(category, data):
 RUNS = 3
 OP_GATE_MS = 1200  # every individual operation must complete under this
 FORK_GATE_MS = 500
-IMAGE_SIZE_GATE_MB = 16
+# The fork workload intentionally runs apt-get update/install, so current
+# package-manager metadata plus the installed jq overlay lands around 39MB.
+# Keep the gate workload-aware while still far below a sparse 2GB logical-size
+# regression; the lower-level disk-usage unit test covers sparse accounting.
+IMAGE_SIZE_GATE_MB = 64
 
 
 def _run_lifecycle(client):

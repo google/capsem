@@ -495,8 +495,13 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     assert test_install, "test-install recipe missing"
     body = test_install.group("body")
 
-    assert 'bash scripts/prepare-install-assets.sh "{{assets_dir}}" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"' in body
-    assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug /src/{{assets_dir}} "$DEB"' in body
+    assert 'ASSETS_HOST="$(python3 -c' in body
+    assert 'ASSETS_CONTAINER="/src/{{assets_dir}}"' in body
+    assert 'EXTRA_ASSETS_MOUNT=(-v "$ASSETS_HOST:$ASSETS_CONTAINER")' in body
+    assert '"${EXTRA_ASSETS_MOUNT[@]}"' in body
+    assert 'bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"' in body
+    assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"' in body
+    assert '-e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER"' in body
     assert "uv run --group dev python -m pytest tests/capsem-install/" in body
     assert 'scripts/repack-deb.sh "$DEB" /cargo-target/debug assets' not in body
 
@@ -508,6 +513,61 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     assert 'python3 scripts/create_hash_assets.py "$ASSETS_DIR"' in prep_script
     assert 'bash scripts/sync-dev-assets.sh "$ASSETS_DIR" "$ASSETS_DIR"' in prep_script
     assert 'bash scripts/verify-local-manifest-signature.sh "$ASSETS_DIR" config/manifest-sign.pub' in prep_script
+
+    sync_script = (REPO_ROOT / "scripts" / "sync-dev-assets.sh").read_text()
+    assert '[[ -f "$src_file" ]] || continue' in sync_script
+
+
+def test_simulate_install_copies_only_arch_asset_files(tmp_path):
+    """Nested source asset dirs must not poison install fixture refresh."""
+    bin_src = tmp_path / "bin"
+    assets_src = tmp_path / "assets"
+    capsem_home = tmp_path / "home" / ".capsem"
+    bin_src.mkdir()
+
+    binaries = (
+        "capsem",
+        "capsem-service",
+        "capsem-process",
+        "capsem-mcp",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-gateway",
+        "capsem-tray",
+    )
+    for binary in binaries:
+        path = bin_src / binary
+        path.write_text("#!/bin/sh\n[ \"$1\" = version ] && echo 'capsem 1.1.0 build test'\n")
+        path.chmod(0o755)
+
+    machine = os.uname().machine.lower()
+    arch = "arm64" if machine in {"arm64", "aarch64"} else "x86_64"
+    arch_src = assets_src / arch
+    arch_src.mkdir(parents=True)
+    for name in ("vmlinuz", "initrd.img", "rootfs.squashfs"):
+        (arch_src / name).write_text(name)
+    (arch_src / arch).mkdir()
+    (assets_src / "manifest.json").write_text("{}")
+    (assets_src / "manifest.json.minisig").write_text("sig")
+    (assets_src / "manifest-sign.dev.pub").write_text("pub")
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "scripts" / "simulate-install.sh"),
+            str(bin_src),
+            str(assets_src),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "CAPSEM_HOME": str(capsem_home)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (capsem_home / "assets" / arch / "vmlinuz").is_file()
+    assert not (capsem_home / "assets" / arch / arch).exists()
 
 
 def test_cut_release_prepares_local_tag_without_pushing():

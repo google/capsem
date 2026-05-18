@@ -7,6 +7,19 @@ use std::collections::HashMap;
 
 static TEST_CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[test]
+fn guest_boot_config_types_are_not_reexported_from_policy_config() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let types = std::fs::read_to_string(manifest_dir.join("src/net/policy_config/types.rs"))
+        .expect("policy_config types source should be readable");
+
+    assert!(
+        !types.contains("guest_config::{GuestConfig, GuestFile}")
+            && !types.contains("pub use crate::vm::guest_config"),
+        "guest boot config belongs to vm::guest_config, not policy_config"
+    );
+}
+
 fn empty_file() -> SettingsFile {
     SettingsFile::default()
 }

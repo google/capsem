@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recording rewritten request previews in telemetry.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
+- Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under
+  the VM namespace instead of the legacy policy-config namespace.
 
 ### Fixed
 - Fixed `just smoke`, `just test`, and `build-ui` ordering so Tauri frontend
@@ -50,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed default user profile discovery to resolve under `CAPSEM_HOME`/`HOME`
   instead of a literal `./~` directory, keeping local artifacts out of runtime
   and test profile resolution.
+- Fixed install E2E asset handling when the repo `assets/` path is a symlink,
+  including file-only asset copying so nested/stale arch directories cannot
+  poison install fixture refresh.
 
 ## [1.1.1778860037] - 2026-05-15
 

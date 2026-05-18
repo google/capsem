@@ -3,6 +3,7 @@ use super::resolver::resolve_settings;
 use super::types::*;
 use crate::net::domain_policy::{Action, DomainPolicy};
 use crate::net::http_policy::{HttpPolicy, HttpRule};
+use crate::vm::guest_config::{GuestConfig, GuestFile};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -479,7 +480,7 @@ pub(super) fn inject_mcp_servers_json(json_str: &str, servers: &[McpServerDef]) 
 
 /// Backward-compatible wrapper: inject capsem MCP server (delegates to generic version).
 pub(super) fn inject_capsem_mcp_server(json_str: &str) -> String {
-    let servers = super::loader::load_mcp_servers();
+    let servers = super::loader::load_default_mcp_servers();
     inject_mcp_servers_json(json_str, &servers)
 }
 
@@ -520,7 +521,7 @@ pub(super) fn inject_mcp_servers_toml(toml_str: &str, servers: &[McpServerDef]) 
 
 /// Backward-compatible wrapper: inject capsem MCP server into TOML (delegates to generic version).
 pub(super) fn inject_capsem_mcp_server_toml(toml_str: &str) -> String {
-    let servers = super::loader::load_mcp_servers();
+    let servers = super::loader::load_default_mcp_servers();
     inject_mcp_servers_toml(toml_str, &servers)
 }
 

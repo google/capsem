@@ -989,21 +989,6 @@ pub struct SettingsResponse {
 // Guest config and VM settings
 // ---------------------------------------------------------------------------
 
-/// A file to write into the guest filesystem at boot.
-#[derive(Debug, Clone)]
-pub struct GuestFile {
-    pub path: String,
-    pub content: String,
-    pub mode: u32,
-}
-
-/// Guest VM configuration (extracted from settings).
-#[derive(Debug, Default, Clone)]
-pub struct GuestConfig {
-    pub env: Option<HashMap<String, String>>,
-    pub files: Option<Vec<GuestFile>>,
-}
-
 /// VM resource settings (extracted from settings).
 #[derive(Debug, Default, Clone)]
 pub struct VmSettings {

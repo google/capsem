@@ -72,7 +72,10 @@ ARCH=$(uname -m)
 
 if [[ -d "$ASSETS_SRC/$ARCH" ]]; then
     mkdir -p "$ASSETS_DST/$ARCH"
-    cp -f "$ASSETS_SRC/$ARCH"/* "$ASSETS_DST/$ARCH/"
+    for src_file in "$ASSETS_SRC/$ARCH"/*; do
+        [[ -f "$src_file" ]] || continue
+        cp -f "$src_file" "$ASSETS_DST/$ARCH/"
+    done
 fi
 
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.

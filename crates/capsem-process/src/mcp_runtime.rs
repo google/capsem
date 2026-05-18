@@ -9,11 +9,12 @@ use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
 use capsem_core::net::policy_config::{
-    GuestConfig, GuestFile, PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
+    PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
 };
 use capsem_core::settings_profiles::{
     self, CapabilityMode, EffectiveRule, RuleDecision, VmNetworkMode,
 };
+use capsem_core::vm::guest_config::{GuestConfig, GuestFile};
 use std::collections::HashMap;
 use tracing::warn;
 
