@@ -271,6 +271,9 @@ fn list_response_with_entries() {
                 version: Some("0.16.1".into()),
                 forked_from: None,
                 description: None,
+                profile_id: Some("everyday-work".into()),
+                profile_revision: Some("2026.0520.2".into()),
+                profile_status: Some(SessionProfileStatus::Current),
                 created_at: None,
                 uptime_secs: Some(3600),
                 total_input_tokens: None,
@@ -296,6 +299,9 @@ fn list_response_with_entries() {
                 version: None,
                 forked_from: None,
                 description: None,
+                profile_id: None,
+                profile_revision: None,
+                profile_status: Some(SessionProfileStatus::Corrupted),
                 created_at: None,
                 uptime_secs: None,
                 total_input_tokens: None,
@@ -318,8 +324,24 @@ fn list_response_with_entries() {
     assert_eq!(resp2.sessions.len(), 2);
     assert_eq!(resp2.sessions[0].id, "vm-1");
     assert!(!resp2.sessions[0].persistent);
+    assert_eq!(
+        resp2.sessions[0].profile_id.as_deref(),
+        Some("everyday-work")
+    );
+    assert_eq!(
+        resp2.sessions[0].profile_revision.as_deref(),
+        Some("2026.0520.2")
+    );
+    assert_eq!(
+        resp2.sessions[0].profile_status,
+        Some(SessionProfileStatus::Current)
+    );
     assert_eq!(resp2.sessions[1].id, "mydev");
     assert!(resp2.sessions[1].persistent);
+    assert_eq!(
+        resp2.sessions[1].profile_status,
+        Some(SessionProfileStatus::Corrupted)
+    );
 }
 
 #[test]

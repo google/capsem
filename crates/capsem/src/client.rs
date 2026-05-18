@@ -77,6 +77,12 @@ pub struct SessionInfo {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub profile_revision: Option<String>,
+    #[serde(default)]
+    pub profile_status: Option<SessionProfileStatus>,
+    #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
     pub uptime_secs: Option<u64>,
@@ -105,6 +111,30 @@ pub struct SessionInfo {
     /// crashed VM shows its own reason on screen.
     #[serde(default)]
     pub last_error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionProfileStatus {
+    Current,
+    NeedsUpdate,
+    Deprecated,
+    Revoked,
+    Corrupted,
+    Unknown,
+}
+
+impl SessionProfileStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::NeedsUpdate => "needs_update",
+            Self::Deprecated => "deprecated",
+            Self::Revoked => "revoked",
+            Self::Corrupted => "corrupted",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

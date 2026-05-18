@@ -97,6 +97,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed persistent VM resume to require forward profile pins and pinned asset
   identity; unpinned registry entries no longer fall back to the current
   profile/assets.
+- Added profile identity and status to VM list/status payloads, `capsem list`,
+  and `capsem info`: each VM now reports its pinned profile/revision plus
+  `current`, `needs_update`, `deprecated`, `revoked`, `corrupted`, or
+  `unknown`.
 - Removed legacy `assets.manifest.*` service settings and setup-time asset
   manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2

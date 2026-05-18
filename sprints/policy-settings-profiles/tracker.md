@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `64 ahead / 0 behind` `origin/main` in this worktree after the
-  forward-only resume pin enforcement slice. The rescue
+  `65 ahead / 0 behind` `origin/main` in this worktree after the VM
+  list/status profile-state reporting slice. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -41,10 +41,11 @@ order:
 
 1. Finish S07a's remaining contract gaps: catalog-driven profile payload
    install/update/revoke, mandatory VM profile/revision/package pins,
-   retention, forward-only VM create/fork/persist/resume enforcement, and
-   status/debug readiness. The next inserted stop is telemetry identity: every
-   session must expose the VM id, profile id, and user id as a durable session
-   fact before we keep pushing profile pinning.
+   retention, forward-only VM create/fork/persist/resume enforcement, VM
+   list/status profile-state reporting, and debug readiness. The next inserted
+   stop is telemetry identity: every session must expose the VM id, profile id,
+   and user id as a durable session fact before we keep pushing profile
+   pinning.
 2. Start S07b only after S07a's runtime contract is stable enough for
    `capsem-admin` to generate and validate the same shapes.
 3. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
@@ -167,7 +168,7 @@ When this sprint starts, promote the inline brief above into
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
-closed for the active branch: `HEAD...origin/main` is currently `64 ahead / 0
+closed for the active branch: `HEAD...origin/main` is currently `65 ahead / 0
 behind`. The remaining cleanup debt is now S06c plus the final V2 naming
 collapse and release gate. When executed, keep the order:
 
@@ -395,7 +396,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   adds a manifest-free hash cleanup helper plus `POST /setup/assets/cleanup`,
   preserving installed-profile and saved-VM retention, deleting stale
   hash-named files and legacy `v1.0.*` directories, and returning
-  `409 Conflict` while assets are checking or updating.
+  `409 Conflict` while assets are checking or updating. VM list/status now
+  reports pinned profile id/revision plus current/needs_update/deprecated/
+  revoked/corrupted/unknown state, and `capsem list`/`capsem info` render the
+  typed client enum; missing pins are corrupted.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -407,7 +411,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   CLI-to-service wiring for `profile reconcile-catalog`, `/setup/assets`
   provenance, profile-aware cleanup retention source composition, `POST
   /setup/assets/cleanup` cleanup execution with installed-profile/saved-VM
-  retention, mitm_proxy integration test for model.request rewrite redaction.
+  retention, `/list`/`/info`/`capsem list`/`capsem info` profile-state
+  rendering, mitm_proxy integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -483,6 +488,13 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   after forward-only resume pin enforcement, `cargo test -p capsem-service
   resume_saved_vm` **2** passed and `cargo test -p capsem-service` **109** +
   **148** passed;
+  after VM list/status profile-state reporting, `cargo test -p capsem-service
+  profile_status` **1** passed, `cargo test -p capsem-service
+  handle_reconcile_profile_catalog_installs_current_active_revision` **1**
+  passed, `cargo test -p capsem format_session_profile_for_list` **1** passed,
+  and `cargo test -p capsem list_response_with_entries` **1** passed;
+  full package proof for the same slice: `cargo test -p capsem-service`
+  **109 + 149** passed and `cargo test -p capsem` **242** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

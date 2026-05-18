@@ -25,12 +25,13 @@ completely.
 ## Execution Mode
 
 **Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `64 ahead / 0 behind` `origin/main` in this
+is coherent again and sits `65 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
-  mandatory VM profile/revision/package pins, retention, and forward-only
-  resume/create/fork/persist enforcement are landed and tested.
+  mandatory VM profile/revision/package pins, retention, forward-only
+  resume/create/fork/persist enforcement, and VM list/status profile-state
+  reporting are landed and tested.
 - Do not start S07b implementation until S07a's runtime contract is stable
   enough for `capsem-admin` to consume it.
 - Do not resume HTTP/CLI/UI/docs lift work until the profile catalog and asset
@@ -91,7 +92,7 @@ the next starts. The `#` column is the execution index;
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
-| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, and forward-only resume pin enforcement have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling, mandatory catalog revision pins on every create/fork/persist path, and richer catalog clients. |
+| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, forward-only resume pin enforcement, and VM list/status profile-state reporting have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling, mandatory catalog revision pins on every create/fork/persist path, and richer catalog clients/debug detail. |
 | 15 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
 | 16 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
 | 17 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
@@ -220,6 +221,11 @@ Landed S07a foundation:
 - Forward-only persistent VM resume. Resume now requires a profile pin and
   pinned asset identity before process spawn; unpinned registry entries no
   longer fall back to the current catalog/default assets.
+- VM list/status profile state. `/list`, `/info`, `capsem list`, and `capsem
+  info` now expose each VM's profile id/revision plus `current`,
+  `needs_update`, `deprecated`, `revoked`, `corrupted`, or `unknown` based on
+  the persisted profile catalog snapshot and installed current revision
+  sidecar.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.
@@ -354,6 +360,14 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-service resume_saved_vm` passed with 2 service tests,
   and `cargo test -p capsem-service` passed with 109 library tests + 148
   service tests after forward-only resume pin enforcement.
+- `cargo test -p capsem-service profile_status`, `cargo test -p capsem-service
+  handle_reconcile_profile_catalog_installs_current_active_revision`, `cargo
+  test -p capsem format_session_profile_for_list`, and `cargo test -p capsem
+  list_response_with_entries` passed after VM list/status profile-state
+  reporting.
+- `cargo test -p capsem-service` passed with 109 library tests + 149
+  service tests, and `cargo test -p capsem` passed with 242 CLI tests after the
+  VM list/status profile-state reporting slice.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

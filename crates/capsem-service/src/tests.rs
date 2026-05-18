@@ -1183,6 +1183,183 @@ async fn handle_list_reports_missing_saved_vm_dependencies_separately() {
     );
 }
 
+#[tokio::test]
+async fn handle_list_reports_profile_status_for_each_vm() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let catalog_path = state.service_settings.profiles.corp_dirs[0]
+        .join(".catalog")
+        .join("profile-manifest.json");
+    std::fs::create_dir_all(catalog_path.parent().unwrap()).unwrap();
+    std::fs::write(&catalog_path, profile_status_manifest_json()).unwrap();
+
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry.data.vms.insert(
+            "vm-current".into(),
+            pinned_vm_entry(&state, "vm-current", "everyday-work", Some("2026.0520.2")),
+        );
+        registry.data.vms.insert(
+            "vm-update".into(),
+            pinned_vm_entry(&state, "vm-update", "everyday-work", Some("2026.0520.1")),
+        );
+        registry.data.vms.insert(
+            "vm-deprecated".into(),
+            pinned_vm_entry(&state, "vm-deprecated", "coding", Some("2026.0520.1")),
+        );
+        registry.data.vms.insert(
+            "vm-revoked".into(),
+            pinned_vm_entry(&state, "vm-revoked", "research", Some("2026.0520.1")),
+        );
+        registry.data.vms.insert(
+            "vm-corrupted".into(),
+            PersistentVmEntry {
+                name: "vm-corrupted".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: None,
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/vm-corrupted"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(list) = handle_list(State(state)).await;
+    let by_id = list
+        .sandboxes
+        .iter()
+        .map(|info| (info.id.as_str(), info))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let current = by_id["vm-current"];
+    assert_eq!(current.profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(current.profile_revision.as_deref(), Some("2026.0520.2"));
+    assert_eq!(current.profile_status, Some(VmProfileStatus::Current));
+
+    let update = by_id["vm-update"];
+    assert_eq!(update.profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(update.profile_revision.as_deref(), Some("2026.0520.1"));
+    assert_eq!(update.profile_status, Some(VmProfileStatus::NeedsUpdate));
+
+    assert_eq!(
+        by_id["vm-deprecated"].profile_status,
+        Some(VmProfileStatus::Deprecated)
+    );
+    assert_eq!(
+        by_id["vm-revoked"].profile_status,
+        Some(VmProfileStatus::Revoked)
+    );
+    assert_eq!(
+        by_id["vm-corrupted"].profile_status,
+        Some(VmProfileStatus::Corrupted)
+    );
+}
+
+fn pinned_vm_entry(
+    state: &ServiceState,
+    name: &str,
+    profile_id: &str,
+    revision: Option<&str>,
+) -> PersistentVmEntry {
+    let base_assets = test_saved_vm_base_assets();
+    PersistentVmEntry {
+        name: name.into(),
+        ram_mb: 2048,
+        cpus: 2,
+        base_version: "0.0.0".into(),
+        base_assets: Some(base_assets.clone()),
+        profile_pin: Some(SavedVmProfilePin {
+            profile_id: profile_id.into(),
+            profile_revision: revision.map(str::to_string),
+            profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+            package_contract_hash: format!("blake3:{}", "d".repeat(64)),
+            base_assets: Some(base_assets),
+        }),
+        created_at: "0".into(),
+        session_dir: state.run_dir.join("persistent").join(name),
+        forked_from: None,
+        description: None,
+        suspended: false,
+        defunct: false,
+        last_error: None,
+        checkpoint_path: None,
+        env: None,
+    }
+}
+
+fn profile_status_manifest_json() -> &'static str {
+    r#"{
+      "format": 1,
+      "profiles": {
+        "everyday-work": {
+          "current_revision": "2026.0520.2",
+          "revisions": {
+            "2026.0520.1": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///tmp/everyday-work-1/profile.json",
+              "profile_hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "profile_signature_url": "file:///tmp/everyday-work-1/profile.json.minisig"
+            },
+            "2026.0520.2": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///tmp/everyday-work-2/profile.json",
+              "profile_hash": "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "profile_signature_url": "file:///tmp/everyday-work-2/profile.json.minisig"
+            }
+          }
+        },
+        "coding": {
+          "current_revision": "2026.0520.2",
+          "revisions": {
+            "2026.0520.1": {
+              "status": "deprecated",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///tmp/coding-1/profile.json",
+              "profile_hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "profile_signature_url": "file:///tmp/coding-1/profile.json.minisig"
+            },
+            "2026.0520.2": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///tmp/coding-2/profile.json",
+              "profile_hash": "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "profile_signature_url": "file:///tmp/coding-2/profile.json.minisig"
+            }
+          }
+        },
+        "research": {
+          "current_revision": "2026.0520.2",
+          "revisions": {
+            "2026.0520.1": {
+              "status": "revoked",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///tmp/research-1/profile.json",
+              "profile_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "profile_signature_url": "file:///tmp/research-1/profile.json.minisig"
+            },
+            "2026.0520.2": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///tmp/research-2/profile.json",
+              "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "profile_signature_url": "file:///tmp/research-2/profile.json.minisig"
+            }
+          }
+        }
+      }
+    }"#
+}
+
 #[test]
 fn resume_saved_vm_fails_when_pinned_rootfs_is_missing() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -3022,7 +3199,7 @@ async fn handle_reconcile_profile_catalog_installs_current_active_revision() {
     );
 
     let Json(val) = handle_reconcile_profile_catalog(Json(ProfileCatalogReconcileRequest {
-        manifest_json,
+        manifest_json: manifest_json.clone(),
         profile_payload_pubkey: pubkey.to_string(),
     }))
     .await
@@ -3060,6 +3237,16 @@ async fn handle_reconcile_profile_catalog_installs_current_active_revision() {
     .expect("catalog reconcile should install current revision");
     assert_eq!(installed.revision, "2026.0520.1");
     assert_eq!(installed.payload_hash, profile_hash);
+    let stored_manifest = std::fs::read_to_string(
+        dir.path()
+            .join("home")
+            .join("profiles")
+            .join("corp")
+            .join(".catalog")
+            .join("profile-manifest.json"),
+    )
+    .unwrap();
+    assert_eq!(stored_manifest, manifest_json);
 }
 
 #[tokio::test]

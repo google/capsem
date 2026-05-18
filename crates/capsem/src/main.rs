@@ -20,7 +20,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use client::{
     ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
     ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest,
-    PurgeResponse, RunRequest, SessionInfo, UdsClient,
+    PurgeResponse, RunRequest, SessionInfo, SessionProfileStatus, UdsClient,
 };
 
 const fn cli_styles() -> Styles {
@@ -487,6 +487,24 @@ fn format_uptime(secs: Option<u64>) -> String {
     }
 }
 
+fn format_session_profile_for_list(session: &client::SessionInfo) -> String {
+    match (
+        session.profile_id.as_deref(),
+        session.profile_revision.as_deref(),
+        session.profile_status,
+    ) {
+        (_, _, Some(SessionProfileStatus::Corrupted)) => "corrupted".to_string(),
+        (Some(profile_id), Some(revision), Some(status)) => {
+            format!("{profile_id}@{revision}:{}", status.as_str())
+        }
+        (Some(profile_id), Some(revision), None) => format!("{profile_id}@{revision}"),
+        (Some(profile_id), None, Some(status)) => format!("{profile_id}:{}", status.as_str()),
+        (Some(profile_id), None, None) => profile_id.to_string(),
+        (None, None, Some(status)) => status.as_str().to_string(),
+        _ => "-".to_string(),
+    }
+}
+
 fn print_session_info(info: &SessionInfo) {
     println!("Session: {}", info.id);
     if let Some(name) = &info.name {
@@ -515,6 +533,10 @@ fn print_session_info(info: &SessionInfo) {
     }
     if let Some(desc) = &info.description {
         println!("Desc:    {}", desc);
+    }
+    let profile = format_session_profile_for_list(info);
+    if profile != "-" {
+        println!("Profile: {}", profile);
     }
 
     let has_telemetry = info.created_at.is_some()
@@ -1085,7 +1107,7 @@ async fn main() -> Result<()> {
                 println!("No sessions.");
             } else {
                 println!(
-                    "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                    "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10} PROFILE",
                     "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME"
                 );
                 for s in &resp.sessions {
@@ -1096,9 +1118,10 @@ async fn main() -> Result<()> {
                         .unwrap_or_else(|| "-".into());
                     let cpus = s.cpus.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
                     let uptime = format_uptime(s.uptime_secs);
+                    let profile = format_session_profile_for_list(s);
                     println!(
-                        "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
-                        s.id, name, s.status, ram, cpus, uptime
+                        "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10} {}",
+                        s.id, name, s.status, ram, cpus, uptime, profile
                     );
                     // Defunct rows: show the tail of process.log inline so
                     // the user doesn't need a separate `capsem logs` call
@@ -2351,6 +2374,48 @@ mod tests {
             profile_catalog_reconcile_summary_line(&result),
             "Profile catalog reconciled: installed=1 unchanged=2 deprecated_kept=3 revoked_removed=4 absent_removed=5 errors=6"
         );
+    }
+
+    #[test]
+    fn format_session_profile_for_list_shows_revision_and_status() {
+        let mut session = SessionInfo {
+            id: "vm".into(),
+            name: None,
+            pid: 0,
+            status: "Stopped".into(),
+            persistent: true,
+            ram_mb: None,
+            cpus: None,
+            version: None,
+            forked_from: None,
+            description: None,
+            profile_id: Some("everyday-work".into()),
+            profile_revision: Some("2026.0520.2".into()),
+            profile_status: Some(SessionProfileStatus::Current),
+            created_at: None,
+            uptime_secs: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            total_estimated_cost: None,
+            total_tool_calls: None,
+            total_mcp_calls: None,
+            total_requests: None,
+            allowed_requests: None,
+            denied_requests: None,
+            total_file_events: None,
+            model_call_count: None,
+            last_error: None,
+        };
+
+        assert_eq!(
+            format_session_profile_for_list(&session),
+            "everyday-work@2026.0520.2:current"
+        );
+
+        session.profile_id = None;
+        session.profile_revision = None;
+        session.profile_status = Some(SessionProfileStatus::Corrupted);
+        assert_eq!(format_session_profile_for_list(&session), "corrupted");
     }
 
     #[test]

@@ -71,6 +71,10 @@ Landed:
   profile-aware retention set, removes unreferenced hash-named and legacy
   asset files without old manifest authority, and fails closed while asset
   downloads/checks are in progress.
+- VM list/status now reports each VM's pinned profile id/revision and derived
+  profile state: `current`, `needs_update`, `deprecated`, `revoked`,
+  `corrupted`, or `unknown`. `capsem list` and `capsem info` render the same
+  typed state. Missing pins are `corrupted`, not silently rebound.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -107,8 +111,12 @@ Push order from here:
    refuses cleanup while the asset supervisor is checking/updating. Remaining:
    cross-process/per-asset download locks and VM-create/download race coverage.
 4. Enforce forward-only VM identity on every VM create/fork/persist/resume path.
-5. Update status/debug with catalog state, installed revisions, package
+5. [~] Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
+   Landed: `/list`, `/info`, `capsem list`, and `capsem info` expose VM profile
+   id/revision and derived current/update/deprecated/revoked/corrupted state.
+   Remaining: richer debug report provenance, package contract drift, and
+   asset verification diagnostics.
 
 Winter readiness check: S07a is not done while any VM can boot from assets that
 are not traceable back to a signed catalog record and a verified profile
@@ -644,6 +652,12 @@ This sprint creates the contract consumed by later sprints:
       asset identity instead of falling back to the current profile/assets.
       Remaining work makes catalog-backed revision pins mandatory on every
       VM-create/fork/persist path before HTTP/UI lift.
+- [~] Report VM profile state in list/status. Landed: `/list`, `/info`,
+      `capsem list`, and `capsem info` now surface pinned profile id/revision plus
+      current/needs_update/deprecated/revoked/corrupted/unknown state from the
+      persisted profile catalog snapshot and installed current revision
+      sidecar. Remaining: debug-report/package-contract/asset-verification
+      detail.
 - [ ] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
       revoked profile fail-closed behavior.
@@ -705,6 +719,15 @@ This sprint creates the contract consumed by later sprints:
   resume_saved_vm` (2 service tests), proving unpinned persistent VMs are
   rejected before process spawn and valid pinned VMs still fail on missing
   pinned assets.
+  VM list profile-state coverage now adds `cargo test -p capsem-service
+  profile_status` (1 service test), `cargo test -p capsem-service
+  handle_reconcile_profile_catalog_installs_current_active_revision` (1 service
+  test for catalog snapshot persistence), `cargo test -p capsem
+  format_session_profile_for_list` (1 CLI formatting test), and `cargo test -p
+  capsem list_response_with_entries` (1 client serde test).
+  Full package proof for this slice: `cargo test -p capsem-service` (109
+  library tests + 149 service tests) and `cargo test -p capsem` (242 CLI
+  tests).
   Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar

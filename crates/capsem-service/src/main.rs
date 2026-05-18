@@ -2196,8 +2196,126 @@ fn attach_list_live_metrics_placeholder(_info: &mut SandboxInfo, _id: &str) {
     // session.db here; this handler is a hot path and fans out across VMs.
 }
 
+struct VmProfileCatalogSnapshot {
+    roots: capsem_core::settings_profiles::ProfileRootSettings,
+    manifest: Option<capsem_core::profile_manifest::ProfileManifest>,
+}
+
+fn profile_catalog_manifest_path(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+) -> Option<PathBuf> {
+    settings
+        .profiles
+        .corp_dirs
+        .first()
+        .map(|corp_dir| corp_dir.join(".catalog").join("profile-manifest.json"))
+}
+
+fn load_vm_profile_catalog_snapshot(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+) -> VmProfileCatalogSnapshot {
+    let manifest = profile_catalog_manifest_path(settings)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|content| {
+            capsem_core::profile_manifest::ProfileManifest::from_json(&content).ok()
+        });
+    VmProfileCatalogSnapshot {
+        roots: settings.profiles.clone(),
+        manifest,
+    }
+}
+
+fn persist_profile_catalog_manifest(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+    manifest_json: &str,
+) -> Result<(), AppError> {
+    let path = profile_catalog_manifest_path(settings).ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "no corp profile directory is configured".into(),
+        )
+    })?;
+    let parent = path.parent().ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "profile catalog manifest path has no parent: {}",
+                path.display()
+            ),
+        )
+    })?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("create profile catalog manifest directory: {error}"),
+        )
+    })?;
+    std::fs::write(&path, manifest_json).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write profile catalog manifest {}: {error}", path.display()),
+        )
+    })
+}
+
+fn vm_profile_status(
+    pin: Option<&SavedVmProfilePin>,
+    catalog: &VmProfileCatalogSnapshot,
+) -> VmProfileStatus {
+    let Some(pin) = pin else {
+        return VmProfileStatus::Corrupted;
+    };
+    let Some(revision) = pin.profile_revision.as_deref() else {
+        return VmProfileStatus::Corrupted;
+    };
+
+    if let Some(manifest) = &catalog.manifest {
+        let Ok(record) = manifest.revision(&pin.profile_id, revision) else {
+            return VmProfileStatus::Corrupted;
+        };
+        return match record.record.status {
+            capsem_core::profile_manifest::ProfileRevisionStatus::Deprecated => {
+                VmProfileStatus::Deprecated
+            }
+            capsem_core::profile_manifest::ProfileRevisionStatus::Revoked => {
+                VmProfileStatus::Revoked
+            }
+            capsem_core::profile_manifest::ProfileRevisionStatus::Active => {
+                match manifest.current_revision(&pin.profile_id) {
+                    Ok(current) if current.revision == revision => VmProfileStatus::Current,
+                    Ok(_) => VmProfileStatus::NeedsUpdate,
+                    Err(_) => VmProfileStatus::Corrupted,
+                }
+            }
+        };
+    }
+
+    match capsem_core::settings_profiles::load_installed_profile_revision(
+        &catalog.roots,
+        &pin.profile_id,
+    ) {
+        Ok(Some(installed)) if installed.revision == revision => VmProfileStatus::Current,
+        Ok(Some(_)) => VmProfileStatus::NeedsUpdate,
+        Ok(None) => VmProfileStatus::Unknown,
+        Err(_) => VmProfileStatus::Unknown,
+    }
+}
+
+fn attach_vm_profile_status(
+    info: &mut SandboxInfo,
+    pin: Option<&SavedVmProfilePin>,
+    catalog: &VmProfileCatalogSnapshot,
+) {
+    info.profile_status = Some(vm_profile_status(pin, catalog));
+    if let Some(pin) = pin {
+        info.profile_id = Some(pin.profile_id.clone());
+        info.profile_revision = pin.profile_revision.clone();
+    }
+}
+
 async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListResponse> {
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
+    let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
 
     // Running instances. Keep this path in-memory only; durable session.db
     // telemetry is intentionally reserved for single-VM/detail paths.
@@ -2216,6 +2334,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.version = Some(i.base_version.clone());
             info.base_assets = i.base_assets.clone();
             info.profile_pin = i.profile_pin.clone();
+            attach_vm_profile_status(&mut info, i.profile_pin.as_ref(), &profile_catalog);
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
             attach_list_live_metrics_placeholder(&mut info, &i.id);
@@ -2246,6 +2365,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
                 info.version = Some(entry.base_version.clone());
                 info.base_assets = entry.base_assets.clone();
                 info.profile_pin = entry.profile_pin.clone();
+                attach_vm_profile_status(&mut info, entry.profile_pin.as_ref(), &profile_catalog);
                 info.forked_from = entry.forked_from.clone();
                 info.description = entry.description.clone();
                 if entry.defunct {
@@ -2381,6 +2501,7 @@ async fn handle_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<SandboxInfo>, AppError> {
+    let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
     // Check running instances first
     {
         let (instance_data, session_dir) = {
@@ -2399,6 +2520,7 @@ async fn handle_info(
                     info.version = Some(i.base_version.clone());
                     info.base_assets = i.base_assets.clone();
                     info.profile_pin = i.profile_pin.clone();
+                    attach_vm_profile_status(&mut info, i.profile_pin.as_ref(), &profile_catalog);
                     info.forked_from = i.forked_from.clone();
                     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
                     (Some(info), Some(i.session_dir.clone()))
@@ -2430,6 +2552,7 @@ async fn handle_info(
             info.version = Some(entry.base_version.clone());
             info.base_assets = entry.base_assets.clone();
             info.profile_pin = entry.profile_pin.clone();
+            attach_vm_profile_status(&mut info, entry.profile_pin.as_ref(), &profile_catalog);
             info.forked_from = entry.forked_from.clone();
             info.description = entry.description.clone();
             if entry.defunct {
@@ -3729,6 +3852,7 @@ async fn handle_reconcile_profile_catalog(
                 ));
             }
         };
+    persist_profile_catalog_manifest(&settings, &body.manifest_json)?;
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
     for profile_id in manifest.profiles.keys() {

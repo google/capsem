@@ -97,6 +97,10 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_status: Option<VmProfileStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
@@ -149,6 +153,8 @@ impl SandboxInfo {
             size_bytes: None,
             vm_id: None,
             profile_id: None,
+            profile_revision: None,
+            profile_status: None,
             user_id: None,
             created_at: None,
             uptime_secs: None,
@@ -165,6 +171,17 @@ impl SandboxInfo {
             last_error: None,
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VmProfileStatus {
+    Current,
+    NeedsUpdate,
+    Deprecated,
+    Revoked,
+    Corrupted,
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
