@@ -3253,8 +3253,8 @@ fn normalize_header_names(headers: Vec<String>) -> Vec<String> {
 
 fn map_policy_callback(
     callback: &str,
-) -> Result<capsem_core::net::policy_config::PolicyCallback, String> {
-    use capsem_core::net::policy_config::PolicyCallback;
+) -> Result<capsem_core::net::policy_v2::PolicyCallback, String> {
+    use capsem_core::net::policy_v2::PolicyCallback;
     match callback {
         "mcp.request" => Ok(PolicyCallback::McpRequest),
         "mcp.response" => Ok(PolicyCallback::McpResponse),
@@ -3273,8 +3273,8 @@ fn map_policy_callback(
 
 fn map_policy_decision(
     decision: capsem_core::settings_profiles::RuleDecision,
-) -> capsem_core::net::policy_config::PolicyDecisionKind {
-    use capsem_core::net::policy_config::PolicyDecisionKind;
+) -> capsem_core::net::policy_v2::PolicyDecisionKind {
+    use capsem_core::net::policy_v2::PolicyDecisionKind;
     match decision {
         capsem_core::settings_profiles::RuleDecision::Allow => PolicyDecisionKind::Allow,
         capsem_core::settings_profiles::RuleDecision::Ask => PolicyDecisionKind::Ask,
@@ -3290,17 +3290,17 @@ fn validate_policy_rule_update(
 ) -> Result<(), String> {
     let callback = map_policy_callback(&update.callback)?;
     let callback_type = match callback {
-        capsem_core::net::policy_config::PolicyCallback::McpRequest
-        | capsem_core::net::policy_config::PolicyCallback::McpResponse => "mcp",
-        capsem_core::net::policy_config::PolicyCallback::HttpRequest
-        | capsem_core::net::policy_config::PolicyCallback::HttpResponse => "http",
-        capsem_core::net::policy_config::PolicyCallback::DnsQuery
-        | capsem_core::net::policy_config::PolicyCallback::DnsResponse => "dns",
-        capsem_core::net::policy_config::PolicyCallback::ModelRequest
-        | capsem_core::net::policy_config::PolicyCallback::ModelResponse
-        | capsem_core::net::policy_config::PolicyCallback::ModelToolCall
-        | capsem_core::net::policy_config::PolicyCallback::ModelToolResponse => "model",
-        capsem_core::net::policy_config::PolicyCallback::HookDecision => "hook",
+        capsem_core::net::policy_v2::PolicyCallback::McpRequest
+        | capsem_core::net::policy_v2::PolicyCallback::McpResponse => "mcp",
+        capsem_core::net::policy_v2::PolicyCallback::HttpRequest
+        | capsem_core::net::policy_v2::PolicyCallback::HttpResponse => "http",
+        capsem_core::net::policy_v2::PolicyCallback::DnsQuery
+        | capsem_core::net::policy_v2::PolicyCallback::DnsResponse => "dns",
+        capsem_core::net::policy_v2::PolicyCallback::ModelRequest
+        | capsem_core::net::policy_v2::PolicyCallback::ModelResponse
+        | capsem_core::net::policy_v2::PolicyCallback::ModelToolCall
+        | capsem_core::net::policy_v2::PolicyCallback::ModelToolResponse => "model",
+        capsem_core::net::policy_v2::PolicyCallback::HookDecision => "hook",
     };
     if callback_type != rule_type {
         return Err(format!(
@@ -3315,7 +3315,7 @@ fn validate_policy_rule_update(
         return Ok(());
     }
 
-    let policy_rule = capsem_core::net::policy_config::PolicyRuleConfig {
+    let policy_rule = capsem_core::net::policy_v2::PolicyRuleConfig {
         on: callback,
         condition: update.condition.clone(),
         decision: map_policy_decision(update.decision),

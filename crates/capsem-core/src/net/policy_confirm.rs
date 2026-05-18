@@ -14,7 +14,7 @@ use capsem_proto::poll::RetryOpts;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::net::policy_config::PolicyCallback;
+use crate::net::policy_v2::PolicyCallback;
 use crate::poll::poll_until;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

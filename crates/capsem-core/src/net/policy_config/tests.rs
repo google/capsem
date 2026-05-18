@@ -20,6 +20,44 @@ fn guest_boot_config_types_are_not_reexported_from_policy_config() {
     );
 }
 
+#[test]
+fn policy_v2_runtime_call_sites_use_policy_v2_import_surface() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("capsem-core should live under crates/");
+    let runtime_files = [
+        "crates/capsem-core/src/net/policy_confirm.rs",
+        "crates/capsem-core/src/net/dns/server.rs",
+        "crates/capsem-core/src/net/mitm_proxy/mod.rs",
+        "crates/capsem-core/src/net/mitm_proxy/mcp_endpoint.rs",
+        "crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs",
+        "crates/capsem-core/src/net/mitm_proxy/policy_v2_http_hook.rs",
+        "crates/capsem-core/src/net/mitm_proxy/policy_v2_model.rs",
+        "crates/capsem-process/src/mcp_runtime.rs",
+        "crates/capsem-service/src/main.rs",
+    ];
+
+    for file in runtime_files {
+        let source = std::fs::read_to_string(repo_root.join(file))
+            .unwrap_or_else(|err| panic!("failed to read {file}: {err}"));
+        assert!(
+            !source.contains("net::policy_config::Policy")
+                && !source.contains("net::policy_config::{MatchedPolicyRule")
+                && !source.contains("net::policy_config::{Policy")
+                && !source.contains("net::policy_config::{\n    MatchedPolicyRule")
+                && !source.contains("net::policy_config::{\n    Policy")
+                && !source.contains("crate::net::policy_config::Policy")
+                && !source.contains("crate::net::policy_config::{MatchedPolicyRule")
+                && !source.contains("crate::net::policy_config::{Policy")
+                && !source.contains("crate::net::policy_config::{\n    MatchedPolicyRule")
+                && !source.contains("crate::net::policy_config::{\n    Policy"),
+            "{file} should import Policy V2 runtime types from net::policy_v2, not net::policy_config"
+        );
+    }
+}
+
 fn empty_file() -> SettingsFile {
     SettingsFile::default()
 }
@@ -5994,6 +6032,95 @@ priority = 10
         .expect("other github path should match broad allow");
     assert_eq!(hit.name, "allow_github");
     assert_eq!(hit.rule.decision, PolicyDecisionKind::Allow);
+}
+
+#[test]
+fn policy_v2_evaluates_http_response_body_headers_and_request_context() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.http.block_secret_json]
+on = "http.response"
+if = 'request.host == "api.openai.com" && response.status == "200" && response.headers.content_type.contains("application/json") && response.text.contains("response-secret")'
+decision = "block"
+priority = 10
+
+[policy.http.allow_other_openai]
+on = "http.response"
+if = 'request.host == "api.openai.com"'
+decision = "allow"
+priority = 20
+"#,
+    )
+    .unwrap();
+
+    let blocked = serde_json::json!({
+        "request": {
+            "host": "api.openai.com"
+        },
+        "response": {
+            "status": "200",
+            "headers": {
+                "content_type": "application/json; charset=utf-8"
+            },
+            "text": "{\"message\":\"response-secret\"}"
+        }
+    });
+    let hit = file
+        .policy
+        .find_matching_rule(PolicyCallback::HttpResponse, &blocked)
+        .unwrap()
+        .expect("secret JSON response should match block rule");
+    assert_eq!(hit.name, "block_secret_json");
+    assert_eq!(hit.rule.decision, PolicyDecisionKind::Block);
+
+    let clean = serde_json::json!({
+        "request": {
+            "host": "api.openai.com"
+        },
+        "response": {
+            "status": "200",
+            "headers": {
+                "content_type": "application/json; charset=utf-8"
+            },
+            "text": "{\"message\":\"safe\"}"
+        }
+    });
+    let hit = file
+        .policy
+        .find_matching_rule(PolicyCallback::HttpResponse, &clean)
+        .unwrap()
+        .expect("clean OpenAI response should match fallback allow");
+    assert_eq!(hit.name, "allow_other_openai");
+    assert_eq!(hit.rule.decision, PolicyDecisionKind::Allow);
+}
+
+#[test]
+fn policy_v2_http_response_header_rule_does_not_match_when_header_missing() {
+    let file: SettingsFile = toml::from_str(
+        r#"
+[policy.http.block_sensitive_download]
+on = "http.response"
+if = 'response.headers.content_disposition.contains("attachment") && response.text.contains("secret")'
+decision = "block"
+priority = 10
+"#,
+    )
+    .unwrap();
+
+    let subject = serde_json::json!({
+        "response": {
+            "status": "200",
+            "headers": {},
+            "text": "secret"
+        }
+    });
+    assert!(
+        file.policy
+            .find_matching_rule(PolicyCallback::HttpResponse, &subject)
+            .unwrap()
+            .is_none(),
+        "missing response headers must not satisfy string-helper CEL expressions"
+    );
 }
 
 #[test]

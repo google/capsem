@@ -7,8 +7,8 @@ use tokio::sync::RwLock;
 use crate::mcp::aggregator::AggregatorClient;
 use crate::mcp::policy::McpPolicy;
 use crate::mcp::types::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
-use crate::net::policy_config::PolicyConfig;
 use crate::net::policy_confirm::{Confirmer, PlaceholderConfirmer};
+use crate::net::policy_v2::PolicyConfig;
 
 const DEFAULT_MCP_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS: u64 = 300;

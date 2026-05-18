@@ -19,7 +19,7 @@ use super::events::{Event, EventKind, EventMask};
 use super::hooks::{Hook, HookCtx, HookOutcome, StopAction};
 use super::protocol::Protocol;
 use super::util::split_path_query;
-use crate::net::policy_config::{
+use crate::net::policy_v2::{
     MatchedPolicyRule, PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
     PolicySubject, PolicySubjectValue,
 };

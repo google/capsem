@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from capsem.builder.config import load_guest_config
+from capsem.builder.config import generate_defaults_json, load_guest_config
 from capsem.builder.docker import (
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
@@ -445,6 +445,49 @@ class TestGenerateBuildContext:
     def test_unknown_template_raises(self, real_config):
         with pytest.raises(ValueError, match="Unknown template"):
             generate_build_context("Dockerfile.unknown.j2", real_config, "arm64")
+
+
+class TestGuestConfigBuildAndDefaultsAlignment:
+    """Image build context and defaults.json must come from the same config."""
+
+    def test_enabled_ai_cli_installs_have_matching_defaults(self, real_config):
+        ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
+        defaults = generate_defaults_json(real_config)
+
+        installed_packages = set(ctx["npm_packages"]) | set(ctx["curl_installs"])
+        for key, provider in real_config.ai_providers.items():
+            if not provider.enabled:
+                continue
+            section = defaults["settings"]["ai"][key]
+            assert section["allow"]["default"] is provider.enabled
+            assert section["api_key"]["meta"]["env_vars"] == provider.api_key.env_vars
+            assert section["domains"]["default"] == ", ".join(provider.network.domains)
+            if provider.install:
+                assert set(provider.install.packages).issubset(installed_packages), (
+                    f"{key} install packages should be in the rootfs build context"
+                )
+
+    def test_web_registry_defaults_match_real_guest_security_config(self, real_config):
+        defaults = generate_defaults_json(real_config)
+        registries = defaults["settings"]["security"]["services"]["registry"]
+
+        for key, service in real_config.web_security.registry.items():
+            section = registries[key]
+            assert section["allow"]["default"] is service.enabled
+            assert section["allow"]["meta"]["domains"] == service.domains
+            assert section["domains"]["default"] == ", ".join(service.domains)
+
+    def test_vm_resource_defaults_match_real_guest_resource_config(self, real_config):
+        defaults = generate_defaults_json(real_config)
+        resources = defaults["settings"]["vm"]["resources"]
+        source = real_config.vm_resources
+
+        assert resources["cpu_count"]["default"] == source.cpu_count
+        assert resources["ram_gb"]["default"] == source.ram_gb
+        assert resources["scratch_disk_size_gb"]["default"] == source.scratch_disk_size_gb
+        assert resources["log_bodies"]["default"] is source.log_bodies
+        assert resources["max_body_capture"]["default"] == source.max_body_capture
+        assert resources["max_sessions"]["default"] == source.max_sessions
 
 
 # ---------------------------------------------------------------------------

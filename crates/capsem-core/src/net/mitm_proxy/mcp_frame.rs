@@ -20,7 +20,7 @@ use crate::mcp::policy::{
     McpDecisionRule, McpDecisionRuleAction, McpDecisionRuleMatch, McpPolicy, ToolDecision,
 };
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
-use crate::net::policy_config::{
+use crate::net::policy_v2::{
     PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig, PolicySubject,
     PolicySubjectValue,
 };

@@ -70,7 +70,7 @@ pub struct MitmProxyConfig {
     /// Live Policy V2 config shared with HTTP, DNS, MCP, model, and
     /// hook enforcement. Held here for model request rules, which need
     /// the request body before upstream dispatch.
-    pub policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>>,
+    pub policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_v2::PolicyConfig>>>,
     pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,
@@ -131,14 +131,14 @@ pub fn make_production_pipeline(
     telemetry: Arc<telemetry_hook::TelemetryDeps>,
 ) -> Arc<pipeline::Pipeline> {
     let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        crate::net::policy_config::PolicyConfig::default(),
+        crate::net::policy_v2::PolicyConfig::default(),
     )));
     make_production_pipeline_with_policy_v2(policy, policy_v2, telemetry)
 }
 
 pub fn make_production_pipeline_with_policy_v2(
     policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
-    policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>>,
+    policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_v2::PolicyConfig>>>,
     telemetry: Arc<telemetry_hook::TelemetryDeps>,
 ) -> Arc<pipeline::Pipeline> {
     let p = pipeline::Pipeline::builder()

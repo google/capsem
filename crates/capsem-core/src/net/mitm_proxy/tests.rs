@@ -1152,6 +1152,15 @@ async fn spawn_http_fixture_response_owned(
     headers: Vec<(&'static str, &'static str)>,
     body: String,
 ) -> (u16, tokio::task::JoinHandle<String>) {
+    spawn_http_fixture_response_bytes(status, reason, headers, body.into_bytes()).await
+}
+
+async fn spawn_http_fixture_response_bytes(
+    status: u16,
+    reason: &'static str,
+    headers: Vec<(&'static str, &'static str)>,
+    body: Vec<u8>,
+) -> (u16, tokio::task::JoinHandle<String>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1170,14 +1179,24 @@ async fn spawn_http_fixture_response_owned(
             response.push_str("\r\n");
         }
         response.push_str(&format!(
-            "content-length: {}\r\nconnection: close\r\n\r\n{}",
-            body.len(),
-            body
+            "content-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
         ));
         stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(&body).await.unwrap();
         request
     });
     (port, task)
+}
+
+fn gzip_bytes(body: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(body).unwrap();
+    encoder.finish().unwrap()
 }
 
 async fn spawn_http_no_touch_fixture() -> (u16, tokio::task::JoinHandle<()>) {
@@ -1786,6 +1805,73 @@ reason = "Do not deliver secret model text"
             .as_deref()
             .is_none_or(|text| !text.contains("response-secret")),
         "blocked model response must not populate secret text_content"
+    );
+}
+
+#[tokio::test]
+async fn policy_v2_model_response_block_decodes_gzip_before_guest_delivery() {
+    let compressed = gzip_bytes(openai_sse_text_response("gpt-4o", "hello gzip-secret").as_bytes());
+    let (port, upstream_task) = spawn_http_fixture_response_bytes(
+        200,
+        "OK",
+        vec![
+            ("content-type", "text/event-stream"),
+            ("content-encoding", "gzip"),
+        ],
+        compressed,
+    )
+    .await;
+    let config = make_config_with_policy_v2(
+        allow_local_http_policy(port),
+        policy_v2_from_toml(
+            r#"
+[policy.model.block_gzip_secret_response]
+on = "model.response"
+if = 'provider == "openai" && model == "gpt-4o" && response.text.contains("gzip-secret")'
+decision = "block"
+priority = 10
+reason = "Do not deliver compressed secret model text"
+"#,
+        ),
+    );
+    let (mut sender, proxy_task, _conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
+            .await;
+
+    let (status, response_body) =
+        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "safe").await;
+    assert_eq!(status, 403);
+    assert!(response_body.contains("policy.model.block_gzip_secret_response"));
+    assert!(
+        !response_body.contains("gzip-secret"),
+        "gzip-compressed blocked model response must not reach the guest"
+    );
+    drop(sender);
+    let _ = proxy_task.await;
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.contains("gpt-4o"),
+        "response policy should evaluate compressed bodies after upstream dispatch"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    assert_eq!(event.decision, Decision::Denied);
+    assert_eq!(event.status_code, Some(403));
+    assert_eq!(event.policy_action.as_deref(), Some("block"));
+    assert_eq!(
+        event.policy_rule.as_deref(),
+        Some("policy.model.block_gzip_secret_response")
+    );
+    assert!(
+        !event
+            .response_body_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains("gzip-secret"),
+        "blocked compressed response telemetry must not retain secret text"
     );
 }
 

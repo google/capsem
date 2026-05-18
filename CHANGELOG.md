@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added model Policy V2 `model.request` body rewrite support for
   `request.data` rules, forwarding only the rewritten bytes upstream and
   recording rewritten request previews in telemetry.
+- Added a `net::policy_v2` runtime import surface plus CEL, gzip model-response,
+  and builder config/defaults tests to keep Profile V2 policy enforcement and
+  image-generated settings aligned.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

@@ -16,11 +16,11 @@ use crate::net::ai_traffic::events;
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::ai_traffic::request_parser::{self, RequestMeta};
 use crate::net::parsers::sse_parser::SseParser;
-use crate::net::policy_config::{
+use crate::net::policy_confirm::{ConfirmArgs, Confirmer, Decision};
+use crate::net::policy_v2::{
     PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig, PolicySubject,
     PolicySubjectValue,
 };
-use crate::net::policy_confirm::{ConfirmArgs, Confirmer, Decision};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LastModelPolicyV2Decision {

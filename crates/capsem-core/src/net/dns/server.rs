@@ -40,7 +40,7 @@ use crate::net::parsers::dns_parser::{
     build_nxdomain, build_redirect_response, build_servfail, parse_query, DnsQuery,
 };
 use crate::net::policy::NetworkPolicy;
-use crate::net::policy_config::{
+use crate::net::policy_v2::{
     MatchedPolicyRule, PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
     PolicySubject, PolicySubjectValue,
 };

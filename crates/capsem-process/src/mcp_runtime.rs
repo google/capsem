@@ -8,7 +8,7 @@ use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
-use capsem_core::net::policy_config::{
+use capsem_core::net::policy_v2::{
     PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
 };
 use capsem_core::settings_profiles::{
