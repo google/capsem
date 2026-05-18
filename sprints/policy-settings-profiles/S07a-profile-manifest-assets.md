@@ -455,9 +455,15 @@ This sprint creates the contract consumed by later sprints:
 
 ## Tasks
 
-- [ ] Design manifest v3 profile catalog schema.
-- [ ] Add parser/validator tests for profile ids, immutable revisions, statuses,
+- [~] Design manifest v3 profile catalog schema. Initial
+      `capsem-core::profile_manifest::ManifestV3` parser/model landed for
+      profile ids, immutable revisions, `ProfileRevisionStatus`, payload
+      locations, and canonical profile hashes.
+- [~] Add parser/validator tests for profile ids, immutable revisions, statuses,
       profile payload locations, hashes, signatures, and binary compatibility.
+      Initial focused tests cover status enum acceptance/rejection, active-only
+      current revisions, missing current revision, bad hash, and format
+      fail-closed behavior.
 - [ ] Commit `schemas/capsem.profile.v2.schema.json` as JSON Schema Draft
       2020-12, with closed-field validation and golden valid/invalid fixtures.
 - [ ] Add Rust and Python validation paths that parse TOML to the JSON-compatible
@@ -489,7 +495,9 @@ This sprint creates the contract consumed by later sprints:
 
 ## Coverage Ledger
 
-- Unit/contract: manifest v3 parser/validator, JSON Schema Draft 2020-12
+- Unit/contract: initial manifest v3 parser/status validator landed with
+  `cargo test -p capsem-core profile_manifest` (9 tests passed). Remaining:
+  JSON Schema Draft 2020-12
   validation for `capsem.profile.v2`, Pydantic `validate_json()` /
   `model_dump_json()` fixture parity for Python admin models, valid/invalid
   schema fixture parity across Rust and Python validators, profile package/tool

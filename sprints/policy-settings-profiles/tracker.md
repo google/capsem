@@ -63,10 +63,10 @@ a valid claim -- mark it `[ ]` instead.
   collisions across locked roots and selected-profile settings saves.
   Rules create/delete, confirm listing, skills, profile-backed VM create, and
   full route proof remain open.
-14. [ ] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
-    -- signed manifest becomes the profile catalog; profiles gain package/tool
-    contracts and asset declarations; VM create pins profile revision and
-    verified asset hashes.
+14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
+    -- started. Typed manifest v3 profile catalog/status parser landed in
+    `capsem-core::profile_manifest`; remaining work adds package/tool
+    contracts, asset declarations, first-use download, retention, and VM pins.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
