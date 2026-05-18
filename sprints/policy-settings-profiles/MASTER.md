@@ -267,7 +267,8 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.
 - `cargo test -p capsem-core settings_profiles --lib` passed with 122 tests.
-- `cargo test -p capsem-core profile_manifest --lib` passed with 9 tests.
+- `cargo test -p capsem-core profile_manifest --lib` passed with 12 tests after
+  adding lifecycle gates and current/specific revision resolution.
 - `cargo test -p capsem-core --test profile_schema` passed with 6 tests.
 - `cargo test -p capsem-service` passed with 245 tests.
 - `cargo test -p capsem-process --no-run` passed.

@@ -31,6 +31,18 @@ impl ProfileRevisionStatus {
     pub fn can_be_current(self) -> bool {
         matches!(self, Self::Active)
     }
+
+    pub fn allows_install_or_update(self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    pub fn allows_new_vm(self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    pub fn allows_existing_vm(self) -> bool {
+        matches!(self, Self::Active | Self::Deprecated)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -68,6 +80,55 @@ impl ProfileManifest {
         }
         Ok(())
     }
+
+    pub fn current_revision(&self, profile_id: &str) -> Result<ResolvedProfileRevision<'_>> {
+        let (profile_id, profile) = self.profile_entry(profile_id)?;
+        let (revision, record) = profile
+            .revisions
+            .get_key_value(&profile.current_revision)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "current revision '{}' for profile '{}' not found",
+                    profile.current_revision,
+                    profile_id
+                )
+            })?;
+        Ok(ResolvedProfileRevision {
+            profile_id,
+            revision,
+            record,
+        })
+    }
+
+    pub fn revision(
+        &self,
+        profile_id: &str,
+        revision: &str,
+    ) -> Result<ResolvedProfileRevision<'_>> {
+        let (profile_id, profile) = self.profile_entry(profile_id)?;
+        let (revision, record) = profile.revisions.get_key_value(revision).ok_or_else(|| {
+            anyhow::anyhow!("revision '{revision}' for profile '{profile_id}' not found")
+        })?;
+        Ok(ResolvedProfileRevision {
+            profile_id,
+            revision,
+            record,
+        })
+    }
+
+    fn profile_entry(&self, profile_id: &str) -> Result<(&str, &ManifestProfile)> {
+        self.profiles
+            .get_key_value(profile_id)
+            .map(|(profile_id, profile)| (profile_id.as_str(), profile))
+            .ok_or_else(|| anyhow::anyhow!("profile '{profile_id}' not found"))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedProfileRevision<'a> {
+    pub profile_id: &'a str,
+    pub revision: &'a str,
+    pub record: &'a ManifestProfileRevision,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -235,6 +296,81 @@ mod tests {
         let manifest = ProfileManifest::from_json(&manifest_json("active")).unwrap();
         let revision = &manifest.profiles["everyday-work"].revisions["2026.0520.1"];
         assert_eq!(revision.status, ProfileRevisionStatus::Active);
+    }
+
+    #[test]
+    fn profile_revision_status_lifecycle_gates_are_explicit() {
+        assert!(ProfileRevisionStatus::Active.can_be_current());
+        assert!(ProfileRevisionStatus::Active.allows_install_or_update());
+        assert!(ProfileRevisionStatus::Active.allows_new_vm());
+        assert!(ProfileRevisionStatus::Active.allows_existing_vm());
+
+        assert!(!ProfileRevisionStatus::Deprecated.can_be_current());
+        assert!(!ProfileRevisionStatus::Deprecated.allows_install_or_update());
+        assert!(!ProfileRevisionStatus::Deprecated.allows_new_vm());
+        assert!(ProfileRevisionStatus::Deprecated.allows_existing_vm());
+
+        assert!(!ProfileRevisionStatus::Revoked.can_be_current());
+        assert!(!ProfileRevisionStatus::Revoked.allows_install_or_update());
+        assert!(!ProfileRevisionStatus::Revoked.allows_new_vm());
+        assert!(!ProfileRevisionStatus::Revoked.allows_existing_vm());
+    }
+
+    #[test]
+    fn profile_manifest_resolves_current_and_specific_revision_records() {
+        let json = format!(
+            r#"{{
+              "format": 1,
+              "profiles": {{
+                "everyday-work": {{
+                  "current_revision": "2026.0520.2",
+                  "revisions": {{
+                    "2026.0520.1": {{
+                      "status": "deprecated",
+                      "min_binary": "1.0.0",
+                      "profile_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.1/profile.toml",
+                      "profile_hash": "{HASH}",
+                      "profile_signature_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.1/profile.toml.minisig"
+                    }},
+                    "2026.0520.2": {{
+                      "status": "active",
+                      "min_binary": "1.0.0",
+                      "profile_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.2/profile.toml",
+                      "profile_hash": "{HASH}",
+                      "profile_signature_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.2/profile.toml.minisig"
+                    }}
+                  }}
+                }}
+              }}
+            }}"#
+        );
+        let manifest = ProfileManifest::from_json(&json).unwrap();
+
+        let current = manifest.current_revision("everyday-work").unwrap();
+        assert_eq!(current.profile_id, "everyday-work");
+        assert_eq!(current.revision, "2026.0520.2");
+        assert_eq!(current.record.status, ProfileRevisionStatus::Active);
+        assert!(current.record.status.allows_install_or_update());
+
+        let deprecated = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+        assert_eq!(deprecated.profile_id, "everyday-work");
+        assert_eq!(deprecated.revision, "2026.0520.1");
+        assert_eq!(deprecated.record.status, ProfileRevisionStatus::Deprecated);
+        assert!(deprecated.record.status.allows_existing_vm());
+        assert!(!deprecated.record.status.allows_new_vm());
+    }
+
+    #[test]
+    fn profile_manifest_resolution_reports_missing_profile_or_revision() {
+        let manifest = ProfileManifest::from_json(&manifest_json("active")).unwrap();
+
+        let missing_profile = manifest.current_revision("ghost").unwrap_err();
+        assert!(format!("{missing_profile:#}").contains("profile 'ghost' not found"));
+
+        let missing_revision = manifest
+            .revision("everyday-work", "2026.0520.0")
+            .unwrap_err();
+        assert!(format!("{missing_revision:#}").contains("revision '2026.0520.0'"));
     }
 
     #[test]

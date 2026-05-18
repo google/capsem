@@ -361,9 +361,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   S07 metrics proto foundation adds **36** focused `capsem-proto`
   IPC tests and **18** focused `capsem-process` IPC tests. S07a
   telemetry identity now has focused logger schema/writer/reader,
-  core env-resolution, and service serialization/enrichment tests. VM profile
-  pins add registry roundtrip, package-contract hash, API serialization, and
-  fork persistence coverage.
+  core env-resolution, and service serialization/enrichment tests. Profile
+  manifest lifecycle gates now have explicit `active` / `deprecated` /
+  `revoked` install/new-VM/existing-VM contract tests, plus current/specific
+  revision resolution tests. VM profile pins add registry roundtrip,
+  package-contract hash, API serialization, and fork persistence coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -416,6 +418,7 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `cargo test -p capsem-service` **107** + **140** passed;
   after VM profile pins, `cargo test -p capsem-service` **108** + **141**
   passed;
+  `cargo test -p capsem-core profile_manifest --lib` **12** passed;
   `cargo test -p capsem-core telemetry --lib` **31** passed;
   `cargo test -p capsem-process --no-run` passed; and
   `cargo test -p capsem-mcp-aggregator --no-run` passed.
