@@ -372,6 +372,69 @@ pub fn reconcile_absent_installed_profiles_from_manifest(
     Ok(outcomes)
 }
 
+pub fn installed_profile_asset_filenames(roots: &ProfileRootSettings) -> Result<BTreeSet<String>> {
+    roots.validate("profiles")?;
+    let mut filenames = BTreeSet::new();
+    for installed in list_installed_profile_revisions(roots)? {
+        let Some(corp_dir) = roots.corp_dirs.first() else {
+            break;
+        };
+        let payload_path = corp_dir
+            .join(".catalog")
+            .join("profiles")
+            .join(&installed.profile_id)
+            .join(&installed.revision)
+            .join("profile.json");
+        if !payload_path.exists() {
+            continue;
+        }
+        let payload = fs::read_to_string(&payload_path).map_err(|source| {
+            SettingsProfilesError::ReadFile {
+                path: payload_path.clone(),
+                details: source.to_string(),
+            }
+        })?;
+        let value = serde_json::from_str::<serde_json::Value>(&payload).map_err(|source| {
+            SettingsProfilesError::Parse {
+                kind: "installed profile payload",
+                details: source.to_string(),
+            }
+        })?;
+        collect_profile_payload_asset_filenames(&value, &mut filenames);
+    }
+    Ok(filenames)
+}
+
+fn collect_profile_payload_asset_filenames(
+    payload: &serde_json::Value,
+    filenames: &mut BTreeSet<String>,
+) {
+    let Some(assets_by_arch) = payload
+        .get("vm")
+        .and_then(|vm| vm.get("assets"))
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+    for assets in assets_by_arch.values() {
+        for (logical_name, key) in [
+            ("vmlinuz", "kernel"),
+            ("initrd.img", "initrd"),
+            ("rootfs.squashfs", "rootfs"),
+        ] {
+            let Some(hash) = assets
+                .get(key)
+                .and_then(|asset| asset.get("hash"))
+                .and_then(serde_json::Value::as_str)
+                .and_then(|hash| hash.strip_prefix("blake3:"))
+            else {
+                continue;
+            };
+            filenames.insert(crate::asset_manager::hash_filename(logical_name, hash));
+        }
+    }
+}
+
 pub fn install_verified_profile_payload(
     roots: &ProfileRootSettings,
     verified: &crate::profile_manifest::VerifiedProfilePayload,

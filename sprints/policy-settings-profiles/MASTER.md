@@ -209,6 +209,9 @@ Landed S07a foundation:
   launchable current state for installed profile ids missing from the signed
   manifest and reports `absent_removed`, while preserving archived payloads for
   the retention/VM-pin cleanup slice.
+- Profile-aware asset retention sources. Cleanup can now derive preservation
+  filenames from installed current profile payloads and persistent VM profile
+  pins before deleting hash-named assets.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.
@@ -233,7 +236,10 @@ Remaining S07a push order:
    sidecar; signed catalog install/update still needs to make revision
    mandatory from catalog records on every VM-create path.
 3. Retention and cleanup that preserve active/deprecated installed revisions,
-   in-progress downloads, and existing VM pins.
+   in-progress downloads, and existing VM pins. Retention filename extraction
+   has landed for installed current profile payloads and persistent VM profile
+   pins; production cleanup caller wiring and in-progress download/race
+   coverage remain.
 4. Explicit unsupported/unbound handling for pre-S07a registry records.
 5. Status/debug readiness for profile catalog state, installed revisions,
    package contracts, asset verification, VM pins, and drift/revocation.
@@ -321,6 +327,13 @@ Latest focused verification after the rescue/push transition:
   cleanup and CLI summary coverage.
 - `cargo test -p capsem-core --lib` passed with 1612 tests + 1 ignored after
   absent installed profile cleanup.
+- `cargo test -p capsem-core installed_profile_asset_filenames --lib` passed
+  with 2 tests, `cargo test -p capsem-core settings_profiles --lib` passed with
+  133 tests, and `cargo test -p capsem-service saved_vm_assets` passed with 2
+  tests after profile-aware asset retention sources.
+- `cargo test -p capsem-core --lib` passed with 1614 tests + 1 ignored and
+  `cargo test -p capsem-service` passed with 110 library tests + 145 service
+  tests after profile-aware asset retention sources.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

@@ -1536,6 +1536,68 @@ fn reconcile_absent_installed_profiles_removes_launchable_profile() {
 }
 
 #[test]
+fn installed_profile_asset_filenames_reads_current_payload_assets() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    fs::create_dir_all(record_dir.join("2026.0520.1")).unwrap();
+    fs::write(
+        record_dir.join("2026.0520.1").join("profile.json"),
+        include_str!("../../../../schemas/fixtures/profile-v2-valid.json"),
+    )
+    .unwrap();
+    fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+
+    let filenames = installed_profile_asset_filenames(&roots).unwrap();
+
+    assert!(filenames.contains("vmlinuz-aaaaaaaaaaaaaaaa"));
+    assert!(filenames.contains("initrd-bbbbbbbbbbbbbbbb.img"));
+    assert!(filenames.contains("rootfs-cccccccccccccccc.squashfs"));
+}
+
+#[test]
+fn installed_profile_asset_filenames_ignores_archived_payload_without_current_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+    let archived = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work")
+        .join("2026.0520.1");
+    fs::create_dir_all(&archived).unwrap();
+    fs::write(
+        archived.join("profile.json"),
+        include_str!("../../../../schemas/fixtures/profile-v2-valid.json"),
+    )
+    .unwrap();
+
+    let filenames = installed_profile_asset_filenames(&roots).unwrap();
+
+    assert!(filenames.is_empty());
+}
+
+#[test]
 fn user_profile_fork_from_builtin_profile() {
     let temp = tempfile::tempdir().unwrap();
     let base_dir = temp.path().join("base");

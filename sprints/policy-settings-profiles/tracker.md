@@ -386,7 +386,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   --manifest --pubkey [--json]`. Absent installed profile cleanup now has a
   core contract test for removing launchable current state while preserving the
   archived payload plus service-route coverage for the `absent_removed`
-  summary/outcome.
+  summary/outcome. Retention-source coverage now proves installed current
+  profile payloads emit hash-derived VM asset filenames, archived payloads
+  without `current.json` do not retain assets, persistent VM profile pins feed
+  saved-asset retention, and real cleanup preserves the combined profile+VM-pin
+  set while deleting an unreferenced hash-named asset.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -396,7 +400,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   profile root and installed revision payload storage, service API profile
   catalog reconcile install/revoke/absent-removal summaries, native
   CLI-to-service wiring for `profile reconcile-catalog`, `/setup/assets`
-  provenance, mitm_proxy integration test for model.request rewrite redaction.
+  provenance, profile-aware cleanup retention source composition, mitm_proxy
+  integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -457,6 +462,13 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   **108** + **145** passed and `cargo test -p capsem` **241** passed;
   `cargo test -p capsem-core --lib` **1612** passed / 0 failed / 1 ignored
   after absent installed profile cleanup;
+  after profile-aware asset retention sources, `cargo test -p capsem-core
+  installed_profile_asset_filenames --lib` **2** passed, `cargo test -p
+  capsem-core settings_profiles --lib` **133** passed, and `cargo test -p
+  capsem-service saved_vm_assets` **2** passed;
+  package gates after profile-aware asset retention sources: `cargo test -p
+  capsem-core --lib` **1614** passed / 0 failed / 1 ignored and `cargo test -p
+  capsem-service` **110** + **145** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;
