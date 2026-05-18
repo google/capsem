@@ -3442,6 +3442,96 @@ fn profile_presets_json(
     serde_json::Value::Array(presets)
 }
 
+fn profile_record_json(
+    record: &capsem_core::settings_profiles::ProfileRecord,
+) -> serde_json::Value {
+    json!({
+        "profile": record.profile,
+        "source": record.source.as_str(),
+        "path": record.path.as_ref().map(|path| path.display().to_string()),
+        "locked": record.locked,
+    })
+}
+
+/// GET /profiles -- list typed Profile V2 profile records.
+async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
+    let settings_path = service_settings_path();
+    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("load {}: {e}", settings_path.display()),
+            )
+        })?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+
+    let mut profiles = catalog.list().map(profile_record_json).collect::<Vec<_>>();
+    profiles.sort_by(|left, right| {
+        left["profile"]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["profile"]["id"].as_str().unwrap_or_default())
+    });
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "default_profile": settings.profiles.default_profile,
+        "profiles": profiles,
+    })))
+}
+
+/// GET /profiles/{id} -- fetch one typed Profile V2 profile record.
+async fn handle_get_profile(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+    let settings_path = service_settings_path();
+    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("load {}: {e}", settings_path.display()),
+            )
+        })?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let record = catalog
+        .get(&id)
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("profile '{id}' not found")))?;
+
+    Ok(Json(profile_record_json(record)))
+}
+
+/// GET /profiles/{id}/effective -- resolve one profile to VM-effective settings.
+async fn handle_resolve_profile(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings_path = service_settings_path();
+    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("load {}: {e}", settings_path.display()),
+            )
+        })?;
+    let (effective, trace) =
+        capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+            &settings,
+            Some(&id),
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("resolve effective profile '{id}': {e}"),
+            )
+        })?;
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "profile_id": effective.profile_id,
+        "effective": effective,
+        "resolver_trace": trace,
+    })))
+}
+
 fn settings_response_json() -> serde_json::Value {
     match load_service_profiles_state() {
         Ok((settings, catalog, effective, trace)) => {
@@ -5934,6 +6024,9 @@ async fn main() -> Result<()> {
         .route("/settings/presets/{id}", post(handle_select_profile_preset))
         .route("/settings/lint", post(handle_lint_config))
         .route("/settings/validate-key", post(handle_validate_key))
+        .route("/profiles", get(handle_list_profiles))
+        .route("/profiles/{id}", get(handle_get_profile))
+        .route("/profiles/{id}/effective", get(handle_resolve_profile))
         .route("/setup/state", get(handle_get_setup_state))
         .route("/setup/detect", get(handle_detect_host_config))
         .route("/setup/complete", post(handle_complete_onboarding))

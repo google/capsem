@@ -19,7 +19,8 @@ Add the S07/S12 foundational metrics IPC contract:
 
 ## Later S07 Slices
 
-- Profile list/get/create/fork/update/delete/resolve route group.
+- Profile list/get/create/fork/update/delete/resolve route group. The first
+  route slice is read-only list/get/resolve.
 - Dedicated Rules API list/get/add/remove/evaluate route group.
 - Confirm pending listing shape, leaving resolution to S15.
 - Skills list/add/delete route group.
@@ -32,6 +33,17 @@ Add the S07/S12 foundational metrics IPC contract:
 - Service/process code compiles with the new variants.
 - Changelog and Profile V2 trackers name the partial S07 progress and remaining
   release holds.
+
+## Second Slice
+
+Add read-only service profile routes:
+
+- `GET /profiles`
+- `GET /profiles/{id}`
+- `GET /profiles/{id}/effective`
+
+This gives clients a stable discovery/resolve API before S07 mutation routes
+land.
 
 ## Testing Proof Matrix
 

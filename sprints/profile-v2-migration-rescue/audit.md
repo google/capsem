@@ -221,9 +221,13 @@ Landed:
   `ServiceToProcess::GetMetricsSnapshot` and
   `ProcessToService::MetricsSnapshot` IPC variants; `capsem-process`
   can return a process-owned default snapshot until S12's accumulator lands.
+- Dedicated read-only profile routes exist for list/get/resolve:
+  `GET /profiles`, `GET /profiles/{id}`, and
+  `GET /profiles/{id}/effective`.
 
 Gaps:
-- No dedicated profile list/get/create/fork/update/delete/resolve route group.
+- Dedicated profile mutation routes are still missing:
+  create/fork/update/delete.
 - No dedicated skills list/add/delete route group.
 - No dedicated Rules API (`GET /rules`, `POST /rules`,
   `POST /rules/evaluate`, etc.).

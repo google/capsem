@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being treated as Profile V2 runtime authority.
 - Added the first S07 UDS foundation: typed VM metrics snapshot structs plus
   service/process IPC request and response variants for live metrics.
+- Added read-only Profile V2 UDS profile routes for listing profiles, fetching
+  a profile record, and resolving VM-effective settings with resolver trace.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

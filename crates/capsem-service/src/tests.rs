@@ -2550,6 +2550,84 @@ async fn handle_get_presets_returns_list() {
 }
 
 #[tokio::test]
+async fn handle_list_profiles_returns_catalog_with_default_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_list_profiles().await.unwrap();
+    assert_eq!(
+        val["default_profile"],
+        serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+    );
+    let profiles = val["profiles"].as_array().expect("profiles array");
+    assert!(
+        profiles.iter().any(|profile| {
+            profile["profile"]["id"]
+                == serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+        }),
+        "catalog should include the selected everyday-work profile"
+    );
+}
+
+#[tokio::test]
+async fn handle_get_profile_returns_profile_record() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_get_profile(Path(
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string(),
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        val["profile"]["id"],
+        serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+    );
+    assert!(val["source"].is_string());
+    assert!(val["locked"].is_boolean());
+}
+
+#[tokio::test]
+async fn handle_get_profile_returns_not_found_for_unknown_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let err = handle_get_profile(Path("missing-profile".to_string()))
+        .await
+        .expect_err("unknown profile should return typed not-found error");
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err.1.contains("missing-profile"));
+}
+
+#[tokio::test]
+async fn handle_resolve_profile_returns_effective_settings_and_trace() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_resolve_profile(Path(
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string(),
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        val["profile_id"],
+        serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+    );
+    assert_eq!(
+        val["effective"]["profile_id"],
+        serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+    );
+    assert!(val["resolver_trace"]["events"].is_array());
+}
+
+#[tokio::test]
 async fn handle_lint_config_returns_array() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
