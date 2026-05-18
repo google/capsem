@@ -96,7 +96,9 @@ for the rule engine that do not need a VM.
 - Unit/contract: request/response shape tests for every route
   (settings, profiles, profile catalog/revisions, profile package/tool contract,
   profile asset readiness, VM create profile selection, MCP, skills,
-  **rules list/get/add/remove/evaluate**, provenance, typed errors).
+  **rules list/get/add/remove/evaluate**, provenance, typed errors). Profile
+  catalog errors must distinguish revoked, deprecated, removed, stale catalog,
+  incompatible binary, unsupported arch, and verification failure.
 - Functional: UDS CRUD and resolve tests, including a roundtrip that
   stages a rule via `POST /rules`, evaluates a synthetic subject via
   `POST /rules/evaluate`, and asserts the same `matched_rule_id`
@@ -104,8 +106,10 @@ for the rule engine that do not need a VM.
   revision and pinned asset hashes are echoed.
 - Adversarial: invalid payloads, locked mutations (built-in rule
   delete attempt, profile lock), revoked profile selection, unknown profile
-  revision, incompatible binary, asset readiness failure, concurrent updates,
-  oversize rule bodies, condition strings that fail closed at parse time.
+  revision, incompatible binary, stale catalog rollback rejection, unsupported
+  arch, asset readiness failure, interrupted first-use download, concurrent
+  duplicate downloads, concurrent updates, oversize rule bodies, condition
+  strings that fail closed at parse time.
 - E2E/VM: service-level create/fork/delete profile proof and service-level
   profile-backed VM create. **Rules
   API end-to-end** is the prerequisite that un-defers the

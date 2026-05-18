@@ -32,12 +32,18 @@ state and profile-backed VM creation.
 ## Coverage Ledger
 
 - Unit/contract: HTTP response shape tests (incl. the Rules API
-  routes; assert the typed-error envelope matches UDS).
+  routes; assert the typed-error envelope matches UDS). Profile catalog,
+  revision status, asset readiness, download progress, and VM pin payloads must
+  be contract-tested against the UDS shape.
 - Functional: HTTP CRUD and resolve tests; a Rules API roundtrip
   (`POST /rules` -> `POST /rules/evaluate` -> assert same
-  `matched_rule_id` comes back).
+  `matched_rule_id` comes back). HTTP VM create with `profile_id` starts a
+  profile-scoped first-use download and returns the resolved profile revision
+  and pinned asset hashes.
 - Adversarial: malformed requests, locked mutations (built-in rule
-  delete attempt, profile lock), gateway/service mismatch.
+  delete attempt, profile lock), gateway/service mismatch, revoked profile,
+  stale catalog, incompatible revision, interrupted download, and repeated
+  create requests while a download is already in progress.
 - E2E/VM: session created through HTTP uses selected profile revision, downloads
   missing verified assets on first use, and pins profile id/revision plus asset
   hashes before boot.
@@ -47,4 +53,6 @@ state and profile-backed VM creation.
   asset-readiness, and VM pin state.
 - Performance: not primary; `POST /rules/evaluate` must remain a
   read-only operation that does not block concurrent rule writes
-  (same `Arc<PolicyConfig>` snapshot contract as the UDS side).
+  (same `Arc<PolicyConfig>` snapshot contract as the UDS side). Profile catalog
+  and readiness endpoints use cached local state and do not perform network
+  fetches on list/status paths.

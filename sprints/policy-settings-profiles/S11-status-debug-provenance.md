@@ -20,6 +20,11 @@ binding visible.
 - [ ] Add selected/resolved package/tool contract and VM asset readiness.
 - [ ] Add persistent VM pin rendering: profile id/revision, package contract
       hash, pinned asset hashes, and drift/deprecated/revoked warnings.
+- [ ] Add chain-of-trust rendering for profile-backed VMs: manifest identity,
+      profile payload verification, package/tool contract, asset verification,
+      and VM pin status.
+- [ ] Add compatibility rendering for pre-S07a VMs so old registry entries are
+      visible as legacy/unbound instead of appearing to use the current profile.
 - Test status/debug against active service and VM-effective state.
 
 ## Implemented Slice
@@ -51,7 +56,8 @@ settings/profile load-error rendering.
 - Adversarial: credential value redaction is covered; missing profile roots, bad
   profile load errors are covered; missing profile roots and locked setting
   rendering remain; generated-rule ownership rendering is pending; revoked
-  profile and missing asset diagnostics must be covered.
+  profile, stale manifest rollback, interrupted download, unauthorized signing
+  key, legacy/unbound VM, and missing asset diagnostics must be covered.
 - E2E/VM: debug report explains launched session profile revision and pinned
   verified assets.
 - Telemetry: report includes audit-relevant settings/profile/rule summaries at

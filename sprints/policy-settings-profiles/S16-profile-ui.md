@@ -29,8 +29,10 @@ readiness, and profile-backed VM creation first-class in the UI.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states.
 - Adversarial: locked/forbidden profile actions, revoked profile, incompatible
-  profile revision, asset download failure.
+  profile revision, stale catalog rollback warning, asset download failure,
+  interrupted download retry, and legacy/unbound VM pin display.
 - E2E/VM: launch session with selected profile revision and verified assets.
 - Telemetry: UI links to status/debug provenance for profile revision and asset
   verification failures.
-- Performance: profile switching remains responsive.
+- Performance: profile switching remains responsive and does not trigger network
+  fetches or hash scans on every selection change.

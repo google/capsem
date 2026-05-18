@@ -124,6 +124,11 @@ the shipped schema must preserve these invariants:
 
 ## Trust Chain
 
+Reference chain: `Capsem binary trust root -> signed manifest -> profile
+id/revision/status -> verified profile payload -> package/tool contract + VM
+asset declarations -> downloaded assets verified by signature/hash -> VM pinned
+to profile revision + asset hashes -> boot`.
+
 ```mermaid
 flowchart TD
     A["Capsem binary<br/>manifest signing public key"] --> B["manifest.json + minisig"]
@@ -149,9 +154,59 @@ flowchart TD
     H --> O
 ```
 
+## Architectural Gap Audit
+
+These decisions must be closed before implementation can be called airtight:
+
+- **Manifest v2 to v3 transition.** Existing asset-only manifests must either
+  load through an explicit legacy/dev path or fail with a typed "manifest format
+  unsupported" error. Release mode must not silently reinterpret a v2 manifest
+  as an empty profile catalog.
+- **Rollback protection.** A previously installed profile revision must not be
+  replaced by an older revision unless an operator explicitly asks for rollback.
+  Store the last trusted manifest identity and reject stale signed catalogs when
+  they would downgrade an installed active profile.
+- **Key identity and rotation.** Define whether profile payload signatures use
+  the manifest signing key or a manifest-listed profile signing key id. If
+  separate keys exist, the manifest must bind key id, algorithm, and allowed
+  profile ids/revisions so a valid signature for one publisher cannot authorize
+  another profile.
+- **Canonical hash/signature formats.** Choose one canonical on-disk form
+  (`blake3:<hex>` etc.) and reject ambiguous or truncated hashes. Profile and
+  asset verification must happen before files move into the install location.
+- **Atomic and concurrent downloads.** First-use downloads must use temp files,
+  per-profile/per-asset locks, verification-before-rename, and retry-safe
+  cleanup. Two simultaneous VM creates for the same profile revision must share
+  the work or one must wait; they must not corrupt partial files.
+- **Per-arch asset declarations.** Profiles need asset declarations per
+  supported arch, not a single global URL set. Unsupported host arch fails
+  before download with a typed error.
+- **Profile inheritance for packages/assets.** Package/tool declarations and
+  `vm.assets` must have deterministic parent/child merge semantics, conflict
+  diagnostics, and provenance in effective settings.
+- **Existing VM migration.** VMs created before S07a need a compatibility
+  record: either a synthetic legacy profile revision pin or an explicit
+  "unbound legacy VM" status. Resume must not silently bind them to today's
+  catalog default.
+- **Revocation semantics.** Revoked revisions block new VM creation. Existing VM
+  behavior must be explicit: fail closed by default, or allow only with an
+  operator override that is logged and visible in status/debug.
+- **Asset retention races.** Cleanup must account for running VMs, persistent VM
+  pins, installed profile revisions, and downloads in progress. It must never
+  remove an asset between readiness check and process spawn.
+- **Dev/offline/corp modes.** Dev local assets and air-gapped corp deployments
+  need explicit modes, not accidental bypasses. Each mode must preserve the
+  trust-chain vocabulary in status/debug.
+- **In-guest package proof.** The package/tool contract is not proven by profile
+  parsing alone. Add a VM/doctor probe that verifies the booted guest contains
+  the declared package/tool versions and records mismatches as diagnostic
+  failures.
+
 ## Service / Resolver Scope
 
 - Add manifest parsing for profile catalog records and revision status.
+- Add manifest format migration/compatibility handling for existing v2
+  asset-only manifests.
 - Add profile payload download/install/update logic.
 - Extend profile schema and effective settings with packages/tools and VM asset
   declarations.
@@ -159,10 +214,13 @@ flowchart TD
   profile revision's assets are present. Missing assets download at first use.
 - Replace global current-asset selection for profile-backed VMs with
   profile-driven asset resolution.
+- Add atomic download, per-asset locking, verification-before-rename, retry, and
+  cancellation-safe partial-file cleanup.
 - Preserve the dev-mode local-asset path for developer builds, but make the
   release/install path profile-driven.
 - Extend persistent VM registry with `profile_id`, `profile_revision`, package
   contract hash, and pinned asset hashes.
+- Add existing-VM compatibility handling for pre-S07a VM records.
 - Add explicit rebase/migrate semantics later; do not silently move existing
   VMs across profile revisions in this sprint.
 
@@ -193,30 +251,46 @@ This sprint creates the contract consumed by later sprints:
 - [ ] Add profile payload install/update/delete/revoke logic from manifest
       records.
 - [ ] Add profile-driven asset resolution and first-use download.
+- [ ] Add atomic first-use download locking and verification-before-rename for
+      profile payloads and VM assets.
 - [ ] Add cleanup retention for installed profile revisions plus existing VM
       pins.
 - [ ] Add persistent VM profile/revision/package/asset pin metadata.
+- [ ] Add existing-VM compatibility handling for pre-S07a registry records.
 - [ ] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
       revoked profile fail-closed behavior.
+- [ ] Add concurrency tests for duplicate first-use downloads and cleanup while
+      VM creation is in progress.
+- [ ] Add in-guest package/tool contract verification through capsem-doctor or a
+      focused VM probe.
 - [ ] Update debug/status fixtures with profile catalog and asset readiness.
 
 ## Coverage Ledger
 
 - Unit/contract: manifest v3 parser/validator, profile package/tool parser,
-  asset declaration parser, resolver inheritance/override behavior.
+  asset declaration parser, resolver inheritance/override behavior, per-arch
+  asset selection, rollback/stale-manifest rejection, signature-key identity,
+  canonical hash format, and v2 manifest compatibility/fail-closed behavior.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
-  profile update.
+  profile update; pre-S07a VM registry entries render explicit compatibility
+  state instead of rebinding to the current default.
 - Adversarial: bad profile id/revision, downgrade attempts, bad signature/hash,
   incompatible binary, revoked profile, missing asset, asset hash mismatch,
-  malformed package version.
+  malformed package version, unsupported host arch, profile payload signed by an
+  unauthorized key, profile/asset URL scheme rejection, path traversal in
+  payload locations, interrupted downloads, and stale partial files.
 - E2E/VM or integration: service-level VM create with profile-backed first-use
-  asset download; resume an existing VM after catalog update.
+  asset download; resume an existing VM after catalog update; capsem-doctor or
+  equivalent in-guest probe verifies declared package/tool versions match the
+  booted VM.
 - Telemetry/observability: status/debug report catalog state, installed
-  revisions, package contract, asset readiness, and VM pin drift/revocation.
+  revisions, package contract, asset readiness, VM pin drift/revocation, last
+  manifest identity, verification failures, and operator override events.
 - Performance: first-use download is not on hot list/status paths; list/status
   must use cached readiness. Resolver overhead for package/tool inheritance is
-  bounded by existing profile-chain depth.
+  bounded by existing profile-chain depth. Concurrent readiness checks must not
+  perform duplicate network downloads for the same asset hash.
 - Missing/deferred: explicit VM rebase/migration UX is deferred until profile
   create/update surfaces are stable; this sprint only pins and reports.

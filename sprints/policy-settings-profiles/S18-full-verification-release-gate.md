@@ -20,12 +20,38 @@ Prove the redesign is releaseable.
 - Prove asset cleanup preserves files referenced by installed active/deprecated
   profile revisions and existing VM pins, and removes unreferenced
   removed/revoked profile assets.
+- Prove rollback and revocation behavior:
+  stale signed manifest cannot downgrade an installed active profile; revoked
+  profile revisions cannot create new VMs; existing revoked VM behavior matches
+  the S07a contract and is visible in status/debug.
+- Prove first-use download safety under concurrency:
+  two simultaneous VM creates for the same profile revision do not corrupt
+  partial files, duplicate network work unnecessarily, or race cleanup.
+- Prove package/tool contract at runtime:
+  a capsem-doctor or equivalent in-guest probe reads declared versions from the
+  selected profile revision and verifies the booted VM actually contains them.
+- Prove pre-S07a compatibility:
+  old persistent VM registry entries resume or fail with an explicit legacy
+  compatibility status; they never silently bind to the current catalog default.
 
 ## Coverage Ledger
 
-- Unit/contract: complete.
-- Functional: complete.
-- Adversarial: complete.
-- E2E/VM: complete.
-- Telemetry: complete.
-- Performance: complete or explicitly waived with rationale.
+- Unit/contract: complete for profile catalog schema, signatures/hashes,
+  lifecycle status, package/tool contracts, per-arch assets, rollback
+  protection, resolver inheritance, VM pin metadata, and API/CLI/UI shapes.
+- Functional: complete for manifest update, profile install/update/remove/
+  revoke, first-use asset download, VM create/resume/fork/delete, cleanup
+  retention, and explicit profile selection through UDS/HTTP/CLI/UI.
+- Adversarial: complete for malformed manifests/profiles, bad signatures,
+  truncated hashes, unauthorized profile signing key, unsupported arch,
+  incompatible binary, revoked/deprecated/removed revisions, partial downloads,
+  cleanup races, path traversal, bad URL schemes, and stale catalogs.
+- E2E/VM: complete for profile-backed VM boot, package/tool contract proof,
+  enforcement through VM-effective settings, resume after catalog update, and
+  cleanup safety with at least one persistent VM pin.
+- Telemetry: complete for debug/status/reporting of chain-of-trust state,
+  profile revision, package contract, asset readiness, verification failures,
+  VM pins, drift, revocation, and operator overrides.
+- Performance: complete or explicitly waived with rationale; list/status do not
+  hit network or perform expensive hash verification, and concurrent first-use
+  downloads are bounded and deduplicated.

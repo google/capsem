@@ -35,7 +35,9 @@ through CLI command families.
 
 - Unit/contract: parser tests; `capsem rules evaluate` parser tests
   (subject from `--subject path.json` vs stdin; rejects missing
-  callback).
+  callback); profile catalog/revision output golden tests; VM create parser
+  tests for `--profile`, `--profile-revision`, download progress, and
+  revoked/incompatible profile errors.
 - Functional: CLI to service integration tests; `capsem rules add`
   then `capsem rules evaluate` roundtrip; `capsem confirm list` +
   `capsem confirm accept <id>` resolves a real pending ask end to
@@ -46,9 +48,12 @@ through CLI command families.
   surfaces the typed `rule_is_builtin` error verbatim, accept on a
   non-existent ask id returns a typed error rather than hanging, revoked
   profile cannot be used for new VM create, incompatible profile revision
-  explains the binary compatibility failure.
+  explains the binary compatibility failure, interrupted first-use download
+  resumes or fails with a typed cleanup hint, and stale catalog/rollback
+  rejection is rendered without suggesting a destructive fix.
 - E2E/VM: CLI-created/profile-selected VM can launch a session after verified
-  first-use asset download.
+  first-use asset download; CLI status shows package/tool contract proof after
+  the VM probe runs.
 - Telemetry: CLI status/debug exposes active profile revision, package contract,
   asset readiness, and VM pin state.
 - Performance: not primary.

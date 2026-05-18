@@ -13,6 +13,25 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
 
 ## Scope
 
+- Publish the chain of trust as the reference diagram for every profile/catalog
+  doc:
+
+  ```mermaid
+  flowchart TD
+      A["Capsem binary<br/>manifest signing public key"] --> B["signed manifest"]
+      B --> C["profile id + revision + lifecycle status"]
+      C --> D["signed/hashed profile payload"]
+      D --> E["package/tool contract"]
+      D --> F["VM asset declarations"]
+      F --> G["downloaded assets verified by signature/hash"]
+      G --> H["VM pinned to profile revision + asset hashes"]
+      H --> I["boot with pinned verified assets"]
+  ```
+
+  Compact form: `binary trust root -> signed manifest -> profile
+  id/revision/status -> verified profile payload -> package/tool contract +
+  asset declarations -> verified downloaded assets -> VM profile/revision/asset
+  pin -> boot`.
 - Write a clear engine guide:
   - service settings versus VM/session profiles.
   - signed manifest as the profile catalog, including profile ids, immutable
@@ -85,6 +104,9 @@ Final paths should follow the actual docs tree present when this sprint starts.
 
 - [ ] Audit existing docs for v1 settings/policy language.
 - [ ] Define final docs information architecture and sidebar placement.
+- [ ] Add the chain-of-trust diagram above to the engine overview,
+      profile-catalog reference, corporate deployment guide, and security
+      overview, using the same vocabulary in every page.
 - [ ] Write engine overview with resolution/provenance diagrams.
 - [ ] Write rule-engine grammar reference:
       callbacks, fields, decisions, rewrite rules, priority defaults.
@@ -149,7 +171,8 @@ Final paths should follow the actual docs tree present when this sprint starts.
 - Functional: docs site builds successfully.
 - Adversarial: docs explicitly cover bad config, forbidden corp actions, bad
   remote policy endpoint, missing profile roots, bad profile/asset signatures,
-  revoked profiles, missing assets, and debug-report diagnosis.
+  revoked profiles, rollback/downgrade attempts, missing assets, concurrent
+  first-use downloads, cleanup retention races, and debug-report diagnosis.
 - E2E/VM: docs examples are checked against actual CLI/API once those sprints
   exist.
 - Telemetry: docs cover OpenTelemetry endpoint behavior, redaction, retry, and
