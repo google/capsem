@@ -15,16 +15,37 @@ is updated with the concrete branch and worktree path, verified by
   branch has actually landed. **Read those two commands before
   trusting any prose in this file** -- prose drifts; git history
   does not.
-- **`main` is way ahead.** As of the last check, `main` is **140
-  commits ahead** of this branch (and the branch is 84 commits
-  ahead of main on this sprint's work). `main` has been advancing
-  in directly overlapping areas (recent commits include
-  `3d85491 feat: add policy rules settings surface` and policy v2
-  hardening). The
-  [Post-S06 cleanup milestone](#post-s06-cleanup-milestone)
-  step 1 is the explicit reconciliation point: `git merge
-  origin/main` before any rename or further plan work, so the
-  conflict surface stays mechanical.
+- **Current git posture:** as of 2026-05-18, this branch is
+  `44 ahead / 0 behind` `origin/main` in this worktree. The rescue
+  reconciliation is closed for the active profile sprint; do not
+  resurrect the old "main is way ahead" warning unless `git
+  rev-list --left-right --count HEAD...origin/main` says it is true
+  again.
+
+## Operating Mode
+
+**Rescue is closed; push phase is active.** The S00-S06 audit and the
+S07/S07a rescue work brought the branch back to a coherent profile-v2
+contract:
+
+- V1 settings/defaults authority is removed from the active runtime path.
+- Profile V2 settings, resolver trace, Policy V2 runtime wiring, UDS profile
+  and rule routes, package/tool contracts, profile schema artifacts, Pydantic
+  admin contracts, and profile-driven VM asset readiness have landed.
+- Old asset-only manifests are no longer runtime authority. `assets.manifest.*`
+  service settings and setup-time signed asset manifest checks are removed.
+
+The tracker is now a push board, not a rescue board. Work proceeds in this
+order:
+
+1. Finish S07a's remaining contract gaps: catalog-driven profile payload
+   install/update/revoke, explicit VM profile/revision/package pins, retention,
+   unsupported/unbound handling for pre-S07a registry entries, and status/debug
+   readiness.
+2. Start S07b only after S07a's runtime contract is stable enough for
+   `capsem-admin` to generate and validate the same shapes.
+3. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
+   asset contract are no longer moving underneath them.
 
 ## Linear path
 
@@ -129,15 +150,14 @@ When this sprint starts, promote the inline brief above into
 
 ## Post-S06 cleanup milestone
 
-Originally planned to run before S07. The branch has already advanced into S07,
-so this remains explicit cleanup debt before release rather than a hidden
-side-task. When executed, keep the order:
+Originally planned to run before S07. The rescue merge/reconciliation portion is
+closed for the active branch: `HEAD...origin/main` is currently `44 ahead / 0
+behind`. The remaining cleanup debt is now S06c plus the final V2 naming
+collapse and release gate. When executed, keep the order:
 
-1. **`git merge origin/main`.** Closes the long-deferred merge debt
-   from the parallel hardening sprint. Runs before the rename so
-   the conflict surface stays mechanical (pre-rename identifiers
-   on both sides). As of the last check, `origin/main` was 29
-   commits ahead of this branch.
+1. **Confirm branch remains caught up.** Run `git rev-list --left-right --count
+   HEAD...origin/main`. If the right-hand count is non-zero, merge/reconcile
+   before rename work.
 2. **V2 rename across the crate.** With V1 ablated by S06c the
    rename collapses cleanly:
    - Files: `policy_v2_http_hook.rs` -> `policy_http_hook.rs`,

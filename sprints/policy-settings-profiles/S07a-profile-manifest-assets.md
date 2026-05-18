@@ -12,6 +12,34 @@ revisions, each with its own package/tool contract and VM asset locations,
 without coupling those assets to a single global "current image" or to the
 Capsem binary version.
 
+## Current Status
+
+Rescue is complete; this sprint is now in push mode.
+
+Landed:
+
+- Canonical `ProfileManifest` catalog parser using `format = 1`.
+- `active`, `deprecated`, and `revoked` status enum coverage with no `removed`.
+- Closed `capsem.profile.v2` JSON Schema artifact, Rust schema validation, and
+  Pydantic v2 admin models.
+- Typed profile package/tool contracts and per-arch VM asset declarations.
+- Profile-driven service VM asset resolution/download and boot-time hash
+  verification via `capsem-process`.
+- Removal of old asset-only manifest runtime authority, including
+  `assets.manifest.*` service settings and setup-time signed asset manifest
+  checks.
+
+Push order from here:
+
+1. Install/update/delete/revoke profile payloads from catalog records.
+2. Persist explicit VM `profile_id`, `profile_revision`, package contract hash,
+   and pinned asset metadata.
+3. Add retention/cleanup for installed profile revisions, in-progress
+   downloads, and existing VM pins.
+4. Surface unsupported/unbound state for pre-S07a VM records.
+5. Update status/debug with catalog state, installed revisions, package
+   contracts, asset verification, VM pins, drift, and revocation warnings.
+
 ## Product Contract
 
 - The Capsem binary owns the trust root: the baked-in manifest signing public

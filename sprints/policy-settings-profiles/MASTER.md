@@ -22,6 +22,20 @@ requirements. The old ad hoc settings registry, standalone `[mcp]` authority,
 and hand-authored `config/defaults.json` runtime/UI source are removed
 completely.
 
+## Execution Mode
+
+**Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
+is coherent again and sits `44 ahead / 0 behind` `origin/main` in this
+worktree. The tracker is now a push board:
+
+- Keep S07a as the active contract sprint until profile catalog install/update,
+  VM profile/revision/package pins, retention, and pre-S07a unsupported/unbound
+  handling are landed and tested.
+- Do not start S07b implementation until S07a's runtime contract is stable
+  enough for `capsem-admin` to consume it.
+- Do not resume HTTP/CLI/UI/docs lift work until the profile catalog and asset
+  readiness semantics are no longer moving underneath those surfaces.
+
 ## Product Contract
 
 - **Service settings are service/app-scoped.** They configure app/service
@@ -137,38 +151,35 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
 
 ## Current Active Work
 
-S06-pre is closed. Slices 6a-6e (Confirmer trait + placeholder, DNS,
-HTTP, MCP, model `ask -> confirm()` wiring), the adversarial backfill
-(redaction, bounds, concurrency, panic isolation, hang fail-closed
-via shared `RetryOpts` backoff), and [slice 6f - exit tests](tracker.md#slice-6f---exit-tests)
-(`confirm_with_backoff` contract tests, 200-way concurrent-load smoke,
-resolved-outcome attribution fix in the HTTP / DNS / model telemetry
-slots) have all landed. Carry-over from slice 6f:
+Current execution is in [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md).
+S07a is the contract sprint that lets later HTTP, CLI, UI, docs, and admin
+tooling land without reinterpreting profile semantics.
 
-- **Deferred:** capsem-doctor E2E ask probe per subsystem. Unblock
-  condition is now explicit: the
-  [S07 Rules API](S07-uds-service-api.md#rules-api) (list / get /
-  add / remove / evaluate) + the
-  [S15 resolve routes](S15-confirm-ux.md) (`GET /confirm/pending`
-  + `POST /confirm/pending/{id}/{accept|deny}`), surfaced over the
-  gateway by [S08](S08-http-gateway-api.md) and the CLI by
-  [S09](S09-cli-integration.md). Python probe shape once that
-  lands: `POST /rules` stages an ask rule, traffic from inside the
-  VM matches it, `GET /confirm/pending` picks up the queued ask,
-  `POST /confirm/pending/{id}/accept` resolves. The Rust-side
-  functional attribution test at the hook boundary covers the
-  contract until then.
-- **Slice 7+:** `policy_confirm_events` /
-  `policy_body_inspection_events` schemas, streaming body inspector,
-  instant propagation.
+Landed S07a foundation:
 
-Current execution is in [S07 - UDS service API](S07-uds-service-api.md).
-Before the gateway/UI layers harden the public contract, insert
-[S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md).
-S07a makes the signed manifest the profile catalog, extends profiles with the
-closed JSON Schema Draft 2020-12 `capsem.profile.v2` contract, guest
-package/tool contract, and per-arch asset declarations, and makes VM create pin
-the selected profile revision plus verified asset hashes.
+- Canonical signed profile catalog parser/model (`ProfileManifest`, format
+  `1`) with `active|deprecated|revoked` lifecycle status.
+- Closed Profile V2 JSON Schema Draft 2020-12 artifact plus Rust schema
+  validation helpers and Pydantic v2 admin models.
+- Typed package/tool contracts and per-arch VM asset declarations in profile
+  TOML, resolver merge, VM-effective serialization, and tests.
+- Profile-driven service asset readiness/download. Service startup resolves VM
+  assets from the selected profile, `capsem-process` verifies profile-provided
+  expected hashes, and old asset-only manifests are not runtime authority.
+- Legacy `assets.manifest.*` service settings and setup-time signed asset
+  manifest checks are removed.
+
+Remaining S07a push order:
+
+1. Catalog-driven profile payload install/update/delete/revoke from manifest
+   records, including `deprecated` and `revoked` fail-closed semantics.
+2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
+   pinned asset metadata.
+3. Retention and cleanup that preserve active/deprecated installed revisions,
+   in-progress downloads, and existing VM pins.
+4. Explicit unsupported/unbound handling for pre-S07a registry records.
+5. Status/debug readiness for profile catalog state, installed revisions,
+   package contracts, asset verification, VM pins, and drift/revocation.
 
 Immediately after S07a, [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md)
 turns those contracts into operator tooling: `capsem-admin` creates/validates
@@ -183,32 +194,29 @@ public-contract foundation for every later layer. HTTP, CLI, UI, docs, and
 release tooling must consume those shapes rather than inventing independent
 profile/asset/admin semantics.
 
-**Post-S06 cleanup debt remains visible.** The historical cleanup order is
-still tracked in [tracker.md](tracker.md#post-s06-cleanup-milestone): merge
-`origin/main`, perform the V2 rename, then run the full verification gate. The
-current branch has already advanced into S07, so do not let that cleanup debt
-disappear before release.
+**Deferred cleanup debt remains visible.** S06c legacy NetworkPolicy ablation
+and the final V2 naming collapse are still tracked in
+[tracker.md](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) and
+[tracker.md](tracker.md#post-s06-cleanup-milestone). They are not blockers for
+the immediate S07a push, but they remain release blockers.
 
-
-
-S00 is complete. A first typed replacement model now exists in
+Historical S00-S06 rescue context: a first typed replacement model now exists in
 `capsem-core::settings_profiles`: service settings, profile TOML, the built-in
 Everyday Work profile, security capabilities, service-scoped telemetry/remote
-policy settings, pre-S07a service-scoped asset/manifest/image locations, TOML
+policy settings, service-scoped asset/image locations, TOML
 credentials, profile discovery, user profile CRUD/fork, service settings file
 load/save, VM-effective settings with provenance and derived capability rules,
 VM-effective settings persistence, Rust-owned descriptor metadata, and
-debug-report settings/profile/asset summaries that redact credential values.
-S03 now also wires service startup through typed service settings for asset
-directory and manifest source resolution. `/setup/assets` and the debug report
-report the resolved asset, manifest, and image source/provenance so custom
-corporate locations are diagnosable. S06 runtime wiring now attaches
+debug-report settings/profile summaries that redact credential values.
+S03 wired service startup through typed service settings for asset/image
+location resolution; S07a later removed old asset manifest authority and made
+profile payloads own VM asset declarations. S06 runtime wiring now attaches
 `vm-effective-settings.toml` to session directories during sandbox provisioning
 and fork, preserving readable attachments and regenerating corrupt ones.
 `capsem-process` runtime consumption is now cut over to session-attached
 `vm-effective-settings.toml` for startup/reload policy assembly. Remaining v1
 runtime callers are primarily deeper core policy-engine surfaces tracked in
-S06-pre/S06/S06a/S06b. The S00-S06 accuracy audit is captured in
+S06c. The S00-S06 accuracy audit is captured in
 `sprints/policy-settings-profiles/S00-S06-audit-2026-05-14.md`.
 S04 design has now been closed on 2026-05-14 after locking canonical v1 rule
 format at `security.rules.<type>.<rule_name>` (priority default `1`) while
@@ -233,29 +241,15 @@ S06b is now explicit as a companion sprint: migrate legacy allowlist outputs
 into canonical `security.rules` and mark generated rules as managed/uneditable
 with source-setting labeling.
 
-Latest focused verification:
+Latest focused verification after the rescue/push transition:
 
-- `cargo test -p capsem-core settings_profiles` passed with 51 focused tests.
-- `cargo test -p capsem-service --lib debug_report::tests` passed with 5 tests.
-- `cargo test -p capsem-service startup_` passed with startup manifest tests.
-- `cargo test -p capsem-service
-  handle_asset_status_reports_resolved_asset_location_sources` passed.
-- `cargo test -p capsem-service ensure_vm_effective_settings_` passed with
-  attach/regenerate coverage.
-- `cargo test -p capsem-process` passed with 96 unit tests, including
-  vm-effective runtime policy conversion/reload behavior.
-- `cargo test -p capsem-service handle_` passed with 22 focused service
-  handler tests, including `/settings*` typed cutover coverage.
-- `cargo test -p capsem-service` passed outside the sandbox on 2026-05-14 with
-  95 lib tests and 113 service-bin tests.
-- `CAPSEM_ASSETS_DIR=/Users/elie/git/capsem/assets uv run python -m pytest
-  tests/capsem-service/test_svc_service_settings_runtime.py -v --tb=short`
-  passed with real service, real gateway, malformed-settings startup, and VM
-  boot/exec coverage for service.toml-owned assets.
-- `CAPSEM_ASSETS_DIR=/Users/elie/git/capsem/assets uv run python -m pytest
-  tests/capsem-service/test_svc_setup.py::TestSetupAssets
-  tests/capsem-service/test_svc_service_settings_runtime.py -v --tb=short`
-  passed with 5 targeted service setup/runtime tests.
+- `cargo test -p capsem-core settings_profiles --lib` passed with 122 tests.
+- `cargo test -p capsem-core profile_manifest --lib` passed with 9 tests.
+- `cargo test -p capsem-core --test profile_schema` passed with 6 tests.
+- `cargo test -p capsem-service` passed with 245 tests.
+- `cargo test -p capsem-process --no-run` passed.
+- `cargo test -p capsem setup::tests` passed with 16 tests.
+- `uv run python -m pytest tests/test_profiles.py` passed with 8 tests.
 
 S01 closed on 2026-05-14. Service/process runtime paths no longer depend on
 v1 settings-policy loaders for `/settings`, `/mcp`, VM defaults, or process
