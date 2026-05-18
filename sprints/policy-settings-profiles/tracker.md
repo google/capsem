@@ -67,18 +67,22 @@ a valid claim -- mark it `[ ]` instead.
     -- signed manifest becomes the profile catalog; profiles gain package/tool
     contracts and asset declarations; VM create pins profile revision and
     verified asset hashes.
-15. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
-16. [ ] [S09 - CLI integration](S09-cli-integration.md)
-17. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
-18. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
-19. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
-20. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
-21. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- rule editor component is consumed by S15.
-22. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
-23. [ ] [S16 - Profile UI](S16-profile-ui.md)
-24. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-25. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
-26. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
+    -- unify Python builder/manifest/profile tooling under released
+    `capsem-admin`; derive images from profiles; remove hand-edited image
+    settings as authority.
+16. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
+17. [ ] [S09 - CLI integration](S09-cli-integration.md)
+18. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+19. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+20. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
+21. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
+22. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- rule editor component is consumed by S15.
+23. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+24. [ ] [S16 - Profile UI](S16-profile-ui.md)
+25. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+26. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+27. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
@@ -175,6 +179,11 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   catalog and profiles must carry package/tool contracts plus VM asset
   declarations. S07a also defines first-use asset download, profile revision
   status, cleanup retention, and persistent VM profile/revision/asset pins.
+- **S07b is the admin tooling bridge.** The current Python image builder and
+  manifest scripts must be unified under a released `capsem-admin` package.
+  Profiles become the source of truth for image build plans and manifest
+  entries; hand-edited `guest/config` image settings are not carried forward as
+  compatibility input.
 - **S12 architecture: single source of truth.** The in-memory
   per-VM accumulator in `capsem-process` is the only runtime
   source; `session.db` is read on the data path exactly twice in

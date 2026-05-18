@@ -33,6 +33,17 @@ Prove the redesign is releaseable.
 - Prove pre-S07a compatibility:
   old persistent VM registry entries resume or fail with an explicit legacy
   compatibility status; they never silently bind to the current catalog default.
+- Prove `capsem-admin` packaging:
+  bootstrap and release packages install the admin CLI; packaged
+  `capsem-admin profile validate`, `manifest check --fast`, and `image verify`
+  run successfully from the installed layout.
+- Prove profile-derived images:
+  release image builds derive package/tool/image settings from selected
+  profiles, not hand-edited `guest/config`; tests fail if builder inputs bypass
+  the profile source of truth.
+- Prove manifest admin checks:
+  `capsem-admin manifest check --fast` validates remote profile/asset URLs with
+  HTTP `HEAD`, while `--download` downloads and verifies all referenced bytes.
 
 ## Coverage Ledger
 
@@ -41,14 +52,17 @@ Prove the redesign is releaseable.
   protection, resolver inheritance, VM pin metadata, and API/CLI/UI shapes.
 - Functional: complete for manifest update, profile install/update/remove/
   revoke, first-use asset download, VM create/resume/fork/delete, cleanup
-  retention, and explicit profile selection through UDS/HTTP/CLI/UI.
+  retention, explicit profile selection through UDS/HTTP/CLI/UI, and
+  `capsem-admin` profile/image/manifest workflows.
 - Adversarial: complete for malformed manifests/profiles, bad signatures,
   truncated hashes, unauthorized profile signing key, unsupported arch,
   incompatible binary, revoked/deprecated/removed revisions, partial downloads,
   cleanup races, path traversal, bad URL schemes, and stale catalogs.
 - E2E/VM: complete for profile-backed VM boot, package/tool contract proof,
   enforcement through VM-effective settings, resume after catalog update, and
-  cleanup safety with at least one persistent VM pin.
+  cleanup safety with at least one persistent VM pin. At least one release-gate
+  image is built or fixture-built from profile-derived inputs and verified in a
+  booted VM.
 - Telemetry: complete for debug/status/reporting of chain-of-trust state,
   profile revision, package contract, asset readiness, verification failures,
   VM pins, drift, revocation, and operator overrides.

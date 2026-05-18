@@ -38,6 +38,7 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
     revisions, lifecycle status, payload identity, and compatibility.
   - profile discovery/install/update across base/corp/user roots.
   - profile package/tool contracts and how they map to VM asset requirements.
+  - `capsem-admin` profile/image/manifest workflows for corp admins.
   - VM profile/revision/asset pinning and why existing VMs do not silently move
     when a profile updates.
   - VM-effective settings attachment.
@@ -62,6 +63,8 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
   - configuring remote policy decisions.
   - configuring signed profile catalogs, profile payload hosting, asset
     locations, and custom images.
+  - using `capsem-admin manifest check --fast` for HTTP HEAD reachability checks
+    and `capsem-admin manifest check --download` for full-byte verification.
   - configuring custom images/rootfs dependencies.
   - credential storage for cutover and brokerage/keychain roadmap.
 - Revamp existing docs pages:
@@ -90,6 +93,9 @@ Under `docs/src/content/docs/`, likely pages:
 - `configuration/profile-catalogs.md` - signed manifest profile catalog,
   revisions, lifecycle status, profile payload signatures, lazy download, and
   asset retention.
+- `configuration/capsem-admin.md` - corp-admin CLI workflows for profile
+  creation/validation, profile-derived image build/verify, manifest
+  generate/check/sign, bootstrap install, and release package verification.
 - `configuration/corporate-deployment.md` - corp roots, governance, locks,
   custom images, rollout patterns.
 - `security/profile-capabilities.md` - credential brokerage, PII, MCP RAG/tools,
@@ -116,6 +122,10 @@ Final paths should follow the actual docs tree present when this sprint starts.
       profile ids, revisions, active/deprecated/removed/revoked status, payload
       hashes/signatures, and compatibility.
 - [ ] Write profile package/tool contract and VM asset declaration reference.
+- [ ] Write `capsem-admin` reference:
+      profile create/validate, image plan/build/verify, manifest
+      generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
+      reports, bootstrap install, and packaged release usage.
 - [ ] Document profile-backed VM create semantics:
       profile id/revision selection, first-use download, verification,
       persistent VM pins, and no implicit migration on profile update.
@@ -123,6 +133,8 @@ Final paths should follow the actual docs tree present when this sprint starts.
 - [ ] Write telemetry and remote policy configuration guide.
 - [ ] Write custom manifest/profile payload/assets/images/rootfs dependency
   guide or update the existing page.
+- [ ] Remove docs that tell admins to edit `guest/config` image settings by hand
+      for release images; replace with profile-derived `capsem-admin` flows.
 - [ ] Update architecture pages to reflect service/profile/VM-effective
   settings.
 - [ ] Update security pages to reflect capabilities, credential brokerage,
@@ -167,14 +179,15 @@ Final paths should follow the actual docs tree present when this sprint starts.
 
 - Unit/contract: docs snippets match typed TOML structs, profile catalog
   manifest structs, package/tool declarations, asset declarations, rule grammar,
-  callback names, and CLI/API names.
+  callback names, `capsem-admin` commands, and CLI/API names.
 - Functional: docs site builds successfully.
 - Adversarial: docs explicitly cover bad config, forbidden corp actions, bad
   remote policy endpoint, missing profile roots, bad profile/asset signatures,
   revoked profiles, rollback/downgrade attempts, missing assets, concurrent
   first-use downloads, cleanup retention races, and debug-report diagnosis.
 - E2E/VM: docs examples are checked against actual CLI/API once those sprints
-  exist.
+  exist. `capsem-admin` docs examples are checked against the packaged CLI once
+  S07b lands.
 - Telemetry: docs cover OpenTelemetry endpoint behavior, redaction, retry, and
   failure semantics after S12.
 - Performance: docs mention profile discovery/remote policy timeout behavior

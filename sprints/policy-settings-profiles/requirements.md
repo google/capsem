@@ -29,6 +29,12 @@ revision. Debug output must explicitly show where the manifest came from, which
 profile revision is installed/selected, the package/tool contract, boot asset
 identity/readiness, telemetry endpoint, and remote decision endpoint.
 
+Corp/admin image and manifest tooling is packaged and exposed as
+`capsem-admin`. It is installed by bootstrap and included in release packages.
+Profiles are the source of truth for image package/tool contracts, generated
+image build plans, and manifest profile/asset entries. Hand-edited image
+settings are not supported as a compatibility input.
+
 ## Removal Contract
 
 Remove v1 completely:
@@ -88,6 +94,24 @@ Downloads are lazy: Capsem downloads profile-owned VM assets at first profile
 use or explicit prefetch, not unconditionally for every catalog profile. Cleanup
 must retain assets referenced by existing VM pins and by installed
 active/deprecated profile revisions.
+
+## Admin Tooling Contract
+
+The Python admin tooling must be a uv-managed package with a public
+`capsem-admin` CLI. Required flows:
+
+- create and validate profile payloads;
+- derive image build plans from profiles;
+- build or fixture-build profile-derived images;
+- verify image assets and in-guest package/tool versions against the profile;
+- generate, check, and sign profile manifests;
+- fast-check remote profile/assets with HTTP `HEAD` without downloading full
+  assets;
+- full-check remote profile/assets by downloading and verifying every referenced
+  payload/asset.
+
+The old model where release image settings are edited directly in builder config
+is removed. Generated config may exist as build output only.
 
 ## Security UI Contract
 

@@ -230,6 +230,9 @@ This sprint creates the contract consumed by later sprints:
 
 - S07 exposes installed/catalog profiles, revisions, status, packages/tools,
   asset readiness, and profile-backed VM create/fork options over UDS.
+- S07b provides `capsem-admin`, the corp/admin CLI that creates and validates
+  profiles, derives image build plans from profiles, verifies built images, and
+  generates/checks/signs manifests.
 - S08 mirrors that surface over HTTP and streams asset download/readiness
   progress for profile-backed VM creation.
 - S09 updates CLI profile and VM creation commands to select a profile
