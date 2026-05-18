@@ -364,9 +364,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   core env-resolution, and service serialization/enrichment tests. Profile
   manifest lifecycle gates now have explicit `active` / `deprecated` /
   `revoked` install/new-VM/existing-VM contract tests, plus current/specific
-  revision resolution tests in both Rust and Pydantic admin models. VM profile
-  pins add registry roundtrip, package-contract hash, API serialization, and
-  fork persistence coverage.
+  revision resolution tests in both Rust and Pydantic admin models. Core
+  install guards cover active-status, BLAKE3 payload hash, schema validation,
+  and manifest/payload id+revision parity. VM profile pins add registry
+  roundtrip, package-contract hash, API serialization, and fork persistence
+  coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -419,7 +421,7 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `cargo test -p capsem-service` **107** + **140** passed;
   after VM profile pins, `cargo test -p capsem-service` **108** + **141**
   passed;
-  `cargo test -p capsem-core profile_manifest --lib` **12** passed;
+  `cargo test -p capsem-core profile_manifest --lib` **16** passed;
   `uv run pytest tests/test_profiles.py -q` **10** passed;
   `cargo test -p capsem-core telemetry --lib` **31** passed;
   `cargo test -p capsem-process --no-run` passed; and

@@ -131,6 +131,71 @@ pub struct ResolvedProfileRevision<'a> {
     pub record: &'a ManifestProfileRevision,
 }
 
+#[derive(Debug, Clone)]
+pub struct VerifiedProfilePayload {
+    pub profile_id: String,
+    pub revision: String,
+    pub payload_hash: String,
+    pub value: serde_json::Value,
+}
+
+pub fn verify_installable_profile_payload(
+    revision: ResolvedProfileRevision<'_>,
+    payload_json: &str,
+) -> Result<VerifiedProfilePayload> {
+    if !revision.record.status.allows_install_or_update() {
+        bail!(
+            "profile '{}' revision '{}' has status '{}' and cannot be installed or updated",
+            revision.profile_id,
+            revision.revision,
+            revision.record.status.as_str()
+        );
+    }
+
+    let payload_hash = format!("blake3:{}", blake3::hash(payload_json.as_bytes()).to_hex());
+    if payload_hash != revision.record.profile_hash {
+        bail!(
+            "profile payload hash mismatch for '{}@{}' (expected {}, got {})",
+            revision.profile_id,
+            revision.revision,
+            revision.record.profile_hash,
+            payload_hash
+        );
+    }
+
+    let value = crate::profile_payload_schema::validate_profile_payload_v2_json(payload_json)
+        .map_err(|error| anyhow::anyhow!("profile payload schema validation failed: {error}"))?;
+    let payload_profile_id = value
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("profile payload id is missing"))?;
+    if payload_profile_id != revision.profile_id {
+        bail!(
+            "profile payload id '{}' does not match manifest profile '{}'",
+            payload_profile_id,
+            revision.profile_id
+        );
+    }
+    let payload_revision = value
+        .get("revision")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("profile payload revision is missing"))?;
+    if payload_revision != revision.revision {
+        bail!(
+            "profile payload revision '{}' does not match manifest revision '{}'",
+            payload_revision,
+            revision.revision
+        );
+    }
+
+    Ok(VerifiedProfilePayload {
+        profile_id: payload_profile_id.to_string(),
+        revision: payload_revision.to_string(),
+        payload_hash,
+        value,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestProfile {
@@ -267,6 +332,8 @@ mod tests {
     use super::*;
 
     const HASH: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const VALID_PROFILE_PAYLOAD: &str =
+        include_str!("../../../schemas/fixtures/profile-v2-valid.json");
 
     fn manifest_json(status: &str) -> String {
         format!(
@@ -283,6 +350,43 @@ mod tests {
                       "profile_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.1/profile.toml",
                       "profile_hash": "{HASH}",
                       "profile_signature_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.1/profile.toml.minisig"
+                    }}
+                  }}
+                }}
+              }}
+            }}"#
+        )
+    }
+
+    fn payload_hash(payload: &str) -> String {
+        format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex())
+    }
+
+    fn manifest_json_with_revision(
+        target_revision: &str,
+        status: &str,
+        profile_hash: &str,
+    ) -> String {
+        format!(
+            r#"{{
+              "format": 1,
+              "profiles": {{
+                "everyday-work": {{
+                  "current_revision": "2026.0520.2",
+                  "revisions": {{
+                    "{target_revision}": {{
+                      "status": "{status}",
+                      "min_binary": "1.0.0",
+                      "profile_url": "https://assets.capsem.dev/profiles/everyday-work/{target_revision}/profile.json",
+                      "profile_hash": "{profile_hash}",
+                      "profile_signature_url": "https://assets.capsem.dev/profiles/everyday-work/{target_revision}/profile.json.minisig"
+                    }},
+                    "2026.0520.2": {{
+                      "status": "active",
+                      "min_binary": "1.0.0",
+                      "profile_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.2/profile.json",
+                      "profile_hash": "{HASH}",
+                      "profile_signature_url": "https://assets.capsem.dev/profiles/everyday-work/2026.0520.2/profile.json.minisig"
                     }}
                   }}
                 }}
@@ -371,6 +475,75 @@ mod tests {
             .revision("everyday-work", "2026.0520.0")
             .unwrap_err();
         assert!(format!("{missing_revision:#}").contains("revision '2026.0520.0'"));
+    }
+
+    #[test]
+    fn installable_profile_payload_verifies_manifest_hash_and_identity() {
+        let profile_hash = payload_hash(VALID_PROFILE_PAYLOAD);
+        let manifest = ProfileManifest::from_json(&manifest_json_with_revision(
+            "2026.0520.1",
+            "active",
+            &profile_hash,
+        ))
+        .unwrap();
+        let revision = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+
+        let verified = verify_installable_profile_payload(revision, VALID_PROFILE_PAYLOAD).unwrap();
+
+        assert_eq!(verified.profile_id, "everyday-work");
+        assert_eq!(verified.revision, "2026.0520.1");
+        assert_eq!(verified.payload_hash, profile_hash);
+        assert_eq!(verified.value["schema"], "capsem.profile.v2");
+    }
+
+    #[test]
+    fn installable_profile_payload_rejects_non_active_status() {
+        let profile_hash = payload_hash(VALID_PROFILE_PAYLOAD);
+        let manifest = ProfileManifest::from_json(&manifest_json_with_revision(
+            "2026.0520.1",
+            "deprecated",
+            &profile_hash,
+        ))
+        .unwrap();
+        let revision = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+
+        let error =
+            verify_installable_profile_payload(revision, VALID_PROFILE_PAYLOAD).unwrap_err();
+
+        assert!(format!("{error:#}").contains("cannot be installed or updated"));
+    }
+
+    #[test]
+    fn installable_profile_payload_rejects_hash_mismatch() {
+        let manifest =
+            ProfileManifest::from_json(&manifest_json_with_revision("2026.0520.1", "active", HASH))
+                .unwrap();
+        let revision = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+
+        let error =
+            verify_installable_profile_payload(revision, VALID_PROFILE_PAYLOAD).unwrap_err();
+
+        assert!(format!("{error:#}").contains("profile payload hash mismatch"));
+    }
+
+    #[test]
+    fn installable_profile_payload_rejects_id_or_revision_mismatch() {
+        let payload = VALID_PROFILE_PAYLOAD.replace(
+            r#""revision": "2026.0520.1""#,
+            r#""revision": "2026.0520.0""#,
+        );
+        let profile_hash = payload_hash(&payload);
+        let manifest = ProfileManifest::from_json(&manifest_json_with_revision(
+            "2026.0520.1",
+            "active",
+            &profile_hash,
+        ))
+        .unwrap();
+        let revision = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+
+        let error = verify_installable_profile_payload(revision, &payload).unwrap_err();
+
+        assert!(format!("{error:#}").contains("payload revision"));
     }
 
     #[test]

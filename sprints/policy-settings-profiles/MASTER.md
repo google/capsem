@@ -180,6 +180,10 @@ Landed S07a foundation:
 - VM profile pins. Running and persistent VM metadata now carries resolved
   `profile_id`, optional `profile_revision`, package-contract hash, and pinned
   boot asset hashes; fork/persist/list/info preserve and expose that pin.
+- Core profile payload install guard. Catalog-selected revisions now verify
+  active status, BLAKE3 payload hash, Profile V2 schema validity, and
+  manifest/payload id+revision parity before an install/update path can write
+  the payload.
 
 Remaining S07a push order:
 
@@ -269,6 +273,8 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-core settings_profiles --lib` passed with 122 tests.
 - `cargo test -p capsem-core profile_manifest --lib` passed with 12 tests after
   adding lifecycle gates and current/specific revision resolution.
+- `cargo test -p capsem-core profile_manifest --lib` passed with 16 tests after
+  adding the installable profile payload guard.
 - `uv run pytest tests/test_profiles.py -q` passed with 10 Pydantic
   profile/manifest tests after mirroring lifecycle gates and revision
   resolution in admin models.

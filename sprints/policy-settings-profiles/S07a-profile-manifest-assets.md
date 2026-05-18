@@ -35,13 +35,19 @@ Landed:
   `capsem-process`; `/info` exposes the recorded identity.
 - VM metadata now carries an explicit profile pin with `profile_id`, optional
   `profile_revision`, package-contract hash, and pinned boot asset identity.
+- Core manifest install guard verifies active status, BLAKE3 payload hash,
+  Profile V2 schema validity, and manifest/payload id+revision parity before a
+  profile payload can be installed.
 
 Push order from here:
 
 0. [x] Expose telemetry identity for every session: `vm_id`, `profile_id`, and
    `user_id` must be persisted beside session telemetry, surfaced through
    detail/status paths, and covered by focused tests.
-1. Install/update/delete/revoke profile payloads from catalog records.
+1. [~] Install/update/delete/revoke profile payloads from catalog records.
+   Landed: core install guard. Remaining: download/signature verification,
+   runtime profile conversion, installed-revision storage, and deletion/revoke
+   actions.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, and pinned asset metadata. Landed: registry/runtime/API profile pins
    with optional revision. Remaining: make `profile_revision` mandatory once
