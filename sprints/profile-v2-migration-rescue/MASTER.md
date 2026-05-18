@@ -78,6 +78,9 @@ Rescue inventory:
 - S07 has started with the typed metrics IPC foundation:
   `capsem_proto::metrics`, `ServiceToProcess::GetMetricsSnapshot`, and
   `ProcessToService::MetricsSnapshot` compile and round-trip over bincode.
+- S07 now also includes UDS Profile V2 profile CRUD/resolve plus rules
+  list/get/evaluate. Rules create/delete, confirm listing, skills, gateway
+  mirror, and route-level Python/VM proof remain release-held.
 - `just smoke` passed on 2026-05-17 after the Profile V2 runtime/DNS rescue (`just smoke`, 224s)
 - `just test-install` passed on 2026-05-18 after the asset symlink/mount and file-only copy fixes (`57 passed`, `29 skipped`)
 - Committed delta classification remains release-held and must be replayed by slice

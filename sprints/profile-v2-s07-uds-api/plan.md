@@ -56,6 +56,23 @@ Add profile mutation routes:
 
 This completes the dedicated profile CRUD/fork group at the service UDS layer.
 
+## Fourth Slice
+
+Add the read-only and dry-run half of the dedicated Rules API:
+
+- `GET /rules?profile=<id>&callback=<type>`
+- `GET /rules/{rule_id}`
+- `POST /rules/evaluate`
+
+The list/get routes expose resolved Profile V2 rules with canonical
+`security.rules.<type>.<name>` ids, provenance, ownership metadata, source
+profile, priority, and match condition. The evaluate route runs the V2 policy
+engine against a synthetic JSON subject and returns the matched rule, decision,
+`would_ask`, and reason without enforcing, prompting, or writing telemetry.
+
+Rule create/delete remains a later S07 slice so this change can lock the query
+and evaluator contract first.
+
 ## Testing Proof Matrix
 
 - Unit/contract: capsem-proto metrics/IPC roundtrips.

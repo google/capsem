@@ -59,8 +59,9 @@ a valid claim -- mark it `[ ]` instead.
   foundation slice landed `capsem_proto::metrics` plus
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
-  routes and profile create/fork/update/delete mutation routes landed. Rules
-  API, confirm listing, skills, and full route proof remain open.
+  routes, profile create/fork/update/delete mutation routes, and rules
+  list/get/evaluate routes landed. Rules create/delete, confirm listing,
+  skills, and full route proof remain open.
 14. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
 15. [ ] [S09 - CLI integration](S09-cli-integration.md)
 16. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)

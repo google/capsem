@@ -227,11 +227,16 @@ Landed:
 - Dedicated profile mutation routes exist for user-owned profiles:
   `POST /profiles`, `POST /profiles/{id}/fork`, `PUT /profiles/{id}`, and
   `DELETE /profiles/{id}`.
+- Dedicated rules read/evaluate routes exist for resolved Profile V2 rules:
+  `GET /rules`, `GET /rules/{rule_id}`, and `POST /rules/evaluate`. The routes
+  expose canonical `security.rules.<type>.<name>` ids, provenance/source
+  profile, ownership metadata, and dry-run matched-rule decisions without
+  enforcing or prompting.
 
 Gaps:
 - No dedicated skills list/add/delete route group.
-- No dedicated Rules API (`GET /rules`, `POST /rules`,
-  `POST /rules/evaluate`, etc.).
+- Rules API mutation routes (`POST /rules`, `DELETE /rules/{rule_id}`) remain
+  open.
 - No `GET /confirm/pending` listing surface.
 - No live metrics accumulator or public service route consumes the metrics IPC
   snapshot yet; S12 owns runtime counters and `/list`/`/info` integration.

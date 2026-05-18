@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a profile record, and resolving VM-effective settings with resolver trace.
 - Added Profile V2 UDS profile mutation routes for creating, forking, updating,
   and deleting user-owned profiles.
+- Added Profile V2 UDS rules routes for listing resolved rules, fetching a
+  rule with provenance, and dry-running V2 policy evaluation against synthetic
+  subjects without enforcing or prompting.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

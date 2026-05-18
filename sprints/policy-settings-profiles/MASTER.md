@@ -56,7 +56,7 @@ the next starts. The `#` column is the execution index;
 | 10 | [S06b - Legacy Allowlist Migration And Rule Ownership Locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) | Not Started | Port legacy allowlist outputs into canonical rules and enforce generated-rule ownership (`managed by <setting>`, uneditable). |
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Not Started | `git merge origin/main` -> v2 rename -> full verification gate, in that order. S07 starts on the post-cleanup codebase. |
-| 13 | [S07 - UDS Service API](S07-uds-service-api.md) | Not Started | Expose settings/profile/MCP/skills + `capsem_proto::metrics` types over UDS. |
+| 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, gateway mirror, and full route proof remain open. |
 | 14 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior. |
 | 15 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, and `confirm` CLI command families. |
 | 16 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |

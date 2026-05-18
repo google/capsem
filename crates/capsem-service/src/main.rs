@@ -3459,6 +3459,22 @@ struct ProfileForkRequest {
     name: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct RulesQuery {
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    callback: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuleEvaluateRequest {
+    #[serde(default)]
+    profile: Option<String>,
+    callback: String,
+    subject: serde_json::Value,
+}
+
 fn load_service_settings_for_profiles(
 ) -> Result<capsem_core::settings_profiles::ServiceSettings, AppError> {
     let settings_path = service_settings_path();
@@ -3605,6 +3621,279 @@ async fn handle_resolve_profile(
         "effective": effective,
         "resolver_trace": trace,
     })))
+}
+
+fn canonical_rule_id(rule: &capsem_core::settings_profiles::EffectiveRule) -> String {
+    if rule.id.starts_with("security.rules.") {
+        return rule.id.clone();
+    }
+    let Some((rule_type, name)) = rule.id.split_once('.') else {
+        return format!("security.rules.{}", rule.id);
+    };
+    if matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") && !name.is_empty() {
+        format!("security.rules.{rule_type}.{name}")
+    } else {
+        format!("security.rules.{}", rule.id)
+    }
+}
+
+fn rule_type_and_name_from_effective_id(id: &str) -> Option<(&str, &str)> {
+    let (rule_type, name) = id.split_once('.')?;
+    if matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") && !name.is_empty() {
+        Some((rule_type, name))
+    } else {
+        None
+    }
+}
+
+fn rule_json_from_effective(
+    rule: &capsem_core::settings_profiles::EffectiveRule,
+) -> serde_json::Value {
+    let rule_type = rule_type_and_name_from_effective_id(&rule.id)
+        .map(|(rule_type, _)| rule_type.to_string())
+        .or_else(|| rule_type_from_callback(&rule.callback).map(ToOwned::to_owned));
+    json!({
+        "id": canonical_rule_id(rule),
+        "effective_id": rule.id,
+        "rule_type": rule_type,
+        "source_profile": rule.provenance.profile_id,
+        "callback": rule.callback,
+        "condition": rule.condition,
+        "decision": rule.decision,
+        "priority": rule.priority,
+        "derived": rule.derived,
+        "editable": rule.editable,
+        "owner_setting_path": rule.owner_setting_path,
+        "owner_setting_label": rule.owner_setting_label,
+        "provenance": rule.provenance,
+        "rule": {
+            "on": rule.callback,
+            "if": rule.condition,
+            "decision": rule.decision,
+            "priority": rule.priority,
+            "reason": rule.reason,
+            "rewrite_target": rule.rewrite_target,
+            "rewrite_value": rule.rewrite_value,
+            "strip_request_headers": rule.strip_request_headers,
+            "strip_response_headers": rule.strip_response_headers,
+        },
+    })
+}
+
+fn resolve_effective_for_rules(
+    profile: Option<String>,
+) -> Result<capsem_core::settings_profiles::EffectiveVmSettings, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let profile_id = profile.unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+        &settings,
+        Some(&profile_id),
+    )
+    .map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("resolve effective profile '{profile_id}': {e}"),
+        )
+    })?;
+    Ok(effective)
+}
+
+fn find_effective_rule<'a>(
+    effective: &'a capsem_core::settings_profiles::EffectiveVmSettings,
+    rule_id: &str,
+) -> Option<&'a capsem_core::settings_profiles::EffectiveRule> {
+    effective.rules.iter().find(|rule| {
+        rule.id == rule_id
+            || canonical_rule_id(rule) == rule_id
+            || rule
+                .id
+                .strip_prefix("security.rules.")
+                .is_some_and(|stripped| stripped == rule_id)
+    })
+}
+
+fn effective_policy_rule_config(
+    rule: &capsem_core::settings_profiles::EffectiveRule,
+) -> Result<capsem_core::net::policy_v2::PolicyRuleConfig, String> {
+    let callback = map_policy_callback(&rule.callback)?;
+    let policy_rule = capsem_core::net::policy_v2::PolicyRuleConfig {
+        on: callback,
+        condition: rule.condition.clone(),
+        decision: map_policy_decision(rule.decision),
+        priority: rule.priority,
+        reason: rule.reason.clone(),
+        rewrite_target: rule.rewrite_target.clone(),
+        rewrite_value: rule.rewrite_value.clone(),
+        strip_request_headers: rule.strip_request_headers.clone(),
+        strip_response_headers: rule.strip_response_headers.clone(),
+    };
+    policy_rule.validate()?;
+    Ok(policy_rule)
+}
+
+fn policy_config_for_effective_callback(
+    effective: &capsem_core::settings_profiles::EffectiveVmSettings,
+    requested_callback: &str,
+) -> Result<
+    (
+        capsem_core::net::policy_v2::PolicyConfig,
+        HashMap<String, String>,
+    ),
+    AppError,
+> {
+    let mut config = capsem_core::net::policy_v2::PolicyConfig::default();
+    let mut ids_by_name = HashMap::new();
+    for rule in &effective.rules {
+        if rule.callback != requested_callback {
+            continue;
+        }
+        let Some((rule_type, name)) = rule_type_and_name_from_effective_id(&rule.id) else {
+            continue;
+        };
+        let policy_rule = effective_policy_rule_config(rule).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid effective rule '{}': {e}", canonical_rule_id(rule)),
+            )
+        })?;
+        match rule_type {
+            "mcp" => {
+                config.mcp.insert(name.to_string(), policy_rule);
+            }
+            "http" => {
+                config.http.insert(name.to_string(), policy_rule);
+            }
+            "dns" => {
+                config.dns.insert(name.to_string(), policy_rule);
+            }
+            "model" => {
+                config.model.insert(name.to_string(), policy_rule);
+            }
+            "hook" => {
+                config.hook.insert(name.to_string(), policy_rule);
+            }
+            _ => {}
+        }
+        ids_by_name.insert(name.to_string(), canonical_rule_id(rule));
+    }
+    Ok((config, ids_by_name))
+}
+
+/// GET /rules -- list resolved Profile V2 rules for a profile.
+async fn handle_list_rules(
+    Query(query): Query<RulesQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if let Some(callback) = query.callback.as_deref() {
+        if rule_type_from_callback(callback).is_none() {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("unsupported policy callback '{callback}'"),
+            ));
+        }
+    }
+    let effective = resolve_effective_for_rules(query.profile)?;
+    let mut rules = effective
+        .rules
+        .iter()
+        .filter(|rule| {
+            query
+                .callback
+                .as_deref()
+                .map(|callback| rule.callback == callback)
+                .unwrap_or(true)
+        })
+        .map(rule_json_from_effective)
+        .collect::<Vec<_>>();
+    rules.sort_by(|left, right| {
+        left["id"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["id"].as_str().unwrap_or_default())
+    });
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "profile_id": effective.profile_id,
+        "rules": rules,
+    })))
+}
+
+/// GET /rules/{rule_id} -- fetch one resolved rule with provenance.
+async fn handle_get_rule(Path(rule_id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let mut profile_ids = vec![settings.profiles.default_profile.clone()];
+    let mut remaining = catalog
+        .list()
+        .map(|record| record.profile.id.clone())
+        .filter(|id| id != &settings.profiles.default_profile)
+        .collect::<Vec<_>>();
+    remaining.sort();
+    profile_ids.extend(remaining);
+
+    for profile_id in profile_ids {
+        let (effective, _) =
+            capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+                &settings,
+                Some(&profile_id),
+            )
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("resolve effective profile '{profile_id}': {e}"),
+                )
+            })?;
+        if let Some(rule) = find_effective_rule(&effective, &rule_id) {
+            return Ok(Json(rule_json_from_effective(rule)));
+        }
+    }
+
+    Err(AppError(
+        StatusCode::NOT_FOUND,
+        format!("rule '{rule_id}' not found"),
+    ))
+}
+
+/// POST /rules/evaluate -- dry-run the V2 evaluator against a synthetic subject.
+async fn handle_evaluate_rule(
+    Json(request): Json<RuleEvaluateRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let callback =
+        map_policy_callback(&request.callback).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let effective = resolve_effective_for_rules(request.profile)?;
+    let (config, ids_by_name) =
+        policy_config_for_effective_callback(&effective, &request.callback)?;
+    let matched = config
+        .find_matching_rule(callback, &request.subject)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("evaluate rule: {e}")))?;
+
+    if let Some(matched) = matched {
+        let matched_rule_id = ids_by_name
+            .get(matched.name)
+            .cloned()
+            .unwrap_or_else(|| matched.name.to_string());
+        let decision = matched.rule.decision;
+        Ok(Json(json!({
+            "mode": "settings_profiles_v2",
+            "profile_id": effective.profile_id,
+            "matched_rule_id": matched_rule_id,
+            "decision": decision,
+            "would_ask": decision == capsem_core::net::policy_v2::PolicyDecisionKind::Ask,
+            "reason": matched.rule.reason,
+            "enforced": false,
+        })))
+    } else {
+        Ok(Json(json!({
+            "mode": "settings_profiles_v2",
+            "profile_id": effective.profile_id,
+            "matched_rule_id": serde_json::Value::Null,
+            "decision": serde_json::Value::Null,
+            "would_ask": false,
+            "reason": serde_json::Value::Null,
+            "enforced": false,
+        })))
+    }
 }
 
 fn settings_response_json() -> serde_json::Value {
@@ -6111,6 +6400,9 @@ async fn main() -> Result<()> {
         )
         .route("/profiles/{id}/fork", post(handle_fork_profile))
         .route("/profiles/{id}/effective", get(handle_resolve_profile))
+        .route("/rules", get(handle_list_rules))
+        .route("/rules/evaluate", post(handle_evaluate_rule))
+        .route("/rules/{rule_id}", get(handle_get_rule))
         .route("/setup/state", get(handle_get_setup_state))
         .route("/setup/detect", get(handle_detect_host_config))
         .route("/setup/complete", post(handle_complete_onboarding))

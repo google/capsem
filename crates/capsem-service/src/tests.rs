@@ -2757,6 +2757,161 @@ async fn handle_delete_profile_rejects_locked_builtin_profile() {
 }
 
 #[tokio::test]
+async fn handle_list_rules_returns_effective_rules_with_canonical_ids() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("custom", "Custom");
+    profile.security.rules.http.insert(
+        "block_openai".to_string(),
+        capsem_core::settings_profiles::ProfileRule {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'api.openai.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Block,
+            priority: 25,
+            reason: Some("test block".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    );
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let Json(val) = handle_list_rules(Query(RulesQuery {
+        profile: Some("custom".to_string()),
+        callback: Some("http.request".to_string()),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(val["profile_id"], serde_json::json!("custom"));
+    let rules = val["rules"].as_array().expect("rules array");
+    let rule = rules
+        .iter()
+        .find(|rule| rule["id"] == serde_json::json!("security.rules.http.block_openai"))
+        .expect("custom HTTP rule should be listed by canonical id");
+    assert_eq!(rule["effective_id"], serde_json::json!("http.block_openai"));
+    assert_eq!(rule["source_profile"], serde_json::json!("custom"));
+    assert_eq!(rule["rule"]["on"], serde_json::json!("http.request"));
+    assert_eq!(
+        rule["rule"]["if"],
+        serde_json::json!("request.host == 'api.openai.com'")
+    );
+    assert_eq!(rule["rule"]["priority"], serde_json::json!(25));
+    assert_eq!(rule["editable"], serde_json::json!(true));
+}
+
+#[tokio::test]
+async fn handle_get_rule_returns_single_rule_with_provenance() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("custom", "Custom");
+    profile.security.rules.http.insert(
+        "block_openai".to_string(),
+        capsem_core::settings_profiles::ProfileRule {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'api.openai.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Block,
+            priority: 25,
+            reason: Some("test block".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    );
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let Json(val) = handle_get_rule(Path("security.rules.http.block_openai".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        val["id"],
+        serde_json::json!("security.rules.http.block_openai")
+    );
+    assert_eq!(val["effective_id"], serde_json::json!("http.block_openai"));
+    assert_eq!(val["provenance"]["profile_id"], serde_json::json!("custom"));
+    assert_eq!(
+        val["provenance"]["toml_path"],
+        serde_json::json!("security.rules.http.block_openai")
+    );
+}
+
+#[tokio::test]
+async fn handle_evaluate_rule_dry_runs_v2_policy_without_enforcement() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("custom", "Custom");
+    profile.security.rules.http.insert(
+        "ask_openai".to_string(),
+        capsem_core::settings_profiles::ProfileRule {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'api.openai.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Ask,
+            priority: 25,
+            reason: Some("needs review".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    );
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let Json(val) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: Some("custom".to_string()),
+        callback: "http.request".to_string(),
+        subject: serde_json::json!({
+            "request": {
+                "host": "api.openai.com",
+                "method": "POST"
+            }
+        }),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        val["matched_rule_id"],
+        serde_json::json!("security.rules.http.ask_openai")
+    );
+    assert_eq!(val["decision"], serde_json::json!("ask"));
+    assert_eq!(val["would_ask"], serde_json::json!(true));
+    assert_eq!(val["reason"], serde_json::json!("needs review"));
+    assert_eq!(val["enforced"], serde_json::json!(false));
+}
+
+#[tokio::test]
+async fn handle_evaluate_rule_rejects_unknown_callback() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let err = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: None,
+        callback: "http.read".to_string(),
+        subject: serde_json::json!({
+            "request": {
+                "host": "api.openai.com"
+            }
+        }),
+    }))
+    .await
+    .expect_err("unsupported evaluator callback should fail closed");
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("unsupported policy callback"));
+}
+
+#[tokio::test]
 async fn handle_lint_config_returns_array() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
