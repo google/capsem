@@ -36,6 +36,11 @@ worktree. The tracker is now a push board:
 - Do not resume HTTP/CLI/UI/docs lift work until the profile catalog and asset
   readiness semantics are no longer moving underneath those surfaces.
 
+**Winter readiness.** The wall is the release gate. Nothing crosses it unless
+the profile trust chain is signed, profile payloads are installed from the
+catalog, VMs pin exact profile/revision/package/asset identity, old config stays
+dead, and every public surface can explain what happened.
+
 ## Product Contract
 
 - **Service settings are service/app-scoped.** They configure app/service

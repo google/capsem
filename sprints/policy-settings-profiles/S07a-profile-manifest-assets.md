@@ -40,6 +40,11 @@ Push order from here:
 5. Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
 
+Winter readiness check: S07a is not done while any VM can boot from assets that
+are not traceable back to a signed catalog record and a verified profile
+payload. Deprecated revisions may shelter existing VMs; revoked revisions do not
+open the gate.
+
 ## Product Contract
 
 - The Capsem binary owns the trust root: the baked-in manifest signing public

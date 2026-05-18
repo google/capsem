@@ -47,6 +47,16 @@ order:
 3. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
    asset contract are no longer moving underneath them.
 
+Winter readiness rules:
+
+- The old stack is dead and stays dead.
+- Profiles are the banner under which VM assets, package assumptions, and
+  runtime policy march.
+- A VM without explicit profile/revision/package/asset identity is unbound, not
+  silently blessed.
+- The release gate is the wall: every claim needs tests, status/debug
+  explanation, and tracker evidence before it crosses.
+
 ## Linear path
 
 Strictly ordered. Finish item N before starting item N+1. No
