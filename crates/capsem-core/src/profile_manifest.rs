@@ -198,6 +198,15 @@ pub fn verify_installable_profile_payload(
     })
 }
 
+pub fn verify_profile_payload_signature(
+    pubkey_file: &str,
+    payload_bytes: &[u8],
+    sig_file: &str,
+) -> Result<()> {
+    crate::asset_manager::verify_manifest_signature(pubkey_file, payload_bytes, sig_file)
+        .context("profile payload signature verification failed")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestProfile {
@@ -546,6 +555,27 @@ mod tests {
         let error = verify_installable_profile_payload(revision, &payload).unwrap_err();
 
         assert!(format!("{error:#}").contains("payload revision"));
+    }
+
+    const TEST_PUBKEY: &str = "untrusted comment: minisign public key D2FF2FA8B3C45D80\nRWSAXcSzqC//0ussmV+rXA7RVjSb7oBJxZA/Ao9jSOz3yVIv8vcHBOLS\n";
+    const TEST_SIGNED_BYTES: &[u8] = b"{\"hello\":\"world\",\"format\":2}";
+    const TEST_SIGNATURE: &str = "untrusted comment: capsem test fixture\nRUSAXcSzqC//0gYG4blIb+435YYxZ665oOig9zIb4BG6alNMXB5/WnDFnKR5SHSfxsi+yyJGNuyDkmPTku5gPusVanpI9YR1MQ4=\ntrusted comment: capsem test fixture\nwyK54SForvZTNYj5/Vn/sScn9kPTutpmSZ27MaZAV8QAspbtH1NKTrCuEw9VVb8r/EOOUWycImpo95puXB/KDg==\n";
+
+    #[test]
+    fn profile_payload_signature_uses_minisign_verification() {
+        verify_profile_payload_signature(TEST_PUBKEY, TEST_SIGNED_BYTES, TEST_SIGNATURE).unwrap();
+    }
+
+    #[test]
+    fn profile_payload_signature_rejects_tampered_payload() {
+        let error = verify_profile_payload_signature(
+            TEST_PUBKEY,
+            b"{\"hello\":\"tampered\",\"format\":2}",
+            TEST_SIGNATURE,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("profile payload signature"));
     }
 
     #[test]

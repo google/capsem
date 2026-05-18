@@ -188,13 +188,16 @@ Landed S07a foundation:
   into the runtime resolver profile shape, materialize into the corp profile
   root, and preserve the exact verified payload under the installed revision
   catalog path.
+- Profile payload signature verification. The profile catalog path now has a
+  profile-specific minisign verification wrapper with tamper coverage, reusing
+  the existing Capsem signature verifier.
 
 Remaining S07a push order:
 
 1. Catalog-driven profile payload install/update/delete/revoke from manifest
    records, including `deprecated` and `revoked` fail-closed semantics.
-   Core verification/materialization has landed; download/signature
-   verification and delete/revoke orchestration remain.
+   Core verification/materialization/signature primitives have landed; payload
+   URL download and delete/revoke orchestration remain.
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
    pinned asset metadata. Landed for runtime/registry/API with optional
    revision; signed catalog install/update still needs to make revision
@@ -279,8 +282,8 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-core settings_profiles --lib` passed with 122 tests.
 - `cargo test -p capsem-core profile_manifest --lib` passed with 12 tests after
   adding lifecycle gates and current/specific revision resolution.
-- `cargo test -p capsem-core profile_manifest --lib` passed with 16 tests after
-  adding the installable profile payload guard.
+- `cargo test -p capsem-core profile_manifest --lib` passed with 18 tests after
+  adding the installable profile payload guard and signature wrapper.
 - `uv run pytest tests/test_profiles.py -q` passed with 10 Pydantic
   profile/manifest tests after mirroring lifecycle gates and revision
   resolution in admin models.

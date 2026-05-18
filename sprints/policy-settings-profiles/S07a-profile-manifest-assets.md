@@ -42,6 +42,8 @@ Landed:
 - Verified Profile V2 payloads can now be converted into the runtime resolver
   profile shape and installed into the corp profile root while preserving the
   exact signed payload under `.catalog/profiles/<id>/<revision>/profile.json`.
+- Profile payload signature verification now reuses the existing minisign
+  verifier through a profile-specific wrapper with tamper tests.
 
 Push order from here:
 
@@ -51,8 +53,7 @@ Push order from here:
 1. [~] Install/update/delete/revoke profile payloads from catalog records.
    Landed: core install guard, runtime profile conversion, corp-root
    materialization, and installed-revision payload storage. Remaining:
-   download/signature verification, update orchestration, and deletion/revoke
-   actions.
+   payload URL download, update orchestration, and deletion/revoke actions.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, and pinned asset metadata. Landed: registry/runtime/API profile pins
    with optional revision. Remaining: make `profile_revision` mandatory once
