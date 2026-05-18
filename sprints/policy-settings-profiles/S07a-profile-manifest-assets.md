@@ -42,6 +42,9 @@ Landed:
 - Verified Profile V2 payloads can now be converted into the runtime resolver
   profile shape and installed into the corp profile root while preserving the
   exact signed payload under `.catalog/profiles/<id>/<revision>/profile.json`.
+- Profile materialization writes `.catalog/profiles/<id>/current.json` so
+  status/debug and VM pinning can read the installed revision and payload hash
+  without inferring them from filenames.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature

@@ -1037,6 +1037,15 @@ fn install_verified_profile_payload_materializes_runtime_profile_and_revision_pa
             .join("profile.json")
     );
     assert!(installed.payload_path.exists());
+    assert_eq!(
+        installed.current_record_path,
+        corp_dir
+            .join(".catalog")
+            .join("profiles")
+            .join("everyday-work")
+            .join("current.json")
+    );
+    assert!(installed.current_record_path.exists());
     let installed_payload = fs::read_to_string(&installed.payload_path).unwrap();
     assert_eq!(
         format!(
@@ -1045,6 +1054,12 @@ fn install_verified_profile_payload_materializes_runtime_profile_and_revision_pa
         ),
         profile_hash
     );
+    let current = load_installed_profile_revision(&roots, EVERYDAY_WORK_PROFILE_ID)
+        .unwrap()
+        .expect("current installed revision should be recorded");
+    assert_eq!(current.profile_id, EVERYDAY_WORK_PROFILE_ID);
+    assert_eq!(current.revision, "2026.0520.1");
+    assert_eq!(current.payload_hash, profile_hash);
 
     let catalog = discover_profiles(&roots).unwrap();
     let record = catalog.get(EVERYDAY_WORK_PROFILE_ID).unwrap();

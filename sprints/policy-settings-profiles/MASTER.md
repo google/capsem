@@ -188,6 +188,9 @@ Landed S07a foundation:
   into the runtime resolver profile shape, materialize into the corp profile
   root, and preserve the exact verified payload under the installed revision
   catalog path.
+- Installed revision sidecar. Materialization now writes
+  `.catalog/profiles/<id>/current.json` with profile id, revision, and payload
+  hash for status/debug and mandatory VM revision pinning.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.

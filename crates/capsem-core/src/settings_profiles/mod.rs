@@ -262,6 +262,15 @@ pub struct InstalledProfileRevision {
     pub payload_hash: String,
     pub runtime_profile_path: PathBuf,
     pub payload_path: PathBuf,
+    pub current_record_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InstalledProfileRevisionRecord {
+    pub profile_id: String,
+    pub revision: String,
+    pub payload_hash: String,
 }
 
 pub fn install_verified_profile_payload(
@@ -320,13 +329,78 @@ pub fn install_verified_profile_payload(
         }
     })?;
 
+    let current_record_path = corp_profile_revision_current_path(corp_dir, &verified.profile_id);
+    let current_record = InstalledProfileRevisionRecord {
+        profile_id: verified.profile_id.clone(),
+        revision: verified.revision.clone(),
+        payload_hash: verified.payload_hash.clone(),
+    };
+    let current_record_payload =
+        serde_json::to_string_pretty(&current_record).map_err(|source| {
+            SettingsProfilesError::Serialize {
+                kind: "installed profile revision",
+                details: source.to_string(),
+            }
+        })?;
+    fs::write(&current_record_path, current_record_payload).map_err(|source| {
+        SettingsProfilesError::WriteFile {
+            path: current_record_path.clone(),
+            details: source.to_string(),
+        }
+    })?;
+
     Ok(InstalledProfileRevision {
         profile_id: verified.profile_id.clone(),
         revision: verified.revision.clone(),
         payload_hash: verified.payload_hash.clone(),
         runtime_profile_path,
         payload_path,
+        current_record_path,
     })
+}
+
+pub fn load_installed_profile_revision(
+    roots: &ProfileRootSettings,
+    profile_id: &str,
+) -> Result<Option<InstalledProfileRevisionRecord>> {
+    validate_profile_id("profile_id", profile_id)?;
+    let Some(corp_dir) = roots.corp_dirs.first() else {
+        return Ok(None);
+    };
+    let path = corp_profile_revision_current_path(corp_dir, profile_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let input = fs::read_to_string(&path).map_err(|source| SettingsProfilesError::ReadFile {
+        path: path.clone(),
+        details: source.to_string(),
+    })?;
+    let record =
+        serde_json::from_str::<InstalledProfileRevisionRecord>(&input).map_err(|source| {
+            SettingsProfilesError::Parse {
+                kind: "installed profile revision",
+                details: source.to_string(),
+            }
+        })?;
+    if record.profile_id != profile_id {
+        return Err(SettingsProfilesError::Validation {
+            path: "installed_profile_revision.profile_id".to_string(),
+            message: format!(
+                "installed profile revision id '{}' does not match requested profile '{}'",
+                record.profile_id, profile_id
+            ),
+        });
+    }
+    validate_profile_id("installed_profile_revision.profile_id", &record.profile_id)?;
+    Ok(Some(record))
+}
+
+fn corp_profile_revision_current_path(corp_dir: &Path, profile_id: &str) -> PathBuf {
+    corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join(profile_id)
+        .join("current.json")
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

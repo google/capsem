@@ -369,12 +369,13 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   and manifest/payload id+revision parity in both Rust and Pydantic admin
   models. Runtime conversion/materialization tests prove verified Profile V2
   payloads become resolver-compatible corp TOML while preserving the exact
-  signed payload bytes in installed revision storage. Profile payload
-  signature verification reuses the existing minisign verifier with tamper
-  coverage; fetch tests prove catalog payload/signature locations are read and
-  verified before hash/schema/id/revision checks. VM profile pins add registry
-  roundtrip, package-contract hash, API serialization, and fork persistence
-  coverage.
+  signed payload bytes in installed revision storage; `current.json` records
+  the installed profile id, revision, and payload hash for later status/debug
+  and VM pinning. Profile payload signature verification reuses the existing
+  minisign verifier with tamper coverage; fetch tests prove catalog payload/
+  signature locations are read and verified before hash/schema/id/revision
+  checks. VM profile pins add registry roundtrip, package-contract hash, API
+  serialization, and fork persistence coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
