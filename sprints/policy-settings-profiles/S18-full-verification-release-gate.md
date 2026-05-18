@@ -37,10 +37,18 @@ Prove the redesign is releaseable.
   bootstrap and release packages install the admin CLI; packaged
   `capsem-admin profile validate`, `manifest check --fast`, and `image verify`
   run successfully from the installed layout.
+- Prove bootstrap path:
+  developer bootstrap installs the local editable admin tooling with uv
+  (`uv sync` / `uv pip install -e .` as finalized by S07b), not by consuming a
+  release package.
 - Prove profile-derived images:
   release image builds derive package/tool/image settings from selected
   profiles, not hand-edited `guest/config`; tests fail if builder inputs bypass
   the profile source of truth.
+- Prove all-arch default:
+  omitted `--arch` on `capsem-admin image build`, `image verify`, and manifest
+  checks means `all` and covers every supported release arch. Single-arch mode is
+  tested only as a narrowing override.
 - Prove manifest admin checks:
   `capsem-admin manifest check --fast` validates remote profile/asset URLs with
   HTTP `HEAD`, while `--download` downloads and verifies all referenced bytes.

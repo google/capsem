@@ -51,11 +51,11 @@ cover these operator flows:
 ```sh
 capsem-admin profile init <profile-id>
 capsem-admin profile validate profile.toml
-capsem-admin profile derive-image profile.toml --arch arm64 --out build/profile-image/
+capsem-admin profile derive-image profile.toml --out build/profile-image/
 
-capsem-admin image plan profile.toml --arch arm64
-capsem-admin image build profile.toml --arch arm64 --out assets/
-capsem-admin image verify profile.toml --assets-dir assets/ --arch arm64
+capsem-admin image plan profile.toml
+capsem-admin image build profile.toml --out assets/
+capsem-admin image verify profile.toml --assets-dir assets/
 
 capsem-admin manifest generate --profiles profiles/ --assets-dir assets/ --out manifest.json
 capsem-admin manifest check manifest.json --fast
@@ -65,6 +65,10 @@ capsem-admin manifest sign manifest.json --key private/manifest.key
 
 Required semantics:
 
+- `--arch` is optional everywhere. The default is `all`, which builds/checks all
+  supported release arches (`arm64` and `x86_64` today). Passing
+  `--arch arm64` or `--arch x86_64` narrows the operation for local debugging
+  and CI shards.
 - `--fast` performs profile payload checks and HTTP `HEAD`/metadata checks for
   remote assets: URL exists, size matches where advertised, content type is
   acceptable, signature URLs exist, and cache validators are sane. It does not
@@ -106,11 +110,27 @@ this sprint.
   - `src/capsem/builder/models.py`
   - `src/capsem/builder/config.py`
   - `src/capsem/builder/docker.py`
+  - `src/capsem/builder/doctor.py`
   - `src/capsem/builder/manifest.py`
+  - `src/capsem/builder/manifest_version.py`
   - `scripts/gen_manifest.py`
   - `scripts/create_hash_assets.py`
+  - `scripts/build-assets.sh`
+  - `scripts/verify-local-manifest-signature.sh`
+  - `scripts/sync-dev-assets.sh`
+- Move Justfile-facing build primitives to `capsem-admin`:
+  `build-assets`, `build-kernel`, `build-rootfs`, `_pack-initrd` manifest
+  regeneration, hash alias creation, local manifest signature verification, and
+  guest-agent build/repack hooks must call the admin library/CLI rather than
+  loose scripts or `capsem-builder`.
 - Convert manifest generation/check/sign helpers from loose scripts into
   importable library functions with CLI coverage.
+- Replace builder doctor output and fix hints:
+  `capsem-builder doctor`, `capsem-builder init guest/`, and guest-config-as-
+  source checks become `capsem-admin doctor` checks that validate toolchain,
+  Docker/Colima resources, rust cross targets, b3sum/minisign, profile-derived
+  build plans, required guest artifacts, and local/remote manifest signing
+  readiness.
 - Add profile-to-image derivation:
   profile TOML -> typed profile model -> package/tool contract -> builder
   context -> rendered Dockerfile/build plan.
@@ -119,6 +139,48 @@ this sprint.
   `guest/config` instead of the selected profile.
 - Install `capsem-admin` through bootstrap and package it in `.pkg`/`.deb`
   release payloads.
+
+## Existing Surfaces To Absorb
+
+Read the current Justfile, scripts, and builder doctor before implementation.
+At minimum, S07b must either move these surfaces behind `capsem-admin` or write
+down why they remain lower-level private helpers:
+
+- `Justfile`:
+  - `build-assets` defaults to all arches when `arch` is omitted.
+  - `build-kernel` / `build-rootfs` are CI-facing single-arch primitives.
+  - `_pack-initrd` cross-compiles guest agents, repacks initrd atomically,
+    regenerates `B3SUMS`, regenerates `manifest.json`, creates hash aliases,
+    syncs/signs dev assets, and verifies the local manifest signature.
+  - install/package recipes sign/copy manifests and verify installed manifest
+    presence.
+- `scripts/build-assets.sh`:
+  - no `--arch` means both `arm64` and `x86_64`.
+  - single `--arch` narrows to one arch.
+  - runs kernel/rootfs builds and calls Python checksum/manifest generation.
+- Manifest and asset scripts:
+  - `scripts/gen_manifest.py`
+  - `scripts/create_hash_assets.py`
+  - `scripts/sync-dev-assets.sh`
+  - `scripts/verify-local-manifest-signature.sh`
+  - `scripts/prepare-install-assets.sh`
+- Verification/preflight scripts:
+  - `scripts/validate-rootfs.sh`
+  - `scripts/verify_deb_payload.py`
+  - `scripts/check-release-workflow.sh`
+  - `scripts/preflight.sh`
+  - `scripts/capture-install-status.py`
+- Builder doctor:
+  - container runtime/resources/clock checks;
+  - Rust toolchain and cross-target checks;
+  - `b3sum`/minisign readiness;
+  - required guest artifact/source-file checks;
+  - current guest-config checks, which must be replaced by profile-derived
+    build-plan checks.
+
+The goal is not to make every helper a top-level public command. The goal is to
+make `capsem-admin` the public/admin entrypoint and to move shared behavior into
+importable Python modules with test coverage.
 
 ## Image Verification Scope
 
@@ -161,8 +223,9 @@ The checker must fail closed for:
 
 ## Bootstrap And Release Scope
 
-- `bootstrap.sh` installs `capsem-admin` using the repo's uv-managed package
-  workflow.
+- `bootstrap.sh` installs local admin tooling with the developer editable uv
+  workflow (`uv sync` / `uv pip install -e .` as appropriate for the final
+  layout). It does not use release packages.
 - Release packages include the admin CLI and any required Python runtime/wheel
   payload according to the packaging policy chosen for this repo.
 - `just test` / release gates prove the packaged `capsem-admin` binary can run
@@ -176,6 +239,10 @@ The checker must fail closed for:
 - [ ] Design `capsem-admin` command tree and JSON report schema.
 - [ ] Add `capsem-admin` package/distribution entry point and bootstrap install
       wiring.
+- [ ] Update Justfile recipes and shell scripts to use `capsem-admin`, with
+      `--arch all` as the default and single-arch overrides for CI shards.
+- [ ] Replace builder doctor with admin doctor checks and remove guest config as
+      input authority.
 - [ ] Refactor manifest generation/check/sign scripts into importable Python
       library modules.
 - [ ] Add profile TOML parser/adapter for admin tooling or bind to the Rust
@@ -192,9 +259,11 @@ The checker must fail closed for:
 
 ## Coverage Ledger
 
-- Unit/contract: CLI parser golden tests; JSON report schema tests; profile
-  adapter conformance with Rust profile schema; manifest v3 generate/check/sign
-  tests; profile-to-image build plan tests; no-hand-edited-settings guard tests.
+- Unit/contract: CLI parser golden tests, including omitted `--arch` defaulting
+  to `all` and single-arch narrowing; JSON report schema tests; profile adapter
+  conformance with Rust profile schema; manifest v3 generate/check/sign tests;
+  profile-to-image build plan tests; admin doctor checks; no-hand-edited-
+  settings guard tests.
 - Functional: `capsem-admin profile validate`; `image plan`; `image verify`;
   `manifest generate`; `manifest check --fast`; `manifest check --download`;
   bootstrap-installed CLI smoke.
@@ -202,8 +271,9 @@ The checker must fail closed for:
   manager, URL scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch,
   missing signature URL, hash mismatch after download, duplicate profile
   revision, revoked current profile, path traversal, stale manifest rollback.
-- E2E/VM or integration: build or fixture-build a profile-derived image, boot it
-  through Capsem, and run an in-guest verification probe that proves declared
+- E2E/VM or integration: build or fixture-build profile-derived images for all
+  supported release arches by default, boot at least the host-arch image through
+  Capsem, and run an in-guest verification probe that proves declared
   packages/tools are present.
 - Telemetry/observability: command JSON reports include profile id/revision,
   manifest identity, asset hashes, package contract hash, check mode, timings,

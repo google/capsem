@@ -125,7 +125,8 @@ Final paths should follow the actual docs tree present when this sprint starts.
 - [ ] Write `capsem-admin` reference:
       profile create/validate, image plan/build/verify, manifest
       generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
-      reports, bootstrap install, and packaged release usage.
+      reports, omitted `--arch` defaulting to all supported release arches,
+      bootstrap editable install, and packaged release usage.
 - [ ] Document profile-backed VM create semantics:
       profile id/revision selection, first-use download, verification,
       persistent VM pins, and no implicit migration on profile update.
