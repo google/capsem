@@ -569,6 +569,7 @@ async fn timeline_handler_returns_policy_v2_layers_and_null_trace_rows() {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 
@@ -949,6 +950,40 @@ fn saved_vm_current_base_assets_from_profile_records_boot_hashes() {
     assert_eq!(base_assets.guest_abi.as_deref(), Some("capsem-guest-v2"));
 }
 
+#[test]
+fn vm_profile_pin_hashes_effective_package_contract_and_assets() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions/profile-pin");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let mut effective = capsem_core::settings_profiles::resolve_effective_vm_settings(
+        &capsem_core::settings_profiles::ProfileRootSettings::default(),
+        None,
+    )
+    .unwrap();
+    effective
+        .packages
+        .value
+        .runtimes
+        .insert("python".to_string(), "3.12.3".to_string());
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let base_assets = test_saved_vm_base_assets();
+    let pin = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0518.1".to_string()),
+            Some(base_assets.clone()),
+        )
+        .unwrap();
+    let package_json = serde_json::to_vec(&effective.packages.value).unwrap();
+    let expected_hash = format!("blake3:{}", blake3::hash(&package_json).to_hex());
+
+    assert_eq!(pin.profile_id, "everyday-work");
+    assert_eq!(pin.profile_revision.as_deref(), Some("2026.0518.1"));
+    assert_eq!(pin.package_contract_hash, expected_hash);
+    assert_eq!(pin.base_assets, Some(base_assets));
+}
+
 #[tokio::test]
 async fn handle_list_reports_missing_saved_vm_dependencies_separately() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -978,6 +1013,7 @@ async fn handle_list_reports_missing_saved_vm_dependencies_separately() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 base_assets: Some(test_saved_vm_base_assets()),
+                profile_pin: None,
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/saved-old"),
                 forked_from: None,
@@ -1031,6 +1067,7 @@ fn resume_saved_vm_fails_when_pinned_rootfs_is_missing() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 base_assets: Some(test_saved_vm_base_assets()),
+                profile_pin: None,
                 created_at: "0".into(),
                 session_dir,
                 forked_from: None,
@@ -1066,6 +1103,7 @@ fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 }
@@ -1215,6 +1253,7 @@ async fn mcp_refresh_surfaces_process_failure() {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 
@@ -1275,6 +1314,7 @@ async fn reload_config_returns_structured_failed_session_state() {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 
@@ -1785,6 +1825,7 @@ fn provision_persistent_rejects_duplicate_name() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 base_assets: None,
+                profile_pin: None,
                 created_at: "0".into(),
                 session_dir: PathBuf::from("/tmp/taken"),
                 forked_from: None,
@@ -1918,6 +1959,7 @@ async fn handle_fork_creates_persistent_sandbox() {
             env: None,
             forked_from: None,
             base_assets: Some(base_assets.clone()),
+            profile_pin: None,
         },
     );
     let result = handle_fork(
@@ -1939,6 +1981,10 @@ async fn handle_fork_creates_persistent_sandbox() {
     assert_eq!(entry.description, Some("test".into()));
     assert_eq!(entry.base_version, "0.0.0");
     assert_eq!(entry.base_assets, Some(base_assets));
+    let pin = entry.profile_pin.as_ref().expect("fork must pin profile");
+    assert_eq!(pin.profile_id, "everyday-work");
+    assert!(pin.package_contract_hash.starts_with("blake3:"));
+    assert_eq!(pin.base_assets, entry.base_assets);
 }
 
 #[tokio::test]
@@ -1980,6 +2026,7 @@ async fn handle_fork_duplicate_returns_conflict() {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
     // state is already Arc<ServiceState> from make_test_state*
@@ -2015,7 +2062,22 @@ async fn handle_fork_from_persistent_registry() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let (effective, trace) =
+        capsem_core::settings_profiles::resolve_effective_vm_settings_with_trace(
+            &capsem_core::settings_profiles::ProfileRootSettings::default(),
+            None,
+        )
+        .unwrap();
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    capsem_core::settings_profiles::write_vm_effective_trace(&session_dir, &trace).unwrap();
     let base_assets = test_saved_vm_base_assets();
+    let source_profile_pin = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0518.1".to_string()),
+            Some(base_assets.clone()),
+        )
+        .unwrap();
     {
         let mut reg = state.persistent_registry.lock().unwrap();
         reg.data.vms.insert(
@@ -2026,6 +2088,7 @@ async fn handle_fork_from_persistent_registry() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 base_assets: Some(base_assets.clone()),
+                profile_pin: Some(source_profile_pin.clone()),
                 created_at: "2026-01-01T00:00:00Z".into(),
                 session_dir: session_dir.clone(),
                 forked_from: None,
@@ -2055,6 +2118,22 @@ async fn handle_fork_from_persistent_registry() {
         registry.get("from-pers").unwrap().base_assets,
         Some(base_assets)
     );
+    let fork_pin = registry
+        .get("from-pers")
+        .unwrap()
+        .profile_pin
+        .as_ref()
+        .expect("forked persistent VM should preserve a profile pin");
+    assert_eq!(fork_pin.profile_id, source_profile_pin.profile_id);
+    assert_eq!(
+        fork_pin.profile_revision,
+        source_profile_pin.profile_revision
+    );
+    assert_eq!(
+        fork_pin.package_contract_hash,
+        source_profile_pin.package_contract_hash
+    );
+    assert_eq!(fork_pin.base_assets, source_profile_pin.base_assets);
 }
 
 #[test]
@@ -2097,6 +2176,7 @@ async fn handle_list_shows_suspended_status() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 base_assets: None,
+                profile_pin: None,
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/susp-vm"),
                 forked_from: None,
@@ -2121,6 +2201,7 @@ async fn handle_list_shows_suspended_status() {
                 cpus: 1,
                 base_version: "0.0.0".into(),
                 base_assets: None,
+                profile_pin: None,
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/stop-vm"),
                 forked_from: None,
@@ -2163,6 +2244,7 @@ async fn handle_info_shows_suspended_status() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 base_assets: None,
+                profile_pin: None,
                 created_at: "0".into(),
                 session_dir: state.run_dir.join("persistent/info-susp"),
                 forked_from: None,
@@ -2203,6 +2285,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
                 env: None,
                 forked_from: None,
                 base_assets: None,
+                profile_pin: None,
             },
         );
     }
@@ -2239,6 +2322,7 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 base_assets: None,
+                profile_pin: None,
                 created_at: "0".into(),
                 session_dir: session_dir.clone(),
                 forked_from: None,
@@ -2311,6 +2395,13 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
     info.vm_id = Some("test".into());
     info.profile_id = Some("everyday-work".into());
     info.user_id = Some("elie".into());
+    info.profile_pin = Some(capsem_service::registry::SavedVmProfilePin {
+        profile_id: "everyday-work".into(),
+        profile_revision: Some("2026.0518.1".into()),
+        package_contract_hash:
+            "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
+        base_assets: None,
+    });
     info.total_input_tokens = Some(1000);
     info.total_estimated_cost = Some(0.42);
     info.model_call_count = Some(5);
@@ -2318,6 +2409,8 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
     assert!(json.contains("\"vm_id\":\"test\""));
     assert!(json.contains("\"profile_id\":\"everyday-work\""));
     assert!(json.contains("\"user_id\":\"elie\""));
+    assert!(json.contains("\"profile_pin\""));
+    assert!(json.contains("\"profile_revision\":\"2026.0518.1\""));
     assert!(json.contains("\"total_input_tokens\":1000"));
     assert!(json.contains("\"total_estimated_cost\":0.42"));
     assert!(json.contains("\"model_call_count\":5"));
@@ -2332,6 +2425,7 @@ fn sandbox_info_telemetry_fields_omitted_when_none() {
     assert!(!json.contains("model_call_count"));
     assert!(!json.contains("uptime_secs"));
     assert!(!json.contains("profile_id"));
+    assert!(!json.contains("profile_pin"));
     assert!(!json.contains("user_id"));
 }
 
@@ -2441,6 +2535,7 @@ async fn handle_list_does_not_scan_session_db_hot_path() {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 
@@ -3562,6 +3657,7 @@ fn resolve_rejects_symlink_escape() {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 
@@ -3593,6 +3689,7 @@ fn resolve_valid_path_inside_workspace() {
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 
@@ -3704,6 +3801,7 @@ fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &
             env: None,
             forked_from: None,
             base_assets: None,
+            profile_pin: None,
         },
     );
 }

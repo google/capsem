@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added durable per-session telemetry identity: `session.db` now records the
   VM id, resolved profile id, and local user id, and `/info` exposes those
   fields for support/status flows.
+- Added VM profile pins for persistent/running VM metadata, including resolved
+  profile id, optional profile revision, package-contract hash, and pinned boot
+  asset identity.
 - Removed legacy `assets.manifest.*` service settings and setup-time asset
   manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2

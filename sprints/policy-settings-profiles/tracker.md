@@ -109,8 +109,11 @@ a valid claim -- mark it `[ ]` instead.
     now resolves/downloads VM assets from profile declarations, forwards
     expected profile hashes to `capsem-process`, rejects old asset manifests as
     runtime authority, and no longer exposes `assets.manifest.*` service
-    settings. Remaining work installs profile payloads from the catalog, adds
-    retention, explicit VM profile/revision/package pins, and pre-S07a
+    settings. `session.db` now records VM/profile/user telemetry identity, and
+    VM metadata now carries a profile pin with resolved profile id, optional
+    profile revision, package-contract hash, and pinned asset hashes. Remaining
+    work installs profile payloads from the catalog, makes profile revision
+    mandatory from signed records, adds retention, and adds pre-S07a
     unsupported/unbound handling.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
@@ -358,7 +361,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   S07 metrics proto foundation adds **36** focused `capsem-proto`
   IPC tests and **18** focused `capsem-process` IPC tests. S07a
   telemetry identity now has focused logger schema/writer/reader,
-  core env-resolution, and service serialization/enrichment tests.
+  core env-resolution, and service serialization/enrichment tests. VM profile
+  pins add registry roundtrip, package-contract hash, API serialization, and
+  fork persistence coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -393,8 +398,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `block`). S07a adds a durable `session_identity` row to
   `session.db` with `vm_id`, `profile_id`, and `user_id`, service
   propagation into `capsem-process`, `/info` exposure, and focused
-  read-back coverage. Persisted policy-decision read-back from a running
-  `session.db` (capsem-doctor E2E ask probe) is **deferred**.
+  read-back coverage. VM metadata surfaces the corresponding profile pin for
+  status/detail paths without reopening `session.db` on `/list`. Persisted
+  policy-decision read-back from a running `session.db` (capsem-doctor E2E ask
+  probe) is **deferred**.
   `policy_confirm_events` table remains S06-pre slice 7+ work.
 - **Performance**: no benchmarks added by S06/S06a/S06b; the
   resolver runs at provision / reload, not on the hot path,
@@ -407,6 +414,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   telemetry identity):
   `cargo test -p capsem-logger` **100** + **126** passed;
   `cargo test -p capsem-service` **107** + **140** passed;
+  after VM profile pins, `cargo test -p capsem-service` **108** + **141**
+  passed;
   `cargo test -p capsem-core telemetry --lib` **31** passed;
   `cargo test -p capsem-process --no-run` passed; and
   `cargo test -p capsem-mcp-aggregator --no-run` passed.

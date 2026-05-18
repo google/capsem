@@ -4,7 +4,7 @@ use capsem_core::session::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::registry::SavedVmBaseAssets;
+use crate::registry::{SavedVmBaseAssets, SavedVmProfilePin};
 
 /// Response for GET /stats -- full main.db dump in one call.
 #[derive(Serialize, Debug)]
@@ -81,6 +81,8 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_assets: Option<SavedVmBaseAssets>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_pin: Option<SavedVmProfilePin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -141,6 +143,7 @@ impl SandboxInfo {
             cpus: None,
             version: None,
             base_assets: None,
+            profile_pin: None,
             forked_from: None,
             description: None,
             size_bytes: None,

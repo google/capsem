@@ -22,6 +22,16 @@ pub struct SavedVmBaseAssets {
     pub guest_abi: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmProfilePin {
+    pub profile_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub profile_revision: Option<String>,
+    pub package_contract_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub base_assets: Option<SavedVmBaseAssets>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
     pub name: String,
@@ -30,6 +40,8 @@ pub struct PersistentVmEntry {
     pub base_version: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub base_assets: Option<SavedVmBaseAssets>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub profile_pin: Option<SavedVmProfilePin>,
     pub created_at: String,
     pub session_dir: PathBuf,
     #[serde(
@@ -141,6 +153,7 @@ mod tests {
             cpus: 2,
             base_version: "0.1.0".into(),
             base_assets: None,
+            profile_pin: None,
             created_at: "12345".into(),
             session_dir,
             forked_from: None,
@@ -210,6 +223,51 @@ mod tests {
     }
 
     #[test]
+    fn persistent_registry_roundtrip_preserves_profile_pin() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test_registry.json");
+
+        let mut registry = PersistentRegistry::load(path.clone());
+        let mut entry = make_entry("saved-vm", dir.path().join("saved-vm"));
+        let base_assets = SavedVmBaseAssets {
+            asset_version: "everyday-work@2026.0518.1".into(),
+            arch: "arm64".into(),
+            kernel_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            initrd_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            rootfs_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
+            guest_abi: Some("capsem-guest-v2".into()),
+        };
+        entry.base_assets = Some(base_assets.clone());
+        entry.profile_pin = Some(SavedVmProfilePin {
+            profile_id: "everyday-work".into(),
+            profile_revision: Some("2026.0518.1".into()),
+            package_contract_hash:
+                "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
+            base_assets: Some(base_assets),
+        });
+
+        registry.register(entry).unwrap();
+
+        let registry2 = PersistentRegistry::load(path);
+        let pin = registry2
+            .get("saved-vm")
+            .unwrap()
+            .profile_pin
+            .as_ref()
+            .expect("profile pin should roundtrip");
+        assert_eq!(pin.profile_id, "everyday-work");
+        assert_eq!(pin.profile_revision.as_deref(), Some("2026.0518.1"));
+        assert_eq!(
+            pin.package_contract_hash,
+            "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        );
+        assert_eq!(
+            pin.base_assets.as_ref().unwrap().rootfs_hash,
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        );
+    }
+
+    #[test]
     fn legacy_registry_entries_without_base_assets_still_load() {
         let entry: PersistentVmEntry = serde_json::from_str(
             r#"{
@@ -225,6 +283,7 @@ mod tests {
 
         assert_eq!(entry.name, "legacy");
         assert!(entry.base_assets.is_none());
+        assert!(entry.profile_pin.is_none());
     }
 
     #[test]

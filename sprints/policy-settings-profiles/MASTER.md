@@ -177,13 +177,18 @@ Landed S07a foundation:
   `profile_id`, and `user_id`; service passes those facts to
   `capsem-process`; process/aggregator logs include them; `/info` surfaces the
   stored identity.
+- VM profile pins. Running and persistent VM metadata now carries resolved
+  `profile_id`, optional `profile_revision`, package-contract hash, and pinned
+  boot asset hashes; fork/persist/list/info preserve and expose that pin.
 
 Remaining S07a push order:
 
 1. Catalog-driven profile payload install/update/delete/revoke from manifest
    records, including `deprecated` and `revoked` fail-closed semantics.
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
-   pinned asset metadata.
+   pinned asset metadata. Landed for runtime/registry/API with optional
+   revision; signed catalog install/update still needs to make revision
+   mandatory from catalog records.
 3. Retention and cleanup that preserve active/deprecated installed revisions,
    in-progress downloads, and existing VM pins.
 4. Explicit unsupported/unbound handling for pre-S07a registry records.
@@ -256,6 +261,8 @@ Latest focused verification after the rescue/push transition:
   tests.
 - `cargo test -p capsem-service` passed with 107 library tests + 140 service
   tests.
+- `cargo test -p capsem-service` passed with 108 library tests + 141 service
+  tests after VM profile pins.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

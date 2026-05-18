@@ -28,7 +28,9 @@ use capsem_service::asset_supervisor::{
 };
 use capsem_service::debug_report;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
-use capsem_service::registry::{PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets};
+use capsem_service::registry::{
+    PersistentRegistry, PersistentVmEntry, SavedVmBaseAssets, SavedVmProfilePin,
+};
 use capsem_service::saved_vm_assets;
 use capsem_service::triage;
 
@@ -169,6 +171,8 @@ struct InstanceInfo {
     forked_from: Option<String>,
     /// Exact boot-asset identity this VM's root overlay depends on.
     base_assets: Option<SavedVmBaseAssets>,
+    /// Exact profile/package/asset identity this VM was created with.
+    profile_pin: Option<SavedVmProfilePin>,
 }
 
 pub struct ProvisionOptions<'a> {
@@ -331,6 +335,24 @@ impl ServiceState {
             &effective.profile_id,
             &capsem_core::telemetry::host_user_id(),
         ))
+    }
+
+    fn vm_profile_pin(
+        &self,
+        session_dir: &FsPath,
+        profile_revision: Option<String>,
+        base_assets: Option<SavedVmBaseAssets>,
+    ) -> Result<SavedVmProfilePin> {
+        let effective = capsem_core::settings_profiles::load_vm_effective_settings(session_dir)
+            .context("load vm-effective settings for profile pin")?;
+        let package_json = serde_json::to_vec(&effective.packages.value)
+            .context("serialize package contract for profile pin")?;
+        Ok(SavedVmProfilePin {
+            profile_id: effective.profile_id,
+            profile_revision,
+            package_contract_hash: format!("blake3:{}", blake3::hash(&package_json).to_hex()),
+            base_assets,
+        })
     }
 
     fn resolve_vm_runtime_defaults(&self) -> VmRuntimeDefaults {
@@ -631,6 +653,10 @@ impl ServiceState {
         } else {
             self.current_base_assets()?
         };
+        let inherited_profile_revision = source_entry
+            .as_ref()
+            .and_then(|entry| entry.profile_pin.as_ref())
+            .and_then(|pin| pin.profile_revision.clone());
 
         let pinned_source_assets = source_entry.as_ref().and_then(|entry| {
             entry
@@ -696,6 +722,13 @@ impl ServiceState {
         }
         self.ensure_vm_effective_settings(&session_dir)
             .context("attach vm-effective settings to session")?;
+        let profile_pin = self
+            .vm_profile_pin(
+                &session_dir,
+                inherited_profile_revision,
+                base_assets.clone(),
+            )
+            .context("pin VM profile/package/assets")?;
         let telemetry_env = self
             .telemetry_identity_env(id, &session_dir)
             .context("derive process telemetry identity")?;
@@ -921,6 +954,7 @@ impl ServiceState {
                 checkpoint_path: None,
                 env: env.clone(),
                 base_assets: base_assets.clone(),
+                profile_pin: Some(profile_pin.clone()),
             })?;
         }
 
@@ -940,6 +974,7 @@ impl ServiceState {
                 env,
                 forked_from: from.clone(),
                 base_assets,
+                profile_pin: Some(profile_pin),
             },
         );
 
@@ -980,6 +1015,7 @@ impl ServiceState {
         let cpus = cpus_override.unwrap_or(entry.cpus);
         let version = entry.base_version.clone();
         let base_assets = entry.base_assets.clone();
+        let profile_pin = entry.profile_pin.clone();
 
         info!(name, version, "resume_sandbox: re-spawning process");
 
@@ -1143,6 +1179,7 @@ impl ServiceState {
                 env: None,
                 forked_from: entry.forked_from.clone(),
                 base_assets,
+                profile_pin,
             },
         );
 
@@ -1707,7 +1744,7 @@ async fn handle_fork(
     }
 
     // Find source: running instance or stopped persistent VM
-    let (session_dir, ram_mb, cpus, base_version, base_assets, uds_path) = {
+    let (session_dir, ram_mb, cpus, base_version, base_assets, source_profile_pin, uds_path) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
@@ -1716,6 +1753,7 @@ async fn handle_fork(
                 i.cpus,
                 i.base_version.clone(),
                 i.base_assets.clone(),
+                i.profile_pin.clone(),
                 Some(i.uds_path.clone()),
             )
         } else {
@@ -1728,6 +1766,7 @@ async fn handle_fork(
                     p.cpus,
                     p.base_version.clone(),
                     p.base_assets.clone(),
+                    p.profile_pin.clone(),
                     None,
                 )
             } else {
@@ -1794,6 +1833,18 @@ async fn handle_fork(
                 format!("fork: failed to attach vm-effective settings: {e:#}"),
             )
         })?;
+    let profile_pin = state
+        .vm_profile_pin(
+            &new_session_dir,
+            source_profile_pin.and_then(|pin| pin.profile_revision),
+            base_assets.clone(),
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("fork: failed to pin profile: {e:#}"),
+            )
+        })?;
 
     // Register as persistent VM
     {
@@ -1820,6 +1871,7 @@ async fn handle_fork(
                 checkpoint_path: None,
                 env: None,
                 base_assets,
+                profile_pin: Some(profile_pin),
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -2144,6 +2196,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.cpus = Some(i.cpus);
             info.version = Some(i.base_version.clone());
             info.base_assets = i.base_assets.clone();
+            info.profile_pin = i.profile_pin.clone();
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
             attach_list_live_metrics_placeholder(&mut info, &i.id);
@@ -2173,6 +2226,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
                 info.cpus = Some(entry.cpus);
                 info.version = Some(entry.base_version.clone());
                 info.base_assets = entry.base_assets.clone();
+                info.profile_pin = entry.profile_pin.clone();
                 info.forked_from = entry.forked_from.clone();
                 info.description = entry.description.clone();
                 if entry.defunct {
@@ -2325,6 +2379,7 @@ async fn handle_info(
                     info.cpus = Some(i.cpus);
                     info.version = Some(i.base_version.clone());
                     info.base_assets = i.base_assets.clone();
+                    info.profile_pin = i.profile_pin.clone();
                     info.forked_from = i.forked_from.clone();
                     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
                     (Some(info), Some(i.session_dir.clone()))
@@ -2355,6 +2410,7 @@ async fn handle_info(
             info.cpus = Some(entry.cpus);
             info.version = Some(entry.base_version.clone());
             info.base_assets = entry.base_assets.clone();
+            info.profile_pin = entry.profile_pin.clone();
             info.forked_from = entry.forked_from.clone();
             info.description = entry.description.clone();
             if entry.defunct {
@@ -5724,7 +5780,7 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, ram_mb, cpus, base_version, forked_from, env, base_assets) = {
+    let (old_session_dir, ram_mb, cpus, base_version, forked_from, env, base_assets, profile_pin) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -5743,6 +5799,7 @@ async fn handle_persist(
             i.forked_from.clone(),
             i.env.clone(),
             i.base_assets.clone(),
+            i.profile_pin.clone(),
         )
     };
 
@@ -5781,6 +5838,7 @@ async fn handle_persist(
                 checkpoint_path: None,
                 env: env.clone(),
                 base_assets: base_assets.clone(),
+                profile_pin: profile_pin.clone(),
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -5804,6 +5862,7 @@ async fn handle_persist(
                     env: info.env,
                     forked_from,
                     base_assets,
+                    profile_pin,
                 },
             );
         }
