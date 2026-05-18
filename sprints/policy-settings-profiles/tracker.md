@@ -185,8 +185,9 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   manifest scripts must be unified under a released `capsem-admin` package.
   Profiles become the source of truth for image build plans and manifest
   entries; `capsem-admin profile validate/schema` consumes the shared JSON
-  Schema artifact and valid/invalid fixtures; hand-edited `guest/config` image
-  settings are not carried forward as compatibility input.
+  Schema artifact and valid/invalid fixtures; Python admin internals use
+  Pydantic v2 models instead of raw nested dicts; hand-edited `guest/config`
+  image settings are not carried forward as compatibility input.
 - **S12 architecture: single source of truth.** The in-memory
   per-VM accumulator in `capsem-process` is the only runtime
   source; `session.db` is read on the data path exactly twice in

@@ -86,8 +86,15 @@ Required tooling baseline:
   crate. If implementation chooses Rust-derived schema generation, use
   `schemars` or an equivalent maintained generator and diff the generated
   output against the committed schema artifact.
+- Python/admin CLI: use Pydantic v2 `BaseModel` types for every profile,
+  manifest, package, tool, asset, verification report, and command output
+  shape. Models must set `extra="forbid"` and use typed validators for semantic
+  checks. Raw `dict` / `serde_json::Value`-style manipulation is allowed only at
+  parse/serialization boundaries.
 - Python/admin CLI: add the standard `jsonschema` package and validate parsed
   TOML profiles against `capsem.profile.v2.schema.json` before semantic checks.
+  Pydantic models then own normalized access, defaults, error paths, and JSON
+  report emission.
 - Docs/editors/CI: publish the same JSON Schema artifact for documentation,
   editor validation, and golden fixture checks.
 - Semantic checks that JSON Schema cannot express cleanly remain explicit code:

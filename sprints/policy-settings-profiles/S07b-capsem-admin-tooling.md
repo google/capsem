@@ -89,6 +89,11 @@ Required semantics:
   against local paths and produce the same verification report shape.
 - Every command supports machine-readable JSON output for CI and human-readable
   output for admins.
+- Python implementation code must use Pydantic v2 models end to end for profile
+  payloads, manifest records, asset records, package/tool contracts, build
+  plans, doctor checks, verification reports, and command JSON output. Raw dict
+  manipulation is limited to TOML/JSON parse boundaries and final
+  `model_dump()` / `model_dump_json()` emission.
 
 ## Source-Of-Truth Flow
 
@@ -148,6 +153,11 @@ this sprint.
   validate` must fail closed on unknown or underspecified fields through JSON
   Schema Draft 2020-12 validation, and `profile schema` must export the
   standard schema artifact for docs, editors, CI, Rust, and Python tooling.
+- Add Pydantic model layer:
+  profile, manifest, asset, package/tool, build-plan, doctor, and report
+  modules must be represented as `BaseModel` classes with `ConfigDict(extra=
+  "forbid")`, typed fields, model validators, stable error paths, and unit
+  tests. Do not pass untyped nested dicts between admin modules.
 - Remove hand-edited image settings as accepted input for release builds. Tests
   must fail if a release build reads package/tool/image settings from
   `guest/config` instead of the selected profile.
@@ -256,6 +266,9 @@ The checker must fail closed for:
 - [ ] Add standard schema tooling dependencies: Python `jsonschema` for
       `capsem-admin` and Rust JSON Schema validation/generation tooling chosen
       in S07a.
+- [ ] Add Pydantic v2 models for profile payloads, manifest records, package/
+      tool contracts, assets, build plans, doctor checks, verification reports,
+      and command JSON output.
 - [ ] Add `capsem-admin` package/distribution entry point and bootstrap install
       wiring.
 - [ ] Update Justfile recipes and shell scripts to use `capsem-admin`, with
@@ -268,6 +281,8 @@ The checker must fail closed for:
       `capsem.profile.v2.schema.json` through shared valid/invalid fixtures and
       Rust/Python conformance tests.
 - [ ] Implement profile-to-image build-plan derivation.
+- [ ] Replace raw dict/list plumbing in admin workflows with Pydantic model
+      parsing, validation, normalized accessors, and `model_dump_json()` output.
 - [ ] Remove hand-edited image settings as release-build authority.
 - [ ] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
@@ -282,9 +297,10 @@ The checker must fail closed for:
 - Unit/contract: CLI parser golden tests, including omitted `--arch` defaulting
   to `all` and single-arch narrowing; JSON report schema tests;
   `capsem.profile.v2` JSON Schema Draft 2020-12 golden tests; profile adapter
-  conformance with the shared schema artifact; manifest v3 generate/check/sign
-  tests; profile-to-image build plan tests; admin doctor checks;
-  no-hand-edited-settings guard tests.
+  conformance with the shared schema artifact; Pydantic model validation tests
+  for profiles, manifests, assets, package/tool contracts, build plans, doctor
+  checks, and reports; manifest v3 generate/check/sign tests; profile-to-image
+  build plan tests; admin doctor checks; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `image plan`; `image verify`; `manifest generate`; `manifest check
   --fast`; `manifest check --download`; bootstrap-installed CLI smoke.
@@ -293,7 +309,8 @@ The checker must fail closed for:
   manifest/payload id or revision mismatch, missing per-arch asset table, URL
   scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch, missing
   signature URL, hash mismatch after download, duplicate profile revision,
-  revoked current profile, path traversal, stale manifest rollback.
+  revoked current profile, path traversal, stale manifest rollback, and
+  untyped/raw dict bypass attempts in admin module tests.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default, boot at least the host-arch image through
   Capsem, and run an in-guest verification probe that proves declared

@@ -58,14 +58,19 @@ Prove the redesign is releaseable.
   mismatches, malformed package versions, unsupported arch declarations, and
   incomplete per-arch asset records. Rust and Python validators must pass the
   same JSON Schema Draft 2020-12 valid/invalid fixtures.
+- Prove admin type safety:
+  Python admin workflows use Pydantic v2 models for profile, manifest, asset,
+  package/tool, build-plan, doctor, and report shapes. Tests fail if workflows
+  bypass models with untyped nested dict manipulation except at parse/output
+  boundaries.
 
 ## Coverage Ledger
 
 - Unit/contract: complete for profile catalog schema, `capsem.profile.v2`
   JSON Schema Draft 2020-12 closure, shared Rust/Python schema fixture parity,
-  signatures/hashes, lifecycle status, package/tool contracts, per-arch assets,
-  rollback protection, resolver inheritance, VM pin metadata, and API/CLI/UI
-  shapes.
+  Pydantic v2 model coverage for every admin data shape, signatures/hashes,
+  lifecycle status, package/tool contracts, per-arch assets, rollback
+  protection, resolver inheritance, VM pin metadata, and API/CLI/UI shapes.
 - Functional: complete for manifest update, profile install/update/remove/
   revoke, first-use asset download, VM create/resume/fork/delete, cleanup
   retention, explicit profile selection through UDS/HTTP/CLI/UI, and
