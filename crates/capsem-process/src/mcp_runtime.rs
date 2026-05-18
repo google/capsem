@@ -446,6 +446,8 @@ fn map_effective_callback(callback: &str) -> Option<PolicyCallback> {
         "mcp.request" => Some(PolicyCallback::McpRequest),
         "mcp.response" => Some(PolicyCallback::McpResponse),
         "http.request" => Some(PolicyCallback::HttpRequest),
+        "http.read" => Some(PolicyCallback::HttpRead),
+        "http.write" => Some(PolicyCallback::HttpWrite),
         "http.response" => Some(PolicyCallback::HttpResponse),
         "dns.request" => Some(PolicyCallback::DnsQuery),
         "dns.response" => Some(PolicyCallback::DnsResponse),
@@ -473,7 +475,10 @@ fn policy_rules_mut(
 ) -> &mut HashMap<String, PolicyRuleConfig> {
     match callback {
         PolicyCallback::McpRequest | PolicyCallback::McpResponse => &mut config.mcp,
-        PolicyCallback::HttpRequest | PolicyCallback::HttpResponse => &mut config.http,
+        PolicyCallback::HttpRequest
+        | PolicyCallback::HttpRead
+        | PolicyCallback::HttpWrite
+        | PolicyCallback::HttpResponse => &mut config.http,
         PolicyCallback::DnsQuery | PolicyCallback::DnsResponse => &mut config.dns,
         PolicyCallback::ModelRequest
         | PolicyCallback::ModelResponse

@@ -96,6 +96,10 @@ fn split_conjunction(condition: &str) -> Result<Vec<&str>, String> {
 }
 
 fn validate_atom(callback: PolicyCallback, atom: &str) -> Result<(), String> {
+    if matches!(atom, "true" | "false") {
+        return Ok(());
+    }
+
     if let Some(inner) = atom.strip_prefix("has(").and_then(|s| s.strip_suffix(')')) {
         let field = inner.trim();
         validate_field(callback, field)?;
@@ -127,6 +131,13 @@ fn evaluate_atom<S>(callback: PolicyCallback, atom: &str, subject: &S) -> Result
 where
     S: PolicySubject + ?Sized,
 {
+    if atom == "true" {
+        return Ok(true);
+    }
+    if atom == "false" {
+        return Ok(false);
+    }
+
     if let Some(inner) = atom.strip_prefix("has(").and_then(|s| s.strip_suffix(')')) {
         let field = inner.trim();
         validate_field(callback, field)?;
@@ -372,7 +383,7 @@ fn field_allowed(callback: PolicyCallback, field: &str) -> bool {
             ],
             &["arguments", "response"],
         ),
-        PolicyCallback::HttpRequest => (
+        PolicyCallback::HttpRequest | PolicyCallback::HttpRead | PolicyCallback::HttpWrite => (
             &[
                 "request.scheme",
                 "request.host",

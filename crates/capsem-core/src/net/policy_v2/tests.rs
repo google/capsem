@@ -110,6 +110,46 @@ reason = "Route the strawman repository namespace through the allowed mirror"
 }
 
 #[test]
+fn policy_v2_supports_http_read_write_callbacks() {
+    let policy = policy_from_toml(
+        r#"
+[policy.http.default_read]
+on = "http.read"
+if = 'true'
+decision = "ask"
+priority = 900
+reason = "default read gate"
+
+[policy.http.default_write]
+on = "http.write"
+if = 'request.method == "POST"'
+decision = "block"
+priority = 901
+reason = "default write gate"
+"#,
+    );
+
+    let read = policy.http.get("default_read").expect("read rule");
+    assert_eq!(read.on, PolicyCallback::HttpRead);
+    assert_eq!(read.decision, PolicyDecisionKind::Ask);
+
+    let write = policy.http.get("default_write").expect("write rule");
+    assert_eq!(write.on, PolicyCallback::HttpWrite);
+    assert_eq!(write.decision, PolicyDecisionKind::Block);
+
+    let subject = serde_json::json!({
+        "request": {
+            "method": "POST"
+        }
+    });
+    let hit = policy
+        .find_matching_rule(PolicyCallback::HttpWrite, &subject)
+        .unwrap()
+        .expect("http.write rule should evaluate request fields");
+    assert_eq!(hit.name, "default_write");
+}
+
+#[test]
 fn policy_v2_rejects_invalid_rule_shapes() {
     let cases = [
         (

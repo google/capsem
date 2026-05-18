@@ -60,8 +60,11 @@ a valid claim -- mark it `[ ]` instead.
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
   routes, profile create/fork/update/delete mutation routes, and rules
-  list/get/evaluate routes landed. Rules create/delete, confirm listing,
-  skills, and full route proof remain open.
+  list/get/evaluate routes landed. Rules read/evaluate is now hardened with a
+  chained service workflow, generated `http.read`/`http.write` dry-run support,
+  boolean catch-all CEL support, and a bounded large-profile evaluation test.
+  Rules create/delete, confirm listing, skills, and full route proof remain
+  open.
 14. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
 15. [ ] [S09 - CLI integration](S09-cli-integration.md)
 16. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)

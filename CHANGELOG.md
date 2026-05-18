@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Profile V2 UDS rules routes for listing resolved rules, fetching a
   rule with provenance, and dry-running V2 policy evaluation against synthetic
   subjects without enforcing or prompting.
+- Added chained functional and bounded performance coverage for the Profile V2
+  UDS Rules API before mirroring it through the HTTP gateway.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under
@@ -60,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass through instead of dropping bytes.
 - Fixed Policy V2 CEL parsing so method-looking text inside quoted string
   literals is not mistaken for `.contains()`/`.matches()` calls.
+- Fixed Policy V2 dry-run/runtime callback coverage for generated `http.read`
+  and `http.write` rules, including boolean `true` CEL catch-all conditions.
 - Fixed `just smoke`, `just test`, and `build-ui` ordering so Tauri frontend
   assets are built before Rust workspace compile/clippy/test phases that need
   `frontend/dist`.

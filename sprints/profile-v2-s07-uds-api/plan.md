@@ -73,6 +73,20 @@ engine against a synthetic JSON subject and returns the matched rule, decision,
 Rule create/delete remains a later S07 slice so this change can lock the query
 and evaluator contract first.
 
+## Rules API Hardening
+
+Before mirroring the Rules API through S08 HTTP gateway routes, harden the UDS
+contract with:
+
+- A functional workflow that chains profile create, profile list, rule list,
+  rule get, dry-run evaluate, profile update, and dry-run re-evaluate.
+- Generated-rule dry-run coverage for `http.read` and `http.write` catch-all
+  callbacks.
+- Shared Policy V2 support for `http.read` / `http.write` callback names and
+  boolean `true` / `false` CEL terms used by generated rules.
+- A bounded large-profile evaluation test so the gateway does not inherit an
+  obviously unbounded hot path.
+
 ## Testing Proof Matrix
 
 - Unit/contract: capsem-proto metrics/IPC roundtrips.
@@ -85,3 +99,6 @@ and evaluator contract first.
 - Telemetry: no live counters yet; S12 accumulator remains deferred.
 - Performance: snapshot request is classified as a health/read-only IPC action,
   not a job or lifecycle mutation.
+- Rules API performance: `POST /rules/evaluate` is covered by a 32-iteration
+  large-profile regression test over 161 HTTP rules with a 1.5s debug-build
+  budget.

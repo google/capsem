@@ -3253,6 +3253,8 @@ fn map_policy_callback(
         "mcp.request" => Ok(PolicyCallback::McpRequest),
         "mcp.response" => Ok(PolicyCallback::McpResponse),
         "http.request" => Ok(PolicyCallback::HttpRequest),
+        "http.read" => Ok(PolicyCallback::HttpRead),
+        "http.write" => Ok(PolicyCallback::HttpWrite),
         "http.response" => Ok(PolicyCallback::HttpResponse),
         "dns.request" => Ok(PolicyCallback::DnsQuery),
         "dns.response" => Ok(PolicyCallback::DnsResponse),
@@ -3287,6 +3289,8 @@ fn validate_policy_rule_update(
         capsem_core::net::policy_v2::PolicyCallback::McpRequest
         | capsem_core::net::policy_v2::PolicyCallback::McpResponse => "mcp",
         capsem_core::net::policy_v2::PolicyCallback::HttpRequest
+        | capsem_core::net::policy_v2::PolicyCallback::HttpRead
+        | capsem_core::net::policy_v2::PolicyCallback::HttpWrite
         | capsem_core::net::policy_v2::PolicyCallback::HttpResponse => "http",
         capsem_core::net::policy_v2::PolicyCallback::DnsQuery
         | capsem_core::net::policy_v2::PolicyCallback::DnsResponse => "dns",
@@ -3467,7 +3471,7 @@ struct RulesQuery {
     callback: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RuleEvaluateRequest {
     #[serde(default)]
     profile: Option<String>,
@@ -3731,7 +3735,7 @@ fn effective_policy_rule_config(
     Ok(policy_rule)
 }
 
-fn policy_config_for_effective_callback(
+fn build_effective_policy_for_callback(
     effective: &capsem_core::settings_profiles::EffectiveVmSettings,
     requested_callback: &str,
 ) -> Result<
@@ -3862,8 +3866,7 @@ async fn handle_evaluate_rule(
     let callback =
         map_policy_callback(&request.callback).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
     let effective = resolve_effective_for_rules(request.profile)?;
-    let (config, ids_by_name) =
-        policy_config_for_effective_callback(&effective, &request.callback)?;
+    let (config, ids_by_name) = build_effective_policy_for_callback(&effective, &request.callback)?;
     let matched = config
         .find_matching_rule(callback, &request.subject)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("evaluate rule: {e}")))?;

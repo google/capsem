@@ -232,6 +232,10 @@ Landed:
   expose canonical `security.rules.<type>.<name>` ids, provenance/source
   profile, ownership metadata, and dry-run matched-rule decisions without
   enforcing or prompting.
+- Rules read/evaluate has pre-gateway hardening coverage: chained profile/rule
+  workflow, generated `http.read`/`http.write` dry-run support, boolean
+  catch-all CEL support, process-side conversion of non-derived read/write
+  callbacks, and a bounded large-profile evaluate test.
 
 Gaps:
 - No dedicated skills list/add/delete route group.

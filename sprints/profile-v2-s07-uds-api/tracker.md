@@ -24,6 +24,9 @@
 - [x] Run focused rules API verification.
 - [x] Update S07 trackers and changelog for rules read/evaluate.
 - [x] Commit rules read/evaluate slice.
+- [x] Add chained Rules API functional proof before HTTP lift.
+- [x] Add generated `http.read`/`http.write` dry-run support and tests.
+- [x] Add bounded large-profile Rules API evaluation performance proof.
 
 ## Notes
 
@@ -45,16 +48,28 @@
   failed on missing profile mutation handlers and fork request type.
   RED proof `cargo test -p capsem-service --bin capsem-service handle_list_rules_returns_effective_rules_with_canonical_ids -- --nocapture`
   failed on missing Rules API query/request structs and handlers.
+  RED proof `cargo test -p capsem-core policy_v2_supports_http_read_write_callbacks -- --nocapture`
+  first failed on missing `HttpRead`/`HttpWrite` callback variants, then exposed
+  that generated `if = "true"` catch-all conditions were not accepted by the
+  Policy V2 CEL validator.
 - Functional:
   `cargo test -p capsem-process ipc -- --nocapture` passed 18 focused process
   IPC tests, including the process-owned default metrics snapshot.
   `cargo test -p capsem-service --bin capsem-service profile -- --nocapture`
-  passed 11 focused service profile tests, including list/get/resolve and
-  create/fork/update/delete handlers.
+  passed 13 focused service profile/rules tests, including list/get/resolve,
+  create/fork/update/delete handlers, and the chained rules workflow.
   `cargo test -p capsem-service --bin capsem-service rule -- --nocapture`
-  passed 8 focused service rules/settings tests, including canonical rule list,
-  single-rule provenance lookup, and dry-run V2 evaluation returning the matched
-  canonical id.
+  passed 11 focused service rules/settings tests, including canonical rule
+  list, single-rule provenance lookup, generated `http.read`/`http.write`
+  evaluation, chained profile/rule/evaluate/update workflow, and dry-run V2
+  evaluation returning the matched canonical id.
+  `cargo test -p capsem-core policy_v2 -- --nocapture` passed 77 focused
+  Policy V2 tests, including the new callback vocabulary and boolean CEL terms.
+  `cargo test -p capsem-process load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults -- --nocapture`
+  passed with non-derived `http.read`/`http.write` rules converted into the
+  process-side Policy V2 engine.
+  `cargo test -p capsem-process mcp_runtime -- --nocapture` passed 10 focused
+  runtime policy conversion tests.
 - Adversarial:
   `cargo test -p capsem-proto ipc -- --nocapture` passed 36 focused proto IPC
   tests, including the real bincode wire-format metrics snapshot roundtrip.
@@ -73,6 +88,10 @@
   failed on missing read-only metrics IPC classification.
   GREEN proof is included in the process IPC suite; the request is classified as
   `HealthCheck`, not job/lifecycle mutation.
+  `rules_api_evaluate_stays_bounded_for_large_profiles` runs 32 dry-run
+  evaluations over a 161-rule HTTP profile and asserts completion under 1.5s
+  in the debug test build; latest observed run completed the full rule suite in
+  0.28s.
 - Missing/deferred: Rules API create/delete, confirm pending listing, skills
   routes, gateway mirror, Python/VM route proof, and live metrics accumulator
   remain open S07/S08/S12 work.

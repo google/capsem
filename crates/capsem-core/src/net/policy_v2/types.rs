@@ -15,6 +15,10 @@ pub enum PolicyCallback {
     McpResponse,
     #[serde(rename = "http.request")]
     HttpRequest,
+    #[serde(rename = "http.read")]
+    HttpRead,
+    #[serde(rename = "http.write")]
+    HttpWrite,
     #[serde(rename = "http.response")]
     HttpResponse,
     #[serde(rename = "dns.query")]
@@ -37,7 +41,10 @@ impl PolicyCallback {
     pub fn policy_type(self) -> PolicyRuleType {
         match self {
             PolicyCallback::McpRequest | PolicyCallback::McpResponse => PolicyRuleType::Mcp,
-            PolicyCallback::HttpRequest | PolicyCallback::HttpResponse => PolicyRuleType::Http,
+            PolicyCallback::HttpRequest
+            | PolicyCallback::HttpRead
+            | PolicyCallback::HttpWrite
+            | PolicyCallback::HttpResponse => PolicyRuleType::Http,
             PolicyCallback::DnsQuery | PolicyCallback::DnsResponse => PolicyRuleType::Dns,
             PolicyCallback::ModelRequest
             | PolicyCallback::ModelResponse

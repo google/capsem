@@ -282,6 +282,40 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         owner_setting_label: None,
         editable: true,
     });
+    effective.rules.push(EffectiveRule {
+        id: "http.user-read".to_string(),
+        callback: "http.read".to_string(),
+        condition: "true".to_string(),
+        decision: RuleDecision::Ask,
+        priority: 20,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("User-authored read gate".to_string()),
+        derived: false,
+        provenance: effective.profile.provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "http.user-write".to_string(),
+        callback: "http.write".to_string(),
+        condition: "true".to_string(),
+        decision: RuleDecision::Block,
+        priority: 21,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("User-authored write gate".to_string()),
+        derived: false,
+        provenance: effective.profile.provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
 
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
 
@@ -360,6 +394,19 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         .1
         .condition
         .contains("response.text.contains(\"secret\")"));
+
+    let http_read_rules = runtime
+        .policy_v2
+        .rules_for_callback(PolicyCallback::HttpRead);
+    assert!(http_read_rules
+        .iter()
+        .any(|(name, rule)| *name == "user-read" && rule.condition == "true"));
+    let http_write_rules = runtime
+        .policy_v2
+        .rules_for_callback(PolicyCallback::HttpWrite);
+    assert!(http_write_rules
+        .iter()
+        .any(|(name, rule)| *name == "user-write" && rule.condition == "true"));
 }
 
 #[test]

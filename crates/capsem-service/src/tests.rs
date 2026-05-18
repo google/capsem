@@ -2637,6 +2637,26 @@ fn custom_profile(id: &str, name: &str) -> capsem_core::settings_profiles::Profi
     profile
 }
 
+fn test_profile_rule(
+    callback: &str,
+    condition: &str,
+    decision: capsem_core::settings_profiles::RuleDecision,
+    priority: i32,
+    reason: &str,
+) -> capsem_core::settings_profiles::ProfileRule {
+    capsem_core::settings_profiles::ProfileRule {
+        callback: callback.to_string(),
+        condition: condition.to_string(),
+        decision,
+        priority,
+        reason: Some(reason.to_string()),
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+    }
+}
+
 #[tokio::test]
 async fn handle_create_profile_persists_user_profile() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
@@ -2765,17 +2785,13 @@ async fn handle_list_rules_returns_effective_rules_with_canonical_ids() {
     let mut profile = custom_profile("custom", "Custom");
     profile.security.rules.http.insert(
         "block_openai".to_string(),
-        capsem_core::settings_profiles::ProfileRule {
-            callback: "http.request".to_string(),
-            condition: "request.host == 'api.openai.com'".to_string(),
-            decision: capsem_core::settings_profiles::RuleDecision::Block,
-            priority: 25,
-            reason: Some("test block".to_string()),
-            rewrite_target: None,
-            rewrite_value: None,
-            strip_request_headers: Vec::new(),
-            strip_response_headers: Vec::new(),
-        },
+        test_profile_rule(
+            "http.request",
+            "request.host == 'api.openai.com'",
+            capsem_core::settings_profiles::RuleDecision::Block,
+            25,
+            "test block",
+        ),
     );
     let _ = handle_create_profile(Json(profile)).await.unwrap();
 
@@ -2813,17 +2829,13 @@ async fn handle_get_rule_returns_single_rule_with_provenance() {
     let mut profile = custom_profile("custom", "Custom");
     profile.security.rules.http.insert(
         "block_openai".to_string(),
-        capsem_core::settings_profiles::ProfileRule {
-            callback: "http.request".to_string(),
-            condition: "request.host == 'api.openai.com'".to_string(),
-            decision: capsem_core::settings_profiles::RuleDecision::Block,
-            priority: 25,
-            reason: Some("test block".to_string()),
-            rewrite_target: None,
-            rewrite_value: None,
-            strip_request_headers: Vec::new(),
-            strip_response_headers: Vec::new(),
-        },
+        test_profile_rule(
+            "http.request",
+            "request.host == 'api.openai.com'",
+            capsem_core::settings_profiles::RuleDecision::Block,
+            25,
+            "test block",
+        ),
     );
     let _ = handle_create_profile(Json(profile)).await.unwrap();
 
@@ -2852,17 +2864,13 @@ async fn handle_evaluate_rule_dry_runs_v2_policy_without_enforcement() {
     let mut profile = custom_profile("custom", "Custom");
     profile.security.rules.http.insert(
         "ask_openai".to_string(),
-        capsem_core::settings_profiles::ProfileRule {
-            callback: "http.request".to_string(),
-            condition: "request.host == 'api.openai.com'".to_string(),
-            decision: capsem_core::settings_profiles::RuleDecision::Ask,
-            priority: 25,
-            reason: Some("needs review".to_string()),
-            rewrite_target: None,
-            rewrite_value: None,
-            strip_request_headers: Vec::new(),
-            strip_response_headers: Vec::new(),
-        },
+        test_profile_rule(
+            "http.request",
+            "request.host == 'api.openai.com'",
+            capsem_core::settings_profiles::RuleDecision::Ask,
+            25,
+            "needs review",
+        ),
     );
     let _ = handle_create_profile(Json(profile)).await.unwrap();
 
@@ -2890,6 +2898,152 @@ async fn handle_evaluate_rule_dry_runs_v2_policy_without_enforcement() {
 }
 
 #[tokio::test]
+async fn rules_api_functional_chain_reloads_profile_changes_across_calls() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("chain", "Chain");
+    profile.security.rules.http.insert(
+        "ask_openai".to_string(),
+        test_profile_rule(
+            "http.request",
+            "request.host == 'api.openai.com'",
+            capsem_core::settings_profiles::RuleDecision::Ask,
+            20,
+            "review OpenAI access",
+        ),
+    );
+    profile.security.rules.http.insert(
+        "allow_github".to_string(),
+        test_profile_rule(
+            "http.request",
+            "request.host == 'github.com'",
+            capsem_core::settings_profiles::RuleDecision::Allow,
+            30,
+            "allow GitHub",
+        ),
+    );
+
+    let Json(created) = handle_create_profile(Json(profile)).await.unwrap();
+    assert_eq!(created["profile"]["id"], serde_json::json!("chain"));
+
+    let Json(profiles) = handle_list_profiles().await.unwrap();
+    assert!(profiles["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|profile| profile["profile"]["id"] == serde_json::json!("chain")));
+
+    let Json(listed) = handle_list_rules(Query(RulesQuery {
+        profile: Some("chain".to_string()),
+        callback: Some("http.request".to_string()),
+    }))
+    .await
+    .unwrap();
+    let listed_rules = listed["rules"].as_array().expect("rules array");
+    assert!(listed_rules
+        .iter()
+        .any(|rule| rule["id"] == serde_json::json!("security.rules.http.ask_openai")));
+    assert!(listed_rules
+        .iter()
+        .any(|rule| rule["id"] == serde_json::json!("security.rules.http.allow_github")));
+
+    let Json(rule) = handle_get_rule(Path("security.rules.http.ask_openai".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(rule["source_profile"], serde_json::json!("chain"));
+    assert_eq!(rule["rule"]["decision"], serde_json::json!("ask"));
+
+    let subject = serde_json::json!({
+        "request": {
+            "host": "api.openai.com",
+            "method": "GET"
+        }
+    });
+    let Json(before_update) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: Some("chain".to_string()),
+        callback: "http.request".to_string(),
+        subject: subject.clone(),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        before_update["matched_rule_id"],
+        serde_json::json!("security.rules.http.ask_openai")
+    );
+    assert_eq!(before_update["would_ask"], serde_json::json!(true));
+
+    let mut updated = custom_profile("chain", "Chain");
+    updated.security.rules.http.insert(
+        "block_openai".to_string(),
+        test_profile_rule(
+            "http.request",
+            "request.host == 'api.openai.com'",
+            capsem_core::settings_profiles::RuleDecision::Block,
+            5,
+            "tightened during same workflow",
+        ),
+    );
+    let _ = handle_update_profile(Path("chain".to_string()), Json(updated))
+        .await
+        .unwrap();
+
+    let Json(after_update) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: Some("chain".to_string()),
+        callback: "http.request".to_string(),
+        subject,
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        after_update["matched_rule_id"],
+        serde_json::json!("security.rules.http.block_openai")
+    );
+    assert_eq!(after_update["decision"], serde_json::json!("block"));
+    assert_eq!(after_update["would_ask"], serde_json::json!(false));
+}
+
+#[tokio::test]
+async fn handle_evaluate_rule_supports_generated_http_read_write_callbacks() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let subject = serde_json::json!({
+        "request": {
+            "host": "example.com",
+            "method": "GET"
+        }
+    });
+    let Json(read) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: None,
+        callback: "http.read".to_string(),
+        subject: subject.clone(),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        read["matched_rule_id"],
+        serde_json::json!("security.rules.http.default_read")
+    );
+    assert!(read["decision"].is_string());
+
+    let Json(write) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: None,
+        callback: "http.write".to_string(),
+        subject,
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        write["matched_rule_id"],
+        serde_json::json!("security.rules.http.default_write")
+    );
+    assert!(write["decision"].is_string());
+}
+
+#[tokio::test]
 async fn handle_evaluate_rule_rejects_unknown_callback() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -2897,7 +3051,7 @@ async fn handle_evaluate_rule_rejects_unknown_callback() {
 
     let err = handle_evaluate_rule(Json(RuleEvaluateRequest {
         profile: None,
-        callback: "http.read".to_string(),
+        callback: "http.connect".to_string(),
         subject: serde_json::json!({
             "request": {
                 "host": "api.openai.com"
@@ -2909,6 +3063,70 @@ async fn handle_evaluate_rule_rejects_unknown_callback() {
 
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
     assert!(err.1.contains("unsupported policy callback"));
+}
+
+#[tokio::test]
+async fn rules_api_evaluate_stays_bounded_for_large_profiles() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("large", "Large");
+    for index in 0..160 {
+        profile.security.rules.http.insert(
+            format!("miss_{index:03}"),
+            test_profile_rule(
+                "http.request",
+                &format!("request.host == 'miss-{index}.example.com'"),
+                capsem_core::settings_profiles::RuleDecision::Block,
+                index + 1,
+                "bulk miss",
+            ),
+        );
+    }
+    profile.security.rules.http.insert(
+        "target".to_string(),
+        test_profile_rule(
+            "http.request",
+            "request.host == 'target.example.com'",
+            capsem_core::settings_profiles::RuleDecision::Block,
+            900,
+            "bulk target",
+        ),
+    );
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let request = RuleEvaluateRequest {
+        profile: Some("large".to_string()),
+        callback: "http.request".to_string(),
+        subject: serde_json::json!({
+            "request": {
+                "host": "target.example.com",
+                "method": "GET"
+            }
+        }),
+    };
+    let Json(warmup) = handle_evaluate_rule(Json(request.clone())).await.unwrap();
+    assert_eq!(
+        warmup["matched_rule_id"],
+        serde_json::json!("security.rules.http.target")
+    );
+
+    let iterations = 32;
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let Json(result) = handle_evaluate_rule(Json(request.clone())).await.unwrap();
+        assert_eq!(
+            result["matched_rule_id"],
+            serde_json::json!("security.rules.http.target")
+        );
+    }
+    let elapsed = start.elapsed();
+    let budget = std::time::Duration::from_millis(1500);
+    assert!(
+        elapsed < budget,
+        "{iterations} large-profile rule evaluations took {elapsed:?}, budget {budget:?}"
+    );
 }
 
 #[tokio::test]
