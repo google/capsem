@@ -37,7 +37,8 @@ Landed:
   `profile_revision`, package-contract hash, and pinned boot asset identity.
 - Core manifest install guard verifies active status, BLAKE3 payload hash,
   Profile V2 schema validity, and manifest/payload id+revision parity before a
-  profile payload can be installed.
+  profile payload can be installed; the Pydantic admin models mirror the same
+  guard.
 
 Push order from here:
 

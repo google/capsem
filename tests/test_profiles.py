@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import textwrap
 
+import blake3
 import pytest
 from pydantic import ValidationError
 
@@ -15,11 +16,49 @@ from capsem.builder.profiles import (
     validate_manifest_json,
     validate_profile_json,
     validate_profile_toml,
+    verify_installable_profile_payload,
 )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = PROJECT_ROOT / "schemas" / "fixtures"
+
+
+def _profile_hash(payload: str) -> str:
+    return f"blake3:{blake3.blake3(payload.encode()).hexdigest()}"
+
+
+def _manifest_with_revision_hash(
+    revision: str,
+    status: str,
+    profile_hash: str,
+) -> str:
+    return f"""
+        {{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.2",
+              "revisions": {{
+                "{revision}": {{
+                  "status": "{status}",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile-{revision}.json",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "https://assets.capsem.dev/profile-{revision}.json.minisig"
+                }},
+                "2026.0520.2": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile-2026.0520.2.json",
+                  "profile_hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "profile_signature_url": "https://assets.capsem.dev/profile-2026.0520.2.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
 
 
 def test_profile_payload_json_enters_and_leaves_through_pydantic() -> None:
@@ -238,6 +277,62 @@ def test_manifest_resolves_current_and_specific_revision_records() -> None:
         manifest.current_revision("ghost")
     with pytest.raises(KeyError, match="revision '2026.0520.0'"):
         manifest.revision("everyday-work", "2026.0520.0")
+
+
+def test_installable_profile_payload_verifies_manifest_hash_and_identity() -> None:
+    payload = (FIXTURE_DIR / "profile-v2-valid.json").read_text()
+    manifest = validate_manifest_json(
+        _manifest_with_revision_hash("2026.0520.1", "active", _profile_hash(payload))
+    )
+    revision = manifest.revision("everyday-work", "2026.0520.1")
+
+    verified = verify_installable_profile_payload(revision, payload)
+
+    assert verified.profile.id == "everyday-work"
+    assert verified.profile.revision == "2026.0520.1"
+    assert verified.payload_hash == _profile_hash(payload)
+
+
+def test_installable_profile_payload_rejects_status_hash_and_identity_drift() -> None:
+    payload = (FIXTURE_DIR / "profile-v2-valid.json").read_text()
+    deprecated_manifest = validate_manifest_json(
+        _manifest_with_revision_hash("2026.0520.1", "deprecated", _profile_hash(payload))
+    )
+    with pytest.raises(ValueError, match="cannot be installed or updated"):
+        verify_installable_profile_payload(
+            deprecated_manifest.revision("everyday-work", "2026.0520.1"),
+            payload,
+        )
+
+    mismatch_manifest = validate_manifest_json(
+        _manifest_with_revision_hash(
+            "2026.0520.1",
+            "active",
+            "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+    )
+    with pytest.raises(ValueError, match="profile payload hash mismatch"):
+        verify_installable_profile_payload(
+            mismatch_manifest.revision("everyday-work", "2026.0520.1"),
+            payload,
+        )
+
+    drifted_payload = payload.replace(
+        '"revision": "2026.0520.1"',
+        '"revision": "2026.0520.0"',
+    )
+    drift_manifest = validate_manifest_json(
+        _manifest_with_revision_hash(
+            "2026.0520.1",
+            "active",
+            _profile_hash(drifted_payload),
+        )
+    )
+    with pytest.raises(ValueError, match="payload revision"):
+        verify_installable_profile_payload(
+            drift_manifest.revision("everyday-work", "2026.0520.1"),
+            drifted_payload,
+        )
 
 
 def test_manifest_json_round_trips_through_pydantic_dump() -> None:

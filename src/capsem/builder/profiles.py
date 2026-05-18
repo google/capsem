@@ -14,6 +14,7 @@ from typing import Annotated, Any, Literal
 import re
 import tomllib
 
+import blake3
 from pydantic import (
     AnyUrl,
     BaseModel,
@@ -319,6 +320,11 @@ class ResolvedProfileRevision(StrictModel):
     record: ManifestProfileRevision
 
 
+class VerifiedProfilePayload(StrictModel):
+    profile: ProfilePayloadV2
+    payload_hash: Blake3Hash
+
+
 ProfilePayloadV2Adapter = TypeAdapter(ProfilePayloadV2)
 ProfileManifestAdapter = TypeAdapter(ProfileManifest)
 
@@ -337,6 +343,40 @@ def validate_manifest_json(payload: str | bytes) -> ProfileManifest:
 
 def dump_manifest_json(manifest: ProfileManifest) -> str:
     return manifest.model_dump_json(exclude_none=True, indent=2)
+
+
+def verify_installable_profile_payload(
+    revision: ResolvedProfileRevision,
+    payload: str | bytes,
+) -> VerifiedProfilePayload:
+    if not revision.record.status.allows_install_or_update():
+        raise ValueError(
+            f"profile '{revision.profile_id}' revision '{revision.revision}' "
+            f"has status '{revision.record.status.value}' "
+            "and cannot be installed or updated"
+        )
+
+    payload_bytes = payload.encode() if isinstance(payload, str) else payload
+    payload_hash = f"blake3:{blake3.blake3(payload_bytes).hexdigest()}"
+    if payload_hash != revision.record.profile_hash:
+        raise ValueError(
+            f"profile payload hash mismatch for '{revision.profile_id}@{revision.revision}' "
+            f"(expected {revision.record.profile_hash}, got {payload_hash})"
+        )
+
+    profile = ProfilePayloadV2.model_validate_json(payload_bytes)
+    if profile.id != revision.profile_id:
+        raise ValueError(
+            f"profile payload id '{profile.id}' does not match "
+            f"manifest profile '{revision.profile_id}'"
+        )
+    if profile.revision != revision.revision:
+        raise ValueError(
+            f"profile payload revision '{profile.revision}' does not match "
+            f"manifest revision '{revision.revision}'"
+        )
+
+    return VerifiedProfilePayload(profile=profile, payload_hash=payload_hash)
 
 
 def validate_profile_toml(path: Path) -> ProfilePayloadV2:

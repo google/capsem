@@ -278,6 +278,8 @@ Latest focused verification after the rescue/push transition:
 - `uv run pytest tests/test_profiles.py -q` passed with 10 Pydantic
   profile/manifest tests after mirroring lifecycle gates and revision
   resolution in admin models.
+- `uv run pytest tests/test_profiles.py -q` passed with 12 Pydantic
+  profile/manifest tests after adding installable payload verification.
 - `cargo test -p capsem-core --test profile_schema` passed with 6 tests.
 - `cargo test -p capsem-service` passed with 245 tests.
 - `cargo test -p capsem-process --no-run` passed.
