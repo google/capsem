@@ -264,13 +264,13 @@ class ManifestProfile(StrictModel):
         return self
 
 
-class ManifestV3(StrictModel):
-    format: Literal[3]
+class ProfileManifest(StrictModel):
+    format: Literal[1]
     profiles: dict[ProfileId, ManifestProfile]
 
 
 ProfilePayloadV2Adapter = TypeAdapter(ProfilePayloadV2)
-ManifestV3Adapter = TypeAdapter(ManifestV3)
+ProfileManifestAdapter = TypeAdapter(ProfileManifest)
 
 
 def validate_profile_json(payload: str | bytes) -> ProfilePayloadV2:
@@ -281,11 +281,11 @@ def dump_profile_json(profile: ProfilePayloadV2) -> str:
     return profile.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
-def validate_manifest_json(payload: str | bytes) -> ManifestV3:
-    return ManifestV3.model_validate_json(payload)
+def validate_manifest_json(payload: str | bytes) -> ProfileManifest:
+    return ProfileManifest.model_validate_json(payload)
 
 
-def dump_manifest_json(manifest: ManifestV3) -> str:
+def dump_manifest_json(manifest: ProfileManifest) -> str:
     return manifest.model_dump_json(exclude_none=True, indent=2)
 
 

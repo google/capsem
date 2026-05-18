@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from capsem.builder.profiles import (
-    ManifestV3,
+    ProfileManifest,
     ProfilePayloadV2,
     ProfileRevisionStatus,
     dump_manifest_json,
@@ -129,7 +129,7 @@ def test_manifest_status_enum_excludes_removed() -> None:
         validate_manifest_json(
             """
             {
-              "format": 3,
+              "format": 1,
               "profiles": {
                 "everyday-work": {
                   "current_revision": "2026.0520.1",
@@ -154,7 +154,7 @@ def test_manifest_current_revision_must_be_active() -> None:
         validate_manifest_json(
             """
             {
-              "format": 3,
+              "format": 1,
               "profiles": {
                 "everyday-work": {
                   "current_revision": "2026.0520.1",
@@ -178,7 +178,7 @@ def test_manifest_json_round_trips_through_pydantic_dump() -> None:
     manifest = validate_manifest_json(
         """
         {
-          "format": 3,
+          "format": 1,
           "profiles": {
             "everyday-work": {
               "current_revision": "2026.0520.1",
@@ -199,7 +199,7 @@ def test_manifest_json_round_trips_through_pydantic_dump() -> None:
     )
 
     dumped = dump_manifest_json(manifest)
-    reparsed = ManifestV3.model_validate_json(dumped)
+    reparsed = ProfileManifest.model_validate_json(dumped)
 
     assert reparsed == manifest
     assert '"status": "active"' in dumped

@@ -314,7 +314,7 @@ The checker must fail closed for:
   conformance with the shared schema artifact; Pydantic model validation tests
   for profiles, manifests, assets, package/tool contracts, build plans, doctor
   checks, and reports; explicit JSON I/O tests for `model_validate_json()` /
-  `TypeAdapter.validate_json()` and `model_dump_json()`; manifest v3
+  `TypeAdapter.validate_json()` and `model_dump_json()`; profile manifest
   generate/check/sign tests; profile-to-image build plan tests; admin doctor
   checks; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile

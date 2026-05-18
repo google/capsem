@@ -64,7 +64,7 @@ a valid claim -- mark it `[ ]` instead.
   Rules create/delete, confirm listing, skills, profile-backed VM create, and
   full route proof remain open.
 14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
-    -- started. Typed manifest v3 profile catalog/status parser landed in
+    -- started. Canonical profile catalog/status parser landed in
     `capsem-core::profile_manifest`; typed profile package/tool contracts and
     per-arch VM asset declarations now parse, validate, serialize through
     VM-effective settings, and merge through profile inheritance. The formal
@@ -73,8 +73,8 @@ a valid claim -- mark it `[ ]` instead.
     validate JSON through Pydantic, dump JSON through Pydantic, and bridge TOML
     through immediate Pydantic JSON validation. Rust now validates profile JSON
     and TOML payloads against the production schema artifact. Remaining work
-    installs profile payloads from the manifest, adds first-use download,
-    retention, and VM pins.
+    removes old asset-only runtime authority, installs profile payloads from
+    the manifest, adds first-use download, retention, and VM pins.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image

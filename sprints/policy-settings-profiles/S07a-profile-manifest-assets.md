@@ -31,12 +31,13 @@ Capsem binary version.
 
 ## Manifest Contract
 
-Add a manifest section that lists profile records. Shape can evolve during
-implementation, but the required semantics are:
+The signed manifest is the profile catalog. It lists profile records; VM assets
+are declared by the verified profile payloads referenced from those records.
+Shape can evolve during implementation, but the required semantics are:
 
 ```json
 {
-  "format": 3,
+  "format": 1,
   "profiles": {
     "everyday-work": {
       "current_revision": "2026.0520.1",
@@ -368,10 +369,10 @@ flowchart TD
 
 These decisions must be closed before implementation can be called airtight:
 
-- **Manifest v2 to v3 transition.** Existing asset-only manifests must either
-  load through an explicit legacy/dev path or fail with a typed "manifest format
-  unsupported" error. Release mode must not silently reinterpret a v2 manifest
-  as an empty profile catalog.
+- **Remove asset-only manifest authority.** The release/install path must not
+  load the old asset-only manifest as runtime authority. Profile-backed VM
+  creation reads the signed profile catalog and verified profile payloads; stale
+  asset-only manifests fail closed if presented to the profile-catalog path.
 - **Rollback protection.** A previously installed profile revision must not be
   replaced by an older revision unless an operator explicitly asks for rollback.
   Store the last trusted manifest identity and reject stale signed catalogs when
@@ -415,8 +416,8 @@ These decisions must be closed before implementation can be called airtight:
 ## Service / Resolver Scope
 
 - Add manifest parsing for profile catalog records and revision status.
-- Add manifest format migration/compatibility handling for existing v2
-  asset-only manifests.
+- Remove asset-only manifest handling from the profile-backed release/runtime
+  path; do not add migration or compatibility behavior for old manifests.
 - Add profile payload download/install/update logic.
 - Extend profile schema and effective settings with packages/tools and VM asset
   declarations.
@@ -426,11 +427,12 @@ These decisions must be closed before implementation can be called airtight:
   profile-driven asset resolution.
 - Add atomic download, per-asset locking, verification-before-rename, retry, and
   cancellation-safe partial-file cleanup.
-- Preserve the dev-mode local-asset path for developer builds, but make the
-  release/install path profile-driven.
+- Make release/install asset resolution profile-driven. Developer fixture paths
+  may remain only as explicit test/dev conveniences, never as release fallback.
 - Extend persistent VM registry with `profile_id`, `profile_revision`, package
   contract hash, and pinned asset hashes.
-- Add existing-VM compatibility handling for pre-S07a VM records.
+- Block unpinned pre-S07a VM records from the profile-backed path with an
+  explicit unsupported/unbound status; do not silently synthesize a profile pin.
 - Add explicit rebase/migrate semantics later; do not silently move existing
   VMs across profile revisions in this sprint.
 
@@ -455,8 +457,8 @@ This sprint creates the contract consumed by later sprints:
 
 ## Tasks
 
-- [~] Design manifest v3 profile catalog schema. Initial
-      `capsem-core::profile_manifest::ManifestV3` parser/model landed for
+- [~] Design the canonical profile catalog manifest schema. Initial
+      `capsem-core::profile_manifest::ProfileManifest` parser/model landed for
       profile ids, immutable revisions, `ProfileRevisionStatus`, payload
       locations, and canonical profile hashes.
 - [~] Add parser/validator tests for profile ids, immutable revisions, statuses,
@@ -476,7 +478,7 @@ This sprint creates the contract consumed by later sprints:
       JSON bytes are available; Rust validates against the standard JSON Schema
       artifact before semantic trust-chain checks. Initial Python
       `capsem.builder.profiles` Pydantic v2 models landed for profile payloads
-      and manifest v3, with `extra="forbid"`, Pydantic-only JSON
+      and profile manifest, with `extra="forbid"`, Pydantic-only JSON
       input/output helpers, TOML parse-then-Pydantic-JSON validation, status
       enum coverage, and active-current manifest validation. Initial Rust
       `capsem_core::profile_payload_schema` helpers landed for validating
@@ -499,7 +501,7 @@ This sprint creates the contract consumed by later sprints:
 - [ ] Add cleanup retention for installed profile revisions plus existing VM
       pins.
 - [ ] Add persistent VM profile/revision/package/asset pin metadata.
-- [ ] Add existing-VM compatibility handling for pre-S07a registry records.
+- [ ] Add explicit unsupported/unbound handling for pre-S07a registry records.
 - [ ] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
       revoked profile fail-closed behavior.
@@ -511,7 +513,7 @@ This sprint creates the contract consumed by later sprints:
 
 ## Coverage Ledger
 
-- Unit/contract: initial manifest v3 parser/status validator landed with
+- Unit/contract: initial profile manifest parser/status validator landed with
   `cargo test -p capsem-core profile_manifest` (9 tests passed). The first
   profile contract slice landed with `cargo test -p capsem-core
   settings_profiles` (123 tests passed), including package/tool/asset TOML
@@ -530,11 +532,11 @@ This sprint creates the contract consumed by later sprints:
   active-current manifest validation. Remaining: cross-language schema fixture
   parity, per-arch asset selection against host arch, rollback/stale-manifest
   rejection, signature-key identity, full package version grammar validation,
-  and v2 manifest compatibility/fail-closed behavior.
+  and fail-closed rejection of old asset-only manifests on profile-backed paths.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
-  profile update; pre-S07a VM registry entries render explicit compatibility
-  state instead of rebinding to the current default.
+  profile update; unpinned pre-S07a VM registry entries render explicit
+  unsupported/unbound state instead of rebinding to the current default.
 - Adversarial: bad profile id/revision, unknown fields/tables, wrong schema
   id/version, manifest/payload id mismatch, missing parent revision for a
   catalog-published inherited profile, downgrade attempts, bad signature/hash,

@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validation, and the canonical `active`/`deprecated`/`revoked` status enum.
 - Added Rust Profile V2 payload schema validation helpers for JSON and TOML
   payloads backed by the production Draft 2020-12 schema artifact.
+- Changed the signed profile catalog manifest to the canonical
+  `ProfileManifest` / `format = 1` contract, removing the transitional
+  generation naming and old asset-manifest compatibility language.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

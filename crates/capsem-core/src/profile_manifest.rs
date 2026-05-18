@@ -1,15 +1,15 @@
 //! Signed profile catalog manifest types.
 //!
-//! S07a introduces manifest format 3 as the profile catalog. This module is
-//! intentionally about typed parsing and validation only; download, signature
-//! verification, and VM pinning build on top of these types in later slices.
+//! S07a makes this manifest the profile catalog. This module is intentionally
+//! about typed parsing and validation only; download, signature verification,
+//! and VM pinning build on top of these types in later slices.
 
 use std::collections::BTreeMap;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-const MANIFEST_FORMAT_V3: u32 = 3;
+const PROFILE_MANIFEST_FORMAT: u32 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -35,25 +35,25 @@ impl ProfileRevisionStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ManifestV3 {
+pub struct ProfileManifest {
     pub format: u32,
     pub profiles: BTreeMap<String, ManifestProfile>,
 }
 
-impl ManifestV3 {
+impl ProfileManifest {
     pub fn from_json(content: &str) -> Result<Self> {
         let manifest: Self =
-            serde_json::from_str(content).context("parse profile manifest v3 JSON")?;
+            serde_json::from_str(content).context("parse profile manifest JSON")?;
         manifest.validate()?;
         Ok(manifest)
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.format != MANIFEST_FORMAT_V3 {
+        if self.format != PROFILE_MANIFEST_FORMAT {
             bail!(
                 "unsupported profile manifest format {}; expected {}",
                 self.format,
-                MANIFEST_FORMAT_V3
+                PROFILE_MANIFEST_FORMAT
             );
         }
         if self.profiles.is_empty() {
@@ -210,7 +210,7 @@ mod tests {
     fn manifest_json(status: &str) -> String {
         format!(
             r#"{{
-              "format": 3,
+              "format": 1,
               "profiles": {{
                 "everyday-work": {{
                   "current_revision": "2026.0520.1",
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn profile_manifest_accepts_active_current_revision() {
-        let manifest = ManifestV3::from_json(&manifest_json("active")).unwrap();
+        let manifest = ProfileManifest::from_json(&manifest_json("active")).unwrap();
         let revision = &manifest.profiles["everyday-work"].revisions["2026.0520.1"];
         assert_eq!(revision.status, ProfileRevisionStatus::Active);
     }
@@ -241,7 +241,7 @@ mod tests {
     fn profile_manifest_accepts_deprecated_non_current_revision() {
         let json = format!(
             r#"{{
-              "format": 3,
+              "format": 1,
               "profiles": {{
                 "everyday-work": {{
                   "current_revision": "2026.0520.2",
@@ -265,7 +265,7 @@ mod tests {
               }}
             }}"#
         );
-        let manifest = ManifestV3::from_json(&json).unwrap();
+        let manifest = ProfileManifest::from_json(&json).unwrap();
         let revision = &manifest.profiles["everyday-work"].revisions["2026.0520.1"];
         assert_eq!(revision.status, ProfileRevisionStatus::Deprecated);
     }
@@ -274,7 +274,7 @@ mod tests {
     fn profile_manifest_accepts_revoked_non_current_revision() {
         let json = format!(
             r#"{{
-              "format": 3,
+              "format": 1,
               "profiles": {{
                 "everyday-work": {{
                   "current_revision": "2026.0520.1",
@@ -298,26 +298,26 @@ mod tests {
               }}
             }}"#
         );
-        let manifest = ManifestV3::from_json(&json).unwrap();
+        let manifest = ProfileManifest::from_json(&json).unwrap();
         let revision = &manifest.profiles["everyday-work"].revisions["2026.0520.0"];
         assert_eq!(revision.status, ProfileRevisionStatus::Revoked);
     }
 
     #[test]
     fn profile_manifest_rejects_removed_status() {
-        let error = ManifestV3::from_json(&manifest_json("removed")).unwrap_err();
+        let error = ProfileManifest::from_json(&manifest_json("removed")).unwrap_err();
         assert!(format!("{error:#}").contains("unknown variant"));
     }
 
     #[test]
     fn profile_manifest_rejects_revoked_current_revision() {
-        let error = ManifestV3::from_json(&manifest_json("revoked")).unwrap_err();
+        let error = ProfileManifest::from_json(&manifest_json("revoked")).unwrap_err();
         assert!(format!("{error:#}").contains("must be active"));
     }
 
     #[test]
     fn profile_manifest_rejects_deprecated_current_revision() {
-        let error = ManifestV3::from_json(&manifest_json("deprecated")).unwrap_err();
+        let error = ProfileManifest::from_json(&manifest_json("deprecated")).unwrap_err();
         assert!(format!("{error:#}").contains("must be active"));
     }
 
@@ -329,21 +329,21 @@ mod tests {
             r#""current_revision": "2026.0520.1""#,
             1,
         );
-        let error = ManifestV3::from_json(&json).unwrap_err();
+        let error = ProfileManifest::from_json(&json).unwrap_err();
         assert!(format!("{error:#}").contains("does not exist"));
     }
 
     #[test]
     fn profile_manifest_rejects_bad_profile_hash() {
-        let error =
-            ManifestV3::from_json(&manifest_json("active").replace(HASH, "aaaaaaaa")).unwrap_err();
+        let error = ProfileManifest::from_json(&manifest_json("active").replace(HASH, "aaaaaaaa"))
+            .unwrap_err();
         assert!(format!("{error:#}").contains("profile_hash"));
     }
 
     #[test]
-    fn profile_manifest_rejects_format_two() {
-        let error = ManifestV3::from_json(
-            &manifest_json("active").replace("\"format\": 3", "\"format\": 2"),
+    fn profile_manifest_rejects_old_asset_manifest_format() {
+        let error = ProfileManifest::from_json(
+            &manifest_json("active").replace("\"format\": 1", "\"format\": 2"),
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("unsupported profile manifest format"));
