@@ -8,6 +8,10 @@ state and profile-backed VM creation.
 ## Tasks
 
 - Add HTTP endpoints backed by UDS behavior.
+- The gateway fallback already exposes the service `POST
+  /profiles/catalog/reconcile` route to authenticated local HTTP callers; S08
+  must add HTTP contract tests and client-facing docs for that exact payload
+  and typed outcome summary instead of inventing a gateway-only shape.
 - Preserve typed errors and provenance payloads.
 - Add service/gateway mismatch reporting to debug report.
 - Test app settings, profile CRUD, profile catalog/revision state, profile

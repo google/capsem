@@ -10,7 +10,13 @@ creation through the service UDS API.
 - Add service settings endpoints.
 - Add profile list/get/create/fork/update/delete endpoints.
 - Add profile resolve and VM-effective settings endpoints.
-- Reserve the UDS shape for profile catalog/revision endpoints; the backing
+- Add `POST /profiles/catalog/reconcile` for signed catalog lifecycle
+  reconciliation. The route accepts a validated profile catalog manifest plus
+  profile payload public key material, installs/updates current `active`
+  revisions, keeps installed `deprecated` revisions available for existing VMs,
+  removes launchable/current state for installed `revoked` revisions, and
+  returns typed per-revision outcomes plus summary counts.
+- Continue filling the UDS shape for profile catalog/revision endpoints; the backing
   manifest/profile/assets implementation lands in
   [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md).
   The surface lists catalog profiles, lists revisions, shows lifecycle status,

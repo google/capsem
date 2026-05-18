@@ -52,6 +52,10 @@ Landed:
   re-installs incomplete active local state, keeps installed `deprecated`
   revisions for existing VMs, and removes the launchable profile plus current
   state for installed `revoked` revisions.
+- Service route `POST /profiles/catalog/reconcile` now applies that lifecycle
+  reconciler from the UDS/gateway surface and returns typed per-revision
+  outcomes plus summary counts for installed, unchanged, deprecated, revoked,
+  and error states.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -66,9 +70,11 @@ Push order from here:
 1. [~] Install/update/delete/revoke profile payloads from catalog records.
    Landed: core install guard, runtime profile conversion, corp-root
    materialization, installed-revision payload storage, and a typed core
-   lifecycle reconciler for active/deprecated/revoked records. Remaining:
-   service scheduling/endpoints for manifest-wide reconciliation and absent
-   catalog profile cleanup.
+   lifecycle reconciler for active/deprecated/revoked records. UDS/gateway
+   `POST /profiles/catalog/reconcile` now runs manifest-wide current-revision
+   install/update plus deprecated/revoked local-state handling. Remaining:
+   manifest source fetch/scheduling, CLI/UI clients, and absent catalog profile
+   cleanup.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
@@ -575,8 +581,10 @@ This sprint creates the contract consumed by later sprints:
       revisions from signed payload locations, re-installs incomplete local
       active state, keeps installed `deprecated` revisions, and removes
       the launchable profile plus current state for installed `revoked`
-      revisions. Remaining: manifest-wide service orchestration and
-      absent-profile cleanup.
+      revisions. Service `POST /profiles/catalog/reconcile` now applies the
+      reconciler across catalog current revisions and non-active records,
+      returning a typed outcome summary. Remaining: manifest source fetch/
+      scheduling, CLI/UI clients, and absent-profile cleanup.
 - [~] Add profile-driven asset resolution and first-use download. Service
       startup now builds an `AssetRequirement` from the default profile's
       `vm.assets.<arch>` declaration, rejects old manifest-backed release
@@ -632,10 +640,11 @@ This sprint creates the contract consumed by later sprints:
   active-current manifest validation. Runtime asset supervisor coverage now runs
   `cargo test -p capsem-service asset_supervisor --lib` (7 tests passed),
   covering profile URL download, missing assets, retryable failures, and
-  background reconciliation; `cargo test -p capsem-service` (250 tests passed)
+  background reconciliation; `cargo test -p capsem-service` (252 tests passed)
   covers startup fail-closed behavior, service asset status without legacy
   manifest fields, profile-derived saved-VM base hashes, installed profile
-  revision sidecar/payload-hash pinning, and debug/status shape. Remaining:
+  revision sidecar/payload-hash pinning, service API profile catalog
+  reconcile install/revoke summaries, and debug/status shape. Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar
   validation, profile payload downloads, and per-asset cross-process locks.

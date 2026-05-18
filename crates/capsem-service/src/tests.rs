@@ -2833,6 +2833,153 @@ async fn handle_resolve_profile_returns_effective_settings_and_trace() {
     assert!(val["resolver_trace"]["events"].is_array());
 }
 
+#[tokio::test]
+async fn handle_reconcile_profile_catalog_installs_current_active_revision() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let payload_path = dir.path().join("profile.json");
+    let signature_path = dir.path().join("profile.json.minisig");
+    let payload = include_str!("../../../schemas/fixtures/profile-v2-valid.json");
+    let signature = include_str!("../../../schemas/fixtures/profile-v2-valid.json.minisig");
+    let pubkey = include_str!("../../../schemas/fixtures/profile-v2-test.pub");
+    std::fs::write(&payload_path, payload).unwrap();
+    std::fs::write(&signature_path, signature).unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest_json = format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file://{}",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "file://{}"
+                }}
+              }}
+            }}
+          }}
+        }}"#,
+        payload_path.display(),
+        signature_path.display(),
+    );
+
+    let Json(val) = handle_reconcile_profile_catalog(Json(ProfileCatalogReconcileRequest {
+        manifest_json,
+        profile_payload_pubkey: pubkey.to_string(),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(val["summary"]["installed"], serde_json::json!(1));
+    assert_eq!(val["summary"]["errors"], serde_json::json!(0));
+    assert_eq!(
+        val["outcomes"][0]["outcome"],
+        serde_json::json!("installed")
+    );
+    assert_eq!(
+        val["outcomes"][0]["profile_id"],
+        serde_json::json!("everyday-work")
+    );
+    assert_eq!(
+        val["outcomes"][0]["revision"],
+        serde_json::json!("2026.0520.1")
+    );
+    assert_eq!(
+        val["outcomes"][0]["payload_hash"],
+        serde_json::json!(profile_hash)
+    );
+
+    let installed = capsem_core::settings_profiles::load_installed_profile_revision(
+        &capsem_core::settings_profiles::load_service_settings_or_default(
+            &dir.path().join("home").join("service.toml"),
+        )
+        .unwrap()
+        .profiles,
+        "everyday-work",
+    )
+    .unwrap()
+    .expect("catalog reconcile should install current revision");
+    assert_eq!(installed.revision, "2026.0520.1");
+    assert_eq!(installed.payload_hash, profile_hash);
+}
+
+#[tokio::test]
+async fn handle_reconcile_profile_catalog_removes_revoked_installed_revision() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let home = dir.path().join("home");
+    let corp_dir = home.join("profiles").join("corp");
+    std::fs::write(corp_dir.join("everyday-work.toml"), "runtime profile").unwrap();
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    std::fs::create_dir_all(&record_dir).unwrap();
+    std::fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+    let manifest_json = r#"{
+      "format": 1,
+      "profiles": {
+        "everyday-work": {
+          "current_revision": "2026.0520.2",
+          "revisions": {
+            "2026.0520.1": {
+              "status": "revoked",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///definitely/not/read/profile.json",
+              "profile_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "profile_signature_url": "file:///definitely/not/read/profile.json.minisig"
+            },
+            "2026.0520.2": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///definitely/not/read/profile.json",
+              "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "profile_signature_url": "file:///definitely/not/read/profile.json.minisig"
+            }
+          }
+        }
+      }
+    }"#;
+
+    let Json(val) = handle_reconcile_profile_catalog(Json(ProfileCatalogReconcileRequest {
+        manifest_json: manifest_json.to_string(),
+        profile_payload_pubkey: "unused".to_string(),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(val["summary"]["revoked_removed"], serde_json::json!(1));
+    assert_eq!(val["summary"]["errors"], serde_json::json!(1));
+    assert!(val["outcomes"].as_array().unwrap().iter().any(|outcome| {
+        outcome["outcome"] == serde_json::json!("revoked_removed")
+            && outcome["revision"] == serde_json::json!("2026.0520.1")
+    }));
+    assert!(
+        val["outcomes"].as_array().unwrap().iter().any(|outcome| {
+            outcome["outcome"] == serde_json::json!("error")
+                && outcome["revision"] == serde_json::json!("2026.0520.2")
+        }),
+        "current active revision should report download/signature errors without hiding revoke result"
+    );
+    assert!(!corp_dir.join("everyday-work.toml").exists());
+    assert!(!record_dir.join("current.json").exists());
+}
+
 fn custom_profile(id: &str, name: &str) -> capsem_core::settings_profiles::Profile {
     let mut profile = capsem_core::settings_profiles::Profile::everyday_work();
     profile.id = id.to_string();

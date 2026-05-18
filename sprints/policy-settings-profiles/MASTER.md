@@ -198,6 +198,10 @@ Landed S07a foundation:
   complete `active` revisions, re-installs incomplete active state, keeps
   installed `deprecated` revisions for existing VMs, and removes the launchable
   profile plus current state for installed `revoked` revisions.
+- Service profile catalog reconcile route. `POST /profiles/catalog/reconcile`
+  applies the lifecycle reconciler through the service UDS surface and returns
+  typed per-revision outcomes plus summary counts. The gateway fallback exposes
+  the same route to authenticated local HTTP callers.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.
@@ -210,7 +214,9 @@ Remaining S07a push order:
 1. Catalog-driven profile payload install/update/delete/revoke from manifest
    records, including `deprecated` and `revoked` fail-closed semantics.
    Core verification/fetch/materialization/signature primitives and the typed
-   lifecycle reconciler have landed; manifest-wide service orchestration and
+   lifecycle reconciler have landed; service UDS/gateway reconciliation has
+   landed for current active revisions plus deprecated/revoked local-state
+   handling. Manifest source fetch/scheduling, CLI/UI clients, and
    absent-profile cleanup remain.
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
    pinned asset metadata. Landed for runtime/registry/API with installed
@@ -293,6 +299,8 @@ Latest focused verification after the rescue/push transition:
   tests after VM profile pins.
 - `cargo test -p capsem-service` passed with 108 library tests + 142 service
   tests after installed profile payload identity pins.
+- `cargo test -p capsem-service` passed with 108 library tests + 144 service
+  tests after the service profile catalog reconcile route.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

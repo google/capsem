@@ -3522,6 +3522,13 @@ struct ProfileForkRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileCatalogReconcileRequest {
+    manifest_json: String,
+    profile_payload_pubkey: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RulesQuery {
     #[serde(default)]
     profile: Option<String>,
@@ -3695,6 +3702,167 @@ async fn handle_resolve_profile(
         "effective": effective,
         "resolver_trace": trace,
     })))
+}
+
+/// POST /profiles/catalog/reconcile -- apply signed profile catalog lifecycle state.
+async fn handle_reconcile_profile_catalog(
+    Json(body): Json<ProfileCatalogReconcileRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let manifest =
+        match capsem_core::profile_manifest::ProfileManifest::from_json(&body.manifest_json) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                return Err(AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("parse profile catalog manifest: {error}"),
+                ));
+            }
+        };
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    for profile_id in manifest.profiles.keys() {
+        let current = manifest.current_revision(profile_id).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("resolve current profile revision: {e}"),
+            )
+        })?;
+        if seen.insert((current.profile_id.to_string(), current.revision.to_string())) {
+            targets.push((current.profile_id.to_string(), current.revision.to_string()));
+        }
+        let Some(profile) = manifest.profiles.get(profile_id) else {
+            continue;
+        };
+        for (revision, record) in &profile.revisions {
+            if record.status == capsem_core::profile_manifest::ProfileRevisionStatus::Active {
+                continue;
+            }
+            if seen.insert((profile_id.clone(), revision.clone())) {
+                targets.push((profile_id.clone(), revision.clone()));
+            }
+        }
+    }
+    targets.sort();
+
+    let mut summary = ProfileCatalogReconcileSummary::default();
+    let mut outcomes = Vec::new();
+    for (profile_id, revision_id) in targets {
+        let revision = manifest.revision(&profile_id, &revision_id).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("resolve profile revision '{profile_id}@{revision_id}': {e}"),
+            )
+        })?;
+        match capsem_core::settings_profiles::reconcile_profile_revision_from_manifest(
+            &settings.profiles,
+            revision,
+            &body.profile_payload_pubkey,
+        )
+        .await
+        {
+            Ok(outcome) => outcomes.push(profile_reconcile_outcome_json(outcome, &mut summary)),
+            Err(error) => {
+                summary.errors += 1;
+                outcomes.push(json!({
+                    "profile_id": profile_id,
+                    "revision": revision_id,
+                    "outcome": "error",
+                    "error": format!("{error:#}"),
+                }));
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "summary": summary,
+        "outcomes": outcomes,
+    })))
+}
+
+#[derive(Debug, Default, Serialize)]
+struct ProfileCatalogReconcileSummary {
+    installed: usize,
+    unchanged: usize,
+    deprecated_kept: usize,
+    deprecated_not_installed: usize,
+    revoked_removed: usize,
+    revoked_not_installed: usize,
+    errors: usize,
+}
+
+fn profile_reconcile_outcome_json(
+    outcome: capsem_core::settings_profiles::ProfileRevisionReconcileOutcome,
+    summary: &mut ProfileCatalogReconcileSummary,
+) -> serde_json::Value {
+    match outcome {
+        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::Installed(installed) => {
+            summary.installed += 1;
+            json!({
+                "profile_id": installed.profile_id,
+                "revision": installed.revision,
+                "payload_hash": installed.payload_hash,
+                "outcome": "installed",
+                "runtime_profile_path": installed.runtime_profile_path.display().to_string(),
+                "payload_path": installed.payload_path.display().to_string(),
+                "current_record_path": installed.current_record_path.display().to_string(),
+            })
+        }
+        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::Unchanged(record) => {
+            summary.unchanged += 1;
+            json!({
+                "profile_id": record.profile_id,
+                "revision": record.revision,
+                "payload_hash": record.payload_hash,
+                "outcome": "unchanged",
+            })
+        }
+        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::DeprecatedKept(
+            record,
+        ) => {
+            summary.deprecated_kept += 1;
+            json!({
+                "profile_id": record.profile_id,
+                "revision": record.revision,
+                "payload_hash": record.payload_hash,
+                "outcome": "deprecated_kept",
+            })
+        }
+        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::DeprecatedNotInstalled {
+            profile_id,
+            revision,
+        } => {
+            summary.deprecated_not_installed += 1;
+            json!({
+                "profile_id": profile_id,
+                "revision": revision,
+                "outcome": "deprecated_not_installed",
+            })
+        }
+        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::RevokedRemoved {
+            profile_id,
+            revision,
+        } => {
+            summary.revoked_removed += 1;
+            json!({
+                "profile_id": profile_id,
+                "revision": revision,
+                "outcome": "revoked_removed",
+            })
+        }
+        capsem_core::settings_profiles::ProfileRevisionReconcileOutcome::RevokedNotInstalled {
+            profile_id,
+            revision,
+        } => {
+            summary.revoked_not_installed += 1;
+            json!({
+                "profile_id": profile_id,
+                "revision": revision,
+                "outcome": "revoked_not_installed",
+            })
+        }
+    }
 }
 
 fn canonical_rule_id(rule: &capsem_core::settings_profiles::EffectiveRule) -> String {
@@ -6444,6 +6612,10 @@ async fn main() -> Result<()> {
         .route(
             "/profiles",
             get(handle_list_profiles).post(handle_create_profile),
+        )
+        .route(
+            "/profiles/catalog/reconcile",
+            post(handle_reconcile_profile_catalog),
         )
         .route(
             "/profiles/{id}",

@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from signed payloads, deprecated installed revisions stay available for
   existing VMs, and revoked installed revisions lose their launchable profile
   plus current state.
+- Added `POST /profiles/catalog/reconcile` on the service API so UDS/gateway
+  callers can apply signed profile catalog lifecycle state and receive a typed
+  install/deprecate/revoke/error summary.
 - Removed legacy `assets.manifest.*` service settings and setup-time asset
   manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2

@@ -379,15 +379,18 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   revision keep, and revoked launchable profile plus current-state removal. VM
   profile pins add registry roundtrip, package-contract hash, installed sidecar
   revision/payload-hash capture, API serialization, and fork persistence
-  coverage.
+  coverage. Service profile catalog reconciliation covers active current
+  revision install and revoked installed revision removal through
+  `POST /profiles/catalog/reconcile`, including per-revision error summaries.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
   `resolve_effective_vm_settings_with_corp`, debug-report
   rendering with resolver-trace summary, service startup +
   asset settings, verified profile payload materialization into the corp
-  profile root and installed revision payload storage, `/setup/assets` provenance, mitm_proxy
-  integration test for model.request rewrite redaction.
+  profile root and installed revision payload storage, service API profile
+  catalog reconcile install/revoke summaries, `/setup/assets` provenance,
+  mitm_proxy integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -429,7 +432,7 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   in-memory metrics accumulator is the next perf-shaped piece).
   The S07 metrics snapshot request is classified as read-only
   `HealthCheck` IPC so it does not enter job/lifecycle dispatch.
-- **Test-gate snapshot** (cargo test, updated 2026-05-18 for S07a core
+- **Test-gate snapshot** (cargo test, updated 2026-05-18 for S07a service
   profile catalog reconciliation):
   `cargo test -p capsem-logger` **100** + **126** passed;
   `cargo test -p capsem-service` **107** + **140** passed;
@@ -437,6 +440,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   passed;
   after installed profile payload identity pins, `cargo test -p capsem-service`
   **108** + **142** passed;
+  after the service profile catalog reconcile route, `cargo test -p
+  capsem-service` **108** + **144** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;
