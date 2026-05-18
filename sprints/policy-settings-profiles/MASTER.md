@@ -25,7 +25,7 @@ completely.
 ## Execution Mode
 
 **Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `46 ahead / 0 behind` `origin/main` in this
+is coherent again and sits `63 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
@@ -91,7 +91,7 @@ the next starts. The `#` column is the execution index;
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
-| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, and profile-driven service asset resolution/download have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds profile payload install/update/revoke, retention, explicit VM profile/revision/package pins, and unsupported/unbound pre-S07a handling. |
+| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, and profile-aware cleanup caller have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling, mandatory catalog revision pins, richer catalog clients, and unsupported/unbound pre-S07a handling. |
 | 15 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
 | 16 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
 | 17 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
@@ -212,6 +212,11 @@ Landed S07a foundation:
 - Profile-aware asset retention sources. Cleanup can now derive preservation
   filenames from installed current profile payloads and persistent VM profile
   pins before deleting hash-named assets.
+- Profile-aware production asset cleanup. `POST /setup/assets/cleanup` now
+  runs a manifest-free cleanup path through installed-profile and saved-VM
+  retention, removes stale hash-named files plus legacy `v1.0.*` directories,
+  preserves metadata/temp files, and refuses cleanup while assets are checking
+  or updating.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.
@@ -238,8 +243,9 @@ Remaining S07a push order:
 3. Retention and cleanup that preserve active/deprecated installed revisions,
    in-progress downloads, and existing VM pins. Retention filename extraction
    has landed for installed current profile payloads and persistent VM profile
-   pins; production cleanup caller wiring and in-progress download/race
-   coverage remain.
+   pins; `POST /setup/assets/cleanup` now uses that retention set and fails
+   closed while assets are checking/updating. Remaining: cross-process/per-asset
+   download locks and VM-create/download race coverage.
 4. Explicit unsupported/unbound handling for pre-S07a registry records.
 5. Status/debug readiness for profile catalog state, installed revisions,
    package contracts, asset verification, VM pins, and drift/revocation.
@@ -334,6 +340,11 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-core --lib` passed with 1614 tests + 1 ignored and
   `cargo test -p capsem-service` passed with 110 library tests + 145 service
   tests after profile-aware asset retention sources.
+- `cargo test -p capsem-core cleanup_ --lib` passed with 7 tests,
+  `cargo test -p capsem-core --lib` passed with 1615 tests + 1 ignored,
+  `cargo test -p capsem-service handle_asset_cleanup` passed with 2 service
+  tests, and `cargo test -p capsem-service` passed with 110 library tests +
+  147 service tests after the profile-aware asset cleanup caller.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

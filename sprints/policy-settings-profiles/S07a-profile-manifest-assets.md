@@ -67,6 +67,10 @@ Landed:
   profile payload assets plus persistent VM profile pins, with cleanup proof
   that unreferenced hash-named assets are removed while both retention roots
   survive.
+- `POST /setup/assets/cleanup` now wires production cleanup through the
+  profile-aware retention set, removes unreferenced hash-named and legacy
+  asset files without old manifest authority, and fails closed while asset
+  downloads/checks are in progress.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -97,9 +101,11 @@ Push order from here:
 3. [~] Add retention/cleanup for installed profile revisions, in-progress
    downloads, and existing VM pins. Landed: retention filename extraction from
    installed current profile payloads and persistent VM profile pins, plus
-   cleanup proof for the combined preservation set. Remaining: wire every
-   production cleanup caller through the retention set and add in-progress
-   download/race coverage.
+   cleanup proof for the combined preservation set. `POST
+   /setup/assets/cleanup` now uses that retention set, does not depend on the
+   old asset manifest, removes unreferenced hash-named/legacy asset files, and
+   refuses cleanup while the asset supervisor is checking/updating. Remaining:
+   cross-process/per-asset download locks and VM-create/download race coverage.
 4. Surface unsupported/unbound state for pre-S07a VM records.
 5. Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
@@ -620,8 +626,11 @@ This sprint creates the contract consumed by later sprints:
       pins. Landed: installed current profile payloads now produce
       hash-derived VM asset filenames for retention; persistent VM retention
       now also reads `profile_pin.base_assets`; `cleanup_retention_asset_filenames`
-      combines both roots and is covered through real asset cleanup. Remaining:
-      production cleanup caller wiring and in-progress download/race coverage.
+      combines both roots and is covered through real asset cleanup. `POST
+      /setup/assets/cleanup` now calls a manifest-free cleanup helper with that
+      retention set and refuses to run while assets are checking/updating.
+      Remaining: cross-process/per-asset download locks and VM-create/download
+      race coverage.
 - [~] Add persistent VM profile/revision/package/asset pin metadata. VM base
       asset hashes are now derived from profile asset declarations instead of
       the asset manifest; registry/runtime/API metadata now carries
@@ -681,6 +690,12 @@ This sprint creates the contract consumed by later sprints:
   --lib` (2 tests), `cargo test -p capsem-core settings_profiles --lib` (133
   tests), and `cargo test -p capsem-service saved_vm_assets` (2 tests),
   including a real cleanup proof for installed-profile plus VM-pin retention.
+  Production cleanup coverage now adds `cargo test -p capsem-core cleanup_
+  --lib` (7 tests) and `cargo test -p capsem-service handle_asset_cleanup`
+  (2 service tests), proving the manifest-free cleanup helper preserves
+  metadata/temp files, removes legacy/hash-named stale assets, the service
+  endpoint preserves installed-profile plus saved-VM retention, and cleanup
+  returns `409 Conflict` while assets are still updating.
   Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar

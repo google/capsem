@@ -4512,6 +4512,60 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
     }
 }
 
+/// POST /setup/assets/cleanup -- remove unreferenced profile-era VM assets.
+async fn handle_asset_cleanup(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    state.asset_supervisor.refresh_local_state();
+    let health = state.asset_supervisor.snapshot();
+    if health.state != AssetHealthState::Ready {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "asset cleanup is blocked while assets are {}; retry once assets are ready",
+                health.state.as_str()
+            ),
+        ));
+    }
+
+    let retention = {
+        let registry = state.persistent_registry.lock().unwrap();
+        saved_vm_assets::cleanup_retention_asset_filenames(
+            &registry,
+            &state.service_settings.profiles,
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("derive asset cleanup retention set: {error:#}"),
+            )
+        })?
+    };
+    let removed = capsem_core::asset_manager::cleanup_unreferenced_assets_preserving(
+        &state.assets_dir,
+        retention.iter(),
+    )
+    .map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("cleanup unreferenced assets: {error:#}"),
+        )
+    })?;
+    let removed_paths = removed
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "skipped": false,
+        "asset_state": health.state,
+        "retained_count": retention.len(),
+        "removed_count": removed_paths.len(),
+        "removed": removed_paths,
+    })))
+}
+
 fn asset_locations_status_json(
     locations: &capsem_core::settings_profiles::ResolvedServiceAssetLocations,
 ) -> serde_json::Value {
@@ -6659,6 +6713,7 @@ async fn main() -> Result<()> {
         .route("/setup/complete", post(handle_complete_onboarding))
         .route("/setup/retry", post(handle_setup_retry))
         .route("/setup/assets", get(handle_asset_status))
+        .route("/setup/assets/cleanup", post(handle_asset_cleanup))
         .route("/setup/corp-config", post(handle_corp_config))
         .route("/mcp/servers", get(handle_mcp_servers))
         .route("/mcp/tools", get(handle_mcp_tools))

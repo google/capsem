@@ -90,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the archived installed payload for retention/VM-pin cleanup.
 - Added profile-aware asset retention sources so cleanup can preserve VM assets
   referenced by installed profile payloads and by persistent VM profile pins.
+- Added `POST /setup/assets/cleanup`, a profile-era asset cleanup endpoint that
+  removes unreferenced hash-named/legacy asset files without old manifest
+  authority, preserves installed-profile and saved-VM pins, and refuses to run
+  while assets are still checking or updating.
 - Removed legacy `assets.manifest.*` service settings and setup-time asset
   manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2

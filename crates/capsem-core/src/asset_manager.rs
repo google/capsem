@@ -644,8 +644,7 @@ where
 
     cleanup_asset_dir(base_dir, &referenced, &mut removed)?;
 
-    for entry in std::fs::read_dir(base_dir)? {
-        let entry = entry?;
+    for entry in read_dir_sorted(base_dir)? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
@@ -674,13 +673,60 @@ where
     Ok(removed)
 }
 
+/// Remove hash-named asset files not referenced by installed profiles or saved
+/// VMs. This is the profile-catalog cleanup path: old asset manifests are not
+/// runtime authority here.
+pub fn cleanup_unreferenced_assets_preserving<I, S>(
+    base_dir: &Path,
+    referenced: I,
+) -> Result<Vec<PathBuf>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let referenced: HashSet<String> = referenced
+        .into_iter()
+        .map(|name| name.as_ref().to_string())
+        .collect();
+    let mut removed = Vec::new();
+    if !base_dir.exists() {
+        return Ok(removed);
+    }
+
+    cleanup_asset_dir(base_dir, &referenced, &mut removed)?;
+
+    for entry in read_dir_sorted(base_dir)? {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if is_asset_metadata_file(&name_str)
+            || name_str.starts_with('.')
+            || name_str.ends_with(".tmp")
+        {
+            continue;
+        }
+
+        if entry.file_type()?.is_dir() {
+            let path = entry.path();
+            if name_str.starts_with("v1.0.") {
+                info!(path = %path.display(), "removing legacy asset directory");
+                std::fs::remove_dir_all(&path)?;
+                removed.push(path);
+            } else {
+                cleanup_asset_dir(&path, &referenced, &mut removed)?;
+            }
+        }
+    }
+
+    Ok(removed)
+}
+
 fn cleanup_asset_dir(
     dir: &Path,
     referenced: &HashSet<String>,
     removed: &mut Vec<PathBuf>,
 ) -> Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in read_dir_sorted(dir)? {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
 
@@ -701,6 +747,12 @@ fn cleanup_asset_dir(
         }
     }
     Ok(())
+}
+
+fn read_dir_sorted(dir: &Path) -> Result<Vec<std::fs::DirEntry>> {
+    let mut entries = std::fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    Ok(entries)
 }
 
 fn is_asset_metadata_file(name: &str) -> bool {
@@ -1570,6 +1622,32 @@ mod tests {
 
         assert_eq!(removed, vec![temp_rootfs]);
         assert!(saved_rootfs.exists());
+    }
+
+    #[test]
+    fn cleanup_profile_retention_does_not_require_legacy_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let arm64 = base.join("arm64");
+        let legacy = base.join("v1.0.1776269479");
+        std::fs::create_dir(&arm64).unwrap();
+        std::fs::create_dir(&legacy).unwrap();
+        std::fs::write(base.join("manifest.json"), b"{}").unwrap();
+        std::fs::write(base.join("rootfs-download.tmp"), b"in flight").unwrap();
+        std::fs::write(legacy.join("rootfs.squashfs"), b"legacy").unwrap();
+
+        let retained_kernel = arm64.join("vmlinuz-aaaaaaaaaaaaaaaa");
+        let stale_rootfs = arm64.join("rootfs-bbbbbbbbbbbbbbbb.squashfs");
+        std::fs::write(&retained_kernel, b"kernel").unwrap();
+        std::fs::write(&stale_rootfs, b"stale").unwrap();
+
+        let removed =
+            cleanup_unreferenced_assets_preserving(base, ["vmlinuz-aaaaaaaaaaaaaaaa"]).unwrap();
+
+        assert_eq!(removed, vec![stale_rootfs, legacy]);
+        assert!(retained_kernel.exists());
+        assert!(base.join("manifest.json").exists());
+        assert!(base.join("rootfs-download.tmp").exists());
     }
 
     #[test]

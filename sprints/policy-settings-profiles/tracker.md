@@ -16,7 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `46 ahead / 0 behind` `origin/main` in this worktree. The rescue
+  `63 ahead / 0 behind` `origin/main` in this worktree after the
+  profile-aware asset cleanup caller slice. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -166,7 +167,7 @@ When this sprint starts, promote the inline brief above into
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
-closed for the active branch: `HEAD...origin/main` is currently `44 ahead / 0
+closed for the active branch: `HEAD...origin/main` is currently `63 ahead / 0
 behind`. The remaining cleanup debt is now S06c plus the final V2 naming
 collapse and release gate. When executed, keep the order:
 
@@ -390,7 +391,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   profile payloads emit hash-derived VM asset filenames, archived payloads
   without `current.json` do not retain assets, persistent VM profile pins feed
   saved-asset retention, and real cleanup preserves the combined profile+VM-pin
-  set while deleting an unreferenced hash-named asset.
+  set while deleting an unreferenced hash-named asset. Production cleanup now
+  adds a manifest-free hash cleanup helper plus `POST /setup/assets/cleanup`,
+  preserving installed-profile and saved-VM retention, deleting stale
+  hash-named files and legacy `v1.0.*` directories, and returning
+  `409 Conflict` while assets are checking or updating.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -400,8 +405,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   profile root and installed revision payload storage, service API profile
   catalog reconcile install/revoke/absent-removal summaries, native
   CLI-to-service wiring for `profile reconcile-catalog`, `/setup/assets`
-  provenance, profile-aware cleanup retention source composition, mitm_proxy
-  integration test for model.request rewrite redaction.
+  provenance, profile-aware cleanup retention source composition, `POST
+  /setup/assets/cleanup` cleanup execution with installed-profile/saved-VM
+  retention, mitm_proxy integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -469,6 +475,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   package gates after profile-aware asset retention sources: `cargo test -p
   capsem-core --lib` **1614** passed / 0 failed / 1 ignored and `cargo test -p
   capsem-service` **110** + **145** passed;
+  after the profile-aware asset cleanup caller, `cargo test -p capsem-core
+  cleanup_ --lib` **7** passed, `cargo test -p capsem-core --lib` **1615**
+  passed / 0 failed / 1 ignored, `cargo test -p capsem-service
+  handle_asset_cleanup` **2** passed, and `cargo test -p capsem-service`
+  **110** + **147** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

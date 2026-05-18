@@ -772,6 +772,110 @@ async fn handle_asset_status_exposes_service_asset_locations() {
     assert!(status["asset_locations"].get("manifest_source").is_none());
 }
 
+#[tokio::test]
+async fn handle_asset_cleanup_preserves_profile_and_saved_vm_retention() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
+    std::fs::write(state.assets_dir.join("vmlinuz"), b"current kernel").unwrap();
+    std::fs::write(state.assets_dir.join("initrd.img"), b"current initrd").unwrap();
+    std::fs::write(state.assets_dir.join("rootfs.squashfs"), b"current rootfs").unwrap();
+    state.asset_supervisor.refresh_local_state();
+
+    let corp_dir = state.service_settings.profiles.corp_dirs[0].clone();
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    std::fs::create_dir_all(record_dir.join("2026.0520.1")).unwrap();
+    std::fs::write(
+        record_dir.join("2026.0520.1").join("profile.json"),
+        include_str!("../../../schemas/fixtures/profile-v2-valid.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+
+    let arm64 = state.assets_dir.join("arm64");
+    let legacy = state.assets_dir.join("v1.0.1776269479");
+    std::fs::create_dir(&arm64).unwrap();
+    std::fs::create_dir(&legacy).unwrap();
+    let profile_kernel = arm64.join("vmlinuz-aaaaaaaaaaaaaaaa");
+    let saved_kernel = arm64.join("vmlinuz-dddddddddddddddd");
+    let stale_rootfs = arm64.join("rootfs-9999999999999999.squashfs");
+    std::fs::write(&profile_kernel, b"profile kernel").unwrap();
+    std::fs::write(&saved_kernel, b"saved kernel").unwrap();
+    std::fs::write(&stale_rootfs, b"stale rootfs").unwrap();
+    std::fs::write(legacy.join("rootfs.squashfs"), b"legacy").unwrap();
+
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry.data.vms.insert(
+            "saved-assets".into(),
+            PersistentVmEntry {
+                name: "saved-assets".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: Some(SavedVmBaseAssets {
+                    asset_version: "saved-profile@2026.0520.1".into(),
+                    arch: "arm64".into(),
+                    kernel_hash: "d".repeat(64),
+                    initrd_hash: "e".repeat(64),
+                    rootfs_hash: "f".repeat(64),
+                    guest_abi: Some("capsem-guest-v2".into()),
+                }),
+                profile_pin: None,
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/saved-assets"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(result) = handle_asset_cleanup(State(state)).await.unwrap();
+
+    assert_eq!(result["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(result["skipped"], serde_json::json!(false));
+    assert_eq!(result["removed_count"], serde_json::json!(2));
+    assert!(profile_kernel.exists());
+    assert!(saved_kernel.exists());
+    assert!(!stale_rootfs.exists());
+    assert!(!legacy.exists());
+}
+
+#[tokio::test]
+async fn handle_asset_cleanup_refuses_while_assets_are_updating() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    std::fs::create_dir_all(state.assets_dir.join("arm64")).unwrap();
+    let stale = state
+        .assets_dir
+        .join("arm64")
+        .join("rootfs-9999999999999999.squashfs");
+    std::fs::write(&stale, b"stale rootfs").unwrap();
+    state.asset_supervisor.refresh_local_state();
+
+    let err = handle_asset_cleanup(State(state)).await.unwrap_err();
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err
+        .1
+        .contains("asset cleanup is blocked while assets are updating"));
+    assert!(stale.exists());
+}
+
 #[test]
 fn ensure_vm_effective_settings_writes_default_profile_attachment() {
     let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
