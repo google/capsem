@@ -46,11 +46,21 @@ Remove v1 completely:
 - remove old config-shape awareness completely;
 - provide no migration layer and no compatibility diagnostics.
 
-## Typed TOML Contract
+## Typed TOML And Schema Contract
 
-Rust structs plus Serde/TOML parsing and Rust validators are the source of truth.
-JSON Schema is not the enforcement source. Any UI descriptors or schema artifacts
-must be generated from Rust-owned types/descriptors.
+Rust structs plus Serde/TOML parsing and Rust validators remain the service
+implementation boundary for settings/profile loading. Published profile
+payloads also have a formal machine-readable contract:
+`schemas/capsem.profile.v2.schema.json`, using JSON Schema Draft 2020-12 over
+the parsed TOML data model.
+
+The profile schema includes top-level identity, immutable revision,
+compatibility, package/tool contracts, per-arch VM asset records, and the
+existing security/rule sections. Unknown fields are rejected through
+`additionalProperties: false` / `unevaluatedProperties: false` in the schema.
+Rust and Python validators must share the same schema fixtures. Semantic
+trust-chain checks that JSON Schema cannot express, such as signature
+authorization and manifest/profile parity, run after schema validation.
 
 ## Profile Contract
 

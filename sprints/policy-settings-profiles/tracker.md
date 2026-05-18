@@ -176,14 +176,17 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   can start with proto already in place. See S12 spec.
 - **S07a is a public-contract bridge.** Before HTTP, CLI, and UI harden profile
   create/VM create semantics, the signed manifest must become the profile
-  catalog and profiles must carry package/tool contracts plus VM asset
-  declarations. S07a also defines first-use asset download, profile revision
-  status, cleanup retention, and persistent VM profile/revision/asset pins.
+  catalog and profiles must carry a closed `capsem.profile.v2` contract backed
+  by JSON Schema Draft 2020-12, with package/tool contracts plus per-arch VM
+  asset declarations. S07a also defines first-use asset download, profile
+  revision status, cleanup retention, and persistent VM profile/revision/asset
+  pins.
 - **S07b is the admin tooling bridge.** The current Python image builder and
   manifest scripts must be unified under a released `capsem-admin` package.
   Profiles become the source of truth for image build plans and manifest
-  entries; hand-edited `guest/config` image settings are not carried forward as
-  compatibility input.
+  entries; `capsem-admin profile validate/schema` consumes the shared JSON
+  Schema artifact and valid/invalid fixtures; hand-edited `guest/config` image
+  settings are not carried forward as compatibility input.
 - **S12 architecture: single source of truth.** The in-memory
   per-VM accumulator in `capsem-process` is the only runtime
   source; `session.db` is read on the data path exactly twice in

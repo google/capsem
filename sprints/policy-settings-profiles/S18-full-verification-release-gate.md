@@ -52,12 +52,20 @@ Prove the redesign is releaseable.
 - Prove manifest admin checks:
   `capsem-admin manifest check --fast` validates remote profile/asset URLs with
   HTTP `HEAD`, while `--download` downloads and verifies all referenced bytes.
+- Prove profile schema closure:
+  `capsem-admin profile validate` rejects unknown fields/tables, wrong
+  `capsem.profile.v2` schema id/version, manifest/payload id or revision
+  mismatches, malformed package versions, unsupported arch declarations, and
+  incomplete per-arch asset records. Rust and Python validators must pass the
+  same JSON Schema Draft 2020-12 valid/invalid fixtures.
 
 ## Coverage Ledger
 
-- Unit/contract: complete for profile catalog schema, signatures/hashes,
-  lifecycle status, package/tool contracts, per-arch assets, rollback
-  protection, resolver inheritance, VM pin metadata, and API/CLI/UI shapes.
+- Unit/contract: complete for profile catalog schema, `capsem.profile.v2`
+  JSON Schema Draft 2020-12 closure, shared Rust/Python schema fixture parity,
+  signatures/hashes, lifecycle status, package/tool contracts, per-arch assets,
+  rollback protection, resolver inheritance, VM pin metadata, and API/CLI/UI
+  shapes.
 - Functional: complete for manifest update, profile install/update/remove/
   revoke, first-use asset download, VM create/resume/fork/delete, cleanup
   retention, explicit profile selection through UDS/HTTP/CLI/UI, and

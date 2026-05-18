@@ -89,7 +89,8 @@ Under `docs/src/content/docs/`, likely pages:
   remote policy, credentials, manifest source, asset directory, image roots, and
   asset download endpoint.
 - `configuration/profiles.md` - profile TOML, profile CRUD/forking, package/tool
-  contracts, VM assets, VM-effective settings, custom profiles.
+  contracts, per-arch VM assets, VM-effective settings, custom profiles, and
+  the JSON Schema Draft 2020-12 `capsem.profile.v2` schema reference.
 - `configuration/profile-catalogs.md` - signed manifest profile catalog,
   revisions, lifecycle status, profile payload signatures, lazy download, and
   asset retention.
@@ -117,13 +118,17 @@ Final paths should follow the actual docs tree present when this sprint starts.
 - [ ] Write rule-engine grammar reference:
       callbacks, fields, decisions, rewrite rules, priority defaults.
 - [ ] Write service settings reference with TOML examples.
-- [ ] Write profile reference with TOML examples and custom-profile workflow.
+- [ ] Write profile reference with TOML examples, custom-profile workflow, the
+      closed `capsem.profile.v2` field table, JSON Schema Draft 2020-12
+      artifact, and validation failure examples for unknown fields, wrong
+      schema version, bad package versions, and incomplete per-arch asset
+      declarations.
 - [ ] Write signed profile catalog reference with manifest examples for
       profile ids, revisions, active/deprecated/removed/revoked status, payload
       hashes/signatures, and compatibility.
 - [ ] Write profile package/tool contract and VM asset declaration reference.
 - [ ] Write `capsem-admin` reference:
-      profile create/validate, image plan/build/verify, manifest
+      profile create/validate/schema, image plan/build/verify, manifest
       generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
       reports, omitted `--arch` defaulting to all supported release arches,
       bootstrap editable install, and packaged release usage.

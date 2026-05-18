@@ -51,6 +51,7 @@ cover these operator flows:
 ```sh
 capsem-admin profile init <profile-id>
 capsem-admin profile validate profile.toml
+capsem-admin profile schema --out schemas/capsem.profile.v2.schema.json
 capsem-admin profile derive-image profile.toml --out build/profile-image/
 
 capsem-admin image plan profile.toml
@@ -69,6 +70,14 @@ Required semantics:
   supported release arches (`arm64` and `x86_64` today). Passing
   `--arch arm64` or `--arch x86_64` narrows the operation for local debugging
   and CI shards.
+- `profile validate` parses TOML into the JSON-compatible data model, validates
+  it against the standard JSON Schema Draft 2020-12
+  `capsem.profile.v2.schema.json` artifact from S07a, then runs semantic checks:
+  package-version grammar checks, manifest/payload id+revision parity when a
+  manifest record is supplied, and per-arch asset record completeness.
+- `profile schema` prints or refreshes the committed JSON Schema artifact used
+  by docs, editors, CI, Rust validation, and Python/admin validation. It must
+  not emit a private or implementation-specific schema dialect.
 - `--fast` performs profile payload checks and HTTP `HEAD`/metadata checks for
   remote assets: URL exists, size matches where advertised, content type is
   acceptable, signature URLs exist, and cache validators are sane. It does not
@@ -134,6 +143,11 @@ this sprint.
 - Add profile-to-image derivation:
   profile TOML -> typed profile model -> package/tool contract -> builder
   context -> rendered Dockerfile/build plan.
+- Add schema-aware profile tooling:
+  `profile init` must create a valid `capsem.profile.v2` draft, `profile
+  validate` must fail closed on unknown or underspecified fields through JSON
+  Schema Draft 2020-12 validation, and `profile schema` must export the
+  standard schema artifact for docs, editors, CI, Rust, and Python tooling.
 - Remove hand-edited image settings as accepted input for release builds. Tests
   must fail if a release build reads package/tool/image settings from
   `guest/config` instead of the selected profile.
@@ -237,6 +251,11 @@ The checker must fail closed for:
 ## Tasks
 
 - [ ] Design `capsem-admin` command tree and JSON report schema.
+- [ ] Add `capsem.profile.v2` JSON Schema Draft 2020-12 export and golden
+      fixtures.
+- [ ] Add standard schema tooling dependencies: Python `jsonschema` for
+      `capsem-admin` and Rust JSON Schema validation/generation tooling chosen
+      in S07a.
 - [ ] Add `capsem-admin` package/distribution entry point and bootstrap install
       wiring.
 - [ ] Update Justfile recipes and shell scripts to use `capsem-admin`, with
@@ -245,8 +264,9 @@ The checker must fail closed for:
       input authority.
 - [ ] Refactor manifest generation/check/sign scripts into importable Python
       library modules.
-- [ ] Add profile TOML parser/adapter for admin tooling or bind to the Rust
-      profile schema through generated fixtures/conformance tests.
+- [ ] Add profile TOML parser/adapter for admin tooling bound to
+      `capsem.profile.v2.schema.json` through shared valid/invalid fixtures and
+      Rust/Python conformance tests.
 - [ ] Implement profile-to-image build-plan derivation.
 - [ ] Remove hand-edited image settings as release-build authority.
 - [ ] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
@@ -260,17 +280,20 @@ The checker must fail closed for:
 ## Coverage Ledger
 
 - Unit/contract: CLI parser golden tests, including omitted `--arch` defaulting
-  to `all` and single-arch narrowing; JSON report schema tests; profile adapter
-  conformance with Rust profile schema; manifest v3 generate/check/sign tests;
-  profile-to-image build plan tests; admin doctor checks; no-hand-edited-
-  settings guard tests.
-- Functional: `capsem-admin profile validate`; `image plan`; `image verify`;
-  `manifest generate`; `manifest check --fast`; `manifest check --download`;
-  bootstrap-installed CLI smoke.
+  to `all` and single-arch narrowing; JSON report schema tests;
+  `capsem.profile.v2` JSON Schema Draft 2020-12 golden tests; profile adapter
+  conformance with the shared schema artifact; manifest v3 generate/check/sign
+  tests; profile-to-image build plan tests; admin doctor checks;
+  no-hand-edited-settings guard tests.
+- Functional: `capsem-admin profile init`; `profile validate`; `profile
+  schema`; `image plan`; `image verify`; `manifest generate`; `manifest check
+  --fast`; `manifest check --download`; bootstrap-installed CLI smoke.
 - Adversarial: malformed profile, missing package version, unsupported package
-  manager, URL scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch,
-  missing signature URL, hash mismatch after download, duplicate profile
-  revision, revoked current profile, path traversal, stale manifest rollback.
+  manager, unknown profile field/table, wrong schema id/version,
+  manifest/payload id or revision mismatch, missing per-arch asset table, URL
+  scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch, missing
+  signature URL, hash mismatch after download, duplicate profile revision,
+  revoked current profile, path traversal, stale manifest rollback.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default, boot at least the host-arch image through
   Capsem, and run an in-guest verification probe that proves declared

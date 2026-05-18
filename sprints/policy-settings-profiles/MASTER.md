@@ -166,13 +166,15 @@ Current execution is in [S07 - UDS service API](S07-uds-service-api.md).
 Before the gateway/UI layers harden the public contract, insert
 [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md).
 S07a makes the signed manifest the profile catalog, extends profiles with the
-guest package/tool contract and asset declarations, and makes VM create pin the
-selected profile revision plus verified asset hashes.
+closed JSON Schema Draft 2020-12 `capsem.profile.v2` contract, guest
+package/tool contract, and per-arch asset declarations, and makes VM create pin
+the selected profile revision plus verified asset hashes.
 
 Immediately after S07a, [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md)
 turns those contracts into operator tooling: `capsem-admin` creates/validates
-profiles, derives image build plans from profiles, verifies built images, and
-generates/checks/signs manifests.
+profiles, exports/validates the shared schema artifact, derives image build
+plans from profiles, verifies built images, and generates/checks/signs
+manifests.
 
 [S07 - UDS service API](S07-uds-service-api.md), S07a, and S07b are the
 public-contract foundation for every later layer. HTTP, CLI, UI, docs, and

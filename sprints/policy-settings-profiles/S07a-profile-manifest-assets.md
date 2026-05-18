@@ -68,14 +68,124 @@ Required rules:
     VMs pinned to it.
 - Profile payload identity is verified before the profile is installed or used.
 
-## Profile Contract Additions
+## Normative Profile Payload Schema
 
-Extend profile TOML with a package/tool contract and asset declarations.
+S07a must ship a concrete, standard schema artifact for profile payloads:
+`schemas/capsem.profile.v2.schema.json`, written as JSON Schema Draft 2020-12.
+TOML remains the admin-authored syntax, but validation is defined over the
+parsed TOML data model. Do not invent a private schema language.
 
-Package/tool contract:
+A planning draft lives at
+`sprints/policy-settings-profiles/schemas/capsem.profile.v2.schema.json`; S07a
+implementation should either promote it into the production schema location or
+replace it with an equivalent Draft 2020-12 artifact before code lands.
+
+Required tooling baseline:
+
+- Rust: add standard JSON Schema validation tooling, such as the `jsonschema`
+  crate. If implementation chooses Rust-derived schema generation, use
+  `schemars` or an equivalent maintained generator and diff the generated
+  output against the committed schema artifact.
+- Python/admin CLI: add the standard `jsonschema` package and validate parsed
+  TOML profiles against `capsem.profile.v2.schema.json` before semantic checks.
+- Docs/editors/CI: publish the same JSON Schema artifact for documentation,
+  editor validation, and golden fixture checks.
+- Semantic checks that JSON Schema cannot express cleanly remain explicit code:
+  manifest/profile id parity, signature authorization, rollback protection,
+  package-manager-specific version resolution, URL allowlists by operating
+  mode, and parent revision availability.
+
+The JSON Schema artifact must be closed by default:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.capsem.dev/capsem.profile.v2.schema.json",
+  "title": "Capsem Profile Payload v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "version",
+    "id",
+    "revision",
+    "name",
+    "description",
+    "best_for",
+    "profile_type",
+    "compatibility",
+    "vm",
+    "packages",
+    "tools",
+    "security"
+  ],
+  "properties": {
+    "schema": { "const": "capsem.profile.v2" },
+    "version": { "const": 2 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,63}$" },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.[0-9]{4}\\.[0-9]+$"
+    },
+    "profile_type": { "enum": ["everyday-work", "coding"] },
+    "compatibility": { "$ref": "#/$defs/compatibility" },
+    "packages": { "$ref": "#/$defs/packages" },
+    "tools": { "$ref": "#/$defs/tools" },
+    "vm": { "$ref": "#/$defs/vm" }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "hash", "signature_url", "size", "content_type"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "signature_url": { "type": "string", "format": "uri" },
+        "size": { "type": "integer", "minimum": 1 },
+        "content_type": { "type": "string" }
+      }
+    }
+  }
+}
+```
+
+The committed schema must fully enumerate `$defs` for identity, compatibility,
+VM resources, packages, tools, per-arch assets, and the existing S04 security
+rule sections. Open-ended package maps may use JSON Schema `patternProperties`
+with `additionalProperties: false`; unrestricted `object` holes are not
+allowed in the published schema.
+
+Published profile payloads must use this top-level TOML shape:
 
 ```toml
-[packages]
+schema = "capsem.profile.v2"
+version = 2
+id = "everyday-work"
+revision = "2026.0520.1"
+name = "Everyday Work"
+description = "Balanced defaults for day-to-day work."
+best_for = "Balanced defaults for day-to-day work."
+profile_type = "everyday-work"
+icon_svg = "<svg ...>...</svg>"
+extends_profile_id = "base-everyday"
+extends_profile_revision = "2026.0520.1"
+
+[compatibility]
+min_binary = "1.0.0"
+max_binary = ""
+guest_abi = "capsem-guest-v2"
+
+[vm]
+cpus = 4
+memory_mib = 8192
+disk_mib = 32768
+
+[packages.runtimes]
 python = "3.12.3"
 node = "22.1.0"
 uv = "0.4.30"
@@ -87,31 +197,114 @@ numpy = "1.26.4"
 [packages.node_packages]
 playwright = "1.44.0"
 
-[tools]
-capsem_doctor = ">=1.0.0"
-browser = ">=0.1.0"
+[packages.system]
+distro = "debian"
+release = "bookworm"
+
+[packages.system.apt]
+ca-certificates = "20230311"
+curl = "7.88.1-10+deb12u12"
+
+[tools.capsem_doctor]
+version = ">=1.0.0"
+required = true
+source = "guest"
+
+[tools.browser]
+version = ">=0.1.0"
+required = true
+source = "guest"
+
+[security.capabilities]
+credential_brokerage = "ask"
+pii_detection = "ask"
+mcp_rag = "allow"
+mcp_tools = "allow"
+network_egress = "ask"
+file_boundaries = "ask"
+audit = "audit"
+
+[vm.assets.arm64.kernel]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/vmlinuz"
+hash = "blake3:..."
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/vmlinuz.minisig"
+size = 12345678
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/initrd.img"
+hash = "blake3:..."
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/initrd.img.minisig"
+size = 12345678
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/rootfs.squashfs"
+hash = "blake3:..."
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/rootfs.squashfs.minisig"
+size = 12345678
+content_type = "application/vnd.squashfs"
+
+[vm.assets.x86_64.kernel]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/x86_64/vmlinuz"
+hash = "blake3:..."
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/x86_64/vmlinuz.minisig"
+size = 12345678
+content_type = "application/octet-stream"
+
+[vm.assets.x86_64.initrd]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/x86_64/initrd.img"
+hash = "blake3:..."
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/x86_64/initrd.img.minisig"
+size = 12345678
+content_type = "application/octet-stream"
+
+[vm.assets.x86_64.rootfs]
+url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/x86_64/rootfs.squashfs"
+hash = "blake3:..."
+signature_url = "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/x86_64/rootfs.squashfs.minisig"
+size = 12345678
+content_type = "application/vnd.squashfs"
 ```
 
-VM assets:
+Required validation rules:
 
-```toml
-[vm.assets]
-kernel_url = "https://assets.capsem.dev/vm/default/2026.0520.1/vmlinuz"
-kernel_hash = "blake3:..."
-kernel_signature_url = "https://assets.capsem.dev/vm/default/2026.0520.1/vmlinuz.minisig"
+- Unknown fields and unknown tables are rejected by JSON Schema. No open-ended
+  maps are accepted except explicitly typed package-manager maps such as
+  `packages.system.apt`, `packages.python_modules`, and
+  `packages.node_packages`.
+- `schema` must equal `capsem.profile.v2`; `version` must equal `2`.
+- `id` must match the manifest `profile_id`. `revision` must match the
+  manifest revision record and is immutable after signing.
+- `revision` uses the catalog revision grammar
+  `[0-9]{4}\.[0-9]{4}\.[0-9]+` until a later sprint deliberately changes it.
+- Catalog-published profiles that inherit from a parent must include both
+  `extends_profile_id` and `extends_profile_revision`. Local draft/user
+  profiles that are not yet pinned may use an explicit draft mode in
+  `capsem-admin`, but published payload validation requires both fields.
+- `compatibility.min_binary` is required. `compatibility.max_binary` may be an
+  empty string to mean unbounded; `null` is not valid TOML.
+- Package versions are strings constrained by JSON Schema patterns where the
+  grammar is regular enough, then parsed by package-type-specific validators:
+  SemVer for Node/tool versions where applicable, PEP 440 for Python packages,
+  Debian version syntax for apt packages, and a documented exact string escape
+  only for package managers without a stable grammar.
+- `tools.<tool>.version` is required and may be an exact version or a
+  comparator range. `required` defaults to `true` only if omitted by generated
+  built-in profiles; corp/user-authored profiles must write it explicitly.
+- `vm.assets.<arch>` is required for every supported release arch unless the
+  manifest marks the profile as arch-limited. Each arch table must contain
+  exactly `kernel`, `initrd`, and `rootfs` asset records.
+- Asset records require `url`, `hash`, `signature_url`, `size`, and
+  `content_type`. `hash` must use the canonical `blake3:<hex>` form.
+- Asset URLs must use an allowlisted scheme for the operating mode
+  (`https`, signed local file paths, or explicit air-gapped file roots). Path
+  traversal is rejected before any file access.
+- Existing profile sections from S04 (`general`, `appearance`, `ai`, `mcp`,
+  `skills`, `security`) remain part of the same schema and keep their existing
+  validation rules.
 
-initrd_url = "https://assets.capsem.dev/vm/default/2026.0520.1/initrd.img"
-initrd_hash = "blake3:..."
-initrd_signature_url = "https://assets.capsem.dev/vm/default/2026.0520.1/initrd.img.minisig"
-
-rootfs_url = "https://assets.capsem.dev/vm/default/2026.0520.1/rootfs.squashfs"
-rootfs_hash = "blake3:..."
-rootfs_signature_url = "https://assets.capsem.dev/vm/default/2026.0520.1/rootfs.squashfs.minisig"
-guest_abi = "capsem-guest-v2"
-```
-
-Implementation may normalize the repeated asset fields into typed tables, but
-the shipped schema must preserve these invariants:
+The shipped schema must preserve these invariants:
 
 - Profiles declare the guest package/tool versions their rules, skills, MCP
   connectors, and UI affordances assume.
@@ -248,7 +441,13 @@ This sprint creates the contract consumed by later sprints:
 - [ ] Design manifest v3 profile catalog schema.
 - [ ] Add parser/validator tests for profile ids, immutable revisions, statuses,
       profile payload locations, hashes, signatures, and binary compatibility.
-- [ ] Extend profile TOML schema with packages/tools and VM asset declarations.
+- [ ] Commit `schemas/capsem.profile.v2.schema.json` as JSON Schema Draft
+      2020-12, with closed-field validation and golden valid/invalid fixtures.
+- [ ] Add Rust and Python validation paths that parse TOML to the JSON-compatible
+      data model and validate with standard JSON Schema tooling before semantic
+      trust-chain checks.
+- [ ] Extend profile TOML schema with typed packages/tools and per-arch VM
+      asset declarations.
 - [ ] Add resolver tests for inherited package/tool contracts and asset
       declarations.
 - [ ] Add profile payload install/update/delete/revoke logic from manifest
@@ -271,15 +470,19 @@ This sprint creates the contract consumed by later sprints:
 
 ## Coverage Ledger
 
-- Unit/contract: manifest v3 parser/validator, profile package/tool parser,
-  asset declaration parser, resolver inheritance/override behavior, per-arch
-  asset selection, rollback/stale-manifest rejection, signature-key identity,
+- Unit/contract: manifest v3 parser/validator, JSON Schema Draft 2020-12
+  validation for `capsem.profile.v2`, valid/invalid schema fixture parity
+  across Rust and Python validators, profile package/tool parser, asset
+  declaration parser, resolver inheritance/override behavior, per-arch asset
+  selection, rollback/stale-manifest rejection, signature-key identity,
   canonical hash format, and v2 manifest compatibility/fail-closed behavior.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
   profile update; pre-S07a VM registry entries render explicit compatibility
   state instead of rebinding to the current default.
-- Adversarial: bad profile id/revision, downgrade attempts, bad signature/hash,
+- Adversarial: bad profile id/revision, unknown fields/tables, wrong schema
+  id/version, manifest/payload id mismatch, missing parent revision for a
+  catalog-published inherited profile, downgrade attempts, bad signature/hash,
   incompatible binary, revoked profile, missing asset, asset hash mismatch,
   malformed package version, unsupported host arch, profile payload signed by an
   unauthorized key, profile/asset URL scheme rejection, path traversal in
