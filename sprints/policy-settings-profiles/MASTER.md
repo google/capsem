@@ -184,11 +184,17 @@ Landed S07a foundation:
   active status, BLAKE3 payload hash, Profile V2 schema validity, and
   manifest/payload id+revision parity before an install/update path can write
   the payload.
+- Verified profile payload materialization. Profile V2 payloads now convert
+  into the runtime resolver profile shape, materialize into the corp profile
+  root, and preserve the exact verified payload under the installed revision
+  catalog path.
 
 Remaining S07a push order:
 
 1. Catalog-driven profile payload install/update/delete/revoke from manifest
    records, including `deprecated` and `revoked` fail-closed semantics.
+   Core verification/materialization has landed; download/signature
+   verification and delete/revoke orchestration remain.
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
    pinned asset metadata. Landed for runtime/registry/API with optional
    revision; signed catalog install/update still needs to make revision

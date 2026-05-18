@@ -39,6 +39,9 @@ Landed:
   Profile V2 schema validity, and manifest/payload id+revision parity before a
   profile payload can be installed; the Pydantic admin models mirror the same
   guard.
+- Verified Profile V2 payloads can now be converted into the runtime resolver
+  profile shape and installed into the corp profile root while preserving the
+  exact signed payload under `.catalog/profiles/<id>/<revision>/profile.json`.
 
 Push order from here:
 
@@ -46,8 +49,9 @@ Push order from here:
    `user_id` must be persisted beside session telemetry, surfaced through
    detail/status paths, and covered by focused tests.
 1. [~] Install/update/delete/revoke profile payloads from catalog records.
-   Landed: core install guard. Remaining: download/signature verification,
-   runtime profile conversion, installed-revision storage, and deletion/revoke
+   Landed: core install guard, runtime profile conversion, corp-root
+   materialization, and installed-revision payload storage. Remaining:
+   download/signature verification, update orchestration, and deletion/revoke
    actions.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, and pinned asset metadata. Landed: registry/runtime/API profile pins

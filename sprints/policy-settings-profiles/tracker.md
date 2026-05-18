@@ -367,14 +367,18 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   revision resolution tests in both Rust and Pydantic admin models. Core
   install guards cover active-status, BLAKE3 payload hash, schema validation,
   and manifest/payload id+revision parity in both Rust and Pydantic admin
-  models. VM profile pins add registry roundtrip, package-contract hash, API
-  serialization, and fork persistence coverage.
+  models. Runtime conversion/materialization tests prove verified Profile V2
+  payloads become resolver-compatible corp TOML while preserving the exact
+  signed payload bytes in installed revision storage. VM profile pins add
+  registry roundtrip, package-contract hash, API serialization, and fork
+  persistence coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
   `resolve_effective_vm_settings_with_corp`, debug-report
   rendering with resolver-trace summary, service startup +
-  asset settings, `/setup/assets` provenance, mitm_proxy
+  asset settings, verified profile payload materialization into the corp
+  profile root and installed revision payload storage, `/setup/assets` provenance, mitm_proxy
   integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
@@ -422,6 +426,7 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   after VM profile pins, `cargo test -p capsem-service` **108** + **141**
   passed;
   `cargo test -p capsem-core profile_manifest --lib` **16** passed;
+  `cargo test -p capsem-core settings_profiles --lib` **125** passed;
   `uv run pytest tests/test_profiles.py -q` **12** passed;
   `cargo test -p capsem-core telemetry --lib` **31** passed;
   `cargo test -p capsem-process --no-run` passed; and

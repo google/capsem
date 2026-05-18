@@ -136,6 +136,7 @@ pub struct VerifiedProfilePayload {
     pub profile_id: String,
     pub revision: String,
     pub payload_hash: String,
+    pub payload_json: String,
     pub value: serde_json::Value,
 }
 
@@ -192,6 +193,7 @@ pub fn verify_installable_profile_payload(
         profile_id: payload_profile_id.to_string(),
         revision: payload_revision.to_string(),
         payload_hash,
+        payload_json: payload_json.to_string(),
         value,
     })
 }

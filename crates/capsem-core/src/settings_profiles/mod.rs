@@ -255,6 +255,80 @@ pub fn install_corp_profile_toml(
     Ok(profile_path)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledProfileRevision {
+    pub profile_id: String,
+    pub revision: String,
+    pub payload_hash: String,
+    pub runtime_profile_path: PathBuf,
+    pub payload_path: PathBuf,
+}
+
+pub fn install_verified_profile_payload(
+    roots: &ProfileRootSettings,
+    verified: &crate::profile_manifest::VerifiedProfilePayload,
+) -> Result<InstalledProfileRevision> {
+    roots.validate("profiles")?;
+    let corp_dir = roots
+        .corp_dirs
+        .first()
+        .ok_or_else(|| SettingsProfilesError::Forbidden {
+            message: "no corp profile directory is configured".to_string(),
+        })?;
+    let profile = Profile::from_profile_payload_v2_value(verified.value.clone())?;
+    if profile.id != verified.profile_id {
+        return Err(SettingsProfilesError::Validation {
+            path: "profile_payload.id".to_string(),
+            message: format!(
+                "runtime profile id '{}' does not match verified profile '{}'",
+                profile.id, verified.profile_id
+            ),
+        });
+    }
+
+    let revision_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join(&verified.profile_id)
+        .join(&verified.revision);
+    fs::create_dir_all(&revision_dir).map_err(|source| SettingsProfilesError::WriteFile {
+        path: revision_dir.clone(),
+        details: source.to_string(),
+    })?;
+    let payload_path = revision_dir.join("profile.json");
+    fs::write(&payload_path, &verified.payload_json).map_err(|source| {
+        SettingsProfilesError::WriteFile {
+            path: payload_path.clone(),
+            details: source.to_string(),
+        }
+    })?;
+
+    fs::create_dir_all(corp_dir).map_err(|source| SettingsProfilesError::WriteFile {
+        path: corp_dir.clone(),
+        details: source.to_string(),
+    })?;
+    let runtime_profile_path = corp_dir.join(format!("{}.toml", profile.id));
+    let runtime_payload =
+        toml::to_string_pretty(&profile).map_err(|source| SettingsProfilesError::Serialize {
+            kind: "profile",
+            details: source.to_string(),
+        })?;
+    fs::write(&runtime_profile_path, runtime_payload).map_err(|source| {
+        SettingsProfilesError::WriteFile {
+            path: runtime_profile_path.clone(),
+            details: source.to_string(),
+        }
+    })?;
+
+    Ok(InstalledProfileRevision {
+        profile_id: verified.profile_id.clone(),
+        revision: verified.revision.clone(),
+        payload_hash: verified.payload_hash.clone(),
+        runtime_profile_path,
+        payload_path,
+    })
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceSettingOrigin {
@@ -678,6 +752,35 @@ impl Profile {
                 kind: "profile",
                 details: source.to_string(),
             })?;
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn from_profile_payload_v2_value(mut value: serde_json::Value) -> Result<Self> {
+        let Some(object) = value.as_object_mut() else {
+            return Err(SettingsProfilesError::Validation {
+                path: "profile_payload".to_string(),
+                message: "profile payload must be an object".to_string(),
+            });
+        };
+        object.remove("schema");
+        object.remove("revision");
+        object.remove("compatibility");
+        object.remove("extends_profile_revision");
+        object.insert("version".to_string(), json!(SETTINGS_SCHEMA_VERSION));
+        if let Some(vm) = object
+            .get_mut("vm")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            vm.remove("disk_mib");
+        }
+
+        let profile = serde_json::from_value::<Self>(value).map_err(|source| {
+            SettingsProfilesError::Parse {
+                kind: "profile",
+                details: source.to_string(),
+            }
+        })?;
         profile.validate()?;
         Ok(profile)
     }

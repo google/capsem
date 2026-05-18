@@ -956,6 +956,142 @@ fn user_profile_create_update_delete_round_trip() {
 }
 
 #[test]
+fn profile_payload_v2_converts_to_runtime_profile_shape() {
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let value = crate::profile_payload_schema::validate_profile_payload_v2_json(payload).unwrap();
+
+    let profile = Profile::from_profile_payload_v2_value(value).unwrap();
+
+    assert_eq!(profile.version, SETTINGS_SCHEMA_VERSION);
+    assert_eq!(profile.id, EVERYDAY_WORK_PROFILE_ID);
+    assert_eq!(profile.packages.runtimes["python"], "3.12.3");
+    assert_eq!(profile.vm.memory_mib, 8192);
+    assert_eq!(
+        profile.vm.assets["arm64"].rootfs.hash,
+        "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    );
+    assert_eq!(
+        profile.security.rules.http["allow-api"].callback,
+        "http.request"
+    );
+
+    let toml = toml::to_string_pretty(&profile).unwrap();
+    let reparsed = Profile::from_toml_str(&toml).unwrap();
+    assert_eq!(reparsed.id, profile.id);
+    assert_eq!(reparsed.vm.assets, profile.vm.assets);
+}
+
+#[test]
+fn install_verified_profile_payload_materializes_runtime_profile_and_revision_payload() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile.json",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "https://assets.capsem.dev/profile.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}"#
+    ))
+    .unwrap();
+    let revision = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+    let verified =
+        crate::profile_manifest::verify_installable_profile_payload(revision, payload).unwrap();
+
+    let installed = install_verified_profile_payload(&roots, &verified).unwrap();
+
+    assert_eq!(installed.profile_id, EVERYDAY_WORK_PROFILE_ID);
+    assert_eq!(installed.revision, "2026.0520.1");
+    assert_eq!(installed.payload_hash, profile_hash);
+    assert_eq!(
+        installed.runtime_profile_path,
+        corp_dir.join("everyday-work.toml")
+    );
+    assert!(installed.runtime_profile_path.exists());
+    assert_eq!(
+        installed.payload_path,
+        corp_dir
+            .join(".catalog")
+            .join("profiles")
+            .join("everyday-work")
+            .join("2026.0520.1")
+            .join("profile.json")
+    );
+    assert!(installed.payload_path.exists());
+    let installed_payload = fs::read_to_string(&installed.payload_path).unwrap();
+    assert_eq!(
+        format!(
+            "blake3:{}",
+            blake3::hash(installed_payload.as_bytes()).to_hex()
+        ),
+        profile_hash
+    );
+
+    let catalog = discover_profiles(&roots).unwrap();
+    let record = catalog.get(EVERYDAY_WORK_PROFILE_ID).unwrap();
+    assert_eq!(record.source, ProfileSource::Corp);
+    assert!(record.locked);
+    assert_eq!(record.profile.packages.runtimes["python"], "3.12.3");
+}
+
+#[test]
+fn install_verified_profile_payload_requires_corp_profile_root() {
+    let temp = tempfile::tempdir().unwrap();
+    let roots = test_roots(temp.path().join("base"), temp.path().join("user"));
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile.json",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "https://assets.capsem.dev/profile.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}"#
+    ))
+    .unwrap();
+    let verified = crate::profile_manifest::verify_installable_profile_payload(
+        manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+        payload,
+    )
+    .unwrap();
+
+    let error = install_verified_profile_payload(&roots, &verified).unwrap_err();
+
+    assert!(matches!(error, SettingsProfilesError::Forbidden { .. }));
+    assert!(format!("{error}").contains("no corp profile directory"));
+}
+
+#[test]
 fn user_profile_fork_from_builtin_profile() {
     let temp = tempfile::tempdir().unwrap();
     let base_dir = temp.path().join("base");
