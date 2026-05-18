@@ -207,6 +207,54 @@ pub fn verify_profile_payload_signature(
         .context("profile payload signature verification failed")
 }
 
+pub async fn fetch_installable_profile_payload(
+    revision: ResolvedProfileRevision<'_>,
+    pubkey_file: &str,
+) -> Result<VerifiedProfilePayload> {
+    let payload_bytes = read_profile_payload_location(&revision.record.profile_url)
+        .await
+        .with_context(|| format!("read profile payload {}", revision.record.profile_url))?;
+    let signature_bytes = read_profile_payload_location(&revision.record.profile_signature_url)
+        .await
+        .with_context(|| {
+            format!(
+                "read profile payload signature {}",
+                revision.record.profile_signature_url
+            )
+        })?;
+    let signature = String::from_utf8(signature_bytes)
+        .context("profile payload signature is not valid UTF-8 minisign text")?;
+    verify_profile_payload_signature(pubkey_file, &payload_bytes, &signature)?;
+    let payload_json =
+        String::from_utf8(payload_bytes).context("profile payload is not valid UTF-8 JSON")?;
+    verify_installable_profile_payload(revision, &payload_json)
+}
+
+async fn read_profile_payload_location(location: &str) -> Result<Vec<u8>> {
+    if let Some(path) = location.strip_prefix("file://") {
+        return tokio::fs::read(path)
+            .await
+            .with_context(|| format!("read {path}"));
+    }
+
+    let response = reqwest::Client::builder()
+        .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("build profile payload HTTP client")?
+        .get(location)
+        .send()
+        .await
+        .with_context(|| format!("GET {location}"))?;
+    if !response.status().is_success() {
+        bail!("GET {} returned {}", location, response.status());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .with_context(|| format!("read response body from {location}"))?;
+    Ok(bytes.to_vec())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestProfile {
@@ -573,6 +621,100 @@ mod tests {
             b"{\"hello\":\"tampered\",\"format\":2}",
             TEST_SIGNATURE,
         )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("profile payload signature"));
+    }
+
+    #[tokio::test]
+    async fn fetch_installable_profile_payload_reads_file_urls_and_verifies_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload_path = dir.path().join("profile.json");
+        let signature_path = dir.path().join("profile.json.minisig");
+        let payload = include_str!("../../../schemas/fixtures/profile-v2-valid.json");
+        let signature = include_str!("../../../schemas/fixtures/profile-v2-valid.json.minisig");
+        let pubkey = include_str!("../../../schemas/fixtures/profile-v2-test.pub");
+        std::fs::write(&payload_path, payload).unwrap();
+        std::fs::write(&signature_path, signature).unwrap();
+        let profile_hash = payload_hash(payload);
+        let manifest = ProfileManifest::from_json(&format!(
+            r#"{{
+              "format": 1,
+              "profiles": {{
+                "everyday-work": {{
+                  "current_revision": "2026.0520.1",
+                  "revisions": {{
+                    "2026.0520.1": {{
+                      "status": "active",
+                      "min_binary": "1.0.0",
+                      "profile_url": "file://{}",
+                      "profile_hash": "{profile_hash}",
+                      "profile_signature_url": "file://{}"
+                    }}
+                  }}
+                }}
+              }}
+            }}"#,
+            payload_path.display(),
+            signature_path.display(),
+        ))
+        .unwrap();
+
+        let verified = fetch_installable_profile_payload(
+            manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+            pubkey,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(verified.profile_id, "everyday-work");
+        assert_eq!(verified.revision, "2026.0520.1");
+        assert_eq!(verified.payload_hash, profile_hash);
+    }
+
+    #[tokio::test]
+    async fn fetch_installable_profile_payload_rejects_tampered_file_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload_path = dir.path().join("profile.json");
+        let signature_path = dir.path().join("profile.json.minisig");
+        let payload = include_str!("../../../schemas/fixtures/profile-v2-valid.json");
+        let signature = include_str!("../../../schemas/fixtures/profile-v2-valid.json.minisig");
+        let pubkey = include_str!("../../../schemas/fixtures/profile-v2-test.pub");
+        std::fs::write(
+            &payload_path,
+            payload.replace("Everyday Work", "Tampered Work"),
+        )
+        .unwrap();
+        std::fs::write(&signature_path, signature).unwrap();
+        let manifest = ProfileManifest::from_json(&format!(
+            r#"{{
+              "format": 1,
+              "profiles": {{
+                "everyday-work": {{
+                  "current_revision": "2026.0520.1",
+                  "revisions": {{
+                    "2026.0520.1": {{
+                      "status": "active",
+                      "min_binary": "1.0.0",
+                      "profile_url": "file://{}",
+                      "profile_hash": "{}",
+                      "profile_signature_url": "file://{}"
+                    }}
+                  }}
+                }}
+              }}
+            }}"#,
+            payload_path.display(),
+            payload_hash(payload),
+            signature_path.display(),
+        ))
+        .unwrap();
+
+        let error = fetch_installable_profile_payload(
+            manifest.revision("everyday-work", "2026.0520.1").unwrap(),
+            pubkey,
+        )
+        .await
         .unwrap_err();
 
         assert!(format!("{error:#}").contains("profile payload signature"));

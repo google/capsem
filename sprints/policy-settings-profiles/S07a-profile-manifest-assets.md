@@ -44,6 +44,9 @@ Landed:
   exact signed payload under `.catalog/profiles/<id>/<revision>/profile.json`.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
+- Installable profile payload fetch now reads catalog payload/signature
+  locations, verifies minisign first, then enforces hash/schema/id/revision
+  checks before returning a verified payload.
 
 Push order from here:
 
@@ -53,7 +56,7 @@ Push order from here:
 1. [~] Install/update/delete/revoke profile payloads from catalog records.
    Landed: core install guard, runtime profile conversion, corp-root
    materialization, and installed-revision payload storage. Remaining:
-   payload URL download, update orchestration, and deletion/revoke actions.
+   update orchestration and deletion/revoke actions.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, and pinned asset metadata. Landed: registry/runtime/API profile pins
    with optional revision. Remaining: make `profile_revision` mandatory once

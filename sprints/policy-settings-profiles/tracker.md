@@ -369,10 +369,12 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   and manifest/payload id+revision parity in both Rust and Pydantic admin
   models. Runtime conversion/materialization tests prove verified Profile V2
   payloads become resolver-compatible corp TOML while preserving the exact
-  signed payload bytes in installed revision storage. Profile payload signature
-  verification reuses the existing minisign verifier with tamper coverage. VM
-  profile pins add registry roundtrip, package-contract hash, API
-  serialization, and fork persistence coverage.
+  signed payload bytes in installed revision storage. Profile payload
+  signature verification reuses the existing minisign verifier with tamper
+  coverage; fetch tests prove catalog payload/signature locations are read and
+  verified before hash/schema/id/revision checks. VM profile pins add registry
+  roundtrip, package-contract hash, API serialization, and fork persistence
+  coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -426,7 +428,7 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `cargo test -p capsem-service` **107** + **140** passed;
   after VM profile pins, `cargo test -p capsem-service` **108** + **141**
   passed;
-  `cargo test -p capsem-core profile_manifest --lib` **18** passed;
+  `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **125** passed;
   `uv run pytest tests/test_profiles.py -q` **12** passed;
   `cargo test -p capsem-core telemetry --lib` **31** passed;
