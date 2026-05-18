@@ -45,6 +45,9 @@ Landed:
 - Profile materialization writes `.catalog/profiles/<id>/current.json` so
   status/debug and VM pinning can read the installed revision and payload hash
   without inferring them from filenames.
+- VM profile pins now prefer the installed profile revision sidecar over caller
+  hints and include the installed profile payload hash when a catalog-installed
+  revision exists.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -61,9 +64,11 @@ Push order from here:
    materialization, and installed-revision payload storage. Remaining:
    update orchestration and deletion/revoke actions.
 2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
-   hash, and pinned asset metadata. Landed: registry/runtime/API profile pins
-   with optional revision. Remaining: make `profile_revision` mandatory once
-   profile payload install/update resolves signed catalog records.
+   hash, profile payload hash, and pinned asset metadata. Landed:
+   registry/runtime/API profile pins with catalog-installed revision and
+   payload-hash capture when `.catalog/profiles/<id>/current.json` is present.
+   Remaining: make `profile_revision` mandatory once profile payload
+   install/update resolves signed catalog records on every VM-create path.
 3. Add retention/cleanup for installed profile revisions, in-progress
    downloads, and existing VM pins.
 4. Surface unsupported/unbound state for pre-S07a VM records.
@@ -575,8 +580,11 @@ This sprint creates the contract consumed by later sprints:
       pins.
 - [~] Add persistent VM profile/revision/package/asset pin metadata. VM base
       asset hashes are now derived from profile asset declarations instead of
-      the asset manifest; remaining work adds explicit `profile_id`,
-      `profile_revision`, and package contract fields to registry records.
+      the asset manifest; registry/runtime/API metadata now carries
+      `profile_id`, catalog-installed `profile_revision`, installed
+      `profile_payload_hash`, package-contract hash, and pinned boot assets
+      when a verified installed revision exists. Remaining work makes
+      catalog-backed revision pins mandatory on every VM-create path.
 - [ ] Add explicit unsupported/unbound handling for pre-S07a registry records.
 - [ ] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
@@ -609,10 +617,11 @@ This sprint creates the contract consumed by later sprints:
   active-current manifest validation. Runtime asset supervisor coverage now runs
   `cargo test -p capsem-service asset_supervisor --lib` (7 tests passed),
   covering profile URL download, missing assets, retryable failures, and
-  background reconciliation; `cargo test -p capsem-service` (245 tests passed)
+  background reconciliation; `cargo test -p capsem-service` (250 tests passed)
   covers startup fail-closed behavior, service asset status without legacy
-  manifest fields, profile-derived saved-VM base hashes, and debug/status
-  shape. Remaining: cross-language schema fixture parity, rollback/stale
+  manifest fields, profile-derived saved-VM base hashes, installed profile
+  revision sidecar/payload-hash pinning, and debug/status shape. Remaining:
+  cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar
   validation, profile payload downloads, and per-asset cross-process locks.
 - Functional: profile install/update/remove/revoke from manifest; selected

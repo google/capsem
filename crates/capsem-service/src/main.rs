@@ -347,9 +347,18 @@ impl ServiceState {
             .context("load vm-effective settings for profile pin")?;
         let package_json = serde_json::to_vec(&effective.packages.value)
             .context("serialize package contract for profile pin")?;
+        let installed_revision = capsem_core::settings_profiles::load_installed_profile_revision(
+            &self.service_settings.profiles,
+            &effective.profile_id,
+        )
+        .context("load installed profile revision for profile pin")?;
+        let (profile_revision, profile_payload_hash) = installed_revision
+            .map(|record| (Some(record.revision), Some(record.payload_hash)))
+            .unwrap_or((profile_revision, None));
         Ok(SavedVmProfilePin {
             profile_id: effective.profile_id,
             profile_revision,
+            profile_payload_hash,
             package_contract_hash: format!("blake3:{}", blake3::hash(&package_json).to_hex()),
             base_assets,
         })

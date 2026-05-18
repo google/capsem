@@ -27,6 +27,8 @@ pub struct SavedVmProfilePin {
     pub profile_id: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub profile_payload_hash: Option<String>,
     pub package_contract_hash: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub base_assets: Option<SavedVmBaseAssets>,
@@ -241,6 +243,9 @@ mod tests {
         entry.profile_pin = Some(SavedVmProfilePin {
             profile_id: "everyday-work".into(),
             profile_revision: Some("2026.0518.1".into()),
+            profile_payload_hash: Some(
+                "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
+            ),
             package_contract_hash:
                 "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
             base_assets: Some(base_assets),
@@ -257,6 +262,10 @@ mod tests {
             .expect("profile pin should roundtrip");
         assert_eq!(pin.profile_id, "everyday-work");
         assert_eq!(pin.profile_revision.as_deref(), Some("2026.0518.1"));
+        assert_eq!(
+            pin.profile_payload_hash.as_deref(),
+            Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+        );
         assert_eq!(
             pin.package_contract_hash,
             "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"

@@ -374,8 +374,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   and VM pinning. Profile payload signature verification reuses the existing
   minisign verifier with tamper coverage; fetch tests prove catalog payload/
   signature locations are read and verified before hash/schema/id/revision
-  checks. VM profile pins add registry roundtrip, package-contract hash, API
-  serialization, and fork persistence coverage.
+  checks. VM profile pins add registry roundtrip, package-contract hash,
+  installed sidecar revision/payload-hash capture, API serialization, and fork
+  persistence coverage.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -412,7 +413,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `session.db` with `vm_id`, `profile_id`, and `user_id`, service
   propagation into `capsem-process`, `/info` exposure, and focused
   read-back coverage. VM metadata surfaces the corresponding profile pin for
-  status/detail paths without reopening `session.db` on `/list`. Persisted
+  status/detail paths without reopening `session.db` on `/list`, and now pins
+  the installed profile payload hash when a verified installed revision exists.
+  Persisted
   policy-decision read-back from a running `session.db` (capsem-doctor E2E ask
   probe) is **deferred**.
   `policy_confirm_events` table remains S06-pre slice 7+ work.
@@ -429,6 +432,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `cargo test -p capsem-service` **107** + **140** passed;
   after VM profile pins, `cargo test -p capsem-service` **108** + **141**
   passed;
+  after installed profile payload identity pins, `cargo test -p capsem-service`
+  **108** + **142** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **125** passed;
   `uv run pytest tests/test_profiles.py -q` **12** passed;

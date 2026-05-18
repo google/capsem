@@ -191,6 +191,9 @@ Landed S07a foundation:
 - Installed revision sidecar. Materialization now writes
   `.catalog/profiles/<id>/current.json` with profile id, revision, and payload
   hash for status/debug and mandatory VM revision pinning.
+- Installed payload identity pins. VM pin construction now reads the installed
+  profile revision sidecar and records the installed profile payload hash
+  whenever the selected profile has been materialized from the signed catalog.
 - Profile payload signature verification. The profile catalog path now has a
   profile-specific minisign verification wrapper with tamper coverage, reusing
   the existing Capsem signature verifier.
@@ -205,9 +208,10 @@ Remaining S07a push order:
    Core verification/fetch/materialization/signature primitives have landed;
    delete/revoke orchestration remains.
 2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
-   pinned asset metadata. Landed for runtime/registry/API with optional
-   revision; signed catalog install/update still needs to make revision
-   mandatory from catalog records.
+   pinned asset metadata. Landed for runtime/registry/API with installed
+   revision/payload-hash capture when catalog materialization has written the
+   sidecar; signed catalog install/update still needs to make revision
+   mandatory from catalog records on every VM-create path.
 3. Retention and cleanup that preserve active/deprecated installed revisions,
    in-progress downloads, and existing VM pins.
 4. Explicit unsupported/unbound handling for pre-S07a registry records.
@@ -282,6 +286,8 @@ Latest focused verification after the rescue/push transition:
   tests.
 - `cargo test -p capsem-service` passed with 108 library tests + 141 service
   tests after VM profile pins.
+- `cargo test -p capsem-service` passed with 108 library tests + 142 service
+  tests after installed profile payload identity pins.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

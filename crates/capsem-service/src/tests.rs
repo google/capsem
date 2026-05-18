@@ -980,8 +980,46 @@ fn vm_profile_pin_hashes_effective_package_contract_and_assets() {
 
     assert_eq!(pin.profile_id, "everyday-work");
     assert_eq!(pin.profile_revision.as_deref(), Some("2026.0518.1"));
+    assert!(pin.profile_payload_hash.is_none());
     assert_eq!(pin.package_contract_hash, expected_hash);
     assert_eq!(pin.base_assets, Some(base_assets));
+}
+
+#[test]
+fn vm_profile_pin_uses_installed_profile_revision_sidecar() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions/profile-pin-installed");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(
+        &capsem_core::settings_profiles::ProfileRootSettings::default(),
+        None,
+    )
+    .unwrap();
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    let corp_dir = state.service_settings.profiles.corp_dirs[0].clone();
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    std::fs::create_dir_all(&record_dir).unwrap();
+    std::fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+
+    let pin = state.vm_profile_pin(&session_dir, None, None).unwrap();
+
+    assert_eq!(pin.profile_id, "everyday-work");
+    assert_eq!(pin.profile_revision.as_deref(), Some("2026.0520.1"));
+    assert_eq!(
+        pin.profile_payload_hash.as_deref(),
+        Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    );
 }
 
 #[tokio::test]
@@ -2398,6 +2436,9 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
     info.profile_pin = Some(capsem_service::registry::SavedVmProfilePin {
         profile_id: "everyday-work".into(),
         profile_revision: Some("2026.0518.1".into()),
+        profile_payload_hash: Some(
+            "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
+        ),
         package_contract_hash:
             "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
         base_assets: None,
@@ -2411,6 +2452,7 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
     assert!(json.contains("\"user_id\":\"elie\""));
     assert!(json.contains("\"profile_pin\""));
     assert!(json.contains("\"profile_revision\":\"2026.0518.1\""));
+    assert!(json.contains("\"profile_payload_hash\""));
     assert!(json.contains("\"total_input_tokens\":1000"));
     assert!(json.contains("\"total_estimated_cost\":0.42"));
     assert!(json.contains("\"model_call_count\":5"));

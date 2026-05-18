@@ -72,6 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added VM profile pins for persistent/running VM metadata, including resolved
   profile id, optional profile revision, package-contract hash, and pinned boot
   asset identity.
+- Changed VM profile pins to read the installed profile revision sidecar and
+  include the installed profile payload hash when a verified catalog payload is
+  present.
 - Removed legacy `assets.manifest.*` service settings and setup-time asset
   manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
