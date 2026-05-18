@@ -67,9 +67,11 @@ a valid claim -- mark it `[ ]` instead.
     -- started. Typed manifest v3 profile catalog/status parser landed in
     `capsem-core::profile_manifest`; typed profile package/tool contracts and
     per-arch VM asset declarations now parse, validate, serialize through
-    VM-effective settings, and merge through profile inheritance. Remaining
-    work promotes the formal schema/admin validators, installs profile
-    payloads from the manifest, adds first-use download, retention, and VM pins.
+    VM-effective settings, and merge through profile inheritance. The formal
+    `schemas/capsem.profile.v2.schema.json` artifact and Rust golden fixture
+    validation gate have landed. Remaining work adds TOML-to-schema/Pydantic
+    admin validators, installs profile payloads from the manifest, adds
+    first-use download, retention, and VM pins.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image

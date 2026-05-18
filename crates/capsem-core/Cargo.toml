@@ -85,6 +85,7 @@ tempfile = "3"
 dotenvy = "0.15"
 criterion = { version = "0.5", features = ["html_reports"] }
 metrics-util = "0.19"
+jsonschema = { version = "0.46.5", default-features = false }
 # Property-based tests for the DNS wire codec (T3.f). Cheap dev-dep,
 # scoped to test runs only.
 proptest = "1"

@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added typed Profile V2 package/tool contracts and per-architecture VM asset
   declarations, including canonical BLAKE3 hash validation, path-traversal
   rejection, VM-effective serialization, and inherited resolver merge coverage.
+- Added the formal Profile V2 JSON Schema Draft 2020-12 artifact with valid
+  and invalid golden fixtures plus a Rust `jsonschema` validation gate.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

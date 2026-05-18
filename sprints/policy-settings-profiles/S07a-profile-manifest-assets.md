@@ -464,8 +464,12 @@ This sprint creates the contract consumed by later sprints:
       Initial focused tests cover status enum acceptance/rejection, active-only
       current revisions, missing current revision, bad hash, and format
       fail-closed behavior.
-- [ ] Commit `schemas/capsem.profile.v2.schema.json` as JSON Schema Draft
+- [x] Commit `schemas/capsem.profile.v2.schema.json` as JSON Schema Draft
       2020-12, with closed-field validation and golden valid/invalid fixtures.
+      Landed production schema plus fixtures under `schemas/fixtures/` and a
+      Rust `jsonschema` gate that compiles the schema, accepts the valid golden
+      profile, and rejects extra-field, bad-hash, and missing-tool-version
+      fixtures.
 - [ ] Add Rust and Python validation paths that parse TOML to the JSON-compatible
       data model. Python must immediately validate into Pydantic models,
       preferring `TypeAdapter.validate_json()` / `model_validate_json()` when
@@ -507,13 +511,15 @@ This sprint creates the contract consumed by later sprints:
   settings_profiles` (123 tests passed), including package/tool/asset TOML
   parsing, missing tool-version rejection, canonical asset-hash rejection,
   asset path-traversal rejection, descriptor coverage, and inherited
-  package/tool/asset merge behavior. Remaining: JSON Schema Draft 2020-12
-  validation for `capsem.profile.v2`, Pydantic `validate_json()` /
-  `model_dump_json()` fixture parity for Python admin models, valid/invalid
-  schema fixture parity across Rust and Python validators, per-arch asset
-  selection against host arch, rollback/stale-manifest rejection,
-  signature-key identity, full package version grammar validation, and v2
-  manifest compatibility/fail-closed behavior.
+  package/tool/asset merge behavior. Formal schema coverage landed with
+  `cargo test -p capsem-core --test profile_schema` (3 tests passed), compiling
+  the Draft 2020-12 artifact and checking valid/invalid golden fixtures.
+  Remaining: Pydantic `validate_json()` / `model_dump_json()` fixture parity
+  for Python admin models, Rust TOML-to-schema validation wiring,
+  cross-language schema fixture parity, per-arch asset selection against host
+  arch, rollback/stale-manifest rejection, signature-key identity, full package
+  version grammar validation, and v2 manifest compatibility/fail-closed
+  behavior.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
   profile update; pre-S07a VM registry entries render explicit compatibility

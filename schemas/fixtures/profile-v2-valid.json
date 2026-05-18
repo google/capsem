@@ -1,0 +1,103 @@
+{
+  "schema": "capsem.profile.v2",
+  "version": 2,
+  "id": "everyday-work",
+  "revision": "2026.0520.1",
+  "name": "Everyday Work",
+  "description": "Balanced defaults for day-to-day work.",
+  "best_for": "Balanced defaults for day-to-day work.",
+  "profile_type": "everyday-work",
+  "compatibility": {
+    "min_binary": "1.0.0",
+    "max_binary": "",
+    "guest_abi": "capsem-guest-v2"
+  },
+  "vm": {
+    "memory_mib": 8192,
+    "cpus": 4,
+    "disk_mib": 32768,
+    "network": "proxied",
+    "track_rootfs_dependencies": true,
+    "assets": {
+      "arm64": {
+        "kernel": {
+          "url": "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/vmlinuz",
+          "hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "signature_url": "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/vmlinuz.minisig",
+          "size": 7797248,
+          "content_type": "application/octet-stream"
+        },
+        "initrd": {
+          "url": "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/initrd.img",
+          "hash": "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "signature_url": "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/initrd.img.minisig",
+          "size": 2270154,
+          "content_type": "application/octet-stream"
+        },
+        "rootfs": {
+          "url": "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/rootfs.squashfs",
+          "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "signature_url": "https://assets.capsem.dev/vm/everyday-work/2026.0520.1/arm64/rootfs.squashfs.minisig",
+          "size": 454230016,
+          "content_type": "application/vnd.squashfs"
+        }
+      }
+    }
+  },
+  "packages": {
+    "runtimes": {
+      "python": "3.12.3",
+      "node": "22.1.0",
+      "uv": "0.4.30"
+    },
+    "python_modules": {
+      "requests": "2.32.3"
+    },
+    "node_packages": {
+      "@modelcontextprotocol/sdk": "1.2.3",
+      "playwright": "1.44.0"
+    },
+    "system": {
+      "distro": "debian",
+      "release": "bookworm",
+      "apt": {
+        "ca-certificates": "20240203",
+        "curl": "8.11.1-1"
+      }
+    }
+  },
+  "tools": {
+    "capsem_doctor": {
+      "version": "2026.05.18",
+      "required": true,
+      "source": "guest"
+    },
+    "uv": {
+      "version": "0.4.30",
+      "required": true,
+      "source": "guest"
+    }
+  },
+  "security": {
+    "capabilities": {
+      "credential_brokerage": "ask",
+      "pii_detection": "ask",
+      "mcp_rag": "allow",
+      "mcp_tools": "allow",
+      "network_egress": "ask",
+      "file_boundaries": "ask",
+      "audit": "audit"
+    },
+    "rules": {
+      "http": {
+        "allow-api": {
+          "on": "http.request",
+          "if": "request.host == 'api.openai.com'",
+          "decision": "allow",
+          "priority": 1,
+          "reason": "Profile default provider access."
+        }
+      }
+    }
+  }
+}
