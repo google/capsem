@@ -37,9 +37,10 @@ Prove the redesign is releaseable.
 - Prove package/tool contract at runtime:
   a capsem-doctor or equivalent in-guest probe reads declared versions from the
   selected profile revision and verifies the booted VM actually contains them.
-- Prove pre-S07a compatibility:
-  old persistent VM registry entries resume or fail with an explicit legacy
-  compatibility status; they never silently bind to the current catalog default.
+- Prove forward-only VM identity:
+  persistent VM registry entries without a profile pin or pinned asset identity
+  fail closed before process spawn; they never silently bind to the current
+  catalog default.
 - Prove `capsem-admin` packaging:
   bootstrap and release packages install the admin CLI; packaged
   `capsem-admin profile validate`, `manifest check --fast`, and `image verify`

@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `63 ahead / 0 behind` `origin/main` in this worktree after the
-  profile-aware asset cleanup caller slice. The rescue
+  `64 ahead / 0 behind` `origin/main` in this worktree after the
+  forward-only resume pin enforcement slice. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -40,11 +40,11 @@ The tracker is now a push board, not a rescue board. Work proceeds in this
 order:
 
 1. Finish S07a's remaining contract gaps: catalog-driven profile payload
-   install/update/revoke, explicit VM profile/revision/package pins, retention,
-   unsupported/unbound handling for pre-S07a registry entries, and status/debug
-   readiness. The next inserted stop is telemetry identity: every session must
-   expose the VM id, profile id, and user id as a durable session fact before
-   we keep pushing profile pinning.
+   install/update/revoke, mandatory VM profile/revision/package pins,
+   retention, forward-only VM create/fork/persist/resume enforcement, and
+   status/debug readiness. The next inserted stop is telemetry identity: every
+   session must expose the VM id, profile id, and user id as a durable session
+   fact before we keep pushing profile pinning.
 2. Start S07b only after S07a's runtime contract is stable enough for
    `capsem-admin` to generate and validate the same shapes.
 3. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
@@ -55,8 +55,8 @@ Winter readiness rules:
 - The old stack is dead and stays dead.
 - Profiles are the banner under which VM assets, package assumptions, and
   runtime policy march.
-- A VM without explicit profile/revision/package/asset identity is unbound, not
-  silently blessed.
+- A VM without explicit profile/revision/package/asset identity is invalid and
+  must fail closed; there is no pre-S07a compatibility lane.
 - The release gate is the wall: every claim needs tests, status/debug
   explanation, and tracker evidence before it crosses.
 
@@ -114,8 +114,8 @@ a valid claim -- mark it `[ ]` instead.
     VM metadata now carries a profile pin with resolved profile id, optional
     profile revision, package-contract hash, and pinned asset hashes. Remaining
     work installs profile payloads from the catalog, makes profile revision
-    mandatory from signed records, adds retention, and adds pre-S07a
-    unsupported/unbound handling.
+    mandatory from signed records, adds retention, and enforces forward-only VM
+    identity on every create/fork/persist/resume path.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -167,7 +167,7 @@ When this sprint starts, promote the inline brief above into
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
-closed for the active branch: `HEAD...origin/main` is currently `63 ahead / 0
+closed for the active branch: `HEAD...origin/main` is currently `64 ahead / 0
 behind`. The remaining cleanup debt is now S06c plus the final V2 naming
 collapse and release gate. When executed, keep the order:
 
@@ -480,6 +480,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   passed / 0 failed / 1 ignored, `cargo test -p capsem-service
   handle_asset_cleanup` **2** passed, and `cargo test -p capsem-service`
   **110** + **147** passed;
+  after forward-only resume pin enforcement, `cargo test -p capsem-service
+  resume_saved_vm` **2** passed and `cargo test -p capsem-service` **109** +
+  **148** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

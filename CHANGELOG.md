@@ -94,6 +94,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removes unreferenced hash-named/legacy asset files without old manifest
   authority, preserves installed-profile and saved-VM pins, and refuses to run
   while assets are still checking or updating.
+- Changed persistent VM resume to require forward profile pins and pinned asset
+  identity; unpinned registry entries no longer fall back to the current
+  profile/assets.
 - Removed legacy `assets.manifest.*` service settings and setup-time asset
   manifest checks; old asset-only manifests are no longer runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2

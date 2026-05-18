@@ -1019,6 +1019,16 @@ impl ServiceState {
         if !entry.session_dir.exists() {
             return Err(anyhow!("session directory for \"{}\" is missing", name));
         }
+        if entry.profile_pin.is_none() {
+            return Err(anyhow!(
+                "persistent VM \"{name}\" is missing required profile pin; recreate the VM from a signed profile"
+            ));
+        }
+        if entry.base_assets.is_none() {
+            return Err(anyhow!(
+                "persistent VM \"{name}\" is missing required pinned asset identity; recreate the VM from a signed profile"
+            ));
+        }
 
         let ram_mb = ram_mb_override.unwrap_or(entry.ram_mb);
         let cpus = cpus_override.unwrap_or(entry.cpus);

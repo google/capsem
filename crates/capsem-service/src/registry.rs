@@ -277,25 +277,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_registry_entries_without_base_assets_still_load() {
-        let entry: PersistentVmEntry = serde_json::from_str(
-            r#"{
-                "name":"legacy",
-                "ram_mb":2048,
-                "cpus":2,
-                "base_version":"0.1.0",
-                "created_at":"0",
-                "session_dir":"/tmp/legacy"
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(entry.name, "legacy");
-        assert!(entry.base_assets.is_none());
-        assert!(entry.profile_pin.is_none());
-    }
-
-    #[test]
     fn persistent_registry_rejects_duplicate() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test_registry.json");

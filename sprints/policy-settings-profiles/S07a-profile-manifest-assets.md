@@ -106,7 +106,7 @@ Push order from here:
    old asset manifest, removes unreferenced hash-named/legacy asset files, and
    refuses cleanup while the asset supervisor is checking/updating. Remaining:
    cross-process/per-asset download locks and VM-create/download race coverage.
-4. Surface unsupported/unbound state for pre-S07a VM records.
+4. Enforce forward-only VM identity on every VM create/fork/persist/resume path.
 5. Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
 
@@ -498,10 +498,10 @@ These decisions must be closed before implementation can be called airtight:
 - **Profile inheritance for packages/assets.** Package/tool declarations and
   `vm.assets` must have deterministic parent/child merge semantics, conflict
   diagnostics, and provenance in effective settings.
-- **Existing VM migration.** VMs created before S07a need a compatibility
-  record: either a synthetic legacy profile revision pin or an explicit
-  "unbound legacy VM" status. Resume must not silently bind them to today's
-  catalog default.
+- **Forward-only VM identity.** Persistent VMs are valid only when created with
+  an explicit profile revision pin, package contract, and pinned asset identity.
+  There is no pre-S07a compatibility record, no synthetic revision, and no
+  unbound VM status.
 - **Revocation semantics.** Revoked revisions block new VM creation. Existing VM
   behavior must be explicit: fail closed by default, or allow only with an
   operator override that is logged and visible in status/debug.
@@ -537,10 +537,11 @@ These decisions must be closed before implementation can be called airtight:
   may remain only as explicit test/dev conveniences, never as release fallback.
 - Extend persistent VM registry with `profile_id`, `profile_revision`, package
   contract hash, and pinned asset hashes.
-- Block unpinned pre-S07a VM records from the profile-backed path with an
-  explicit unsupported/unbound status; do not silently synthesize a profile pin.
-- Add explicit rebase/migrate semantics later; do not silently move existing
-  VMs across profile revisions in this sprint.
+- Require persistent VM resume to fail closed when a registry entry lacks its
+  profile pin or pinned asset identity; do not silently synthesize a profile pin
+  or fall back to the current catalog/default assets.
+- Add explicit rebase semantics later for forward-created VMs; do not silently
+  move existing VMs across profile revisions in this sprint.
 
 ## API / UX Hand-Offs
 
@@ -638,7 +639,11 @@ This sprint creates the contract consumed by later sprints:
       `profile_payload_hash`, package-contract hash, and pinned boot assets
       when a verified installed revision exists. Remaining work makes
       catalog-backed revision pins mandatory on every VM-create path.
-- [ ] Add explicit unsupported/unbound handling for pre-S07a registry records.
+- [~] Enforce forward-only persistent VM pins. Persistent VM resume now fails
+      closed when a registry entry lacks its required profile pin or pinned
+      asset identity instead of falling back to the current profile/assets.
+      Remaining work makes catalog-backed revision pins mandatory on every
+      VM-create/fork/persist path before HTTP/UI lift.
 - [ ] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
       revoked profile fail-closed behavior.
@@ -696,15 +701,18 @@ This sprint creates the contract consumed by later sprints:
   metadata/temp files, removes legacy/hash-named stale assets, the service
   endpoint preserves installed-profile plus saved-VM retention, and cleanup
   returns `409 Conflict` while assets are still updating.
+  Forward-only resume coverage now adds `cargo test -p capsem-service
+  resume_saved_vm` (2 service tests), proving unpinned persistent VMs are
+  rejected before process spawn and valid pinned VMs still fail on missing
+  pinned assets.
   Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar
   validation, profile payload downloads, and per-asset cross-process locks.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins explicit profile revision and assets; resume
-  preserves VM pins after a profile update; unpinned pre-S07a VM registry
-  entries render explicit unsupported/unbound state instead of rebinding to the
-  current default.
+  preserves VM pins after a profile update; unpinned registry entries are
+  invalid and fail closed instead of rebinding to the current default.
 - Adversarial: bad profile id/revision, unknown fields/tables, wrong schema
   id/version, manifest/payload id mismatch, missing parent revision for a
   catalog-published inherited profile, downgrade attempts, bad signature/hash,

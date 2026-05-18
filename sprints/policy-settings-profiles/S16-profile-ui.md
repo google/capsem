@@ -32,7 +32,7 @@ readiness, and profile-backed VM creation first-class in the UI.
   profile-backed VM create with asset readiness states.
 - Adversarial: locked/forbidden profile actions, revoked profile, incompatible
   profile revision, stale catalog rollback warning, asset download failure,
-  interrupted download retry, and legacy/unbound VM pin display.
+  interrupted download retry, and invalid/missing VM pin display.
 - E2E/VM: launch session with selected profile revision and verified assets.
 - Telemetry: UI links to status/debug provenance for profile revision and asset
   verification failures.

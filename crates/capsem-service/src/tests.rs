@@ -1201,6 +1201,7 @@ fn resume_saved_vm_fails_when_pinned_rootfs_is_missing() {
     std::fs::create_dir_all(&session_dir).unwrap();
     {
         let mut registry = state.persistent_registry.lock().unwrap();
+        let base_assets = test_saved_vm_base_assets();
         registry.data.vms.insert(
             "saved-old".into(),
             PersistentVmEntry {
@@ -1208,8 +1209,14 @@ fn resume_saved_vm_fails_when_pinned_rootfs_is_missing() {
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
-                base_assets: Some(test_saved_vm_base_assets()),
-                profile_pin: None,
+                base_assets: Some(base_assets.clone()),
+                profile_pin: Some(SavedVmProfilePin {
+                    profile_id: "everyday-work".into(),
+                    profile_revision: Some("2026.0520.1".into()),
+                    profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+                    package_contract_hash: format!("blake3:{}", "d".repeat(64)),
+                    base_assets: Some(base_assets),
+                }),
                 created_at: "0".into(),
                 session_dir,
                 forked_from: None,
@@ -1227,6 +1234,48 @@ fn resume_saved_vm_fails_when_pinned_rootfs_is_missing() {
     let msg = format!("{err:#}");
     assert!(msg.contains("saved VM saved-old"), "{msg}");
     assert!(msg.contains("rootfs.squashfs"), "{msg}");
+}
+
+#[test]
+fn resume_saved_vm_requires_forward_profile_pin() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
+    std::fs::write(state.assets_dir.join("vmlinuz"), b"current kernel").unwrap();
+    std::fs::write(state.assets_dir.join("initrd.img"), b"current initrd").unwrap();
+    std::fs::write(state.assets_dir.join("rootfs.squashfs"), b"current rootfs").unwrap();
+    state.asset_supervisor.refresh_local_state();
+    let session_dir = state.run_dir.join("persistent/unpinned");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry.data.vms.insert(
+            "unpinned".into(),
+            PersistentVmEntry {
+                name: "unpinned".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: None,
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let err = state.resume_sandbox("unpinned", None, None).unwrap_err();
+
+    assert!(
+        err.to_string().contains("missing required profile pin"),
+        "unexpected error: {err:#}"
+    );
 }
 
 fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {

@@ -26,8 +26,9 @@ binding visible.
 - [ ] Add chain-of-trust rendering for profile-backed VMs: manifest identity,
       profile payload verification, package/tool contract, asset verification,
       and VM pin status.
-- [ ] Add compatibility rendering for pre-S07a VMs so old registry entries are
-      visible as legacy/unbound instead of appearing to use the current profile.
+- [ ] Add forward-only pin rendering so invalid registry entries missing a
+      profile pin or pinned asset identity fail closed and are reported as
+      invalid state, never as a compatible legacy VM.
 - Test status/debug against active service and VM-effective state.
 
 ## Implemented Slice
@@ -60,7 +61,7 @@ settings/profile load-error rendering.
   profile load errors are covered; missing profile roots and locked setting
   rendering remain; generated-rule ownership rendering is pending; revoked
   profile, stale manifest rollback, interrupted download, unauthorized signing
-  key, legacy/unbound VM, and missing asset diagnostics must be covered.
+  key, invalid VM pin, and missing asset diagnostics must be covered.
 - E2E/VM: debug report explains launched session profile revision and pinned
   verified assets.
 - Telemetry: report includes audit-relevant settings/profile/rule summaries at
