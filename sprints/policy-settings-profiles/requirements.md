@@ -63,10 +63,11 @@ trust-chain checks that JSON Schema cannot express, such as signature
 authorization and manifest/profile parity, run after schema validation.
 
 Python admin tooling must represent all profile, manifest, package/tool, asset,
-build-plan, doctor, and report shapes as Pydantic v2 models. Raw JSON/dict
-manipulation is restricted to parse and serialization boundaries; internal
-admin code should pass typed models with `extra="forbid"` validation and
-predictable error paths.
+build-plan, doctor, and report shapes as Pydantic v2 models. JSON input must
+use Pydantic `model_validate_json()` or `TypeAdapter.validate_json()`, and JSON
+output must use `model_dump_json()`. Internal admin code should pass typed
+models with `extra="forbid"` validation and predictable error paths, not raw
+JSON/dicts.
 
 ## Profile Contract
 

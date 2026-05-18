@@ -175,7 +175,8 @@ turns those contracts into operator tooling: `capsem-admin` creates/validates
 profiles, exports/validates the shared schema artifact, derives image build
 plans from profiles, verifies built images, and generates/checks/signs
 manifests. Python admin internals use Pydantic v2 models for those data shapes,
-not raw nested dicts.
+with JSON entering through Pydantic validation and leaving through Pydantic
+dumping, not raw nested dicts.
 
 [S07 - UDS service API](S07-uds-service-api.md), S07a, and S07b are the
 public-contract foundation for every later layer. HTTP, CLI, UI, docs, and

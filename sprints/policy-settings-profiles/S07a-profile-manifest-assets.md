@@ -89,12 +89,16 @@ Required tooling baseline:
 - Python/admin CLI: use Pydantic v2 `BaseModel` types for every profile,
   manifest, package, tool, asset, verification report, and command output
   shape. Models must set `extra="forbid"` and use typed validators for semantic
-  checks. Raw `dict` / `serde_json::Value`-style manipulation is allowed only at
-  parse/serialization boundaries.
-- Python/admin CLI: add the standard `jsonschema` package and validate parsed
-  TOML profiles against `capsem.profile.v2.schema.json` before semantic checks.
-  Pydantic models then own normalized access, defaults, error paths, and JSON
-  report emission.
+  checks.
+- Python/admin CLI JSON I/O may only enter through Pydantic
+  `model_validate_json()` or `TypeAdapter.validate_json()` and may only leave
+  through `model_dump_json()`. Do not use `json.loads`, ad hoc dict mutation, or
+  the Python `jsonschema` package in admin workflows.
+- TOML authoring remains supported by parsing TOML once, immediately converting
+  that parsed value into the matching Pydantic model, and discarding the
+  intermediate dict. If a workflow needs the stricter JSON path, encode the
+  parsed TOML value to canonical JSON bytes and validate those bytes through
+  Pydantic `validate_json()`.
 - Docs/editors/CI: publish the same JSON Schema artifact for documentation,
   editor validation, and golden fixture checks.
 - Semantic checks that JSON Schema cannot express cleanly remain explicit code:
@@ -451,8 +455,10 @@ This sprint creates the contract consumed by later sprints:
 - [ ] Commit `schemas/capsem.profile.v2.schema.json` as JSON Schema Draft
       2020-12, with closed-field validation and golden valid/invalid fixtures.
 - [ ] Add Rust and Python validation paths that parse TOML to the JSON-compatible
-      data model and validate with standard JSON Schema tooling before semantic
-      trust-chain checks.
+      data model. Python must immediately validate into Pydantic models,
+      preferring `TypeAdapter.validate_json()` / `model_validate_json()` when
+      JSON bytes are available; Rust validates against the standard JSON Schema
+      artifact before semantic trust-chain checks.
 - [ ] Extend profile TOML schema with typed packages/tools and per-arch VM
       asset declarations.
 - [ ] Add resolver tests for inherited package/tool contracts and asset
@@ -478,11 +484,13 @@ This sprint creates the contract consumed by later sprints:
 ## Coverage Ledger
 
 - Unit/contract: manifest v3 parser/validator, JSON Schema Draft 2020-12
-  validation for `capsem.profile.v2`, valid/invalid schema fixture parity
-  across Rust and Python validators, profile package/tool parser, asset
-  declaration parser, resolver inheritance/override behavior, per-arch asset
-  selection, rollback/stale-manifest rejection, signature-key identity,
-  canonical hash format, and v2 manifest compatibility/fail-closed behavior.
+  validation for `capsem.profile.v2`, Pydantic `validate_json()` /
+  `model_dump_json()` fixture parity for Python admin models, valid/invalid
+  schema fixture parity across Rust and Python validators, profile package/tool
+  parser, asset declaration parser, resolver inheritance/override behavior,
+  per-arch asset selection, rollback/stale-manifest rejection,
+  signature-key identity, canonical hash format, and v2 manifest
+  compatibility/fail-closed behavior.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins revision and assets; resume preserves VM pins after a
   profile update; pre-S07a VM registry entries render explicit compatibility

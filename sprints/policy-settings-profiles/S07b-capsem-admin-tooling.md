@@ -71,13 +71,15 @@ Required semantics:
   `--arch arm64` or `--arch x86_64` narrows the operation for local debugging
   and CI shards.
 - `profile validate` parses TOML into the JSON-compatible data model, validates
-  it against the standard JSON Schema Draft 2020-12
-  `capsem.profile.v2.schema.json` artifact from S07a, then runs semantic checks:
+  it immediately into Pydantic v2 models, and runs semantic checks:
   package-version grammar checks, manifest/payload id+revision parity when a
-  manifest record is supplied, and per-arch asset record completeness.
+  manifest record is supplied, and per-arch asset record completeness. JSON
+  inputs must use Pydantic `model_validate_json()` or
+  `TypeAdapter.validate_json()`.
 - `profile schema` prints or refreshes the committed JSON Schema artifact used
   by docs, editors, CI, Rust validation, and Python/admin validation. It must
-  not emit a private or implementation-specific schema dialect.
+  come from the Pydantic model JSON Schema export path or an equivalent checked
+  generation path, not a private schema dialect.
 - `--fast` performs profile payload checks and HTTP `HEAD`/metadata checks for
   remote assets: URL exists, size matches where advertised, content type is
   acceptable, signature URLs exist, and cache validators are sane. It does not
@@ -92,8 +94,10 @@ Required semantics:
 - Python implementation code must use Pydantic v2 models end to end for profile
   payloads, manifest records, asset records, package/tool contracts, build
   plans, doctor checks, verification reports, and command JSON output. Raw dict
-  manipulation is limited to TOML/JSON parse boundaries and final
-  `model_dump()` / `model_dump_json()` emission.
+  manipulation is not an internal API. JSON input must use
+  `model_validate_json()` or `TypeAdapter.validate_json()`; JSON output must use
+  `model_dump_json()`. TOML input may create one temporary parsed value only to
+  construct the Pydantic model immediately.
 
 ## Source-Of-Truth Flow
 
@@ -157,7 +161,9 @@ this sprint.
   profile, manifest, asset, package/tool, build-plan, doctor, and report
   modules must be represented as `BaseModel` classes with `ConfigDict(extra=
   "forbid")`, typed fields, model validators, stable error paths, and unit
-  tests. Do not pass untyped nested dicts between admin modules.
+  tests. Do not pass untyped nested dicts between admin modules. JSON tests must
+  exercise `model_validate_json()` / `TypeAdapter.validate_json()` and
+  `model_dump_json()`, not `json.loads` / `json.dumps`.
 - Remove hand-edited image settings as accepted input for release builds. Tests
   must fail if a release build reads package/tool/image settings from
   `guest/config` instead of the selected profile.
@@ -263,9 +269,9 @@ The checker must fail closed for:
 - [ ] Design `capsem-admin` command tree and JSON report schema.
 - [ ] Add `capsem.profile.v2` JSON Schema Draft 2020-12 export and golden
       fixtures.
-- [ ] Add standard schema tooling dependencies: Python `jsonschema` for
-      `capsem-admin` and Rust JSON Schema validation/generation tooling chosen
-      in S07a.
+- [ ] Add standard schema tooling dependencies: Rust JSON Schema validation/
+      generation tooling chosen in S07a, and no Python `jsonschema` dependency
+      in admin workflows unless a later sprint explicitly reopens that choice.
 - [ ] Add Pydantic v2 models for profile payloads, manifest records, package/
       tool contracts, assets, build plans, doctor checks, verification reports,
       and command JSON output.
@@ -282,7 +288,8 @@ The checker must fail closed for:
       Rust/Python conformance tests.
 - [ ] Implement profile-to-image build-plan derivation.
 - [ ] Replace raw dict/list plumbing in admin workflows with Pydantic model
-      parsing, validation, normalized accessors, and `model_dump_json()` output.
+      parsing, validation, normalized accessors, `model_validate_json()` /
+      `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
 - [ ] Remove hand-edited image settings as release-build authority.
 - [ ] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
@@ -299,8 +306,10 @@ The checker must fail closed for:
   `capsem.profile.v2` JSON Schema Draft 2020-12 golden tests; profile adapter
   conformance with the shared schema artifact; Pydantic model validation tests
   for profiles, manifests, assets, package/tool contracts, build plans, doctor
-  checks, and reports; manifest v3 generate/check/sign tests; profile-to-image
-  build plan tests; admin doctor checks; no-hand-edited-settings guard tests.
+  checks, and reports; explicit JSON I/O tests for `model_validate_json()` /
+  `TypeAdapter.validate_json()` and `model_dump_json()`; manifest v3
+  generate/check/sign tests; profile-to-image build plan tests; admin doctor
+  checks; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `image plan`; `image verify`; `manifest generate`; `manifest check
   --fast`; `manifest check --download`; bootstrap-installed CLI smoke.
@@ -310,7 +319,8 @@ The checker must fail closed for:
   scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch, missing
   signature URL, hash mismatch after download, duplicate profile revision,
   revoked current profile, path traversal, stale manifest rollback, and
-  untyped/raw dict bypass attempts in admin module tests.
+  untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin module
+  tests.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default, boot at least the host-arch image through
   Capsem, and run an in-guest verification probe that proves declared

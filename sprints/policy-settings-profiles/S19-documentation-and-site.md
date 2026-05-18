@@ -132,7 +132,9 @@ Final paths should follow the actual docs tree present when this sprint starts.
       generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
       reports, omitted `--arch` defaulting to all supported release arches,
       bootstrap editable install, packaged release usage, and the Pydantic
-      model layer that backs validation/errors/reports.
+      model layer that backs validation/errors/reports through
+      `model_validate_json()` / `TypeAdapter.validate_json()` and
+      `model_dump_json()`.
 - [ ] Document profile-backed VM create semantics:
       profile id/revision selection, first-use download, verification,
       persistent VM pins, and no implicit migration on profile update.
