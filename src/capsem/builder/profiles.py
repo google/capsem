@@ -47,6 +47,21 @@ class ProfileRevisionStatus(str, Enum):
     DEPRECATED = "deprecated"
     REVOKED = "revoked"
 
+    def can_be_current(self) -> bool:
+        return self is ProfileRevisionStatus.ACTIVE
+
+    def allows_install_or_update(self) -> bool:
+        return self is ProfileRevisionStatus.ACTIVE
+
+    def allows_new_vm(self) -> bool:
+        return self is ProfileRevisionStatus.ACTIVE
+
+    def allows_existing_vm(self) -> bool:
+        return self in {
+            ProfileRevisionStatus.ACTIVE,
+            ProfileRevisionStatus.DEPRECATED,
+        }
+
 
 class ProfileType(str, Enum):
     EVERYDAY_WORK = "everyday-work"
@@ -267,6 +282,41 @@ class ManifestProfile(StrictModel):
 class ProfileManifest(StrictModel):
     format: Literal[1]
     profiles: dict[ProfileId, ManifestProfile]
+
+    def current_revision(self, profile_id: str) -> "ResolvedProfileRevision":
+        profile = self.profiles.get(profile_id)
+        if profile is None:
+            raise KeyError(f"profile '{profile_id}' not found")
+        record = profile.revisions.get(profile.current_revision)
+        if record is None:
+            raise KeyError(
+                f"current revision '{profile.current_revision}' "
+                f"for profile '{profile_id}' not found"
+            )
+        return ResolvedProfileRevision(
+            profile_id=profile_id,
+            revision=profile.current_revision,
+            record=record,
+        )
+
+    def revision(self, profile_id: str, revision: str) -> "ResolvedProfileRevision":
+        profile = self.profiles.get(profile_id)
+        if profile is None:
+            raise KeyError(f"profile '{profile_id}' not found")
+        record = profile.revisions.get(revision)
+        if record is None:
+            raise KeyError(f"revision '{revision}' for profile '{profile_id}' not found")
+        return ResolvedProfileRevision(
+            profile_id=profile_id,
+            revision=revision,
+            record=record,
+        )
+
+
+class ResolvedProfileRevision(StrictModel):
+    profile_id: ProfileId
+    revision: Revision
+    record: ManifestProfileRevision
 
 
 ProfilePayloadV2Adapter = TypeAdapter(ProfilePayloadV2)

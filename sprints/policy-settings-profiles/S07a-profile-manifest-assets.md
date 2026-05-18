@@ -21,7 +21,7 @@ Landed:
 - Canonical `ProfileManifest` catalog parser using `format = 1`.
 - `active`, `deprecated`, and `revoked` status enum coverage with no `removed`;
   typed lifecycle gates now define install/update, new-VM, and existing-VM
-  behavior.
+  behavior in both Rust and Pydantic admin models.
 - Closed `capsem.profile.v2` JSON Schema artifact, Rust schema validation, and
   Pydantic v2 admin models.
 - Typed profile package/tool contracts and per-arch VM asset declarations.

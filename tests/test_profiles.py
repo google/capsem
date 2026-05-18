@@ -149,6 +149,23 @@ def test_manifest_status_enum_excludes_removed() -> None:
         )
 
 
+def test_manifest_status_lifecycle_gates_are_explicit() -> None:
+    assert ProfileRevisionStatus.ACTIVE.can_be_current()
+    assert ProfileRevisionStatus.ACTIVE.allows_install_or_update()
+    assert ProfileRevisionStatus.ACTIVE.allows_new_vm()
+    assert ProfileRevisionStatus.ACTIVE.allows_existing_vm()
+
+    assert not ProfileRevisionStatus.DEPRECATED.can_be_current()
+    assert not ProfileRevisionStatus.DEPRECATED.allows_install_or_update()
+    assert not ProfileRevisionStatus.DEPRECATED.allows_new_vm()
+    assert ProfileRevisionStatus.DEPRECATED.allows_existing_vm()
+
+    assert not ProfileRevisionStatus.REVOKED.can_be_current()
+    assert not ProfileRevisionStatus.REVOKED.allows_install_or_update()
+    assert not ProfileRevisionStatus.REVOKED.allows_new_vm()
+    assert not ProfileRevisionStatus.REVOKED.allows_existing_vm()
+
+
 def test_manifest_current_revision_must_be_active() -> None:
     with pytest.raises(ValidationError):
         validate_manifest_json(
@@ -172,6 +189,55 @@ def test_manifest_current_revision_must_be_active() -> None:
             }
             """
         )
+
+
+def test_manifest_resolves_current_and_specific_revision_records() -> None:
+    manifest = validate_manifest_json(
+        """
+        {
+          "format": 1,
+          "profiles": {
+            "everyday-work": {
+              "current_revision": "2026.0520.2",
+              "revisions": {
+                "2026.0520.1": {
+                  "status": "deprecated",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile-1.toml",
+                  "profile_hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "profile_signature_url": "https://assets.capsem.dev/profile-1.toml.minisig"
+                },
+                "2026.0520.2": {
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile-2.toml",
+                  "profile_hash": "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "profile_signature_url": "https://assets.capsem.dev/profile-2.toml.minisig"
+                }
+              }
+            }
+          }
+        }
+        """
+    )
+
+    current = manifest.current_revision("everyday-work")
+    assert current.profile_id == "everyday-work"
+    assert current.revision == "2026.0520.2"
+    assert current.record.status is ProfileRevisionStatus.ACTIVE
+    assert current.record.status.allows_install_or_update()
+
+    deprecated = manifest.revision("everyday-work", "2026.0520.1")
+    assert deprecated.profile_id == "everyday-work"
+    assert deprecated.revision == "2026.0520.1"
+    assert deprecated.record.status is ProfileRevisionStatus.DEPRECATED
+    assert deprecated.record.status.allows_existing_vm()
+    assert not deprecated.record.status.allows_new_vm()
+
+    with pytest.raises(KeyError, match="profile 'ghost' not found"):
+        manifest.current_revision("ghost")
+    with pytest.raises(KeyError, match="revision '2026.0520.0'"):
+        manifest.revision("everyday-work", "2026.0520.0")
 
 
 def test_manifest_json_round_trips_through_pydantic_dump() -> None:
