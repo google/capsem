@@ -224,10 +224,11 @@ Landed:
 - Dedicated read-only profile routes exist for list/get/resolve:
   `GET /profiles`, `GET /profiles/{id}`, and
   `GET /profiles/{id}/effective`.
+- Dedicated profile mutation routes exist for user-owned profiles:
+  `POST /profiles`, `POST /profiles/{id}/fork`, `PUT /profiles/{id}`, and
+  `DELETE /profiles/{id}`.
 
 Gaps:
-- Dedicated profile mutation routes are still missing:
-  create/fork/update/delete.
 - No dedicated skills list/add/delete route group.
 - No dedicated Rules API (`GET /rules`, `POST /rules`,
   `POST /rules/evaluate`, etc.).

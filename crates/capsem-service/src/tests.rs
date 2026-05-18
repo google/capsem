@@ -2627,6 +2627,135 @@ async fn handle_resolve_profile_returns_effective_settings_and_trace() {
     assert!(val["resolver_trace"]["events"].is_array());
 }
 
+fn custom_profile(id: &str, name: &str) -> capsem_core::settings_profiles::Profile {
+    let mut profile = capsem_core::settings_profiles::Profile::everyday_work();
+    profile.id = id.to_string();
+    profile.name = name.to_string();
+    profile.description = format!("{name} description");
+    profile.best_for = format!("{name} work");
+    profile.profile_type = capsem_core::settings_profiles::ProfileType::Coding;
+    profile
+}
+
+#[tokio::test]
+async fn handle_create_profile_persists_user_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_create_profile(Json(custom_profile("custom", "Custom")))
+        .await
+        .unwrap();
+
+    assert_eq!(val["profile"]["id"], serde_json::json!("custom"));
+    assert_eq!(val["source"], serde_json::json!("user"));
+    assert_eq!(val["locked"], serde_json::json!(false));
+
+    let Json(list) = handle_list_profiles().await.unwrap();
+    assert!(list["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|profile| profile["profile"]["id"] == serde_json::json!("custom")));
+}
+
+#[tokio::test]
+async fn handle_update_profile_rejects_path_body_id_mismatch() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let err = handle_update_profile(
+        Path("path-id".to_string()),
+        Json(custom_profile("body-id", "Body")),
+    )
+    .await
+    .expect_err("route id/body id mismatch should fail closed");
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("does not match"));
+}
+
+#[tokio::test]
+async fn handle_update_profile_persists_existing_user_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("custom", "Custom")))
+        .await
+        .unwrap();
+    let mut updated = custom_profile("custom", "Custom Updated");
+    updated.best_for = "Updated work".to_string();
+
+    let Json(val) = handle_update_profile(Path("custom".to_string()), Json(updated))
+        .await
+        .unwrap();
+
+    assert_eq!(val["profile"]["name"], serde_json::json!("Custom Updated"));
+    assert_eq!(
+        val["profile"]["best_for"],
+        serde_json::json!("Updated work")
+    );
+}
+
+#[tokio::test]
+async fn handle_fork_profile_creates_user_copy() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_fork_profile(
+        Path(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string()),
+        Json(ProfileForkRequest {
+            id: "daily-strict".to_string(),
+            name: "Daily Strict".to_string(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(val["profile"]["id"], serde_json::json!("daily-strict"));
+    assert_eq!(val["profile"]["name"], serde_json::json!("Daily Strict"));
+    assert_eq!(val["source"], serde_json::json!("user"));
+}
+
+#[tokio::test]
+async fn handle_delete_profile_removes_user_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("custom", "Custom")))
+        .await
+        .unwrap();
+    let Json(val) = handle_delete_profile(Path("custom".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(val["deleted"], serde_json::json!("custom"));
+    let err = handle_get_profile(Path("custom".to_string()))
+        .await
+        .expect_err("deleted profile should no longer be discoverable");
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn handle_delete_profile_rejects_locked_builtin_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let err = handle_delete_profile(Path(
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string(),
+    ))
+    .await
+    .expect_err("built-in profile deletes should fail closed");
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("locked"));
+}
+
 #[tokio::test]
 async fn handle_lint_config_returns_array() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;

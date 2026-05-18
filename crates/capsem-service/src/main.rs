@@ -3453,16 +3453,26 @@ fn profile_record_json(
     })
 }
 
+#[derive(Debug, Deserialize)]
+struct ProfileForkRequest {
+    id: String,
+    name: String,
+}
+
+fn load_service_settings_for_profiles(
+) -> Result<capsem_core::settings_profiles::ServiceSettings, AppError> {
+    let settings_path = service_settings_path();
+    capsem_core::settings_profiles::load_service_settings_or_default(&settings_path).map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("load {}: {e}", settings_path.display()),
+        )
+    })
+}
+
 /// GET /profiles -- list typed Profile V2 profile records.
 async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
-    let settings_path = service_settings_path();
-    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("load {}: {e}", settings_path.display()),
-            )
-        })?;
+    let settings = load_service_settings_for_profiles()?;
     let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
 
@@ -3483,14 +3493,7 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
 
 /// GET /profiles/{id} -- fetch one typed Profile V2 profile record.
 async fn handle_get_profile(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    let settings_path = service_settings_path();
-    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("load {}: {e}", settings_path.display()),
-            )
-        })?;
+    let settings = load_service_settings_for_profiles()?;
     let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
     let record = catalog
@@ -3500,18 +3503,90 @@ async fn handle_get_profile(Path(id): Path<String>) -> Result<Json<serde_json::V
     Ok(Json(profile_record_json(record)))
 }
 
+/// POST /profiles -- create a user-owned Profile V2 profile.
+async fn handle_create_profile(
+    Json(profile): Json<capsem_core::settings_profiles::Profile>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let record = capsem_core::settings_profiles::create_user_profile(&settings.profiles, profile)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("create profile: {e}")))?;
+    Ok(Json(profile_record_json(&record)))
+}
+
+/// POST /profiles/{id}/fork -- fork an existing profile into a user profile.
+async fn handle_fork_profile(
+    Path(source_id): Path<String>,
+    Json(body): Json<ProfileForkRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let record = capsem_core::settings_profiles::fork_user_profile(
+        &settings.profiles,
+        &source_id,
+        &body.id,
+        &body.name,
+    )
+    .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("fork profile: {e}")))?;
+    Ok(Json(profile_record_json(&record)))
+}
+
+/// PUT /profiles/{id} -- update an existing user-owned Profile V2 profile.
+async fn handle_update_profile(
+    Path(id): Path<String>,
+    Json(profile): Json<capsem_core::settings_profiles::Profile>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if profile.id != id {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "profile body id '{}' does not match route id '{id}'",
+                profile.id
+            ),
+        ));
+    }
+    let settings = load_service_settings_for_profiles()?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    if let Some(record) = catalog.get(&id) {
+        if record.locked {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("profile '{id}' is locked ({})", record.source.as_str()),
+            ));
+        }
+    }
+    let record = capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
+    Ok(Json(profile_record_json(&record)))
+}
+
+/// DELETE /profiles/{id} -- delete an existing user-owned Profile V2 profile.
+async fn handle_delete_profile(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    if let Some(record) = catalog.get(&id) {
+        if record.locked {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("profile '{id}' is locked ({})", record.source.as_str()),
+            ));
+        }
+    }
+    capsem_core::settings_profiles::delete_user_profile(&settings.profiles, &id)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("delete profile: {e}")))?;
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "deleted": id,
+    })))
+}
+
 /// GET /profiles/{id}/effective -- resolve one profile to VM-effective settings.
 async fn handle_resolve_profile(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let settings_path = service_settings_path();
-    let settings = capsem_core::settings_profiles::load_service_settings_or_default(&settings_path)
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("load {}: {e}", settings_path.display()),
-            )
-        })?;
+    let settings = load_service_settings_for_profiles()?;
     let (effective, trace) =
         capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
             &settings,
@@ -6024,8 +6099,17 @@ async fn main() -> Result<()> {
         .route("/settings/presets/{id}", post(handle_select_profile_preset))
         .route("/settings/lint", post(handle_lint_config))
         .route("/settings/validate-key", post(handle_validate_key))
-        .route("/profiles", get(handle_list_profiles))
-        .route("/profiles/{id}", get(handle_get_profile))
+        .route(
+            "/profiles",
+            get(handle_list_profiles).post(handle_create_profile),
+        )
+        .route(
+            "/profiles/{id}",
+            get(handle_get_profile)
+                .put(handle_update_profile)
+                .delete(handle_delete_profile),
+        )
+        .route("/profiles/{id}/fork", post(handle_fork_profile))
         .route("/profiles/{id}/effective", get(handle_resolve_profile))
         .route("/setup/state", get(handle_get_setup_state))
         .route("/setup/detect", get(handle_detect_host_config))

@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service/process IPC request and response variants for live metrics.
 - Added read-only Profile V2 UDS profile routes for listing profiles, fetching
   a profile record, and resolving VM-effective settings with resolver trace.
+- Added Profile V2 UDS profile mutation routes for creating, forking, updating,
+  and deleting user-owned profiles.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

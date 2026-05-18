@@ -45,6 +45,17 @@ Add read-only service profile routes:
 This gives clients a stable discovery/resolve API before S07 mutation routes
 land.
 
+## Third Slice
+
+Add profile mutation routes:
+
+- `POST /profiles`
+- `POST /profiles/{id}/fork`
+- `PUT /profiles/{id}`
+- `DELETE /profiles/{id}`
+
+This completes the dedicated profile CRUD/fork group at the service UDS layer.
+
 ## Testing Proof Matrix
 
 - Unit/contract: capsem-proto metrics/IPC roundtrips.
