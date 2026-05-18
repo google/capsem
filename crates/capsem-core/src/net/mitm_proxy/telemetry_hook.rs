@@ -5,14 +5,9 @@
 //! T1 slice 8. Replaces the logic in `telemetry::TelemetryEmitter`
 //! and the body-wrapper firing surface from `telemetry::TelemetryBody`.
 //! The ChunkHook owns its own response-side byte counting + preview
-//! (so we no longer need `body::TrackedBody` or `body::RespStatsKind`
-//! once the legacy chain is removed in the cleanup slice). Per-request
-//! context (method, path, status, headers, decision, matched-rule,
-//! request-side stats, etc.) is seeded into `HookState` by
-//! `handle_request` -- the seeding and pipeline registration happen
-//! in slice 9 along with the deletion of `telemetry.rs`. This slice
-//! ships the surface, the emit logic, and the tests; the hook is
-//! shadow-mode in production until slice 9 wires it.
+//! while per-request context (method, path, status, headers, decision,
+//! matched-rule, request-side stats, etc.) is seeded into `HookState`
+//! by `handle_request`.
 
 #![allow(dead_code)]
 

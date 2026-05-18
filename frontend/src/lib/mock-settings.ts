@@ -1,7 +1,7 @@
 // Test/mock settings wrapper.
 // The setting defaults and tree come from mock-settings.generated.ts, which is
-// generated from config/defaults.json. Keep hand-authored data here limited to
-// frontend-only fixtures that do not exist in defaults.
+// derived from builder settings fixtures. Keep hand-authored data here limited
+// to frontend-only fixtures outside the generated tree.
 
 import {
   buildMockTree as buildGeneratedMockTree,

@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   image-generated settings aligned.
 - Added hardening coverage for HTTP gzip decompression, CEL quoted-literal
   parsing, and builder image/defaults alignment.
+- Added guard coverage to keep generated builder/frontend settings fixtures from
+  being treated as Profile V2 runtime authority.
 - Changed `/setup/corp-config` inline and URL installs to accept Profile V2
   corp profile TOML and refresh the typed settings-profile surface.
 - Changed guest boot config ownership so `GuestConfig`/`GuestFile` live under

@@ -1,10 +1,10 @@
 //! Policy V2 HTTP enforcement hook.
 //!
-//! Runs on `RawRequestHead` after the legacy domain/read-write
-//! `PolicyHook` has allowed the request, and on `RawResponseHead`
-//! after upstream response headers arrive but before guest delivery
-//! and telemetry capture. It evaluates named `policy.http.*` rules,
-//! can fail closed, and can mutate parsed HTTP heads in place.
+//! Runs on `RawRequestHead` before upstream dispatch, and on
+//! `RawResponseHead` after upstream response headers arrive but before
+//! guest delivery and telemetry capture. It evaluates named
+//! `policy.http.*` rules, can fail closed, and can mutate parsed HTTP
+//! heads in place.
 
 #![allow(dead_code)]
 

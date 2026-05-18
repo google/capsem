@@ -35,6 +35,7 @@
 - [x] Remove capsem-process V1 `user.toml`/`MergedPolicies` runtime bridge with RED/GREEN tests
 - [x] Restore Profile V2 DNS/full-block smoke telemetry without reintroducing V1 config plumbing
 - [x] Close S06 hygiene pass: move guest boot config to VM namespace, harden install asset handling, and refresh S00-S06 audit proof
+- [x] Quarantine generated builder/frontend settings fixtures from Profile V2 runtime authority
 - [ ] Publish migration TL;DR and residual risk list
 
 ## Notes
@@ -140,6 +141,14 @@
 - Proof: `cargo test -p capsem-process --bin capsem-process process_runtime_source_has_no_v1_policy_bridge -- --nocapture` passed after the namespace cleanup.
 - Proof: `uv run --group dev python -m pytest tests/test_release_workflow_policy.py::test_install_e2e_prepares_clean_checkout_assets_before_repack tests/test_release_workflow_policy.py::test_simulate_install_copies_only_arch_asset_files -q` passed locally after Docker rewrote `.venv`.
 - Proof: `just test-install` passed in Docker (`57 passed`, `29 skipped`) after the asset symlink/mount and file-only copy fixes.
+- Generated `config/defaults.json` remains a frontend mock/build fixture, not a
+  runtime settings source. New guard tests assert Rust crates do not embed
+  generated settings artifacts and that comments do not point frontend/builder
+  surfaces back at removed `policy_config` or V1 runtime authority.
+- RED proof: `uv run python -m pytest tests/test_config.py::TestGeneratedSettingsAuthorityQuarantine -q`
+  failed on stale `defaults.json`/`policy_config` authority wording.
+- GREEN proof: `uv run python -m pytest tests/test_config.py::TestGeneratedSettingsAuthorityQuarantine tests/test_config.py::TestGenerateDefaultsJsonConformance tests/test_docker.py::TestGuestConfigBuildAndDefaultsAlignment -q`
+  passed 15 focused builder/frontend quarantine tests.
 
 ## Change Buckets (Working)
 - `keep`: intentional Profile V2 design/implementation and valid test updates
@@ -152,7 +161,7 @@
 - Functional:
   `/settings*` service handler and Python integration tests passed for typed settings payload; `/setup/corp-config` installs Profile V2 corp profile TOML and leaves `/settings` typed/readable; `/debug/report` handler path passed focused Rust coverage; `/setup/assets` exposes Profile V2 asset-location origins; capsem-process consumes attached effective policy state and reloads running sessions from it; framed MCP request/response `ask` decisions route through confirmer resolution before dispatch/response handling; HTTP request/response `ask` decisions route through confirmer resolution before upstream dispatch/guest response surfacing; model request, model response, tool-call, and tool-response `ask` decisions route through confirmer resolution before upstream or guest delivery; model request rewrite forwards redacted bytes upstream before telemetry records the request preview; gateway status/proxy non-VM Python tests passed
 - Adversarial:
-  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction; model request rewrite fails closed for unsupported targets, no regex match, and non-UTF-8 bodies
+  policy enforcement/redaction test weakenings are blocked as `needs-review`; MCP confirmation snapshots are covered for argument-value redaction in focused unit tests; HTTP confirmation snapshots are covered for no request-header exposure in focused unit tests; model confirmation snapshots are covered for request-body, response-text, tool-argument, and tool-response redaction; model request rewrite fails closed for unsupported targets, no regex match, and non-UTF-8 bodies; generated-settings guard tests reject Rust runtime consumption of `defaults.json`/`settings-schema.json`
 - E2E/VM or integration:
   Focused VM/MITM suites passed for framed MCP (15), HTTP/DNS Policy V2 (2), and model Policy V2 (4). Full `just smoke` passed after ordering/runtime and Profile V2 DNS/full-block rescue. Broad `just test` reached and passed all earlier lanes, then the Docker install lane passed separately after the asset fix. NAT/egress skips classified as `needs-review`.
 - Telemetry/observability:

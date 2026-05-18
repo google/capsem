@@ -71,6 +71,10 @@ Rescue inventory:
 - capsem-process V1 `user.toml`/`MergedPolicies` runtime bridge removed; focused RED/GREEN guardrails now assert Profile V2-only runtime authority, guest boot assembly, and DNS/full-block `NetworkPolicy` conversion
 - Smoke integration now uses a temporary Profile V2 service/profile fixture instead of removed `CAPSEM_USER_CONFIG`/`CAPSEM_CORP_CONFIG` runtime policy plumbing
 - S06 hygiene closeout is green: guest boot config is canonical under `vm::guest_config`, the old policy-config guest-config export is guarded against, deterministic default MCP injection no longer reads process-wide V1 config, and Docker install E2E handles symlinked asset roots correctly.
+- Generated builder/frontend settings fixtures are quarantined from runtime
+  authority: guard tests assert Rust crates do not embed `defaults.json` or
+  `settings-schema.json`, and stale `policy_config`/V1 wording has been removed
+  from the builder, frontend mock, and MITM comments.
 - `just smoke` passed on 2026-05-17 after the Profile V2 runtime/DNS rescue (`just smoke`, 224s)
 - `just test-install` passed on 2026-05-18 after the asset symlink/mount and file-only copy fixes (`57 passed`, `29 skipped`)
 - Committed delta classification remains release-held and must be replayed by slice

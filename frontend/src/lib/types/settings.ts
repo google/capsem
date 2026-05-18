@@ -1,5 +1,5 @@
-// Settings types -- mirrors Rust serde serialization in capsem-core/src/net/policy_config/types.rs.
-// Do not modify field names or shapes without matching the backend.
+// Settings types shared by Profile V2 settings API responses and generated
+// frontend fixtures. Keep field names and shapes aligned with the backend.
 
 /** The data type of a setting (serde rename_all = "snake_case"). */
 export type SettingType =
