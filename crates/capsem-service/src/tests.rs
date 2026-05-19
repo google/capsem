@@ -55,6 +55,78 @@ content_type = "application/vnd.squashfs"
 }
 
 #[test]
+fn startup_asset_requirement_includes_installed_profile_payload_provenance() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile_dir = dir.path().join("profiles/base");
+    let corp_dir = dir.path().join("profiles/corp");
+    std::fs::create_dir_all(&profile_dir).unwrap();
+    std::fs::create_dir_all(corp_dir.join(".catalog/profiles/everyday-work")).unwrap();
+    std::fs::write(
+        profile_dir.join("everyday-work.toml"),
+        r#"
+version = 1
+id = "everyday-work"
+name = "Everyday Work"
+best_for = "Daily sessions."
+profile_type = "everyday-work"
+
+[vm.assets.arm64.kernel]
+url = "https://assets.example.test/vmlinuz?token=secret"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "https://assets.example.test/vmlinuz.minisig"
+size = 10
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "https://assets.example.test/initrd.img"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "https://assets.example.test/initrd.img.minisig"
+size = 11
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "https://assets.example.test/rootfs.squashfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "https://assets.example.test/rootfs.squashfs.minisig"
+size = 12
+content_type = "application/vnd.squashfs"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profiles/everyday-work/current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.1",
+          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }"#,
+    )
+    .unwrap();
+    let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+    settings.profiles.base_dirs = vec![profile_dir];
+    settings.profiles.corp_dirs = vec![corp_dir];
+    settings.profiles.default_profile = "everyday-work".to_string();
+
+    let requirement = startup_asset_requirement(&settings, "arm64", false).unwrap();
+    let supervisor = AssetSupervisor::new(
+        dir.path().join("assets"),
+        requirement,
+        std::time::Duration::from_secs(60),
+    );
+    let health = supervisor.snapshot();
+
+    assert_eq!(health.profile_revision.as_deref(), Some("2026.0520.1"));
+    assert_eq!(
+        health.profile_payload_hash.as_deref(),
+        Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    );
+    assert_eq!(
+        health.profile_assets[0].source_url,
+        "https://assets.example.test/vmlinuz"
+    );
+}
+
+#[test]
 fn startup_asset_requirement_rejects_profiles_without_vm_assets_when_dev_fallback_is_disabled() {
     let dir = tempfile::tempdir().unwrap();
     let profile_dir = dir.path().join("profiles/base");
@@ -700,16 +772,19 @@ fn test_profile_asset_declaration(base_url: &str, name: &str, bytes: &[u8]) -> V
 fn test_profile_asset_supervisor(assets_dir: PathBuf, base_url: &str) -> Arc<AssetSupervisor> {
     Arc::new(AssetSupervisor::new(
         assets_dir,
-        AssetRequirement::Profile(ProfileAssetRequirement::new(
-            "everyday-work".to_string(),
-            Some("2026.0520.1".to_string()),
-            host_asset_arch().to_string(),
-            VmArchAssets {
-                kernel: test_profile_asset_declaration(base_url, "vmlinuz", b"kernel"),
-                initrd: test_profile_asset_declaration(base_url, "initrd.img", b"initrd"),
-                rootfs: test_profile_asset_declaration(base_url, "rootfs.squashfs", b"rootfs"),
-            },
-        )),
+        AssetRequirement::Profile(
+            ProfileAssetRequirement::new(
+                "everyday-work".to_string(),
+                Some("2026.0520.1".to_string()),
+                host_asset_arch().to_string(),
+                VmArchAssets {
+                    kernel: test_profile_asset_declaration(base_url, "vmlinuz", b"kernel"),
+                    initrd: test_profile_asset_declaration(base_url, "initrd.img", b"initrd"),
+                    rootfs: test_profile_asset_declaration(base_url, "rootfs.squashfs", b"rootfs"),
+                },
+            )
+            .with_profile_payload_hash(Some(test_profile_payload_hash())),
+        ),
         std::time::Duration::from_secs(60),
     ))
 }
@@ -2741,6 +2816,21 @@ async fn handle_asset_reconcile_downloads_missing_profile_assets() {
     assert_eq!(
         result["health"]["profile_revision"],
         serde_json::json!("2026.0520.1")
+    );
+    assert_eq!(
+        result["health"]["profile_payload_hash"],
+        serde_json::json!(test_profile_payload_hash())
+    );
+    assert_eq!(
+        result["health"]["profile_assets"][0]["logical_name"],
+        serde_json::json!("vmlinuz")
+    );
+    assert_eq!(
+        result["health"]["profile_assets"][0]["source_url"]
+            .as_str()
+            .unwrap()
+            .contains('?'),
+        false
     );
     assert!(state.asset_supervisor.snapshot().ready);
 }

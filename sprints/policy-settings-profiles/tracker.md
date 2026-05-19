@@ -126,8 +126,9 @@ a valid claim -- mark it `[ ]` instead.
   asset-manifest parser/loader/downloader cleanup, and duplicate-download /
   active-cleanup race proof have landed. First-use VM create/run now drives the
   Profile V2 reconciler before spawn, and source/fork/persist derive boot
-  asset identity from the profile pin. Remaining work: live
-  update/status/logs E2E and richer payload/per-asset provenance.
+  asset identity from the profile pin. Asset health now includes installed
+  profile payload hash plus redacted per-asset source/hash metadata. Remaining
+  work: live update/status/logs E2E.
 16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -471,8 +472,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   requires the installed profile payload hash for forward VM pin construction
   and source/fork/persist validation. S07c adds Profile V2 asset reconcile
   timestamp propagation through `capsem status --json`, text status rendering,
-  and structured service log events for profile asset check/download
-  lifecycle, with URL redaction coverage.
+  installed profile payload hash, redacted per-asset source/hash metadata, and
+  structured service log events for profile asset check/download lifecycle,
+  with URL redaction coverage.
   Persisted
   policy-decision read-back from a running `session.db` (capsem-doctor E2E ask
   probe) is **deferred**.
@@ -590,6 +592,15 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   capsem-service provision_from_source_requires_profile_revision_pin` **1**
   passed, `cargo test -p capsem-service --lib` **110** passed, `cargo fmt
   --all -- --check` passed, and `git diff --check` passed;
+  after profile asset payload/per-asset provenance, `cargo test -p
+  capsem-service startup_asset_requirement_includes_installed_profile_payload_provenance`
+  **1** passed, `cargo test -p capsem-service
+  profile_asset_provenance_redacts_source_urls --lib` **1** passed, `cargo
+  test -p capsem-service handle_asset_reconcile_downloads_missing_profile_assets`
+  **1** passed, `cargo test -p capsem-service --lib` **111** passed, `cargo
+  test -p capsem-service debug_report` **7 + 1** passed, `cargo test -p
+  capsem status::tests` **29** passed, `cargo test -p capsem setup_asset_health`
+  **4** passed, and `cargo fmt --all -- --check` passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

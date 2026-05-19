@@ -546,6 +546,8 @@ mod tests {
             state: state.to_string(),
             profile_id: None,
             profile_revision: None,
+            profile_payload_hash: None,
+            profile_assets: Vec::new(),
             version: Some("2026.0415.1".to_string()),
             arch: Some("arm64".to_string()),
             missing: Vec::new(),

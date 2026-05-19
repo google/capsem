@@ -34,7 +34,9 @@ Landed:
 - Service asset health timestamps are preserved through `capsem status --json`
   and rendered in text status output.
 - Service/CLI asset health now carries explicit Profile V2 provenance:
-  `profile_id`, `profile_revision`, asset version, arch, and check timestamp.
+  `profile_id`, `profile_revision`, installed profile payload hash, redacted
+  per-asset source URL/hash/size/content-type, asset version, arch, and check
+  timestamp.
 - Structured lifecycle logs now cover check start/ready/error, missing assets,
   download start/progress, hash verification, install success, and retryable
   download failure. Download URLs are logged without credentials or query
@@ -47,8 +49,6 @@ Landed:
 
 Gaps:
 
-- Status shows profile id/revision and check state, but not yet the selected
-  catalog payload hash or per-asset URL/hash.
 - Tests cover the service trigger, CLI summary rendering, background
   reconciliation, status timestamp/provenance preservation, debug provenance,
   first-use VM create reconciliation, profile-pin asset authority, concurrent
@@ -111,7 +111,8 @@ Gaps:
    - Make `capsem status` render these details compactly.
    - Add debug-report asset provenance for profile asset source and latest
      supervisor state.
-   - Landed: `profile_id` and `profile_revision` are explicit fields in
+   - Landed: `profile_id`, `profile_revision`, installed profile payload hash,
+     and redacted per-asset source/hash metadata are explicit fields in
      service/CLI asset health, setup asset status, reconcile/list payloads,
      text status, and debug reports.
 
@@ -140,6 +141,10 @@ Gaps:
     background download, retryable errors, progress state, and log URL
     redaction. `cargo test -p capsem profile_asset_reconcile_summary_line`
     covers CLI output summaries.
+  - Landed: `startup_asset_requirement_includes_installed_profile_payload_provenance`
+    proves startup asset health includes installed revision/payload provenance,
+    and `profile_asset_provenance_redacts_source_urls` proves signed URL
+    credentials/query strings stay out of status/debug provenance.
 - Functional:
   - Fake asset server + service endpoint downloads missing profile assets and
     returns final health.
@@ -177,7 +182,7 @@ Gaps:
   - Landed: service debug reports now serialize Profile V2 asset health instead
     of legacy asset manifest presence/hash fields.
   - Landed: debug reports include explicit profile id/revision from asset
-    health.
+    health plus payload hash and per-asset source/hash metadata.
 - Performance:
   - Repeated checks when assets are present do not hash every large file on hot
     `/list` or status paths.
@@ -188,6 +193,8 @@ Gaps:
 
 - `capsem update --assets` is a Profile V2 service-triggered asset reconcile.
 - `capsem status` clearly reports profile asset check/update/readiness.
+- `capsem status --json` and debug reports include profile payload hash plus
+  redacted per-asset source/hash metadata.
 - Background and manual checks use one code path.
 - Logs and debug report explain checks/downloads without sensitive data.
 - Concurrent manual reconcile requests share the supervisor run lock and do not

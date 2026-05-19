@@ -33,6 +33,7 @@ fn profile_assets_for(
     ProfileAssetRequirement {
         profile_id: "everyday-work".to_string(),
         revision: Some("2026.0513.1".to_string()),
+        profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
         arch: "arm64".to_string(),
         assets: VmArchAssets {
             kernel: asset("vmlinuz", &kernel_path, kernel.len()),
@@ -118,12 +119,50 @@ fn local_check_reports_updating_when_required_assets_are_missing() {
     assert!(!health.ready);
     assert_eq!(health.profile_id.as_deref(), Some("everyday-work"));
     assert_eq!(health.profile_revision.as_deref(), Some("2026.0513.1"));
+    assert_eq!(
+        health.profile_payload_hash.as_deref(),
+        Some(format!("blake3:{}", "e".repeat(64)).as_str())
+    );
+    assert_eq!(health.profile_assets.len(), 3);
+    assert_eq!(health.profile_assets[0].logical_name, "vmlinuz");
+    assert_eq!(
+        health.profile_assets[0].source_url,
+        "https://assets.example.test/vmlinuz"
+    );
     assert_eq!(health.version.as_deref(), Some("everyday-work@2026.0513.1"));
     assert_eq!(health.arch.as_deref(), Some("arm64"));
     assert_eq!(
         health.missing,
         vec!["vmlinuz", "initrd.img", "rootfs.squashfs"]
     );
+}
+
+#[test]
+fn profile_asset_provenance_redacts_source_urls() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut required = profile_assets_for(
+        b"kernel",
+        b"initrd",
+        b"rootfs",
+        "https://assets.example.test",
+    );
+    required.assets.kernel.url =
+        "https://user:secret@assets.example.test/private/vmlinuz?token=secret".to_string();
+    let supervisor = supervisor_for(required, dir.path());
+
+    let health = supervisor.snapshot();
+    let kernel = health
+        .profile_assets
+        .iter()
+        .find(|asset| asset.logical_name == "vmlinuz")
+        .expect("kernel provenance should be present");
+
+    assert_eq!(
+        kernel.source_url,
+        "https://assets.example.test/private/vmlinuz"
+    );
+    assert!(!kernel.source_url.contains("secret"));
+    assert!(!kernel.source_url.contains("token"));
 }
 
 #[test]

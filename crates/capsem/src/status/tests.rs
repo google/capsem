@@ -220,6 +220,14 @@ fn status_report_preserves_service_asset_updating_state() {
         state: "updating".into(),
         profile_id: Some("everyday-work".into()),
         profile_revision: Some("2026.0513.1".into()),
+        profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+        profile_assets: vec![crate::client::ProfileAssetProvenance {
+            logical_name: "rootfs.squashfs".into(),
+            hash: format!("blake3:{}", "c".repeat(64)),
+            source_url: "https://assets.example.test/rootfs.squashfs".into(),
+            size: 42,
+            content_type: "application/vnd.squashfs".into(),
+        }],
         version: Some("2026.0513.1".into()),
         arch: Some("arm64".into()),
         missing: vec!["rootfs.squashfs".into()],
@@ -249,6 +257,14 @@ fn status_report_preserves_service_asset_updating_state() {
     assert_eq!(json["asset_health"]["state"], "updating");
     assert_eq!(json["asset_health"]["profile_id"], "everyday-work");
     assert_eq!(json["asset_health"]["profile_revision"], "2026.0513.1");
+    assert_eq!(
+        json["asset_health"]["profile_payload_hash"],
+        format!("blake3:{}", "e".repeat(64))
+    );
+    assert_eq!(
+        json["asset_health"]["profile_assets"][0]["source_url"],
+        "https://assets.example.test/rootfs.squashfs"
+    );
     assert_eq!(json["asset_health"]["checked_at_unix_secs"], 1_779_000_000);
     assert_eq!(
         json["asset_health"]["progress"]["logical_name"],
@@ -270,6 +286,8 @@ fn status_report_blocks_on_saved_vm_asset_dependencies() {
         state: "ready".into(),
         profile_id: Some("everyday-work".into()),
         profile_revision: Some("2026.0513.1".into()),
+        profile_payload_hash: None,
+        profile_assets: Vec::new(),
         version: Some("2026.0513.1".into()),
         arch: Some("arm64".into()),
         missing: Vec::new(),

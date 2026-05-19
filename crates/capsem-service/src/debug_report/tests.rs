@@ -6,6 +6,14 @@ fn ready_asset_health() -> crate::api::AssetHealth {
         state: crate::api::AssetHealthState::Ready,
         profile_id: Some("everyday-work".to_string()),
         profile_revision: Some("2026.0520.1".to_string()),
+        profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+        profile_assets: vec![crate::api::ProfileAssetProvenance {
+            logical_name: "rootfs.squashfs".to_string(),
+            hash: format!("blake3:{}", "c".repeat(64)),
+            source_url: "https://assets.example.test/rootfs.squashfs".to_string(),
+            size: 454_230_016,
+            content_type: "application/vnd.squashfs".to_string(),
+        }],
         version: Some("everyday-work@2026.0520.1".to_string()),
         arch: Some("arm64".to_string()),
         missing: Vec::new(),
@@ -52,10 +60,22 @@ fn attributes_profile_v2_asset_health() {
     assert!(report
         .text
         .contains("profile_asset_profile_revision: 2026.0520.1"));
+    assert!(report.text.contains(&format!(
+        "profile_asset_profile_payload_hash: blake3:{}",
+        "e".repeat(64)
+    )));
+    assert!(report
+        .text
+        .contains("profile_asset_source: rootfs.squashfs hash=blake3:"));
     assert!(report
         .text
         .contains("profile_asset_version: everyday-work@2026.0520.1"));
     assert!(report.text.contains("profile_asset_arch: arm64"));
+    assert_eq!(
+        serde_json::to_value(&report.json).unwrap()["assets"]["health"]["profile_assets"][0]
+            ["source_url"],
+        "https://assets.example.test/rootfs.squashfs"
+    );
     assert!(report.text.contains("running_vm_count: 1"));
     assert!(report.text.contains("total_vm_count: 2"));
 }

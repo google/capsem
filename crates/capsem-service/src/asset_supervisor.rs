@@ -11,7 +11,7 @@ use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::api::{AssetHealth, AssetHealthState, AssetProgress};
+use crate::api::{AssetHealth, AssetHealthState, AssetProgress, ProfileAssetProvenance};
 use crate::registry::SavedVmBaseAssets;
 
 #[derive(Debug)]
@@ -33,6 +33,7 @@ pub enum AssetRequirement {
 pub struct ProfileAssetRequirement {
     profile_id: String,
     revision: Option<String>,
+    profile_payload_hash: Option<String>,
     arch: String,
     assets: VmArchAssets,
 }
@@ -55,6 +56,8 @@ impl AssetSupervisor {
     ) -> Self {
         let profile_id = requirement.profile_id().map(str::to_string);
         let profile_revision = requirement.profile_revision().map(str::to_string);
+        let profile_payload_hash = requirement.profile_payload_hash().map(str::to_string);
+        let profile_assets = requirement.profile_assets();
         Self {
             assets_dir,
             requirement,
@@ -64,6 +67,8 @@ impl AssetSupervisor {
                 state: AssetHealthState::Checking,
                 profile_id,
                 profile_revision,
+                profile_payload_hash,
+                profile_assets,
                 version: None,
                 arch: None,
                 missing: Vec::new(),
@@ -138,6 +143,8 @@ impl AssetSupervisor {
         state.state = AssetHealthState::Error;
         state.profile_id = self.requirement.profile_id().map(str::to_string);
         state.profile_revision = self.requirement.profile_revision().map(str::to_string);
+        state.profile_payload_hash = self.requirement.profile_payload_hash().map(str::to_string);
+        state.profile_assets = self.requirement.profile_assets();
         state.progress = None;
         state.error = Some(error.into());
         state.retryable = retryable;
@@ -218,6 +225,8 @@ impl AssetSupervisor {
         state.state = AssetHealthState::Checking;
         state.profile_id = self.requirement.profile_id().map(str::to_string);
         state.profile_revision = self.requirement.profile_revision().map(str::to_string);
+        state.profile_payload_hash = self.requirement.profile_payload_hash().map(str::to_string);
+        state.profile_assets = self.requirement.profile_assets();
         state.progress = None;
         state.error = None;
         state.retryable = false;
@@ -230,6 +239,8 @@ impl AssetSupervisor {
         state.state = AssetHealthState::Ready;
         state.profile_id = status.profile_id;
         state.profile_revision = status.profile_revision;
+        state.profile_payload_hash = self.requirement.profile_payload_hash().map(str::to_string);
+        state.profile_assets = self.requirement.profile_assets();
         state.version = Some(status.version);
         state.arch = Some(status.arch);
         state.missing.clear();
@@ -245,6 +256,8 @@ impl AssetSupervisor {
         state.state = AssetHealthState::Updating;
         state.profile_id = status.profile_id;
         state.profile_revision = status.profile_revision;
+        state.profile_payload_hash = self.requirement.profile_payload_hash().map(str::to_string);
+        state.profile_assets = self.requirement.profile_assets();
         state.version = Some(status.version);
         state.arch = Some(status.arch);
         state.missing = status.missing;
@@ -306,9 +319,25 @@ impl ProfileAssetRequirement {
         Self {
             profile_id,
             revision,
+            profile_payload_hash: None,
             arch,
             assets,
         }
+    }
+
+    pub fn with_profile_payload_hash(mut self, profile_payload_hash: Option<String>) -> Self {
+        self.profile_payload_hash = profile_payload_hash;
+        self
+    }
+
+    pub fn with_installed_revision(
+        mut self,
+        revision: Option<String>,
+        profile_payload_hash: Option<String>,
+    ) -> Self {
+        self.revision = revision;
+        self.profile_payload_hash = profile_payload_hash;
+        self
     }
 
     pub fn from_effective(effective: &EffectiveVmSettings, arch: &str) -> Result<Self> {
@@ -382,6 +411,23 @@ impl ProfileAssetRequirement {
             .map(|revision| format!("{}@{}", self.profile_id, revision))
             .unwrap_or_else(|| self.profile_id.clone())
     }
+
+    fn profile_assets(&self) -> Vec<ProfileAssetProvenance> {
+        [
+            ("vmlinuz", &self.assets.kernel),
+            ("initrd.img", &self.assets.initrd),
+            ("rootfs.squashfs", &self.assets.rootfs),
+        ]
+        .into_iter()
+        .map(|(logical_name, asset)| ProfileAssetProvenance {
+            logical_name: logical_name.to_string(),
+            hash: asset.hash.clone(),
+            source_url: redacted_url_for_log(&asset.url),
+            size: asset.size,
+            content_type: asset.content_type.clone(),
+        })
+        .collect()
+    }
 }
 
 impl AssetRequirement {
@@ -396,6 +442,20 @@ impl AssetRequirement {
         match self {
             AssetRequirement::Profile(required) => required.revision.as_deref(),
             AssetRequirement::DevLogical { .. } => None,
+        }
+    }
+
+    fn profile_payload_hash(&self) -> Option<&str> {
+        match self {
+            AssetRequirement::Profile(required) => required.profile_payload_hash.as_deref(),
+            AssetRequirement::DevLogical { .. } => None,
+        }
+    }
+
+    fn profile_assets(&self) -> Vec<ProfileAssetProvenance> {
+        match self {
+            AssetRequirement::Profile(required) => required.profile_assets(),
+            AssetRequirement::DevLogical { .. } => Vec::new(),
         }
     }
 }

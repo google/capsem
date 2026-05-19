@@ -208,6 +208,8 @@ pub struct AssetHealthReport {
     pub state: String,
     pub profile_id: Option<String>,
     pub profile_revision: Option<String>,
+    pub profile_payload_hash: Option<String>,
+    pub profile_assets: Vec<crate::api::ProfileAssetProvenance>,
     pub version: Option<String>,
     pub arch: Option<String>,
     pub missing: Vec<String>,
@@ -464,6 +466,8 @@ fn build_asset_report(input: &DebugReportInput) -> Result<AssetsReport> {
             state: health.state.as_str().to_string(),
             profile_id: health.profile_id.clone(),
             profile_revision: health.profile_revision.clone(),
+            profile_payload_hash: health.profile_payload_hash.clone(),
+            profile_assets: health.profile_assets.clone(),
             version: health.version.clone(),
             arch: health.arch.clone(),
             missing: health.missing.clone(),
@@ -976,6 +980,9 @@ fn append_asset_report(lines: &mut Vec<String>, assets: &AssetsReport) {
     if let Some(revision) = health.profile_revision.as_deref() {
         lines.push(format!("profile_asset_profile_revision: {revision}"));
     }
+    if let Some(hash) = health.profile_payload_hash.as_deref() {
+        lines.push(format!("profile_asset_profile_payload_hash: {hash}"));
+    }
     lines.push(format!(
         "profile_asset_version: {}",
         health.version.as_deref().unwrap_or("<unknown>")
@@ -1007,6 +1014,12 @@ fn append_asset_report(lines: &mut Vec<String>, assets: &AssetsReport) {
     lines.push(format!("profile_asset_retryable: {}", health.retryable));
     if let Some(checked_at) = health.checked_at_unix_secs {
         lines.push(format!("profile_asset_checked_at_unix_secs: {checked_at}"));
+    }
+    for asset in &health.profile_assets {
+        lines.push(format!(
+            "profile_asset_source: {} hash={} url={} size={} content_type={}",
+            asset.logical_name, asset.hash, asset.source_url, asset.size, asset.content_type
+        ));
     }
     for dependency in &health.saved_vm_dependencies {
         lines.push(format!(

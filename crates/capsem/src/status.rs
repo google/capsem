@@ -1132,6 +1132,15 @@ fn print_service_asset_status(asset_health: &client::AssetHealth) {
             None => println!("  profile: {}", profile_id),
         }
     }
+    if let Some(hash) = &asset_health.profile_payload_hash {
+        println!("  profile_payload_hash: {}", hash);
+    }
+    for asset in &asset_health.profile_assets {
+        println!(
+            "  asset: {} hash={} source={} size={} content_type={}",
+            asset.logical_name, asset.hash, asset.source_url, asset.size, asset.content_type
+        );
+    }
     if !asset_health.missing.is_empty() {
         println!("  missing: {}", asset_health.missing.join(", "));
     }

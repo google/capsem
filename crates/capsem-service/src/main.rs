@@ -133,7 +133,20 @@ fn startup_asset_requirement(
     )
     .context("resolve default profile for VM assets")?;
     match ProfileAssetRequirement::from_effective(&effective, arch) {
-        Ok(required) => Ok(AssetRequirement::Profile(required)),
+        Ok(required) => {
+            let installed_revision =
+                capsem_core::settings_profiles::load_installed_profile_revision(
+                    &service_settings.profiles,
+                    &effective.profile_id,
+                )
+                .context("load installed profile revision for asset provenance")?;
+            let required = match installed_revision {
+                Some(record) => required
+                    .with_installed_revision(Some(record.revision), Some(record.payload_hash)),
+                None => required,
+            };
+            Ok(AssetRequirement::Profile(required))
+        }
         Err(err) if allow_dev_logical_assets => {
             warn!(
                 error = %err,

@@ -259,6 +259,15 @@ pub struct SavedVmAssetDependency {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAssetProvenance {
+    pub logical_name: String,
+    pub hash: String,
+    pub source_url: String,
+    pub size: u64,
+    pub content_type: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct AssetHealth {
     pub ready: bool,
     pub state: AssetHealthState,
@@ -266,6 +275,10 @@ pub struct AssetHealth {
     pub profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_payload_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profile_assets: Vec<ProfileAssetProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
