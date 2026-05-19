@@ -68,6 +68,16 @@ pub struct ProvisionResponse {
     /// would exceed SUN_LEN. See capsem_core::uds::instance_socket_path.
     #[serde(default)]
     pub uds_path: Option<std::path::PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_status: Option<VmProfileStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_pin: Option<SavedVmProfilePin>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_health: Option<AssetHealth>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -565,6 +575,11 @@ mod tests {
         let r = ProvisionResponse {
             id: "vm-123".into(),
             uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
+            profile_id: Some("everyday-work".into()),
+            profile_revision: Some("2026.0520.1".into()),
+            profile_status: Some(VmProfileStatus::Current),
+            profile_pin: None,
+            asset_health: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
@@ -573,6 +588,9 @@ mod tests {
             r2.uds_path.as_deref(),
             Some(std::path::Path::new("/tmp/r/instances/vm-123.sock"))
         );
+        assert_eq!(r2.profile_id.as_deref(), Some("everyday-work"));
+        assert_eq!(r2.profile_revision.as_deref(), Some("2026.0520.1"));
+        assert_eq!(r2.profile_status, Some(VmProfileStatus::Current));
     }
 
     // -----------------------------------------------------------------------

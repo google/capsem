@@ -10,15 +10,35 @@ import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.profile_asset_fixture import asset_source_dir, find_asset, write_profile_home
+from helpers.service import ServiceInstance, vm_name
 
 pytestmark = [pytest.mark.gateway, pytest.mark.e2e]
 
 
 @pytest.fixture(scope="module")
-def e2e_env():
-    """Start real capsem-service + capsem-gateway."""
-    svc = ServiceInstance()
+def e2e_env(tmp_path_factory):
+    """Start real capsem-service + capsem-gateway with Profile V2 assets."""
+    source_dir = asset_source_dir()
+    if not source_dir.exists():
+        pytest.skip(f"asset source dir missing: {source_dir}")
+
+    assets = {
+        "vmlinuz": find_asset(source_dir, "vmlinuz"),
+        "initrd.img": find_asset(source_dir, "initrd.img"),
+        "rootfs.squashfs": find_asset(source_dir, "rootfs.squashfs"),
+    }
+    capsem_home = tmp_path_factory.mktemp("gw-profile-home")
+    asset_cache = tmp_path_factory.getbasetemp() / f"gw-profile-assets-{uuid.uuid4().hex[:8]}"
+    write_profile_home(capsem_home, asset_cache, assets)
+
+    svc = ServiceInstance(
+        extra_env={
+            "CAPSEM_HOME": str(capsem_home),
+            "CAPSEM_ASSETS_DIR": str(asset_cache),
+        },
+        assets_dir=asset_cache,
+    )
     svc.start()
     gw = GatewayInstance(uds_path=svc.uds_path)
     gw.start()
@@ -34,6 +54,56 @@ def e2e_client(e2e_env):
 
 
 class TestGatewayE2E:
+
+    def test_profile_selected_create_download_boot_via_gateway(self, e2e_client):
+        """HTTP create selects a profile, reconciles its assets, boots, and pins."""
+        status_before = e2e_client.get("/setup/assets", timeout=30)
+        assert status_before["profile_id"] == "profile-asset-boot"
+
+        name = vm_name("gw-profile")
+        resp = e2e_client.post(
+            "/provision",
+            {
+                "name": name,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "profile_id": "profile-asset-boot",
+                "profile_revision": "2026.0519.e2e",
+            },
+            timeout=240,
+        )
+        assert resp is not None, "profile-selected provision failed"
+        assert "error" not in resp, resp
+        vm_id = resp.get("id", name)
+        assert resp["profile_id"] == "profile-asset-boot"
+        assert resp["profile_revision"] == "2026.0519.e2e"
+        assert resp["profile_status"] == "current"
+        assert resp["profile_pin"]["profile_id"] == "profile-asset-boot"
+        assert resp["profile_pin"]["profile_revision"] == "2026.0519.e2e"
+        assert resp["profile_pin"]["profile_payload_hash"].startswith("blake3:")
+        assert resp["profile_pin"]["package_contract_hash"].startswith("blake3:")
+        assert resp["profile_pin"]["base_assets"]["rootfs_hash"]
+        assert resp["asset_health"]["ready"] is True
+        assert resp["asset_health"]["profile_id"] == "profile-asset-boot"
+        assert len(resp["asset_health"]["profile_assets"]) == 3
+
+        try:
+            assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=180), (
+                f"VM {vm_id} never became exec-ready through gateway"
+            )
+            exec_resp = e2e_client.post(
+                f"/exec/{vm_id}",
+                {"command": "echo gateway-profile-boot"},
+                timeout=HTTP_TIMEOUT,
+            )
+            assert "gateway-profile-boot" in exec_resp.get("stdout", "")
+
+            info = e2e_client.get(f"/info/{vm_id}", timeout=60)
+            assert info["profile_id"] == "profile-asset-boot"
+            assert info["profile_revision"] == "2026.0519.e2e"
+            assert info["profile_status"] == "current"
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
 
     def test_provision_list_exec_stop_delete(self, e2e_client):
         """Full VM lifecycle through gateway TCP endpoint."""

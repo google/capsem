@@ -107,10 +107,73 @@ content_type = {toml_string(declarations["rootfs.squashfs"]["content_type"])}
     profile_path.write_text(profile_content, encoding="utf-8")
 
     revision = "2026.0519.e2e"
-    payload_hash = f"blake3:{blake3.blake3(profile_content.encode()).hexdigest()}"
+    arch_assets = {
+        "kernel": declarations["vmlinuz"],
+        "initrd": declarations["initrd.img"],
+        "rootfs": declarations["rootfs.squashfs"],
+    }
+    profile_payload = {
+        "schema": "capsem.profile.v2",
+        "version": 2,
+        "id": "profile-asset-boot",
+        "revision": revision,
+        "name": "Profile Asset Boot",
+        "description": "E2E profile proving profile-owned VM assets boot.",
+        "best_for": "Fresh profile asset download boot probes.",
+        "profile_type": "coding",
+        "compatibility": {
+            "min_binary": "1.0.0",
+            "max_binary": "",
+            "guest_abi": "capsem-guest-v2",
+        },
+        "vm": {
+            "memory_mib": 4096,
+            "cpus": 4,
+            "disk_mib": 32768,
+            "network": "proxied",
+            "track_rootfs_dependencies": True,
+            "assets": {host_arch(): arch_assets},
+        },
+        "packages": {
+            "runtimes": {
+                "python": "3.12.3",
+                "node": "22.1.0",
+                "uv": "0.4.30",
+            },
+            "python_modules": {},
+            "node_packages": {},
+            "system": {
+                "distro": "debian",
+                "release": "bookworm",
+                "apt": {},
+            },
+        },
+        "tools": {
+            "capsem_doctor": {
+                "version": "2026.05.18",
+                "required": True,
+                "source": "guest",
+            },
+        },
+        "mcpServers": {},
+        "security": {
+            "capabilities": {
+                "credential_brokerage": "ask",
+                "pii_detection": "ask",
+                "mcp_rag": "allow",
+                "mcp_tools": "allow",
+                "network_egress": "ask",
+                "file_boundaries": "ask",
+                "audit": "audit",
+            },
+            "rules": {},
+        },
+    }
+    payload_json = json.dumps(profile_payload, indent=2, sort_keys=True)
+    payload_hash = f"blake3:{blake3.blake3(payload_json.encode()).hexdigest()}"
     revision_dir = profile_dir / ".catalog" / "profiles" / "profile-asset-boot"
     (revision_dir / revision).mkdir(parents=True)
-    (revision_dir / revision / "profile.json").write_text("{}", encoding="utf-8")
+    (revision_dir / revision / "profile.json").write_text(payload_json, encoding="utf-8")
     (revision_dir / "current.json").write_text(
         json.dumps(
             {

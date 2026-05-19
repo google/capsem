@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/debug/report` profile asset provenance, exact service typed-error
   passthrough, and service debug-report diagnostics for stale or mismatched
   gateway runtime files.
+- Added S08 live HTTP gateway coverage for selected-profile VM creation: real
+  service/gateway processes now prove `/provision` accepts profile id/revision,
+  reconciles the selected profile's verified VM assets before boot, execs
+  through the gateway, and echoes the pinned profile state through
+  `/info/{vm_id}`.
 - Added Profile V2 settings/profile provenance to the redacted service debug
   report, including selected profile, profile roots, effective VM summary,
   resolver trace summary, and credential-id-only reporting.

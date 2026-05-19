@@ -6893,16 +6893,44 @@ fn launchd_transient_rejects_partial_match() {
 // spawning a real VM. If a future refactor breaks the routing
 // (e.g., maps LaunchdTransient to BailWithError), these fail.
 
+fn test_provision_asset_health() -> AssetHealth {
+    AssetHealth {
+        ready: true,
+        state: AssetHealthState::Ready,
+        profile_id: Some("everyday-work".into()),
+        profile_revision: Some("2026.0520.1".into()),
+        profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+        profile_assets: Vec::new(),
+        version: Some("everyday-work@2026.0520.1".into()),
+        arch: Some("arm64".into()),
+        missing: Vec::new(),
+        progress: None,
+        error: None,
+        retry_count: 0,
+        retryable: false,
+        saved_vm_dependencies: Vec::new(),
+        checked_at_unix_secs: Some(1_779_264_000),
+    }
+}
+
 #[test]
 fn classify_ready_outcome_succeeds() {
     let uds = PathBuf::from("/tmp/x.sock");
+    let health = test_provision_asset_health();
     match classify_attempt_decision(
         ProvisionAttemptOutcome::Ready {
             uds_path: uds.clone(),
+            asset_health: health.clone(),
         },
         "vm-1",
     ) {
-        AttemptDecision::Succeed(p) => assert_eq!(p, uds),
+        AttemptDecision::Succeed {
+            uds_path,
+            asset_health,
+        } => {
+            assert_eq!(uds_path, uds);
+            assert_eq!(asset_health, health);
+        }
         other => panic!("expected Succeed, got {other:?}"),
     }
 }
@@ -6910,13 +6938,21 @@ fn classify_ready_outcome_succeeds() {
 #[test]
 fn classify_still_booting_timeout_succeeds_with_uds() {
     let uds = PathBuf::from("/tmp/y.sock");
+    let health = test_provision_asset_health();
     match classify_attempt_decision(
         ProvisionAttemptOutcome::StillBootingTimedOut {
             uds_path: uds.clone(),
+            asset_health: health.clone(),
         },
         "vm-2",
     ) {
-        AttemptDecision::Succeed(p) => assert_eq!(p, uds),
+        AttemptDecision::Succeed {
+            uds_path,
+            asset_health,
+        } => {
+            assert_eq!(uds_path, uds);
+            assert_eq!(asset_health, health);
+        }
         other => panic!("expected Succeed for still-booting envelope, got {other:?}"),
     }
 }

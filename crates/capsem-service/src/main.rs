@@ -1459,7 +1459,7 @@ impl ServiceState {
         Ok(self.asset_supervisor.current_base_assets())
     }
 
-    async fn ensure_current_profile_assets_ready(&self) -> Result<()> {
+    async fn ensure_current_profile_assets_ready(&self) -> Result<AssetHealth> {
         self.asset_supervisor.ensure_assets_once().await;
         let health = self.asset_supervisor.snapshot();
         if !health.ready {
@@ -1470,14 +1470,14 @@ impl ServiceState {
                 health.error.unwrap_or_else(|| "none".to_string())
             ));
         }
-        Ok(())
+        Ok(health)
     }
 
     async fn ensure_selected_profile_assets_ready(
         &self,
         profile_id: Option<&str>,
         profile_revision: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<AssetHealth> {
         if profile_id.is_none() && profile_revision.is_none() {
             return self.ensure_current_profile_assets_ready().await;
         }
@@ -1506,7 +1506,7 @@ impl ServiceState {
                 health.error.unwrap_or_else(|| "none".to_string())
             ));
         }
-        Ok(())
+        Ok(health)
     }
 
     fn asset_health_snapshot(&self) -> AssetHealth {
@@ -2255,10 +2255,18 @@ fn ensure_fork_profile_pin_matches_source(
 /// on this; everything else (incl. `Other`) bubbles up unchanged.
 #[derive(Debug)]
 enum ProvisionAttemptOutcome {
-    Ready { uds_path: PathBuf },
-    StillBootingTimedOut { uds_path: PathBuf }, // 5s envelope hit; treat as success per pre-existing contract
+    Ready {
+        uds_path: PathBuf,
+        asset_health: AssetHealth,
+    },
+    StillBootingTimedOut {
+        uds_path: PathBuf,
+        asset_health: AssetHealth,
+    }, // 5s envelope hit; treat as success per pre-existing contract
     LaunchdTransient,
-    BootCrash { tail: String },
+    BootCrash {
+        tail: String,
+    },
     ProvisionError(anyhow::Error),
 }
 
@@ -2267,7 +2275,10 @@ enum ProvisionAttemptOutcome {
 /// retry-routing can be unit-tested without spawning a real VM.
 #[derive(Debug)]
 enum AttemptDecision {
-    Succeed(PathBuf),
+    Succeed {
+        uds_path: PathBuf,
+        asset_health: AssetHealth,
+    },
     BailWithError(AppError),
     RetryAfterCleanup,
 }
@@ -2278,10 +2289,17 @@ enum AttemptDecision {
 /// match the pre-refactor handle_provision response shape.
 fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> AttemptDecision {
     match outcome {
-        ProvisionAttemptOutcome::Ready { uds_path }
-        | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => {
-            AttemptDecision::Succeed(uds_path)
+        ProvisionAttemptOutcome::Ready {
+            uds_path,
+            asset_health,
         }
+        | ProvisionAttemptOutcome::StillBootingTimedOut {
+            uds_path,
+            asset_health,
+        } => AttemptDecision::Succeed {
+            uds_path,
+            asset_health,
+        },
         ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
         ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2382,7 +2400,10 @@ async fn handle_provision(
                 error!(id, "provision failed: {e}");
             }
             match classify_attempt_decision(outcome, &id) {
-                AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
+                AttemptDecision::Succeed {
+                    uds_path,
+                    asset_health,
+                } => Some(Ok((uds_path, asset_health))),
                 AttemptDecision::RetryAfterCleanup => None, // poll_until retries
                 AttemptDecision::BailWithError(err) => Some(Err(err)),
             }
@@ -2391,10 +2412,12 @@ async fn handle_provision(
     .await;
 
     match result {
-        Ok(Ok(uds_path)) => Ok(Json(ProvisionResponse {
+        Ok(Ok((uds_path, asset_health))) => Ok(Json(provision_response_for_instance(
+            &state,
             id,
-            uds_path: Some(uds_path),
-        })),
+            uds_path,
+            Some(asset_health),
+        ))),
         Ok(Err(app_err)) => Err(app_err),
         Err(timed_out) => {
             // Exhausted retries on launchd transient. Surface the most
@@ -2422,6 +2445,39 @@ async fn handle_provision(
     }
 }
 
+fn provision_response_for_instance(
+    state: &Arc<ServiceState>,
+    id: String,
+    uds_path: PathBuf,
+    asset_health: Option<AssetHealth>,
+) -> ProvisionResponse {
+    let profile_pin = {
+        let instances = state.instances.lock().unwrap();
+        instances
+            .get(&id)
+            .and_then(|instance| instance.profile_pin.clone())
+    };
+    let profile_id = profile_pin.as_ref().map(|pin| pin.profile_id.clone());
+    let profile_revision = profile_pin
+        .as_ref()
+        .and_then(|pin| pin.profile_revision.clone());
+    let profile_status = {
+        let settings = state.current_service_settings();
+        let catalog = load_vm_profile_catalog_snapshot(&settings);
+        Some(vm_profile_status(profile_pin.as_ref(), &catalog))
+    };
+
+    ProvisionResponse {
+        id,
+        uds_path: Some(uds_path),
+        profile_id,
+        profile_revision,
+        profile_status,
+        profile_pin,
+        asset_health: asset_health.or_else(|| Some(state.asset_health_snapshot())),
+    }
+}
+
 /// Run one provision attempt: spawn capsem-process, then poll up to 5s
 /// for either the `.ready` sentinel or a crash-before-ready signal.
 /// Pure bookkeeping; no retry logic here -- caller drives the retry
@@ -2438,17 +2494,20 @@ async fn provision_attempt(
     profile_id: Option<String>,
     profile_revision: Option<String>,
 ) -> ProvisionAttemptOutcome {
-    if from.is_none() {
-        if let Err(e) = state
+    let asset_health = if from.is_none() {
+        match state
             .ensure_selected_profile_assets_ready(
                 profile_id.as_deref(),
                 profile_revision.as_deref(),
             )
             .await
         {
-            return ProvisionAttemptOutcome::ProvisionError(e);
+            Ok(health) => health,
+            Err(e) => return ProvisionAttemptOutcome::ProvisionError(e),
         }
-    }
+    } else {
+        state.asset_health_snapshot()
+    };
     let state_clone = Arc::clone(state);
     let id_owned = id.to_string();
     let version = state.current_version.clone();
@@ -2490,7 +2549,10 @@ async fn provision_attempt(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if ready_path.exists() {
-            return ProvisionAttemptOutcome::Ready { uds_path };
+            return ProvisionAttemptOutcome::Ready {
+                uds_path,
+                asset_health,
+            };
         }
         let still_alive = state.instances.lock().unwrap().contains_key(id);
         if !still_alive {
@@ -2519,7 +2581,10 @@ async fn provision_attempt(
             };
         }
         if tokio::time::Instant::now() >= deadline {
-            return ProvisionAttemptOutcome::StillBootingTimedOut { uds_path };
+            return ProvisionAttemptOutcome::StillBootingTimedOut {
+                uds_path,
+                asset_health,
+            };
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -7470,10 +7535,12 @@ async fn handle_resume(
                                 ));
                             }
                             state.clear_resume_checkpoint(&cold_id);
-                            return Ok(Json(ProvisionResponse {
-                                id: cold_id,
-                                uds_path: Some(cold_uds_path),
-                            }));
+                            return Ok(Json(provision_response_for_instance(
+                                &state,
+                                cold_id,
+                                cold_uds_path,
+                                None,
+                            )));
                         }
                         Err(cold_e) => {
                             error!(
@@ -7495,10 +7562,9 @@ async fn handle_resume(
                 ));
             }
             state.clear_resume_checkpoint(&id);
-            Ok(Json(ProvisionResponse {
-                id,
-                uds_path: Some(uds_path),
-            }))
+            Ok(Json(provision_response_for_instance(
+                &state, id, uds_path, None,
+            )))
         }
         Err(e) => {
             error!(name, "resume failed: {e}");

@@ -7,11 +7,13 @@ catalog/revision routes, profile CRUD/resolve, skills, MCP servers,
 rules/evaluate, confirm-pending read, profile-selected VM create response
 payloads, `/status` profile/asset provenance, `/setup/assets` profile-scoped
 download progress, `/debug/report` profile asset provenance, exact typed-error
-passthrough, and service debug-report gateway runtime mismatch diagnostics.
+passthrough, service debug-report gateway runtime mismatch diagnostics, and a
+live service/gateway/VM proof that `POST /provision` with a selected profile
+downloads that profile's verified assets before boot, execs through the
+gateway, and reports the pinned profile revision through `/info/{vm_id}`.
 
-S08 is not closed yet. Remaining scope is the live service/VM proof for
-profile-selected HTTP create/download/boot, broader adversarial failure cases,
-and the S15 confirm resolution routes/stream when S15 makes those routes real.
+S08 is not closed yet. Remaining scope is broader adversarial failure cases and
+the S15 confirm resolution routes/stream when S15 makes those routes real.
 
 ## Goal
 
@@ -66,22 +68,28 @@ state and profile-backed VM creation.
   roundtrip (`POST /rules` -> `POST /rules/evaluate` -> assert same
   `matched_rule_id` comes back); and HTTP VM create response echoing selected
   `profile_id`, `profile_revision`, profile pin hashes, and asset state.
-  Remaining: prove a real service HTTP create with `profile_id` triggers the
-  profile-scoped first-use download and boots with the selected revision.
+  The live S08 slice now starts real `capsem-service` plus real
+  `capsem-gateway` against a Profile V2 asset fixture, proves `POST
+  /provision` with explicit `profile_id`/`profile_revision` triggers
+  profile-scoped first-use asset reconciliation, waits for gateway exec-ready,
+  execs inside the VM, and verifies `/info/{vm_id}` reports the same pinned
+  profile identity/status.
 - Adversarial: malformed requests, locked mutations (built-in rule
   delete attempt, profile lock), gateway/service mismatch, revoked profile,
   stale catalog, incompatible revision, interrupted download, and repeated
   create requests while a download is already in progress.
-- E2E/VM: session created through HTTP uses selected profile revision, downloads
-  missing verified assets on first use, and pins profile id/revision plus asset
-  hashes before boot.
+- E2E/VM: session created through HTTP now uses the selected profile revision,
+  downloads missing verified assets on first use, boots, execs through the
+  gateway, and pins profile id/revision plus asset hashes before boot.
   Rules API + S15 resolve E2E is the prerequisite that un-defers
   the [S06-pre slice 6f capsem-doctor ask probe](tracker.md#slice-6f---exit-tests).
 - Telemetry: covers gateway `/status` profile identity and asset provenance
-  preservation, `/debug/report` Profile V2 asset provenance preservation, and
+  preservation, `/debug/report` Profile V2 asset provenance preservation,
   service debug-report issues for invalid/stale/mismatched gateway runtime
-  files. Remaining: richer debug report package/catalog/VM-pin summaries across
-  live profile-selected HTTP create flows.
+  files, production `ProvisionResponse` profile identity/revision/status/pin
+  echo, and `/info/{vm_id}` profile-state echo after live HTTP boot. Remaining:
+  richer debug report package/catalog/VM-pin summaries across live
+  profile-selected HTTP create flows.
 - Performance: not primary; `POST /rules/evaluate` must remain a
   read-only operation that does not block concurrent rule writes
   (same `Arc<PolicyConfig>` snapshot contract as the UDS side). Profile catalog
@@ -95,10 +103,17 @@ state and profile-backed VM creation.
 - `cargo build -p capsem-gateway`
 - `cargo test -p capsem-gateway`
 - `cargo test -p capsem-service debug_report -- --nocapture`
+- `cargo test -p capsem-service provision_response_roundtrip -- --nocapture`
+- `cargo test -p capsem-service classify_ -- --nocapture`
+- `cargo test -p capsem-service provision_attempt_reconciles_ -- --nocapture`
 - `uv run pytest tests/capsem-gateway/test_gw_profile_v2_surface.py -q`
 - `uv run pytest tests/capsem-gateway/test_gw_profile_v2_surface.py tests/capsem-gateway/test_gw_proxy.py tests/capsem-gateway/test_gw_proxy_advanced.py tests/capsem-gateway/test_gw_status.py tests/capsem-gateway/test_gw_status_advanced.py tests/capsem-gateway/test_gw_auth.py -q`
+- `uv run pytest tests/capsem-gateway/test_gw_e2e.py::TestGatewayE2E::test_profile_selected_create_download_boot_via_gateway -q -s`
+- `uv run pytest tests/capsem-gateway/test_gw_e2e.py -q -s`
 
 Full `uv run pytest tests/capsem-gateway -q` is not an S08 closeout yet: the
 mock/contract gateway suites pass, but the full directory currently has live
 VM/MITM failures waiting for exec-ready or sandbox creation in the real
-environment. Keep those visible until the live HTTP VM proof is closed.
+environment. Keep those visible until the remaining live gateway suites are
+ported to the same Profile V2 asset-backed fixture or split into explicit
+environment-gated tests.

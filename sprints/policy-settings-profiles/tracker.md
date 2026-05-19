@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-19, this branch is
-  expected to be `76 ahead / 0 behind` `origin/main` in this worktree after the
-  S07c live profile-asset boot proof commit. The rescue
+  expected to be `90 ahead / 0 behind` `origin/main` in this worktree after the
+  S08 live profile-selected gateway boot proof commit. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -170,8 +170,11 @@ a valid claim -- mark it `[ ]` instead.
     payloads, `/status` profile/asset provenance, `/setup/assets`
     profile-scoped download progress, `/debug/report` Profile V2 asset
     provenance, exact typed-error passthrough, and service debug-report gateway
-    runtime mismatch diagnostics. Remaining: live service/VM HTTP
-    create-download-boot proof, broader adversarial typed-error coverage, and
+    runtime mismatch diagnostics. The live HTTP proof now starts real
+    capsem-service plus real capsem-gateway against a Profile V2 asset fixture,
+    proves selected-profile `/provision` downloads verified assets before boot,
+    execs through the gateway, and reports the same pinned profile through
+    `/info/{vm_id}`. Remaining: broader adversarial typed-error coverage and
     S15 confirm resolution/stream once S15 makes that production route real.
 18. [ ] [S09 - CLI integration](S09-cli-integration.md)
 19. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
@@ -404,7 +407,8 @@ the commit history.
 
 ## Coverage ledger (sprint-wide rollup)
 
-Current as of 2026-05-16 after S06 / S06a / S06b closed.
+Current as of 2026-05-19 after the S08 live profile-selected gateway boot
+proof slice.
 
 - **Unit/contract**: `settings_profiles` carries **118** focused
   tests (resolver, ownership, priority validation, nestable
@@ -487,7 +491,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   fork-plus-exec same-profile IPC coverage, profile payload-hash pin
   enforcement, Profile V2 skills and confirm listing through the live service
   UDS HTTP harness, chained S07 profile/skills/MCP/rules route proof,
-  mitm_proxy integration test for model.request rewrite redaction.
+  mitm_proxy integration test for model.request rewrite redaction. S08 live
+  gateway coverage now starts real service/gateway processes from a Profile V2
+  asset fixture, creates a VM with explicit profile id/revision over HTTP,
+  waits for exec-ready, execs inside the VM, and verifies `/info` echoes the
+  same pinned profile/status.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -513,7 +521,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   the Profile V2 reconciler before process spawn plus a live E2E proof that
   `capsem update --assets` reconciles real profile-declared VM assets into an
   empty cache, boots a real VM, execs inside it, and preserves the installed
-  profile revision pin in `capsem info --json`.
+  profile revision pin in `capsem info --json`. S08 now adds the equivalent
+  HTTP gateway proof for selected-profile create/download/boot/exec and
+  `/info` profile-state echo.
 - **Telemetry**: debug report exposes
   profile/settings/rule provenance and now the resolver trace
   summary (event count, corp event count, locked paths,
