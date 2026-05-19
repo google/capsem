@@ -11,9 +11,13 @@ passthrough, service debug-report gateway runtime mismatch diagnostics, and a
 live service/gateway/VM proof that `POST /provision` with a selected profile
 downloads that profile's verified assets before boot, execs through the
 gateway, and reports the pinned profile revision through `/info/{vm_id}`.
+Adversarial typed-error coverage now spans malformed profile create, locked
+skill delete, locked MCP server delete, built-in rule delete, invalid
+rules/evaluate callback, asset cleanup while updating, and revoked revision
+install.
 
-S08 is not closed yet. Remaining scope is broader adversarial failure cases and
-the S15 confirm resolution routes/stream when S15 makes those routes real.
+S08 is not closed yet. Remaining scope is the S15 confirm resolution routes and
+stream when S15 makes those production routes real.
 
 ## Goal
 
@@ -77,7 +81,12 @@ state and profile-backed VM creation.
 - Adversarial: malformed requests, locked mutations (built-in rule
   delete attempt, profile lock), gateway/service mismatch, revoked profile,
   stale catalog, incompatible revision, interrupted download, and repeated
-  create requests while a download is already in progress.
+  create requests while a download is already in progress. The current gateway
+  slice locks down exact status/body passthrough for malformed profile create,
+  locked inherited skill deletion, locked inherited MCP server deletion, locked
+  built-in rule deletion, invalid `POST /rules/evaluate` callback, asset
+  cleanup while the Profile V2 downloader is updating, and revoked profile
+  revision install.
 - E2E/VM: session created through HTTP now uses the selected profile revision,
   downloads missing verified assets on first use, boots, execs through the
   gateway, and pins profile id/revision plus asset hashes before boot.

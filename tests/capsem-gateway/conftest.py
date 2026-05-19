@@ -96,6 +96,11 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     def _send_error(self, status, msg):
         self._send_json({"error": msg}, status=status)
 
+    def _send_profile_v2_error(self, status, **data):
+        payload = {"mode": "settings_profiles_v2"}
+        payload.update(data)
+        self._send_json(payload, status=status)
+
     def do_GET(self):
         parsed = urlparse(self.clean_path)
         if self.clean_path == "/list" or self.clean_path.startswith("/list?"):
@@ -409,6 +414,14 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             })
         elif self.clean_path == "/profiles":
             data = json.loads(body) if body else {}
+            if not data.get("id"):
+                self._send_profile_v2_error(
+                    400,
+                    error="profile validation failed: id is required",
+                    code="profile_invalid",
+                    field="id",
+                )
+                return
             self._send_json({
                 "mode": "settings_profiles_v2",
                 "profile": data,
@@ -514,6 +527,15 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             MOCK_RULES[rule_id] = rule
             self._send_json(rule)
         elif parsed.path == "/rules/evaluate":
+            data = json.loads(body) if body else {}
+            if data.get("callback") == "bad.callback":
+                self._send_profile_v2_error(
+                    400,
+                    error="unsupported policy callback 'bad.callback'",
+                    code="rule_evaluate_invalid_callback",
+                    callback="bad.callback",
+                )
+                return
             self._send_json({
                 "mode": "settings_profiles_v2",
                 "profile_id": "everyday-work",
@@ -554,6 +576,13 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
         elif self.clean_path == "/reload-config":
             self._send_json({"ok": True})
+        elif self.clean_path == "/setup/assets/cleanup":
+            self._send_profile_v2_error(
+                409,
+                error="asset cleanup is blocked while assets are updating; retry once assets are ready",
+                code="asset_cleanup_blocked",
+                asset_state="updating",
+            )
         elif self.clean_path == "/echo":
             # Echo back the request body for proxy testing
             self.send_response(200)
@@ -582,6 +611,15 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True})
         elif self.clean_path.startswith("/images/"):
             self._send_json({"ok": True})
+        elif self.clean_path.startswith("/skills/dev-sprint"):
+            self._send_profile_v2_error(
+                409,
+                error="skill_is_locked: skill 'dev-sprint' is inherited from profile 'everyday-work'",
+                code="skill_is_locked",
+                profile_id="everyday-work",
+                skill_id="dev-sprint",
+                kind="enabled",
+            )
         elif self.clean_path.startswith("/skills/"):
             skill_id = self.clean_path.split("/skills/", 1)[1].split("?")[0]
             MOCK_SKILLS.discard(skill_id)
@@ -592,6 +630,14 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 "kind": "enabled",
                 "removed": True,
             })
+        elif self.clean_path.startswith("/mcp/connectors/builtin-local"):
+            self._send_profile_v2_error(
+                409,
+                error="server_is_locked: MCP server 'builtin-local' is inherited from profile 'everyday-work'",
+                code="server_is_locked",
+                profile_id="everyday-work",
+                connector_id="builtin-local",
+            )
         elif self.clean_path.startswith("/mcp/connectors/"):
             connector_id = self.clean_path.split("/mcp/connectors/", 1)[1].split("?")[0]
             MOCK_MCP_CONNECTORS.pop(connector_id, None)
@@ -601,6 +647,14 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 "connector_id": connector_id,
                 "removed": True,
             })
+        elif self.clean_path.startswith("/rules/security.rules.http.default_read"):
+            self._send_profile_v2_error(
+                409,
+                error="rule_is_builtin: rule 'security.rules.http.default_read' is inherited from profile 'everyday-work'",
+                code="rule_is_builtin",
+                profile_id="everyday-work",
+                rule_id="security.rules.http.default_read",
+            )
         elif self.clean_path.startswith("/rules/"):
             rule_id = self.clean_path.split("/rules/", 1)[1].split("?")[0]
             MOCK_RULES.pop(rule_id, None)

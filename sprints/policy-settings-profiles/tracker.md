@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-19, this branch is
-  expected to be `90 ahead / 0 behind` `origin/main` in this worktree after the
-  S08 live profile-selected gateway boot proof commit. The rescue
+  expected to be `91 ahead / 0 behind` `origin/main` in this worktree after the
+  S08 adversarial typed-error gateway proof commit. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -174,8 +174,11 @@ a valid claim -- mark it `[ ]` instead.
     capsem-service plus real capsem-gateway against a Profile V2 asset fixture,
     proves selected-profile `/provision` downloads verified assets before boot,
     execs through the gateway, and reports the same pinned profile through
-    `/info/{vm_id}`. Remaining: broader adversarial typed-error coverage and
-    S15 confirm resolution/stream once S15 makes that production route real.
+    `/info/{vm_id}`. Adversarial typed-error coverage now proves exact
+    status/body passthrough for malformed profile create, locked skill/MCP/rule
+    mutations, invalid rule evaluation, asset cleanup while updating, and
+    revoked revision install. Remaining: S15 confirm resolution/stream once S15
+    makes that production route real.
 18. [ ] [S09 - CLI integration](S09-cli-integration.md)
 19. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 20. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
@@ -512,6 +515,10 @@ proof slice.
   skills fail with `skill_exists`, inherited deletes fail with
   `skill_is_locked`, and enabled/disabled transitions remove contradictory
   state. Model.request rewrite: unsupported target, no match, non-UTF-8 body.
+  S08 gateway typed-error coverage proves HTTP preserves exact status/body for
+  malformed profile create, locked inherited skill deletion, locked inherited
+  MCP server deletion, locked built-in rule deletion, invalid rules/evaluate
+  callback, asset cleanup while updating, and revoked profile revision install.
 - **E2E/VM**: covered for the S03 service-settings asset
   runtime slice (real service + real gateway + malformed TOML
   startup + VM boot/exec) and the S06a mitm_proxy integration

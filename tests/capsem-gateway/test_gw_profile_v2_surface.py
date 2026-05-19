@@ -243,3 +243,98 @@ def test_gateway_preserves_profile_v2_typed_error_status_and_body(gw_client):
         "revision": "2026.0301.1",
         "status": "revoked",
     }
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "expected_status", "expected_body"),
+    [
+        (
+            "POST",
+            "/profiles",
+            {"version": 1, "name": "Missing ID"},
+            400,
+            {
+                "mode": "settings_profiles_v2",
+                "error": "profile validation failed: id is required",
+                "code": "profile_invalid",
+                "field": "id",
+            },
+        ),
+        (
+            "DELETE",
+            "/skills/dev-sprint?kind=enabled",
+            None,
+            409,
+            {
+                "mode": "settings_profiles_v2",
+                "error": "skill_is_locked: skill 'dev-sprint' is inherited from profile 'everyday-work'",
+                "code": "skill_is_locked",
+                "profile_id": "everyday-work",
+                "skill_id": "dev-sprint",
+                "kind": "enabled",
+            },
+        ),
+        (
+            "DELETE",
+            "/mcp/connectors/builtin-local",
+            None,
+            409,
+            {
+                "mode": "settings_profiles_v2",
+                "error": "server_is_locked: MCP server 'builtin-local' is inherited from profile 'everyday-work'",
+                "code": "server_is_locked",
+                "profile_id": "everyday-work",
+                "connector_id": "builtin-local",
+            },
+        ),
+        (
+            "DELETE",
+            "/rules/security.rules.http.default_read",
+            None,
+            409,
+            {
+                "mode": "settings_profiles_v2",
+                "error": "rule_is_builtin: rule 'security.rules.http.default_read' is inherited from profile 'everyday-work'",
+                "code": "rule_is_builtin",
+                "profile_id": "everyday-work",
+                "rule_id": "security.rules.http.default_read",
+            },
+        ),
+        (
+            "POST",
+            "/rules/evaluate",
+            {"callback": "bad.callback", "subject": {}},
+            400,
+            {
+                "mode": "settings_profiles_v2",
+                "error": "unsupported policy callback 'bad.callback'",
+                "code": "rule_evaluate_invalid_callback",
+                "callback": "bad.callback",
+            },
+        ),
+        (
+            "POST",
+            "/setup/assets/cleanup",
+            {},
+            409,
+            {
+                "mode": "settings_profiles_v2",
+                "error": "asset cleanup is blocked while assets are updating; retry once assets are ready",
+                "code": "asset_cleanup_blocked",
+                "asset_state": "updating",
+            },
+        ),
+    ],
+)
+def test_gateway_preserves_profile_v2_adversarial_typed_errors(
+    gw_client,
+    method,
+    path,
+    body,
+    expected_status,
+    expected_body,
+):
+    status, raw_body = gw_client.request_status_and_body(method, path, body)
+
+    assert status == expected_status
+    assert json.loads(raw_body) == expected_body

@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciles the selected profile's verified VM assets before boot, execs
   through the gateway, and echoes the pinned profile state through
   `/info/{vm_id}`.
+- Added S08 adversarial HTTP gateway coverage proving Profile V2 typed-error
+  status/body passthrough for malformed profile creation, locked
+  skill/MCP/rule mutations, invalid rule evaluation, asset cleanup while
+  updating, and revoked profile revision install.
 - Added Profile V2 settings/profile provenance to the redacted service debug
   report, including selected profile, profile roots, effective VM summary,
   resolver trace summary, and credential-id-only reporting.
