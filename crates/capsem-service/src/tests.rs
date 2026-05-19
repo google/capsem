@@ -812,7 +812,8 @@ async fn handle_debug_report_returns_pasteable_text() {
     assert!(report.text.contains("Capsem Debug Report"));
     assert!(report.text.contains("capsem_version: 0.0.0"));
     assert!(report.text.contains("running_vm_count: 1"));
-    assert!(report.text.contains("manifest_present: false"));
+    assert!(report.text.contains("source: profile_v2_asset_health"));
+    assert!(report.text.contains("profile_asset_health_present: true"));
 }
 
 #[tokio::test]

@@ -181,7 +181,10 @@ fn status_report_groups_issue_codes_by_install_surface() {
             name: "capsem-tray",
             path: "/tmp/capsem-tray".into(),
         },
-        super::HealthIssue::ManifestMissing,
+        super::HealthIssue::ServiceAssetError {
+            state: "error".to_string(),
+            error: Some("profile assets unavailable".to_string()),
+        },
         super::HealthIssue::GatewayDown {
             port: "19222".into(),
         },
@@ -193,7 +196,10 @@ fn status_report_groups_issue_codes_by_install_surface() {
     let report = super::status_report_from_parts(&service, &issues);
     assert_eq!(report.state, "blocked");
     assert_eq!(report.checks.host.issue_codes, vec!["host_binary_missing"]);
-    assert_eq!(report.checks.assets.issue_codes, vec!["manifest_missing"]);
+    assert_eq!(
+        report.checks.assets.issue_codes,
+        vec!["service_asset_error"]
+    );
     assert_eq!(report.checks.gateway.issue_codes, vec!["gateway_down"]);
     assert_eq!(report.checks.setup.issue_codes, vec!["setup_incomplete"]);
     assert_eq!(report.checks.service_endpoint.state, "ok");
@@ -469,15 +475,11 @@ fn version_output_parser_uses_second_token() {
 }
 
 #[test]
-fn asset_check_reports_missing_manifest() {
+fn asset_check_accepts_empty_profile_v2_assets_directory() {
     let dir = tempfile::tempdir().unwrap();
 
     let issues = super::check_assets_dir(dir.path());
-    assert!(matches!(
-        issues.as_slice(),
-        [super::HealthIssue::ManifestMissing]
-    ));
-    assert_eq!(issues[0].code().as_str(), "manifest_missing");
+    assert!(issues.is_empty(), "unexpected issues: {issues:?}");
 }
 
 #[test]
@@ -736,26 +738,24 @@ fn debug_report_payload_prefers_service_json_field() {
 }
 
 #[test]
-fn diagnostic_manifest_loader_rejects_unsigned_manifest() {
+fn asset_directory_check_ignores_legacy_manifest_files() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
 
-    let err = super::load_diagnostic_manifest_for_assets(dir.path()).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("signature missing"),
-        "unexpected error: {err:#}"
-    );
+    let issues = super::check_assets_dir(dir.path());
+
+    assert!(issues.is_empty(), "unexpected issues: {issues:?}");
 }
 
 #[test]
-fn diagnostic_manifest_loader_rejects_invalid_signature() {
+fn asset_directory_check_only_reports_missing_directory() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
-    std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
+    let missing = dir.path().join("missing-assets");
 
-    let err = super::load_diagnostic_manifest_for_assets(dir.path()).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("verify"),
-        "unexpected error: {err:#}"
-    );
+    let issues = super::check_assets_dir(&missing);
+
+    assert!(matches!(
+        issues.as_slice(),
+        [super::HealthIssue::AssetsDirMissing]
+    ));
 }

@@ -134,12 +134,9 @@ pub fn saved_vm_dependency_issues(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use capsem_core::asset_manager::{
-        cleanup_unused_assets_preserving, AssetRelease, AssetsSection, BinariesSection, ManifestV2,
-    };
+    use capsem_core::asset_manager::cleanup_unreferenced_assets_preserving;
     use capsem_core::settings_profiles::ProfileRootSettings;
 
     use super::*;
@@ -189,29 +186,6 @@ mod tests {
             last_error: None,
             checkpoint_path: None,
             env: None,
-        }
-    }
-
-    fn empty_manifest() -> ManifestV2 {
-        ManifestV2 {
-            format: 2,
-            assets: AssetsSection {
-                current: "2026.0520.1".to_string(),
-                releases: HashMap::from([(
-                    "2026.0520.1".to_string(),
-                    AssetRelease {
-                        date: String::new(),
-                        deprecated: false,
-                        deprecated_date: None,
-                        min_binary: String::new(),
-                        arches: HashMap::new(),
-                    },
-                )]),
-            },
-            binaries: BinariesSection {
-                current: "1.0.0".to_string(),
-                releases: HashMap::new(),
-            },
         }
     }
 
@@ -283,8 +257,7 @@ mod tests {
         );
 
         let retention = cleanup_retention_asset_filenames(&registry, &roots).unwrap();
-        let removed =
-            cleanup_unused_assets_preserving(&assets_dir, &empty_manifest(), retention).unwrap();
+        let removed = cleanup_unreferenced_assets_preserving(&assets_dir, retention).unwrap();
 
         assert_eq!(removed, vec![disposable]);
         assert!(assets_dir.join("vmlinuz-aaaaaaaaaaaaaaaa").exists());

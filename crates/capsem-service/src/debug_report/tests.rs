@@ -1,72 +1,24 @@
 use super::*;
 
-fn manifest_with_asset_hashes(
-    asset_version: &str,
-    binary_version: &str,
-    kernel_hash: &str,
-    initrd_hash: &str,
-    rootfs_hash: &str,
-) -> capsem_core::asset_manager::ManifestV2 {
-    let text = format!(
-        r#"{{
-    "format": 2,
-    "assets": {{
-        "current": "{asset_version}",
-        "releases": {{
-            "{asset_version}": {{
-                "date": "2026-05-12",
-                "deprecated": false,
-                "min_binary": "1.0.0",
-                "arches": {{
-                    "arm64": {{
-                        "vmlinuz": {{ "hash": "{kernel_hash}", "size": 6 }},
-                        "initrd.img": {{ "hash": "{initrd_hash}", "size": 6 }},
-                        "rootfs.squashfs": {{ "hash": "{rootfs_hash}", "size": 6 }}
-                    }}
-                }}
-            }}
-        }}
-    }},
-    "binaries": {{
-        "current": "{binary_version}",
-        "releases": {{
-            "{binary_version}": {{
-                "date": "2026-05-12",
-                "deprecated": false,
-                "min_assets": "{asset_version}"
-            }}
-        }}
-    }}
-}}"#
-    );
-    capsem_core::asset_manager::ManifestV2::from_json(&text).unwrap()
-}
-
-fn write_hash_named_asset(dir: &Path, logical: &str, bytes: &[u8]) -> String {
-    let tmp = dir.join(logical.replace('/', "-"));
-    std::fs::write(&tmp, bytes).unwrap();
-    let hash = capsem_core::asset_manager::hash_file(&tmp).unwrap();
-    let final_path = dir.join(capsem_core::asset_manager::hash_filename(logical, &hash));
-    std::fs::rename(tmp, final_path).unwrap();
-    hash
+fn ready_asset_health() -> crate::api::AssetHealth {
+    crate::api::AssetHealth {
+        ready: true,
+        state: crate::api::AssetHealthState::Ready,
+        version: Some("everyday-work@2026.0520.1".to_string()),
+        arch: Some("arm64".to_string()),
+        missing: Vec::new(),
+        progress: None,
+        error: None,
+        retry_count: 0,
+        retryable: false,
+        saved_vm_dependencies: Vec::new(),
+        checked_at_unix_secs: Some(1_779_264_000),
+    }
 }
 
 #[test]
-fn attributes_the_installed_initrd() {
+fn attributes_profile_v2_asset_health() {
     let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("assets");
-    let arch_dir = assets_dir.join("arm64");
-    std::fs::create_dir_all(&arch_dir).unwrap();
-    let kernel_hash = write_hash_named_asset(&arch_dir, "vmlinuz", b"kernel");
-    let initrd_hash = write_hash_named_asset(&arch_dir, "initrd.img", b"initd!");
-    let rootfs_hash = write_hash_named_asset(&arch_dir, "rootfs.squashfs", b"rootfs");
-    let manifest = manifest_with_asset_hashes(
-        "2026.0512.1",
-        "1.1.1778542197",
-        &kernel_hash,
-        &initrd_hash,
-        &rootfs_hash,
-    );
 
     let report = build_debug_report(DebugReportInput {
         generated_at: "2026-05-12T12:00:00Z".into(),
@@ -76,9 +28,9 @@ fn attributes_the_installed_initrd() {
         platform: "macos/aarch64".into(),
         capsem_home: dir.path().join(".capsem"),
         run_dir: dir.path().join(".capsem/run"),
-        assets_dir: assets_dir.clone(),
+        assets_dir: dir.path().join("assets"),
         asset_locations: None,
-        manifest: Some(manifest),
+        asset_health: Some(ready_asset_health()),
         running_vm_count: 1,
         total_vm_count: 2,
         status_issues: Vec::new(),
@@ -89,16 +41,13 @@ fn attributes_the_installed_initrd() {
     })
     .unwrap();
 
+    assert!(report.text.contains("source: profile_v2_asset_health"));
+    assert!(report.text.contains("profile_asset_health_present: true"));
+    assert!(report.text.contains("profile_asset_ready: true"));
     assert!(report
         .text
-        .contains("asset_version_for_binary: 2026.0512.1"));
-    assert!(report
-        .text
-        .contains(&format!("initrd_manifest_hash: {initrd_hash}")));
-    assert!(report.text.contains("initrd_path: "));
-    assert!(report
-        .text
-        .contains("initrd_actual_hash_matches_manifest: true"));
+        .contains("profile_asset_version: everyday-work@2026.0520.1"));
+    assert!(report.text.contains("profile_asset_arch: arm64"));
     assert!(report.text.contains("running_vm_count: 1"));
     assert!(report.text.contains("total_vm_count: 2"));
 }
@@ -109,8 +58,7 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
     let capsem_home = dir.path().join(".capsem");
     let run_dir = capsem_home.join("run");
     let assets_dir = capsem_home.join("assets");
-    let arch_dir = assets_dir.join("arm64");
-    std::fs::create_dir_all(&arch_dir).unwrap();
+    std::fs::create_dir_all(&assets_dir).unwrap();
     std::fs::create_dir_all(&run_dir).unwrap();
     std::fs::write(run_dir.join("gateway.port"), "19222\n").unwrap();
     std::fs::write(run_dir.join("gateway.pid"), "4242\n").unwrap();
@@ -140,17 +88,6 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
     std::fs::write(bin_dir.join("capsem"), b"cli").unwrap();
     std::fs::write(bin_dir.join("capsem-service"), b"service").unwrap();
 
-    let kernel_hash = write_hash_named_asset(&arch_dir, "vmlinuz", b"kernel");
-    let initrd_hash = write_hash_named_asset(&arch_dir, "initrd.img", b"initd!");
-    let rootfs_hash = write_hash_named_asset(&arch_dir, "rootfs.squashfs", b"rootfs");
-    let manifest = manifest_with_asset_hashes(
-        "2026.0512.1",
-        "1.1.1778542197",
-        &kernel_hash,
-        &initrd_hash,
-        &rootfs_hash,
-    );
-
     let report = build_debug_report(DebugReportInput {
         generated_at: "2026-05-12T12:00:00Z".into(),
         version: "1.1.1778542197".into(),
@@ -161,7 +98,7 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
         run_dir,
         assets_dir,
         asset_locations: None,
-        manifest: Some(manifest),
+        asset_health: Some(ready_asset_health()),
         running_vm_count: 1,
         total_vm_count: 2,
         status_issues: vec!["Initrd asset is MISSING: ~/.capsem/assets/initrd.img".into()],
@@ -234,16 +171,14 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
         redact_path_for_report(&bin_dir.join("capsem-service"))
     );
     assert!(json["disk"]["capsem_home"]["available_bytes"].is_number());
-    assert_eq!(json["assets"]["manifest"]["assets_current"], "2026.0512.1");
+    assert_eq!(json["assets"]["source"], "profile_v2_asset_health");
+    assert_eq!(json["assets"]["health"]["ready"], true);
+    assert_eq!(json["assets"]["health"]["state"], "ready");
     assert_eq!(
-        json["assets"]["files"]["initrd"]["manifest_hash"],
-        initrd_hash
+        json["assets"]["health"]["version"],
+        "everyday-work@2026.0520.1"
     );
-    assert_eq!(
-        json["assets"]["files"]["initrd"]["actual_hash_matches_manifest"],
-        true
-    );
-    assert_eq!(json["assets"]["files"]["initrd"]["size_bytes"], 6);
+    assert_eq!(json["assets"]["health"]["arch"], "arm64");
 
     let serialized = serde_json::to_string(&json).unwrap();
     assert!(serialized.contains("dns failed for elie.net"));
@@ -266,17 +201,12 @@ fn redacts_home_paths() {
 }
 
 #[test]
-fn missing_assets_are_reported_without_panicking() {
+fn updating_profile_assets_are_reported_without_panicking() {
     let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("assets");
-    let missing_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let manifest = manifest_with_asset_hashes(
-        "2026.0512.1",
-        "1.1.1778542197",
-        missing_hash,
-        missing_hash,
-        missing_hash,
-    );
+    let mut health = ready_asset_health();
+    health.ready = false;
+    health.state = crate::api::AssetHealthState::Updating;
+    health.missing = vec!["initrd.img".to_string(), "rootfs.squashfs".to_string()];
 
     let report = build_debug_report(DebugReportInput {
         generated_at: "2026-05-12T12:00:00Z".into(),
@@ -286,9 +216,9 @@ fn missing_assets_are_reported_without_panicking() {
         platform: "macos/aarch64".into(),
         capsem_home: dir.path().join(".capsem"),
         run_dir: dir.path().join(".capsem/run"),
-        assets_dir,
+        assets_dir: dir.path().join("assets"),
         asset_locations: None,
-        manifest: Some(manifest),
+        asset_health: Some(health),
         running_vm_count: 0,
         total_vm_count: 0,
         status_issues: Vec::new(),
@@ -299,10 +229,9 @@ fn missing_assets_are_reported_without_panicking() {
     })
     .unwrap();
 
-    assert!(report.text.contains("initrd_exists: false"));
     assert!(report
         .text
-        .contains("initrd_actual_hash_matches_manifest: false"));
+        .contains("profile_asset_missing: initrd.img,rootfs.squashfs"));
 }
 
 #[test]
@@ -355,7 +284,7 @@ fn includes_settings_profiles_without_leaking_credentials() {
         run_dir: dir.path().join(".capsem/run"),
         assets_dir: dir.path().join("assets"),
         asset_locations: Some(asset_locations),
-        manifest: None,
+        asset_health: None,
         running_vm_count: 0,
         total_vm_count: 0,
         status_issues: Vec::new(),
@@ -411,7 +340,7 @@ fn includes_settings_profiles_load_error() {
         run_dir: dir.path().join(".capsem/run"),
         assets_dir: dir.path().join("assets"),
         asset_locations: None,
-        manifest: None,
+        asset_health: None,
         running_vm_count: 0,
         total_vm_count: 0,
         status_issues: Vec::new(),
@@ -455,7 +384,7 @@ fn settings_profiles_section_includes_resolver_trace_summary_when_present() {
         run_dir: dir.path().join(".capsem/run"),
         assets_dir: dir.path().join("assets"),
         asset_locations: None,
-        manifest: None,
+        asset_health: None,
         running_vm_count: 0,
         total_vm_count: 0,
         status_issues: Vec::new(),

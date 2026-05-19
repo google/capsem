@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `70 ahead / 0 behind` `origin/main` in this worktree after the
-  S07c manual asset reconcile/update slice. The rescue
+  expected to be `71 ahead / 0 behind` `origin/main` in this worktree after the
+  S07c legacy asset-manifest removal commit. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -120,10 +120,11 @@ a valid claim -- mark it `[ ]` instead.
     asset hashes. Remaining work adds manifest source fetch/scheduling, richer
     catalog clients/debug detail, and first-use selected-profile proof.
 15. [~] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
-    -- manual service reconcile endpoint, `capsem update --assets` service
-    trigger, checked-at status propagation, and structured lifecycle logs have
-    landed. Remaining work: debug provenance, duplicate-download/cleanup
-    concurrency proof, and VM-create integration.
+  -- manual service reconcile endpoint, `capsem update --assets` service
+  trigger, checked-at status propagation, structured lifecycle logs, service
+  debug Profile V2 asset-health reporting, and old Rust asset-manifest
+  parser/loader/downloader cleanup have landed. Remaining work:
+  duplicate-download/cleanup concurrency proof and VM-create integration.
 16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -549,6 +550,17 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   status_report_preserves_service_asset_updating_state` **1** passed; full
   package proof: `cargo test -p capsem-service` **110 + 160** passed and
   `cargo test -p capsem` **242** passed;
+  after the old Rust asset-manifest removal pass, `cargo test -p capsem-core`
+  **1575** passed / 0 failed / 1 ignored plus integration/doc tests passed,
+  `cargo test -p capsem-core asset_manager::tests` **5** passed,
+  `cargo test -p capsem status::tests` **29** passed, `cargo test -p
+  capsem` **242** passed, `cargo test -p capsem-service debug_report` **7 +
+  1** passed, and `cargo test -p capsem-service handle_asset_` **5** passed.
+  `cargo fmt --all -- --check`, `git diff --check`, and the Rust legacy-symbol
+  scan for `ManifestV2` / old manifest loaders / old downloader returned clean.
+  A broad `cargo test -p capsem-service` sweep was stopped after the lib suite
+  passed because the existing `reload_config_returns_structured_failed_session_state`
+  binary test sat past the 60s runner warning with no output;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

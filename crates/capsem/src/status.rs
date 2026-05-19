@@ -110,12 +110,6 @@ pub enum HealthIssueCode {
     GatewayStale,
     GatewayTokenMismatch,
     GatewayDown,
-    KernelAssetMissing,
-    InitrdAssetMissing,
-    RootfsAssetMissing,
-    AssetResolveFailed,
-    ManifestMissing,
-    ManifestVerificationFailed,
     AssetsDirMissing,
     ServiceAssetError,
     SavedVmAssetMissing,
@@ -144,12 +138,6 @@ impl HealthIssueCode {
             HealthIssueCode::GatewayStale => "gateway_stale",
             HealthIssueCode::GatewayTokenMismatch => "gateway_token_mismatch",
             HealthIssueCode::GatewayDown => "gateway_down",
-            HealthIssueCode::KernelAssetMissing => "kernel_asset_missing",
-            HealthIssueCode::InitrdAssetMissing => "initrd_asset_missing",
-            HealthIssueCode::RootfsAssetMissing => "rootfs_asset_missing",
-            HealthIssueCode::AssetResolveFailed => "asset_resolve_failed",
-            HealthIssueCode::ManifestMissing => "manifest_missing",
-            HealthIssueCode::ManifestVerificationFailed => "manifest_verification_failed",
             HealthIssueCode::AssetsDirMissing => "assets_dir_missing",
             HealthIssueCode::ServiceAssetError => "service_asset_error",
             HealthIssueCode::SavedVmAssetMissing => "saved_vm_asset_missing",
@@ -220,22 +208,6 @@ pub enum HealthIssue {
     GatewayDown {
         port: String,
     },
-    KernelAssetMissing {
-        path: PathBuf,
-    },
-    InitrdAssetMissing {
-        path: PathBuf,
-    },
-    RootfsAssetMissing {
-        path: PathBuf,
-    },
-    AssetResolveFailed {
-        error: String,
-    },
-    ManifestMissing,
-    ManifestVerificationFailed {
-        error: String,
-    },
     AssetsDirMissing,
     ServiceAssetError {
         state: String,
@@ -279,14 +251,6 @@ impl HealthIssue {
             HealthIssue::GatewayStale { .. } => HealthIssueCode::GatewayStale,
             HealthIssue::GatewayTokenMismatch { .. } => HealthIssueCode::GatewayTokenMismatch,
             HealthIssue::GatewayDown { .. } => HealthIssueCode::GatewayDown,
-            HealthIssue::KernelAssetMissing { .. } => HealthIssueCode::KernelAssetMissing,
-            HealthIssue::InitrdAssetMissing { .. } => HealthIssueCode::InitrdAssetMissing,
-            HealthIssue::RootfsAssetMissing { .. } => HealthIssueCode::RootfsAssetMissing,
-            HealthIssue::AssetResolveFailed { .. } => HealthIssueCode::AssetResolveFailed,
-            HealthIssue::ManifestMissing => HealthIssueCode::ManifestMissing,
-            HealthIssue::ManifestVerificationFailed { .. } => {
-                HealthIssueCode::ManifestVerificationFailed
-            }
             HealthIssue::AssetsDirMissing => HealthIssueCode::AssetsDirMissing,
             HealthIssue::ServiceAssetError { .. } => HealthIssueCode::ServiceAssetError,
             HealthIssue::SavedVmAssetMissing { .. } => HealthIssueCode::SavedVmAssetMissing,
@@ -365,15 +329,8 @@ impl HealthIssue {
             HealthIssue::GatewayTokenMismatch { port } | HealthIssue::GatewayDown { port } => {
                 details.insert("port", port.clone());
             }
-            HealthIssue::KernelAssetMissing { path }
-            | HealthIssue::InitrdAssetMissing { path }
-            | HealthIssue::RootfsAssetMissing { path }
-            | HealthIssue::AppBundleMissing { path } => {
+            HealthIssue::AppBundleMissing { path } => {
                 details.insert("path", path.display().to_string());
-            }
-            HealthIssue::AssetResolveFailed { error }
-            | HealthIssue::ManifestVerificationFailed { error } => {
-                details.insert("error", error.clone());
             }
             HealthIssue::ServiceAssetError { state, error } => {
                 details.insert("state", state.clone());
@@ -398,7 +355,6 @@ impl HealthIssue {
             | HealthIssue::ServiceNotRunning
             | HealthIssue::ServiceEndpointUnavailable
             | HealthIssue::GatewayFilesMissing
-            | HealthIssue::ManifestMissing
             | HealthIssue::AssetsDirMissing => {}
         }
         details
@@ -508,24 +464,6 @@ impl fmt::Display for HealthIssue {
             }
             HealthIssue::GatewayDown { port } => {
                 write!(f, "Gateway is DOWN (port {} not responding)", port)
-            }
-            HealthIssue::KernelAssetMissing { path } => {
-                write!(f, "Kernel asset is MISSING: {}", path.display())
-            }
-            HealthIssue::InitrdAssetMissing { path } => {
-                write!(f, "Initrd asset is MISSING: {}", path.display())
-            }
-            HealthIssue::RootfsAssetMissing { path } => {
-                write!(f, "Rootfs asset is MISSING: {}", path.display())
-            }
-            HealthIssue::AssetResolveFailed { error } => {
-                write!(f, "Failed to resolve assets: {}", error)
-            }
-            HealthIssue::ManifestMissing => {
-                write!(f, "Manifest file not found in assets directory")
-            }
-            HealthIssue::ManifestVerificationFailed { error } => {
-                write!(f, "Manifest verification failed: {}", error)
             }
             HealthIssue::AssetsDirMissing => write!(f, "Assets directory not found"),
             HealthIssue::ServiceAssetError { state, error } => write!(
@@ -754,13 +692,7 @@ fn checks_report_from_issues(
                 .filter(|issue| {
                     matches!(
                         issue.code(),
-                        HealthIssueCode::KernelAssetMissing
-                            | HealthIssueCode::InitrdAssetMissing
-                            | HealthIssueCode::RootfsAssetMissing
-                            | HealthIssueCode::AssetResolveFailed
-                            | HealthIssueCode::ManifestMissing
-                            | HealthIssueCode::ManifestVerificationFailed
-                            | HealthIssueCode::AssetsDirMissing
+                        HealthIssueCode::AssetsDirMissing
                             | HealthIssueCode::ServiceAssetError
                             | HealthIssueCode::SavedVmAssetMissing
                     )
@@ -1114,39 +1046,11 @@ fn check_default_assets() -> Vec<HealthIssue> {
 }
 
 pub(crate) fn check_assets_dir(assets_dir: &Path) -> Vec<HealthIssue> {
-    let mut issues = Vec::new();
-    match load_diagnostic_manifest_for_assets(assets_dir) {
-        Ok(Some(m)) => {
-            let arch = host_asset_arch();
-            match m.resolve(env!("CARGO_PKG_VERSION"), arch, assets_dir) {
-                Ok(resolved) => {
-                    if !resolved.kernel.exists() {
-                        issues.push(HealthIssue::KernelAssetMissing {
-                            path: resolved.kernel.clone(),
-                        });
-                    }
-                    if !resolved.initrd.exists() {
-                        issues.push(HealthIssue::InitrdAssetMissing {
-                            path: resolved.initrd.clone(),
-                        });
-                    }
-                    if !resolved.rootfs.exists() {
-                        issues.push(HealthIssue::RootfsAssetMissing {
-                            path: resolved.rootfs.clone(),
-                        });
-                    }
-                }
-                Err(e) => issues.push(HealthIssue::AssetResolveFailed {
-                    error: e.to_string(),
-                }),
-            }
-        }
-        Ok(None) => issues.push(HealthIssue::ManifestMissing),
-        Err(e) => issues.push(HealthIssue::ManifestVerificationFailed {
-            error: format!("{e:#}"),
-        }),
+    if assets_dir.is_dir() {
+        Vec::new()
+    } else {
+        vec![HealthIssue::AssetsDirMissing]
     }
-    issues
 }
 
 fn check_default_setup_state() -> Vec<HealthIssue> {
@@ -1213,7 +1117,7 @@ async fn print_text_status(
     if let Some(asset_health) = asset_health {
         print_service_asset_status(asset_health);
     } else {
-        print_asset_status();
+        print_offline_asset_status();
     }
     print_defunct_sessions(service.running).await;
 }
@@ -1268,12 +1172,6 @@ async fn fetch_service_asset_health(service_running: bool) -> Option<client::Ass
     resp.into_result().ok()?.asset_health
 }
 
-pub(crate) fn load_diagnostic_manifest_for_assets(
-    assets_dir: &Path,
-) -> Result<Option<capsem_core::asset_manager::ManifestV2>> {
-    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)
-}
-
 async fn print_service_and_gateway_status() {
     let home = crate::paths::capsem_home().unwrap_or_default();
     let sock = home.join("run/service.sock");
@@ -1322,38 +1220,15 @@ async fn print_service_and_gateway_status() {
     }
 }
 
-fn print_asset_status() {
+fn print_offline_asset_status() {
     if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
-        match load_diagnostic_manifest_for_assets(&assets_dir) {
-            Ok(Some(m)) => {
-                let arch = host_asset_arch();
-                println!("Assets:    {} ({})", m.assets.current, arch);
-                match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
-                    Ok(resolved) => {
-                        let k = if resolved.kernel.exists() {
-                            "ok"
-                        } else {
-                            "MISSING"
-                        };
-                        let i = if resolved.initrd.exists() {
-                            "ok"
-                        } else {
-                            "MISSING"
-                        };
-                        let r = if resolved.rootfs.exists() {
-                            "ok"
-                        } else {
-                            "MISSING"
-                        };
-                        println!("  kernel:  {} ({})", resolved.kernel.display(), k);
-                        println!("  initrd:  {} ({})", resolved.initrd.display(), i);
-                        println!("  rootfs:  {} ({})", resolved.rootfs.display(), r);
-                    }
-                    Err(e) => println!("  resolve: {}", e),
-                }
-            }
-            Ok(None) => println!("Assets:    no manifest found"),
-            Err(e) => println!("Assets:    manifest verification failed: {e:#}"),
+        if assets_dir.is_dir() {
+            println!(
+                "Assets:    service not running; Profile V2 health unavailable ({})",
+                assets_dir.display()
+            );
+        } else {
+            println!("Assets:    directory missing ({})", assets_dir.display());
         }
     }
 }
@@ -1444,14 +1319,6 @@ async fn gateway_status(port: &str, token: &str) -> (Option<String>, bool) {
         .unwrap_or(false);
 
     (gw_version, token_ok)
-}
-
-fn host_asset_arch() -> &'static str {
-    if cfg!(target_arch = "aarch64") {
-        "arm64"
-    } else {
-        "x86_64"
-    }
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 
 #[derive(Debug)]
@@ -23,7 +23,7 @@ pub struct DebugReportInput {
     pub run_dir: PathBuf,
     pub assets_dir: PathBuf,
     pub asset_locations: Option<capsem_core::settings_profiles::ResolvedServiceAssetLocations>,
-    pub manifest: Option<capsem_core::asset_manager::ManifestV2>,
+    pub asset_health: Option<crate::api::AssetHealth>,
     pub running_vm_count: usize,
     pub total_vm_count: usize,
     pub status_issues: Vec<String>,
@@ -198,35 +198,31 @@ pub struct SetupReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AssetsReport {
-    pub manifest: ManifestReport,
-    pub asset_version_for_binary: Option<String>,
-    pub files: BTreeMap<String, AssetFileReport>,
+    pub source: &'static str,
+    pub health: Option<AssetHealthReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ManifestReport {
-    pub present: bool,
-    pub path: String,
-    pub exists: bool,
-    pub size_bytes: Option<u64>,
-    pub hash: Option<String>,
-    pub signature_file: FileSnapshot,
-    pub dev_pubkey_file: FileSnapshot,
-    pub assets_current: Option<String>,
-    pub binaries_current: Option<String>,
+pub struct AssetHealthReport {
+    pub ready: bool,
+    pub state: String,
+    pub version: Option<String>,
     pub arch: Option<String>,
+    pub missing: Vec<String>,
+    pub progress: Option<AssetProgressReport>,
+    pub error: Option<String>,
+    pub retry_count: u32,
+    pub retryable: bool,
+    pub saved_vm_dependencies: Vec<crate::api::SavedVmAssetDependency>,
+    pub checked_at_unix_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AssetFileReport {
-    pub logical: String,
-    pub path: String,
-    pub exists: bool,
-    pub size_bytes: Option<u64>,
-    pub manifest_hash: String,
-    pub manifest_size_bytes: u64,
-    pub actual_hash: Option<String>,
-    pub actual_hash_matches_manifest: bool,
+pub struct AssetProgressReport {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    pub bytes_total: Option<u64>,
+    pub done: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -459,113 +455,29 @@ fn read_pid_file(path: &Path) -> Option<u32> {
 }
 
 fn build_asset_report(input: &DebugReportInput) -> Result<AssetsReport> {
-    let manifest_path = manifest_path_for_assets(&input.assets_dir);
-    let signature_path = signature_path_for_manifest(&manifest_path);
-    let dev_pubkey_path = manifest_path
-        .parent()
-        .map(|p| p.join("manifest-sign.dev.pub"))
-        .unwrap_or_else(|| input.assets_dir.join("manifest-sign.dev.pub"));
-    let manifest_file = file_snapshot(&manifest_path, false, true);
-    let signature_file = file_snapshot(&signature_path, false, true);
-    let dev_pubkey_file = file_snapshot(&dev_pubkey_path, false, true);
-
-    let Some(manifest) = input.manifest.as_ref() else {
-        return Ok(AssetsReport {
-            manifest: ManifestReport {
-                present: false,
-                path: manifest_file.path,
-                exists: manifest_file.exists,
-                size_bytes: manifest_file.size_bytes,
-                hash: manifest_file.hash,
-                signature_file,
-                dev_pubkey_file,
-                assets_current: None,
-                binaries_current: None,
-                arch: None,
-            },
-            asset_version_for_binary: None,
-            files: BTreeMap::new(),
-        });
-    };
-
-    let arch = capsem_core::asset_manager::host_manifest_arch();
-    let resolved = manifest
-        .resolve(&input.version, arch, &input.assets_dir)
-        .context("resolve manifest assets for debug report")?;
-    let release = manifest
-        .assets
-        .releases
-        .get(&resolved.asset_version)
-        .with_context(|| format!("asset version {} not found", resolved.asset_version))?;
-    let arch_assets = release.arches.get(arch).with_context(|| {
-        format!(
-            "arch {arch} not found in asset release {}",
-            resolved.asset_version
-        )
-    })?;
-
-    let mut files = BTreeMap::new();
-    for (label, logical, path) in [
-        ("kernel", "vmlinuz", resolved.kernel.as_path()),
-        ("initrd", "initrd.img", resolved.initrd.as_path()),
-        ("rootfs", "rootfs.squashfs", resolved.rootfs.as_path()),
-    ] {
-        files.insert(
-            label.to_string(),
-            build_one_asset_report(logical, path, arch_assets)?,
-        );
-    }
-
     Ok(AssetsReport {
-        manifest: ManifestReport {
-            present: true,
-            path: manifest_file.path,
-            exists: manifest_file.exists,
-            size_bytes: manifest_file.size_bytes,
-            hash: manifest_file.hash,
-            signature_file,
-            dev_pubkey_file,
-            assets_current: Some(manifest.assets.current.clone()),
-            binaries_current: Some(manifest.binaries.current.clone()),
-            arch: Some(arch.to_string()),
-        },
-        asset_version_for_binary: Some(resolved.asset_version),
-        files,
-    })
-}
-
-fn build_one_asset_report(
-    logical: &str,
-    path: &Path,
-    arch_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
-) -> Result<AssetFileReport> {
-    let expected = arch_assets
-        .get(logical)
-        .with_context(|| format!("{logical} missing from manifest arch assets"))?;
-    let exists = path.exists();
-    let size_bytes = std::fs::metadata(path).ok().map(|m| m.len());
-    let actual_hash = if exists {
-        Some(
-            capsem_core::asset_manager::hash_file(path)
-                .with_context(|| format!("hash {}", path.display()))?,
-        )
-    } else {
-        None
-    };
-    let actual_hash_matches_manifest = actual_hash
-        .as_ref()
-        .map(|actual| actual == &expected.hash)
-        .unwrap_or(false);
-
-    Ok(AssetFileReport {
-        logical: logical.to_string(),
-        path: redact_path_for_report(path),
-        exists,
-        size_bytes,
-        manifest_hash: expected.hash.clone(),
-        manifest_size_bytes: expected.size,
-        actual_hash,
-        actual_hash_matches_manifest,
+        source: "profile_v2_asset_health",
+        health: input.asset_health.as_ref().map(|health| AssetHealthReport {
+            ready: health.ready,
+            state: health.state.as_str().to_string(),
+            version: health.version.clone(),
+            arch: health.arch.clone(),
+            missing: health.missing.clone(),
+            progress: health
+                .progress
+                .as_ref()
+                .map(|progress| AssetProgressReport {
+                    logical_name: progress.logical_name.clone(),
+                    bytes_done: progress.bytes_done,
+                    bytes_total: progress.bytes_total,
+                    done: progress.done,
+                }),
+            error: health.error.clone(),
+            retry_count: health.retry_count,
+            retryable: health.retryable,
+            saved_vm_dependencies: health.saved_vm_dependencies.clone(),
+            checked_at_unix_secs: health.checked_at_unix_secs,
+        }),
     })
 }
 
@@ -1045,39 +957,54 @@ fn append_settings_profiles_report(
 }
 
 fn append_asset_report(lines: &mut Vec<String>, assets: &AssetsReport) {
-    if !assets.manifest.present {
-        lines.push("manifest_present: false".to_string());
+    lines.push(format!("source: {}", assets.source));
+    let Some(health) = assets.health.as_ref() else {
+        lines.push("profile_asset_health_present: false".to_string());
         return;
-    }
+    };
 
-    lines.push("manifest_present: true".to_string());
-    if let Some(current) = assets.manifest.assets_current.as_deref() {
-        lines.push(format!("manifest_assets_current: {current}"));
-    }
-    if let Some(current) = assets.manifest.binaries_current.as_deref() {
-        lines.push(format!("manifest_binaries_current: {current}"));
-    }
-    if let Some(arch) = assets.manifest.arch.as_deref() {
-        lines.push(format!("manifest_arch: {arch}"));
-    }
-    if let Some(version) = assets.asset_version_for_binary.as_deref() {
-        lines.push(format!("asset_version_for_binary: {version}"));
-    }
-
-    for label in ["kernel", "initrd", "rootfs"] {
-        let Some(asset) = assets.files.get(label) else {
-            continue;
-        };
-        lines.push(format!("{label}_manifest_hash: {}", asset.manifest_hash));
-        lines.push(format!("{label}_path: {}", asset.path));
-        lines.push(format!("{label}_exists: {}", asset.exists));
+    lines.push("profile_asset_health_present: true".to_string());
+    lines.push(format!("profile_asset_ready: {}", health.ready));
+    lines.push(format!("profile_asset_state: {}", health.state));
+    lines.push(format!(
+        "profile_asset_version: {}",
+        health.version.as_deref().unwrap_or("<unknown>")
+    ));
+    lines.push(format!(
+        "profile_asset_arch: {}",
+        health.arch.as_deref().unwrap_or("<unknown>")
+    ));
+    lines.push(format!(
+        "profile_asset_missing: {}",
+        join_or_none(&health.missing)
+    ));
+    if let Some(progress) = health.progress.as_ref() {
         lines.push(format!(
-            "{label}_actual_hash: {}",
-            asset.actual_hash.as_deref().unwrap_or("<missing>")
+            "profile_asset_progress: {} {}/{} done={}",
+            progress.logical_name,
+            progress.bytes_done,
+            progress
+                .bytes_total
+                .map(|total| total.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string()),
+            progress.done
         ));
+    }
+    if let Some(error) = health.error.as_deref() {
+        lines.push(format!("profile_asset_error: {error}"));
+    }
+    lines.push(format!("profile_asset_retry_count: {}", health.retry_count));
+    lines.push(format!("profile_asset_retryable: {}", health.retryable));
+    if let Some(checked_at) = health.checked_at_unix_secs {
+        lines.push(format!("profile_asset_checked_at_unix_secs: {checked_at}"));
+    }
+    for dependency in &health.saved_vm_dependencies {
         lines.push(format!(
-            "{label}_actual_hash_matches_manifest: {}",
-            asset.actual_hash_matches_manifest
+            "saved_vm_asset_dependency: {} needs {} ({}, {})",
+            dependency.vm,
+            dependency.missing.join(", "),
+            dependency.asset_version,
+            dependency.arch
         ));
     }
 }
@@ -1208,30 +1135,6 @@ fn file_snapshot(path: &Path, include_contents: bool, include_hash: bool) -> Fil
     }
 
     snapshot
-}
-
-fn manifest_path_for_assets(assets_dir: &Path) -> PathBuf {
-    let primary = assets_dir.join("manifest.json");
-    if primary.exists() {
-        return primary;
-    }
-    if let Some(parent) = assets_dir.parent() {
-        let parent_manifest = parent.join("manifest.json");
-        if parent_manifest.exists() {
-            return parent_manifest;
-        }
-    }
-    primary
-}
-
-fn signature_path_for_manifest(path: &Path) -> PathBuf {
-    let mut sig = path.to_path_buf();
-    let name = sig
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("manifest.json");
-    sig.set_file_name(format!("{name}.minisig"));
-    sig
 }
 
 fn collect_log_tails(capsem_home: &Path, run_dir: &Path) -> Vec<LogTailReport> {

@@ -2567,7 +2567,7 @@ async fn handle_debug_report(
         run_dir: state.run_dir.clone(),
         assets_dir: state.assets_dir.clone(),
         asset_locations: Some(state.asset_locations.clone()),
-        manifest: None,
+        asset_health: Some(state.asset_health_snapshot()),
         running_vm_count,
         total_vm_count,
         status_issues,

@@ -143,6 +143,8 @@ Gaps:
   - Landed: structured log calls are in the service asset supervisor for the
     lifecycle event names; focused URL-redaction coverage prevents signed URL
     query/credential leakage.
+  - Landed: service debug reports now serialize Profile V2 asset health instead
+    of legacy asset manifest presence/hash fields.
 - Performance:
   - Repeated checks when assets are present do not hash every large file on hot
     `/list` or status paths.
@@ -156,4 +158,6 @@ Gaps:
 - Background and manual checks use one code path.
 - Logs and debug report explain checks/downloads without sensitive data.
 - Old asset manifest authority is gone from user-facing update flows.
+- Old Rust `ManifestV2` parsing, verified loading, direct downloading, and
+  manifest-driven cleanup paths are removed from the runtime crates.
 - Focused tests plus package gates are recorded in `tracker.md`.
