@@ -39,6 +39,11 @@ Landed:
   download start/progress, hash verification, install success, and retryable
   download failure. Download URLs are logged without credentials or query
   strings.
+- First-use VM create/run now awaits the same Profile V2 asset reconciler
+  before process spawn, so missing selected-profile assets download through the
+  service path instead of failing on a stale initial health snapshot.
+- Create-from-source, fork, and persist derive base asset identity from the
+  VM's profile pin and reject conflicts with the duplicate registry side field.
 
 Gaps:
 
@@ -46,9 +51,10 @@ Gaps:
   catalog payload hash or per-asset URL/hash.
 - Tests cover the service trigger, CLI summary rendering, background
   reconciliation, status timestamp/provenance preservation, debug provenance,
-  concurrent manual reconcile locking, active cleanup refusal, and log URL
-  redaction, but not full `capsem update --assets -> live service -> status
-  progress -> logs` E2E.
+  first-use VM create reconciliation, profile-pin asset authority, concurrent
+  manual reconcile locking, active cleanup refusal, and log URL redaction, but
+  not full `capsem update --assets -> live service -> status progress -> logs`
+  E2E or a live hypervisor boot against freshly downloaded assets.
 
 ## Product Contract
 
@@ -116,6 +122,14 @@ Gaps:
    - Prove cleanup refuses while a download is in progress and cannot delete a
      temp/target asset being installed.
 
+6. [x] **First-use VM create integration**
+   - `handle_provision` / `handle_run` await `AssetSupervisor::ensure_assets_once()`
+     before process spawn when creating from the selected profile.
+   - Create-from-source, fork, and persist use the source VM's profile pin as
+     the boot-asset authority and fail closed on pin/registry drift.
+   - Focused service tests prove missing profile assets download before spawn
+     and pin-side asset authority is preserved.
+
 ## Testing Matrix
 
 - Unit/contract:
@@ -135,6 +149,9 @@ Gaps:
     service endpoint downloading missing profile assets and the already-ready
     outcome plus profile id/revision in the returned health. `cargo test -p
     capsem parse_update_assets` keeps CLI parsing wired.
+  - Landed: `provision_attempt_reconciles_profile_assets_on_first_use_create`
+    proves the create path downloads missing selected-profile assets via the
+    service reconciler before process spawn.
 - Adversarial:
   - Hash mismatch deletes temp file and logs terminal failure.
   - 404/503 records retryable failure with retry count.
@@ -146,6 +163,10 @@ Gaps:
 - E2E/VM or integration:
   - Create VM with missing profile assets triggers download, then boots with
     pinned hashes.
+  - Landed integration proof: focused service create-path coverage downloads
+    missing profile assets before spawn; existing process-spawn wiring passes
+    expected kernel/initrd/rootfs hashes to `capsem-process`. Remaining live VM
+    proof is a real hypervisor boot with freshly downloaded assets.
 - Telemetry/observability:
   - Service logs contain lifecycle event names and fields for a successful
     download and a retryable failure.
@@ -173,6 +194,8 @@ Gaps:
   duplicate network downloads.
 - Cleanup refuses active downloads and leaves stale files untouched until asset
   health is ready.
+- First-use VM create/run triggers Profile V2 reconciliation before spawning,
+  and source/fork/persist derive boot-asset identity from the profile pin.
 - Old asset manifest authority is gone from user-facing update flows.
 - Old Rust `ManifestV2` parsing, verified loading, direct downloading, and
   manifest-driven cleanup paths are removed from the runtime crates.

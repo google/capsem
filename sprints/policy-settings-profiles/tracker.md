@@ -117,15 +117,17 @@ a valid claim -- mark it `[ ]` instead.
     settings. `session.db` now records VM/profile/user telemetry identity, and
     VM metadata now carries a profile pin with resolved profile id, signed
     profile revision, profile payload hash, package-contract hash, and pinned
-    asset hashes. Remaining work adds manifest source fetch/scheduling, richer
-    catalog clients/debug detail, and first-use selected-profile proof.
+    asset hashes. Remaining work adds manifest source fetch/scheduling plus
+    richer catalog clients/debug detail.
 15. [~] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
   trigger, checked-at/profile provenance status propagation, structured
   lifecycle logs, service debug Profile V2 asset-health reporting, old Rust
   asset-manifest parser/loader/downloader cleanup, and duplicate-download /
-  active-cleanup race proof have landed. Remaining work: VM-create
-  integration/E2E proof.
+  active-cleanup race proof have landed. First-use VM create/run now drives the
+  Profile V2 reconciler before spawn, and source/fork/persist derive boot
+  asset identity from the profile pin. Remaining work: live
+  update/status/logs E2E and richer payload/per-asset provenance.
 16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -452,7 +454,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   runtime slice (real service + real gateway + malformed TOML
   startup + VM boot/exec) and the S06a mitm_proxy integration
   test forwarding rewritten model bodies. Capsem-doctor ask
-  probe remains deferred (see below).
+  probe remains deferred (see below). S07c now has focused service-path proof
+  that first-use VM create downloads missing selected-profile assets through
+  the Profile V2 reconciler before process spawn; a live hypervisor boot with
+  freshly downloaded assets remains release-gate debt.
 - **Telemetry**: debug report exposes
   profile/settings/rule provenance and now the resolver trace
   summary (event count, corp event count, locked paths,
@@ -576,6 +581,15 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   concurrent_calls_share_one_download_run` **1** passed, `cargo test -p
   capsem-service handle_asset_reconcile_downloads_missing_profile_assets` **1**
   passed, and `cargo test -p capsem` **242** passed;
+  after first-use VM create/profile-pin asset authority hardening, `cargo test
+  -p capsem-service provision_attempt_reconciles_profile_assets_on_first_use_create`
+  **1** passed, `cargo test -p capsem-service source_vm_base_assets` **2**
+  passed, `cargo test -p capsem-service handle_fork_uses_profile_pin_assets_when_registry_side_field_is_absent`
+  **1** passed, `cargo test -p capsem-service handle_fork` **9** passed,
+  `cargo test -p capsem-service handle_persist` **1** passed, `cargo test -p
+  capsem-service provision_from_source_requires_profile_revision_pin` **1**
+  passed, `cargo test -p capsem-service --lib` **110** passed, `cargo fmt
+  --all -- --check` passed, and `git diff --check` passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

@@ -106,6 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added adversarial coverage proving concurrent profile asset reconciles share
   one download run and asset cleanup refuses while a profile asset download is
   active.
+- Changed first-use VM create/run to await the service Profile V2 asset
+  reconciler before process spawn, and made create-from-source, fork, and
+  persist derive boot-asset identity from the VM profile pin while rejecting
+  pin/registry drift.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,
   manifest-driven downloader, and manifest-driven cleanup path. CLI status and
   service debug reports now rely on Profile V2 asset health instead of legacy

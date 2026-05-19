@@ -92,8 +92,8 @@ the next starts. The `#` column is the execution index;
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
-| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, and VM list/status profile-state reporting have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
-| 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | In Progress | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, and duplicate-download/active-cleanup race proof have landed. Remaining scope is VM-create integration/E2E proof. |
+| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, and first-use selected-profile asset reconciliation have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
+| 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | In Progress | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, and profile-pin asset authority for source/fork/persist have landed. Remaining scope is live update/status/logs E2E plus richer payload/per-asset provenance. |
 | 16 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
 | 17 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
 | 18 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
@@ -267,16 +267,18 @@ Remaining S07a push order:
    in-progress downloads, and existing VM pins. Retention filename extraction
    has landed for installed current profile payloads and persistent VM profile
    pins; `POST /setup/assets/cleanup` now uses that retention set and fails
-   closed while assets are checking/updating. Remaining: cross-process/per-asset
-   download locks and VM-create/download race coverage.
+   closed while assets are checking/updating. Duplicate manual reconcile and
+   active-cleanup races are covered; first-use VM create now uses the same
+   reconciler before spawn. Remaining: cross-process/per-asset download locks.
 4. Forward-only VM identity enforcement on every create/fork/persist/resume
    path. Resume now rejects registry entries without profile pins or pinned
    asset identity. Create-from-source, fork, and persist now reject
    missing/revisionless pins or missing profile payload hashes before asset
    resolution, clone, or session move work. Fork now preserves VM-effective
    profile attachments and rejects profile or payload-hash drift before
-   registry state is created. Remaining work is first-use create with an
-   explicit selected catalog revision plus selected-profile catalog proof.
+   registry state is created. First-use selected-profile create now downloads
+   missing profile assets before process spawn. Remaining work is explicit
+   selected catalog revision plus selected-profile catalog proof.
 5. Status/debug readiness for profile catalog state, installed revisions,
    package contracts, asset verification, VM pins, and drift/revocation.
 

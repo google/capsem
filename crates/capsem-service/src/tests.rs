@@ -1402,6 +1402,62 @@ fn required_vm_profile_pin_requires_profile_payload_hash() {
 }
 
 #[test]
+fn source_vm_base_assets_uses_profile_pin_as_authority() {
+    let base_assets = test_saved_vm_base_assets();
+    let entry = PersistentVmEntry {
+        name: "source-vm".into(),
+        ram_mb: 2048,
+        cpus: 2,
+        base_version: "0.0.0".into(),
+        base_assets: None,
+        profile_pin: Some(test_saved_vm_profile_pin(base_assets.clone())),
+        created_at: "0".into(),
+        session_dir: PathBuf::from("/tmp/source-vm"),
+        forked_from: None,
+        description: None,
+        suspended: false,
+        defunct: false,
+        last_error: None,
+        checkpoint_path: None,
+        env: None,
+    };
+
+    assert_eq!(source_vm_base_assets(&entry).unwrap(), base_assets);
+}
+
+#[test]
+fn source_vm_base_assets_rejects_registry_pin_drift() {
+    let profile_assets = test_saved_vm_base_assets();
+    let mut stored_assets = profile_assets.clone();
+    stored_assets.rootfs_hash =
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into();
+    let entry = PersistentVmEntry {
+        name: "source-drift".into(),
+        ram_mb: 2048,
+        cpus: 2,
+        base_version: "0.0.0".into(),
+        base_assets: Some(stored_assets),
+        profile_pin: Some(test_saved_vm_profile_pin(profile_assets)),
+        created_at: "0".into(),
+        session_dir: PathBuf::from("/tmp/source-drift"),
+        forked_from: None,
+        description: None,
+        suspended: false,
+        defunct: false,
+        last_error: None,
+        checkpoint_path: None,
+        env: None,
+    };
+
+    let err = source_vm_base_assets(&entry).unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("conflicting pinned asset identity"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
 fn fork_profile_pin_match_rejects_profile_payload_hash_drift() {
     let base_assets = test_saved_vm_base_assets();
     let source_pin = test_saved_vm_profile_pin(base_assets.clone());
@@ -2614,6 +2670,16 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
 }
 
 fn make_test_state_with_profile_assets(base_url: &str) -> (Arc<ServiceState>, tempfile::TempDir) {
+    make_test_state_with_profile_assets_and_process(
+        base_url,
+        PathBuf::from("/nonexistent/capsem-process"),
+    )
+}
+
+fn make_test_state_with_profile_assets_and_process(
+    base_url: &str,
+    process_binary: PathBuf,
+) -> (Arc<ServiceState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let registry_path = dir.path().join("persistent_registry.json");
     let assets_dir = dir.path().join("assets");
@@ -2621,7 +2687,7 @@ fn make_test_state_with_profile_assets(base_url: &str) -> (Arc<ServiceState>, te
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
-        process_binary: PathBuf::from("/nonexistent/capsem-process"),
+        process_binary,
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(dir.path()),
@@ -2759,6 +2825,31 @@ async fn handle_asset_cleanup_refuses_during_active_profile_download() {
     let result = reconcile.await.unwrap().unwrap().0;
     server.abort();
     assert_eq!(result["health"]["state"], serde_json::json!("ready"));
+}
+
+#[tokio::test]
+async fn provision_attempt_reconciles_profile_assets_on_first_use_create() {
+    let (base_url, server) = start_test_asset_server().await;
+    let (state, _dir) =
+        make_test_state_with_profile_assets_and_process(&base_url, PathBuf::from("/bin/false"));
+
+    assert!(!state.asset_supervisor.snapshot().ready);
+
+    let outcome = provision_attempt(&state, "first-use-create", 2048, 2, false, None, None).await;
+
+    server.abort();
+    match outcome {
+        ProvisionAttemptOutcome::BootCrash { .. } | ProvisionAttemptOutcome::ProvisionError(_) => {}
+        other => panic!("expected spawn failure after asset reconcile, got {other:?}"),
+    }
+    let health = state.asset_supervisor.snapshot();
+    assert!(health.ready);
+    assert_eq!(health.profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(health.profile_revision.as_deref(), Some("2026.0520.1"));
+    let resolved = state.resolve_asset_paths().unwrap();
+    assert!(resolved.kernel.exists());
+    assert!(resolved.initrd.exists());
+    assert!(resolved.rootfs.exists());
 }
 
 #[tokio::test]
@@ -3242,6 +3333,68 @@ async fn handle_fork_from_persistent_registry() {
         source_profile_pin.package_contract_hash
     );
     assert_eq!(fork_pin.base_assets, source_profile_pin.base_assets);
+}
+
+#[tokio::test]
+async fn handle_fork_uses_profile_pin_assets_when_registry_side_field_is_absent() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("persistent/pers-pin-only");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    let base_assets = test_saved_vm_base_assets();
+    let source_profile_pin = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0520.1".to_string()),
+            Some(test_profile_payload_hash()),
+            Some(base_assets.clone()),
+        )
+        .unwrap();
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "pers-pin-only".into(),
+            PersistentVmEntry {
+                name: "pers-pin-only".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: Some(source_profile_pin.clone()),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(result) = handle_fork(
+        State(state.clone()),
+        Path("pers-pin-only".into()),
+        Json(ForkRequest {
+            name: "pin-only-fork".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.name, "pin-only-fork");
+    let registry = state.persistent_registry.lock().unwrap();
+    let entry = registry.get("pin-only-fork").unwrap();
+    assert_eq!(entry.base_assets, Some(base_assets));
+    assert_eq!(
+        entry.profile_pin.as_ref().unwrap().base_assets,
+        source_profile_pin.base_assets
+    );
 }
 
 #[tokio::test]

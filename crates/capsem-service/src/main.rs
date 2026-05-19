@@ -674,6 +674,10 @@ impl ServiceState {
                 &format!("source VM \"{}\"", entry.name),
             )?;
         }
+        let source_base_assets = source_entry
+            .as_ref()
+            .map(source_vm_base_assets)
+            .transpose()?;
 
         // If cloning from a source sandbox, inherit its base_version.
         let version = if let Some(ref entry) = source_entry {
@@ -681,8 +685,8 @@ impl ServiceState {
         } else {
             version_override.unwrap_or_else(|| self.current_version.clone())
         };
-        let base_assets = if let Some(ref entry) = source_entry {
-            entry.base_assets.clone().or(self.current_base_assets()?)
+        let base_assets = if let Some(source_base_assets) = source_base_assets.clone() {
+            Some(source_base_assets)
         } else {
             self.current_base_assets()?
         };
@@ -695,15 +699,11 @@ impl ServiceState {
             .and_then(|entry| entry.profile_pin.as_ref())
             .and_then(|pin| pin.profile_payload_hash.clone());
 
-        let pinned_source_assets = source_entry.as_ref().and_then(|entry| {
-            entry
-                .base_assets
-                .as_ref()
-                .map(|assets| (&entry.name, assets))
-        });
-        let resolved = if let Some((source_name, base_assets)) = pinned_source_assets {
+        let resolved = if let (Some(entry), Some(base_assets)) =
+            (source_entry.as_ref(), source_base_assets.as_ref())
+        {
             saved_vm_assets::ensure_saved_base_assets_available(
-                source_name,
+                &entry.name,
                 &self.assets_dir,
                 base_assets,
             )?
@@ -1316,6 +1316,20 @@ impl ServiceState {
         Ok(self.asset_supervisor.current_base_assets())
     }
 
+    async fn ensure_current_profile_assets_ready(&self) -> Result<()> {
+        self.asset_supervisor.ensure_assets_once().await;
+        let health = self.asset_supervisor.snapshot();
+        if !health.ready {
+            return Err(anyhow!(
+                "VM assets are not ready (state={}, missing={:?}, error={})",
+                health.state.as_str(),
+                health.missing,
+                health.error.unwrap_or_else(|| "none".to_string())
+            ));
+        }
+        Ok(())
+    }
+
     fn asset_health_snapshot(&self) -> AssetHealth {
         let mut health = self.asset_supervisor.snapshot();
         health.saved_vm_dependencies = {
@@ -1831,6 +1845,10 @@ async fn handle_fork(
     };
     ensure_required_vm_profile_pin(source_profile_pin.as_ref(), &format!("source VM \"{id}\""))
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let base_assets =
+        source_pin_base_assets(&id, source_profile_pin.as_ref(), base_assets.as_ref())
+            .map(Some)
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Freeze + thaw the guest root filesystem so the ext4 system overlay
     // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
@@ -1981,6 +1999,39 @@ fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str
     Ok(())
 }
 
+fn source_pin_base_assets(
+    source_id: &str,
+    pin: Option<&SavedVmProfilePin>,
+    stored_assets: Option<&SavedVmBaseAssets>,
+) -> Result<SavedVmBaseAssets> {
+    let pin = pin.ok_or_else(|| {
+        anyhow!(
+            "source VM \"{source_id}\" is missing required profile pin; required profile revision pin must come from a signed profile"
+        )
+    })?;
+    let pinned_assets = pin.base_assets.as_ref().ok_or_else(|| {
+        anyhow!(
+            "source VM \"{source_id}\" is missing required pinned asset identity; recreate the VM from a signed profile"
+        )
+    })?;
+    if let Some(stored_assets) = stored_assets {
+        if stored_assets != pinned_assets {
+            return Err(anyhow!(
+                "source VM \"{source_id}\" has conflicting pinned asset identity; profile pin and VM registry base assets must match"
+            ));
+        }
+    }
+    Ok(pinned_assets.clone())
+}
+
+fn source_vm_base_assets(entry: &PersistentVmEntry) -> Result<SavedVmBaseAssets> {
+    source_pin_base_assets(
+        &entry.name,
+        entry.profile_pin.as_ref(),
+        entry.base_assets.as_ref(),
+    )
+}
+
 fn ensure_fork_profile_pin_matches_source(
     fork_pin: &SavedVmProfilePin,
     source_pin: &SavedVmProfilePin,
@@ -2023,6 +2074,7 @@ fn ensure_fork_profile_pin_matches_source(
 /// VM with the misleading entitlement string while launchd's
 /// PETRIFIED-cleanup queue was draining. The poll_until loop retries
 /// on this; everything else (incl. `Other`) bubbles up unchanged.
+#[derive(Debug)]
 enum ProvisionAttemptOutcome {
     Ready { uds_path: PathBuf },
     StillBootingTimedOut { uds_path: PathBuf }, // 5s envelope hit; treat as success per pre-existing contract
@@ -2201,6 +2253,11 @@ async fn provision_attempt(
     env: Option<std::collections::HashMap<String, String>>,
     from: Option<String>,
 ) -> ProvisionAttemptOutcome {
+    if from.is_none() {
+        if let Err(e) = state.ensure_current_profile_assets_ready().await {
+            return ProvisionAttemptOutcome::ProvisionError(e);
+        }
+    }
     let state_clone = Arc::clone(state);
     let id_owned = id.to_string();
     let version = state.current_version.clone();
@@ -6357,6 +6414,9 @@ async fn handle_persist(
     };
     ensure_required_vm_profile_pin(profile_pin.as_ref(), &format!("running VM \"{id}\""))
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let base_assets = source_pin_base_assets(&id, profile_pin.as_ref(), base_assets.as_ref())
+        .map(Some)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Move session dir to persistent location
     let new_session_dir = state.run_dir.join("persistent").join(name);
@@ -6535,6 +6595,15 @@ async fn handle_run(
     // offload to the blocking pool, matching `handle_provision` -- the
     // tokio::process::Command::spawn inside still works because
     // spawn_blocking preserves the runtime handle via thread-locals.
+    state
+        .ensure_current_profile_assets_ready()
+        .await
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("provision failed: {e}"),
+            )
+        })?;
     let state_clone = Arc::clone(&state);
     let id_clone = id.clone();
     let version = state.current_version.clone();
