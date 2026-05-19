@@ -4246,6 +4246,88 @@ async fn handle_list_profiles_returns_catalog_with_default_profile() {
 }
 
 #[tokio::test]
+async fn handle_profile_catalog_reports_manifest_and_installed_revisions() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let home = dir.path().join("home");
+    let corp_dir = home.join("profiles").join("corp");
+    let manifest_json = r#"{
+      "format": 1,
+      "profiles": {
+        "everyday-work": {
+          "current_revision": "2026.0520.2",
+          "revisions": {
+            "2026.0520.1": {
+              "status": "deprecated",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///profiles/everyday-work/2026.0520.1/profile.json",
+              "profile_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "profile_signature_url": "file:///profiles/everyday-work/2026.0520.1/profile.json.minisig"
+            },
+            "2026.0520.2": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///profiles/everyday-work/2026.0520.2/profile.json",
+              "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "profile_signature_url": "file:///profiles/everyday-work/2026.0520.2/profile.json.minisig"
+            }
+          }
+        }
+      }
+    }"#;
+    std::fs::create_dir_all(corp_dir.join(".catalog/profiles/everyday-work")).unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profile-manifest.json"),
+        manifest_json,
+    )
+    .unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profiles/everyday-work/current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.2",
+          "payload_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }"#,
+    )
+    .unwrap();
+
+    let Json(val) = handle_profile_catalog().await.unwrap();
+
+    assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(val["manifest_present"], serde_json::json!(true));
+    assert_eq!(
+        val["profiles"][0]["profile_id"],
+        serde_json::json!("everyday-work")
+    );
+    assert_eq!(
+        val["profiles"][0]["current_revision"],
+        serde_json::json!("2026.0520.2")
+    );
+    assert_eq!(
+        val["profiles"][0]["installed_revision"],
+        serde_json::json!("2026.0520.2")
+    );
+    assert_eq!(val["profiles"][0]["revisions"][0]["status"], "deprecated");
+    assert_eq!(
+        val["profiles"][0]["revisions"][1]["installed"],
+        serde_json::json!(true)
+    );
+}
+
+#[tokio::test]
+async fn handle_profile_catalog_reports_empty_state_without_manifest() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(val) = handle_profile_catalog().await.unwrap();
+
+    assert_eq!(val["manifest_present"], serde_json::json!(false));
+    assert_eq!(val["profiles"], serde_json::json!([]));
+}
+
+#[tokio::test]
 async fn handle_get_profile_returns_profile_record() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();

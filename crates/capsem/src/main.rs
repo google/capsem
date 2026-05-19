@@ -159,6 +159,12 @@ enum McpCommands {
 
 #[derive(Subcommand)]
 enum ProfileCommands {
+    /// Show signed profile catalog and installed revision state
+    Catalog {
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// Apply a signed profile catalog manifest through the service
     ReconcileCatalog {
         /// Profile catalog manifest JSON file.
@@ -813,6 +819,44 @@ fn print_profile_catalog_reconcile_summary(result: &serde_json::Value) {
             }
         }
     }
+}
+
+fn print_profile_catalog_summary(result: &serde_json::Value) {
+    println!("{}", profile_catalog_summary_line(result));
+    if let Some(profiles) = result["profiles"].as_array() {
+        for profile in profiles {
+            let profile_id = profile["profile_id"].as_str().unwrap_or("-");
+            let current = profile["current_revision"].as_str().unwrap_or("-");
+            let installed = profile["installed_revision"].as_str().unwrap_or("-");
+            println!("  {profile_id}: current={current} installed={installed}");
+            if let Some(revisions) = profile["revisions"].as_array() {
+                for revision in revisions {
+                    let revision_id = revision["revision"].as_str().unwrap_or("-");
+                    let status = revision["status"].as_str().unwrap_or("unknown");
+                    let marker = if revision["installed"].as_bool().unwrap_or(false) {
+                        " installed"
+                    } else if revision["current"].as_bool().unwrap_or(false) {
+                        " current"
+                    } else {
+                        ""
+                    };
+                    println!("    {revision_id}: {status}{marker}");
+                }
+            }
+        }
+    }
+}
+
+fn profile_catalog_summary_line(result: &serde_json::Value) -> String {
+    let profiles = result["profiles"]
+        .as_array()
+        .map(|profiles| profiles.len())
+        .unwrap_or(0);
+    let configured = result["configured"].as_bool().unwrap_or(false);
+    let manifest_present = result["manifest_present"].as_bool().unwrap_or(false);
+    format!(
+        "Profile catalog: configured={configured} manifest_present={manifest_present} profiles={profiles}"
+    )
 }
 
 fn profile_catalog_reconcile_summary_line(result: &serde_json::Value) -> String {
@@ -1534,6 +1578,15 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 print_profile_catalog_reconcile_summary(&result);
+            }
+        }
+        Commands::Profile(ProfileCommands::Catalog { json }) => {
+            let resp: ApiResponse<serde_json::Value> = client.get("/profiles/catalog").await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_profile_catalog_summary(&result);
             }
         }
         Commands::Misc(MiscCommands::Debug) => {
@@ -2374,6 +2427,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_profile_catalog() {
+        let cli = Cli::parse_from(["capsem", "profile", "catalog", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Catalog { json }) => assert!(json),
+            _ => panic!("expected profile catalog"),
+        }
+    }
+
+    #[test]
     fn parse_profile_reconcile_catalog_url() {
         let cli = Cli::parse_from([
             "capsem",
@@ -2435,6 +2497,27 @@ mod tests {
         assert_eq!(
             profile_catalog_reconcile_summary_line(&result),
             "Profile catalog reconciled: installed=1 unchanged=2 deprecated_kept=3 revoked_removed=4 absent_removed=5 errors=6"
+        );
+    }
+
+    #[test]
+    fn profile_catalog_summary_line_counts_profiles() {
+        let result = serde_json::json!({
+            "configured": true,
+            "manifest_present": true,
+            "profiles": [
+                {
+                    "profile_id": "everyday-work",
+                    "current_revision": "2026.0520.2",
+                    "installed_revision": "2026.0520.2",
+                    "revisions": []
+                }
+            ]
+        });
+
+        assert_eq!(
+            profile_catalog_summary_line(&result),
+            "Profile catalog: configured=true manifest_present=true profiles=1"
         );
     }
 

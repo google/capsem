@@ -65,6 +65,9 @@ TOML by hand.
 
 Routes (UDS; mirrored on the gateway in [S08](S08-http-gateway-api.md)):
 
+- `GET  /profiles/catalog` -> signed catalog status: configured source,
+  persisted manifest path/presence, profile ids, current revision, installed
+  revision/payload hash, and per-revision lifecycle status.
 - `GET  /rules?profile=<id>&callback=<type>` -> list rules.
   Returns the canonical `security.rules.<type>.<name>` id, the rule
   body (typed, not raw TOML), the source profile, the priority, and

@@ -92,6 +92,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added typed `[profile_catalog]` service settings plus service-side scheduled
   profile catalog reconciliation from the configured signed catalog URL and
   profile payload public key.
+- Added a read-only profile catalog status surface plus `capsem profile
+  catalog [--json]` so operators can inspect the persisted signed catalog,
+  installed profile revisions, revision lifecycle status, and configured
+  catalog source.
 - Changed profile catalog reconciliation to remove launchable installed
   profiles whose profile id is absent from the signed catalog while preserving
   the archived installed payload for retention/VM-pin cleanup.

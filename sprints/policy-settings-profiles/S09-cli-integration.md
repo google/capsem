@@ -12,8 +12,12 @@ through CLI command families.
   signed catalog source to `POST /profiles/catalog/reconcile` and print either
   a compact lifecycle summary or raw JSON. Richer catalog/revision subcommands
   remain in this sprint.
+- Initial catalog inspection landed: `capsem profile catalog [--json]` calls
+  `GET /profiles/catalog` and prints configured source state, persisted
+  manifest presence, profile ids, current/installed revisions, and canonical
+  revision status values.
 - Add `capsem profile list/create/fork/update/delete/show/resolve`.
-- Add `capsem profile catalog`, `capsem profile revisions <id>`,
+- Add `capsem profile revisions <id>`,
   `capsem profile install/update/remove <id> [--revision ...]`, and status
   output using the canonical `ProfileRevisionStatus` enum values:
   `active`, `deprecated`, and `revoked`. A missing revision is rendered as

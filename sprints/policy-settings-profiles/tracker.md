@@ -122,7 +122,10 @@ a valid claim -- mark it `[ ]` instead.
     to loopback development/test hosts. Typed `[profile_catalog]` service
     settings now persist the catalog URL, profile payload public key, and check
     interval; service startup schedules the same reconcile path and logs
-    summary counts. Remaining work adds richer catalog clients/debug detail.
+    summary counts. `GET /profiles/catalog` and `capsem profile catalog
+    [--json]` now expose configured catalog source, persisted manifest
+    presence, current/installed revisions, and lifecycle status. Remaining
+    work adds richer revision clients/debug detail.
 15. [x] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
   trigger, checked-at/profile provenance status propagation, structured
@@ -643,6 +646,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   reconcile_configured_profile_catalog` **1** passed, `cargo test -p
   capsem-service --lib` **112** passed, and `cargo test -p capsem-core
   profile_manifest --lib` **20** passed;
+  after read-only catalog status CLI/API wiring, `cargo test -p capsem-service
+  handle_profile_catalog` **2** passed, `cargo test -p capsem
+  parse_profile_catalog` **1** passed, and `cargo test -p capsem
+  profile_catalog_summary` **1** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

@@ -3896,6 +3896,105 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
     })))
 }
 
+/// GET /profiles/catalog -- show signed catalog and installed revision state.
+async fn handle_profile_catalog() -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    Ok(Json(profile_catalog_status_json(&settings)?))
+}
+
+fn profile_catalog_status_json(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+) -> Result<serde_json::Value, AppError> {
+    let manifest_path = profile_catalog_manifest_path(settings);
+    let manifest_json = match manifest_path.as_ref() {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("read profile catalog manifest {}: {error}", path.display()),
+                ));
+            }
+        },
+        None => None,
+    };
+    let manifest = match manifest_json.as_deref() {
+        Some(content) => Some(
+            capsem_core::profile_manifest::ProfileManifest::from_json(content).map_err(
+                |error| {
+                    AppError(
+                        StatusCode::BAD_REQUEST,
+                        format!("parse persisted profile catalog manifest: {error}"),
+                    )
+                },
+            )?,
+        ),
+        None => None,
+    };
+
+    let mut profiles = Vec::new();
+    if let Some(manifest) = &manifest {
+        for (profile_id, profile) in &manifest.profiles {
+            let installed = capsem_core::settings_profiles::load_installed_profile_revision(
+                &settings.profiles,
+                profile_id,
+            )
+            .map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("load installed profile revision '{profile_id}': {error}"),
+                )
+            })?;
+            let mut revisions = profile
+                .revisions
+                .iter()
+                .map(|(revision, record)| {
+                    json!({
+                        "revision": revision,
+                        "status": record.status.as_str(),
+                        "current": revision == &profile.current_revision,
+                        "installed": installed
+                            .as_ref()
+                            .is_some_and(|installed| installed.revision == *revision),
+                        "profile_hash": record.profile_hash,
+                        "min_binary": record.min_binary,
+                    })
+                })
+                .collect::<Vec<_>>();
+            revisions.sort_by(|left, right| {
+                left["revision"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .cmp(right["revision"].as_str().unwrap_or_default())
+            });
+            profiles.push(json!({
+                "profile_id": profile_id,
+                "current_revision": profile.current_revision,
+                "installed_revision": installed.as_ref().map(|installed| installed.revision.clone()),
+                "installed_payload_hash": installed.as_ref().map(|installed| installed.payload_hash.clone()),
+                "revisions": revisions,
+            }));
+        }
+    }
+    profiles.sort_by(|left, right| {
+        left["profile_id"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["profile_id"].as_str().unwrap_or_default())
+    });
+
+    Ok(json!({
+        "mode": "settings_profiles_v2",
+        "configured": settings.profile_catalog.is_configured(),
+        "manifest_url": settings.profile_catalog.manifest_url,
+        "check_interval_secs": settings.profile_catalog.check_interval_secs,
+        "manifest_path": manifest_path.map(|path| path.display().to_string()),
+        "manifest_present": manifest.is_some(),
+        "profiles": profiles,
+    }))
+}
+
 /// GET /profiles/{id} -- fetch one typed Profile V2 profile record.
 async fn handle_get_profile(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
     let settings = load_service_settings_for_profiles()?;
@@ -7171,6 +7270,7 @@ async fn main() -> Result<()> {
             "/profiles/catalog/reconcile",
             post(handle_reconcile_profile_catalog),
         )
+        .route("/profiles/catalog", get(handle_profile_catalog))
         .route(
             "/profiles/{id}",
             get(handle_get_profile)
