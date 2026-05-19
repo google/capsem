@@ -1877,7 +1877,9 @@ async fn handle_fork(
     let profile_pin = state
         .vm_profile_pin(
             &new_session_dir,
-            source_profile_pin.and_then(|pin| pin.profile_revision),
+            source_profile_pin
+                .as_ref()
+                .and_then(|pin| pin.profile_revision.clone()),
             base_assets.clone(),
         )
         .map_err(|e| {
@@ -1886,6 +1888,14 @@ async fn handle_fork(
                 format!("fork: failed to pin profile: {e:#}"),
             )
         })?;
+    ensure_fork_profile_pin_matches_source(
+        &profile_pin,
+        source_profile_pin
+            .as_ref()
+            .expect("source pin was validated above"),
+        &id,
+    )
+    .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Register as persistent VM
     {
@@ -1941,6 +1951,38 @@ fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str
     if pin.base_assets.is_none() {
         return Err(anyhow!(
             "{subject} is missing required pinned asset identity; recreate the VM from a signed profile"
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_fork_profile_pin_matches_source(
+    fork_pin: &SavedVmProfilePin,
+    source_pin: &SavedVmProfilePin,
+    source_id: &str,
+) -> Result<()> {
+    if fork_pin.profile_id != source_pin.profile_id {
+        return Err(anyhow!(
+            "profile drift detected while forking source VM \"{source_id}\": cloned profile id '{}' does not match pinned profile id '{}'",
+            fork_pin.profile_id,
+            source_pin.profile_id
+        ));
+    }
+    if fork_pin.profile_revision != source_pin.profile_revision {
+        return Err(anyhow!(
+            "profile drift detected while forking source VM \"{source_id}\": cloned profile revision {:?} does not match pinned profile revision {:?}",
+            fork_pin.profile_revision,
+            source_pin.profile_revision
+        ));
+    }
+    if fork_pin.package_contract_hash != source_pin.package_contract_hash {
+        return Err(anyhow!(
+            "profile drift detected while forking source VM \"{source_id}\": cloned package contract does not match pinned package contract"
+        ));
+    }
+    if fork_pin.base_assets != source_pin.base_assets {
+        return Err(anyhow!(
+            "profile drift detected while forking source VM \"{source_id}\": cloned asset identity does not match pinned asset identity"
         ));
     }
     Ok(())

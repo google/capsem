@@ -836,3 +836,39 @@ fn clone_sandbox_state_with_session_db() {
         b"db-contents"
     );
 }
+
+#[test]
+fn clone_sandbox_state_preserves_vm_effective_profile_attachments() {
+    let src_tmp = tempfile::tempdir().unwrap();
+    let src = src_tmp.path();
+    std::fs::create_dir_all(src.join("system")).unwrap();
+    std::fs::write(
+        src.join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME),
+        b"profile_id = \"everyday-work\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join(crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME),
+        br#"{"selected_profile_id":"everyday-work","events":[]}"#,
+    )
+    .unwrap();
+
+    let dst_tmp = tempfile::tempdir().unwrap();
+    let dst = dst_tmp.path().join("clone");
+    std::fs::create_dir_all(&dst).unwrap();
+
+    clone_sandbox_state(src, &dst).unwrap();
+
+    assert_eq!(
+        std::fs::read(dst.join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME)).unwrap(),
+        b"profile_id = \"everyday-work\"\n"
+    );
+    assert_eq!(
+        std::fs::read(dst.join(crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME)).unwrap(),
+        br#"{"selected_profile_id":"everyday-work","events":[]}"#
+    );
+    assert!(!dst
+        .join("guest")
+        .join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME)
+        .exists());
+}

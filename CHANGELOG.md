@@ -100,6 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed VM profile pinning to require a signed profile catalog revision and
   pinned asset identity before create-from-source, fork, or persist can produce
   durable VM state.
+- Fixed VM forks to preserve VM-effective profile attachments and fail closed
+  on profile drift before the fork is registered or executed.
 - Added profile identity and status to VM list/status payloads, `capsem list`,
   and `capsem info`: each VM now reports its pinned profile/revision plus
   `current`, `needs_update`, `deprecated`, `revoked`, `corrupted`, or

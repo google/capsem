@@ -1009,6 +1009,44 @@ fn test_saved_vm_profile_pin(
     }
 }
 
+fn spawn_single_exec_server(
+    sock_path: PathBuf,
+    stdout: &'static [u8],
+) -> std::thread::JoinHandle<()> {
+    if let Some(parent) = sock_path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let _ = std::fs::remove_file(&sock_path);
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    std::fs::write(sock_path.with_extension("ready"), b"ready").unwrap();
+    std::thread::spawn(move || {
+        let (mut std_stream, _) = listener.accept().unwrap();
+        capsem_core::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+                    channel_from_std(std_stream).unwrap();
+                match rx.recv().await.unwrap() {
+                    ServiceToProcess::Exec { id, .. } => {
+                        tx.send(ProcessToService::ExecResult {
+                            id,
+                            stdout: stdout.to_vec(),
+                            stderr: Vec::new(),
+                            exit_code: 0,
+                        })
+                        .await
+                        .unwrap();
+                    }
+                    other => panic!("unexpected command: {other:?}"),
+                }
+            });
+    })
+}
+
 #[test]
 fn saved_vm_current_base_assets_from_profile_records_boot_hashes() {
     let profile_assets = capsem_core::settings_profiles::VmArchAssets {
@@ -2396,8 +2434,15 @@ async fn handle_fork_creates_persistent_sandbox() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
     let base_assets = test_saved_vm_base_assets();
-    let source_profile_pin = test_saved_vm_profile_pin(base_assets.clone());
+    let source_profile_pin = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0520.1".into()),
+            Some(base_assets.clone()),
+        )
+        .unwrap();
     state.instances.lock().unwrap().insert(
         "fork-src".into(),
         InstanceInfo {
@@ -2440,6 +2485,181 @@ async fn handle_fork_creates_persistent_sandbox() {
     assert_eq!(pin.profile_revision.as_deref(), Some("2026.0520.1"));
     assert!(pin.package_contract_hash.starts_with("blake3:"));
     assert_eq!(pin.base_assets, entry.base_assets);
+}
+
+#[tokio::test]
+async fn handle_fork_preserves_profile_and_fork_exec_works() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions/fork-exec-src");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    let base_assets = test_saved_vm_base_assets();
+    let source_profile_pin = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0520.1".into()),
+            Some(base_assets.clone()),
+        )
+        .unwrap();
+    state.instances.lock().unwrap().insert(
+        "fork-exec-src".into(),
+        InstanceInfo {
+            id: "fork-exec-src".into(),
+            pid: std::process::id(),
+            uds_path: dir.path().join("fork-exec-src.sock"),
+            session_dir: session_dir.clone(),
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: Some(base_assets.clone()),
+            profile_pin: Some(source_profile_pin.clone()),
+        },
+    );
+
+    let Json(fork_response) = handle_fork(
+        State(state.clone()),
+        Path("fork-exec-src".into()),
+        Json(ForkRequest {
+            name: "fork-exec".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fork_response.name, "fork-exec");
+
+    let fork_entry = state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get("fork-exec")
+        .cloned()
+        .unwrap();
+    let fork_pin = fork_entry.profile_pin.as_ref().unwrap();
+    assert_eq!(fork_pin.profile_id, source_profile_pin.profile_id);
+    assert_eq!(
+        fork_pin.profile_revision,
+        source_profile_pin.profile_revision
+    );
+    assert_eq!(
+        fork_pin.package_contract_hash,
+        source_profile_pin.package_contract_hash
+    );
+    assert_eq!(fork_pin.base_assets, source_profile_pin.base_assets);
+    let fork_effective =
+        capsem_core::settings_profiles::load_vm_effective_settings(&fork_entry.session_dir)
+            .unwrap();
+    assert_eq!(fork_effective.profile_id, source_profile_pin.profile_id);
+
+    let fork_sock = dir.path().join("fork-exec.sock");
+    let server = spawn_single_exec_server(fork_sock.clone(), b"fork-ok\n");
+    state.instances.lock().unwrap().insert(
+        "fork-exec".into(),
+        InstanceInfo {
+            id: "fork-exec".into(),
+            pid: std::process::id(),
+            uds_path: fork_sock,
+            session_dir: fork_entry.session_dir,
+            ram_mb: fork_entry.ram_mb,
+            cpus: fork_entry.cpus,
+            start_time: std::time::Instant::now(),
+            base_version: fork_entry.base_version,
+            persistent: true,
+            env: None,
+            forked_from: fork_entry.forked_from,
+            base_assets: fork_entry.base_assets,
+            profile_pin: fork_entry.profile_pin,
+        },
+    );
+
+    let Json(exec) = handle_exec(
+        State(state),
+        Path("fork-exec".into()),
+        Json(ExecRequest {
+            command: "echo fork-ok".into(),
+            timeout_secs: Some(5),
+        }),
+    )
+    .await
+    .unwrap();
+
+    server.join().unwrap();
+    assert_eq!(exec.stdout, "fork-ok\n");
+    assert_eq!(exec.stderr, "");
+    assert_eq!(exec.exit_code, 0);
+}
+
+#[tokio::test]
+async fn handle_fork_rejects_profile_string_drift_after_clone() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions/fork-profile-drift");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
+    let base_assets = test_saved_vm_base_assets();
+    let source_profile_pin = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0520.1".into()),
+            Some(base_assets.clone()),
+        )
+        .unwrap();
+    let mut effective =
+        capsem_core::settings_profiles::load_vm_effective_settings(&session_dir).unwrap();
+    effective.profile_id = "tampered-profile".into();
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    state.instances.lock().unwrap().insert(
+        "fork-profile-drift".into(),
+        InstanceInfo {
+            id: "fork-profile-drift".into(),
+            pid: std::process::id(),
+            uds_path: PathBuf::from("/tmp/fork-profile-drift.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: Some(base_assets),
+            profile_pin: Some(source_profile_pin),
+        },
+    );
+
+    let err = handle_fork(
+        State(state.clone()),
+        Path("fork-profile-drift".into()),
+        Json(ForkRequest {
+            name: "drifted-fork".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(
+        err.1.contains("profile drift"),
+        "unexpected error: {}",
+        err.1
+    );
+    assert!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("drifted-fork")
+            .is_none(),
+        "profile drift must not register a persistent fork"
+    );
 }
 
 #[tokio::test]
@@ -2512,8 +2732,15 @@ async fn handle_fork_duplicate_returns_conflict() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    state.ensure_vm_effective_settings(&session_dir).unwrap();
     let base_assets = test_saved_vm_base_assets();
-    let source_profile_pin = test_saved_vm_profile_pin(base_assets.clone());
+    let source_profile_pin = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0520.1".into()),
+            Some(base_assets.clone()),
+        )
+        .unwrap();
     state.instances.lock().unwrap().insert(
         "dup-src".into(),
         InstanceInfo {

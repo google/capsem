@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `66 ahead / 0 behind` `origin/main` in this worktree after the
-  forward-only create/fork/persist profile pin enforcement slice. The rescue
+  `67 ahead / 0 behind` `origin/main` in this worktree after the
+  fork profile-integrity coverage slice. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -168,7 +168,7 @@ When this sprint starts, promote the inline brief above into
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
-closed for the active branch: `HEAD...origin/main` is currently `66 ahead / 0
+closed for the active branch: `HEAD...origin/main` is currently `67 ahead / 0
 behind`. The remaining cleanup debt is now S06c plus the final V2 naming
 collapse and release gate. When executed, keep the order:
 
@@ -402,7 +402,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   typed client enum; missing pins are corrupted. Profile pin construction now
   requires a signed catalog revision and pinned asset identity, and
   create-from-source/fork/persist reject missing or revisionless pins before
-  durable clone/move work.
+  durable clone/move work. Fork cloning now preserves VM-effective profile
+  attachments, rejects profile drift, and has fork-plus-exec IPC coverage for
+  same-profile execution.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -416,7 +418,8 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   /setup/assets/cleanup` cleanup execution with installed-profile/saved-VM
   retention, `/list`/`/info`/`capsem list`/`capsem info` profile-state
   rendering, create-from-source/fork/persist fail-closed profile pin gates,
-  mitm_proxy integration test for model.request rewrite redaction.
+  fork-plus-exec same-profile IPC coverage, mitm_proxy integration test for
+  model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -508,6 +511,15 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   handle_persist_rejects_running_vm_without_profile_revision_pin` **1** passed,
   nearby fork/resume positive-path tests passed, and `cargo test -p
   capsem-service` **109 + 153** passed;
+  after fork profile-integrity coverage, `cargo test -p capsem-core
+  clone_sandbox_state_preserves_vm_effective_profile_attachments` **1** passed,
+  `cargo test -p capsem-service handle_fork_preserves_profile_and_fork_exec_works`
+  **1** passed, and `cargo test -p capsem-service
+  handle_fork_rejects_profile_string_drift_after_clone` **1** passed;
+  full package proof after fork profile-integrity coverage: `cargo test -p
+  capsem-core --lib` **1616** passed / 0 failed / 1 ignored, `cargo test -p
+  capsem-service` **109 + 155** passed, and `cargo test -p capsem` **242**
+  passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

@@ -25,7 +25,7 @@ completely.
 ## Execution Mode
 
 **Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `66 ahead / 0 behind` `origin/main` in this
+is coherent again and sits `67 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
@@ -225,6 +225,10 @@ Landed S07a foundation:
   signed catalog revision plus pinned asset identity, and create-from-source,
   fork, and persist fail closed before cloning/moving durable state when the
   source/running VM lacks that revision pin.
+- Fork profile integrity. Fork cloning now preserves the VM-effective profile
+  settings/trace attachments, verifies the forked pin still matches the source
+  VM's profile id/revision/package/assets, and has service coverage that the
+  fork can still execute through IPC with the same profile identity.
 - VM list/status profile state. `/list`, `/info`, `capsem list`, and `capsem
   info` now expose each VM's profile id/revision plus `current`,
   `needs_update`, `deprecated`, `revoked`, `corrupted`, or `unknown` based on
@@ -264,8 +268,10 @@ Remaining S07a push order:
    path. Resume now rejects registry entries without profile pins or pinned
    asset identity. Create-from-source, fork, and persist now reject
    missing/revisionless pins before asset resolution, clone, or session move
-   work. Remaining work is first-use create with an explicit selected catalog
-   revision plus mandatory profile payload hash proof.
+   work. Fork now preserves VM-effective profile attachments and rejects
+   profile drift before registry state is created. Remaining work is first-use
+   create with an explicit selected catalog revision plus mandatory profile
+   payload hash proof.
 5. Status/debug readiness for profile catalog state, installed revisions,
    package contracts, asset verification, VM pins, and drift/revocation.
 
@@ -383,6 +389,16 @@ Latest focused verification after the rescue/push transition:
   create/fork/persist pin enforcement.
 - `cargo test -p capsem-service` passed with 109 library tests + 153 service
   tests after forward-only create/fork/persist pin enforcement.
+- `cargo test -p capsem-core
+  clone_sandbox_state_preserves_vm_effective_profile_attachments`, `cargo test
+  -p capsem-service handle_fork_preserves_profile_and_fork_exec_works`, and
+  `cargo test -p capsem-service
+  handle_fork_rejects_profile_string_drift_after_clone` passed after fork
+  profile-integrity coverage.
+- `cargo test -p capsem-core --lib` passed with 1616 tests + 1 ignored, `cargo
+  test -p capsem-service` passed with 109 library tests + 155 service tests,
+  and `cargo test -p capsem` passed with 242 CLI tests after fork
+  profile-integrity coverage.
 - `cargo test -p capsem-core telemetry --lib` passed with 31 tests.
 - `cargo test -p capsem-process --no-run` passed.
 - `cargo test -p capsem-mcp-aggregator --no-run` passed.

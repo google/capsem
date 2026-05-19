@@ -825,11 +825,18 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
         }
     }
 
-    // Clone session.db at session root (host-only, not in guest/)
-    let db_src = src_session_dir.join("session.db");
-    if db_src.exists() {
-        let db_dst = dst_session_dir.join("session.db");
-        clone_file(&db_src, &db_dst).context("failed to clone session.db")?;
+    // Clone host-only session-root artifacts. These do not belong in the
+    // guest share, but they are part of the VM's durable identity/provenance.
+    for name in [
+        "session.db",
+        crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME,
+        crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME,
+    ] {
+        let src = src_session_dir.join(name);
+        if src.exists() {
+            let dst = dst_session_dir.join(name);
+            clone_file(&src, &dst).with_context(|| format!("failed to clone {name}"))?;
+        }
     }
 
     Ok(crate::session::disk_usage_bytes(dst_session_dir))

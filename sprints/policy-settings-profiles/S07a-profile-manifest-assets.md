@@ -79,6 +79,10 @@ Landed:
   and reject create-from-source, fork, and persist before durable clone/move
   work when the source/running VM lacks a signed profile revision pin and
   pinned asset identity.
+- Fork cloning now preserves VM-effective profile settings/trace attachments,
+  rejects profile drift between the source pin and cloned attachment, and has a
+  fork-plus-exec service test proving the fork keeps the same profile identity
+  through the IPC exec path.
 - Profile payload signature verification now reuses the existing minisign
   verifier through a profile-specific wrapper with tamper tests.
 - Installable profile payload fetch now reads catalog payload/signature
@@ -119,9 +123,11 @@ Push order from here:
    path. Landed: resume fails closed, create-from-source rejects corrupted
    source VMs before asset resolution, fork rejects corrupted sources before
    clone, persist rejects corrupted running VMs before moving session state, and
-   profile pin construction requires signed revision + pinned assets.
-   Remaining: first-use create with an explicit selected catalog revision and
-   mandatory profile payload hash proof.
+   profile pin construction requires signed revision + pinned assets. Fork now
+   preserves VM-effective profile attachments, proves exec still works after
+   fork with the same profile, and rejects profile string drift before
+   registering the fork. Remaining: first-use create with an explicit selected
+   catalog revision and mandatory profile payload hash proof.
 5. [~] Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
    Landed: `/list`, `/info`, `capsem list`, and `capsem info` expose VM profile
@@ -665,6 +671,12 @@ This sprint creates the contract consumed by later sprints:
       profile pins before cloning or moving durable VM state. Remaining work
       makes profile payload hash mandatory on every VM-create path before
       HTTP/UI lift.
+- [x] Prove fork profile integrity across exec. `handle_fork_preserves_profile_
+      and_fork_exec_works` forks a VM, verifies the forked registry pin and
+      VM-effective profile attachment match the source, then executes through a
+      fake capsem-process UDS responder. `handle_fork_rejects_profile_string_
+      drift_after_clone` mutates a profile string in the cloned attachment and
+      proves the fork fails closed before registration.
 - [~] Report VM profile state in list/status. Landed: `/list`, `/info`,
       `capsem list`, and `capsem info` now surface pinned profile id/revision plus
       current/needs_update/deprecated/revoked/corrupted/unknown state from the
@@ -749,6 +761,15 @@ This sprint creates the contract consumed by later sprints:
   handle_persist_rejects_running_vm_without_profile_revision_pin`.
   Full service proof for this slice: `cargo test -p capsem-service` (109
   library tests + 153 service tests).
+  Fork profile-integrity coverage now adds `cargo test -p capsem-core
+  clone_sandbox_state_preserves_vm_effective_profile_attachments`, `cargo test
+  -p capsem-service handle_fork_preserves_profile_and_fork_exec_works`, and
+  `cargo test -p capsem-service
+  handle_fork_rejects_profile_string_drift_after_clone`.
+  Full package proof after fork profile-integrity coverage: `cargo test -p
+  capsem-core --lib` (1616 passed / 1 ignored), `cargo test -p capsem-service`
+  (109 library tests + 155 service tests), and `cargo test -p capsem` (242 CLI
+  tests).
   Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar
