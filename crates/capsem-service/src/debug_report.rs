@@ -206,6 +206,8 @@ pub struct AssetsReport {
 pub struct AssetHealthReport {
     pub ready: bool,
     pub state: String,
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<String>,
     pub version: Option<String>,
     pub arch: Option<String>,
     pub missing: Vec<String>,
@@ -460,6 +462,8 @@ fn build_asset_report(input: &DebugReportInput) -> Result<AssetsReport> {
         health: input.asset_health.as_ref().map(|health| AssetHealthReport {
             ready: health.ready,
             state: health.state.as_str().to_string(),
+            profile_id: health.profile_id.clone(),
+            profile_revision: health.profile_revision.clone(),
             version: health.version.clone(),
             arch: health.arch.clone(),
             missing: health.missing.clone(),
@@ -966,6 +970,12 @@ fn append_asset_report(lines: &mut Vec<String>, assets: &AssetsReport) {
     lines.push("profile_asset_health_present: true".to_string());
     lines.push(format!("profile_asset_ready: {}", health.ready));
     lines.push(format!("profile_asset_state: {}", health.state));
+    if let Some(profile_id) = health.profile_id.as_deref() {
+        lines.push(format!("profile_asset_profile_id: {profile_id}"));
+    }
+    if let Some(revision) = health.profile_revision.as_deref() {
+        lines.push(format!("profile_asset_profile_revision: {revision}"));
+    }
     lines.push(format!(
         "profile_asset_version: {}",
         health.version.as_deref().unwrap_or("<unknown>")

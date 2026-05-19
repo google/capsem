@@ -33,6 +33,8 @@ Landed:
   reads old asset-only manifests or downloads VM assets outside the service.
 - Service asset health timestamps are preserved through `capsem status --json`
   and rendered in text status output.
+- Service/CLI asset health now carries explicit Profile V2 provenance:
+  `profile_id`, `profile_revision`, asset version, arch, and check timestamp.
 - Structured lifecycle logs now cover check start/ready/error, missing assets,
   download start/progress, hash verification, install success, and retryable
   download failure. Download URLs are logged without credentials or query
@@ -40,11 +42,13 @@ Landed:
 
 Gaps:
 
-- Status shows the latest health snapshot but not enough provenance for profile
-  id/revision, selected catalog payload hash, or per-asset URL/hash.
+- Status shows profile id/revision and check state, but not yet the selected
+  catalog payload hash or per-asset URL/hash.
 - Tests cover the service trigger, CLI summary rendering, background
-  reconciliation, status timestamp preservation, and log URL redaction, but not
-  full `capsem update --assets -> live service -> status progress -> logs` E2E.
+  reconciliation, status timestamp/provenance preservation, debug provenance,
+  concurrent manual reconcile locking, active cleanup refusal, and log URL
+  redaction, but not full `capsem update --assets -> live service -> status
+  progress -> logs` E2E.
 
 ## Product Contract
 
@@ -101,8 +105,11 @@ Gaps:
    - Make `capsem status` render these details compactly.
    - Add debug-report asset provenance for profile asset source and latest
      supervisor state.
+   - Landed: `profile_id` and `profile_revision` are explicit fields in
+     service/CLI asset health, setup asset status, reconcile/list payloads,
+     text status, and debug reports.
 
-5. [ ] **Concurrency and cleanup hardening**
+5. [x] **Concurrency and cleanup hardening**
    - Add per-asset or profile-level locks beyond the current in-process run
      lock where needed.
    - Prove two manual triggers do not duplicate downloads.
@@ -126,13 +133,16 @@ Gaps:
     reflects progress/readiness.
   - Landed: `cargo test -p capsem-service handle_asset_reconcile` covers the
     service endpoint downloading missing profile assets and the already-ready
-    outcome. `cargo test -p capsem parse_update_assets` keeps CLI parsing
-    wired.
+    outcome plus profile id/revision in the returned health. `cargo test -p
+    capsem parse_update_assets` keeps CLI parsing wired.
 - Adversarial:
   - Hash mismatch deletes temp file and logs terminal failure.
   - 404/503 records retryable failure with retry count.
-  - Duplicate manual triggers share the same reconcile run.
-  - Cleanup during update returns conflict.
+  - Landed: `handle_asset_reconcile_concurrent_calls_share_one_download_run`
+    proves two concurrent manual triggers issue exactly one GET per required
+    profile asset.
+  - Landed: `handle_asset_cleanup_refuses_during_active_profile_download`
+    proves cleanup returns conflict while a profile asset download is active.
 - E2E/VM or integration:
   - Create VM with missing profile assets triggers download, then boots with
     pinned hashes.
@@ -145,6 +155,8 @@ Gaps:
     query/credential leakage.
   - Landed: service debug reports now serialize Profile V2 asset health instead
     of legacy asset manifest presence/hash fields.
+  - Landed: debug reports include explicit profile id/revision from asset
+    health.
 - Performance:
   - Repeated checks when assets are present do not hash every large file on hot
     `/list` or status paths.
@@ -157,6 +169,10 @@ Gaps:
 - `capsem status` clearly reports profile asset check/update/readiness.
 - Background and manual checks use one code path.
 - Logs and debug report explain checks/downloads without sensitive data.
+- Concurrent manual reconcile requests share the supervisor run lock and do not
+  duplicate network downloads.
+- Cleanup refuses active downloads and leaves stale files untouched until asset
+  health is ready.
 - Old asset manifest authority is gone from user-facing update flows.
 - Old Rust `ManifestV2` parsing, verified loading, direct downloading, and
   manifest-driven cleanup paths are removed from the runtime crates.

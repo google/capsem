@@ -121,10 +121,11 @@ a valid claim -- mark it `[ ]` instead.
     catalog clients/debug detail, and first-use selected-profile proof.
 15. [~] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
-  trigger, checked-at status propagation, structured lifecycle logs, service
-  debug Profile V2 asset-health reporting, and old Rust asset-manifest
-  parser/loader/downloader cleanup have landed. Remaining work:
-  duplicate-download/cleanup concurrency proof and VM-create integration.
+  trigger, checked-at/profile provenance status propagation, structured
+  lifecycle logs, service debug Profile V2 asset-health reporting, old Rust
+  asset-manifest parser/loader/downloader cleanup, and duplicate-download /
+  active-cleanup race proof have landed. Remaining work: VM-create
+  integration/E2E proof.
 16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -561,6 +562,20 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   A broad `cargo test -p capsem-service` sweep was stopped after the lib suite
   passed because the existing `reload_config_returns_structured_failed_session_state`
   binary test sat past the 60s runner warning with no output;
+  after profile asset provenance and race-proof hardening, `cargo test -p
+  capsem-service active_profile_download` **1** passed, `cargo test -p
+  capsem-service concurrent_calls_share_one_download_run` **1** passed,
+  `cargo test -p capsem-service handle_asset_reconcile_downloads_missing_profile_assets`
+  **1** passed, `cargo test -p capsem-service asset_supervisor --lib` **8**
+  passed, `cargo test -p capsem-service debug_report` **7 + 1** passed,
+  `cargo test -p capsem status::tests` **29** passed, and `cargo test -p
+  capsem setup_asset_health` **4** passed; final local gates for this slice:
+  `cargo fmt --all -- --check`, `git diff --check`, `cargo test -p
+  capsem-service --lib` **110** passed, `cargo test -p capsem-service
+  active_profile_download` **1** passed, `cargo test -p capsem-service
+  concurrent_calls_share_one_download_run` **1** passed, `cargo test -p
+  capsem-service handle_asset_reconcile_downloads_missing_profile_assets` **1**
+  passed, and `cargo test -p capsem` **242** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

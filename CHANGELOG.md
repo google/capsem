@@ -100,6 +100,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciler instead of the old asset-manifest downloader.
 - Added structured profile asset check/download lifecycle logs with redacted
   asset URLs, plus status propagation for the service asset check timestamp.
+- Added explicit Profile V2 asset provenance to service/CLI asset health,
+  including profile id and profile revision in reconcile, list/status, setup
+  asset status, and debug-report payloads.
+- Added adversarial coverage proving concurrent profile asset reconciles share
+  one download run and asset cleanup refuses while a profile asset download is
+  active.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,
   manifest-driven downloader, and manifest-driven cleanup path. CLI status and
   service debug reports now rely on Profile V2 asset health instead of legacy

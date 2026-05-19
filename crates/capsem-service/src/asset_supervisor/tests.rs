@@ -116,6 +116,8 @@ fn local_check_reports_updating_when_required_assets_are_missing() {
     let health = supervisor.snapshot();
     assert_eq!(health.state, AssetHealthState::Updating);
     assert!(!health.ready);
+    assert_eq!(health.profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(health.profile_revision.as_deref(), Some("2026.0513.1"));
     assert_eq!(health.version.as_deref(), Some("everyday-work@2026.0513.1"));
     assert_eq!(health.arch.as_deref(), Some("arm64"));
     assert_eq!(
@@ -152,6 +154,8 @@ fn local_check_reports_ready_when_required_assets_are_present() {
     let health = supervisor.snapshot();
     assert_eq!(health.state, AssetHealthState::Ready);
     assert!(health.ready);
+    assert_eq!(health.profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(health.profile_revision.as_deref(), Some("2026.0513.1"));
     assert!(health.missing.is_empty());
     assert!(health.progress.is_none());
     assert!(health.error.is_none());

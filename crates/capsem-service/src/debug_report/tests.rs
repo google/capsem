@@ -4,6 +4,8 @@ fn ready_asset_health() -> crate::api::AssetHealth {
     crate::api::AssetHealth {
         ready: true,
         state: crate::api::AssetHealthState::Ready,
+        profile_id: Some("everyday-work".to_string()),
+        profile_revision: Some("2026.0520.1".to_string()),
         version: Some("everyday-work@2026.0520.1".to_string()),
         arch: Some("arm64".to_string()),
         missing: Vec::new(),
@@ -44,6 +46,12 @@ fn attributes_profile_v2_asset_health() {
     assert!(report.text.contains("source: profile_v2_asset_health"));
     assert!(report.text.contains("profile_asset_health_present: true"));
     assert!(report.text.contains("profile_asset_ready: true"));
+    assert!(report
+        .text
+        .contains("profile_asset_profile_id: everyday-work"));
+    assert!(report
+        .text
+        .contains("profile_asset_profile_revision: 2026.0520.1"));
     assert!(report
         .text
         .contains("profile_asset_version: everyday-work@2026.0520.1"));
@@ -174,6 +182,8 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
     assert_eq!(json["assets"]["source"], "profile_v2_asset_health");
     assert_eq!(json["assets"]["health"]["ready"], true);
     assert_eq!(json["assets"]["health"]["state"], "ready");
+    assert_eq!(json["assets"]["health"]["profile_id"], "everyday-work");
+    assert_eq!(json["assets"]["health"]["profile_revision"], "2026.0520.1");
     assert_eq!(
         json["assets"]["health"]["version"],
         "everyday-work@2026.0520.1"

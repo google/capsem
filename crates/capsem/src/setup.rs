@@ -544,6 +544,8 @@ mod tests {
         crate::client::AssetHealth {
             ready,
             state: state.to_string(),
+            profile_id: None,
+            profile_revision: None,
             version: Some("2026.0415.1".to_string()),
             arch: Some("arm64".to_string()),
             missing: Vec::new(),

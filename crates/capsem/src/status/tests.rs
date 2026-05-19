@@ -218,6 +218,8 @@ fn status_report_preserves_service_asset_updating_state() {
     let asset_health = crate::client::AssetHealth {
         ready: false,
         state: "updating".into(),
+        profile_id: Some("everyday-work".into()),
+        profile_revision: Some("2026.0513.1".into()),
         version: Some("2026.0513.1".into()),
         arch: Some("arm64".into()),
         missing: vec!["rootfs.squashfs".into()],
@@ -245,6 +247,8 @@ fn status_report_preserves_service_asset_updating_state() {
     let json = serde_json::to_value(&report).unwrap();
     assert_eq!(json["state"], "updating");
     assert_eq!(json["asset_health"]["state"], "updating");
+    assert_eq!(json["asset_health"]["profile_id"], "everyday-work");
+    assert_eq!(json["asset_health"]["profile_revision"], "2026.0513.1");
     assert_eq!(json["asset_health"]["checked_at_unix_secs"], 1_779_000_000);
     assert_eq!(
         json["asset_health"]["progress"]["logical_name"],
@@ -264,6 +268,8 @@ fn status_report_blocks_on_saved_vm_asset_dependencies() {
     let asset_health = crate::client::AssetHealth {
         ready: true,
         state: "ready".into(),
+        profile_id: Some("everyday-work".into()),
+        profile_revision: Some("2026.0513.1".into()),
         version: Some("2026.0513.1".into()),
         arch: Some("arm64".into()),
         missing: Vec::new(),

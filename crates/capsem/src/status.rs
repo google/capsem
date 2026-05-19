@@ -1126,6 +1126,12 @@ fn print_service_asset_status(asset_health: &client::AssetHealth) {
     let version = asset_health.version.as_deref().unwrap_or("unknown");
     let arch = asset_health.arch.as_deref().unwrap_or("unknown");
     println!("Assets:    {} (v{}, {})", asset_health.state, version, arch);
+    if let Some(profile_id) = &asset_health.profile_id {
+        match asset_health.profile_revision.as_deref() {
+            Some(revision) => println!("  profile: {} ({})", profile_id, revision),
+            None => println!("  profile: {}", profile_id),
+        }
+    }
     if !asset_health.missing.is_empty() {
         println!("  missing: {}", asset_health.missing.join(", "));
     }

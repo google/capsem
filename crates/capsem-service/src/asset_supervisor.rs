@@ -39,6 +39,8 @@ pub struct ProfileAssetRequirement {
 
 #[derive(Debug)]
 struct LocalAssetStatus {
+    profile_id: Option<String>,
+    profile_revision: Option<String>,
     version: String,
     arch: String,
     missing: Vec<String>,
@@ -51,6 +53,8 @@ impl AssetSupervisor {
         requirement: AssetRequirement,
         check_interval: Duration,
     ) -> Self {
+        let profile_id = requirement.profile_id().map(str::to_string);
+        let profile_revision = requirement.profile_revision().map(str::to_string);
         Self {
             assets_dir,
             requirement,
@@ -58,6 +62,8 @@ impl AssetSupervisor {
             state: Mutex::new(AssetHealth {
                 ready: false,
                 state: AssetHealthState::Checking,
+                profile_id,
+                profile_revision,
                 version: None,
                 arch: None,
                 missing: Vec::new(),
@@ -130,6 +136,8 @@ impl AssetSupervisor {
         let mut state = self.state.lock().unwrap();
         state.ready = false;
         state.state = AssetHealthState::Error;
+        state.profile_id = self.requirement.profile_id().map(str::to_string);
+        state.profile_revision = self.requirement.profile_revision().map(str::to_string);
         state.progress = None;
         state.error = Some(error.into());
         state.retryable = retryable;
@@ -208,6 +216,8 @@ impl AssetSupervisor {
         let mut state = self.state.lock().unwrap();
         state.ready = false;
         state.state = AssetHealthState::Checking;
+        state.profile_id = self.requirement.profile_id().map(str::to_string);
+        state.profile_revision = self.requirement.profile_revision().map(str::to_string);
         state.progress = None;
         state.error = None;
         state.retryable = false;
@@ -218,6 +228,8 @@ impl AssetSupervisor {
         let mut state = self.state.lock().unwrap();
         state.ready = true;
         state.state = AssetHealthState::Ready;
+        state.profile_id = status.profile_id;
+        state.profile_revision = status.profile_revision;
         state.version = Some(status.version);
         state.arch = Some(status.arch);
         state.missing.clear();
@@ -231,6 +243,8 @@ impl AssetSupervisor {
         let mut state = self.state.lock().unwrap();
         state.ready = false;
         state.state = AssetHealthState::Updating;
+        state.profile_id = status.profile_id;
+        state.profile_revision = status.profile_revision;
         state.version = Some(status.version);
         state.arch = Some(status.arch);
         state.missing = status.missing;
@@ -272,6 +286,8 @@ impl AssetSupervisor {
         }
 
         Ok(LocalAssetStatus {
+            profile_id: self.requirement.profile_id().map(str::to_string),
+            profile_revision: self.requirement.profile_revision().map(str::to_string),
             version: resolved.asset_version.clone(),
             arch,
             missing,
@@ -365,6 +381,22 @@ impl ProfileAssetRequirement {
             .as_ref()
             .map(|revision| format!("{}@{}", self.profile_id, revision))
             .unwrap_or_else(|| self.profile_id.clone())
+    }
+}
+
+impl AssetRequirement {
+    fn profile_id(&self) -> Option<&str> {
+        match self {
+            AssetRequirement::Profile(required) => Some(&required.profile_id),
+            AssetRequirement::DevLogical { .. } => None,
+        }
+    }
+
+    fn profile_revision(&self) -> Option<&str> {
+        match self {
+            AssetRequirement::Profile(required) => required.revision.as_deref(),
+            AssetRequirement::DevLogical { .. } => None,
+        }
     }
 }
 

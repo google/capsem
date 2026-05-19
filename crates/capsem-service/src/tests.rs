@@ -1,6 +1,6 @@
 use super::*;
 use capsem_core::settings_profiles::{VmArchAssets, VmAssetDeclaration};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -757,6 +757,84 @@ async fn start_test_asset_server() -> (String, tokio::task::JoinHandle<()>) {
         }
     });
     (format!("http://{addr}"), handle)
+}
+
+async fn start_counted_blocking_asset_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    Arc<AtomicUsize>,
+    Arc<tokio::sync::Notify>,
+    Arc<tokio::sync::Notify>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let first_request_seen = Arc::new(tokio::sync::Notify::new());
+    let release_first_response = Arc::new(tokio::sync::Notify::new());
+    let blocked_first_response = Arc::new(AtomicBool::new(false));
+
+    let handle = {
+        let request_count = Arc::clone(&request_count);
+        let first_request_seen = Arc::clone(&first_request_seen);
+        let release_first_response = Arc::clone(&release_first_response);
+        let blocked_first_response = Arc::clone(&blocked_first_response);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let request_count = Arc::clone(&request_count);
+                let first_request_seen = Arc::clone(&first_request_seen);
+                let release_first_response = Arc::clone(&release_first_response);
+                let blocked_first_response = Arc::clone(&blocked_first_response);
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 2048];
+                    let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf)
+                        .await
+                        .unwrap_or(0);
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let path = request
+                        .lines()
+                        .next()
+                        .and_then(|line| line.split_whitespace().nth(1))
+                        .unwrap_or("/")
+                        .trim_start_matches('/');
+                    let body = match path {
+                        "vmlinuz" => Some(b"kernel".as_slice()),
+                        "initrd.img" => Some(b"initrd".as_slice()),
+                        "rootfs.squashfs" => Some(b"rootfs".as_slice()),
+                        _ => None,
+                    };
+                    if let Some(body) = body {
+                        if !blocked_first_response.swap(true, Ordering::SeqCst) {
+                            first_request_seen.notify_one();
+                            release_first_response.notified().await;
+                        }
+                        let header =
+                            format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+                        let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, header.as_bytes())
+                            .await;
+                        let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, body).await;
+                    } else {
+                        let _ = tokio::io::AsyncWriteExt::write_all(
+                            &mut stream,
+                            b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n",
+                        )
+                        .await;
+                    }
+                });
+            }
+        })
+    };
+
+    (
+        format!("http://{addr}"),
+        handle,
+        request_count,
+        first_request_seen,
+        release_first_response,
+    )
 }
 
 fn test_asset_locations(
@@ -2590,6 +2668,14 @@ async fn handle_asset_reconcile_downloads_missing_profile_assets() {
     assert_eq!(result["outcome"], serde_json::json!("downloaded"));
     assert_eq!(result["health"]["state"], serde_json::json!("ready"));
     assert_eq!(result["health"]["ready"], serde_json::json!(true));
+    assert_eq!(
+        result["health"]["profile_id"],
+        serde_json::json!("everyday-work")
+    );
+    assert_eq!(
+        result["health"]["profile_revision"],
+        serde_json::json!("2026.0520.1")
+    );
     assert!(state.asset_supervisor.snapshot().ready);
 }
 
@@ -2602,6 +2688,76 @@ async fn handle_asset_reconcile_reports_already_ready() {
     let Json(result) = handle_asset_reconcile(State(state)).await.unwrap();
 
     assert_eq!(result["outcome"], serde_json::json!("already_ready"));
+    assert_eq!(result["health"]["state"], serde_json::json!("ready"));
+}
+
+#[tokio::test]
+async fn handle_asset_reconcile_concurrent_calls_share_one_download_run() {
+    let (base_url, server, request_count, first_request_seen, release_first_response) =
+        start_counted_blocking_asset_server().await;
+    let (state, _dir) = make_test_state_with_profile_assets(&base_url);
+
+    let first = tokio::spawn(handle_asset_reconcile(State(state.clone())));
+    let second = tokio::spawn(handle_asset_reconcile(State(state.clone())));
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        first_request_seen.notified(),
+    )
+    .await
+    .expect("first download request should start");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(
+        request_count.load(Ordering::SeqCst),
+        1,
+        "second reconcile must wait on the supervisor run lock instead of starting a duplicate GET"
+    );
+
+    release_first_response.notify_waiters();
+    let first = first.await.unwrap().unwrap().0;
+    let second = second.await.unwrap().unwrap().0;
+    server.abort();
+
+    assert_eq!(first["health"]["state"], serde_json::json!("ready"));
+    assert_eq!(second["health"]["state"], serde_json::json!("ready"));
+    assert!(state.asset_supervisor.snapshot().ready);
+    assert_eq!(
+        request_count.load(Ordering::SeqCst),
+        3,
+        "exactly one GET per required profile asset should be issued"
+    );
+}
+
+#[tokio::test]
+async fn handle_asset_cleanup_refuses_during_active_profile_download() {
+    let (base_url, server, _request_count, first_request_seen, release_first_response) =
+        start_counted_blocking_asset_server().await;
+    let (state, _dir) = make_test_state_with_profile_assets(&base_url);
+    let stale = state.assets_dir.join("rootfs-9999999999999999.squashfs");
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
+    std::fs::write(&stale, b"stale rootfs").unwrap();
+
+    let reconcile = tokio::spawn(handle_asset_reconcile(State(state.clone())));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        first_request_seen.notified(),
+    )
+    .await
+    .expect("download should be in progress before cleanup");
+
+    let err = handle_asset_cleanup(State(state.clone()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err
+        .1
+        .contains("asset cleanup is blocked while assets are updating"));
+    assert!(stale.exists());
+
+    release_first_response.notify_waiters();
+    let result = reconcile.await.unwrap().unwrap().0;
+    server.abort();
     assert_eq!(result["health"]["state"], serde_json::json!("ready"));
 }
 

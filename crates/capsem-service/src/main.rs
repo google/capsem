@@ -4741,6 +4741,8 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
                 "downloading": health.state == AssetHealthState::Updating,
                 "asset_locations": asset_locations_status_json(&state.asset_locations),
                 "asset_version": health.version.unwrap_or(resolved.asset_version),
+                "profile_id": health.profile_id,
+                "profile_revision": health.profile_revision,
                 "arch": health.arch,
                 "missing": health.missing,
                 "progress": health.progress,
