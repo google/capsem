@@ -1,4 +1,5 @@
 use super::*;
+use capsem_core::settings_profiles::{VmArchAssets, VmAssetDeclaration};
 use std::sync::atomic::AtomicU64;
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -684,6 +685,78 @@ fn test_asset_supervisor(assets_dir: PathBuf) -> Arc<AssetSupervisor> {
         },
         std::time::Duration::from_secs(60),
     ))
+}
+
+fn test_profile_asset_declaration(base_url: &str, name: &str, bytes: &[u8]) -> VmAssetDeclaration {
+    VmAssetDeclaration {
+        url: format!("{base_url}/{name}"),
+        hash: format!("blake3:{}", blake3::hash(bytes).to_hex()),
+        signature_url: format!("{base_url}/{name}.minisig"),
+        size: bytes.len() as u64,
+        content_type: "application/octet-stream".to_string(),
+    }
+}
+
+fn test_profile_asset_supervisor(assets_dir: PathBuf, base_url: &str) -> Arc<AssetSupervisor> {
+    Arc::new(AssetSupervisor::new(
+        assets_dir,
+        AssetRequirement::Profile(ProfileAssetRequirement::new(
+            "everyday-work".to_string(),
+            Some("2026.0520.1".to_string()),
+            host_asset_arch().to_string(),
+            VmArchAssets {
+                kernel: test_profile_asset_declaration(base_url, "vmlinuz", b"kernel"),
+                initrd: test_profile_asset_declaration(base_url, "initrd.img", b"initrd"),
+                rootfs: test_profile_asset_declaration(base_url, "rootfs.squashfs", b"rootfs"),
+            },
+        )),
+        std::time::Duration::from_secs(60),
+    ))
+}
+
+async fn start_test_asset_server() -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0_u8; 2048];
+                let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf)
+                    .await
+                    .unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/")
+                    .trim_start_matches('/');
+                let body = match path {
+                    "vmlinuz" => Some(b"kernel".as_slice()),
+                    "initrd.img" => Some(b"initrd".as_slice()),
+                    "rootfs.squashfs" => Some(b"rootfs".as_slice()),
+                    _ => None,
+                };
+                if let Some(body) = body {
+                    let header =
+                        format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+                    let _ =
+                        tokio::io::AsyncWriteExt::write_all(&mut stream, header.as_bytes()).await;
+                    let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, body).await;
+                } else {
+                    let _ = tokio::io::AsyncWriteExt::write_all(
+                        &mut stream,
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n",
+                    )
+                    .await;
+                }
+            });
+        }
+    });
+    (format!("http://{addr}"), handle)
 }
 
 fn test_asset_locations(
@@ -2459,6 +2532,76 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
     (state, dir)
+}
+
+fn make_test_state_with_profile_assets(base_url: &str) -> (Arc<ServiceState>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let registry_path = dir.path().join("persistent_registry.json");
+    let assets_dir = dir.path().join("assets");
+    let current_version = "0.0.0";
+    let state = Arc::new(ServiceState {
+        instances: Mutex::new(HashMap::new()),
+        persistent_registry: Mutex::new(PersistentRegistry::load(registry_path)),
+        process_binary: PathBuf::from("/nonexistent/capsem-process"),
+        assets_dir: assets_dir.clone(),
+        asset_locations: test_asset_locations(assets_dir.clone()),
+        service_settings: test_service_settings(dir.path()),
+        run_dir: dir.path().to_path_buf(),
+        job_counter: AtomicU64::new(1),
+        asset_supervisor: test_profile_asset_supervisor(assets_dir, base_url),
+        current_version: current_version.into(),
+        magika: test_magika(),
+        save_restore_lock: tokio::sync::Mutex::new(()),
+        shutdown_lock: tokio::sync::Mutex::new(()),
+    });
+    (state, dir)
+}
+
+fn write_profile_test_assets(assets_dir: &std::path::Path) {
+    let arch_dir = assets_dir.join(host_asset_arch());
+    std::fs::create_dir_all(&arch_dir).unwrap();
+    for (logical_name, bytes) in [
+        ("vmlinuz", b"kernel".as_slice()),
+        ("initrd.img", b"initrd".as_slice()),
+        ("rootfs.squashfs", b"rootfs".as_slice()),
+    ] {
+        let hash = blake3::hash(bytes).to_hex().to_string();
+        std::fs::write(
+            arch_dir.join(capsem_core::asset_manager::hash_filename(
+                logical_name,
+                &hash,
+            )),
+            bytes,
+        )
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn handle_asset_reconcile_downloads_missing_profile_assets() {
+    let (base_url, server) = start_test_asset_server().await;
+    let (state, _dir) = make_test_state_with_profile_assets(&base_url);
+
+    let Json(result) = handle_asset_reconcile(State(state.clone())).await.unwrap();
+
+    server.abort();
+    assert_eq!(result["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(result["outcome"], serde_json::json!("downloaded"));
+    assert_eq!(result["health"]["state"], serde_json::json!("ready"));
+    assert_eq!(result["health"]["ready"], serde_json::json!(true));
+    assert!(state.asset_supervisor.snapshot().ready);
+}
+
+#[tokio::test]
+async fn handle_asset_reconcile_reports_already_ready() {
+    let (state, _dir) = make_test_state_with_profile_assets("https://assets.example.test");
+    write_profile_test_assets(&state.assets_dir);
+    state.asset_supervisor.refresh_local_state();
+
+    let Json(result) = handle_asset_reconcile(State(state)).await.unwrap();
+
+    assert_eq!(result["outcome"], serde_json::json!("already_ready"));
+    assert_eq!(result["health"]["state"], serde_json::json!("ready"));
 }
 
 #[tokio::test]

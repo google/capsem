@@ -206,6 +206,16 @@ fn retryable_download_error_is_reported_as_error_state() {
     assert_eq!(health.error.as_deref(), Some("GET fixture returned 503"));
 }
 
+#[test]
+fn log_url_redaction_strips_query_and_credentials() {
+    assert_eq!(
+        redacted_url_for_log(
+            "https://token:secret@assets.example.test/path/rootfs.squashfs?sig=secret"
+        ),
+        "https://assets.example.test/path/rootfs.squashfs"
+    );
+}
+
 #[tokio::test]
 async fn ensure_assets_once_downloads_missing_assets_and_reports_ready() {
     let dir = tempfile::tempdir().unwrap();

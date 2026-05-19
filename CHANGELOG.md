@@ -94,6 +94,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removes unreferenced hash-named/legacy asset files without old manifest
   authority, preserves installed-profile and saved-VM pins, and refuses to run
   while assets are still checking or updating.
+- Added `POST /setup/assets/reconcile` so callers can force the service-owned
+  Profile V2 asset reconciler to check/download profile VM assets on demand.
+- Changed `capsem update --assets` to call the service Profile V2 asset
+  reconciler instead of the old asset-manifest downloader.
+- Added structured profile asset check/download lifecycle logs with redacted
+  asset URLs, plus status propagation for the service asset check timestamp.
 - Changed persistent VM resume to require forward profile pins and pinned asset
   identity; unpinned registry entries no longer fall back to the current
   profile/assets.

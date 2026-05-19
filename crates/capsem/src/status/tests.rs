@@ -225,6 +225,7 @@ fn status_report_preserves_service_asset_updating_state() {
         retry_count: 0,
         retryable: false,
         saved_vm_dependencies: Vec::new(),
+        checked_at_unix_secs: Some(1_779_000_000),
     };
 
     let report = super::status_report_from_parts_with_assets(&service, &[], Some(asset_health));
@@ -238,6 +239,7 @@ fn status_report_preserves_service_asset_updating_state() {
     let json = serde_json::to_value(&report).unwrap();
     assert_eq!(json["state"], "updating");
     assert_eq!(json["asset_health"]["state"], "updating");
+    assert_eq!(json["asset_health"]["checked_at_unix_secs"], 1_779_000_000);
     assert_eq!(
         json["asset_health"]["progress"]["logical_name"],
         "rootfs.squashfs"
@@ -270,6 +272,7 @@ fn status_report_blocks_on_saved_vm_asset_dependencies() {
             missing: vec!["rootfs.squashfs".into()],
             recovery_hint: "restore assets".into(),
         }],
+        checked_at_unix_secs: None,
     };
     let issues = super::service_asset_health_issues(&asset_health);
 

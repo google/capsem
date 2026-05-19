@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `69 ahead / 0 behind` `origin/main` in this worktree after the
-  S07c asset-update orchestration planning slice. The rescue
+  `70 ahead / 0 behind` `origin/main` in this worktree after the
+  S07c manual asset reconcile/update slice. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -119,10 +119,11 @@ a valid claim -- mark it `[ ]` instead.
     profile revision, profile payload hash, package-contract hash, and pinned
     asset hashes. Remaining work adds manifest source fetch/scheduling, richer
     catalog clients/debug detail, and first-use selected-profile proof.
-15. [ ] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
-    -- unify background asset checks, manual `capsem update --assets`,
-    status/debug provenance, structured download logs, and cleanup/create
-    concurrency around Profile V2 asset authority.
+15. [~] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
+    -- manual service reconcile endpoint, `capsem update --assets` service
+    trigger, checked-at status propagation, and structured lifecycle logs have
+    landed. Remaining work: debug provenance, duplicate-download/cleanup
+    concurrency proof, and VM-create integration.
 16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -174,7 +175,7 @@ When this sprint starts, promote the inline brief above into
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
-closed for the active branch: `HEAD...origin/main` is currently `69 ahead / 0
+closed for the active branch: `HEAD...origin/main` is currently `70 ahead / 0
 behind`. The remaining cleanup debt is now S06c plus the final V2 naming
 collapse and release gate. When executed, keep the order:
 
@@ -461,7 +462,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   read-back coverage. VM metadata surfaces the corresponding profile pin for
   status/detail paths without reopening `session.db` on `/list`, and now
   requires the installed profile payload hash for forward VM pin construction
-  and source/fork/persist validation.
+  and source/fork/persist validation. S07c adds Profile V2 asset reconcile
+  timestamp propagation through `capsem status --json`, text status rendering,
+  and structured service log events for profile asset check/download
+  lifecycle, with URL redaction coverage.
   Persisted
   policy-decision read-back from a running `session.db` (capsem-doctor E2E ask
   probe) is **deferred**.
@@ -537,6 +541,14 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   vm_profile_pin` **5** passed, `cargo test -p capsem-service handle_fork`
   **8** passed, full `cargo test -p capsem-service` **109 + 158** passed,
   and `cargo test -p capsem` **242** passed;
+  after the first S07c asset update orchestration slice, `cargo test -p
+  capsem-service handle_asset_reconcile` **2** passed, `cargo test -p
+  capsem-service asset_supervisor --lib` **8** passed, `cargo test -p capsem
+  profile_asset_reconcile_summary_line` **2** passed, `cargo test -p capsem
+  parse_update_assets` **1** passed, and `cargo test -p capsem
+  status_report_preserves_service_asset_updating_state` **1** passed; full
+  package proof: `cargo test -p capsem-service` **110 + 160** passed and
+  `cargo test -p capsem` **242** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

@@ -552,6 +552,7 @@ mod tests {
             retry_count: 0,
             retryable: false,
             saved_vm_dependencies: Vec::new(),
+            checked_at_unix_secs: None,
         }
     }
 

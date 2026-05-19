@@ -9,6 +9,7 @@ use capsem_core::asset_manager::{
 use capsem_core::settings_profiles::{EffectiveVmSettings, VmArchAssets, VmAssetDeclaration};
 use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
+use tracing::{debug, error, info, warn};
 
 use crate::api::{AssetHealth, AssetHealthState, AssetProgress};
 use crate::registry::SavedVmBaseAssets;
@@ -140,20 +141,42 @@ impl AssetSupervisor {
 
     pub async fn ensure_assets_once(&self) {
         let _guard = self.run_lock.lock().await;
+        info!(
+            event = "profile_asset_check_start",
+            "profile asset supervisor check started"
+        );
         self.set_checking();
 
         let status = match self.inspect_required_assets() {
             Ok(status) if status.missing.is_empty() => {
+                info!(
+                    event = "profile_asset_check_ready",
+                    asset_version = %status.version,
+                    arch = %status.arch,
+                    "profile assets already ready"
+                );
                 self.record_ready(status);
                 return;
             }
             Ok(status) => status,
             Err(e) => {
+                error!(
+                    event = "profile_asset_check_error",
+                    error = %e,
+                    "profile asset check failed"
+                );
                 self.record_error(format!("{e:#}"), false);
                 return;
             }
         };
 
+        info!(
+            event = "profile_asset_missing",
+            asset_version = %status.version,
+            arch = %status.arch,
+            missing = ?status.missing,
+            "profile assets missing"
+        );
         self.record_updating(status);
         let result = match &self.requirement {
             AssetRequirement::Profile(required) => {
@@ -170,7 +193,14 @@ impl AssetSupervisor {
 
         match result {
             Ok(_) => self.refresh_local_state(),
-            Err(e) => self.record_error(format!("{e:#}"), true),
+            Err(e) => {
+                warn!(
+                    event = "profile_asset_download_retryable_error",
+                    error = %e,
+                    "profile asset download failed; will retry"
+                );
+                self.record_error(format!("{e:#}"), true);
+            }
         }
     }
 
@@ -376,6 +406,18 @@ async fn download_missing_profile_assets(
         }
 
         let url = &asset.url;
+        let redacted_url = redacted_url_for_log(url);
+        info!(
+            event = "profile_asset_download_start",
+            profile_id = %required.profile_id,
+            revision = required.revision.as_deref().unwrap_or(""),
+            arch = %required.arch,
+            logical_name,
+            expected_hash = hash,
+            target = %target.display(),
+            url = %redacted_url,
+            "profile asset download started"
+        );
         let resp = client
             .get(url)
             .send()
@@ -400,6 +442,16 @@ async fn download_missing_profile_assets(
                 .with_context(|| format!("write {}", tmp.display()))?;
             hasher.update(&chunk);
             bytes_done += chunk.len() as u64;
+            debug!(
+                event = "profile_asset_download_progress",
+                profile_id = %required.profile_id,
+                revision = required.revision.as_deref().unwrap_or(""),
+                arch = %required.arch,
+                logical_name,
+                bytes_done,
+                bytes_total = ?total,
+                "profile asset download progressed"
+            );
             on_progress(DownloadProgress {
                 logical_name: logical_name.to_string(),
                 bytes_done,
@@ -417,9 +469,28 @@ async fn download_missing_profile_assets(
             let _ = tokio::fs::remove_file(&tmp).await;
             bail!("{logical_name}: hash mismatch (expected {hash}, got {actual})");
         }
+        info!(
+            event = "profile_asset_verify_ok",
+            profile_id = %required.profile_id,
+            revision = required.revision.as_deref().unwrap_or(""),
+            arch = %required.arch,
+            logical_name,
+            expected_hash = hash,
+            bytes_done,
+            "profile asset hash verified"
+        );
         tokio::fs::rename(&tmp, &target)
             .await
             .with_context(|| format!("install {}", target.display()))?;
+        info!(
+            event = "profile_asset_install_ok",
+            profile_id = %required.profile_id,
+            revision = required.revision.as_deref().unwrap_or(""),
+            arch = %required.arch,
+            logical_name,
+            target = %target.display(),
+            "profile asset installed"
+        );
         on_progress(DownloadProgress {
             logical_name: logical_name.to_string(),
             bytes_done,
@@ -440,6 +511,16 @@ fn dev_asset_base(assets_dir: &Path, arch: &str) -> PathBuf {
         arch_dir
     } else {
         assets_dir.to_path_buf()
+    }
+}
+
+fn redacted_url_for_log(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(parsed) => {
+            let host = parsed.host_str().unwrap_or("unknown-host");
+            format!("{}://{}{}", parsed.scheme(), host, parsed.path())
+        }
+        Err(_) => "<invalid-url>".to_string(),
     }
 }
 

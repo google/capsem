@@ -175,6 +175,8 @@ pub struct AssetHealth {
     pub retryable: bool,
     #[serde(default)]
     pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at_unix_secs: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

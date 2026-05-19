@@ -26,22 +26,25 @@ Landed:
   `ready`, `error`, missing assets, progress, retry count, and retryability.
 - `POST /setup/assets/cleanup` refuses cleanup unless the supervisor reports
   `ready`.
+- `POST /setup/assets/reconcile` now forces the same service-owned
+  `AssetSupervisor::ensure_assets_once()` path and returns `already_ready`,
+  `downloaded`, `checking`, or `error` with final health.
+- `capsem update --assets` now calls `/setup/assets/reconcile`; it no longer
+  reads old asset-only manifests or downloads VM assets outside the service.
+- Service asset health timestamps are preserved through `capsem status --json`
+  and rendered in text status output.
+- Structured lifecycle logs now cover check start/ready/error, missing assets,
+  download start/progress, hash verification, install success, and retryable
+  download failure. Download URLs are logged without credentials or query
+  strings.
 
 Gaps:
 
-- `capsem update --assets` still uses the older release asset manager path and
-  verified asset manifest, not the Profile V2 catalog/profile asset supervisor.
-- There is no manual service endpoint to force a profile asset check/download
-  through the same supervisor path that background reconciliation uses.
-- Background download events are mostly state transitions; they lack a stable
-  structured event trail for check start, missing assets, download start,
-  progress, verify success, install success, retryable failure, and terminal
-  failure.
 - Status shows the latest health snapshot but not enough provenance for profile
-  id/revision, selected catalog payload hash, asset URL/hash, or last checked
-  time.
-- Tests cover background reconciliation and status preservation, but not
-  `capsem update --assets -> service trigger -> status progress -> logs`.
+  id/revision, selected catalog payload hash, or per-asset URL/hash.
+- Tests cover the service trigger, CLI summary rendering, background
+  reconciliation, status timestamp preservation, and log URL redaction, but not
+  full `capsem update --assets -> live service -> status progress -> logs` E2E.
 
 ## Product Contract
 
@@ -65,14 +68,14 @@ Gaps:
 
 ## Implementation Slices
 
-1. **Manual profile asset reconcile endpoint**
+1. [x] **Manual profile asset reconcile endpoint**
    - Add a service route such as `POST /setup/assets/reconcile`.
    - It calls the existing `AssetSupervisor::ensure_assets_once()` path.
    - It returns the final `AssetHealth` snapshot and a typed result:
      `already_ready`, `downloaded`, `checking`, `error`.
    - It must be idempotent under concurrent calls.
 
-2. **CLI update integration**
+2. [x] **CLI update integration**
    - Change `capsem update --assets` to call the service endpoint when the
      service is running.
    - Print the same operator language as status: profile asset check started,
@@ -81,7 +84,7 @@ Gaps:
      fallback remains for development, gate it behind an explicit dev-only
      message and test.
 
-3. **Structured asset lifecycle logging**
+3. [~] **Structured asset lifecycle logging**
    - Emit structured service logs for:
      `profile_asset_check_start`, `profile_asset_check_ready`,
      `profile_asset_missing`, `profile_asset_download_start`,
@@ -92,14 +95,14 @@ Gaps:
      target path, URL host/path, byte counts, retry count, and elapsed time.
    - Avoid logging secrets or signed URL credentials.
 
-4. **Status/debug provenance**
+4. [~] **Status/debug provenance**
    - Extend `AssetHealth` or a sibling status payload with profile id/revision,
      payload hash when known, last check time, and last transition/event.
    - Make `capsem status` render these details compactly.
    - Add debug-report asset provenance for profile asset source and latest
      supervisor state.
 
-5. **Concurrency and cleanup hardening**
+5. [ ] **Concurrency and cleanup hardening**
    - Add per-asset or profile-level locks beyond the current in-process run
      lock where needed.
    - Prove two manual triggers do not duplicate downloads.
@@ -112,11 +115,19 @@ Gaps:
   - `AssetSupervisor` emits expected health/provenance transitions.
   - Manual endpoint maps supervisor outcomes into stable JSON.
   - CLI parser/output covers `capsem update --assets` service success/failure.
+  - Landed: `cargo test -p capsem-service asset_supervisor --lib` covers
+    background download, retryable errors, progress state, and log URL
+    redaction. `cargo test -p capsem profile_asset_reconcile_summary_line`
+    covers CLI output summaries.
 - Functional:
   - Fake asset server + service endpoint downloads missing profile assets and
     returns final health.
   - `capsem update --assets` calls the service endpoint and `capsem status`
     reflects progress/readiness.
+  - Landed: `cargo test -p capsem-service handle_asset_reconcile` covers the
+    service endpoint downloading missing profile assets and the already-ready
+    outcome. `cargo test -p capsem parse_update_assets` keeps CLI parsing
+    wired.
 - Adversarial:
   - Hash mismatch deletes temp file and logs terminal failure.
   - 404/503 records retryable failure with retry count.
@@ -129,6 +140,9 @@ Gaps:
   - Service logs contain lifecycle event names and fields for a successful
     download and a retryable failure.
   - Debug report includes the latest profile asset state.
+  - Landed: structured log calls are in the service asset supervisor for the
+    lifecycle event names; focused URL-redaction coverage prevents signed URL
+    query/credential leakage.
 - Performance:
   - Repeated checks when assets are present do not hash every large file on hot
     `/list` or status paths.

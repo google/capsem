@@ -4763,6 +4763,49 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
     }
 }
 
+/// POST /setup/assets/reconcile -- force a Profile V2 asset check/download now.
+async fn handle_asset_reconcile(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let before = state.asset_supervisor.snapshot();
+    info!(
+        event = "profile_asset_check_start",
+        state = before.state.as_str(),
+        ready = before.ready,
+        missing = ?before.missing,
+        "profile asset reconcile requested"
+    );
+
+    state.asset_supervisor.ensure_assets_once().await;
+    let health = state.asset_supervisor.snapshot();
+    let outcome = if before.ready && health.ready {
+        "already_ready"
+    } else if health.ready {
+        "downloaded"
+    } else if health.state == AssetHealthState::Error {
+        "error"
+    } else {
+        "checking"
+    };
+
+    info!(
+        event = "profile_asset_check_finish",
+        outcome,
+        state = health.state.as_str(),
+        ready = health.ready,
+        retryable = health.retryable,
+        error = health.error.as_deref().unwrap_or(""),
+        missing = ?health.missing,
+        "profile asset reconcile finished"
+    );
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "outcome": outcome,
+        "health": health,
+    })))
+}
+
 /// POST /setup/assets/cleanup -- remove unreferenced profile-era VM assets.
 async fn handle_asset_cleanup(
     State(state): State<Arc<ServiceState>>,
@@ -6966,6 +7009,7 @@ async fn main() -> Result<()> {
         .route("/setup/complete", post(handle_complete_onboarding))
         .route("/setup/retry", post(handle_setup_retry))
         .route("/setup/assets", get(handle_asset_status))
+        .route("/setup/assets/reconcile", post(handle_asset_reconcile))
         .route("/setup/assets/cleanup", post(handle_asset_cleanup))
         .route("/setup/corp-config", post(handle_corp_config))
         .route("/mcp/servers", get(handle_mcp_servers))

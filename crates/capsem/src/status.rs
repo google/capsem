@@ -1240,6 +1240,9 @@ fn print_service_asset_status(asset_health: &client::AssetHealth) {
     if let Some(error) = &asset_health.error {
         println!("  error: {}", error);
     }
+    if let Some(checked_at) = asset_health.checked_at_unix_secs {
+        println!("  checked_at_unix_secs: {}", checked_at);
+    }
     for dependency in &asset_health.saved_vm_dependencies {
         println!(
             "  saved VM missing: {} needs {} ({}, {})",

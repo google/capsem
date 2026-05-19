@@ -1,8 +1,8 @@
 //! Self-update: check GitHub for new versions, prompt to update.
 //!
-//! Asset download and binary swap are implemented in the orthogonal CI sprint
-//! (see sprints/orthogonal-ci/plan.md). Until then, development builds use
-//! `git pull && just install`.
+//! Binary swap is still future work. Profile-owned VM asset updates are
+//! delegated to the running service so `capsem update --assets` uses the same
+//! Profile V2 asset reconciler as background checks.
 
 use std::path::PathBuf;
 
@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::client::{ApiResponse, UdsClient};
 use crate::platform::{self, InstallLayout};
 
 /// Cached update check result.
@@ -36,13 +37,6 @@ fn cache_path() -> Option<PathBuf> {
     crate::paths::capsem_home()
         .ok()
         .map(|d| d.join("update-check.json"))
-}
-
-fn load_update_manifest_for_assets(
-    assets_dir: &std::path::Path,
-) -> Result<capsem_core::asset_manager::ManifestV2> {
-    capsem_core::asset_manager::load_verified_manifest_for_assets(assets_dir, true)?
-        .with_context(|| format!("manifest file not found at {}", assets_dir.display()))
 }
 
 /// Read cached update notice. Sync file read, no latency.
@@ -189,77 +183,39 @@ pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
     Ok(())
 }
 
-/// Pull any missing / hash-mismatched VM assets from the release URL.
+/// Trigger the service-owned Profile V2 asset reconciler.
 async fn refresh_assets() -> Result<()> {
-    let assets_dir = capsem_core::asset_manager::default_assets_dir()
-        .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-    let manifest = load_update_manifest_for_assets(&assets_dir)?;
-
-    let arch = if cfg!(target_arch = "aarch64") {
-        "arm64"
-    } else {
-        "x86_64"
-    };
-    let binary_version = env!("CARGO_PKG_VERSION");
-
-    println!("Refreshing VM assets into {}...", assets_dir.display());
-    let downloaded = capsem_core::asset_manager::download_missing_assets(
-        &manifest,
-        binary_version,
-        arch,
-        &assets_dir,
-        |p| {
-            if p.done {
-                let mb = p.bytes_done as f64 / 1_048_576.0;
-                println!("  {} ({:.1} MB)", p.logical_name, mb);
-            }
-        },
-    )
-    .await
-    .context("asset download failed")?;
-
-    if downloaded.is_empty() {
-        println!("All assets already up to date.");
-    } else {
-        println!("Refreshed {} asset(s).", downloaded.len());
-    }
+    let sock = capsem_core::paths::capsem_run_dir().join("service.sock");
+    let client = UdsClient::new(sock, true);
+    let response: ApiResponse<serde_json::Value> = client
+        .post("/setup/assets/reconcile", serde_json::json!({}))
+        .await
+        .context("request Profile V2 asset reconcile from service")?;
+    let result = response.into_result()?;
+    println!("{}", profile_asset_reconcile_summary_line(&result));
     Ok(())
+}
+
+fn profile_asset_reconcile_summary_line(result: &serde_json::Value) -> String {
+    let outcome = result["outcome"].as_str().unwrap_or("unknown");
+    let health = &result["health"];
+    let state = health["state"].as_str().unwrap_or("unknown");
+    let version = health["version"].as_str().unwrap_or("unknown");
+    let arch = health["arch"].as_str().unwrap_or("unknown");
+    match outcome {
+        "already_ready" => format!("Profile VM assets already ready ({version}, {arch})."),
+        "downloaded" => format!("Profile VM assets reconciled ({version}, {arch})."),
+        "error" => {
+            let error = health["error"].as_str().unwrap_or("unknown error");
+            format!("Profile VM asset reconcile failed: {error}")
+        }
+        _ => format!("Profile VM asset reconcile {outcome} (state={state}, {version}, {arch})."),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const UNSIGNED_MANIFEST: &str = r#"{
-        "format": 2,
-        "assets": {
-            "current": "2026.0415.1",
-            "releases": {
-                "2026.0415.1": {
-                    "date": "2026-04-15",
-                    "deprecated": false,
-                    "min_binary": "1.0.0",
-                    "arches": {
-                        "arm64": {
-                            "vmlinuz": { "hash": "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c", "size": 7797248 },
-                            "initrd.img": { "hash": "cba052ee1e3fc7de5bb1af0da9f4a6472622b24788051f0e4d4ae6eabb0c3456", "size": 2270154 },
-                            "rootfs.squashfs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }
-                        }
-                    }
-                }
-            }
-        },
-        "binaries": {
-            "current": "1.0.1776269479",
-            "releases": {
-                "1.0.1776269479": {
-                    "date": "2026-04-15",
-                    "deprecated": false,
-                    "min_assets": "2026.0415.1"
-                }
-            }
-        }
-    }"#;
 
     #[test]
     fn is_newer_semver() {
@@ -306,27 +262,35 @@ mod tests {
     }
 
     #[test]
-    fn update_assets_manifest_loader_rejects_unsigned_manifest() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
+    fn profile_asset_reconcile_summary_line_reports_downloaded() {
+        let result = serde_json::json!({
+            "outcome": "downloaded",
+            "health": {
+                "state": "ready",
+                "version": "everyday-work@2026.0520.1",
+                "arch": "arm64"
+            }
+        });
 
-        let err = load_update_manifest_for_assets(dir.path()).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("signature missing"),
-            "unexpected error: {err:#}"
+        assert_eq!(
+            profile_asset_reconcile_summary_line(&result),
+            "Profile VM assets reconciled (everyday-work@2026.0520.1, arm64)."
         );
     }
 
     #[test]
-    fn update_assets_manifest_loader_rejects_invalid_signature() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("manifest.json"), UNSIGNED_MANIFEST).unwrap();
-        std::fs::write(dir.path().join("manifest.json.minisig"), "not a signature").unwrap();
+    fn profile_asset_reconcile_summary_line_reports_error() {
+        let result = serde_json::json!({
+            "outcome": "error",
+            "health": {
+                "state": "error",
+                "error": "GET https://assets.example.test/rootfs returned 503"
+            }
+        });
 
-        let err = load_update_manifest_for_assets(dir.path()).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("verify"),
-            "unexpected error: {err:#}"
+        assert_eq!(
+            profile_asset_reconcile_summary_line(&result),
+            "Profile VM asset reconcile failed: GET https://assets.example.test/rootfs returned 503"
         );
     }
 }
