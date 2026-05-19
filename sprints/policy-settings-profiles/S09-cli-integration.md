@@ -19,9 +19,14 @@ through CLI command families.
 - Initial revision inspection landed: `capsem profile revisions <id> [--json]`
   calls `GET /profiles/{id}/revisions` and prints current/installed revision
   markers plus canonical lifecycle status values.
+- Initial revision lifecycle actions landed: `capsem profile install <id>
+  [--revision <rev>] [--json]`, `capsem profile update <id> [--revision <rev>]
+  [--json]`, and `capsem profile remove <id> [--revision <rev>] [--json]`
+  call the matching service revision actions. `install` only accepts active
+  revisions, `update` reconciles lifecycle state, and `remove` clears local
+  launchable state while preserving archived payloads.
 - Add `capsem profile list/create/fork/update/delete/show/resolve`.
-- Add `capsem profile install/update/remove <id> [--revision ...]` and status
-  output using the canonical `ProfileRevisionStatus` enum values:
+- Add richer status output using the canonical `ProfileRevisionStatus` enum values:
   `active`, `deprecated`, and `revoked`. A missing revision is rendered as
   absent/unknown, not as `removed`.
 - Extend `capsem profile show/resolve` to print package/tool contracts, resolved

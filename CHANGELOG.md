@@ -99,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added per-profile catalog revision inspection through
   `GET /profiles/{id}/revisions` and `capsem profile revisions <id> [--json]`,
   including current/installed revision markers and canonical lifecycle status.
+- Added profile revision lifecycle actions through the service and CLI:
+  `install`, `update`, and `remove` now operate on signed catalog revisions,
+  reject revoked installs, clean revoked installed revisions, and remove local
+  launchable state while preserving archived payload material.
 - Changed profile catalog reconciliation to remove launchable installed
   profiles whose profile id is absent from the signed catalog while preserving
   the archived installed payload for retention/VM-pin cleanup.

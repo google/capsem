@@ -2918,17 +2918,28 @@ fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
                 .contains("profile_asset_profile_payload_hash: blake3:"));
             assert!(debug.text.contains("profile_asset_source: vmlinuz"));
 
-            let service_logs = handle_service_logs(State(state.clone())).await.unwrap();
-            server.abort();
-
-            for event in [
+            let expected_events = [
                 "profile_asset_check_start",
                 "profile_asset_missing",
                 "profile_asset_download_start",
                 "profile_asset_verify_ok",
                 "profile_asset_install_ok",
                 "profile_asset_check_finish",
-            ] {
+            ];
+            let mut service_logs = String::new();
+            for _ in 0..50 {
+                service_logs = handle_service_logs(State(state.clone())).await.unwrap();
+                if expected_events
+                    .iter()
+                    .all(|event| service_logs.contains(event))
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            server.abort();
+
+            for event in expected_events {
                 assert!(
                     service_logs.contains(event),
                     "service logs should include {event}; logs were:\n{service_logs}"
@@ -4448,6 +4459,242 @@ async fn handle_profile_revisions_returns_not_found_for_unknown_catalog_profile(
     assert!(err
         .1
         .contains("profile catalog entry 'missing-profile' not found"));
+}
+
+fn write_profile_revision_action_manifest(
+    dir: &tempfile::TempDir,
+    settings_path: &std::path::Path,
+    manifest_json: &str,
+) {
+    let pubkey = include_str!("../../../schemas/fixtures/profile-v2-test.pub");
+    let mut settings =
+        capsem_core::settings_profiles::load_service_settings_or_default(settings_path).unwrap();
+    settings.profile_catalog.manifest_url =
+        Some("https://profiles.example.test/profile-manifest.json".to_string());
+    settings.profile_catalog.profile_payload_pubkey = Some(pubkey.to_string());
+    capsem_core::settings_profiles::write_service_settings(settings_path, &settings).unwrap();
+    std::fs::create_dir_all(
+        dir.path()
+            .join("home")
+            .join("profiles")
+            .join("corp")
+            .join(".catalog"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path()
+            .join("home")
+            .join("profiles")
+            .join("corp")
+            .join(".catalog")
+            .join("profile-manifest.json"),
+        manifest_json,
+    )
+    .unwrap();
+}
+
+fn signed_profile_revision_manifest(
+    payload_path: &std::path::Path,
+    signature_path: &std::path::Path,
+    profile_hash: &str,
+) -> String {
+    format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file://{}",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "file://{}"
+                }},
+                "2026.0520.2": {{
+                  "status": "revoked",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file://{}",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "file://{}"
+                }}
+              }}
+            }}
+          }}
+        }}"#,
+        payload_path.display(),
+        signature_path.display(),
+        payload_path.display(),
+        signature_path.display(),
+    )
+}
+
+#[tokio::test]
+async fn handle_install_profile_revision_installs_active_current_revision() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, settings_path, _) = install_settings_profiles_env(&dir);
+    let payload_path = dir.path().join("profile.json");
+    let signature_path = dir.path().join("profile.json.minisig");
+    let payload = include_str!("../../../schemas/fixtures/profile-v2-valid.json");
+    let signature = include_str!("../../../schemas/fixtures/profile-v2-valid.json.minisig");
+    std::fs::write(&payload_path, payload).unwrap();
+    std::fs::write(&signature_path, signature).unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest_json =
+        signed_profile_revision_manifest(&payload_path, &signature_path, &profile_hash);
+    write_profile_revision_action_manifest(&dir, &settings_path, &manifest_json);
+
+    let Json(val) = handle_install_profile_revision(
+        Path("everyday-work".to_string()),
+        Json(ProfileRevisionActionRequest { revision: None }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(val["action"], serde_json::json!("install"));
+    assert_eq!(val["selected_revision"], serde_json::json!("2026.0520.1"));
+    assert_eq!(val["outcome"]["outcome"], serde_json::json!("installed"));
+    assert_eq!(
+        val["outcome"]["payload_hash"],
+        serde_json::json!(profile_hash)
+    );
+}
+
+#[tokio::test]
+async fn handle_install_profile_revision_rejects_revoked_revision() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, settings_path, _) = install_settings_profiles_env(&dir);
+    let payload_path = dir.path().join("profile.json");
+    let signature_path = dir.path().join("profile.json.minisig");
+    let payload = include_str!("../../../schemas/fixtures/profile-v2-valid.json");
+    std::fs::write(&payload_path, payload).unwrap();
+    std::fs::write(
+        &signature_path,
+        include_str!("../../../schemas/fixtures/profile-v2-valid.json.minisig"),
+    )
+    .unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest_json =
+        signed_profile_revision_manifest(&payload_path, &signature_path, &profile_hash);
+    write_profile_revision_action_manifest(&dir, &settings_path, &manifest_json);
+
+    let err = handle_install_profile_revision(
+        Path("everyday-work".to_string()),
+        Json(ProfileRevisionActionRequest {
+            revision: Some("2026.0520.2".to_string()),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("only active revisions can be installed"));
+}
+
+#[tokio::test]
+async fn handle_update_profile_revision_removes_revoked_installed_revision() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, settings_path, _) = install_settings_profiles_env(&dir);
+    let payload_path = dir.path().join("profile.json");
+    let signature_path = dir.path().join("profile.json.minisig");
+    let payload = include_str!("../../../schemas/fixtures/profile-v2-valid.json");
+    std::fs::write(&payload_path, payload).unwrap();
+    std::fs::write(
+        &signature_path,
+        include_str!("../../../schemas/fixtures/profile-v2-valid.json.minisig"),
+    )
+    .unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest_json =
+        signed_profile_revision_manifest(&payload_path, &signature_path, &profile_hash);
+    write_profile_revision_action_manifest(&dir, &settings_path, &manifest_json);
+    let corp_dir = dir.path().join("home").join("profiles").join("corp");
+    std::fs::create_dir_all(corp_dir.join(".catalog/profiles/everyday-work")).unwrap();
+    std::fs::write(
+        corp_dir.join("everyday-work.toml"),
+        "id = \"everyday-work\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profiles/everyday-work/current.json"),
+        format!(
+            r#"{{
+              "profile_id": "everyday-work",
+              "revision": "2026.0520.2",
+              "payload_hash": "{profile_hash}"
+            }}"#
+        ),
+    )
+    .unwrap();
+
+    let Json(val) = handle_update_profile_revision_lifecycle(
+        Path("everyday-work".to_string()),
+        Json(ProfileRevisionActionRequest {
+            revision: Some("2026.0520.2".to_string()),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(val["action"], serde_json::json!("update"));
+    assert_eq!(
+        val["outcome"]["outcome"],
+        serde_json::json!("revoked_removed")
+    );
+    assert!(!corp_dir.join("everyday-work.toml").exists());
+    assert!(!corp_dir
+        .join(".catalog/profiles/everyday-work/current.json")
+        .exists());
+}
+
+#[tokio::test]
+async fn handle_remove_profile_revision_removes_launchable_state() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let corp_dir = dir.path().join("home").join("profiles").join("corp");
+    std::fs::create_dir_all(corp_dir.join(".catalog/profiles/everyday-work/2026.0520.2")).unwrap();
+    std::fs::write(
+        corp_dir.join("everyday-work.toml"),
+        "id = \"everyday-work\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profiles/everyday-work/2026.0520.2/profile.json"),
+        "{}",
+    )
+    .unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profiles/everyday-work/current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.2",
+          "payload_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }"#,
+    )
+    .unwrap();
+
+    let Json(val) = handle_remove_profile_revision(
+        Path("everyday-work".to_string()),
+        Json(ProfileRevisionActionRequest { revision: None }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(val["action"], serde_json::json!("remove"));
+    assert_eq!(val["selected_revision"], serde_json::json!("2026.0520.2"));
+    assert_eq!(val["outcome"]["outcome"], serde_json::json!("removed"));
+    assert!(!corp_dir.join("everyday-work.toml").exists());
+    assert!(!corp_dir
+        .join(".catalog/profiles/everyday-work/current.json")
+        .exists());
+    assert!(corp_dir
+        .join(".catalog/profiles/everyday-work/2026.0520.2/profile.json")
+        .exists());
 }
 
 #[tokio::test]

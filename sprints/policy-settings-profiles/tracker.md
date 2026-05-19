@@ -125,8 +125,10 @@ a valid claim -- mark it `[ ]` instead.
     summary counts. `GET /profiles/catalog`, `GET /profiles/{id}/revisions`,
     `capsem profile catalog [--json]`, and `capsem profile revisions <id>
     [--json]` now expose configured catalog source, persisted manifest
-    presence, current/installed revisions, and lifecycle status. Remaining
-    work adds install/update/remove revision clients and UI/debug detail.
+    presence, current/installed revisions, and lifecycle status.
+    `POST /profiles/{id}/revisions/{install,update,remove}` and `capsem
+    profile install|update|remove <id> [--revision <rev>] [--json]` now add
+    selected revision lifecycle actions. Remaining work adds UI/debug detail.
 15. [x] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
   trigger, checked-at/profile provenance status propagation, structured
@@ -659,6 +661,17 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `cargo test -p capsem-service` passed with **112** lib tests, **174**
   service-bin tests, and doc tests after fixing the profile asset operator-flow
   log capture to run inside one dispatcher-bound runtime;
+  after selected revision lifecycle actions, `cargo test -p capsem-service
+  handle_install_profile_revision` **2** passed, `cargo test -p capsem-service
+  handle_update_profile_revision` **1** passed, `cargo test -p capsem-service
+  handle_remove_profile_revision` **1** passed, `cargo test -p capsem
+  parse_profile_install_update_remove` **1** passed, `cargo test -p capsem
+  profile_revision_action_summary` **1** passed, and `cargo test -p
+  capsem-core remove_installed_profile_revision --lib` **1** passed;
+  widened gates after selected revision lifecycle actions: `cargo test -p
+  capsem` **257** passed, `cargo test -p capsem-service` passed with **112**
+  lib tests, **178** service-bin tests, and doc tests, and `cargo test -p
+  capsem-core settings_profiles --lib` **137** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

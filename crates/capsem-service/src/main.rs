@@ -3849,6 +3849,13 @@ struct ProfileCatalogReconcileRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileRevisionActionRequest {
+    #[serde(default)]
+    revision: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RulesQuery {
     #[serde(default)]
     profile: Option<String>,
@@ -4051,6 +4058,179 @@ async fn handle_profile_revisions(
         "installed_payload_hash": installed.as_ref().map(|installed| installed.payload_hash.clone()),
         "revisions": profile_revision_records_json(profile, installed.as_ref()),
     })))
+}
+
+/// POST /profiles/{id}/revisions/install -- install an active signed catalog revision.
+async fn handle_install_profile_revision(
+    Path(profile_id): Path<String>,
+    Json(body): Json<ProfileRevisionActionRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    Ok(Json(
+        reconcile_selected_profile_revision(&settings, &profile_id, body.revision.as_deref(), true)
+            .await?,
+    ))
+}
+
+/// POST /profiles/{id}/revisions/update -- reconcile one signed catalog revision.
+async fn handle_update_profile_revision_lifecycle(
+    Path(profile_id): Path<String>,
+    Json(body): Json<ProfileRevisionActionRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    Ok(Json(
+        reconcile_selected_profile_revision(
+            &settings,
+            &profile_id,
+            body.revision.as_deref(),
+            false,
+        )
+        .await?,
+    ))
+}
+
+/// POST /profiles/{id}/revisions/remove -- remove local launchable state for one revision.
+async fn handle_remove_profile_revision(
+    Path(profile_id): Path<String>,
+    Json(body): Json<ProfileRevisionActionRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let selected_revision = match body.revision.as_deref() {
+        Some(revision) => revision.to_string(),
+        None => capsem_core::settings_profiles::load_installed_profile_revision(
+            &settings.profiles,
+            &profile_id,
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("load installed profile revision '{profile_id}': {error}"),
+            )
+        })?
+        .map(|installed| installed.revision)
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                format!("profile '{profile_id}' has no installed revision to remove"),
+            )
+        })?,
+    };
+    let removed = capsem_core::settings_profiles::remove_installed_profile_revision(
+        &settings.profiles,
+        &profile_id,
+        Some(&selected_revision),
+    )
+    .map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "remove installed profile revision '{profile_id}@{selected_revision}': {error}"
+            ),
+        )
+    })?;
+
+    let outcome = match removed {
+        Some(record) => json!({
+            "profile_id": record.profile_id,
+            "revision": record.revision,
+            "payload_hash": record.payload_hash,
+            "outcome": "removed",
+        }),
+        None => json!({
+            "profile_id": profile_id,
+            "revision": selected_revision,
+            "outcome": "not_installed",
+        }),
+    };
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "action": "remove",
+        "profile_id": outcome["profile_id"],
+        "selected_revision": outcome["revision"],
+        "outcome": outcome,
+    })))
+}
+
+async fn reconcile_selected_profile_revision(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+    profile_id: &str,
+    requested_revision: Option<&str>,
+    install_only: bool,
+) -> Result<serde_json::Value, AppError> {
+    let (_, manifest) = load_persisted_profile_manifest(settings)?;
+    let manifest = manifest.ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            "profile catalog manifest is not present".into(),
+        )
+    })?;
+    let revision = match requested_revision {
+        Some(revision) => manifest.revision(profile_id, revision).map_err(|error| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                format!("resolve profile revision '{profile_id}@{revision}': {error}"),
+            )
+        })?,
+        None => manifest.current_revision(profile_id).map_err(|error| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                format!("resolve current profile revision '{profile_id}': {error}"),
+            )
+        })?,
+    };
+    if install_only
+        && revision.record.status != capsem_core::profile_manifest::ProfileRevisionStatus::Active
+    {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "profile revision '{}@{}' has status {}; only active revisions can be installed",
+                revision.profile_id,
+                revision.revision,
+                revision.record.status.as_str()
+            ),
+        ));
+    }
+    let profile_payload_pubkey = settings
+        .profile_catalog
+        .profile_payload_pubkey
+        .as_deref()
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                "profile catalog profile_payload_pubkey is not configured".into(),
+            )
+        })?;
+    let selected_profile_id = revision.profile_id.to_string();
+    let selected_revision = revision.revision.to_string();
+    let action = if install_only { "install" } else { "update" };
+    let mut summary = ProfileCatalogReconcileSummary::default();
+    let outcome = capsem_core::settings_profiles::reconcile_profile_revision_from_manifest(
+        &settings.profiles,
+        revision,
+        profile_payload_pubkey,
+    )
+    .await
+    .map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "reconcile profile revision '{selected_profile_id}@{selected_revision}': {error:#}"
+            ),
+        )
+    })
+    .map(|outcome| profile_reconcile_outcome_json(outcome, &mut summary))?;
+
+    Ok(json!({
+        "mode": "settings_profiles_v2",
+        "action": action,
+        "profile_id": selected_profile_id,
+        "selected_revision": selected_revision,
+        "requested_revision": requested_revision,
+        "summary": summary,
+        "outcome": outcome,
+    }))
 }
 
 /// GET /profiles/{id} -- fetch one typed Profile V2 profile record.
@@ -7329,6 +7509,18 @@ async fn main() -> Result<()> {
             post(handle_reconcile_profile_catalog),
         )
         .route("/profiles/catalog", get(handle_profile_catalog))
+        .route(
+            "/profiles/{id}/revisions/install",
+            post(handle_install_profile_revision),
+        )
+        .route(
+            "/profiles/{id}/revisions/update",
+            post(handle_update_profile_revision_lifecycle),
+        )
+        .route(
+            "/profiles/{id}/revisions/remove",
+            post(handle_remove_profile_revision),
+        )
         .route("/profiles/{id}/revisions", get(handle_profile_revisions))
         .route(
             "/profiles/{id}",

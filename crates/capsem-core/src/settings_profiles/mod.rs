@@ -561,6 +561,21 @@ pub fn load_installed_profile_revision(
     Ok(Some(record))
 }
 
+pub fn remove_installed_profile_revision(
+    roots: &ProfileRootSettings,
+    profile_id: &str,
+    revision: Option<&str>,
+) -> Result<Option<InstalledProfileRevisionRecord>> {
+    let Some(installed) = load_installed_profile_revision(roots, profile_id)? else {
+        return Ok(None);
+    };
+    if revision.is_some_and(|revision| revision != installed.revision) {
+        return Ok(None);
+    }
+    remove_launchable_installed_profile_revision(roots, profile_id)?;
+    Ok(Some(installed))
+}
+
 fn list_installed_profile_revisions(
     roots: &ProfileRootSettings,
 ) -> Result<Vec<InstalledProfileRevisionRecord>> {

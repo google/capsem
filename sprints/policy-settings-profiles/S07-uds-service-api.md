@@ -72,6 +72,16 @@ Routes (UDS; mirrored on the gateway in [S08](S08-http-gateway-api.md)):
   current revision, installed revision/payload hash, canonical lifecycle status,
   and current/installed markers. Missing catalog manifests and unknown profile
   ids fail as absence/not-found, never as a synthetic `removed` lifecycle.
+- `POST /profiles/{id}/revisions/install` body `{ revision?: string }` ->
+  install the selected active signed revision, defaulting to `current_revision`.
+  Revoked/deprecated installs fail closed instead of becoming launchable.
+- `POST /profiles/{id}/revisions/update` body `{ revision?: string }` ->
+  reconcile the selected signed revision lifecycle. Active revisions install or
+  refresh, deprecated installed revisions stay available for pinned VMs, and
+  revoked installed revisions lose launchable state.
+- `POST /profiles/{id}/revisions/remove` body `{ revision?: string }` ->
+  remove local launchable/current state for the selected installed revision,
+  defaulting to the installed revision, while preserving archived payload bytes.
 - `GET  /rules?profile=<id>&callback=<type>` -> list rules.
   Returns the canonical `security.rules.<type>.<name>` id, the rule
   body (typed, not raw TOML), the source profile, the priority, and

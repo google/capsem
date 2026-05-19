@@ -1596,6 +1596,48 @@ fn reconcile_absent_installed_profiles_removes_launchable_profile() {
 }
 
 #[test]
+fn remove_installed_profile_revision_removes_launchable_state_only_for_selected_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let corp_dir = temp.path().join("corp");
+    let mut roots = test_roots(temp.path().join("base"), temp.path().join("user"));
+    roots.corp_dirs = vec![corp_dir.clone()];
+    let record_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join("everyday-work");
+    fs::create_dir_all(record_dir.join("2026.0520.2")).unwrap();
+    fs::write(
+        corp_dir.join("everyday-work.toml"),
+        "id = \"everyday-work\"\n",
+    )
+    .unwrap();
+    fs::write(record_dir.join("2026.0520.2/profile.json"), "{}").unwrap();
+    fs::write(
+        record_dir.join("current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.2",
+          "payload_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }"#,
+    )
+    .unwrap();
+
+    let skipped =
+        remove_installed_profile_revision(&roots, "everyday-work", Some("2026.0520.1")).unwrap();
+    assert!(skipped.is_none());
+    assert!(corp_dir.join("everyday-work.toml").exists());
+    assert!(record_dir.join("current.json").exists());
+
+    let removed = remove_installed_profile_revision(&roots, "everyday-work", Some("2026.0520.2"))
+        .unwrap()
+        .expect("selected installed revision should be removed");
+    assert_eq!(removed.revision, "2026.0520.2");
+    assert!(!corp_dir.join("everyday-work.toml").exists());
+    assert!(!record_dir.join("current.json").exists());
+    assert!(record_dir.join("2026.0520.2/profile.json").exists());
+}
+
+#[test]
 fn installed_profile_asset_filenames_reads_current_payload_assets() {
     let temp = tempfile::tempdir().unwrap();
     let base_dir = temp.path().join("base");

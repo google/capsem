@@ -173,6 +173,39 @@ enum ProfileCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Install an active signed catalog revision
+    Install {
+        /// Profile id to install
+        profile_id: String,
+        /// Specific revision to install; defaults to catalog current_revision
+        #[arg(long)]
+        revision: Option<String>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reconcile a signed catalog revision lifecycle
+    Update {
+        /// Profile id to update
+        profile_id: String,
+        /// Specific revision to reconcile; defaults to catalog current_revision
+        #[arg(long)]
+        revision: Option<String>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove local launchable state for an installed profile revision
+    Remove {
+        /// Profile id to remove
+        profile_id: String,
+        /// Specific revision to remove; defaults to the installed revision
+        #[arg(long)]
+        revision: Option<String>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// Apply a signed profile catalog manifest through the service
     ReconcileCatalog {
         /// Profile catalog manifest JSON file.
@@ -871,6 +904,18 @@ fn print_profile_revisions_summary(result: &serde_json::Value) {
             println!("  {revision_id}: {status}{marker}");
         }
     }
+}
+
+fn print_profile_revision_action_summary(result: &serde_json::Value) {
+    println!("{}", profile_revision_action_summary_line(result));
+}
+
+fn profile_revision_action_summary_line(result: &serde_json::Value) -> String {
+    let action = result["action"].as_str().unwrap_or("-");
+    let profile_id = result["profile_id"].as_str().unwrap_or("-");
+    let revision = result["selected_revision"].as_str().unwrap_or("-");
+    let outcome = result["outcome"]["outcome"].as_str().unwrap_or("unknown");
+    format!("Profile revision {action}: {profile_id}@{revision} {outcome}")
 }
 
 fn profile_revisions_summary_line(result: &serde_json::Value) -> String {
@@ -1637,6 +1682,54 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 print_profile_revisions_summary(&result);
+            }
+        }
+        Commands::Profile(ProfileCommands::Install {
+            profile_id,
+            revision,
+            json,
+        }) => {
+            let body = serde_json::json!({ "revision": revision });
+            let resp: ApiResponse<serde_json::Value> = client
+                .post(&format!("/profiles/{profile_id}/revisions/install"), &body)
+                .await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_profile_revision_action_summary(&result);
+            }
+        }
+        Commands::Profile(ProfileCommands::Update {
+            profile_id,
+            revision,
+            json,
+        }) => {
+            let body = serde_json::json!({ "revision": revision });
+            let resp: ApiResponse<serde_json::Value> = client
+                .post(&format!("/profiles/{profile_id}/revisions/update"), &body)
+                .await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_profile_revision_action_summary(&result);
+            }
+        }
+        Commands::Profile(ProfileCommands::Remove {
+            profile_id,
+            revision,
+            json,
+        }) => {
+            let body = serde_json::json!({ "revision": revision });
+            let resp: ApiResponse<serde_json::Value> = client
+                .post(&format!("/profiles/{profile_id}/revisions/remove"), &body)
+                .await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_profile_revision_action_summary(&result);
             }
         }
         Commands::Misc(MiscCommands::Debug) => {
@@ -2498,6 +2591,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_profile_install_update_remove() {
+        for (verb, expected_revision) in [
+            ("install", Some("2026.0520.2")),
+            ("update", Some("2026.0520.3")),
+            ("remove", None),
+        ] {
+            let mut args = vec!["capsem", "profile", verb, "everyday-work", "--json"];
+            if let Some(revision) = expected_revision {
+                args.push("--revision");
+                args.push(revision);
+            }
+            let cli = Cli::parse_from(args);
+            match (verb, cli.command.unwrap()) {
+                (
+                    "install",
+                    Commands::Profile(ProfileCommands::Install {
+                        profile_id,
+                        revision,
+                        json,
+                    }),
+                )
+                | (
+                    "update",
+                    Commands::Profile(ProfileCommands::Update {
+                        profile_id,
+                        revision,
+                        json,
+                    }),
+                )
+                | (
+                    "remove",
+                    Commands::Profile(ProfileCommands::Remove {
+                        profile_id,
+                        revision,
+                        json,
+                    }),
+                ) => {
+                    assert_eq!(profile_id, "everyday-work");
+                    assert_eq!(revision.as_deref(), expected_revision);
+                    assert!(json);
+                }
+                _ => panic!("expected profile {verb}"),
+            }
+        }
+    }
+
+    #[test]
     fn parse_profile_reconcile_catalog_url() {
         let cli = Cli::parse_from([
             "capsem",
@@ -2599,6 +2739,23 @@ mod tests {
         assert_eq!(
             profile_revisions_summary_line(&result),
             "Profile revisions: profile=everyday-work current=2026.0520.2 installed=2026.0520.1 revisions=3"
+        );
+    }
+
+    #[test]
+    fn profile_revision_action_summary_line_reports_outcome() {
+        let result = serde_json::json!({
+            "action": "install",
+            "profile_id": "everyday-work",
+            "selected_revision": "2026.0520.2",
+            "outcome": {
+                "outcome": "installed"
+            }
+        });
+
+        assert_eq!(
+            profile_revision_action_summary_line(&result),
+            "Profile revision install: everyday-work@2026.0520.2 installed"
         );
     }
 
