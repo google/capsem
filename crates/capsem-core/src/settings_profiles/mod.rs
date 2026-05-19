@@ -561,6 +561,71 @@ pub fn load_installed_profile_revision(
     Ok(Some(record))
 }
 
+pub fn load_complete_installed_profile_revision(
+    roots: &ProfileRootSettings,
+    profile_id: &str,
+) -> Result<Option<InstalledProfileRevision>> {
+    let Some(record) = load_installed_profile_revision(roots, profile_id)? else {
+        return Ok(None);
+    };
+    let corp_dir = roots
+        .corp_dirs
+        .first()
+        .ok_or_else(|| SettingsProfilesError::Forbidden {
+            message: "no corp profile directory is configured".to_string(),
+        })?;
+    let runtime_profile_path = corp_dir.join(format!("{}.toml", record.profile_id));
+    let payload_path = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join(&record.profile_id)
+        .join(&record.revision)
+        .join("profile.json");
+    if !runtime_profile_path.is_file() {
+        return Err(SettingsProfilesError::Validation {
+            path: "installed_profile_revision.runtime_profile_path".to_string(),
+            message: format!(
+                "installed profile revision '{}' is missing launchable runtime profile '{}'",
+                record.profile_id,
+                runtime_profile_path.display()
+            ),
+        });
+    }
+    if !payload_path.is_file() {
+        return Err(SettingsProfilesError::Validation {
+            path: "installed_profile_revision.payload_path".to_string(),
+            message: format!(
+                "installed profile revision '{}@{}' is missing archived verified payload '{}'",
+                record.profile_id,
+                record.revision,
+                payload_path.display()
+            ),
+        });
+    }
+    let payload = fs::read(&payload_path).map_err(|source| SettingsProfilesError::ReadFile {
+        path: payload_path.clone(),
+        details: source.to_string(),
+    })?;
+    let actual_payload_hash = format!("blake3:{}", blake3::hash(&payload).to_hex());
+    if actual_payload_hash != record.payload_hash {
+        return Err(SettingsProfilesError::Validation {
+            path: "installed_profile_revision.payload_hash".to_string(),
+            message: format!(
+                "installed profile revision '{}@{}' payload hash '{}' does not match current record '{}'",
+                record.profile_id, record.revision, actual_payload_hash, record.payload_hash
+            ),
+        });
+    }
+    Ok(Some(InstalledProfileRevision {
+        profile_id: record.profile_id.clone(),
+        revision: record.revision.clone(),
+        payload_hash: record.payload_hash.clone(),
+        runtime_profile_path,
+        payload_path,
+        current_record_path: corp_profile_revision_current_path(corp_dir, &record.profile_id),
+    }))
+}
+
 pub fn remove_installed_profile_revision(
     roots: &ProfileRootSettings,
     profile_id: &str,

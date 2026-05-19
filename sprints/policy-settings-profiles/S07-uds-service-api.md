@@ -31,10 +31,13 @@ creation through the service UDS API.
   `profile_id` required by UI/CLI flows, `profile_revision` optional for
   advanced/debug use. Absence may default to the service-selected profile, but
   responses must always echo the resolved profile id/revision and pinned asset
-  identity.
+  identity. Initial UDS/CLI request fields have landed for fresh VM create;
+  source clones reject override attempts and inherit the source VM profile pin.
 - Add profile-backed VM create proof: selected profile resolves, required assets
   are present or queued for first-use download, and persistent VM registry pins
-  profile id/revision plus asset hashes.
+  profile id/revision plus asset hashes. The first service proof now verifies
+  selected profile/revision create, first-use selected asset reconciliation,
+  selected VM-effective attachment, and complete installed-payload trust.
 - Add MCP list/add/delete endpoints in the new model.
 - Add skills list/add/delete endpoints in the new model.
 - Add the Rules API (see below): list / get / add / remove / evaluate

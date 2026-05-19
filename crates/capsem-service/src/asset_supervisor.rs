@@ -361,7 +361,7 @@ impl ProfileAssetRequirement {
         ))
     }
 
-    fn resolved_assets(&self, base_dir: &Path) -> ResolvedAssets {
+    pub fn resolved_assets(&self, base_dir: &Path) -> ResolvedAssets {
         ResolvedAssets {
             kernel: self.resolve_one(base_dir, "vmlinuz", &self.assets.kernel),
             initrd: self.resolve_one(base_dir, "initrd.img", &self.assets.initrd),
@@ -393,7 +393,7 @@ impl ProfileAssetRequirement {
         }
     }
 
-    fn base_assets(&self) -> SavedVmBaseAssets {
+    pub fn base_assets(&self) -> SavedVmBaseAssets {
         let hashes = self.expected_hashes();
         SavedVmBaseAssets {
             asset_version: self.asset_version(),

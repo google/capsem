@@ -127,22 +127,70 @@ fn startup_asset_requirement(
     arch: &str,
     allow_dev_logical_assets: bool,
 ) -> Result<AssetRequirement> {
-    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+    profile_asset_requirement_for_selection(
         service_settings,
         None,
+        None,
+        arch,
+        allow_dev_logical_assets,
     )
-    .context("resolve default profile for VM assets")?;
+}
+
+fn profile_asset_requirement_for_selection(
+    service_settings: &capsem_core::settings_profiles::ServiceSettings,
+    profile_id: Option<&str>,
+    profile_revision: Option<&str>,
+    arch: &str,
+    allow_dev_logical_assets: bool,
+) -> Result<AssetRequirement> {
+    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+        service_settings,
+        profile_id,
+    )
+    .with_context(|| {
+        format!(
+            "resolve {}profile for VM assets",
+            profile_id.unwrap_or("default ")
+        )
+    })?;
     match ProfileAssetRequirement::from_effective(&effective, arch) {
         Ok(required) => {
-            let installed_revision =
+            let selected_profile_requires_catalog = profile_id.is_some() || profile_revision.is_some();
+            let installed_revision = if selected_profile_requires_catalog {
+                capsem_core::settings_profiles::load_complete_installed_profile_revision(
+                    &service_settings.profiles,
+                    &effective.profile_id,
+                )
+                .context("load complete installed profile revision for asset provenance")?
+                .map(|record| (record.revision, record.payload_hash))
+            } else {
                 capsem_core::settings_profiles::load_installed_profile_revision(
                     &service_settings.profiles,
                     &effective.profile_id,
                 )
-                .context("load installed profile revision for asset provenance")?;
+                .context("load installed profile revision for asset provenance")?
+                .map(|record| (record.revision, record.payload_hash))
+            };
             let required = match installed_revision {
-                Some(record) => required
-                    .with_installed_revision(Some(record.revision), Some(record.payload_hash)),
+                Some((revision, payload_hash)) => {
+                    if let Some(requested) = profile_revision {
+                        if revision != requested {
+                            anyhow::bail!(
+                                "profile '{}' installed revision '{}' does not match requested revision '{}'",
+                                effective.profile_id,
+                                revision,
+                                requested
+                            );
+                        }
+                    }
+                    required.with_installed_revision(Some(revision), Some(payload_hash))
+                }
+                None if selected_profile_requires_catalog => {
+                    anyhow::bail!(
+                        "profile '{}' has no installed signed catalog revision; install it before creating a VM",
+                        effective.profile_id
+                    );
+                }
                 None => required,
             };
             Ok(AssetRequirement::Profile(required))
@@ -152,7 +200,7 @@ fn startup_asset_requirement(
                 error = %err,
                 arch,
                 profile_id = %effective.profile_id,
-                "default profile has no VM asset declarations; using explicit development assets"
+                "profile has no VM asset declarations; using explicit development assets"
             );
             Ok(AssetRequirement::DevLogical {
                 arch: arch.to_string(),
@@ -196,6 +244,8 @@ pub struct ProvisionOptions<'a> {
     pub persistent: bool,
     pub env: Option<std::collections::HashMap<String, String>>,
     pub from: Option<String>,
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<String>,
     pub description: Option<String>,
 }
 
@@ -309,7 +359,7 @@ impl ServiceState {
             return Ok(());
         }
 
-        self.refresh_vm_effective_settings(session_dir)
+        self.refresh_vm_effective_settings_for_profile(session_dir, None)
     }
 
     fn current_service_settings(&self) -> capsem_core::settings_profiles::ServiceSettings {
@@ -323,17 +373,25 @@ impl ServiceState {
             })
     }
 
-    fn refresh_vm_effective_settings(&self, session_dir: &FsPath) -> Result<()> {
+    fn refresh_vm_effective_settings_for_profile(
+        &self,
+        session_dir: &FsPath,
+        profile_id: Option<&str>,
+    ) -> Result<()> {
         let settings = self.current_service_settings();
         let (effective, trace) =
             capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-                &settings, None,
+                &settings, profile_id,
             )?;
         capsem_core::settings_profiles::write_vm_effective_settings(session_dir, &effective)
             .context("persist vm-effective settings")?;
         capsem_core::settings_profiles::write_vm_effective_trace(session_dir, &trace)
             .context("persist vm-effective trace")?;
         Ok(())
+    }
+
+    fn refresh_vm_effective_settings(&self, session_dir: &FsPath) -> Result<()> {
+        self.refresh_vm_effective_settings_for_profile(session_dir, None)
     }
 
     fn telemetry_identity_env(
@@ -361,11 +419,12 @@ impl ServiceState {
             .context("load vm-effective settings for profile pin")?;
         let package_json = serde_json::to_vec(&effective.packages.value)
             .context("serialize package contract for profile pin")?;
-        let installed_revision = capsem_core::settings_profiles::load_installed_profile_revision(
-            &self.service_settings.profiles,
-            &effective.profile_id,
-        )
-        .context("load installed profile revision for profile pin")?;
+        let installed_revision =
+            capsem_core::settings_profiles::load_complete_installed_profile_revision(
+                &self.service_settings.profiles,
+                &effective.profile_id,
+            )
+            .context("load complete installed profile revision for profile pin")?;
         let (profile_revision, profile_payload_hash) = installed_revision
             .map(|record| (Some(record.revision), Some(record.payload_hash)))
             .unwrap_or((profile_revision, profile_payload_hash));
@@ -618,6 +677,8 @@ impl ServiceState {
             persistent,
             env,
             from,
+            profile_id,
+            profile_revision,
             description,
         } = options;
 
@@ -671,6 +732,11 @@ impl ServiceState {
         }
 
         // Validate source sandbox if --from provided
+        if from.is_some() && (profile_id.is_some() || profile_revision.is_some()) {
+            return Err(anyhow!(
+                "profile selection is only valid for fresh VM create; source clones inherit the source VM profile pin"
+            ));
+        }
         let source_entry = if let Some(ref from_name) = from {
             let registry = self.persistent_registry.lock().unwrap();
             let entry = registry
@@ -700,6 +766,18 @@ impl ServiceState {
         };
         let base_assets = if let Some(source_base_assets) = source_base_assets.clone() {
             Some(source_base_assets)
+        } else if profile_id.is_some() || profile_revision.is_some() {
+            let settings = self.current_service_settings();
+            match profile_asset_requirement_for_selection(
+                &settings,
+                profile_id.as_deref(),
+                profile_revision.as_deref(),
+                host_asset_arch(),
+                false,
+            )? {
+                AssetRequirement::Profile(required) => Some(required.base_assets()),
+                AssetRequirement::DevLogical { .. } => None,
+            }
         } else {
             self.current_base_assets()?
         };
@@ -720,6 +798,40 @@ impl ServiceState {
                 &self.assets_dir,
                 base_assets,
             )?
+        } else if profile_id.is_some() || profile_revision.is_some() {
+            let settings = self.current_service_settings();
+            match profile_asset_requirement_for_selection(
+                &settings,
+                profile_id.as_deref(),
+                profile_revision.as_deref(),
+                host_asset_arch(),
+                false,
+            )? {
+                AssetRequirement::Profile(required) => {
+                    let resolved = required.resolved_assets(&self.assets_dir);
+                    let missing = [
+                        ("vmlinuz", &resolved.kernel),
+                        ("initrd.img", &resolved.initrd),
+                        ("rootfs.squashfs", &resolved.rootfs),
+                    ]
+                    .into_iter()
+                    .filter_map(|(name, path)| (!path.exists()).then_some(name))
+                    .collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        return Err(anyhow!(
+                            "selected profile VM assets are not ready (profile={}, revision={:?}, missing={missing:?})",
+                            profile_id.as_deref().unwrap_or("default"),
+                            profile_revision
+                        ));
+                    }
+                    resolved
+                }
+                AssetRequirement::DevLogical { .. } => {
+                    return Err(anyhow!(
+                        "selected profile VM assets must come from a signed profile catalog"
+                    ));
+                }
+            }
         } else {
             let health = self.asset_supervisor.snapshot();
             if !health.ready {
@@ -770,7 +882,7 @@ impl ServiceState {
             capsem_core::auto_snapshot::clone_sandbox_state(&entry.session_dir, &session_dir)
                 .context("failed to clone sandbox state")?;
         }
-        self.ensure_vm_effective_settings(&session_dir)
+        self.refresh_vm_effective_settings_for_profile(&session_dir, profile_id.as_deref())
             .context("attach vm-effective settings to session")?;
         let profile_pin = self
             .vm_profile_pin(
@@ -780,6 +892,24 @@ impl ServiceState {
                 base_assets.clone(),
             )
             .context("pin VM profile/package/assets")?;
+        if let Some(expected_profile_id) = profile_id.as_deref() {
+            if profile_pin.profile_id != expected_profile_id {
+                return Err(anyhow!(
+                    "selected profile '{}' resolved to pinned profile '{}'",
+                    expected_profile_id,
+                    profile_pin.profile_id
+                ));
+            }
+        }
+        if let Some(expected_revision) = profile_revision.as_deref() {
+            if profile_pin.profile_revision.as_deref() != Some(expected_revision) {
+                return Err(anyhow!(
+                    "selected profile revision '{}' resolved to pinned revision {:?}",
+                    expected_revision,
+                    profile_pin.profile_revision
+                ));
+            }
+        }
         let telemetry_env = self
             .telemetry_identity_env(id, &session_dir)
             .context("derive process telemetry identity")?;
@@ -1335,6 +1465,42 @@ impl ServiceState {
         if !health.ready {
             return Err(anyhow!(
                 "VM assets are not ready (state={}, missing={:?}, error={})",
+                health.state.as_str(),
+                health.missing,
+                health.error.unwrap_or_else(|| "none".to_string())
+            ));
+        }
+        Ok(())
+    }
+
+    async fn ensure_selected_profile_assets_ready(
+        &self,
+        profile_id: Option<&str>,
+        profile_revision: Option<&str>,
+    ) -> Result<()> {
+        if profile_id.is_none() && profile_revision.is_none() {
+            return self.ensure_current_profile_assets_ready().await;
+        }
+        let settings = self.current_service_settings();
+        let requirement = profile_asset_requirement_for_selection(
+            &settings,
+            profile_id,
+            profile_revision,
+            host_asset_arch(),
+            false,
+        )?;
+        let supervisor = AssetSupervisor::new(
+            self.assets_dir.clone(),
+            requirement,
+            std::time::Duration::from_secs(60),
+        );
+        supervisor.ensure_assets_once().await;
+        let health = supervisor.snapshot();
+        if !health.ready {
+            return Err(anyhow!(
+                "selected profile VM assets are not ready after reconcile (profile={:?}, revision={:?}, state={}, missing={:?}, error={})",
+                health.profile_id,
+                health.profile_revision,
                 health.state.as_str(),
                 health.missing,
                 health.error.unwrap_or_else(|| "none".to_string())
@@ -2171,6 +2337,8 @@ async fn handle_provision(
         let id = id_for_loop.clone();
         let payload_env = payload.env.clone();
         let payload_from = payload.from.clone();
+        let payload_profile_id = payload.profile_id.clone();
+        let payload_profile_revision = payload.profile_revision.clone();
         let payload_persistent = payload.persistent;
         let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         async move {
@@ -2200,6 +2368,8 @@ async fn handle_provision(
                 payload_persistent,
                 payload_env,
                 payload_from,
+                payload_profile_id,
+                payload_profile_revision,
             )
             .await;
             // Log structured context BEFORE losing the outcome to classify_*.
@@ -2265,9 +2435,17 @@ async fn provision_attempt(
     persistent: bool,
     env: Option<std::collections::HashMap<String, String>>,
     from: Option<String>,
+    profile_id: Option<String>,
+    profile_revision: Option<String>,
 ) -> ProvisionAttemptOutcome {
     if from.is_none() {
-        if let Err(e) = state.ensure_current_profile_assets_ready().await {
+        if let Err(e) = state
+            .ensure_selected_profile_assets_ready(
+                profile_id.as_deref(),
+                profile_revision.as_deref(),
+            )
+            .await
+        {
             return ProvisionAttemptOutcome::ProvisionError(e);
         }
     }
@@ -2283,6 +2461,8 @@ async fn provision_attempt(
             persistent,
             env,
             from,
+            profile_id,
+            profile_revision,
             description: None,
         })
     })
@@ -7059,6 +7239,8 @@ async fn handle_run(
             persistent: false,
             env,
             from: None,
+            profile_id: None,
+            profile_revision: None,
             description: None,
         })
     })

@@ -114,8 +114,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while assets are still checking or updating.
 - Added `POST /setup/assets/reconcile` so callers can force the service-owned
   Profile V2 asset reconciler to check/download profile VM assets on demand.
+- Added explicit profile selection for fresh VM create/provision requests and
+  `capsem create --profile [--profile-revision]`, with selected profile asset
+  reconciliation and VM-effective profile attachment before process spawn.
 - Changed `capsem update --assets` to call the service Profile V2 asset
   reconciler instead of the old asset-manifest downloader.
+- Changed VM profile pinning to require complete installed profile revision
+  authority when present, including the runtime profile file, archived verified
+  payload, and matching payload hash.
 - Added structured profile asset check/download lifecycle logs with redacted
   asset URLs, plus status propagation for the service asset check timestamp.
 - Added explicit Profile V2 asset provenance to service/CLI asset health,

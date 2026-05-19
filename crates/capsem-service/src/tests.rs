@@ -1417,14 +1417,25 @@ fn vm_profile_pin_uses_installed_profile_revision_sidecar() {
         .join(".catalog")
         .join("profiles")
         .join("everyday-work");
-    std::fs::create_dir_all(&record_dir).unwrap();
+    let revision_dir = record_dir.join("2026.0520.1");
+    std::fs::create_dir_all(&revision_dir).unwrap();
+    std::fs::write(
+        corp_dir.join("everyday-work.toml"),
+        "version = 1\nid = \"everyday-work\"\n",
+    )
+    .unwrap();
+    let payload = br#"{"id":"everyday-work"}"#;
+    std::fs::write(revision_dir.join("profile.json"), payload).unwrap();
+    let payload_hash = format!("blake3:{}", blake3::hash(payload).to_hex());
     std::fs::write(
         record_dir.join("current.json"),
-        r#"{
+        format!(
+            r#"{{
           "profile_id": "everyday-work",
           "revision": "2026.0520.1",
-          "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-        }"#,
+          "payload_hash": "{payload_hash}"
+        }}"#,
+        ),
     )
     .unwrap();
 
@@ -1436,7 +1447,7 @@ fn vm_profile_pin_uses_installed_profile_revision_sidecar() {
     assert_eq!(pin.profile_revision.as_deref(), Some("2026.0520.1"));
     assert_eq!(
         pin.profile_payload_hash.as_deref(),
-        Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+        Some(payload_hash.as_str())
     );
 }
 
@@ -2589,6 +2600,8 @@ fn provision_accepts_name_just_under_uds_limit() {
         persistent: false,
         env: None,
         from: None,
+        profile_id: None,
+        profile_revision: None,
         description: None,
     });
     // Will fail later (missing rootfs), but NOT for path length
@@ -2612,6 +2625,8 @@ fn provision_short_name_passes_path_check() {
         persistent: false,
         env: None,
         from: None,
+        profile_id: None,
+        profile_revision: None,
         description: None,
     });
     // Fails for missing assets, not path length
@@ -2663,6 +2678,8 @@ fn provision_persistent_rejects_duplicate_name() {
         persistent: true,
         env: None,
         from: None,
+        profile_id: None,
+        profile_revision: None,
         description: None,
     });
     assert!(result.is_err());
@@ -2685,6 +2702,8 @@ fn provision_persistent_validates_name() {
         persistent: true,
         env: None,
         from: None,
+        profile_id: None,
+        profile_revision: None,
         description: None,
     });
     assert!(result.is_err());
@@ -2734,6 +2753,8 @@ fn provision_from_source_requires_profile_revision_pin() {
             persistent: false,
             env: None,
             from: Some("old-source".into()),
+            profile_id: None,
+            profile_revision: None,
             description: None,
         })
         .unwrap_err();
@@ -3039,7 +3060,18 @@ async fn provision_attempt_reconciles_profile_assets_on_first_use_create() {
 
     assert!(!state.asset_supervisor.snapshot().ready);
 
-    let outcome = provision_attempt(&state, "first-use-create", 2048, 2, false, None, None).await;
+    let outcome = provision_attempt(
+        &state,
+        "first-use-create",
+        2048,
+        2,
+        false,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
 
     server.abort();
     match outcome {
@@ -3054,6 +3086,136 @@ async fn provision_attempt_reconciles_profile_assets_on_first_use_create() {
     assert!(resolved.kernel.exists());
     assert!(resolved.initrd.exists());
     assert!(resolved.rootfs.exists());
+}
+
+#[tokio::test]
+async fn provision_attempt_reconciles_selected_profile_assets_and_attachment() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let false_binary = ["/bin/false", "/usr/bin/false"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from("/bin/false"));
+    let (state, dir) = make_test_state_with_profile_assets_and_process(
+        "https://assets.example.test",
+        false_binary,
+    );
+    let _env_guard = SettingsEnvGuard {
+        previous_capsem_home: std::env::var_os("CAPSEM_HOME"),
+    };
+    std::env::set_var("CAPSEM_HOME", &state.run_dir);
+    capsem_core::settings_profiles::write_service_settings(
+        &state.run_dir.join("service.toml"),
+        &state.service_settings,
+    )
+    .unwrap();
+    let corp_dir = dir.path().join("profiles/corp");
+    let source_dir = dir.path().join("selected-profile-assets");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(source_dir.join("vmlinuz"), b"kernel").unwrap();
+    std::fs::write(source_dir.join("initrd.img"), b"initrd").unwrap();
+    std::fs::write(source_dir.join("rootfs.squashfs"), b"rootfs").unwrap();
+    let revision_dir = corp_dir.join(".catalog/profiles/coding/2026.0520.1");
+    std::fs::create_dir_all(&revision_dir).unwrap();
+    let arch = host_asset_arch();
+    std::fs::write(
+        corp_dir.join("coding.toml"),
+        format!(
+            r#"
+version = 1
+id = "coding"
+name = "Coding"
+best_for = "Development sessions."
+profile_type = "coding"
+
+[vm.assets.{arch}.kernel]
+url = "file://{}"
+hash = "blake3:{}"
+signature_url = "file://{}/vmlinuz.minisig"
+size = 6
+content_type = "application/octet-stream"
+
+[vm.assets.{arch}.initrd]
+url = "file://{}"
+hash = "blake3:{}"
+signature_url = "file://{}/initrd.img.minisig"
+size = 6
+content_type = "application/octet-stream"
+
+[vm.assets.{arch}.rootfs]
+url = "file://{}"
+hash = "blake3:{}"
+signature_url = "file://{}/rootfs.squashfs.minisig"
+size = 6
+content_type = "application/octet-stream"
+"#,
+            source_dir.join("vmlinuz").display(),
+            blake3::hash(b"kernel").to_hex(),
+            source_dir.display(),
+            source_dir.join("initrd.img").display(),
+            blake3::hash(b"initrd").to_hex(),
+            source_dir.display(),
+            source_dir.join("rootfs.squashfs").display(),
+            blake3::hash(b"rootfs").to_hex(),
+            source_dir.display(),
+        ),
+    )
+    .unwrap();
+    let payload = br#"{"id":"coding"}"#;
+    std::fs::write(revision_dir.join("profile.json"), payload).unwrap();
+    let payload_hash = format!("blake3:{}", blake3::hash(payload).to_hex());
+    std::fs::write(
+        corp_dir.join(".catalog/profiles/coding/current.json"),
+        format!(
+            r#"{{
+          "profile_id": "coding",
+          "revision": "2026.0520.1",
+          "payload_hash": "{payload_hash}"
+        }}"#,
+        ),
+    )
+    .unwrap();
+
+    let outcome = provision_attempt(
+        &state,
+        "selected-profile-create",
+        2048,
+        2,
+        false,
+        None,
+        None,
+        Some("coding".to_string()),
+        Some("2026.0520.1".to_string()),
+    )
+    .await;
+
+    match outcome {
+        ProvisionAttemptOutcome::BootCrash { .. } => {}
+        ProvisionAttemptOutcome::ProvisionError(error) => {
+            panic!("selected profile create should reach process spawn, got: {error:#}");
+        }
+        other => panic!("expected spawn failure after selected asset reconcile, got {other:?}"),
+    }
+    for (logical_name, bytes) in [
+        ("vmlinuz", b"kernel".as_slice()),
+        ("initrd.img", b"initrd".as_slice()),
+        ("rootfs.squashfs", b"rootfs".as_slice()),
+    ] {
+        let hash = blake3::hash(bytes).to_hex().to_string();
+        assert!(state
+            .assets_dir
+            .join(arch)
+            .join(capsem_core::asset_manager::hash_filename(
+                logical_name,
+                &hash
+            ))
+            .exists());
+    }
+    let failed_dir = find_failed_session_dir(&state.run_dir, "selected-profile-create")
+        .expect("failed selected-create session should be preserved");
+    let effective = capsem_core::settings_profiles::load_vm_effective_settings(&failed_dir)
+        .expect("selected create should attach VM-effective settings");
+    assert_eq!(effective.profile_id, "coding");
 }
 
 #[tokio::test]
@@ -3672,6 +3834,8 @@ fn provision_rejects_nonexistent_source_sandbox() {
         persistent: false,
         env: None,
         from: Some("ghost-sandbox".into()),
+        profile_id: None,
+        profile_revision: None,
         description: None,
     });
     assert!(result.is_err());

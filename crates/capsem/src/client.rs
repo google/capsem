@@ -32,6 +32,10 @@ pub struct ProvisionRequest {
     pub env: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "image")]
     pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

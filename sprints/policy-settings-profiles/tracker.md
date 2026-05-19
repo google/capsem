@@ -128,7 +128,10 @@ a valid claim -- mark it `[ ]` instead.
     presence, current/installed revisions, and lifecycle status.
     `POST /profiles/{id}/revisions/{install,update,remove}` and `capsem
     profile install|update|remove <id> [--revision <rev>] [--json]` now add
-    selected revision lifecycle actions. Remaining work adds UI/debug detail.
+    selected revision lifecycle actions. Fresh VM create now accepts explicit
+    profile/revision selection, reconciles that profile's assets before spawn,
+    attaches the selected VM-effective profile, and refuses incomplete
+    installed revision payloads. Remaining work adds UI/debug detail.
 15. [x] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
   trigger, checked-at/profile provenance status propagation, structured

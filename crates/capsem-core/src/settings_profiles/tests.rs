@@ -1120,12 +1120,70 @@ fn install_verified_profile_payload_materializes_runtime_profile_and_revision_pa
     assert_eq!(current.profile_id, EVERYDAY_WORK_PROFILE_ID);
     assert_eq!(current.revision, "2026.0520.1");
     assert_eq!(current.payload_hash, profile_hash);
+    let complete = load_complete_installed_profile_revision(&roots, EVERYDAY_WORK_PROFILE_ID)
+        .unwrap()
+        .expect("complete installed revision should include runtime and payload files");
+    assert_eq!(complete.profile_id, EVERYDAY_WORK_PROFILE_ID);
+    assert_eq!(complete.revision, "2026.0520.1");
+    assert_eq!(complete.payload_hash, profile_hash);
+    assert_eq!(
+        complete.runtime_profile_path,
+        installed.runtime_profile_path
+    );
+    assert_eq!(complete.payload_path, installed.payload_path);
 
     let catalog = discover_profiles(&roots).unwrap();
     let record = catalog.get(EVERYDAY_WORK_PROFILE_ID).unwrap();
     assert_eq!(record.source, ProfileSource::Corp);
     assert!(record.locked);
     assert_eq!(record.profile.packages.runtimes["python"], "3.12.3");
+}
+
+#[test]
+fn load_complete_installed_profile_revision_rejects_payload_hash_drift() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    let mut roots = test_roots(base_dir, user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile.json",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "https://assets.capsem.dev/profile.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}"#
+    ))
+    .unwrap();
+    let revision = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+    let verified =
+        crate::profile_manifest::verify_installable_profile_payload(revision, payload).unwrap();
+    let installed = install_verified_profile_payload(&roots, &verified).unwrap();
+    fs::write(
+        &installed.payload_path,
+        br#"{"id":"everyday-work","tampered":true}"#,
+    )
+    .unwrap();
+
+    let error =
+        load_complete_installed_profile_revision(&roots, EVERYDAY_WORK_PROFILE_ID).unwrap_err();
+    assert!(error.to_string().contains("payload hash"));
 }
 
 #[test]

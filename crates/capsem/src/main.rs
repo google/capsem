@@ -254,6 +254,12 @@ enum SessionCommands {
         /// Clone state from an existing persistent session
         #[arg(long)]
         from: Option<String>,
+        /// Profile id for a fresh VM
+        #[arg(long)]
+        profile: Option<String>,
+        /// Exact installed profile revision for a fresh VM
+        #[arg(long = "profile-revision")]
+        profile_revision: Option<String>,
     },
     /// Open an interactive shell in a session
     ///
@@ -1132,6 +1138,8 @@ async fn main() -> Result<()> {
             cpu,
             env,
             from,
+            profile,
+            profile_revision,
         }) => {
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
@@ -1141,6 +1149,8 @@ async fn main() -> Result<()> {
                 persistent,
                 env: client::parse_env_vars(env)?,
                 from: from.clone(),
+                profile_id: profile.clone(),
+                profile_revision: profile_revision.clone(),
             };
 
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
@@ -1204,6 +1214,8 @@ async fn main() -> Result<()> {
                         persistent: false,
                         env: None,
                         from: None,
+                        profile_id: None,
+                        profile_revision: None,
                     };
                     let resp: ApiResponse<ProvisionResponse> =
                         client.post("/provision", &req).await?;
@@ -1776,6 +1788,8 @@ async fn main() -> Result<()> {
                 persistent: false,
                 env: None,
                 from: None,
+                profile_id: None,
+                profile_revision: None,
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
             let provisioned = resp.into_result()?;
@@ -2139,6 +2153,29 @@ mod tests {
                 assert_eq!(cpu, 2);
             }
             _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn parse_create_with_profile_selection() {
+        let cli = Cli::parse_from([
+            "capsem",
+            "create",
+            "--profile",
+            "coding",
+            "--profile-revision",
+            "2026.0520.1",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Create {
+                profile,
+                profile_revision,
+                ..
+            }) => {
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert_eq!(profile_revision.as_deref(), Some("2026.0520.1"));
+            }
+            _ => panic!("expected Create with profile selection"),
         }
     }
 

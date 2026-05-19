@@ -32,8 +32,10 @@ through CLI command families.
 - Extend `capsem profile show/resolve` to print package/tool contracts, resolved
   VM asset identity, asset readiness, and revoke/deprecation warnings.
 - Extend VM create/start commands to accept `--profile <id>` and optional
-  `--profile-revision <rev>`. The command must show first-use asset download
-  progress and print the resolved profile id/revision and asset hashes.
+  `--profile-revision <rev>`. Initial `capsem create --profile
+  --profile-revision` parsing and request forwarding have landed; remaining
+  CLI work must show first-use asset download progress and print the resolved
+  profile id/revision and asset hashes.
 - Add `capsem mcp list/add/delete/show`.
 - Add `capsem skills list/add/delete/show`.
 - Add `capsem rules list/show/add/remove/evaluate` mirroring the
@@ -55,8 +57,8 @@ through CLI command families.
   (subject from `--subject path.json` vs stdin; rejects missing
   callback); profile catalog/revision output golden tests for all
   `ProfileRevisionStatus` enum values; VM create parser tests for `--profile`,
-  `--profile-revision`, download progress, and revoked/incompatible profile
-  errors.
+  `--profile-revision` have landed. Remaining parser coverage covers download
+  progress and revoked/incompatible profile errors.
 - Functional: CLI to service integration tests; `capsem rules add`
   then `capsem rules evaluate` roundtrip; `capsem confirm list` +
   `capsem confirm accept <id>` resolves a real pending ask end to

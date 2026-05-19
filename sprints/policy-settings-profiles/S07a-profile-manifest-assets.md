@@ -137,9 +137,11 @@ Push order from here:
    profile pin construction requires signed revision + payload hash + pinned assets. Fork now
    preserves VM-effective profile attachments, proves exec still works after
    fork with the same profile, and rejects profile string drift before
-   registering the fork, including profile payload hash drift. Remaining:
-   first-use create with an explicit selected catalog revision and
-   selected-profile catalog proof.
+   registering the fork, including profile payload hash drift. Fresh VM create
+   now accepts an explicit selected profile/revision, downloads missing
+   selected-profile assets before spawn, attaches the selected VM-effective
+   profile, and rejects incomplete installed profile revisions whose archived
+   payload is missing or hash-drifted.
 5. [~] Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
    Landed: `/list`, `/info`, `capsem list`, and `capsem info` expose VM profile
@@ -685,8 +687,9 @@ This sprint creates the contract consumed by later sprints:
       asset identity instead of falling back to the current profile/assets.
       Create-from-source, fork, and persist now reject missing/revisionless
       profile pins or missing profile payload hashes before cloning or moving
-      durable VM state. Remaining work is explicit selected-profile catalog
-      proof before HTTP/UI lift.
+      durable VM state. Fresh create now accepts selected profile/revision,
+      reconciles selected assets before spawn, attaches the selected
+      VM-effective settings, and refuses incomplete installed revision payloads.
 - [x] Prove fork profile integrity across exec. `handle_fork_preserves_profile_
       and_fork_exec_works` forks a VM, verifies the forked registry pin and
       VM-effective profile attachment match the source, then executes through a
@@ -700,9 +703,12 @@ This sprint creates the contract consumed by later sprints:
       persisted profile catalog snapshot and installed current revision
       sidecar. Remaining: debug-report/package-contract/asset-verification
       detail.
-- [ ] Add functional tests for create VM with selected profile revision,
+- [~] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
-      revoked profile fail-closed behavior.
+      revoked profile fail-closed behavior. Landed: selected profile/revision
+      create reconciles file-backed assets, pins/attaches the selected profile
+      before process spawn, and core payload-drift coverage rejects incomplete
+      installed revision authority.
 - [ ] Add concurrency tests for duplicate first-use downloads and cleanup while
       VM creation is in progress.
 - [ ] Add in-guest package/tool contract verification through capsem-doctor or a
@@ -806,7 +812,15 @@ This sprint creates the contract consumed by later sprints:
   and read the expected descendant-only file from the final fork. The shared
   Profile V2 asset-backed E2E fixture was extracted to
   `tests/helpers/profile_asset_fixture.py`; the existing live profile-asset
-  boot proof still passes.
+  boot proof still passes. Selected-create coverage now adds `cargo test -p
+  capsem-service provision_attempt_reconciles_selected_profile_assets_and_attachment`,
+  `cargo test -p capsem-service vm_profile_pin_uses_installed_profile_revision_sidecar`,
+  `cargo test -p capsem-core load_complete_installed_profile_revision --lib`,
+  `cargo test -p capsem-service provision_request_with_profile_selection --lib`,
+  and `cargo test -p capsem parse_create_with_profile_selection`, proving the
+  create request/CLI shape, selected profile asset reconciliation, selected
+  VM-effective attachment, complete installed-payload trust check, and payload
+  hash-drift rejection.
   Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar

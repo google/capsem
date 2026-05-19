@@ -37,6 +37,13 @@ pub struct ProvisionRequest {
     /// be cloned from this existing persistent sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "image")]
     pub from: Option<String>,
+    /// Profile id to resolve for a fresh VM. Clones inherit the source VM's
+    /// profile pin instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    /// Optional exact installed profile revision to require for a fresh VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -542,6 +549,17 @@ mod tests {
     }
 
     #[test]
+    fn provision_request_with_profile_selection() {
+        let json = json!({
+            "profile_id": "coding",
+            "profile_revision": "2026.0520.1"
+        });
+        let r: ProvisionRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(r.profile_id.as_deref(), Some("coding"));
+        assert_eq!(r.profile_revision.as_deref(), Some("2026.0520.1"));
+    }
+
+    #[test]
     fn provision_request_env_omitted() {
         let r = ProvisionRequest {
             name: None,
@@ -550,6 +568,8 @@ mod tests {
             persistent: false,
             env: None,
             from: None,
+            profile_id: None,
+            profile_revision: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(!json.contains("env"));
