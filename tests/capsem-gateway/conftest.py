@@ -254,6 +254,92 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 "profile_id": "everyday-work",
                 "rules": list(MOCK_RULES.values()),
             })
+        elif self.clean_path == "/setup/assets":
+            self._send_json({
+                "ready": False,
+                "state": "updating",
+                "downloading": True,
+                "asset_locations": {
+                    "assets_dir": "/tmp/capsem-assets",
+                    "image_roots": ["/tmp/capsem-images"],
+                },
+                "asset_version": "everyday-work@2026.0520.1",
+                "profile_id": "everyday-work",
+                "profile_revision": "2026.0520.1",
+                "profile_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "profile_assets": [{
+                    "logical_name": "rootfs.squashfs",
+                    "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "source_url": "https://assets.example.test/rootfs.squashfs",
+                    "size": 12,
+                    "content_type": "application/vnd.squashfs",
+                }],
+                "arch": "arm64",
+                "missing": ["rootfs.squashfs"],
+                "progress": {
+                    "logical_name": "rootfs.squashfs",
+                    "bytes_done": 6,
+                    "bytes_total": 12,
+                    "done": False,
+                },
+                "error": None,
+                "retry_count": 0,
+                "retryable": False,
+                "assets": [
+                    {
+                        "name": "vmlinuz",
+                        "path": "/tmp/capsem-assets/vmlinuz",
+                        "status": "present",
+                    },
+                    {
+                        "name": "initrd.img",
+                        "path": "/tmp/capsem-assets/initrd.img",
+                        "status": "present",
+                    },
+                    {
+                        "name": "rootfs.squashfs",
+                        "path": "/tmp/capsem-assets/rootfs.squashfs",
+                        "status": "downloading",
+                    },
+                ],
+            })
+        elif self.clean_path == "/debug/report":
+            self._send_json({
+                "text": "\n".join([
+                    "Capsem Debug Report",
+                    "schema: capsem.debug.v2",
+                    "profile_asset_profile_id: everyday-work",
+                    "profile_asset_profile_revision: 2026.0520.1",
+                    "profile_asset_source: rootfs.squashfs hash=blake3:cccc",
+                    "vm_profile_pin: vm-001 everyday-work@2026.0520.1 current",
+                    "gateway_runtime_issue: none",
+                ]),
+                "json": {
+                    "schema": "capsem.debug.v2",
+                    "redacted": True,
+                    "assets": {
+                        "source": "profile_v2_asset_health",
+                        "health": {
+                            "ready": False,
+                            "state": "updating",
+                            "profile_id": "everyday-work",
+                            "profile_revision": "2026.0520.1",
+                            "profile_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                            "profile_assets": [{
+                                "logical_name": "rootfs.squashfs",
+                                "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                                "source_url": "https://assets.example.test/rootfs.squashfs",
+                                "size": 12,
+                                "content_type": "application/vnd.squashfs",
+                            }],
+                        },
+                    },
+                    "status": {
+                        "issues": [],
+                        "defunct_sessions": [],
+                    },
+                },
+            })
         elif self.clean_path == "/policy-hook/spec":
             self._send_json({
                 "openapi": "3.1.0",
@@ -355,6 +441,14 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 }],
             })
+        elif self.clean_path == "/profiles/revoked-work/revisions/install":
+            self._send_json({
+                "error": "profile revision is revoked",
+                "mode": "settings_profiles_v2",
+                "profile_id": "revoked-work",
+                "revision": "2026.0301.1",
+                "status": "revoked",
+            }, status=409)
         elif self.clean_path == "/profiles/everyday-work/revisions/install":
             self._send_json({
                 "mode": "settings_profiles_v2",

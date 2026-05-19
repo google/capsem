@@ -269,7 +269,8 @@ pub fn build_debug_report(input: DebugReportInput) -> Result<DebugReport> {
     let install = build_install_report(input.install.as_ref());
     let host_binaries = build_host_binary_report(&input);
     let processes = build_process_report(&input.process_pids);
-    let status = build_status_report(&input);
+    let mut status = build_status_report(&input);
+    append_gateway_runtime_issues(&mut status.issues, &runtime, &processes);
     let setup = build_setup_report(&input.capsem_home);
     let assets = build_asset_report(&input)?;
     let logs = collect_log_tails(&input.capsem_home, &input.run_dir);
@@ -504,6 +505,72 @@ fn build_status_report(input: &DebugReportInput) -> DebugStatusReport {
                 last_error: session.last_error.as_deref().map(redact_log_line),
             })
             .collect(),
+    }
+}
+
+fn append_gateway_runtime_issues(
+    issues: &mut Vec<String>,
+    runtime: &RuntimeReport,
+    processes: &[ProcessReport],
+) {
+    let token_exists = runtime.gateway_token_file.exists;
+    let port_exists = runtime.gateway_port_file.exists;
+    let pid_exists = runtime.gateway_pid_file.exists;
+
+    if port_exists {
+        match runtime.gateway_port_file.contents.as_deref() {
+            Some(raw) => match raw.parse::<u16>() {
+                Ok(0) => issues.push("Gateway port file is invalid: 0".into()),
+                Ok(_) => {}
+                Err(_) => issues.push(format!("Gateway port file is invalid: {raw}")),
+            },
+            None => issues.push("Gateway port file is present but unreadable".into()),
+        }
+    }
+
+    let gateway = processes.iter().find(|process| process.name == "gateway");
+    let pid_file_value = runtime
+        .gateway_pid_file
+        .contents
+        .as_deref()
+        .and_then(|raw| raw.parse::<u32>().ok());
+    if let (
+        Some(file_pid),
+        Some(ProcessReport {
+            pid: Some(inspected_pid),
+            ..
+        }),
+    ) = (pid_file_value, gateway)
+    {
+        if file_pid != *inspected_pid {
+            issues.push(format!(
+                "Gateway pid file does not match inspected gateway process: file={file_pid} inspected={inspected_pid}"
+            ));
+        }
+    }
+    match gateway {
+        Some(ProcessReport {
+            pid: Some(pid),
+            running: Some(false),
+            ..
+        }) => issues.push(format!(
+            "Gateway pid file points at non-running process: {pid}"
+        )),
+        Some(ProcessReport {
+            pid: Some(_),
+            running: None,
+            ..
+        }) => issues.push("Gateway pid running state is unknown".into()),
+        Some(ProcessReport { pid: None, .. }) if pid_exists => {
+            issues.push("Gateway pid file is invalid or unreadable".into())
+        }
+        Some(ProcessReport { pid: None, .. }) if token_exists || port_exists => {
+            issues.push("Gateway token/port files exist but gateway pid file is missing".into())
+        }
+        None if token_exists || port_exists || pid_exists => {
+            issues.push("Gateway runtime files exist but gateway process was not inspected".into())
+        }
+        _ => {}
     }
 }
 

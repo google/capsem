@@ -219,6 +219,63 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
 }
 
 #[test]
+fn reports_gateway_runtime_mismatches() {
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join(".capsem");
+    let run_dir = capsem_home.join("run");
+    let assets_dir = capsem_home.join("assets");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(run_dir.join("gateway.port"), "0\n").unwrap();
+    std::fs::write(run_dir.join("gateway.pid"), "4242\n").unwrap();
+    std::fs::write(run_dir.join("gateway.token"), "redacted-by-snapshot\n").unwrap();
+
+    let report = build_debug_report(DebugReportInput {
+        generated_at: "2026-05-12T12:00:00Z".into(),
+        version: "1.1.1778542197".into(),
+        build_hash: "1d95b80.1778545863".into(),
+        build_ts: "dev".into(),
+        platform: "macos/aarch64".into(),
+        capsem_home,
+        run_dir,
+        assets_dir,
+        asset_locations: None,
+        asset_health: Some(ready_asset_health()),
+        running_vm_count: 0,
+        total_vm_count: 0,
+        status_issues: Vec::new(),
+        defunct_sessions: Vec::new(),
+        install: None,
+        process_pids: vec![ProcessReportInput {
+            name: "gateway".into(),
+            pid: Some(4_194_303),
+            executable_path: None,
+        }],
+        settings_profiles: None,
+    })
+    .unwrap();
+
+    let issues = serde_json::to_value(&report.json).unwrap()["status"]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(issues.contains(&"Gateway port file is invalid: 0".to_string()));
+    assert!(issues.contains(
+        &"Gateway pid file does not match inspected gateway process: file=4242 inspected=4194303"
+            .to_string()
+    ));
+    assert!(issues.contains(&"Gateway pid file points at non-running process: 4194303".to_string()));
+    assert!(report
+        .text
+        .contains("status_issue: Gateway port file is invalid: 0"));
+    assert!(report
+        .text
+        .contains("status_issue: Gateway pid file does not match inspected gateway process"));
+}
+
+#[test]
 fn redacts_home_paths() {
     assert_eq!(
         redact_path_for_report(Path::new("/Users/alice/.capsem/assets/arm64/initrd.img")),

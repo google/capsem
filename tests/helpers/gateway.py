@@ -185,14 +185,41 @@ class TcpHttpClient:
 
     def get_status_and_body(self, path, timeout=30, use_auth=True,
                             extra_headers=None):
-        """Return (status_code, body_text) tuple."""
+        """Return (status_code, body_text) tuple for GET."""
+        return self.request_status_and_body(
+            "GET",
+            path,
+            timeout=timeout,
+            use_auth=use_auth,
+            extra_headers=extra_headers,
+        )
+
+    def post_status_and_body(self, path, body=None, timeout=30, use_auth=True,
+                             extra_headers=None):
+        """Return (status_code, body_text) tuple for POST."""
+        return self.request_status_and_body(
+            "POST",
+            path,
+            body=body,
+            timeout=timeout,
+            use_auth=use_auth,
+            extra_headers=extra_headers,
+        )
+
+    def request_status_and_body(self, method, path, body=None, timeout=30,
+                                use_auth=True, extra_headers=None):
+        """Return (status_code, body_text) tuple for arbitrary methods."""
         cmd = [
             "curl", "-s", "-S",
+            "-X", method,
             "-w", "\n%{http_code}",
             "--max-time", str(timeout),
         ]
         if use_auth:
             cmd += ["-H", f"Authorization: Bearer {self.token}"]
+        if body is not None:
+            cmd += ["-H", "Content-Type: application/json"]
+            cmd += ["-d", json.dumps(body)]
         for k, v in (extra_headers or {}).items():
             cmd += ["-H", f"{k}: {v}"]
         cmd.append(f"{self.base_url}{path}")

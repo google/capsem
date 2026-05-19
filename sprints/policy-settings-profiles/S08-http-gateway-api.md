@@ -2,15 +2,16 @@
 
 ## Status
 
-In progress. First slice landed: the gateway Profile V2 proxy contract is now
-covered for catalog/revision routes, profile CRUD/resolve, skills, MCP servers,
+In progress. Gateway Profile V2 proxy contract coverage now spans
+catalog/revision routes, profile CRUD/resolve, skills, MCP servers,
 rules/evaluate, confirm-pending read, profile-selected VM create response
-payloads, and `/status` profile/asset provenance.
+payloads, `/status` profile/asset provenance, `/setup/assets` profile-scoped
+download progress, `/debug/report` profile asset provenance, exact typed-error
+passthrough, and service debug-report gateway runtime mismatch diagnostics.
 
 S08 is not closed yet. Remaining scope is the live service/VM proof for
-profile-selected HTTP create/download/boot, gateway debug mismatch reporting,
-download progress parity with `/setup/assets`, adversarial failure cases, and
-the S15 confirm resolution routes/stream when S15 makes those routes real.
+profile-selected HTTP create/download/boot, broader adversarial failure cases,
+and the S15 confirm resolution routes/stream when S15 makes those routes real.
 
 ## Goal
 
@@ -56,9 +57,11 @@ state and profile-backed VM creation.
   `active|deprecated|revoked` revision status values, catalog/revision
   lifecycle summaries, profile CRUD/resolve envelopes, skills/MCP/rules
   gateway proxy routes, `GET /confirm/pending`, profile-selected VM create
-  response identity/pin/asset health, and `/status` profile identity plus
-  per-asset provenance. Remaining: typed-error envelope parity for malformed
-  and denied profile/rule/asset calls plus download progress parity.
+  response identity/pin/asset health, `/status` profile identity plus
+  per-asset provenance, `/setup/assets` download progress parity, and
+  exact typed-error status/body passthrough for denied profile revision
+  operations. Remaining: malformed request and locked mutation parity across
+  the rest of profile/rule/asset surfaces.
 - Functional: first slice covers HTTP CRUD and resolve tests; a Rules API
   roundtrip (`POST /rules` -> `POST /rules/evaluate` -> assert same
   `matched_rule_id` comes back); and HTTP VM create response echoing selected
@@ -74,10 +77,11 @@ state and profile-backed VM creation.
   hashes before boot.
   Rules API + S15 resolve E2E is the prerequisite that un-defers
   the [S06-pre slice 6f capsem-doctor ask probe](tracker.md#slice-6f---exit-tests).
-- Telemetry: first slice covers gateway `/status` profile identity and asset
-  provenance preservation. Remaining: debug report includes gateway-visible
-  profile catalog, package, asset-readiness, and VM pin state, plus explicit
-  gateway/service mismatch reporting.
+- Telemetry: covers gateway `/status` profile identity and asset provenance
+  preservation, `/debug/report` Profile V2 asset provenance preservation, and
+  service debug-report issues for invalid/stale/mismatched gateway runtime
+  files. Remaining: richer debug report package/catalog/VM-pin summaries across
+  live profile-selected HTTP create flows.
 - Performance: not primary; `POST /rules/evaluate` must remain a
   read-only operation that does not block concurrent rule writes
   (same `Arc<PolicyConfig>` snapshot contract as the UDS side). Profile catalog
@@ -90,6 +94,7 @@ state and profile-backed VM creation.
 - `cargo test -p capsem-gateway status -- --nocapture`
 - `cargo build -p capsem-gateway`
 - `cargo test -p capsem-gateway`
+- `cargo test -p capsem-service debug_report -- --nocapture`
 - `uv run pytest tests/capsem-gateway/test_gw_profile_v2_surface.py -q`
 - `uv run pytest tests/capsem-gateway/test_gw_profile_v2_surface.py tests/capsem-gateway/test_gw_proxy.py tests/capsem-gateway/test_gw_proxy_advanced.py tests/capsem-gateway/test_gw_status.py tests/capsem-gateway/test_gw_status_advanced.py tests/capsem-gateway/test_gw_auth.py -q`
 

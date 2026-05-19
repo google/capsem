@@ -1,6 +1,7 @@
 """S08 Profile V2 gateway surface contract tests."""
 
 import uuid
+import json
 
 import pytest
 
@@ -186,3 +187,59 @@ def test_gateway_status_preserves_profile_identity_and_asset_provenance(gw_clien
     assert status["assets"]["profile_assets"][0]["logical_name"] == "rootfs.squashfs"
     assert status["vms"][0]["profile_id"] == "everyday-work"
     assert status["vms"][0]["profile_status"] == "current"
+
+
+def test_profile_asset_progress_proxies_setup_assets_envelope(gw_client):
+    assets = gw_client.get("/setup/assets")
+
+    assert assets["ready"] is False
+    assert assets["state"] == "updating"
+    assert assets["downloading"] is True
+    assert assets["asset_version"] == "everyday-work@2026.0520.1"
+    assert assets["profile_id"] == "everyday-work"
+    assert assets["profile_revision"] == "2026.0520.1"
+    assert assets["profile_payload_hash"].startswith("blake3:")
+    assert assets["profile_assets"][0]["logical_name"] == "rootfs.squashfs"
+    assert assets["missing"] == ["rootfs.squashfs"]
+    assert assets["progress"] == {
+        "logical_name": "rootfs.squashfs",
+        "bytes_done": 6,
+        "bytes_total": 12,
+        "done": False,
+    }
+    assert {
+        item["name"]: item["status"] for item in assets["assets"]
+    }["rootfs.squashfs"] == "downloading"
+
+
+def test_gateway_debug_report_preserves_profile_v2_provenance(gw_client):
+    report = gw_client.get("/debug/report")
+
+    assert report["json"]["schema"] == "capsem.debug.v2"
+    assert report["json"]["assets"]["source"] == "profile_v2_asset_health"
+    health = report["json"]["assets"]["health"]
+    assert health["profile_id"] == "everyday-work"
+    assert health["profile_revision"] == "2026.0520.1"
+    assert health["profile_payload_hash"].startswith("blake3:")
+    assert health["profile_assets"][0]["source_url"] == (
+        "https://assets.example.test/rootfs.squashfs"
+    )
+    assert "profile_asset_profile_id: everyday-work" in report["text"]
+    assert "vm_profile_pin: vm-001 everyday-work@2026.0520.1 current" in report["text"]
+
+
+def test_gateway_preserves_profile_v2_typed_error_status_and_body(gw_client):
+    status, body = gw_client.post_status_and_body(
+        "/profiles/revoked-work/revisions/install",
+        {},
+    )
+    parsed = json.loads(body)
+
+    assert status == 409
+    assert parsed == {
+        "error": "profile revision is revoked",
+        "mode": "settings_profiles_v2",
+        "profile_id": "revoked-work",
+        "revision": "2026.0301.1",
+        "status": "revoked",
+    }

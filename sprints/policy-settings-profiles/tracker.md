@@ -167,10 +167,12 @@ a valid claim -- mark it `[ ]` instead.
     contract slice landed for Profile V2 catalog/revision routes, profile
     CRUD/resolve, skills, standard `mcpServers` server management,
     rules/evaluate, confirm-pending read, profile-selected VM create response
-    payloads, and `/status` profile/asset provenance. Remaining: live
-    service/VM HTTP create-download-boot proof, debug mismatch reporting,
-    download-progress parity, adversarial typed-error coverage, and S15 confirm
-    resolution/stream once S15 makes that production route real.
+    payloads, `/status` profile/asset provenance, `/setup/assets`
+    profile-scoped download progress, `/debug/report` Profile V2 asset
+    provenance, exact typed-error passthrough, and service debug-report gateway
+    runtime mismatch diagnostics. Remaining: live service/VM HTTP
+    create-download-boot proof, broader adversarial typed-error coverage, and
+    S15 confirm resolution/stream once S15 makes that production route real.
 18. [ ] [S09 - CLI integration](S09-cli-integration.md)
 19. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 20. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
