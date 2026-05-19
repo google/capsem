@@ -4043,6 +4043,22 @@ struct RulesQuery {
     callback: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RulesMutationQuery {
+    #[serde(default)]
+    profile: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuleCreateRequest {
+    #[serde(default, alias = "profile_id")]
+    profile: Option<String>,
+    id: String,
+    #[serde(flatten)]
+    update: PolicyRuleUpdate,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct RuleEvaluateRequest {
     #[serde(default)]
@@ -4908,6 +4924,81 @@ fn find_effective_rule<'a>(
     })
 }
 
+fn parse_rule_resource_id(rule_id: &str) -> Result<(String, String), String> {
+    let stripped = rule_id.strip_prefix("security.rules.").unwrap_or(rule_id);
+    let mut parts = stripped.split('.');
+    let rule_type = parts.next();
+    let rule_name = parts.next();
+    if rule_type.is_none() || rule_name.is_none() || parts.next().is_some() {
+        return Err(format!(
+            "invalid rule id '{rule_id}'; expected security.rules.<type>.<name>"
+        ));
+    }
+    let rule_type = rule_type.unwrap_or_default();
+    if !matches!(rule_type, "mcp" | "http" | "dns" | "model" | "hook") {
+        return Err(format!(
+            "unsupported policy rule type in rule id '{rule_id}'"
+        ));
+    }
+    let rule_name = rule_name.unwrap_or_default();
+    if rule_name.is_empty()
+        || !rule_name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+    {
+        return Err(format!("invalid policy rule name in rule id '{rule_id}'"));
+    }
+    Ok((rule_type.to_string(), rule_name.to_string()))
+}
+
+fn profile_has_rule(
+    profile: &capsem_core::settings_profiles::Profile,
+    rule_type: &str,
+    rule_name: &str,
+) -> bool {
+    match rule_type {
+        "mcp" => profile.security.rules.mcp.contains_key(rule_name),
+        "http" => profile.security.rules.http.contains_key(rule_name),
+        "dns" => profile.security.rules.dns.contains_key(rule_name),
+        "model" => profile.security.rules.model.contains_key(rule_name),
+        "hook" => profile.security.rules.hook.contains_key(rule_name),
+        _ => false,
+    }
+}
+
+fn save_mutated_rule_profile(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+    source: capsem_core::settings_profiles::ProfileSource,
+    profile: capsem_core::settings_profiles::Profile,
+) -> Result<(), AppError> {
+    match source {
+        capsem_core::settings_profiles::ProfileSource::User => {
+            capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
+                .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
+        }
+        capsem_core::settings_profiles::ProfileSource::BuiltIn => {
+            capsem_core::settings_profiles::create_user_profile(&settings.profiles, profile)
+                .map_err(|e| {
+                    AppError(
+                        StatusCode::BAD_REQUEST,
+                        format!("create profile override: {e}"),
+                    )
+                })?;
+        }
+        capsem_core::settings_profiles::ProfileSource::Base
+        | capsem_core::settings_profiles::ProfileSource::Corp => {
+            return Err(AppError(
+                StatusCode::CONFLICT,
+                format!(
+                    "profile '{}' is locked ({source:?}); switch to a user-editable profile first",
+                    profile.id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn effective_policy_rule_config(
     rule: &capsem_core::settings_profiles::EffectiveRule,
 ) -> Result<capsem_core::net::policy_v2::PolicyRuleConfig, String> {
@@ -5049,6 +5140,127 @@ async fn handle_get_rule(Path(rule_id): Path<String>) -> Result<Json<serde_json:
         StatusCode::NOT_FOUND,
         format!("rule '{rule_id}' not found"),
     ))
+}
+
+/// POST /rules -- create a user-editable Profile V2 rule.
+async fn handle_create_rule(
+    Json(request): Json<RuleCreateRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (rule_type, rule_name) =
+        parse_rule_resource_id(&request.id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    validate_policy_rule_update(&rule_type, &rule_name, &request.update)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = request
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile '{target_profile_id}' not found"),
+        )
+    })?;
+    let mut profile = selected.profile.clone();
+    if profile_has_rule(&profile, &rule_type, &rule_name) {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!("rule_exists: security.rules.{rule_type}.{rule_name}"),
+        ));
+    }
+    upsert_profile_rule(
+        &mut profile,
+        &rule_type,
+        rule_name.clone(),
+        profile_rule_from_update(request.update),
+    );
+    profile.validate().map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("profile validation failed: {e}"),
+        )
+    })?;
+    save_mutated_rule_profile(&settings, selected.source, profile)?;
+
+    let effective = resolve_effective_for_rules(Some(target_profile_id.clone()))?;
+    let canonical = format!("security.rules.{rule_type}.{rule_name}");
+    let rule = find_effective_rule(&effective, &canonical).ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("created rule '{canonical}' was not visible after profile save"),
+        )
+    })?;
+    Ok(Json(rule_json_from_effective(rule)))
+}
+
+/// DELETE /rules/{rule_id} -- remove a user-authored Profile V2 rule.
+async fn handle_delete_rule(
+    Path(rule_id): Path<String>,
+    Query(query): Query<RulesMutationQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let (rule_type, rule_name) =
+        parse_rule_resource_id(&rule_id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = query
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile '{target_profile_id}' not found"),
+        )
+    })?;
+    if selected.source != capsem_core::settings_profiles::ProfileSource::User {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "rule_is_builtin: profile '{}' is locked ({:?})",
+                selected.profile.id, selected.source
+            ),
+        ));
+    }
+
+    let effective = resolve_effective_for_rules(Some(target_profile_id.clone()))?;
+    let effective_rule = find_effective_rule(&effective, &rule_id)
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("rule '{rule_id}' not found")))?;
+    if effective_rule.provenance.profile_id != target_profile_id
+        || !profile_has_rule(&selected.profile, &rule_type, &rule_name)
+    {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "rule_is_builtin: rule '{}' is inherited from profile '{}'",
+                canonical_rule_id(effective_rule),
+                effective_rule.provenance.profile_id
+            ),
+        ));
+    }
+    capsem_core::settings_profiles::ensure_rule_editable(effective_rule)
+        .map_err(|e| AppError(StatusCode::CONFLICT, format!("rule_is_builtin: {e}")))?;
+
+    let mut profile = selected.profile.clone();
+    remove_profile_rule(&mut profile, &rule_type, &rule_name);
+    profile.validate().map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("profile validation failed: {e}"),
+        )
+    })?;
+    capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "profile_id": target_profile_id,
+        "rule_id": format!("security.rules.{rule_type}.{rule_name}"),
+        "removed": true,
+    })))
 }
 
 /// POST /rules/evaluate -- dry-run the V2 evaluator against a synthetic subject.
@@ -7712,9 +7924,12 @@ async fn main() -> Result<()> {
         )
         .route("/profiles/{id}/fork", post(handle_fork_profile))
         .route("/profiles/{id}/effective", get(handle_resolve_profile))
-        .route("/rules", get(handle_list_rules))
+        .route("/rules", get(handle_list_rules).post(handle_create_rule))
         .route("/rules/evaluate", post(handle_evaluate_rule))
-        .route("/rules/{rule_id}", get(handle_get_rule))
+        .route(
+            "/rules/{rule_id}",
+            get(handle_get_rule).delete(handle_delete_rule),
+        )
         .route("/setup/state", get(handle_get_setup_state))
         .route("/setup/detect", get(handle_detect_host_config))
         .route("/setup/complete", post(handle_complete_onboarding))

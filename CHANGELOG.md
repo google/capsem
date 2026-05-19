@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Profile V2 UDS rules routes for listing resolved rules, fetching a
   rule with provenance, and dry-running V2 policy evaluation against synthetic
   subjects without enforcing or prompting.
+- Added Profile V2 UDS rule mutation routes for creating user-authored rules
+  and deleting direct user rules, including default built-in profile override
+  materialization, duplicate-rule rejection, and locked-rule delete failures.
 - Added chained functional and bounded performance coverage for the Profile V2
   UDS Rules API before mirroring it through the HTTP gateway.
 - Added Profile V2 service tests proving profile creation cannot shadow locked

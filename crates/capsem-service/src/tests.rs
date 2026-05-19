@@ -5700,6 +5700,175 @@ async fn rules_api_functional_chain_reloads_profile_changes_across_calls() {
 }
 
 #[tokio::test]
+async fn rules_api_create_delete_roundtrip_updates_user_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("rules-user", "Rules User")))
+        .await
+        .unwrap();
+
+    let Json(created) = handle_create_rule(Json(RuleCreateRequest {
+        profile: Some("rules-user".to_string()),
+        id: "security.rules.http.ask_openai".to_string(),
+        update: PolicyRuleUpdate {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'api.openai.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Ask,
+            priority: 20,
+            reason: Some("review OpenAI access".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        created["id"],
+        serde_json::json!("security.rules.http.ask_openai")
+    );
+    assert_eq!(created["source_profile"], serde_json::json!("rules-user"));
+    assert_eq!(created["rule"]["decision"], serde_json::json!("ask"));
+
+    let subject = serde_json::json!({
+        "request": {
+            "host": "api.openai.com",
+            "method": "GET"
+        }
+    });
+    let Json(evaluated) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: Some("rules-user".to_string()),
+        callback: "http.request".to_string(),
+        subject: subject.clone(),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        evaluated["matched_rule_id"],
+        serde_json::json!("security.rules.http.ask_openai")
+    );
+
+    let Json(deleted) = handle_delete_rule(
+        Path("security.rules.http.ask_openai".to_string()),
+        Query(RulesMutationQuery {
+            profile: Some("rules-user".to_string()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        deleted["rule_id"],
+        serde_json::json!("security.rules.http.ask_openai")
+    );
+    assert_eq!(deleted["removed"], serde_json::json!(true));
+
+    let Json(after_delete) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: Some("rules-user".to_string()),
+        callback: "http.request".to_string(),
+        subject,
+    }))
+    .await
+    .unwrap();
+    assert!(after_delete["matched_rule_id"].is_null());
+}
+
+#[tokio::test]
+async fn handle_delete_rule_rejects_locked_profile_rule() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let err = handle_delete_rule(
+        Path("security.rules.http.default_read".to_string()),
+        Query(RulesMutationQuery { profile: None }),
+    )
+    .await
+    .expect_err("default built-in rule deletion should fail closed");
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("rule_is_builtin"));
+}
+
+#[tokio::test]
+async fn handle_create_rule_materializes_default_builtin_profile_override() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
+
+    assert!(!user_profile_path.exists());
+    let Json(created) = handle_create_rule(Json(RuleCreateRequest {
+        profile: None,
+        id: "security.rules.http.ask_probe".to_string(),
+        update: PolicyRuleUpdate {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'probe.example.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Ask,
+            priority: 20,
+            reason: Some("probe approval".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(
+        created["id"],
+        serde_json::json!("security.rules.http.ask_probe")
+    );
+    assert!(user_profile_path.exists());
+    let text = std::fs::read_to_string(user_profile_path).unwrap();
+    assert!(text.contains("[security.rules.http.ask_probe]"));
+}
+
+#[tokio::test]
+async fn handle_create_rule_rejects_duplicate_user_rule() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("rules-user", "Rules User");
+    profile.security.rules.http.insert(
+        "ask_openai".to_string(),
+        test_profile_rule(
+            "http.request",
+            "request.host == 'api.openai.com'",
+            capsem_core::settings_profiles::RuleDecision::Ask,
+            20,
+            "review OpenAI access",
+        ),
+    );
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let err = handle_create_rule(Json(RuleCreateRequest {
+        profile: Some("rules-user".to_string()),
+        id: "security.rules.http.ask_openai".to_string(),
+        update: PolicyRuleUpdate {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'api.openai.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Ask,
+            priority: 20,
+            reason: Some("review OpenAI access".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    }))
+    .await
+    .expect_err("duplicate rule create should fail closed");
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("rule_exists"));
+}
+
+#[tokio::test]
 async fn handle_evaluate_rule_supports_generated_http_read_write_callbacks() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();

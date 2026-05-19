@@ -94,13 +94,15 @@ a valid claim -- mark it `[ ]` instead.
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
   routes, profile create/fork/update/delete mutation routes, and rules
-  list/get/evaluate routes landed. Rules read/evaluate is now hardened with a
-  chained service workflow, generated `http.read`/`http.write` dry-run support,
-  boolean catch-all CEL support, and a bounded large-profile evaluation test.
+  list/get/create/delete/evaluate routes landed. Rules read/evaluate is now
+  hardened with a chained service workflow, generated `http.read`/`http.write`
+  dry-run support, boolean catch-all CEL support, and a bounded large-profile
+  evaluation test. Rules create/delete now materialize user-profile overrides
+  for default built-ins, reject duplicate user rules, and fail closed on locked
+  built-in deletes with `rule_is_builtin`.
   Profile/settings composition has additional service coverage for create-id
   collisions across locked roots and selected-profile settings saves.
-  Rules create/delete, confirm listing, skills, profile-backed VM create, and
-  full route proof remain open.
+  Confirm listing, skills, and full route proof remain open.
 14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
     -- started. Canonical profile catalog/status parser landed in
     `capsem-core::profile_manifest`; typed profile package/tool contracts and

@@ -45,7 +45,9 @@ creation through the service UDS API.
   bulk `/settings/<profile>/rules` write path. The resolve side of
   the Rules API (answer a pending ask by id) is owned by
   [S15 - Confirm UX](S15-confirm-ux.md); S07 makes sure the rest of
-  the API is shaped to plug into the same surface.
+  the API is shaped to plug into the same surface. Landed: list/get/evaluate
+  plus create/delete user-rule mutations with duplicate protection, default
+  built-in user override materialization, and locked-rule delete failures.
 - Include provenance and typed validation errors in responses.
 - Feed UDS-visible state into debug report.
 - Add `capsem_proto::metrics` module (`VmMetricsSnapshot` and family)
@@ -92,12 +94,14 @@ Routes (UDS; mirrored on the gateway in [S08](S08-http-gateway-api.md)):
   profile.
 - `GET  /rules/{rule_id}` -> single rule with full provenance
   (profile, layer, derived-from-ask metadata if any).
-- `POST /rules` body: typed rule -> create a rule under the user
-  profile. Validation errors are typed (same shape as the rest of S07).
+- `POST /rules` body: `{ id, profile?: string, ...typed rule }` -> create a
+  rule under the user profile. If `profile` is omitted and the default profile
+  is built-in, the service materializes the user override before writing.
+  Duplicate direct user rules fail with `409 rule_exists`.
 - `DELETE /rules/{rule_id}` -> remove a rule from the user profile.
-  Removing a built-in rule fails closed with a typed
-  `rule_is_builtin` error; the caller must `POST /rules` an
-  overriding rule with higher priority instead.
+  Removing a built-in, locked, generated, or inherited rule fails closed with a
+  typed `rule_is_builtin` error; the caller must `POST /rules` an overriding
+  user rule instead.
 - `POST /rules/evaluate` body: `{ subject, callback, [profile] }` ->
   run the V2 evaluator against the supplied synthetic subject without
   enforcing. Returns `{ matched_rule_id, decision, would_ask: bool,
@@ -134,15 +138,16 @@ for the rule engine that do not need a VM.
   incompatible binary, unsupported arch, and verification failure.
 - Functional: UDS CRUD and resolve tests, including a roundtrip that
   stages a rule via `POST /rules`, evaluates a synthetic subject via
-  `POST /rules/evaluate`, and asserts the same `matched_rule_id`
-  comes back. Profile-backed VM create test asserts the selected profile
+  `POST /rules/evaluate`, asserts the same `matched_rule_id`
+  comes back, deletes it via `DELETE /rules/{rule_id}`, and asserts evaluation
+  no longer matches. Profile-backed VM create test asserts the selected profile
   revision and pinned asset hashes are echoed.
 - Adversarial: invalid payloads, locked mutations (built-in rule
-  delete attempt, profile lock), revoked profile selection, unknown profile
-  revision, incompatible binary, stale catalog rollback rejection, unsupported
-  arch, asset readiness failure, interrupted first-use download, concurrent
-  duplicate downloads, concurrent updates, oversize rule bodies, condition
-  strings that fail closed at parse time.
+  delete attempt, profile lock), duplicate rule create, revoked profile
+  selection, unknown profile revision, incompatible binary, stale catalog
+  rollback rejection, unsupported arch, asset readiness failure, interrupted
+  first-use download, concurrent duplicate downloads, concurrent updates,
+  oversize rule bodies, condition strings that fail closed at parse time.
 - E2E/VM: service-level create/fork/delete profile proof and service-level
   profile-backed VM create. **Rules
   API end-to-end** is the prerequisite that un-defers the
