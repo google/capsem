@@ -15,9 +15,9 @@ is updated with the concrete branch and worktree path, verified by
   branch has actually landed. **Read those two commands before
   trusting any prose in this file** -- prose drifts; git history
   does not.
-- **Current git posture:** as of 2026-05-18, this branch is
-  expected to be `71 ahead / 0 behind` `origin/main` in this worktree after the
-  S07c legacy asset-manifest removal commit. The rescue
+- **Current git posture:** as of 2026-05-19, this branch is
+  expected to be `76 ahead / 0 behind` `origin/main` in this worktree after the
+  S07c live profile-asset boot proof commit. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -119,7 +119,7 @@ a valid claim -- mark it `[ ]` instead.
     profile revision, profile payload hash, package-contract hash, and pinned
     asset hashes. Remaining work adds manifest source fetch/scheduling plus
     richer catalog clients/debug detail.
-15. [~] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
+15. [x] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
   trigger, checked-at/profile provenance status propagation, structured
   lifecycle logs, service debug Profile V2 asset-health reporting, old Rust
@@ -130,8 +130,10 @@ a valid claim -- mark it `[ ]` instead.
   profile payload hash plus redacted per-asset source/hash metadata. A chained
   service-level operator test now proves reconcile, `/setup/assets`, `/list`,
   debug report, and `/service-logs` agree after a real local profile asset
-  download. Remaining work: live hypervisor boot proof with freshly downloaded
-  assets.
+  download. The closing E2E probe now reconciles real profile-declared VM
+  assets into an empty cache through `capsem update --assets`, boots a real VM,
+  execs inside it, and verifies `capsem info --json` reports the installed
+  profile revision pin.
 16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -460,8 +462,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   test forwarding rewritten model bodies. Capsem-doctor ask
   probe remains deferred (see below). S07c now has focused service-path proof
   that first-use VM create downloads missing selected-profile assets through
-  the Profile V2 reconciler before process spawn; a live hypervisor boot with
-  freshly downloaded assets remains release-gate debt.
+  the Profile V2 reconciler before process spawn plus a live E2E proof that
+  `capsem update --assets` reconciles real profile-declared VM assets into an
+  empty cache, boots a real VM, execs inside it, and preserves the installed
+  profile revision pin in `capsem info --json`.
 - **Telemetry**: debug report exposes
   profile/settings/rule provenance and now the resolver trace
   summary (event count, corp event count, locked paths,
@@ -609,6 +613,12 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   passed, `cargo test -p capsem-service handle_asset_reconcile` **3** passed,
   `cargo test -p capsem-service --lib` **111** passed, `cargo test -p capsem`
   **242** passed, `cargo fmt --all -- --check` passed, and `git diff --check`
+  passed;
+  after live profile-asset boot proof, `cargo test -p capsem-service
+  ensure_assets_once_copies_file_profile_assets_and_reports_ready` **1**
+  passed, `cargo test -p capsem
+  update_assets_uses_explicit_uds_socket_when_provided` **1** passed, and `uv
+  run python -m pytest tests/capsem-e2e/test_profile_asset_boot.py -q` **1**
   passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after

@@ -294,6 +294,68 @@ async fn ensure_assets_once_downloads_missing_assets_and_reports_ready() {
 }
 
 #[tokio::test]
+async fn ensure_assets_once_copies_file_profile_assets_and_reports_ready() {
+    let source = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    let files = [
+        ("vmlinuz", b"kernel".as_slice()),
+        ("initrd.img", b"initrd".as_slice()),
+        ("rootfs.squashfs", b"rootfs".as_slice()),
+    ];
+    for (name, bytes) in files {
+        std::fs::write(source.path().join(name), bytes).unwrap();
+    }
+    let asset = |name: &str| {
+        let path = source.path().join(name);
+        VmAssetDeclaration {
+            url: reqwest::Url::from_file_path(&path).unwrap().to_string(),
+            hash: format!("blake3:{}", hash_file(&path).unwrap()),
+            signature_url: reqwest::Url::from_file_path(
+                source.path().join(format!("{name}.minisig")),
+            )
+            .unwrap()
+            .to_string(),
+            size: path.metadata().unwrap().len(),
+            content_type: "application/octet-stream".to_string(),
+        }
+    };
+    let required = ProfileAssetRequirement {
+        profile_id: "everyday-work".to_string(),
+        revision: Some("2026.0513.1".to_string()),
+        profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+        arch: "arm64".to_string(),
+        assets: VmArchAssets {
+            kernel: asset("vmlinuz"),
+            initrd: asset("initrd.img"),
+            rootfs: asset("rootfs.squashfs"),
+        },
+    };
+    let expected_assets = required.assets.clone();
+    let supervisor = supervisor_for(required, target.path());
+
+    supervisor.ensure_assets_once().await;
+
+    let health = supervisor.snapshot();
+    assert_eq!(health.state, AssetHealthState::Ready);
+    assert!(health.ready);
+    assert!(health.missing.is_empty());
+    for (name, asset) in [
+        ("vmlinuz", &expected_assets.kernel),
+        ("initrd.img", &expected_assets.initrd),
+        ("rootfs.squashfs", &expected_assets.rootfs),
+    ] {
+        assert!(
+            target
+                .path()
+                .join("arm64")
+                .join(hash_filename(name, profile_asset_hash_hex(asset)))
+                .exists(),
+            "{name} should be copied from file:// profile source"
+        );
+    }
+}
+
+#[tokio::test]
 async fn ensure_assets_once_reports_retryable_error_when_release_source_fails() {
     let dir = tempfile::tempdir().unwrap();
     let (base_url, server) = start_asset_server(HashMap::new()).await;

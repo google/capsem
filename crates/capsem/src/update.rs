@@ -163,13 +163,14 @@ fn is_newer(latest: &str, current: &str) -> bool {
 /// Run the update flow.
 ///
 /// With `assets = true`, refresh only the VM asset files referenced by the
-/// locally-installed manifest. Binary swap is still scoped to the orthogonal
-/// CI sprint and remains a "rebuild from source" step for dev builds.
-pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
+/// selected by the active profile. Binary swap is still scoped to the
+/// orthogonal CI sprint and remains a "rebuild from source" step for dev
+/// builds.
+pub async fn run_update(_yes: bool, assets: bool, uds_path: Option<PathBuf>) -> Result<()> {
     let layout = platform::detect_install_layout();
 
     if assets {
-        return refresh_assets().await;
+        return refresh_assets(uds_path).await;
     }
 
     if layout == InstallLayout::Development {
@@ -184,8 +185,8 @@ pub async fn run_update(_yes: bool, assets: bool) -> Result<()> {
 }
 
 /// Trigger the service-owned Profile V2 asset reconciler.
-async fn refresh_assets() -> Result<()> {
-    let sock = capsem_core::paths::capsem_run_dir().join("service.sock");
+async fn refresh_assets(uds_path: Option<PathBuf>) -> Result<()> {
+    let sock = asset_refresh_socket(uds_path);
     let client = UdsClient::new(sock, true);
     let response: ApiResponse<serde_json::Value> = client
         .post("/setup/assets/reconcile", serde_json::json!({}))
@@ -194,6 +195,10 @@ async fn refresh_assets() -> Result<()> {
     let result = response.into_result()?;
     println!("{}", profile_asset_reconcile_summary_line(&result));
     Ok(())
+}
+
+fn asset_refresh_socket(uds_path: Option<PathBuf>) -> PathBuf {
+    uds_path.unwrap_or_else(capsem_core::paths::service_socket_path)
 }
 
 fn profile_asset_reconcile_summary_line(result: &serde_json::Value) -> String {
@@ -292,5 +297,11 @@ mod tests {
             profile_asset_reconcile_summary_line(&result),
             "Profile VM asset reconcile failed: GET https://assets.example.test/rootfs returned 503"
         );
+    }
+
+    #[test]
+    fn update_assets_uses_explicit_uds_socket_when_provided() {
+        let explicit = PathBuf::from("/tmp/capsem-profile-asset.sock");
+        assert_eq!(asset_refresh_socket(Some(explicit.clone())), explicit);
     }
 }

@@ -8,7 +8,7 @@ use capsem_core::asset_manager::{
 };
 use capsem_core::settings_profiles::{EffectiveVmSettings, VmArchAssets, VmAssetDeclaration};
 use futures::StreamExt;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 use crate::api::{AssetHealth, AssetHealthState, AssetProgress, ProfileAssetProvenance};
@@ -510,15 +510,6 @@ async fn download_missing_profile_assets(
             url = %redacted_url,
             "profile asset download started"
         );
-        let resp = client
-            .get(url)
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
-        if !resp.status().is_success() {
-            bail!("GET {} returned {}", url, resp.status());
-        }
-        let total = resp.content_length().or(Some(asset.size));
         let tmp = arch_dir.join(format!("{filename}.tmp"));
         let _ = tokio::fs::remove_file(&tmp).await;
         let mut file = tokio::fs::File::create(&tmp)
@@ -526,30 +517,86 @@ async fn download_missing_profile_assets(
             .with_context(|| format!("create {}", tmp.display()))?;
         let mut hasher = blake3::Hasher::new();
         let mut bytes_done = 0_u64;
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.with_context(|| format!("stream {url}"))?;
-            file.write_all(&chunk)
+        let final_total;
+
+        if let Some(source_path) = file_asset_source_path(url)? {
+            let total = tokio::fs::metadata(&source_path)
                 .await
-                .with_context(|| format!("write {}", tmp.display()))?;
-            hasher.update(&chunk);
-            bytes_done += chunk.len() as u64;
-            debug!(
-                event = "profile_asset_download_progress",
-                profile_id = %required.profile_id,
-                revision = required.revision.as_deref().unwrap_or(""),
-                arch = %required.arch,
-                logical_name,
-                bytes_done,
-                bytes_total = ?total,
-                "profile asset download progressed"
-            );
-            on_progress(DownloadProgress {
-                logical_name: logical_name.to_string(),
-                bytes_done,
-                bytes_total: total,
-                done: false,
-            });
+                .ok()
+                .map(|metadata| metadata.len())
+                .or(Some(asset.size));
+            final_total = total;
+            let mut source = tokio::fs::File::open(&source_path)
+                .await
+                .with_context(|| format!("open {}", source_path.display()))?;
+            let mut buffer = vec![0_u8; 1024 * 1024];
+            loop {
+                let n = source
+                    .read(&mut buffer)
+                    .await
+                    .with_context(|| format!("read {}", source_path.display()))?;
+                if n == 0 {
+                    break;
+                }
+                let chunk = &buffer[..n];
+                file.write_all(chunk)
+                    .await
+                    .with_context(|| format!("write {}", tmp.display()))?;
+                hasher.update(chunk);
+                bytes_done += n as u64;
+                debug!(
+                    event = "profile_asset_download_progress",
+                    profile_id = %required.profile_id,
+                    revision = required.revision.as_deref().unwrap_or(""),
+                    arch = %required.arch,
+                    logical_name,
+                    bytes_done,
+                    bytes_total = ?total,
+                    "profile asset download progressed"
+                );
+                on_progress(DownloadProgress {
+                    logical_name: logical_name.to_string(),
+                    bytes_done,
+                    bytes_total: total,
+                    done: false,
+                });
+            }
+        } else {
+            let resp = client
+                .get(url)
+                .send()
+                .await
+                .with_context(|| format!("GET {url}"))?;
+            if !resp.status().is_success() {
+                bail!("GET {} returned {}", url, resp.status());
+            }
+            let total = resp.content_length().or(Some(asset.size));
+            final_total = total;
+            let mut stream = resp.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.with_context(|| format!("stream {url}"))?;
+                file.write_all(&chunk)
+                    .await
+                    .with_context(|| format!("write {}", tmp.display()))?;
+                hasher.update(&chunk);
+                bytes_done += chunk.len() as u64;
+                debug!(
+                    event = "profile_asset_download_progress",
+                    profile_id = %required.profile_id,
+                    revision = required.revision.as_deref().unwrap_or(""),
+                    arch = %required.arch,
+                    logical_name,
+                    bytes_done,
+                    bytes_total = ?total,
+                    "profile asset download progressed"
+                );
+                on_progress(DownloadProgress {
+                    logical_name: logical_name.to_string(),
+                    bytes_done,
+                    bytes_total: total,
+                    done: false,
+                });
+            }
         }
         file.flush()
             .await
@@ -586,7 +633,7 @@ async fn download_missing_profile_assets(
         on_progress(DownloadProgress {
             logical_name: logical_name.to_string(),
             bytes_done,
-            bytes_total: total,
+            bytes_total: final_total,
             done: true,
         });
     }
@@ -595,6 +642,20 @@ async fn download_missing_profile_assets(
 
 fn profile_asset_hash_hex(asset: &VmAssetDeclaration) -> &str {
     asset.hash.strip_prefix("blake3:").unwrap_or(&asset.hash)
+}
+
+fn file_asset_source_path(url: &str) -> Result<Option<PathBuf>> {
+    let parsed = match reqwest::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(_) => return Ok(None),
+    };
+    if parsed.scheme() != "file" {
+        return Ok(None);
+    }
+    let Ok(path) = parsed.to_file_path() else {
+        bail!("invalid file asset URL {url}");
+    };
+    Ok(Some(path))
 }
 
 fn dev_asset_base(assets_dir: &Path, arch: &str) -> PathBuf {

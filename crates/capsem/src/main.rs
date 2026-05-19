@@ -921,7 +921,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Commands::Misc(MiscCommands::Update { yes, assets }) => {
-            update::run_update(*yes, *assets).await?;
+            update::run_update(*yes, *assets, Some(uds_path.clone())).await?;
             return Ok(());
         }
         Commands::Misc(MiscCommands::Setup {

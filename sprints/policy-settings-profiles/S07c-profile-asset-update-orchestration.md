@@ -49,15 +49,19 @@ Landed:
 - The service-level operator flow now chains a real local profile asset
   download through reconcile, `/setup/assets`, `/list`, debug report, and
   `/service-logs`, proving status and log observability tell the same story.
+- `file://` profile VM asset declarations are now first-class reconciler
+  sources, matching the formal profile schema and enabling secure local/corp
+  asset staging without weakening the `https://` production URL requirement.
+- A live serial E2E probe now starts the real service with an empty asset cache,
+  installs a catalog-backed profile revision, reconciles real profile-owned VM
+  assets through `capsem update --assets`, boots a VM from those freshly
+  reconciled hash-named assets, execs inside it, and verifies `capsem info
+  --json` reports the pinned profile revision.
 
 Gaps:
 
-- Tests cover the service trigger, CLI summary rendering, background
-  reconciliation, status timestamp/provenance preservation, debug provenance,
-  first-use VM create reconciliation, profile-pin asset authority, concurrent
-  manual reconcile locking, active cleanup refusal, chained service
-  status/debug/log observability, and log URL redaction, but not a live
-  hypervisor boot against freshly downloaded assets.
+- S07c has no remaining release-gate gap. Broader profile catalog scheduling,
+  selected-revision UX, and richer clients remain in S07a/S08/S09/S16.
 
 ## Product Contract
 
@@ -97,7 +101,7 @@ Gaps:
      fallback remains for development, gate it behind an explicit dev-only
      message and test.
 
-3. [~] **Structured asset lifecycle logging**
+3. [x] **Structured asset lifecycle logging**
    - Emit structured service logs for:
      `profile_asset_check_start`, `profile_asset_check_ready`,
      `profile_asset_missing`, `profile_asset_download_start`,
@@ -108,7 +112,7 @@ Gaps:
      target path, URL host/path, byte counts, retry count, and elapsed time.
    - Avoid logging secrets or signed URL credentials.
 
-4. [~] **Status/debug provenance**
+4. [x] **Status/debug provenance**
    - Extend `AssetHealth` or a sibling status payload with profile id/revision,
      payload hash when known, last check time, and last transition/event.
    - Make `capsem status` render these details compactly.
@@ -164,6 +168,9 @@ Gaps:
     proves a real local asset download is visible consistently through
     reconcile output, `/setup/assets`, `/list`, debug report, and
     `/service-logs`.
+  - Landed: `ensure_assets_once_copies_file_profile_assets_and_reports_ready`
+    proves profile asset reconciliation can copy formal `file://` asset
+    declarations through the same hash/rename/progress path.
 - Adversarial:
   - Hash mismatch deletes temp file and logs terminal failure.
   - 404/503 records retryable failure with retry count.
@@ -175,10 +182,10 @@ Gaps:
 - E2E/VM or integration:
   - Create VM with missing profile assets triggers download, then boots with
     pinned hashes.
-  - Landed integration proof: focused service create-path coverage downloads
-    missing profile assets before spawn; existing process-spawn wiring passes
-    expected kernel/initrd/rootfs hashes to `capsem-process`. Remaining live VM
-    proof is a real hypervisor boot with freshly downloaded assets.
+  - Landed: `tests/capsem-e2e/test_profile_asset_boot.py` boots a real VM
+    after `capsem update --assets` reconciles real profile-declared assets into
+    an empty cache, execs inside the guest, and verifies `capsem info --json`
+    reports the installed profile revision pin.
 - Telemetry/observability:
   - Service logs contain lifecycle event names and fields for a successful
     download and a retryable failure.
@@ -204,6 +211,8 @@ Gaps:
 - `capsem status` clearly reports profile asset check/update/readiness.
 - `capsem status --json` and debug reports include profile payload hash plus
   redacted per-asset source/hash metadata.
+- `capsem update --assets` honors the selected service UDS path and can
+  reconcile both `https://` and formal `file://` profile asset sources.
 - Background and manual checks use one code path.
 - Logs and debug report explain checks/downloads without sensitive data.
 - The service-level operator flow links reconcile, status, debug, and logs for
@@ -214,6 +223,8 @@ Gaps:
   health is ready.
 - First-use VM create/run triggers Profile V2 reconciliation before spawning,
   and source/fork/persist derive boot-asset identity from the profile pin.
+- Live VM E2E proves real profile-owned assets can be reconciled into an empty
+  cache and booted.
 - Old asset manifest authority is gone from user-facing update flows.
 - Old Rust `ManifestV2` parsing, verified loading, direct downloading, and
   manifest-driven cleanup paths are removed from the runtime crates.

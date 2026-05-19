@@ -114,6 +114,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added chained service-level coverage proving a profile asset reconcile is
   reflected consistently in `/setup/assets`, `/list`, debug reports, and
   service logs after downloading from a local asset server.
+- Added formal `file://` Profile V2 VM asset reconciliation support plus live
+  E2E coverage proving `capsem update --assets` can fill an empty asset cache,
+  boot a real VM from the reconciled hash-named assets, exec inside it, and
+  preserve the installed profile revision pin in `capsem info --json`.
+- Changed `capsem update --assets` to honor the selected service UDS socket
+  instead of assuming the default runtime socket.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,
   manifest-driven downloader, and manifest-driven cleanup path. CLI status and
   service debug reports now rely on Profile V2 asset health instead of legacy

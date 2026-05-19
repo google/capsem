@@ -9,6 +9,7 @@ we have a test infrastructure bug.
 """
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -47,9 +48,13 @@ class RealService:
     recipe. If they diverge, tests pass but the product breaks.
     """
 
-    def __init__(self):
+    def __init__(self, *, capsem_home=None, assets_dir=None, extra_env=None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-e2e-"))
-        self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
+        self.uds_path = self.tmp_dir / "service.sock"
+        self.capsem_home = Path(capsem_home) if capsem_home else None
+        self.assets_dir = Path(assets_dir) if assets_dir else None
+        self.extra_env = dict(extra_env or {})
+        self.env = None
         self.proc = None
         self._log_file = None
         self._stderr_file = None
@@ -59,11 +64,16 @@ class RealService:
         sign_binary(SERVICE_BINARY)
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-        assets_dir = ASSETS_DIR / arch
+        assets_dir = self.assets_dir or (ASSETS_DIR / arch)
 
         env = os.environ.copy()
         env["RUST_LOG"] = "capsem=debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
+        if self.capsem_home:
+            env["CAPSEM_HOME"] = str(self.capsem_home)
+            env["CAPSEM_ASSETS_DIR"] = str(assets_dir)
+        env.update(self.extra_env)
+        self.env = env
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"
@@ -126,7 +136,7 @@ class RealService:
         """Run the real capsem CLI binary. Returns CompletedProcess."""
         cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path)] + list(args)
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+            cmd, capture_output=True, text=True, timeout=timeout, env=self.env,
         )
 
     def cli_ok(self, *args, timeout=60):
@@ -137,6 +147,26 @@ class RealService:
             f"stdout: {r.stdout}\nstderr: {r.stderr}"
         )
         return r
+
+    def api_json(self, method, path, payload=None, timeout=60):
+        """Call the real service over its UDS HTTP API and decode JSON."""
+        cmd = [
+            "curl", "-sS", "--unix-socket", str(self.uds_path),
+            "--max-time", str(timeout), "-X", method,
+        ]
+        body = None
+        if payload is not None:
+            cmd.extend(["-H", "Content-Type: application/json", "--data-binary", "@-"])
+            body = json.dumps(payload)
+        cmd.append("http://localhost" + path)
+        r = subprocess.run(
+            cmd, input=body, capture_output=True, text=True,
+            timeout=timeout + 5, env=self.env,
+        )
+        assert r.returncode == 0, (
+            f"HTTP {method} {path} failed\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        return json.loads(r.stdout)
 
     def wait_exec_ready(self, vm_name, timeout=EXEC_READY_TIMEOUT):
         """Wait until a VM responds to exec via the real CLI.
@@ -163,3 +193,9 @@ def service():
     svc.start()
     yield svc
     svc.stop()
+
+
+@pytest.fixture
+def real_service_factory():
+    """Factory for tests that need their own isolated real service."""
+    return RealService

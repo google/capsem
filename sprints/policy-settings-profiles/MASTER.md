@@ -24,8 +24,8 @@ completely.
 
 ## Execution Mode
 
-**Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `70 ahead / 0 behind` `origin/main` in this
+**Rescue complete; push phase active.** As of 2026-05-19, the profile-v2 branch
+is coherent again and is expected to sit `76 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
@@ -93,7 +93,7 @@ the next starts. The `#` column is the execution index;
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
 | 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, and first-use selected-profile asset reconciliation have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
-| 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | In Progress | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile/payload/per-asset provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, profile-pin asset authority for source/fork/persist, and chained service-level reconcile/status/debug/log proof have landed. Remaining scope is live hypervisor boot proof with freshly downloaded assets. |
+| 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | Done | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile/payload/per-asset provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, profile-pin asset authority for source/fork/persist, chained service-level reconcile/status/debug/log proof, formal `file://` asset reconciliation, explicit UDS socket selection, and a live real-VM boot/exec proof from freshly reconciled profile assets have landed. |
 | 16 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
 | 17 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
 | 18 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
@@ -283,10 +283,10 @@ Remaining S07a push order:
    package contracts, asset verification, VM pins, and drift/revocation.
 
 Immediately after S07a, [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md)
-turns the asset pieces into a production operator workflow: background checks,
+turned the asset pieces into a production operator workflow: background checks,
 manual `capsem update --assets`, status/debug provenance, structured download
-logs, and cleanup/create concurrency must all use the same Profile V2 asset
-authority. After S07c, [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md)
+logs, cleanup/create concurrency, and live boot proof all use the same Profile
+V2 asset authority. After S07c, [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md)
 turns those contracts into operator tooling: `capsem-admin` creates/validates
 profiles, exports/validates the shared schema artifact, derives image build
 plans from profiles, verifies built images, and generates/checks/signs
