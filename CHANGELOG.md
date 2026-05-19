@@ -70,8 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   VM id, resolved profile id, and local user id, and `/info` exposes those
   fields for support/status flows.
 - Added VM profile pins for persistent/running VM metadata, including resolved
-  profile id, optional profile revision, package-contract hash, and pinned boot
-  asset identity.
+  profile id, signed profile revision, profile payload hash,
+  package-contract hash, and pinned boot asset identity.
 - Changed VM profile pins to read the installed profile revision sidecar and
   include the installed profile payload hash when a verified catalog payload is
   present.
@@ -97,9 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed persistent VM resume to require forward profile pins and pinned asset
   identity; unpinned registry entries no longer fall back to the current
   profile/assets.
-- Changed VM profile pinning to require a signed profile catalog revision and
-  pinned asset identity before create-from-source, fork, or persist can produce
-  durable VM state.
+- Changed VM profile pinning to require a signed profile catalog revision,
+  profile payload hash, and pinned asset identity before create-from-source,
+  fork, or persist can produce durable VM state.
 - Fixed VM forks to preserve VM-effective profile attachments and fail closed
   on profile drift before the fork is registered or executed.
 - Added profile identity and status to VM list/status payloads, `capsem list`,

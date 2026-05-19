@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `67 ahead / 0 behind` `origin/main` in this worktree after the
-  fork profile-integrity coverage slice. The rescue
+  `68 ahead / 0 behind` `origin/main` in this worktree after the
+  VM profile-payload-hash pinning slice. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -112,11 +112,10 @@ a valid claim -- mark it `[ ]` instead.
     expected profile hashes to `capsem-process`, rejects old asset manifests as
     runtime authority, and no longer exposes `assets.manifest.*` service
     settings. `session.db` now records VM/profile/user telemetry identity, and
-    VM metadata now carries a profile pin with resolved profile id, optional
-    profile revision, package-contract hash, and pinned asset hashes. Remaining
-    work installs profile payloads from the catalog, makes profile revision
-    mandatory from signed records, adds retention, and enforces forward-only VM
-    identity on every create/fork/persist/resume path.
+    VM metadata now carries a profile pin with resolved profile id, signed
+    profile revision, profile payload hash, package-contract hash, and pinned
+    asset hashes. Remaining work adds manifest source fetch/scheduling, richer
+    catalog clients/debug detail, and first-use selected-profile proof.
 15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -168,7 +167,7 @@ When this sprint starts, promote the inline brief above into
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
-closed for the active branch: `HEAD...origin/main` is currently `67 ahead / 0
+closed for the active branch: `HEAD...origin/main` is currently `68 ahead / 0
 behind`. The remaining cleanup debt is now S06c plus the final V2 naming
 collapse and release gate. When executed, keep the order:
 
@@ -400,11 +399,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   reports pinned profile id/revision plus current/needs_update/deprecated/
   revoked/corrupted/unknown state, and `capsem list`/`capsem info` render the
   typed client enum; missing pins are corrupted. Profile pin construction now
-  requires a signed catalog revision and pinned asset identity, and
-  create-from-source/fork/persist reject missing or revisionless pins before
-  durable clone/move work. Fork cloning now preserves VM-effective profile
-  attachments, rejects profile drift, and has fork-plus-exec IPC coverage for
-  same-profile execution.
+  requires a signed catalog revision, profile payload hash, and pinned asset
+  identity, and create-from-source/fork/persist reject missing, revisionless,
+  or payload-hash-less pins before durable clone/move work. Fork cloning now
+  preserves VM-effective profile attachments, rejects profile and payload-hash
+  drift, and has fork-plus-exec IPC coverage for same-profile execution.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -418,8 +417,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   /setup/assets/cleanup` cleanup execution with installed-profile/saved-VM
   retention, `/list`/`/info`/`capsem list`/`capsem info` profile-state
   rendering, create-from-source/fork/persist fail-closed profile pin gates,
-  fork-plus-exec same-profile IPC coverage, mitm_proxy integration test for
-  model.request rewrite redaction.
+  fork-plus-exec same-profile IPC coverage, profile payload-hash pin
+  enforcement, mitm_proxy integration test for model.request rewrite
+  redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -448,8 +448,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   `session.db` with `vm_id`, `profile_id`, and `user_id`, service
   propagation into `capsem-process`, `/info` exposure, and focused
   read-back coverage. VM metadata surfaces the corresponding profile pin for
-  status/detail paths without reopening `session.db` on `/list`, and now pins
-  the installed profile payload hash when a verified installed revision exists.
+  status/detail paths without reopening `session.db` on `/list`, and now
+  requires the installed profile payload hash for forward VM pin construction
+  and source/fork/persist validation.
   Persisted
   policy-decision read-back from a running `session.db` (capsem-doctor E2E ask
   probe) is **deferred**.
@@ -520,6 +521,11 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   capsem-core --lib` **1616** passed / 0 failed / 1 ignored, `cargo test -p
   capsem-service` **109 + 155** passed, and `cargo test -p capsem` **242**
   passed;
+  after mandatory VM profile payload hashes, `cargo test -p capsem-service
+  profile_payload_hash` **3** passed, `cargo test -p capsem-service
+  vm_profile_pin` **5** passed, `cargo test -p capsem-service handle_fork`
+  **8** passed, full `cargo test -p capsem-service` **109 + 158** passed,
+  and `cargo test -p capsem` **242** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

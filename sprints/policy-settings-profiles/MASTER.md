@@ -25,7 +25,7 @@ completely.
 ## Execution Mode
 
 **Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `67 ahead / 0 behind` `origin/main` in this
+is coherent again and sits `68 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
@@ -92,7 +92,7 @@ the next starts. The `#` column is the execution index;
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
-| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, forward-only resume/create-from-source/fork/persist pin enforcement, and VM list/status profile-state reporting have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
+| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, and VM list/status profile-state reporting have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
 | 15 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
 | 16 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
 | 17 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
@@ -179,8 +179,9 @@ Landed S07a foundation:
   `capsem-process`; process/aggregator logs include them; `/info` surfaces the
   stored identity.
 - VM profile pins. Running and persistent VM metadata now carries resolved
-  `profile_id`, optional `profile_revision`, package-contract hash, and pinned
-  boot asset hashes; fork/persist/list/info preserve and expose that pin.
+  `profile_id`, signed `profile_revision`, profile payload hash,
+  package-contract hash, and pinned boot asset hashes; fork/persist/list/info
+  preserve and expose that pin.
 - Core profile payload install guard. Catalog-selected revisions now verify
   active status, BLAKE3 payload hash, Profile V2 schema validity, and
   manifest/payload id+revision parity before an install/update path can write
@@ -193,8 +194,8 @@ Landed S07a foundation:
   `.catalog/profiles/<id>/current.json` with profile id, revision, and payload
   hash for status/debug and mandatory VM revision pinning.
 - Installed payload identity pins. VM pin construction now reads the installed
-  profile revision sidecar and records the installed profile payload hash
-  whenever the selected profile has been materialized from the signed catalog.
+  profile revision sidecar, records the installed profile payload hash, and
+  rejects create/inherit paths that lack that signed payload proof.
 - Core profile catalog reconciler. A typed core API now installs/updates
   complete `active` revisions, re-installs incomplete active state, keeps
   installed `deprecated` revisions for existing VMs, and removes the launchable
@@ -222,13 +223,14 @@ Landed S07a foundation:
   pinned asset identity before process spawn; unpinned registry entries no
   longer fall back to the current catalog/default assets.
 - Forward-only VM creation boundaries. Profile pin construction now requires a
-  signed catalog revision plus pinned asset identity, and create-from-source,
-  fork, and persist fail closed before cloning/moving durable state when the
-  source/running VM lacks that revision pin.
+  signed catalog revision, profile payload hash, and pinned asset identity, and
+  create-from-source, fork, and persist fail closed before cloning/moving
+  durable state when the source/running VM lacks that full pin.
 - Fork profile integrity. Fork cloning now preserves the VM-effective profile
   settings/trace attachments, verifies the forked pin still matches the source
-  VM's profile id/revision/package/assets, and has service coverage that the
-  fork can still execute through IPC with the same profile identity.
+  VM's profile id/revision/payload-hash/package/assets, and has service
+  coverage that the fork can still execute through IPC with the same profile
+  identity.
 - VM list/status profile state. `/list`, `/info`, `capsem list`, and `capsem
   info` now expose each VM's profile id/revision plus `current`,
   `needs_update`, `deprecated`, `revoked`, `corrupted`, or `unknown` based on
@@ -252,12 +254,11 @@ Remaining S07a push order:
    service. Absent installed profile ids now lose launchable state during
    reconcile. Manifest source fetch/scheduling, richer catalog/revision CLI
    verbs, and UI clients remain.
-2. Persistent VM `profile_id`, `profile_revision`, package contract hash, and
-   pinned asset metadata. Landed for runtime/registry/API with installed
-   revision/payload-hash capture when catalog materialization has written the
-   sidecar; profile pin construction now requires a signed catalog revision and
-   pinned asset identity. Remaining work makes profile payload hash mandatory on
-   every VM-create path.
+2. Persistent VM `profile_id`, `profile_revision`, profile payload hash,
+   package contract hash, and pinned asset metadata. Landed for
+   runtime/registry/API with installed revision/payload-hash capture; profile
+   pin construction now requires a signed catalog revision, profile payload
+   hash, and pinned asset identity on every create/inherit path.
 3. Retention and cleanup that preserve active/deprecated installed revisions,
    in-progress downloads, and existing VM pins. Retention filename extraction
    has landed for installed current profile payloads and persistent VM profile
@@ -267,11 +268,11 @@ Remaining S07a push order:
 4. Forward-only VM identity enforcement on every create/fork/persist/resume
    path. Resume now rejects registry entries without profile pins or pinned
    asset identity. Create-from-source, fork, and persist now reject
-   missing/revisionless pins before asset resolution, clone, or session move
-   work. Fork now preserves VM-effective profile attachments and rejects
-   profile drift before registry state is created. Remaining work is first-use
-   create with an explicit selected catalog revision plus mandatory profile
-   payload hash proof.
+   missing/revisionless pins or missing profile payload hashes before asset
+   resolution, clone, or session move work. Fork now preserves VM-effective
+   profile attachments and rejects profile or payload-hash drift before
+   registry state is created. Remaining work is first-use create with an
+   explicit selected catalog revision plus selected-profile catalog proof.
 5. Status/debug readiness for profile catalog state, installed revisions,
    package contracts, asset verification, VM pins, and drift/revocation.
 

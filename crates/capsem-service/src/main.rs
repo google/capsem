@@ -341,6 +341,7 @@ impl ServiceState {
         &self,
         session_dir: &FsPath,
         profile_revision: Option<String>,
+        profile_payload_hash: Option<String>,
         base_assets: Option<SavedVmBaseAssets>,
     ) -> Result<SavedVmProfilePin> {
         let effective = capsem_core::settings_profiles::load_vm_effective_settings(session_dir)
@@ -354,12 +355,19 @@ impl ServiceState {
         .context("load installed profile revision for profile pin")?;
         let (profile_revision, profile_payload_hash) = installed_revision
             .map(|record| (Some(record.revision), Some(record.payload_hash)))
-            .unwrap_or((profile_revision, None));
+            .unwrap_or((profile_revision, profile_payload_hash));
         let profile_revision = profile_revision
             .filter(|revision| !revision.trim().is_empty())
             .ok_or_else(|| {
                 anyhow!(
                     "VM profile pin requires a signed profile catalog revision; reconcile the profile catalog before creating VMs"
+                )
+            })?;
+        let profile_payload_hash = profile_payload_hash
+            .filter(|hash| !hash.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "VM profile pin requires a signed profile payload hash; reconcile the profile catalog before creating VMs"
                 )
             })?;
         let base_assets = base_assets.ok_or_else(|| {
@@ -368,7 +376,7 @@ impl ServiceState {
         Ok(SavedVmProfilePin {
             profile_id: effective.profile_id,
             profile_revision: Some(profile_revision),
-            profile_payload_hash,
+            profile_payload_hash: Some(profile_payload_hash),
             package_contract_hash: format!("blake3:{}", blake3::hash(&package_json).to_hex()),
             base_assets: Some(base_assets),
         })
@@ -682,6 +690,10 @@ impl ServiceState {
             .as_ref()
             .and_then(|entry| entry.profile_pin.as_ref())
             .and_then(|pin| pin.profile_revision.clone());
+        let inherited_profile_payload_hash = source_entry
+            .as_ref()
+            .and_then(|entry| entry.profile_pin.as_ref())
+            .and_then(|pin| pin.profile_payload_hash.clone());
 
         let pinned_source_assets = source_entry.as_ref().and_then(|entry| {
             entry
@@ -751,6 +763,7 @@ impl ServiceState {
             .vm_profile_pin(
                 &session_dir,
                 inherited_profile_revision,
+                inherited_profile_payload_hash,
                 base_assets.clone(),
             )
             .context("pin VM profile/package/assets")?;
@@ -1880,6 +1893,9 @@ async fn handle_fork(
             source_profile_pin
                 .as_ref()
                 .and_then(|pin| pin.profile_revision.clone()),
+            source_profile_pin
+                .as_ref()
+                .and_then(|pin| pin.profile_payload_hash.clone()),
             base_assets.clone(),
         )
         .map_err(|e| {
@@ -1948,6 +1964,15 @@ fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str
             "{subject} is missing required profile revision pin; recreate the VM from a signed profile"
         ));
     }
+    if pin
+        .profile_payload_hash
+        .as_deref()
+        .is_none_or(|hash| hash.trim().is_empty())
+    {
+        return Err(anyhow!(
+            "{subject} is missing required profile payload hash; recreate the VM from a signed profile"
+        ));
+    }
     if pin.base_assets.is_none() {
         return Err(anyhow!(
             "{subject} is missing required pinned asset identity; recreate the VM from a signed profile"
@@ -1973,6 +1998,11 @@ fn ensure_fork_profile_pin_matches_source(
             "profile drift detected while forking source VM \"{source_id}\": cloned profile revision {:?} does not match pinned profile revision {:?}",
             fork_pin.profile_revision,
             source_pin.profile_revision
+        ));
+    }
+    if fork_pin.profile_payload_hash != source_pin.profile_payload_hash {
+        return Err(anyhow!(
+            "profile drift detected while forking source VM \"{source_id}\": cloned profile payload hash does not match pinned profile payload hash"
         ));
     }
     if fork_pin.package_contract_hash != source_pin.package_contract_hash {

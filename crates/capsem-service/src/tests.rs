@@ -1009,6 +1009,10 @@ fn test_saved_vm_profile_pin(
     }
 }
 
+fn test_profile_payload_hash() -> String {
+    format!("blake3:{}", "e".repeat(64))
+}
+
 fn spawn_single_exec_server(
     sock_path: PathBuf,
     stdout: &'static [u8],
@@ -1126,6 +1130,7 @@ fn vm_profile_pin_hashes_effective_package_contract_and_assets() {
         .vm_profile_pin(
             &session_dir,
             Some("2026.0518.1".to_string()),
+            Some(test_profile_payload_hash()),
             Some(base_assets.clone()),
         )
         .unwrap();
@@ -1134,7 +1139,10 @@ fn vm_profile_pin_hashes_effective_package_contract_and_assets() {
 
     assert_eq!(pin.profile_id, "everyday-work");
     assert_eq!(pin.profile_revision.as_deref(), Some("2026.0518.1"));
-    assert!(pin.profile_payload_hash.is_none());
+    assert_eq!(
+        pin.profile_payload_hash.as_deref(),
+        Some(test_profile_payload_hash().as_str())
+    );
     assert_eq!(pin.package_contract_hash, expected_hash);
     assert_eq!(pin.base_assets, Some(base_assets));
 }
@@ -1167,7 +1175,7 @@ fn vm_profile_pin_uses_installed_profile_revision_sidecar() {
     .unwrap();
 
     let pin = state
-        .vm_profile_pin(&session_dir, None, Some(test_saved_vm_base_assets()))
+        .vm_profile_pin(&session_dir, None, None, Some(test_saved_vm_base_assets()))
         .unwrap();
 
     assert_eq!(pin.profile_id, "everyday-work");
@@ -1191,11 +1199,68 @@ fn vm_profile_pin_requires_signed_catalog_revision() {
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
 
     let err = state
-        .vm_profile_pin(&session_dir, None, Some(test_saved_vm_base_assets()))
+        .vm_profile_pin(&session_dir, None, None, Some(test_saved_vm_base_assets()))
         .unwrap_err();
 
     assert!(
         format!("{err:#}").contains("signed profile catalog revision"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn vm_profile_pin_requires_profile_payload_hash() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session_dir = dir.path().join("sessions/profile-pin-no-payload-hash");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(
+        &capsem_core::settings_profiles::ProfileRootSettings::default(),
+        None,
+    )
+    .unwrap();
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let err = state
+        .vm_profile_pin(
+            &session_dir,
+            Some("2026.0520.1".into()),
+            None,
+            Some(test_saved_vm_base_assets()),
+        )
+        .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("profile payload hash"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn required_vm_profile_pin_requires_profile_payload_hash() {
+    let base_assets = test_saved_vm_base_assets();
+    let mut pin = test_saved_vm_profile_pin(base_assets);
+    pin.profile_payload_hash = None;
+
+    let err = ensure_required_vm_profile_pin(Some(&pin), "source VM \"missing-hash\"").unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("profile payload hash"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn fork_profile_pin_match_rejects_profile_payload_hash_drift() {
+    let base_assets = test_saved_vm_base_assets();
+    let source_pin = test_saved_vm_profile_pin(base_assets.clone());
+    let mut fork_pin = test_saved_vm_profile_pin(base_assets);
+    fork_pin.profile_payload_hash = Some(format!("blake3:{}", "f".repeat(64)));
+
+    let err = ensure_fork_profile_pin_matches_source(&fork_pin, &source_pin, "fork-src")
+        .expect_err("payload hash drift must reject the fork");
+
+    assert!(
+        format!("{err:#}").contains("payload hash"),
         "unexpected error: {err:#}"
     );
 }
@@ -2440,6 +2505,7 @@ async fn handle_fork_creates_persistent_sandbox() {
         .vm_profile_pin(
             &session_dir,
             Some("2026.0520.1".into()),
+            Some(test_profile_payload_hash()),
             Some(base_assets.clone()),
         )
         .unwrap();
@@ -2500,6 +2566,7 @@ async fn handle_fork_preserves_profile_and_fork_exec_works() {
         .vm_profile_pin(
             &session_dir,
             Some("2026.0520.1".into()),
+            Some(test_profile_payload_hash()),
             Some(base_assets.clone()),
         )
         .unwrap();
@@ -2546,6 +2613,10 @@ async fn handle_fork_preserves_profile_and_fork_exec_works() {
     assert_eq!(
         fork_pin.profile_revision,
         source_profile_pin.profile_revision
+    );
+    assert_eq!(
+        fork_pin.profile_payload_hash,
+        source_profile_pin.profile_payload_hash
     );
     assert_eq!(
         fork_pin.package_contract_hash,
@@ -2608,6 +2679,7 @@ async fn handle_fork_rejects_profile_string_drift_after_clone() {
         .vm_profile_pin(
             &session_dir,
             Some("2026.0520.1".into()),
+            Some(test_profile_payload_hash()),
             Some(base_assets.clone()),
         )
         .unwrap();
@@ -2738,6 +2810,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         .vm_profile_pin(
             &session_dir,
             Some("2026.0520.1".into()),
+            Some(test_profile_payload_hash()),
             Some(base_assets.clone()),
         )
         .unwrap();
@@ -2805,6 +2878,7 @@ async fn handle_fork_from_persistent_registry() {
         .vm_profile_pin(
             &session_dir,
             Some("2026.0518.1".to_string()),
+            Some(test_profile_payload_hash()),
             Some(base_assets.clone()),
         )
         .unwrap();
@@ -2858,6 +2932,10 @@ async fn handle_fork_from_persistent_registry() {
     assert_eq!(
         fork_pin.profile_revision,
         source_profile_pin.profile_revision
+    );
+    assert_eq!(
+        fork_pin.profile_payload_hash,
+        source_profile_pin.profile_payload_hash
     );
     assert_eq!(
         fork_pin.package_contract_hash,

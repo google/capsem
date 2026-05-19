@@ -33,8 +33,9 @@ Landed:
 - Durable session telemetry identity: `session.db` records `vm_id`,
   `profile_id`, and `user_id`; service passes identity into
   `capsem-process`; `/info` exposes the recorded identity.
-- VM metadata now carries an explicit profile pin with `profile_id`, optional
-  `profile_revision`, package-contract hash, and pinned boot asset identity.
+- VM metadata now carries an explicit profile pin with `profile_id`, signed
+  `profile_revision`, profile payload hash, package-contract hash, and pinned
+  boot asset identity.
 - Core manifest install guard verifies active status, BLAKE3 payload hash,
   Profile V2 schema validity, and manifest/payload id+revision parity before a
   profile payload can be installed; the Pydantic admin models mirror the same
@@ -46,8 +47,8 @@ Landed:
   status/debug and VM pinning can read the installed revision and payload hash
   without inferring them from filenames.
 - VM profile pins now prefer the installed profile revision sidecar over caller
-  hints and include the installed profile payload hash when a catalog-installed
-  revision exists.
+  hints, require a signed profile payload hash, and fail closed if a create,
+  fork, source, or persist boundary lacks that proof.
 - Core catalog reconciliation now installs/updates complete `active` revisions,
   re-installs incomplete active local state, keeps installed `deprecated`
   revisions for existing VMs, and removes the launchable profile plus current
@@ -75,10 +76,10 @@ Landed:
   profile state: `current`, `needs_update`, `deprecated`, `revoked`,
   `corrupted`, or `unknown`. `capsem list` and `capsem info` render the same
   typed state. Missing pins are `corrupted`, not silently rebound.
-- Forward-only VM identity gates now reject revisionless pins at construction
-  and reject create-from-source, fork, and persist before durable clone/move
-  work when the source/running VM lacks a signed profile revision pin and
-  pinned asset identity.
+- Forward-only VM identity gates now reject revisionless or payload-hash-less
+  pins at construction and reject create-from-source, fork, and persist before
+  durable clone/move work when the source/running VM lacks a signed profile
+  revision, profile payload hash, and pinned asset identity.
 - Fork cloning now preserves VM-effective profile settings/trace attachments,
   rejects profile drift between the source pin and cloned attachment, and has a
   fork-plus-exec service test proving the fork keeps the same profile identity
@@ -104,13 +105,12 @@ Push order from here:
    installed profile ids now lose launchable current state during reconcile.
    Remaining: manifest source fetch/scheduling, richer catalog/revision CLI
    verbs, and UI clients.
-2. [~] Persist explicit VM `profile_id`, `profile_revision`, package contract
+2. [x] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
-   payload-hash capture when `.catalog/profiles/<id>/current.json` is present;
-   profile pin construction now refuses revisionless pins and requires pinned
-   asset identity. Remaining: make profile payload hash mandatory on all
-   create paths, not only when the installed current sidecar is present.
+   payload-hash capture; profile pin construction now refuses missing
+   revision, missing profile payload hash, and missing pinned asset identity on
+   every create/inherit path.
 3. [~] Add retention/cleanup for installed profile revisions, in-progress
    downloads, and existing VM pins. Landed: retention filename extraction from
    installed current profile payloads and persistent VM profile pins, plus
@@ -123,11 +123,12 @@ Push order from here:
    path. Landed: resume fails closed, create-from-source rejects corrupted
    source VMs before asset resolution, fork rejects corrupted sources before
    clone, persist rejects corrupted running VMs before moving session state, and
-   profile pin construction requires signed revision + pinned assets. Fork now
+   profile pin construction requires signed revision + payload hash + pinned assets. Fork now
    preserves VM-effective profile attachments, proves exec still works after
    fork with the same profile, and rejects profile string drift before
-   registering the fork. Remaining: first-use create with an explicit selected
-   catalog revision and mandatory profile payload hash proof.
+   registering the fork, including profile payload hash drift. Remaining:
+   first-use create with an explicit selected catalog revision and
+   selected-profile catalog proof.
 5. [~] Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
    Landed: `/list`, `/info`, `capsem list`, and `capsem info` expose VM profile
@@ -150,9 +151,9 @@ open the gate.
 - The signed profile payload owns VM/session configuration and declares the
   packages/tools it expects inside the guest plus the VM assets needed to make
   those expectations true.
-- VM creation pins the resolved `profile_id`, `revision`, package contract, and
-  exact asset hashes. Existing VMs do not move when a profile revision changes
-  unless the user explicitly rebases/migrates them.
+- VM creation pins the resolved `profile_id`, `revision`, profile payload
+  hash, package contract, and exact asset hashes. Existing VMs do not move when
+  a profile revision changes unless the user explicitly rebases/migrates them.
 - Asset cleanup preserves files referenced by existing VM pins and by installed
   active/deprecated profile revisions. Revoked revisions and absent catalog
   revisions do not keep assets alive unless an existing VM still pins them.
@@ -657,24 +658,25 @@ This sprint creates the contract consumed by later sprints:
       retention set and refuses to run while assets are checking/updating.
       Remaining: cross-process/per-asset download locks and VM-create/download
       race coverage.
-- [~] Add persistent VM profile/revision/package/asset pin metadata. VM base
+- [x] Add persistent VM profile/revision/package/asset pin metadata. VM base
       asset hashes are now derived from profile asset declarations instead of
       the asset manifest; registry/runtime/API metadata now carries
       `profile_id`, catalog-installed `profile_revision`, installed
       `profile_payload_hash`, package-contract hash, and pinned boot assets
-      when a verified installed revision exists. Remaining work makes
-      catalog-backed revision pins mandatory on every VM-create path.
+      and profile pin construction now requires the signed revision, profile
+      payload hash, and pinned asset identity on every create/inherit path.
 - [~] Enforce forward-only persistent VM pins. Persistent VM resume now fails
       closed when a registry entry lacks its required profile pin or pinned
       asset identity instead of falling back to the current profile/assets.
       Create-from-source, fork, and persist now reject missing/revisionless
-      profile pins before cloning or moving durable VM state. Remaining work
-      makes profile payload hash mandatory on every VM-create path before
-      HTTP/UI lift.
+      profile pins or missing profile payload hashes before cloning or moving
+      durable VM state. Remaining work is explicit selected-profile catalog
+      proof before HTTP/UI lift.
 - [x] Prove fork profile integrity across exec. `handle_fork_preserves_profile_
       and_fork_exec_works` forks a VM, verifies the forked registry pin and
       VM-effective profile attachment match the source, then executes through a
-      fake capsem-process UDS responder. `handle_fork_rejects_profile_string_
+      fake capsem-process UDS responder. Direct drift coverage also rejects
+      profile payload hash divergence. `handle_fork_rejects_profile_string_
       drift_after_clone` mutates a profile string in the cloned attachment and
       proves the fork fails closed before registration.
 - [~] Report VM profile state in list/status. Landed: `/list`, `/info`,
