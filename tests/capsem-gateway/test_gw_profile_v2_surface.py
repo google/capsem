@@ -1,0 +1,188 @@
+"""S08 Profile V2 gateway surface contract tests."""
+
+import uuid
+
+import pytest
+
+pytestmark = pytest.mark.gateway
+
+
+def test_profile_catalog_and_revision_statuses_proxy_exactly(gw_client):
+    catalog = gw_client.get("/profiles/catalog")
+
+    assert catalog["mode"] == "settings_profiles_v2"
+    revisions = catalog["profiles"][0]["revisions"]
+    assert {item["status"] for item in revisions} == {
+        "active",
+        "deprecated",
+        "revoked",
+    }
+    assert "removed" not in {item["status"] for item in revisions}
+
+    detail = gw_client.get("/profiles/everyday-work/revisions")
+    assert detail["profile_id"] == "everyday-work"
+    assert {item["status"] for item in detail["revisions"]} == {
+        "active",
+        "deprecated",
+        "revoked",
+    }
+
+
+def test_profile_revision_lifecycle_routes_proxy_typed_summaries(gw_client):
+    reconcile = gw_client.post(
+        "/profiles/catalog/reconcile",
+        {"manifest_json": "{}", "profile_payload_pubkey": "test"},
+    )
+    assert reconcile["summary"]["installed"] == 1
+    assert reconcile["outcomes"][0]["outcome"] == "installed"
+
+    installed = gw_client.post("/profiles/everyday-work/revisions/install", {})
+    assert installed["action"] == "install"
+    assert installed["selected_revision"] == "2026.0520.1"
+    assert installed["outcome"]["outcome"] == "installed"
+
+    updated = gw_client.post("/profiles/everyday-work/revisions/update", {})
+    assert updated["action"] == "update"
+    assert updated["outcome"]["outcome"] == "unchanged"
+
+    removed = gw_client.post("/profiles/everyday-work/revisions/remove", {})
+    assert removed["action"] == "remove"
+    assert removed["outcome"]["outcome"] == "removed"
+
+
+def test_profile_crud_and_resolve_routes_proxy_profile_v2_envelope(gw_client):
+    created = gw_client.post(
+        "/profiles",
+        {
+            "version": 1,
+            "id": "gateway-profile",
+            "name": "Gateway Profile",
+            "best_for": "Gateway tests",
+            "profile_type": "custom",
+        },
+    )
+    assert created["mode"] == "settings_profiles_v2"
+    assert created["profile"]["id"] == "gateway-profile"
+
+    listed = gw_client.get("/profiles")
+    assert listed["mode"] == "settings_profiles_v2"
+    assert listed["profiles"][0]["id"] == "everyday-work"
+
+    fetched = gw_client.get("/profiles/everyday-work")
+    assert fetched["profile"]["id"] == "everyday-work"
+
+    forked = gw_client.post(
+        "/profiles/everyday-work/fork",
+        {"id": "gateway-fork", "name": "Gateway Fork"},
+    )
+    assert forked["profile"]["id"] == "gateway-fork"
+
+    updated = gw_client.put(
+        "/profiles/everyday-work",
+        {
+            "version": 1,
+            "id": "everyday-work",
+            "name": "Everyday Work Updated",
+            "best_for": "Gateway tests",
+            "profile_type": "custom",
+        },
+    )
+    assert updated["profile"]["name"] == "Everyday Work Updated"
+
+    effective = gw_client.get("/profiles/everyday-work/effective")
+    assert effective["profile_id"] == "everyday-work"
+    assert effective["effective"]["profile_id"] == "everyday-work"
+
+
+def test_skills_mcp_rules_and_confirm_proxy_profile_v2_routes(gw_client):
+    suffix = uuid.uuid4().hex[:8]
+    skill_id = f"gateway-skill-{suffix}"
+    connector_id = f"gateway-mcp-{suffix}"
+    rule_id = "security.rules.http.ask_probe"
+
+    skill = gw_client.post("/skills", {"id": skill_id, "kind": "enabled"})
+    assert skill["id"] == skill_id
+    assert skill["kind"] == "enabled"
+    listed_skills = gw_client.get("/skills?kind=enabled")
+    assert skill_id in listed_skills["enabled"]
+    deleted_skill = gw_client.delete(f"/skills/{skill_id}?kind=enabled")
+    assert deleted_skill["removed"] is True
+
+    connector = gw_client.post(
+        "/mcp/connectors",
+        {
+            "id": connector_id,
+            "server": {"command": "npx", "args": ["@capsem/mock"]},
+        },
+    )
+    assert connector["id"] == connector_id
+    listed_connectors = gw_client.get("/mcp/connectors")
+    assert any(item["id"] == connector_id for item in listed_connectors["servers"])
+    deleted_connector = gw_client.delete(f"/mcp/connectors/{connector_id}")
+    assert deleted_connector["removed"] is True
+
+    rule = gw_client.post(
+        "/rules",
+        {
+            "id": rule_id,
+            "callback": "http.request",
+            "condition": "request.host == 'probe.example.com'",
+            "decision": "ask",
+            "priority": 20,
+            "reason": "gateway S08 proof",
+        },
+    )
+    assert rule["id"] == rule_id
+    evaluated = gw_client.post(
+        "/rules/evaluate",
+        {
+            "callback": "http.request",
+            "subject": {"request": {"host": "probe.example.com"}},
+        },
+    )
+    assert evaluated["matched_rule_id"] == rule_id
+    assert evaluated["would_ask"] is True
+    deleted_rule = gw_client.delete(f"/rules/{rule_id}")
+    assert deleted_rule["removed"] is True
+
+    pending = gw_client.get("/confirm/pending")
+    assert pending == {
+        "mode": "settings_profiles_v2",
+        "pending": [],
+        "pending_count": 0,
+        "resolve_available": False,
+        "resolve_owner": "S15-confirm-ux",
+    }
+
+
+def test_profile_selected_vm_create_response_preserves_pin_and_asset_state(gw_client):
+    created = gw_client.post(
+        "/provision",
+        {
+            "name": f"gateway-profile-{uuid.uuid4().hex[:8]}",
+            "ram_mb": 2048,
+            "cpus": 2,
+            "profile_id": "everyday-work",
+            "profile_revision": "2026.0520.1",
+        },
+    )
+
+    assert created["profile_id"] == "everyday-work"
+    assert created["profile_revision"] == "2026.0520.1"
+    assert created["profile_pin"]["profile_payload_hash"].startswith("blake3:")
+    assert created["profile_pin"]["package_contract_hash"].startswith("blake3:")
+    assert created["profile_pin"]["base_assets"]["rootfs_hash"].startswith("c")
+    assert created["asset_health"]["ready"] is True
+    assert created["asset_health"]["profile_id"] == "everyday-work"
+
+
+def test_gateway_status_preserves_profile_identity_and_asset_provenance(gw_client):
+    status = gw_client.get("/status")
+
+    assert status["service"] == "running"
+    assert status["assets"]["profile_id"] == "everyday-work"
+    assert status["assets"]["profile_revision"] == "2026.0520.1"
+    assert status["assets"]["profile_payload_hash"].startswith("blake3:")
+    assert status["assets"]["profile_assets"][0]["logical_name"] == "rootfs.squashfs"
+    assert status["vms"][0]["profile_id"] == "everyday-work"
+    assert status["vms"][0]["profile_status"] == "current"

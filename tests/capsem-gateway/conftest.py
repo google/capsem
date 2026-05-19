@@ -62,6 +62,9 @@ MOCK_VMS = {
     },
 }
 MOCK_FILES = {}
+MOCK_SKILLS = set()
+MOCK_MCP_CONNECTORS = {}
+MOCK_RULES = {}
 
 
 class MockServiceHandler(BaseHTTPRequestHandler):
@@ -105,8 +108,152 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "persistent": vm["persistent"],
                     "ram_mb": vm["ram_mb"],
                     "cpus": vm["cpus"],
+                    "profile_id": "everyday-work",
+                    "profile_revision": "2026.0520.1",
+                    "profile_status": "current",
                 })
-            self._send_json({"sandboxes": sandboxes})
+            self._send_json({
+                "sandboxes": sandboxes,
+                "asset_health": {
+                    "ready": True,
+                    "state": "ready",
+                    "profile_id": "everyday-work",
+                    "profile_revision": "2026.0520.1",
+                    "profile_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "profile_assets": [{
+                        "logical_name": "rootfs.squashfs",
+                        "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        "source_url": "https://assets.example.test/rootfs.squashfs",
+                        "size": 12,
+                        "content_type": "application/vnd.squashfs",
+                    }],
+                    "missing": [],
+                    "retry_count": 0,
+                    "retryable": False,
+                },
+            })
+        elif self.clean_path == "/profiles/catalog":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "configured_source": "https://profiles.example.test/catalog.json",
+                "manifest_present": True,
+                "profiles": [{
+                    "profile_id": "everyday-work",
+                    "current_revision": "2026.0520.1",
+                    "installed_revision": "2026.0520.1",
+                    "installed_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "revisions": [
+                        {
+                            "revision": "2026.0520.1",
+                            "status": "active",
+                            "current": True,
+                            "installed": True,
+                        },
+                        {
+                            "revision": "2026.0415.1",
+                            "status": "deprecated",
+                            "current": False,
+                            "installed": False,
+                        },
+                        {
+                            "revision": "2026.0301.1",
+                            "status": "revoked",
+                            "current": False,
+                            "installed": False,
+                        },
+                    ],
+                }],
+            })
+        elif self.clean_path == "/profiles/everyday-work/revisions":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "current_revision": "2026.0520.1",
+                "installed_revision": "2026.0520.1",
+                "installed_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "revisions": [
+                    {"revision": "2026.0520.1", "status": "active", "current": True, "installed": True},
+                    {"revision": "2026.0415.1", "status": "deprecated", "current": False, "installed": False},
+                    {"revision": "2026.0301.1", "status": "revoked", "current": False, "installed": False},
+                ],
+            })
+        elif self.clean_path == "/profiles":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profiles": [{
+                    "id": "everyday-work",
+                    "name": "Everyday Work",
+                    "source": "builtin",
+                    "locked": True,
+                }],
+            })
+        elif self.clean_path == "/profiles/everyday-work":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile": {"id": "everyday-work", "name": "Everyday Work"},
+                "source": "builtin",
+                "locked": True,
+            })
+        elif self.clean_path == "/profiles/everyday-work/effective":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "effective": {
+                    "profile_id": "everyday-work",
+                    "skills": {"groups": [], "enabled": ["dev-sprint"], "disabled": []},
+                },
+                "resolver_trace": {"events": []},
+            })
+        elif self.clean_path == "/confirm/pending":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "pending": [],
+                "pending_count": 0,
+                "resolve_available": False,
+                "resolve_owner": "S15-confirm-ux",
+            })
+        elif parsed.path == "/skills":
+            enabled = sorted(MOCK_SKILLS)
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "groups": [],
+                "enabled": enabled,
+                "disabled": [],
+                "skills": [
+                    {
+                        "id": skill,
+                        "kind": "enabled",
+                        "source_profile": "everyday-work",
+                        "source": "user",
+                        "direct": True,
+                        "editable": True,
+                    }
+                    for skill in enabled
+                ],
+            })
+        elif parsed.path == "/mcp/connectors":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "servers": [
+                    {
+                        "id": server_id,
+                        "server": server,
+                        "source_profile": "everyday-work",
+                        "source": "user",
+                        "direct": True,
+                        "editable": True,
+                    }
+                    for server_id, server in sorted(MOCK_MCP_CONNECTORS.items())
+                ],
+            })
+        elif parsed.path == "/rules":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "rules": list(MOCK_RULES.values()),
+            })
         elif self.clean_path == "/policy-hook/spec":
             self._send_json({
                 "openapi": "3.1.0",
@@ -148,7 +295,140 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         if self.clean_path == "/provision":
             data = json.loads(body) if body else {}
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
-            self._send_json({"id": vm_id})
+            self._send_json({
+                "id": vm_id,
+                "profile_id": data.get("profile_id", "everyday-work"),
+                "profile_revision": data.get("profile_revision", "2026.0520.1"),
+                "profile_status": "current",
+                "profile_pin": {
+                    "profile_id": data.get("profile_id", "everyday-work"),
+                    "profile_revision": data.get("profile_revision", "2026.0520.1"),
+                    "profile_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "package_contract_hash": "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "base_assets": {
+                        "version": "everyday-work",
+                        "arch": "arm64",
+                        "kernel_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "initrd_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "rootfs_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    },
+                },
+                "asset_health": {
+                    "ready": True,
+                    "state": "ready",
+                    "profile_id": data.get("profile_id", "everyday-work"),
+                    "profile_revision": data.get("profile_revision", "2026.0520.1"),
+                    "missing": [],
+                },
+            })
+        elif self.clean_path == "/profiles":
+            data = json.loads(body) if body else {}
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile": data,
+                "source": "user",
+                "locked": False,
+            })
+        elif self.clean_path == "/profiles/everyday-work/fork":
+            data = json.loads(body) if body else {}
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile": {"id": data.get("id", "forked"), "name": data.get("name", "Forked")},
+                "source": "user",
+                "locked": False,
+            })
+        elif self.clean_path == "/profiles/catalog/reconcile":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "summary": {
+                    "installed": 1,
+                    "unchanged": 0,
+                    "deprecated_kept": 0,
+                    "revoked_removed": 0,
+                    "absent_removed": 0,
+                    "errors": 0,
+                },
+                "outcomes": [{
+                    "profile_id": "everyday-work",
+                    "revision": "2026.0520.1",
+                    "outcome": "installed",
+                    "payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                }],
+            })
+        elif self.clean_path == "/profiles/everyday-work/revisions/install":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "action": "install",
+                "profile_id": "everyday-work",
+                "selected_revision": "2026.0520.1",
+                "requested_revision": None,
+                "summary": {"installed": 1, "errors": 0},
+                "outcome": {"profile_id": "everyday-work", "revision": "2026.0520.1", "outcome": "installed"},
+            })
+        elif self.clean_path == "/profiles/everyday-work/revisions/update":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "action": "update",
+                "profile_id": "everyday-work",
+                "selected_revision": "2026.0520.1",
+                "summary": {"unchanged": 1, "errors": 0},
+                "outcome": {"profile_id": "everyday-work", "revision": "2026.0520.1", "outcome": "unchanged"},
+            })
+        elif self.clean_path == "/profiles/everyday-work/revisions/remove":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "action": "remove",
+                "profile_id": "everyday-work",
+                "selected_revision": "2026.0520.1",
+                "outcome": {"outcome": "removed"},
+            })
+        elif parsed.path == "/skills":
+            data = json.loads(body) if body else {}
+            skill_id = data.get("id", "unnamed-skill")
+            MOCK_SKILLS.add(skill_id)
+            self._send_json({
+                "id": skill_id,
+                "kind": data.get("kind", "enabled"),
+                "source_profile": "everyday-work",
+                "source": "user",
+                "direct": True,
+                "editable": True,
+            })
+        elif parsed.path == "/mcp/connectors":
+            data = json.loads(body) if body else {}
+            server_id = data.get("id", "mock")
+            server = data.get("server") or data.get("connector") or {"command": "npx", "args": []}
+            MOCK_MCP_CONNECTORS[server_id] = server
+            self._send_json({
+                "id": server_id,
+                "server": server,
+                "source_profile": "everyday-work",
+                "source": "user",
+                "direct": True,
+                "editable": True,
+            })
+        elif parsed.path == "/rules":
+            data = json.loads(body) if body else {}
+            rule_id = data.get("id", "security.rules.http.ask_probe")
+            rule = {
+                "id": rule_id,
+                "callback": data.get("callback", "http.request"),
+                "decision": data.get("decision", "ask"),
+                "source_profile": "everyday-work",
+                "editable": True,
+            }
+            MOCK_RULES[rule_id] = rule
+            self._send_json(rule)
+        elif parsed.path == "/rules/evaluate":
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "matched_rule_id": "security.rules.http.ask_probe",
+                "decision": "ask",
+                "would_ask": True,
+                "reason": "mock ask",
+                "enforced": False,
+            })
         elif self.clean_path.startswith("/exec/"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")
@@ -190,11 +470,52 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
+    def do_PUT(self):
+        body = self._read_body()
+        if self.clean_path == "/profiles/everyday-work":
+            data = json.loads(body) if body else {}
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile": data,
+                "source": "user",
+                "locked": False,
+            })
+        else:
+            self._send_error(404, f"unknown endpoint: {self.clean_path}")
+
     def do_DELETE(self):
         if self.clean_path.startswith("/delete/"):
             self._send_json({"ok": True})
         elif self.clean_path.startswith("/images/"):
             self._send_json({"ok": True})
+        elif self.clean_path.startswith("/skills/"):
+            skill_id = self.clean_path.split("/skills/", 1)[1].split("?")[0]
+            MOCK_SKILLS.discard(skill_id)
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "skill_id": skill_id,
+                "kind": "enabled",
+                "removed": True,
+            })
+        elif self.clean_path.startswith("/mcp/connectors/"):
+            connector_id = self.clean_path.split("/mcp/connectors/", 1)[1].split("?")[0]
+            MOCK_MCP_CONNECTORS.pop(connector_id, None)
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "connector_id": connector_id,
+                "removed": True,
+            })
+        elif self.clean_path.startswith("/rules/"):
+            rule_id = self.clean_path.split("/rules/", 1)[1].split("?")[0]
+            MOCK_RULES.pop(rule_id, None)
+            self._send_json({
+                "mode": "settings_profiles_v2",
+                "profile_id": "everyday-work",
+                "rule_id": rule_id,
+                "removed": True,
+            })
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 

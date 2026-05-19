@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the first S08 Profile V2 HTTP gateway contract coverage for profile
+  catalog/revision routes, profile CRUD/resolve, skills, standard MCP servers,
+  rules/evaluate, confirm-pending reads, profile-selected VM create response
+  pins, and gateway `/status` profile/asset provenance.
 - Added Profile V2 settings/profile provenance to the redacted service debug
   report, including selected profile, profile roots, effective VM summary,
   resolver trace summary, and credential-id-only reporting.

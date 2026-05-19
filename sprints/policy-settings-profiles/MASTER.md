@@ -95,7 +95,7 @@ the next starts. The `#` column is the execution index;
 | 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, complete installed-payload trust checks, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, first-use selected-profile asset reconciliation, file/HTTPS catalog reconcile sources, and scheduled `[profile_catalog]` service reconciliation have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds richer catalog clients/debug detail. |
 | 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | Done | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile/payload/per-asset provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, profile-pin asset authority for source/fork/persist, chained service-level reconcile/status/debug/log proof, formal `file://` asset reconciliation, explicit UDS socket selection, and a live real-VM boot/exec proof from freshly reconciled profile assets have landed. |
 | 16 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
-| 17 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
+| 17 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | In Progress | First Profile V2 gateway contract slice landed: catalog/revision, profile CRUD/resolve, skills, standard MCP servers, rules/evaluate, confirm-pending read, profile-selected VM create response payloads, and `/status` profile/asset provenance. Remaining: live VM HTTP create/download/boot, debug mismatch reporting, download-progress parity, adversarial typed errors, and S15 confirm resolution/stream. |
 | 18 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
 | 19 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |
 | 20 | [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md) | Not Started | Make status/debug explain active settings, profiles, derived rules, MCP, skills, profile catalog state, package contracts, asset readiness, and VM pins. |
@@ -161,11 +161,17 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
 
 ## Current Active Work
 
-Current execution is in [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md).
-S07a is the contract sprint that lets later HTTP, CLI, UI, docs, and admin
-tooling land without reinterpreting profile semantics.
+Current execution is in [S08 - HTTP Gateway API](S08-http-gateway-api.md).
+The first slice mirrors the S07/S07a/S07c Profile V2 service contracts through
+the authenticated local HTTP gateway and proves the gateway preserves profile
+identity, revision status, VM pins, rule/MCP/skills envelopes, and asset
+provenance instead of inventing gateway-only shapes.
 
-Landed S07a foundation:
+S07b remains a release-blocking admin-tooling sprint. It is not complete; it
+will consume the same profile/manifest/schema contracts once this HTTP public
+surface is stable enough to avoid another semantics rewrite.
+
+S07a/S07c foundation carried into S08:
 
 - Canonical signed profile catalog parser/model (`ProfileManifest`, format
   `1`) with `active|deprecated|revoked` lifecycle status.

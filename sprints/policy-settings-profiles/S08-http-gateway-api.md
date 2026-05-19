@@ -1,5 +1,17 @@
 # S08 - HTTP Gateway API
 
+## Status
+
+In progress. First slice landed: the gateway Profile V2 proxy contract is now
+covered for catalog/revision routes, profile CRUD/resolve, skills, MCP servers,
+rules/evaluate, confirm-pending read, profile-selected VM create response
+payloads, and `/status` profile/asset provenance.
+
+S08 is not closed yet. Remaining scope is the live service/VM proof for
+profile-selected HTTP create/download/boot, gateway debug mismatch reporting,
+download progress parity with `/setup/assets`, adversarial failure cases, and
+the S15 confirm resolution routes/stream when S15 makes those routes real.
+
 ## Goal
 
 Wire HTTP API to the already-tested UDS behavior, including profile catalog
@@ -38,15 +50,21 @@ state and profile-backed VM creation.
 
 ## Coverage Ledger
 
-- Unit/contract: HTTP response shape tests (incl. the Rules API
-  routes; assert the typed-error envelope matches UDS). Profile catalog,
-  `ProfileRevisionStatus` enum values, asset readiness, download progress, and
-  VM pin payloads must be contract-tested against the UDS shape.
-- Functional: HTTP CRUD and resolve tests; a Rules API roundtrip
-  (`POST /rules` -> `POST /rules/evaluate` -> assert same
-  `matched_rule_id` comes back). HTTP VM create with `profile_id` starts a
-  profile-scoped first-use download and returns the resolved profile revision
-  and pinned asset hashes.
+- Unit/contract: first slice covered by
+  `tests/capsem-gateway/test_gw_profile_v2_surface.py` and
+  `crates/capsem-gateway/src/status/tests.rs`. It verifies exact
+  `active|deprecated|revoked` revision status values, catalog/revision
+  lifecycle summaries, profile CRUD/resolve envelopes, skills/MCP/rules
+  gateway proxy routes, `GET /confirm/pending`, profile-selected VM create
+  response identity/pin/asset health, and `/status` profile identity plus
+  per-asset provenance. Remaining: typed-error envelope parity for malformed
+  and denied profile/rule/asset calls plus download progress parity.
+- Functional: first slice covers HTTP CRUD and resolve tests; a Rules API
+  roundtrip (`POST /rules` -> `POST /rules/evaluate` -> assert same
+  `matched_rule_id` comes back); and HTTP VM create response echoing selected
+  `profile_id`, `profile_revision`, profile pin hashes, and asset state.
+  Remaining: prove a real service HTTP create with `profile_id` triggers the
+  profile-scoped first-use download and boots with the selected revision.
 - Adversarial: malformed requests, locked mutations (built-in rule
   delete attempt, profile lock), gateway/service mismatch, revoked profile,
   stale catalog, incompatible revision, interrupted download, and repeated
@@ -56,10 +74,26 @@ state and profile-backed VM creation.
   hashes before boot.
   Rules API + S15 resolve E2E is the prerequisite that un-defers
   the [S06-pre slice 6f capsem-doctor ask probe](tracker.md#slice-6f---exit-tests).
-- Telemetry: debug report includes gateway-visible profile catalog, package,
-  asset-readiness, and VM pin state.
+- Telemetry: first slice covers gateway `/status` profile identity and asset
+  provenance preservation. Remaining: debug report includes gateway-visible
+  profile catalog, package, asset-readiness, and VM pin state, plus explicit
+  gateway/service mismatch reporting.
 - Performance: not primary; `POST /rules/evaluate` must remain a
   read-only operation that does not block concurrent rule writes
   (same `Arc<PolicyConfig>` snapshot contract as the UDS side). Profile catalog
   and readiness endpoints use cached local state and do not perform network
   fetches on list/status paths.
+
+## Verification
+
+- `cargo fmt --all`
+- `cargo test -p capsem-gateway status -- --nocapture`
+- `cargo build -p capsem-gateway`
+- `cargo test -p capsem-gateway`
+- `uv run pytest tests/capsem-gateway/test_gw_profile_v2_surface.py -q`
+- `uv run pytest tests/capsem-gateway/test_gw_profile_v2_surface.py tests/capsem-gateway/test_gw_proxy.py tests/capsem-gateway/test_gw_proxy_advanced.py tests/capsem-gateway/test_gw_status.py tests/capsem-gateway/test_gw_status_advanced.py tests/capsem-gateway/test_gw_auth.py -q`
+
+Full `uv run pytest tests/capsem-gateway -q` is not an S08 closeout yet: the
+mock/contract gateway suites pass, but the full directory currently has live
+VM/MITM failures waiting for exec-ready or sandbox creation in the real
+environment. Keep those visible until the live HTTP VM proof is closed.

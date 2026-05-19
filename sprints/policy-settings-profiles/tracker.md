@@ -162,7 +162,15 @@ a valid claim -- mark it `[ ]` instead.
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
     settings as authority.
-17. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
+17. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
+    -- started by explicit user direction after S07 closeout. First gateway
+    contract slice landed for Profile V2 catalog/revision routes, profile
+    CRUD/resolve, skills, standard `mcpServers` server management,
+    rules/evaluate, confirm-pending read, profile-selected VM create response
+    payloads, and `/status` profile/asset provenance. Remaining: live
+    service/VM HTTP create-download-boot proof, debug mismatch reporting,
+    download-progress parity, adversarial typed-error coverage, and S15 confirm
+    resolution/stream once S15 makes that production route real.
 18. [ ] [S09 - CLI integration](S09-cli-integration.md)
 19. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 20. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

@@ -35,6 +35,14 @@ pub struct AssetHealth {
     pub ready: bool,
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_payload_hash: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profile_assets: Vec<ProfileAssetProvenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arch: Option<String>,
@@ -67,6 +75,15 @@ pub struct AssetProgress {
     pub done: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProfileAssetProvenance {
+    pub logical_name: String,
+    pub hash: String,
+    pub source_url: String,
+    pub size: u64,
+    pub content_type: String,
+}
+
 #[derive(Serialize, Clone)]
 pub struct StatusResponse {
     pub service: String,
@@ -84,6 +101,12 @@ pub struct VmSummary {
     pub name: Option<String>,
     pub status: String,
     pub persistent: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_status: Option<String>,
     // Telemetry (present for running VMs, absent for stopped)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uptime_secs: Option<u64>,
@@ -199,6 +222,14 @@ struct ServiceAssetHealth {
     #[serde(default = "default_asset_state")]
     state: String,
     #[serde(default)]
+    profile_id: Option<String>,
+    #[serde(default)]
+    profile_revision: Option<String>,
+    #[serde(default)]
+    profile_payload_hash: Option<String>,
+    #[serde(default)]
+    profile_assets: Vec<ProfileAssetProvenance>,
+    #[serde(default)]
     version: Option<String>,
     #[serde(default)]
     arch: Option<String>,
@@ -237,6 +268,12 @@ struct SessionInfo {
     status: String,
     #[serde(default)]
     persistent: bool,
+    #[serde(default)]
+    profile_id: Option<String>,
+    #[serde(default)]
+    profile_revision: Option<String>,
+    #[serde(default)]
+    profile_status: Option<String>,
     #[serde(default)]
     ram_mb: Option<u64>,
     #[serde(default)]
@@ -313,6 +350,9 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             name: sess.name.clone(),
             status: sess.status.clone(),
             persistent: sess.persistent,
+            profile_id: sess.profile_id.clone(),
+            profile_revision: sess.profile_revision.clone(),
+            profile_status: sess.profile_status.clone(),
             uptime_secs: sess.uptime_secs,
             total_input_tokens: sess.total_input_tokens,
             total_output_tokens: sess.total_output_tokens,
@@ -330,6 +370,10 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
     let assets = list.asset_health.map(|h| AssetHealth {
         ready: h.ready,
         state: h.state,
+        profile_id: h.profile_id,
+        profile_revision: h.profile_revision,
+        profile_payload_hash: h.profile_payload_hash,
+        profile_assets: h.profile_assets,
         version: h.version,
         arch: h.arch,
         missing: h.missing,
