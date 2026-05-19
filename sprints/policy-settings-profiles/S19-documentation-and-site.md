@@ -207,7 +207,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       capability-derived, toggle-derived, corp-directive).
 - [ ] Document nestable rules under setting hosts
       (`ai.providers.<name>.rules.<type>.<name>`,
-      `mcp.connectors.<name>.rules.<type>.<name>`), with a
+      `mcpServers.<name>.capsem.rules.<type>.<name>`), with a
       worked corp-profile TOML example and the
       "rules follow the file structure" provenance rule.
 - [ ] Document `http.read` / `http.write` callback split
@@ -314,7 +314,7 @@ Three fields on `EffectiveRule`:
   owning setting when the rule is generated from a non-rule
   setting (e.g. `security.capabilities.network_egress`,
   `ai.providers.openai.enabled`,
-  `mcp.connectors.github.allowed_tools`).
+  `mcpServers.github.capsem.allowed_tools`).
 - `owner_setting_label: Option<String>` -- human-readable
   label rendered as "managed by <setting>" in the UI.
 - `editable: bool` -- `false` for setting-derived rules; the
@@ -439,6 +439,6 @@ contributors don't re-litigate:
 | 6b.4 | `http.read` / `http.write` callbacks | Callback matrix in the rule-engine grammar reference |
 | 6b.5 | Catch-all rules at `1000` | "Default action" / "What happens when nothing matches" section |
 | 6b.6 | Provider-toggle rules at `0` | "AI providers" page showing rule emission from toggles |
-| 6b.7 | MCP `allowed_tools` rules at `0` | "MCP connectors" page showing rule emission |
+| 6b.7 | MCP `allowed_tools` rules at `0` | "MCP servers" page showing rule emission |
 | 6b.8 | Mutation gate (`Forbidden { owner_setting_path }`) | Error reference + "Why can't I edit this rule?" troubleshooting |
 | 6b.9 | This block | Source of truth for S19 docs scope |

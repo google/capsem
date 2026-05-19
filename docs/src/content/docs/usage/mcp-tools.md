@@ -68,9 +68,9 @@ telemetry) without having to drive `capsem_exec` by hand.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `capsem_mcp_connectors` | `profile?` | List Profile V2 MCP connectors for the selected or requested profile. |
-| `capsem_mcp_add` | `id`, `profile?`, `disabled?`, `type?`, `credential_refs?`, `allowed_tools?` | Add a Profile V2 MCP connector to a user profile. |
-| `capsem_mcp_delete` | `id`, `profile?` | Delete a direct user Profile V2 MCP connector. |
+| `capsem_mcp_connectors` | `profile?` | List Profile V2 `mcpServers` entries for the selected or requested profile. |
+| `capsem_mcp_add` | `id`, `profile?`, `disabled?`, `type?`, `command?`, `args?`, `env?`, `url?`, `headers?`, `bearerToken?`, `credential_refs?`, `allowed_tools?` | Add a standard MCP server entry plus Capsem governance metadata to a user profile. |
+| `capsem_mcp_delete` | `id`, `profile?` | Delete a direct user Profile V2 MCP server entry. |
 
 ## Diagnostics
 

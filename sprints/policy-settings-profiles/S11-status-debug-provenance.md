@@ -39,7 +39,7 @@ binding visible.
   profile roots, manifest source/path/URL, asset directory, image roots, asset
   download endpoint, telemetry endpoint, remote decision endpoint, credential
   IDs, profiles and lock/source state, selected/effective profile, VM settings,
-  MCP connector IDs, skills state, and derived/raw rule counts.
+  MCP server IDs, skills state, and derived/raw rule counts.
 - If settings/profile resolution fails, the debug report records the load error
   instead of silently dropping the section.
 

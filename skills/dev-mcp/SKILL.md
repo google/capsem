@@ -36,9 +36,9 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
 | `capsem_fork` | id, name, description? | Fork a running/stopped VM into a new stopped persistent session (use as a reusable template). |
-| `capsem_mcp_connectors` | profile? | List Profile V2 MCP connectors for the selected or requested profile. |
-| `capsem_mcp_add` | id, profile?, disabled?, type?, credential_refs?, allowed_tools? | Add a Profile V2 MCP connector to a user profile. |
-| `capsem_mcp_delete` | id, profile? | Delete a direct user Profile V2 MCP connector. |
+| `capsem_mcp_connectors` | profile? | List Profile V2 `mcpServers` entries for the selected or requested profile. |
+| `capsem_mcp_add` | id, profile?, disabled?, type?, command?, args?, env?, url?, headers?, bearerToken?, credential_refs?, allowed_tools? | Add a standard MCP server entry plus Capsem governance metadata to a user profile. |
+| `capsem_mcp_delete` | id, profile? | Delete a direct user Profile V2 MCP server entry. |
 | `capsem_panics` | since?, limit? | **Run FIRST when investigating an unexplained failure.** Structured panic + backtrace extractor across `~/.capsem/run/{service,mcp,gateway,tray}.log` and capsem-app's latest jsonl. Returns `[{ ts, binary, thread, location, message, frames }]` with home-dir paths redacted. |
 | `capsem_triage` | id?, since?, limit? | Opinionated ranked summary of recent panics, dropped IPC frames (`target=ipc` warns from W1), 4xx/5xx server errors (`target=service`), and slow operations (>500ms). With `id`: also queries session.db for denied net + mcp errors + exec failures. |
 | `capsem_host_logs` | name, grep?, tail?, maxBytes? | Read a host log by symbolic name. Names: `service`, `mcp`, `gateway`, `tray`, `app` (latest jsonl in `~/.capsem/logs/`). Hard-coded allowlist; no path traversal. |

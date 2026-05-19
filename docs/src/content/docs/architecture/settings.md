@@ -24,7 +24,8 @@ flowchart TD
 
 `service.toml` selects the default profile, declares profile roots, stores
 credential references, and carries corp directives. Profile files describe
-capabilities, AI providers, MCP connectors, VM resources, and policy rules.
+capabilities, AI providers, standard MCP servers, VM resources, and policy
+rules.
 
 ## Resolution
 
@@ -50,7 +51,7 @@ decision = "block"
 priority = 10
 ```
 
-Provider and MCP connector toggles can also emit derived rules. Corp profiles
+Provider and MCP server toggles can also emit derived rules. Corp profiles
 may author corp-priority rules; user profiles are limited to user-priority
 ranges.
 
@@ -58,9 +59,14 @@ ranges.
 
 MCP runtime configuration is projected from the effective profile:
 
-- connector enablement comes from `mcp.connectors`;
+- server configuration comes from the profile's standard `mcpServers` map;
 - default tool behavior comes from the `mcp_tools` capability;
 - per-tool rules come from `mcp.request` rules.
+
+`mcpServers` uses the same top-level shape as common MCP client configs:
+stdio servers define `command`, `args`, and `env`; remote servers define `url`,
+`headers`, and `bearerToken`. Capsem-only governance belongs under the adjacent
+`capsem` object, for example `mcpServers.github.capsem.allowed_tools`.
 
 No standalone MCP settings file is loaded by the VM process.
 

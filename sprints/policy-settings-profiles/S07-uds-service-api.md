@@ -40,11 +40,13 @@ creation through the service UDS API.
   selected VM-effective attachment, and complete installed-payload trust.
 - Add MCP list/add/delete endpoints in the new model. Landed: the old
   `/mcp/{servers,tools,policy}` and `/mcp/tools/*` management surface is
-  removed; `/mcp/connectors` now lists/adds Profile V2 MCP connectors, and
-  `/mcp/connectors/{id}` deletes direct user connectors while rejecting locked
-  or inherited connectors. The capsem-mcp debug tools now mirror the same
-  connector surface, and the dead service-to-process MCP management IPC
-  variants are deleted.
+  removed; `/mcp/connectors` now lists/adds Profile V2 MCP servers, and
+  `/mcp/connectors/{id}` deletes direct user servers while rejecting locked
+  or inherited servers. The capsem-mcp debug tools now mirror the same
+  server surface. The profile file format is the industry-standard top-level
+  `mcpServers` map (`command`/`args`/`env` or `url`/`headers`/`bearerToken`);
+  Capsem governance lives under `mcpServers.<id>.capsem`. The dead
+  service-to-process MCP management IPC variants are deleted.
 - Add skills list/add/delete endpoints in the new model.
 - Add the Rules API (see below): list / get / add / remove / evaluate
   policy rules through a dedicated route group, separate from the
@@ -142,7 +144,7 @@ for the rule engine that do not need a VM.
   `active`, `deprecated`, and `revoked`. Profile catalog errors must
   distinguish revoked, deprecated, absent/unknown revision, stale catalog,
   incompatible binary, unsupported arch, and verification failure.
-- Functional: UDS CRUD and resolve tests, including Profile V2 MCP connector
+- Functional: UDS CRUD and resolve tests, including Profile V2 MCP server
   list/create/delete over user profile state, plus a roundtrip that
   stages a rule via `POST /rules`, evaluates a synthetic subject via
   `POST /rules/evaluate`, asserts the same `matched_rule_id`
@@ -150,8 +152,8 @@ for the rule engine that do not need a VM.
   no longer matches. Profile-backed VM create test asserts the selected profile
   revision and pinned asset hashes are echoed.
 - Adversarial: invalid payloads, locked mutations (built-in rule
-  delete attempt, inherited MCP connector delete, profile lock), duplicate rule
-  create, duplicate MCP connector create, revoked profile selection, unknown
+  delete attempt, inherited MCP server delete, profile lock), duplicate rule
+  create, duplicate MCP server create, revoked profile selection, unknown
   profile revision, incompatible binary, stale catalog rollback rejection,
   unsupported arch, asset readiness failure, interrupted first-use download,
   concurrent duplicate downloads, concurrent updates, oversize rule bodies,

@@ -52,8 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UDS Rules API before mirroring it through the HTTP gateway.
 - Added Profile V2 service tests proving profile creation cannot shadow locked
   profile roots and settings saves follow the currently selected user profile.
-- Changed MCP management to use Profile V2 connectors: `/mcp/connectors` now
-  lists/adds connectors, `/mcp/connectors/{id}` deletes direct user connectors,
+- Changed MCP management to use Profile V2 MCP servers: profiles now use the
+  standard top-level `mcpServers` map with Capsem governance under
+  `mcpServers.<id>.capsem`; `/mcp/connectors` now
+  lists/adds servers, `/mcp/connectors/{id}` deletes direct user servers,
   and the old `/mcp/{servers,tools,policy}` plus `/mcp/tools/*` service/CLI
   surface, capsem-mcp debug tools, and service-to-process management IPC are
   removed.

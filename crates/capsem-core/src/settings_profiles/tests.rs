@@ -404,9 +404,14 @@ model = "gpt-5.2"
 base_url = "https://api.openai.com/v1"
 credential_refs = ["openai"]
 
-[mcp.connectors.github]
+[mcpServers.github]
 enabled = true
-connector_type = "repository"
+type = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+[mcpServers.github.env]
+GITHUB_TOKEN = "env:CAPSEM_GITHUB_TOKEN"
+[mcpServers.github.capsem]
 credential_refs = ["github"]
 allowed_tools = ["repo.read", "issue.write"]
 
@@ -444,11 +449,48 @@ reason = "Secrets must not leave the VM."
         profile.ai.providers["openai"].model.as_deref(),
         Some("gpt-5.2")
     );
-    assert_eq!(profile.mcp.connectors["github"].allowed_tools.len(), 2);
+    let github = &profile.mcp.connectors["github"];
+    assert_eq!(github.server_type.as_deref(), Some("stdio"));
+    assert_eq!(github.command.as_deref(), Some("npx"));
+    assert_eq!(
+        github.args,
+        vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-github".to_string()
+        ]
+    );
+    assert_eq!(
+        github.env.get("GITHUB_TOKEN").map(String::as_str),
+        Some("env:CAPSEM_GITHUB_TOKEN")
+    );
+    assert_eq!(github.capsem.allowed_tools.len(), 2);
     let rule = &profile.security.rules.http["block-secret-egress"];
     assert_eq!(rule.callback, "http.request");
     assert_eq!(rule.condition, "request.data.contains_secret");
     assert_eq!(rule.priority, 1);
+}
+
+#[test]
+fn profile_parse_rejects_legacy_mcp_connectors_shape() {
+    let err = Profile::from_toml_str(
+        r#"
+version = 1
+id = "coding"
+name = "For Coding"
+best_for = "Coding sessions with repository tools."
+profile_type = "coding"
+
+[mcp.connectors.github]
+enabled = true
+allowed_tools = ["repo.read"]
+"#,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("unknown field `mcp`"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -918,8 +960,10 @@ id = "connector"
 name = "Connector"
 best_for = "Connector"
 
-[mcp.connectors.github]
+[mcpServers.github]
 enabled = true
+command = "npx"
+[mcpServers.github.capsem]
 credential_refs = ["../github-token"]
 "#,
     )
@@ -2472,13 +2516,16 @@ name = "Parent"
 best_for = "Parent."
 profile_type = "coding"
 
-[mcp.connectors.github]
+[mcpServers.github]
 enabled = true
-connector_type = "repository"
+command = "npx"
+[mcpServers.github.capsem]
 allowed_tools = ["repo.read"]
 
-[mcp.connectors.shared]
+[mcpServers.shared]
 enabled = true
+command = "python"
+[mcpServers.shared.capsem]
 allowed_tools = ["parent.tool"]
 "#,
     );
@@ -2493,12 +2540,16 @@ best_for = "Child."
 profile_type = "coding"
 extends_profile_id = "parent"
 
-[mcp.connectors.shared]
+[mcpServers.shared]
 enabled = true
+command = "node"
+[mcpServers.shared.capsem]
 allowed_tools = ["child.tool"]
 
-[mcp.connectors.local]
+[mcpServers.local]
 enabled = true
+command = "uvx"
+[mcpServers.local.capsem]
 allowed_tools = ["local.tool"]
 "#,
     );
@@ -2513,7 +2564,7 @@ allowed_tools = ["local.tool"]
     assert!(connectors.contains_key("local"));
     // Shared key: child wins entirely (not partial merge).
     let shared = connectors.get("shared").expect("shared connector");
-    assert_eq!(shared.allowed_tools, vec!["child.tool".to_string()]);
+    assert_eq!(shared.capsem.allowed_tools, vec!["child.tool".to_string()]);
 }
 
 #[test]
@@ -3148,11 +3199,11 @@ name = "With Nested"
 best_for = "Corp profile with nested connector rules"
 profile_type = "coding"
 
-[mcp.connectors.github]
+[mcpServers.github]
 enabled = true
-connector_type = "repository"
+command = "npx"
 
-[mcp.connectors.github.rules.mcp.allow_repo_read]
+[mcpServers.github.capsem.rules.mcp.allow_repo_read]
 on = "mcp.request"
 if = "true"
 decision = "allow"
@@ -3171,11 +3222,11 @@ priority = -10
         .expect("nested rule must surface");
     assert_eq!(
         nested.owner_setting_path.as_deref(),
-        Some("mcp.connectors.github"),
+        Some("mcpServers.github.capsem"),
     );
     assert_eq!(
         nested.owner_setting_label.as_deref(),
-        Some("MCP connector · github"),
+        Some("MCP server · github"),
     );
 }
 
@@ -3414,7 +3465,7 @@ base_url = "https://llm.internal.corp:8443/v1"
 
 #[test]
 fn mcp_allowed_tools_emits_allow_rule_per_tool_at_priority_zero() {
-    // Slice 6b.7: mcp.connectors.<name>.allowed_tools emits
+    // Slice 6b.7: mcpServers.<name>.capsem.allowed_tools emits
     // one allow rule per tool at priority 0, condition
     // `tool.name == '<tool>'`, owner pointing at the
     // allowed_tools list.
@@ -3433,9 +3484,10 @@ name = "GitHub Connector"
 best_for = "Corp profile with GitHub tools allowlist"
 profile_type = "coding"
 
-[mcp.connectors.github]
+[mcpServers.github]
 enabled = true
-connector_type = "repository"
+command = "npx"
+[mcpServers.github.capsem]
 allowed_tools = ["repo.read", "issue.write"]
 "#,
     )
@@ -3459,7 +3511,7 @@ allowed_tools = ["repo.read", "issue.write"]
         assert!(rule.condition.contains(expected_tool));
         assert_eq!(
             rule.owner_setting_path.as_deref(),
-            Some("mcp.connectors.github.allowed_tools")
+            Some("mcpServers.github.capsem.allowed_tools")
         );
         assert!(!rule.editable);
     }

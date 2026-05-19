@@ -84,14 +84,30 @@ impl McpUserConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpManualServer {
     pub name: String,
-    /// HTTP endpoint URL for the MCP server.
+    /// HTTP endpoint URL for the MCP server. Empty for stdio servers.
+    #[serde(default)]
     pub url: String,
+    /// Binary path for stdio MCP servers.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Command-line arguments for stdio MCP servers.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variables for stdio MCP servers.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     /// Custom HTTP headers to send with every request.
     #[serde(default)]
     pub headers: HashMap<String, String>,
     /// Bearer token for Authorization header.
     #[serde(default)]
     pub bearer_token: Option<String>,
+    /// Optional process pool size for MCP servers with stateless tools.
+    #[serde(default)]
+    pub pool_size: Option<u32>,
+    /// Tool names that may be safely round-robined across pool peers.
+    #[serde(default)]
+    pub pool_safe_tools: Vec<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -363,8 +379,13 @@ mod tests {
             servers: vec![McpManualServer {
                 name: "test".into(),
                 url: "https://mcp.example.com/v1".into(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
                 headers: HashMap::new(),
                 bearer_token: Some("tok_123".into()),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
                 enabled: true,
             }],
             server_enabled: {

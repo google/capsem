@@ -1,11 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::sync::{Mutex, OnceLock};
 
 use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_core::net::policy_v2::PolicyCallback;
-use capsem_core::settings_profiles::{CapabilityMode, EffectiveRule, RuleDecision};
+use capsem_core::settings_profiles::{
+    CapabilityMode, EffectiveRule, McpConnectorCapsemMetadata, McpConnectorConfig, RuleDecision,
+};
 
 use capsem_core::mcp::policy::McpUserConfig;
 
@@ -407,6 +409,68 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
     assert!(http_write_rules
         .iter()
         .any(|(name, rule)| *name == "user-write" && rule.condition == "true"));
+}
+
+#[test]
+fn load_runtime_policy_state_wires_profile_mcp_servers_into_runtime_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let mut effective =
+        capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None).unwrap();
+    effective.mcp.value.connectors.insert(
+        "github".to_string(),
+        McpConnectorConfig {
+            enabled: true,
+            server_type: Some("stdio".to_string()),
+            command: Some("npx".to_string()),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-github".to_string(),
+            ],
+            env: BTreeMap::from([(
+                "GITHUB_TOKEN".to_string(),
+                "env:CAPSEM_GITHUB_TOKEN".to_string(),
+            )]),
+            url: None,
+            headers: BTreeMap::new(),
+            bearer_token: None,
+            pool_size: Some(2),
+            pool_safe_tools: vec!["repo.read".to_string()],
+            capsem: McpConnectorCapsemMetadata {
+                allowed_tools: vec!["repo.read".to_string()],
+                ..Default::default()
+            },
+        },
+    );
+
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let runtime = load_runtime_policy_state_from_effective(&session_dir);
+
+    let github = runtime
+        .mcp_user
+        .servers
+        .iter()
+        .find(|server| server.name == "github")
+        .expect("profile mcpServers.github should become runtime MCP server");
+    assert_eq!(github.command.as_deref(), Some("npx"));
+    assert_eq!(
+        github.args,
+        vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-github".to_string()
+        ]
+    );
+    assert_eq!(
+        github.env.get("GITHUB_TOKEN").map(String::as_str),
+        Some("env:CAPSEM_GITHUB_TOKEN")
+    );
+    assert_eq!(github.pool_size, Some(2));
+    assert_eq!(github.pool_safe_tools, vec!["repo.read".to_string()]);
+    assert!(github.enabled);
 }
 
 #[test]

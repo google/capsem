@@ -616,15 +616,31 @@ struct McpConnectorsParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct McpAddParams {
-    /// Connector id.
+    /// MCP server id.
     id: String,
     /// Profile id to mutate. Defaults to the selected Profile V2 root.
     profile: Option<String>,
-    /// Store the connector disabled. Defaults to false.
+    /// Store the server disabled. Defaults to false.
     disabled: Option<bool>,
-    /// Connector type: mcp, repository, or custom. Defaults to mcp.
+    /// MCP server transport type: stdio, http, or sse.
     #[serde(rename = "type")]
-    connector_type: Option<String>,
+    server_type: Option<String>,
+    /// Stdio MCP server command.
+    command: Option<String>,
+    /// Stdio MCP server arguments.
+    #[serde(default)]
+    args: Vec<String>,
+    /// Stdio MCP server environment variables.
+    #[serde(default)]
+    env: HashMap<String, String>,
+    /// HTTP/SSE MCP server URL.
+    url: Option<String>,
+    /// HTTP/SSE MCP server headers.
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    /// Bearer token for HTTP/SSE MCP server auth.
+    #[serde(rename = "bearerToken")]
+    bearer_token: Option<String>,
     /// Credential reference ids.
     #[serde(default)]
     credential_refs: Vec<String>,
@@ -635,7 +651,7 @@ struct McpAddParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct McpDeleteParams {
-    /// Connector id.
+    /// MCP server id.
     id: String,
     /// Profile id to mutate. Defaults to the selected Profile V2 root.
     profile: Option<String>,
@@ -1027,7 +1043,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_mcp_connectors",
-        description = "List Profile V2 MCP connectors for the selected or requested profile"
+        description = "List Profile V2 MCP servers for the selected or requested profile"
     )]
     async fn mcp_connectors(
         &self,
@@ -1043,7 +1059,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_mcp_add",
-        description = "Add a Profile V2 MCP connector to a user profile"
+        description = "Add a Profile V2 MCP server to a user profile"
     )]
     async fn mcp_add(
         &self,
@@ -1052,10 +1068,32 @@ impl CapsemHandler {
         let mut body = json!({
             "id": params.id,
             "enabled": !params.disabled.unwrap_or(false),
-            "connector_type": params.connector_type.unwrap_or_else(|| "mcp".to_string()),
-            "credential_refs": params.credential_refs,
-            "allowed_tools": params.allowed_tools,
+            "capsem": {
+                "credential_refs": params.credential_refs,
+                "allowed_tools": params.allowed_tools,
+            },
         });
+        if let Some(server_type) = params.server_type {
+            body["type"] = json!(server_type);
+        }
+        if let Some(command) = params.command {
+            body["command"] = json!(command);
+        }
+        if !params.args.is_empty() {
+            body["args"] = json!(params.args);
+        }
+        if !params.env.is_empty() {
+            body["env"] = json!(params.env);
+        }
+        if let Some(url) = params.url {
+            body["url"] = json!(url);
+        }
+        if !params.headers.is_empty() {
+            body["headers"] = json!(params.headers);
+        }
+        if let Some(bearer_token) = params.bearer_token {
+            body["bearerToken"] = json!(bearer_token);
+        }
         if let Some(profile) = params.profile {
             body["profile"] = json!(profile);
         }
@@ -1068,7 +1106,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_mcp_delete",
-        description = "Delete a direct user Profile V2 MCP connector"
+        description = "Delete a direct user Profile V2 MCP server"
     )]
     async fn mcp_delete(
         &self,

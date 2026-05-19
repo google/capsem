@@ -88,9 +88,9 @@ sequenceDiagram
 | `capsem_inspect_schema` | Get CREATE TABLE statements for telemetry DB | Schema constant |
 | `capsem_inspect` | Run SQL query against VM's session.db | `POST /inspect/{id}` |
 | `capsem_version` | MCP server version and service connectivity | Local + service |
-| `capsem_mcp_connectors` | List Profile V2 MCP connectors | `GET /mcp/connectors` |
-| `capsem_mcp_add` | Add a Profile V2 MCP connector | `POST /mcp/connectors` |
-| `capsem_mcp_delete` | Delete a direct user Profile V2 MCP connector | `DELETE /mcp/connectors/{id}` |
+| `capsem_mcp_connectors` | List Profile V2 `mcpServers` entries | `GET /mcp/connectors` |
+| `capsem_mcp_add` | Add a standard MCP server entry to a profile | `POST /mcp/connectors` |
+| `capsem_mcp_delete` | Delete a direct user Profile V2 MCP server entry | `DELETE /mcp/connectors/{id}` |
 
 ### Service auto-launch
 

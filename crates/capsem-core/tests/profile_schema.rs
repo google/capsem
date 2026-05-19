@@ -46,6 +46,11 @@ fn profile_v2_schema_is_closed_draft_2020_12_contract() {
         schema["$defs"]["tool"]["required"],
         serde_json::json!(["version", "required", "source"])
     );
+    assert!(schema["properties"].get("mcp").is_none());
+    assert_eq!(
+        schema["properties"]["mcpServers"],
+        serde_json::json!({ "$ref": "#/$defs/mcp_servers" })
+    );
 }
 
 #[test]
@@ -90,6 +95,10 @@ fn profile_v2_json_validation_helper_accepts_valid_fixture() {
     let value = validate_profile_payload_v2_json(&input).unwrap();
 
     assert_eq!(value["schema"], "capsem.profile.v2");
+    assert_eq!(
+        value["mcpServers"]["github"]["command"],
+        serde_json::json!("npx")
+    );
 }
 
 #[test]

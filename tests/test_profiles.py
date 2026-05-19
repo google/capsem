@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import textwrap
 
@@ -70,7 +71,24 @@ def test_profile_payload_json_enters_and_leaves_through_pydantic() -> None:
 
     assert profile == reparsed
     assert '"schema": "capsem.profile.v2"' in dumped
+    assert profile.mcp_servers["github"].type_ == "stdio"
+    assert profile.mcp_servers["github"].command == "npx"
+    assert profile.mcp_servers["github"].capsem.allowed_tools == [
+        "repo.read",
+        "issue.write",
+    ]
+    assert str(profile.mcp_servers["corp-http"].url) == (
+        "https://mcp.internal.example.com/mcp"
+    )
     assert '"@modelcontextprotocol/sdk"' in dumped
+
+
+def test_profile_payload_rejects_legacy_mcp_connectors_shape() -> None:
+    payload = json.loads((FIXTURE_DIR / "profile-v2-valid.json").read_text())
+    payload["mcp"] = {"connectors": payload.pop("mcpServers")}
+
+    with pytest.raises(ValidationError):
+        validate_profile_json(json.dumps(payload))
 
 
 @pytest.mark.parametrize(

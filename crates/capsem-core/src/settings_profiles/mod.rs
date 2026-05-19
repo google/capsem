@@ -1202,7 +1202,7 @@ pub struct Profile {
     pub appearance: ProfileAppearanceSettings,
     #[serde(default)]
     pub ai: AiProvidersProfileSettings,
-    #[serde(default)]
+    #[serde(default, rename = "mcpServers")]
     pub mcp: McpConnectorsProfileSettings,
     #[serde(default)]
     pub skills: SkillsProfileSettings,
@@ -1307,7 +1307,7 @@ impl Profile {
             }
         }
         self.ai.validate("ai")?;
-        self.mcp.validate("mcp")?;
+        self.mcp.validate("mcpServers")?;
         self.skills.validate("skills")?;
         self.packages.validate("packages")?;
         validate_tool_contracts("tools", &self.tools)?;
@@ -1409,17 +1409,16 @@ impl AiProviderConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(deny_unknown_fields)]
+#[serde(transparent)]
 pub struct McpConnectorsProfileSettings {
-    #[serde(default)]
     pub connectors: BTreeMap<String, McpConnectorConfig>,
 }
 
 impl McpConnectorsProfileSettings {
     fn validate(&self, path: &str) -> Result<()> {
         for (id, connector) in &self.connectors {
-            validate_config_id(&format!("{path}.connectors"), id)?;
-            connector.validate(&format!("{path}.connectors.{id}"))?;
+            validate_config_id(path, id)?;
+            connector.validate(&format!("{path}.{id}"))?;
         }
         Ok(())
     }
@@ -1428,41 +1427,97 @@ impl McpConnectorsProfileSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct McpConnectorConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub server_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(
+        default,
+        rename = "bearerToken",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub bearer_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pool_safe_tools: Vec<String>,
     #[serde(default)]
-    pub connector_type: ConnectorType,
+    pub capsem: McpConnectorCapsemMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct McpConnectorCapsemMetadata {
     #[serde(default)]
     pub credential_refs: Vec<String>,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
-    /// Rules nested under this connector host. Resolver tags
+    /// Rules nested under this MCP server host. Resolver tags
     /// each emitted rule with
-    /// `owner_setting_path = "mcp.connectors.<name>"`.
+    /// `owner_setting_path = "mcpServers.<name>"`.
     #[serde(default, skip_serializing_if = "SecurityRules::is_empty")]
     pub rules: SecurityRules,
 }
 
 impl McpConnectorConfig {
     fn validate(&self, path: &str) -> Result<()> {
-        validate_string_ids(&format!("{path}.credential_refs"), &self.credential_refs)?;
-        for tool in &self.allowed_tools {
-            if tool.trim().is_empty() {
-                validation_error(&format!("{path}.allowed_tools"), "tool id cannot be empty")?;
+        let has_command = self
+            .command
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let has_url = self
+            .url
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        match (has_command, has_url) {
+            (true, true) => validation_error(path, "set either command or url, not both")?,
+            (false, false) => validation_error(path, "must set command or url")?,
+            _ => {}
+        }
+        if let Some(server_type) = self.server_type.as_deref() {
+            match server_type {
+                "stdio" if has_command => {}
+                "http" if has_url => {}
+                "sse" if has_url => {}
+                "stdio" | "http" | "sse" => validation_error(
+                    &format!("{path}.type"),
+                    "type must match command/url transport",
+                )?,
+                _ => validation_error(&format!("{path}.type"), "expected stdio, http, or sse")?,
             }
         }
-        self.rules.validate(&format!("{path}.rules"))?;
+        if let Some(url) = self.url.as_deref() {
+            validate_endpoint(&format!("{path}.url"), url)?;
+        }
+        validate_string_ids(
+            &format!("{path}.capsem.credential_refs"),
+            &self.capsem.credential_refs,
+        )?;
+        for tool in &self.capsem.allowed_tools {
+            if tool.trim().is_empty() {
+                validation_error(
+                    &format!("{path}.capsem.allowed_tools"),
+                    "tool id cannot be empty",
+                )?;
+            }
+        }
+        self.capsem
+            .rules
+            .validate(&format!("{path}.capsem.rules"))?;
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum ConnectorType {
-    #[default]
-    Mcp,
-    Repository,
-    Custom,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -2077,9 +2132,9 @@ pub fn profile_setting_descriptors() -> Vec<SettingDescriptor> {
             sensitive: false,
         },
         SettingDescriptor {
-            path: "mcp.connectors",
-            label: "MCP and connectors",
-            description: "Profile-scoped connector availability.",
+            path: "mcpServers",
+            label: "MCP servers",
+            description: "Profile-scoped MCP server availability.",
             scope: SettingScope::Profile,
             widget: SettingWidget::InfoBox,
             default_value: json!({}),
@@ -2489,7 +2544,7 @@ pub struct EffectiveRule {
     /// Dotted path of the owning setting when the rule was
     /// generated from a non-rule setting (e.g.
     /// `ai.providers.openai.enabled`,
-    /// `mcp.connectors.github.allowed_tools`,
+    /// `mcpServers.github.capsem.allowed_tools`,
     /// `security.capabilities.network_egress`). `None` for
     /// hand-authored rules whose home IS a rule block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2675,8 +2730,8 @@ pub struct EffectiveVmSettingsDebugSummary {
     pub vm_memory_mib: u32,
     pub vm_cpus: u8,
     pub vm_network: VmNetworkMode,
-    pub mcp_connector_ids: Vec<String>,
-    pub enabled_mcp_connector_ids: Vec<String>,
+    pub mcp_server_ids: Vec<String>,
+    pub enabled_mcp_server_ids: Vec<String>,
     pub skill_groups: Vec<String>,
     pub enabled_skills: Vec<String>,
     pub disabled_skills: Vec<String>,
@@ -2687,14 +2742,14 @@ pub struct EffectiveVmSettingsDebugSummary {
 
 impl EffectiveVmSettingsDebugSummary {
     fn from_effective(effective: &EffectiveVmSettings) -> Self {
-        let mcp_connector_ids = effective
+        let mcp_server_ids = effective
             .mcp
             .value
             .connectors
             .keys()
             .cloned()
             .collect::<Vec<_>>();
-        let enabled_mcp_connector_ids = effective
+        let enabled_mcp_server_ids = effective
             .mcp
             .value
             .connectors
@@ -2709,8 +2764,8 @@ impl EffectiveVmSettingsDebugSummary {
             vm_memory_mib: effective.vm.value.memory_mib,
             vm_cpus: effective.vm.value.cpus,
             vm_network: effective.vm.value.network,
-            mcp_connector_ids,
-            enabled_mcp_connector_ids,
+            mcp_server_ids,
+            enabled_mcp_server_ids,
             skill_groups: effective.skills.value.groups.clone(),
             enabled_skills: effective.skills.value.enabled.clone(),
             disabled_skills: effective.skills.value.disabled.clone(),
@@ -2812,7 +2867,7 @@ pub fn write_vm_effective_settings(
 /// (root-to-leaf order, as produced by [`resolve_ancestor_chain`]).
 ///
 /// Merge contract:
-/// - Map-shaped sections (`ai.providers`, `mcp.connectors`,
+/// - Map-shaped sections (`ai.providers`, `mcpServers`,
 ///   `security.rules.*`) merge by key, with later layers
 ///   overriding earlier layers per key.
 /// - Skill string lists (`skills.groups`, `enabled`, `disabled`)
@@ -3118,7 +3173,7 @@ fn effective_rules_from_chain_and_overrides(
     }
 
     // Nested rules: collect rules authored under setting hosts
-    // (AI providers, MCP connectors). They land in the same
+    // (AI providers, MCP servers). They land in the same
     // effective rules list but carry `owner_setting_path`
     // pointing at the host's dotted path so callers know
     // "this rule was authored co-located with the openai
@@ -3151,9 +3206,15 @@ fn collect_nested_rules_for_hosts(
         push_nested_rules_from(&mut out, leaf, &provider.rules, &host_path, &host_label);
     }
     for (connector_id, connector) in &merged_profile.mcp.connectors {
-        let host_path = format!("mcp.connectors.{connector_id}");
-        let host_label = format!("MCP connector · {connector_id}");
-        push_nested_rules_from(&mut out, leaf, &connector.rules, &host_path, &host_label);
+        let host_path = format!("mcpServers.{connector_id}.capsem");
+        let host_label = format!("MCP server · {connector_id}");
+        push_nested_rules_from(
+            &mut out,
+            leaf,
+            &connector.capsem.rules,
+            &host_path,
+            &host_label,
+        );
     }
     out.extend(derived_provider_toggle_rules(leaf, merged_profile));
     out.extend(derived_mcp_allowed_tools_rules(leaf, merged_profile));
@@ -3271,12 +3332,12 @@ fn derived_mcp_allowed_tools_rules(
 ) -> Vec<EffectiveRule> {
     let mut out = Vec::new();
     for (connector_id, connector) in &merged_profile.mcp.connectors {
-        if connector.allowed_tools.is_empty() {
+        if connector.capsem.allowed_tools.is_empty() {
             continue;
         }
-        let owner_path = format!("mcp.connectors.{connector_id}.allowed_tools");
-        let owner_label = format!("MCP connector · {connector_id}");
-        for tool in &connector.allowed_tools {
+        let owner_path = format!("mcpServers.{connector_id}.capsem.allowed_tools");
+        let owner_label = format!("MCP server · {connector_id}");
+        for tool in &connector.capsem.allowed_tools {
             let safe_tool = tool.replace('.', "-");
             out.push(EffectiveRule {
                 id: format!("mcp.connector_{connector_id}_allow_{safe_tool}"),
@@ -3289,10 +3350,10 @@ fn derived_mcp_allowed_tools_rules(
                 strip_request_headers: Vec::new(),
                 strip_response_headers: Vec::new(),
                 reason: Some(format!(
-                    "Derived from mcp.connectors.{connector_id}.allowed_tools"
+                    "Derived from mcpServers.{connector_id}.capsem.allowed_tools"
                 )),
                 derived: true,
-                provenance: provenance(record, &owner_path, "MCP connector allowed_tools"),
+                provenance: provenance(record, &owner_path, "MCP server allowed_tools"),
                 owner_setting_path: Some(owner_path.clone()),
                 owner_setting_label: Some(owner_label.clone()),
                 editable: false,
@@ -3459,7 +3520,7 @@ fn effective_rule_from(
         // Hand-authored profile rules have no owning non-rule
         // setting; they ARE the rule. Slice 6b.3 will populate
         // ownership for rules nested under setting hosts like
-        // `ai.providers.<name>` or `mcp.connectors.<name>`.
+        // `ai.providers.<name>` or `mcpServers.<name>`.
         owner_setting_path: None,
         owner_setting_label: None,
         editable: true,

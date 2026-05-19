@@ -157,16 +157,36 @@ class AiSettings(StrictModel):
     providers: dict[str, AiProvider] = Field(default_factory=dict)
 
 
-class McpConnector(StrictModel):
-    enabled: bool | None = None
-    connector_type: Literal["mcp", "repository", "custom"] | None = None
+class McpServerCapsem(StrictModel):
     credential_refs: list[NonEmptyStr] = Field(default_factory=list)
     allowed_tools: list[NonEmptyStr] = Field(default_factory=list)
     rules: SecurityRules = Field(default_factory=SecurityRules)
 
 
-class McpSettings(StrictModel):
-    connectors: dict[str, McpConnector] = Field(default_factory=dict)
+class McpServer(StrictModel):
+    enabled: bool = True
+    type_: Literal["stdio", "http", "sse"] | None = Field(default=None, alias="type")
+    command: NonEmptyStr | None = None
+    args: list[NonEmptyStr] = Field(default_factory=list)
+    env: dict[NonEmptyStr, str] = Field(default_factory=dict)
+    url: AnyUrl | None = None
+    headers: dict[NonEmptyStr, str] = Field(default_factory=dict)
+    bearer_token: str | None = Field(default=None, alias="bearerToken")
+    pool_size: Annotated[int, Field(ge=1)] | None = None
+    pool_safe_tools: list[NonEmptyStr] = Field(default_factory=list)
+    capsem: McpServerCapsem = Field(default_factory=McpServerCapsem)
+
+    @model_validator(mode="after")
+    def _transport_is_standard_and_complete(self) -> "McpServer":
+        has_command = self.command is not None
+        has_url = self.url is not None
+        if has_command == has_url:
+            raise ValueError("MCP server must set exactly one of command or url")
+        if self.type_ == "stdio" and not has_command:
+            raise ValueError("MCP server type=stdio requires command")
+        if self.type_ in {"http", "sse"} and not has_url:
+            raise ValueError("MCP server type=http/sse requires url")
+        return self
 
 
 class SkillsSettings(StrictModel):
@@ -234,7 +254,7 @@ class ProfilePayloadV2(StrictModel):
     general: GeneralSettings = Field(default_factory=GeneralSettings)
     appearance: AppearanceSettings = Field(default_factory=AppearanceSettings)
     ai: AiSettings = Field(default_factory=AiSettings)
-    mcp: McpSettings = Field(default_factory=McpSettings)
+    mcp_servers: dict[str, McpServer] = Field(default_factory=dict, alias="mcpServers")
     skills: SkillsSettings = Field(default_factory=SkillsSettings)
     vm: VmSettings
     packages: PackageContract

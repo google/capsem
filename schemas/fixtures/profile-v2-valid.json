@@ -78,6 +78,31 @@
       "source": "guest"
     }
   },
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "env:CAPSEM_GITHUB_TOKEN"
+      },
+      "capsem": {
+        "credential_refs": ["github"],
+        "allowed_tools": ["repo.read", "issue.write"]
+      }
+    },
+    "corp-http": {
+      "type": "http",
+      "url": "https://mcp.internal.example.com/mcp",
+      "headers": {
+        "X-Capsem-Profile": "everyday-work"
+      },
+      "bearerToken": "env:CAPSEM_MCP_TOKEN",
+      "capsem": {
+        "allowed_tools": ["catalog.search"]
+      }
+    }
+  },
   "security": {
     "capabilities": {
       "credential_brokerage": "ask",

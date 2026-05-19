@@ -907,12 +907,12 @@ fn append_settings_profiles_report(
             effective.vm_memory_mib, effective.vm_cpus, effective.vm_network
         ));
         lines.push(format!(
-            "effective_mcp_connectors: {}",
-            join_or_none(&effective.mcp_connector_ids)
+            "effective_mcp_servers: {}",
+            join_or_none(&effective.mcp_server_ids)
         ));
         lines.push(format!(
-            "effective_enabled_mcp_connectors: {}",
-            join_or_none(&effective.enabled_mcp_connector_ids)
+            "effective_enabled_mcp_servers: {}",
+            join_or_none(&effective.enabled_mcp_server_ids)
         ));
         lines.push(format!(
             "effective_skill_groups: {}",

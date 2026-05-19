@@ -94,7 +94,7 @@ a valid claim -- mark it `[ ]` instead.
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
   routes, profile create/fork/update/delete mutation routes, Profile V2 MCP
-  connector list/create/delete routes, and rules list/get/create/delete/evaluate
+  server list/create/delete routes, and rules list/get/create/delete/evaluate
   routes landed. The old `/mcp/{servers,tools,policy}` and `/mcp/tools/*`
   service/CLI/capsem-mcp surface is removed rather than shimmed, along with
   the dead MCP management IPC variants. Rules read/evaluate is
@@ -105,7 +105,9 @@ a valid claim -- mark it `[ ]` instead.
   built-in deletes with `rule_is_builtin`.
   Profile/settings composition has additional service coverage for create-id
   collisions across locked roots, selected-profile settings saves, and
-  Profile V2 MCP connector mutation/lock semantics.
+  Profile V2 MCP server mutation/lock semantics. The profile file shape is now
+  the standard `mcpServers` map, with Capsem-only governance nested under each
+  server's `capsem` key; legacy `[mcp.connectors]` is rejected.
   Confirm listing, skills, and full route proof remain open.
 14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
     -- started. Canonical profile catalog/status parser landed in
@@ -371,7 +373,7 @@ the commit history.
   catch-all reserved `1000`) with origin-aware corp-exclusive
   validation; 6b.3 added nestable rule blocks under setting
   hosts (`ai.providers.<name>.rules.*`,
-  `mcp.connectors.<name>.rules.*`); 6b.4 split HTTP catch-all
+  `mcpServers.<name>.capsem.rules.*`); 6b.4 split HTTP catch-all
   into `http.read` / `http.write` callbacks dispatched by
   method group; 6b.5 retargeted capability-derived rules from
   priority 100 -> 1000 as proper per-runtime-callback

@@ -2,9 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use capsem_core::mcp::aggregator::AggregatorClient;
-use capsem_core::mcp::policy::McpPolicy;
-use capsem_core::mcp::policy::McpUserConfig;
-use capsem_core::mcp::policy::ToolDecision;
+use capsem_core::mcp::policy::{McpManualServer, McpPolicy, McpUserConfig, ToolDecision};
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
@@ -362,6 +360,33 @@ fn mcp_user_config_from_effective(
         CapabilityMode::Block => ToolDecision::Block,
     });
 
+    let servers = effective
+        .mcp
+        .value
+        .connectors
+        .iter()
+        .map(|(id, connector)| McpManualServer {
+            name: id.clone(),
+            url: connector.url.clone().unwrap_or_default(),
+            command: connector.command.clone(),
+            args: connector.args.clone(),
+            env: connector
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            headers: connector
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            bearer_token: connector.bearer_token.clone(),
+            pool_size: connector.pool_size,
+            pool_safe_tools: connector.pool_safe_tools.clone(),
+            enabled: connector.enabled,
+        })
+        .collect::<Vec<_>>();
+
     let server_enabled = effective
         .mcp
         .value
@@ -391,7 +416,7 @@ fn mcp_user_config_from_effective(
         global_policy: None,
         default_tool_permission,
         health_check_interval_secs: None,
-        servers: Vec::new(),
+        servers,
         server_enabled,
         tool_permissions,
     }

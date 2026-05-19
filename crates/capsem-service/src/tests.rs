@@ -5189,10 +5189,23 @@ fn test_profile_rule(
 fn test_mcp_connector() -> capsem_core::settings_profiles::McpConnectorConfig {
     capsem_core::settings_profiles::McpConnectorConfig {
         enabled: true,
-        connector_type: capsem_core::settings_profiles::ConnectorType::Mcp,
-        credential_refs: vec!["github-token".to_string()],
-        allowed_tools: vec!["repo.read".to_string()],
-        rules: capsem_core::settings_profiles::SecurityRules::default(),
+        server_type: Some("stdio".to_string()),
+        command: Some("npx".to_string()),
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-github".to_string(),
+        ],
+        env: std::collections::BTreeMap::new(),
+        url: None,
+        headers: std::collections::BTreeMap::new(),
+        bearer_token: None,
+        pool_size: None,
+        pool_safe_tools: Vec::new(),
+        capsem: capsem_core::settings_profiles::McpConnectorCapsemMetadata {
+            credential_refs: vec!["github-token".to_string()],
+            allowed_tools: vec!["repo.read".to_string()],
+            rules: capsem_core::settings_profiles::SecurityRules::default(),
+        },
     }
 }
 
@@ -5485,7 +5498,7 @@ async fn mcp_connectors_api_create_list_delete_roundtrip_updates_user_profile() 
     assert_eq!(created["source_profile"], serde_json::json!("mcp-user"));
     assert_eq!(created["editable"], serde_json::json!(true));
     assert_eq!(
-        created["connector"]["allowed_tools"],
+        created["server"]["capsem"]["allowed_tools"],
         serde_json::json!(["repo.read"])
     );
 
@@ -5494,11 +5507,11 @@ async fn mcp_connectors_api_create_list_delete_roundtrip_updates_user_profile() 
     }))
     .await
     .unwrap();
-    assert!(listed["connectors"]
+    assert!(listed["servers"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|connector| connector["id"] == serde_json::json!("github")));
+        .any(|server| server["id"] == serde_json::json!("github")));
 
     let Json(deleted) = handle_delete_mcp_connector(
         Path("github".to_string()),
@@ -5508,7 +5521,7 @@ async fn mcp_connectors_api_create_list_delete_roundtrip_updates_user_profile() 
     )
     .await
     .unwrap();
-    assert_eq!(deleted["connector_id"], serde_json::json!("github"));
+    assert_eq!(deleted["server_id"], serde_json::json!("github"));
     assert_eq!(deleted["removed"], serde_json::json!(true));
 
     let Json(after_delete) = handle_mcp_connectors(Query(McpConnectorsQuery {
@@ -5516,7 +5529,7 @@ async fn mcp_connectors_api_create_list_delete_roundtrip_updates_user_profile() 
     }))
     .await
     .unwrap();
-    assert!(after_delete["connectors"].as_array().unwrap().is_empty());
+    assert!(after_delete["servers"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -5537,7 +5550,9 @@ async fn handle_create_mcp_connector_materializes_default_builtin_profile_overri
     assert_eq!(created["id"], serde_json::json!("github"));
     assert!(user_profile_path.exists());
     let text = std::fs::read_to_string(user_profile_path).unwrap();
-    assert!(text.contains("[mcp.connectors.github]"));
+    assert!(text.contains("[mcpServers.github]"));
+    assert!(text.contains("command = \"npx\""));
+    assert!(text.contains("[mcpServers.github.capsem]"));
     assert!(text.contains("allowed_tools = [\"repo.read\"]"));
 }
 
@@ -5560,10 +5575,10 @@ async fn handle_create_mcp_connector_rejects_duplicate_direct_connector() {
         connector: test_mcp_connector(),
     }))
     .await
-    .expect_err("duplicate connector create should fail closed");
+    .expect_err("duplicate MCP server create should fail closed");
 
     assert_eq!(err.0, StatusCode::CONFLICT);
-    assert!(err.1.contains("connector_exists"));
+    assert!(err.1.contains("server_exists"));
 }
 
 #[tokio::test]
@@ -5589,10 +5604,10 @@ async fn handle_delete_mcp_connector_rejects_inherited_connector() {
         }),
     )
     .await
-    .expect_err("inherited connector delete should fail closed");
+    .expect_err("inherited MCP server delete should fail closed");
 
     assert_eq!(err.0, StatusCode::CONFLICT);
-    assert!(err.1.contains("connector_is_locked"));
+    assert!(err.1.contains("server_is_locked"));
 }
 
 #[tokio::test]

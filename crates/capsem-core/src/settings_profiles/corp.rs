@@ -155,7 +155,7 @@ fn apply_corp_directive(
             overrides,
             directive_index,
         ),
-        ["mcp", "connectors", name] => {
+        ["mcpServers", name] => {
             apply_connector_directive(profile, name, directive, trace, overrides, directive_index)
         }
         ["ai", "providers", name] => {
@@ -168,7 +168,7 @@ fn apply_corp_directive(
             path: format!("corp_directives[{directive_index}].path"),
             message: format!(
                 "unsupported corp directive path '{}': supported paths are \
-                security.rules.<type>.<name>, mcp.connectors.<name>, \
+                security.rules.<type>.<name>, mcpServers.<name>, \
                 ai.providers.<name>, security.capabilities.<field>",
                 directive.path
             ),

@@ -77,9 +77,9 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mstop\x1b[0m         Stop the background service
 
 \x1b[36;1;4mMCP:\x1b[0m
-  \x1b[32;1mmcp connectors\x1b[0m List Profile V2 MCP connectors
-  \x1b[32;1mmcp add\x1b[0m        Add a Profile V2 MCP connector
-  \x1b[32;1mmcp delete\x1b[0m     Delete a Profile V2 MCP connector
+  \x1b[32;1mmcp connectors\x1b[0m List Profile V2 MCP servers
+  \x1b[32;1mmcp add\x1b[0m        Add a Profile V2 MCP server
+  \x1b[32;1mmcp delete\x1b[0m     Delete a Profile V2 MCP server
 
 \x1b[36;1;4mProfiles:\x1b[0m
   \x1b[32;1mprofile reconcile-catalog\x1b[0m Apply a signed profile catalog manifest
@@ -133,7 +133,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum McpCommands {
-    /// List Profile V2 MCP connectors
+    /// List Profile V2 MCP servers
     Connectors {
         /// Profile id to inspect
         #[arg(long)]
@@ -142,19 +142,37 @@ enum McpCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Add a Profile V2 MCP connector to a user profile
+    /// Add a Profile V2 MCP server to a user profile
     Add {
-        /// Connector id
+        /// MCP server id
         id: String,
         /// Profile id to mutate; defaults to the selected profile
         #[arg(long)]
         profile: Option<String>,
-        /// Store the connector disabled
+        /// Store the server disabled
         #[arg(long)]
         disabled: bool,
-        /// Connector type: mcp, repository, or custom
-        #[arg(long = "type", default_value = "mcp")]
-        connector_type: String,
+        /// MCP server transport type: stdio, http, or sse
+        #[arg(long = "type")]
+        server_type: Option<String>,
+        /// Stdio MCP server command
+        #[arg(long)]
+        command: Option<String>,
+        /// Stdio MCP server argument; repeat for multiple args
+        #[arg(long = "arg", allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Stdio MCP server env var; repeat as KEY=VALUE
+        #[arg(long = "env")]
+        env: Vec<String>,
+        /// HTTP/SSE MCP server URL
+        #[arg(long)]
+        url: Option<String>,
+        /// HTTP/SSE MCP server header; repeat as KEY=VALUE
+        #[arg(long = "header")]
+        headers: Vec<String>,
+        /// Bearer token for HTTP/SSE MCP server auth
+        #[arg(long = "bearer-token")]
+        bearer_token: Option<String>,
         /// Credential reference id; repeat for multiple credentials
         #[arg(long = "credential-ref")]
         credential_refs: Vec<String>,
@@ -165,9 +183,9 @@ enum McpCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Delete a direct user Profile V2 MCP connector
+    /// Delete a direct user Profile V2 MCP server
     Delete {
-        /// Connector id
+        /// MCP server id
         id: String,
         /// Profile id to mutate; defaults to the selected profile
         #[arg(long)]
@@ -1594,20 +1612,20 @@ async fn main() -> Result<()> {
             if *json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                let connectors = result["connectors"].as_array().cloned().unwrap_or_default();
-                if connectors.is_empty() {
-                    println!("No MCP connectors configured.");
+                let servers = result["servers"].as_array().cloned().unwrap_or_default();
+                if servers.is_empty() {
+                    println!("No MCP servers configured.");
                 } else {
                     #[allow(clippy::print_literal)]
                     {
                         println!(
-                            "{:<24} {:<8} {:<12} {:<10} {}",
-                            "ID", "ENABLED", "TYPE", "SOURCE", "ALLOWED_TOOLS"
+                            "{:<24} {:<8} {:<8} {:<18} {:<10} {}",
+                            "ID", "ENABLED", "TYPE", "TARGET", "SOURCE", "ALLOWED_TOOLS"
                         );
                     }
-                    for connector in connectors {
-                        let config = &connector["connector"];
-                        let allowed = config["allowed_tools"]
+                    for server in servers {
+                        let config = &server["server"];
+                        let allowed = config["capsem"]["allowed_tools"]
                             .as_array()
                             .map(|tools| {
                                 tools
@@ -1617,16 +1635,21 @@ async fn main() -> Result<()> {
                                     .join(",")
                             })
                             .unwrap_or_default();
+                        let target = config["command"]
+                            .as_str()
+                            .or_else(|| config["url"].as_str())
+                            .unwrap_or("-");
                         println!(
-                            "{:<24} {:<8} {:<12} {:<10} {}",
-                            connector["id"].as_str().unwrap_or("-"),
+                            "{:<24} {:<8} {:<8} {:<18} {:<10} {}",
+                            server["id"].as_str().unwrap_or("-"),
                             if config["enabled"].as_bool().unwrap_or(false) {
                                 "yes"
                             } else {
                                 "no"
                             },
-                            config["connector_type"].as_str().unwrap_or("-"),
-                            connector["source_profile"].as_str().unwrap_or("-"),
+                            config["type"].as_str().unwrap_or("-"),
+                            target,
+                            server["source_profile"].as_str().unwrap_or("-"),
                             allowed,
                         );
                     }
@@ -1637,7 +1660,13 @@ async fn main() -> Result<()> {
             id,
             profile,
             disabled,
-            connector_type,
+            server_type,
+            command,
+            args,
+            env,
+            url,
+            headers,
+            bearer_token,
             credential_refs,
             allowed_tools,
             json,
@@ -1645,10 +1674,32 @@ async fn main() -> Result<()> {
             let mut body = serde_json::json!({
                 "id": id,
                 "enabled": !*disabled,
-                "connector_type": connector_type,
-                "credential_refs": credential_refs,
-                "allowed_tools": allowed_tools,
+                "capsem": {
+                    "credential_refs": credential_refs,
+                    "allowed_tools": allowed_tools,
+                },
             });
+            if let Some(server_type) = server_type {
+                body["type"] = serde_json::json!(server_type);
+            }
+            if let Some(command) = command {
+                body["command"] = serde_json::json!(command);
+            }
+            if !args.is_empty() {
+                body["args"] = serde_json::json!(args);
+            }
+            if let Some(env) = client::parse_env_vars(env)? {
+                body["env"] = serde_json::json!(env);
+            }
+            if let Some(url) = url {
+                body["url"] = serde_json::json!(url);
+            }
+            if let Some(headers) = client::parse_env_vars(headers)? {
+                body["headers"] = serde_json::json!(headers);
+            }
+            if let Some(bearer_token) = bearer_token {
+                body["bearerToken"] = serde_json::json!(bearer_token);
+            }
             if let Some(profile) = profile {
                 body["profile"] = serde_json::json!(profile);
             }
@@ -1658,10 +1709,7 @@ async fn main() -> Result<()> {
             if *json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!(
-                    "MCP connector added: {}",
-                    result["id"].as_str().unwrap_or("-")
-                );
+                println!("MCP server added: {}", result["id"].as_str().unwrap_or("-"));
             }
         }
         Commands::Mcp(McpCommands::Delete { id, profile }) => {
@@ -1672,8 +1720,8 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
             let result = resp.into_result()?;
             println!(
-                "MCP connector deleted: {}",
-                result["connector_id"].as_str().unwrap_or(&id)
+                "MCP server deleted: {}",
+                result["server_id"].as_str().unwrap_or(&id)
             );
         }
         Commands::Profile(ProfileCommands::ReconcileCatalog {
@@ -2675,6 +2723,16 @@ mod tests {
             "github",
             "--profile",
             "coding",
+            "--type",
+            "stdio",
+            "--command",
+            "npx",
+            "--arg",
+            "-y",
+            "--arg",
+            "@modelcontextprotocol/server-github",
+            "--env",
+            "GITHUB_TOKEN=env:CAPSEM_GITHUB_TOKEN",
             "--credential-ref",
             "github-token",
             "--allowed-tool",
@@ -2687,7 +2745,13 @@ mod tests {
                 id,
                 profile,
                 disabled,
-                connector_type,
+                server_type,
+                command,
+                args,
+                env,
+                url,
+                headers,
+                bearer_token,
                 credential_refs,
                 allowed_tools,
                 json,
@@ -2695,7 +2759,13 @@ mod tests {
                 assert_eq!(id, "github");
                 assert_eq!(profile.as_deref(), Some("coding"));
                 assert!(disabled);
-                assert_eq!(connector_type, "mcp");
+                assert_eq!(server_type.as_deref(), Some("stdio"));
+                assert_eq!(command.as_deref(), Some("npx"));
+                assert_eq!(args, vec!["-y", "@modelcontextprotocol/server-github"]);
+                assert_eq!(env, vec!["GITHUB_TOKEN=env:CAPSEM_GITHUB_TOKEN"]);
+                assert!(url.is_none());
+                assert!(headers.is_empty());
+                assert!(bearer_token.is_none());
                 assert_eq!(credential_refs, vec!["github-token"]);
                 assert_eq!(allowed_tools, vec!["repo.read"]);
                 assert!(json);

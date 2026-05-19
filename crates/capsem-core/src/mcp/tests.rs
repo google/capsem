@@ -264,8 +264,13 @@ fn build_server_list_manual_servers() {
         servers: vec![McpManualServer {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: Some(2),
+            pool_safe_tools: vec!["search".to_string()],
             enabled: true,
         }],
         ..Default::default()
@@ -275,6 +280,9 @@ fn build_server_list_manual_servers() {
     assert!(list
         .iter()
         .any(|s| s.name == "myserver" && s.source == "manual"));
+    let myserver = list.iter().find(|s| s.name == "myserver").unwrap();
+    assert_eq!(myserver.pool_size, Some(2));
+    assert_eq!(myserver.pool_safe_tools, vec!["search".to_string()]);
 }
 
 #[test]
@@ -284,8 +292,13 @@ fn build_server_list_corp_servers_added() {
         servers: vec![McpManualServer {
             name: "corp-server".into(),
             url: "https://corp.internal/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -302,8 +315,13 @@ fn build_server_list_reject_builtin_name() {
         servers: vec![McpManualServer {
             name: "builtin".into(),
             url: "https://evil.com/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -319,8 +337,13 @@ fn build_server_list_empty_name_rejected() {
         servers: vec![McpManualServer {
             name: "".into(),
             url: "https://test.com/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -340,8 +363,13 @@ fn build_server_list_corp_shadows_user_on_same_name() {
         servers: vec![McpManualServer {
             name: "github".into(),
             url: "https://user.example/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: Some("user-token".into()),
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -350,8 +378,13 @@ fn build_server_list_corp_shadows_user_on_same_name() {
         servers: vec![McpManualServer {
             name: "github".into(),
             url: "https://corp.internal/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: Some("corp-token".into()),
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -379,8 +412,13 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
         servers: vec![McpManualServer {
             name: "user-only".into(),
             url: "https://user.example/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -389,8 +427,13 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
         servers: vec![McpManualServer {
             name: "corp-only".into(),
             url: "https://corp.internal/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -413,8 +456,13 @@ fn build_server_list_corp_enabled_override_on_user_server() {
         servers: vec![McpManualServer {
             name: "user-server".into(),
             url: "https://user.example/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -441,8 +489,13 @@ fn build_server_list_enabled_override() {
         servers: vec![McpManualServer {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         server_enabled: {
@@ -612,15 +665,25 @@ fn build_server_list_rejects_names_with_separator() {
     user.servers.push(crate::mcp::policy::McpManualServer {
         name: "bad__name".to_string(),
         url: "http://localhost".to_string(),
+        command: None,
+        args: vec![],
+        env: HashMap::new(),
         headers: HashMap::new(),
         bearer_token: None,
+        pool_size: None,
+        pool_safe_tools: Vec::new(),
         enabled: true,
     });
     user.servers.push(crate::mcp::policy::McpManualServer {
         name: "goodname".to_string(),
         url: "http://localhost".to_string(),
+        command: None,
+        args: vec![],
+        env: HashMap::new(),
         headers: HashMap::new(),
         bearer_token: None,
+        pool_size: None,
+        pool_safe_tools: Vec::new(),
         enabled: true,
     });
 
@@ -628,8 +691,13 @@ fn build_server_list_rejects_names_with_separator() {
     corp.servers.push(crate::mcp::policy::McpManualServer {
         name: "corp__bad".to_string(),
         url: "http://localhost".to_string(),
+        command: None,
+        args: vec![],
+        env: HashMap::new(),
         headers: HashMap::new(),
         bearer_token: None,
+        pool_size: None,
+        pool_safe_tools: Vec::new(),
         enabled: true,
     });
 

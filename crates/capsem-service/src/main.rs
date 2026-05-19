@@ -5819,7 +5819,7 @@ async fn handle_corp_config(
 }
 
 // ---------------------------------------------------------------------------
-// Profile V2 MCP connector API handlers
+// Profile V2 MCP server API handlers
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -5840,7 +5840,7 @@ struct McpConnectorMutationRequest {
 
 fn validate_mcp_connector_id(id: &str) -> Result<(), String> {
     if id.is_empty() {
-        return Err("connector id cannot be empty".to_string());
+        return Err("MCP server id cannot be empty".to_string());
     }
     if id
         .chars()
@@ -5849,7 +5849,7 @@ fn validate_mcp_connector_id(id: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(
-            "connector id may only contain lowercase letters, digits, '-', '_', and '.'"
+            "MCP server id may only contain lowercase letters, digits, '-', '_', and '.'"
                 .to_string(),
         )
     }
@@ -5899,11 +5899,11 @@ fn mcp_connector_json(
         "source": source,
         "direct": direct,
         "editable": editable,
-        "connector": connector,
+        "server": connector,
     })
 }
 
-/// GET /mcp/connectors -- list effective Profile V2 MCP connectors.
+/// GET /mcp/connectors -- list effective Profile V2 MCP servers.
 async fn handle_mcp_connectors(
     Query(query): Query<McpConnectorsQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -5925,7 +5925,7 @@ async fn handle_mcp_connectors(
         )
     })?;
 
-    let mut connectors = effective
+    let mut servers = effective
         .mcp
         .value
         .connectors
@@ -5940,7 +5940,7 @@ async fn handle_mcp_connectors(
             ))
         })
         .collect::<Result<Vec<_>, AppError>>()?;
-    connectors.sort_by(|left, right| {
+    servers.sort_by(|left, right| {
         left["id"]
             .as_str()
             .unwrap_or_default()
@@ -5950,11 +5950,11 @@ async fn handle_mcp_connectors(
     Ok(Json(json!({
         "mode": "settings_profiles_v2",
         "profile_id": effective.profile_id,
-        "connectors": connectors,
+        "servers": servers,
     })))
 }
 
-/// POST /mcp/connectors -- create a direct Profile V2 MCP connector.
+/// POST /mcp/connectors -- create a direct Profile V2 MCP server.
 async fn handle_create_mcp_connector(
     Json(request): Json<McpConnectorMutationRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -5975,7 +5975,7 @@ async fn handle_create_mcp_connector(
     if profile_has_mcp_connector(&selected.profile, &request.id) {
         return Err(AppError(
             StatusCode::CONFLICT,
-            format!("connector_exists: mcp.connectors.{}", request.id),
+            format!("server_exists: mcpServers.{}", request.id),
         ));
     }
 
@@ -5996,10 +5996,10 @@ async fn handle_create_mcp_connector(
         profile: Some(target_profile_id),
     }))
     .await?;
-    let connector = listed["connectors"]
+    let connector = listed["servers"]
         .as_array()
-        .and_then(|connectors| {
-            connectors
+        .and_then(|servers| {
+            servers
                 .iter()
                 .find(|connector| connector["id"] == serde_json::json!(request.id))
                 .cloned()
@@ -6008,7 +6008,7 @@ async fn handle_create_mcp_connector(
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
-                    "created MCP connector '{}' was not visible after profile save",
+                    "created MCP server '{}' was not visible after profile save",
                     request.id
                 ),
             )
@@ -6016,7 +6016,7 @@ async fn handle_create_mcp_connector(
     Ok(Json(connector))
 }
 
-/// DELETE /mcp/connectors/{id} -- remove a direct user Profile V2 MCP connector.
+/// DELETE /mcp/connectors/{id} -- remove a direct user Profile V2 MCP server.
 async fn handle_delete_mcp_connector(
     Path(connector_id): Path<String>,
     Query(query): Query<McpConnectorsQuery>,
@@ -6039,7 +6039,7 @@ async fn handle_delete_mcp_connector(
         return Err(AppError(
             StatusCode::CONFLICT,
             format!(
-                "connector_is_locked: profile '{}' is locked ({:?})",
+                "server_is_locked: profile '{}' is locked ({:?})",
                 selected.profile.id, selected.source
             ),
         ));
@@ -6050,13 +6050,13 @@ async fn handle_delete_mcp_connector(
             Some(owner) => Err(AppError(
                 StatusCode::CONFLICT,
                 format!(
-                    "connector_is_locked: connector '{}' is inherited from profile '{}'",
+                    "server_is_locked: MCP server '{}' is inherited from profile '{}'",
                     connector_id, owner.profile.id
                 ),
             )),
             None => Err(AppError(
                 StatusCode::NOT_FOUND,
-                format!("MCP connector '{connector_id}' not found"),
+                format!("MCP server '{connector_id}' not found"),
             )),
         };
     }
@@ -6075,7 +6075,7 @@ async fn handle_delete_mcp_connector(
     Ok(Json(json!({
         "mode": "settings_profiles_v2",
         "profile_id": target_profile_id,
-        "connector_id": connector_id,
+        "server_id": connector_id,
         "removed": true,
     })))
 }

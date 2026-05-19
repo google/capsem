@@ -38,7 +38,7 @@
     "general": { "$ref": "#/$defs/general" },
     "appearance": { "$ref": "#/$defs/appearance" },
     "ai": { "$ref": "#/$defs/ai" },
-    "mcp": { "$ref": "#/$defs/mcp" },
+    "mcpServers": { "$ref": "#/$defs/mcp_servers" },
     "skills": { "$ref": "#/$defs/skills" },
     "vm": { "$ref": "#/$defs/vm" },
     "packages": { "$ref": "#/$defs/packages" },
@@ -141,25 +141,78 @@
         "rules": { "$ref": "#/$defs/security_rules" }
       }
     },
-    "mcp": {
+    "mcp_servers": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "connectors": {
-          "type": "object",
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z0-9_.-]+$": { "$ref": "#/$defs/mcp_connector" }
-          }
-        }
+      "patternProperties": {
+        "^[A-Za-z0-9_.-]+$": { "$ref": "#/$defs/mcp_server" }
       }
     },
-    "mcp_connector": {
+    "mcp_server": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
-        "connector_type": { "enum": ["mcp", "repository", "custom"] },
+        "type": { "enum": ["stdio", "http", "sse"] },
+        "command": { "$ref": "#/$defs/non_empty_string" },
+        "args": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/non_empty_string" }
+        },
+        "env": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/non_empty_string" },
+          "additionalProperties": { "type": "string" }
+        },
+        "url": { "$ref": "#/$defs/uri" },
+        "headers": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/non_empty_string" },
+          "additionalProperties": { "type": "string" }
+        },
+        "bearerToken": { "type": "string" },
+        "pool_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pool_safe_tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/non_empty_string" },
+          "uniqueItems": true
+        },
+        "capsem": { "$ref": "#/$defs/mcp_server_capsem" }
+      },
+      "oneOf": [
+        {
+          "required": ["command"],
+          "not": { "required": ["url"] }
+        },
+        {
+          "required": ["url"],
+          "not": { "required": ["command"] }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "stdio" } },
+            "required": ["type"]
+          },
+          "then": { "required": ["command"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "enum": ["http", "sse"] } },
+            "required": ["type"]
+          },
+          "then": { "required": ["url"] }
+        }
+      ]
+    },
+    "mcp_server_capsem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
         "credential_refs": {
           "type": "array",
           "items": { "$ref": "#/$defs/config_id" },
