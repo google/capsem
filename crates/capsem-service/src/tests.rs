@@ -2836,6 +2836,75 @@ async fn handle_asset_reconcile_downloads_missing_profile_assets() {
 }
 
 #[tokio::test]
+async fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
+    let (base_url, server) = start_test_asset_server().await;
+    let (state, _dir) = make_test_state_with_profile_assets(&base_url);
+    let log_path = state.run_dir.join("service.log");
+    std::fs::create_dir_all(&state.run_dir).unwrap();
+    let log_writer_path = log_path.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(move || {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_writer_path)
+                .unwrap()
+        })
+        .finish();
+    let _trace_guard = tracing::subscriber::set_default(subscriber);
+
+    let Json(reconcile) = handle_asset_reconcile(State(state.clone())).await.unwrap();
+    assert_eq!(reconcile["outcome"], serde_json::json!("downloaded"));
+    assert_eq!(reconcile["health"]["state"], serde_json::json!("ready"));
+
+    let Json(setup_status) = handle_asset_status(State(state.clone())).await;
+    assert_eq!(setup_status["ready"], serde_json::json!(true));
+    assert_eq!(
+        setup_status["profile_payload_hash"],
+        serde_json::json!(test_profile_payload_hash())
+    );
+    assert_eq!(
+        setup_status["profile_assets"][0]["source_url"],
+        serde_json::json!("http://127.0.0.1/vmlinuz")
+    );
+
+    let Json(list) = handle_list(State(state.clone())).await;
+    let list_health = list.asset_health.expect("list should include asset health");
+    assert!(list_health.ready);
+    assert_eq!(
+        list_health.profile_payload_hash.as_deref(),
+        Some(test_profile_payload_hash().as_str())
+    );
+    assert_eq!(list_health.profile_assets.len(), 3);
+
+    let Json(debug) = handle_debug_report(State(state.clone())).await.unwrap();
+    assert!(debug
+        .text
+        .contains("profile_asset_profile_payload_hash: blake3:"));
+    assert!(debug.text.contains("profile_asset_source: vmlinuz"));
+
+    drop(_trace_guard);
+    let service_logs = handle_service_logs(State(state.clone())).await.unwrap();
+    server.abort();
+
+    for event in [
+        "profile_asset_check_start",
+        "profile_asset_missing",
+        "profile_asset_download_start",
+        "profile_asset_verify_ok",
+        "profile_asset_install_ok",
+        "profile_asset_check_finish",
+    ] {
+        assert!(
+            service_logs.contains(event),
+            "service logs should include {event}; logs were:\n{service_logs}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn handle_asset_reconcile_reports_already_ready() {
     let (state, _dir) = make_test_state_with_profile_assets("https://assets.example.test");
     write_profile_test_assets(&state.assets_dir);

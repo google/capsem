@@ -111,6 +111,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciler before process spawn, and made create-from-source, fork, and
   persist derive boot-asset identity from the VM profile pin while rejecting
   pin/registry drift.
+- Added chained service-level coverage proving a profile asset reconcile is
+  reflected consistently in `/setup/assets`, `/list`, debug reports, and
+  service logs after downloading from a local asset server.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,
   manifest-driven downloader, and manifest-driven cleanup path. CLI status and
   service debug reports now rely on Profile V2 asset health instead of legacy

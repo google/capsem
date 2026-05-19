@@ -4813,6 +4813,8 @@ async fn handle_asset_status(State(state): State<Arc<ServiceState>>) -> Json<ser
                 "asset_version": health.version.unwrap_or(resolved.asset_version),
                 "profile_id": health.profile_id,
                 "profile_revision": health.profile_revision,
+                "profile_payload_hash": health.profile_payload_hash,
+                "profile_assets": health.profile_assets,
                 "arch": health.arch,
                 "missing": health.missing,
                 "progress": health.progress,

@@ -46,15 +46,18 @@ Landed:
   service path instead of failing on a stale initial health snapshot.
 - Create-from-source, fork, and persist derive base asset identity from the
   VM's profile pin and reject conflicts with the duplicate registry side field.
+- The service-level operator flow now chains a real local profile asset
+  download through reconcile, `/setup/assets`, `/list`, debug report, and
+  `/service-logs`, proving status and log observability tell the same story.
 
 Gaps:
 
 - Tests cover the service trigger, CLI summary rendering, background
   reconciliation, status timestamp/provenance preservation, debug provenance,
   first-use VM create reconciliation, profile-pin asset authority, concurrent
-  manual reconcile locking, active cleanup refusal, and log URL redaction, but
-  not full `capsem update --assets -> live service -> status progress -> logs`
-  E2E or a live hypervisor boot against freshly downloaded assets.
+  manual reconcile locking, active cleanup refusal, chained service
+  status/debug/log observability, and log URL redaction, but not a live
+  hypervisor boot against freshly downloaded assets.
 
 ## Product Contract
 
@@ -157,6 +160,10 @@ Gaps:
   - Landed: `provision_attempt_reconciles_profile_assets_on_first_use_create`
     proves the create path downloads missing selected-profile assets via the
     service reconciler before process spawn.
+  - Landed: `profile_asset_operator_flow_chains_reconcile_status_debug_and_logs`
+    proves a real local asset download is visible consistently through
+    reconcile output, `/setup/assets`, `/list`, debug report, and
+    `/service-logs`.
 - Adversarial:
   - Hash mismatch deletes temp file and logs terminal failure.
   - 404/503 records retryable failure with retry count.
@@ -183,6 +190,8 @@ Gaps:
     of legacy asset manifest presence/hash fields.
   - Landed: debug reports include explicit profile id/revision from asset
     health plus payload hash and per-asset source/hash metadata.
+  - Landed: service-log chain coverage proves the expected profile asset
+    lifecycle event names are emitted during a successful reconcile/download.
 - Performance:
   - Repeated checks when assets are present do not hash every large file on hot
     `/list` or status paths.
@@ -197,6 +206,8 @@ Gaps:
   redacted per-asset source/hash metadata.
 - Background and manual checks use one code path.
 - Logs and debug report explain checks/downloads without sensitive data.
+- The service-level operator flow links reconcile, status, debug, and logs for
+  the same profile asset download.
 - Concurrent manual reconcile requests share the supervisor run lock and do not
   duplicate network downloads.
 - Cleanup refuses active downloads and leaves stale files untouched until asset
