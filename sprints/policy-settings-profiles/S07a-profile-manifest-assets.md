@@ -92,6 +92,11 @@ Landed:
 - Installable profile payload fetch now reads catalog payload/signature
   locations, verifies minisign first, then enforces hash/schema/id/revision
   checks before returning a verified payload.
+- Typed `[profile_catalog]` service settings now hold the signed catalog URL,
+  profile payload public key, and check interval. When configured, the service
+  spawns a scheduled reconcile loop that fetches the bounded catalog source,
+  applies the same signed lifecycle reconciler, persists the trusted manifest
+  snapshot, and logs install/update/revoke summary counts.
 
 Push order from here:
 
@@ -106,9 +111,11 @@ Push order from here:
    install/update plus deprecated/revoked local-state handling, and `capsem
    profile reconcile-catalog` gives operators a native CLI entry point. It can
    now read the signed catalog from either a local file or a bounded HTTPS
-   source URL. Absent installed profile ids now lose launchable current state
-   during reconcile. Remaining: persisted manifest source scheduling, richer
-   catalog/revision CLI verbs, and UI clients.
+   source URL. `[profile_catalog]` service settings can now persist that source
+   plus the profile payload public key, and service startup schedules the same
+   reconcile path at the configured interval. Absent installed profile ids now
+   lose launchable current state during reconcile. Remaining: richer
+   catalog/revision CLI verbs, UI clients, and deeper debug/status detail.
 2. [x] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
@@ -641,10 +648,12 @@ This sprint creates the contract consumed by later sprints:
       through `capsem profile reconcile-catalog --manifest <path> --pubkey
       <path> [--json]` or `--manifest-url <https-url>`. URL fetching is
       bounded and allows cleartext HTTP only for loopback development/test
-      hosts. Absent installed profile ids are now removed from launchable
-      current state and reported as `absent_removed`. Remaining: persisted
-      manifest source scheduling, richer catalog/revision CLI verbs, and UI
-      clients.
+      hosts. `[profile_catalog]` service settings now persist the catalog URL,
+      profile payload public key, and check interval; service startup spawns a
+      scheduled reconcile loop using that source and logs summary counts.
+      Absent installed profile ids are now removed from launchable current
+      state and reported as `absent_removed`. Remaining: richer
+      catalog/revision CLI verbs, UI clients, and deeper debug/status detail.
 - [~] Add profile-driven asset resolution and first-use download. Service
       startup now builds an `AssetRequirement` from the default profile's
       `vm.assets.<arch>` declaration, rejects old manifest-backed release
@@ -720,7 +729,12 @@ This sprint creates the contract consumed by later sprints:
   rejection, missing/conflicting sources, and oversized response rejection,
   plus `cargo test -p capsem parse_profile_reconcile_catalog` (3 tests) for
   local file, URL, and missing-source parser contracts; full CLI proof passed
-  with `cargo test -p capsem` (251 tests). Core catalog
+  with `cargo test -p capsem` (251 tests). Persisted source coverage now adds
+  `cargo test -p capsem-core service_settings_` (17 tests) for typed
+  `[profile_catalog]` parsing and validation plus `cargo test -p
+  capsem-service reconcile_configured_profile_catalog` (1 test) proving the
+  service fetches a configured catalog URL, installs the verified payload, and
+  persists the trusted snapshot. Core catalog
   reconciliation coverage now runs `cargo test -p capsem-core
   settings_profiles --lib` (130 tests passed), including active install,
   incomplete active re-install, complete active no-op, deprecated keep, and

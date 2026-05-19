@@ -89,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operators can reconcile a signed Profile V2 catalog from a remote source,
   with `http://` accepted only for loopback development/test hosts and a
   bounded manifest body.
+- Added typed `[profile_catalog]` service settings plus service-side scheduled
+  profile catalog reconciliation from the configured signed catalog URL and
+  profile payload public key.
 - Changed profile catalog reconciliation to remove launchable installed
   profiles whose profile id is absent from the signed catalog while preserving
   the archived installed payload for retention/VM-pin cleanup.

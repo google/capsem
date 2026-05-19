@@ -7,6 +7,8 @@ fn service_settings_defaults_validate() {
     assert_eq!(settings.profiles.default_profile, EVERYDAY_WORK_PROFILE_ID);
     assert!(!settings.telemetry.enabled);
     assert!(!settings.remote_policy.enabled);
+    assert!(!settings.profile_catalog.is_configured());
+    assert_eq!(settings.profile_catalog.check_interval_secs, 21_600);
     assert_eq!(
         settings.profiles.user_dirs,
         vec![crate::paths::capsem_home().join("profiles")]
@@ -52,6 +54,11 @@ endpoint = "https://policy.example.test/decision"
 auth_token = "test-token"
 timeout_ms = 2000
 failure_mode = "fail-closed"
+
+[profile_catalog]
+manifest_url = "https://profiles.example.test/catalog.json"
+profile_payload_pubkey = "untrusted comment: profile payload test key"
+check_interval_secs = 300
 "#,
     )
     .unwrap();
@@ -66,6 +73,59 @@ failure_mode = "fail-closed"
         settings.assets.download_base_url.as_deref(),
         Some("https://assets.example.test/capsem")
     );
+    assert_eq!(
+        settings.profile_catalog.manifest_url.as_deref(),
+        Some("https://profiles.example.test/catalog.json")
+    );
+    assert_eq!(
+        settings.profile_catalog.profile_payload_pubkey.as_deref(),
+        Some("untrusted comment: profile payload test key")
+    );
+    assert_eq!(settings.profile_catalog.check_interval_secs, 300);
+}
+
+#[test]
+fn service_settings_reject_profile_catalog_without_pubkey() {
+    let error = ServiceSettings::from_toml_str(
+        r#"
+[profile_catalog]
+manifest_url = "https://profiles.example.test/catalog.json"
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("profile_catalog.profile_payload_pubkey"));
+}
+
+#[test]
+fn service_settings_reject_profile_catalog_non_loopback_http() {
+    let error = ServiceSettings::from_toml_str(
+        r#"
+[profile_catalog]
+manifest_url = "http://profiles.example.test/catalog.json"
+profile_payload_pubkey = "untrusted comment: profile payload test key"
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("profile_catalog.manifest_url"));
+    assert!(error.to_string().contains("must use https://"));
+}
+
+#[test]
+fn service_settings_accept_profile_catalog_loopback_http_for_dev() {
+    let settings = ServiceSettings::from_toml_str(
+        r#"
+[profile_catalog]
+manifest_url = "http://127.0.0.1:8080/catalog.json"
+profile_payload_pubkey = "untrusted comment: profile payload test key"
+"#,
+    )
+    .unwrap();
+
+    assert!(settings.profile_catalog.is_configured());
 }
 
 #[test]

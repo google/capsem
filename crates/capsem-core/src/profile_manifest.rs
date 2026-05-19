@@ -5,11 +5,14 @@
 //! and VM pinning build on top of these types in later slices.
 
 use std::collections::BTreeMap;
+use std::net::IpAddr;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 const PROFILE_MANIFEST_FORMAT: u32 = 1;
+pub const MAX_PROFILE_CATALOG_MANIFEST_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -122,6 +125,70 @@ impl ProfileManifest {
             .map(|(profile_id, profile)| (profile_id.as_str(), profile))
             .ok_or_else(|| anyhow::anyhow!("profile '{profile_id}' not found"))
     }
+}
+
+pub fn parse_profile_catalog_manifest_url(raw_url: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(raw_url)
+        .with_context(|| format!("parse profile catalog manifest URL {raw_url}"))?;
+    validate_profile_catalog_manifest_url(&url)?;
+    Ok(url)
+}
+
+pub fn validate_profile_catalog_manifest_url(url: &reqwest::Url) -> Result<()> {
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if is_loopback_manifest_host(url.host_str()) => Ok(()),
+        scheme => bail!(
+            "profile catalog manifest URL must use https://; http:// is only allowed for loopback development hosts (got {scheme}://)"
+        ),
+    }
+}
+
+fn is_loopback_manifest_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>().is_ok_and(|addr| addr.is_loopback())
+}
+
+pub async fn fetch_profile_catalog_manifest_url(url: reqwest::Url) -> Result<String> {
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("build profile catalog manifest HTTP client")?
+        .get(url.clone())
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .with_context(|| format!("fetch profile catalog manifest from {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        bail!("profile catalog manifest fetch failed with HTTP {status}");
+    }
+    if let Some(content_length) = response.content_length() {
+        if content_length > MAX_PROFILE_CATALOG_MANIFEST_BYTES {
+            bail!(
+                "profile catalog manifest is too large: {content_length} bytes exceeds {MAX_PROFILE_CATALOG_MANIFEST_BYTES} bytes"
+            );
+        }
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .context("read profile catalog manifest response body")?;
+    if bytes.len() as u64 > MAX_PROFILE_CATALOG_MANIFEST_BYTES {
+        bail!(
+            "profile catalog manifest is too large: {} bytes exceeds {} bytes",
+            bytes.len(),
+            MAX_PROFILE_CATALOG_MANIFEST_BYTES
+        );
+    }
+    String::from_utf8(bytes.to_vec()).context("profile catalog manifest response is not UTF-8")
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,10 +1,6 @@
-use std::net::IpAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
-
-const MAX_PROFILE_CATALOG_MANIFEST_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProfileCatalogManifestSource {
@@ -22,9 +18,7 @@ pub(crate) fn profile_catalog_manifest_source(
         ),
         (Some(path), None) => Ok(ProfileCatalogManifestSource::File(path)),
         (None, Some(raw_url)) => {
-            let url = reqwest::Url::parse(&raw_url)
-                .with_context(|| format!("parse profile catalog manifest URL {raw_url}"))?;
-            validate_profile_catalog_manifest_url(&url)?;
+            let url = capsem_core::profile_manifest::parse_profile_catalog_manifest_url(&raw_url)?;
             Ok(ProfileCatalogManifestSource::Url(url))
         }
         (None, None) => anyhow::bail!(
@@ -51,62 +45,8 @@ async fn read_profile_catalog_manifest_from_source(
     }
 }
 
-fn validate_profile_catalog_manifest_url(url: &reqwest::Url) -> Result<()> {
-    match url.scheme() {
-        "https" => Ok(()),
-        "http" if is_loopback_manifest_host(url.host_str()) => Ok(()),
-        scheme => anyhow::bail!(
-            "profile catalog manifest URL must use https://; http:// is only allowed for loopback development hosts (got {scheme}://)"
-        ),
-    }
-}
-
-fn is_loopback_manifest_host(host: Option<&str>) -> bool {
-    let Some(host) = host else {
-        return false;
-    };
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    host.parse::<IpAddr>().is_ok_and(|addr| addr.is_loopback())
-}
-
 async fn fetch_profile_catalog_manifest(url: reqwest::Url) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .build()
-        .context("build profile catalog manifest HTTP client")?;
-    let response = client
-        .get(url.clone())
-        .header("Accept", "application/json")
-        .header("User-Agent", "capsem")
-        .send()
-        .await
-        .with_context(|| format!("fetch profile catalog manifest from {url}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        anyhow::bail!("profile catalog manifest fetch failed with HTTP {status}");
-    }
-    if let Some(content_length) = response.content_length() {
-        if content_length > MAX_PROFILE_CATALOG_MANIFEST_BYTES {
-            anyhow::bail!(
-                "profile catalog manifest is too large: {content_length} bytes exceeds {MAX_PROFILE_CATALOG_MANIFEST_BYTES} bytes"
-            );
-        }
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .context("read profile catalog manifest response body")?;
-    if bytes.len() as u64 > MAX_PROFILE_CATALOG_MANIFEST_BYTES {
-        anyhow::bail!(
-            "profile catalog manifest is too large: {} bytes exceeds {} bytes",
-            bytes.len(),
-            MAX_PROFILE_CATALOG_MANIFEST_BYTES
-        );
-    }
-    String::from_utf8(bytes.to_vec()).context("profile catalog manifest response is not UTF-8")
+    capsem_core::profile_manifest::fetch_profile_catalog_manifest_url(url).await
 }
 
 #[cfg(test)]
@@ -170,7 +110,9 @@ mod tests {
 
     #[tokio::test]
     async fn read_profile_catalog_manifest_rejects_oversized_fetch() {
-        let body = "x".repeat((MAX_PROFILE_CATALOG_MANIFEST_BYTES + 1) as usize);
+        let body = "x".repeat(
+            (capsem_core::profile_manifest::MAX_PROFILE_CATALOG_MANIFEST_BYTES + 1) as usize,
+        );
         let url = spawn_manifest_server(&body);
 
         let err = read_profile_catalog_manifest(None, Some(url))
@@ -193,7 +135,7 @@ mod tests {
                 body.len(),
                 body
             );
-            stream.write_all(response.as_bytes()).unwrap();
+            let _ = stream.write_all(response.as_bytes());
         });
         format!("http://{addr}/profile-catalog.json")
     }

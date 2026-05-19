@@ -40,7 +40,9 @@ Design decisions closed:
 - Service settings are service/app scoped, not profile scoped.
 - Profile roots, corp/user governance toggles, telemetry endpoint, remote policy
   endpoint, credential storage, asset directory, image roots, and asset download
-  endpoint are service settings.
+  endpoint are service settings. S07a adds the signed profile catalog source
+  (`[profile_catalog]`) as typed service settings: catalog URL, profile payload
+  public key, and check interval.
 - Old asset-manifest source settings were removed in S07a; profile payloads now
   declare VM assets and the signed profile catalog is the only manifest-shaped
   runtime contract.

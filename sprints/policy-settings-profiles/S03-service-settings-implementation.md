@@ -70,8 +70,9 @@ before accepting a socket, and VM boot/exec using service.toml-owned assets.
   present for the implemented service-settings slice, including asset
   resolution provenance.
 - Functional: service settings load/save works at the model layer; service
-  startup consumes typed service settings for asset directory/manifest source;
-  `/setup/assets` and debug report expose resolved asset provenance.
+  startup consumes typed service settings for asset directories, profile
+  catalog source scheduling, and Profile V2 asset resolution; `/setup/assets`
+  and debug report expose resolved asset provenance.
 - Adversarial: unknown fields and invalid enabled endpoint state are covered;
   malformed TOML, invalid endpoint scheme, empty credential values, and invalid
   write rejection are covered. Remote manifest missing URL, local manifest with

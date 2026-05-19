@@ -834,6 +834,33 @@ async fn start_test_asset_server() -> (String, tokio::task::JoinHandle<()>) {
     (format!("http://{addr}"), handle)
 }
 
+async fn start_profile_catalog_manifest_server(
+    manifest_json: String,
+) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let manifest_json = manifest_json.clone();
+            tokio::spawn(async move {
+                let mut buf = [0_u8; 2048];
+                let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                    manifest_json.len()
+                );
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, header.as_bytes()).await;
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, manifest_json.as_bytes())
+                    .await;
+            });
+        }
+    });
+    (format!("http://{addr}/profile-catalog.json"), handle)
+}
+
 async fn start_counted_blocking_asset_server() -> (
     String,
     tokio::task::JoinHandle<()>,
@@ -4347,6 +4374,73 @@ async fn handle_reconcile_profile_catalog_installs_current_active_revision() {
     )
     .unwrap()
     .expect("catalog reconcile should install current revision");
+    assert_eq!(installed.revision, "2026.0520.1");
+    assert_eq!(installed.payload_hash, profile_hash);
+    let stored_manifest = std::fs::read_to_string(
+        dir.path()
+            .join("home")
+            .join("profiles")
+            .join("corp")
+            .join(".catalog")
+            .join("profile-manifest.json"),
+    )
+    .unwrap();
+    assert_eq!(stored_manifest, manifest_json);
+}
+
+#[tokio::test]
+async fn reconcile_configured_profile_catalog_fetches_manifest_source() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, settings_path, _) = install_settings_profiles_env(&dir);
+    let payload_path = dir.path().join("profile.json");
+    let signature_path = dir.path().join("profile.json.minisig");
+    let payload = include_str!("../../../schemas/fixtures/profile-v2-valid.json");
+    let signature = include_str!("../../../schemas/fixtures/profile-v2-valid.json.minisig");
+    let pubkey = include_str!("../../../schemas/fixtures/profile-v2-test.pub");
+    std::fs::write(&payload_path, payload).unwrap();
+    std::fs::write(&signature_path, signature).unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest_json = format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file://{}",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "file://{}"
+                }}
+              }}
+            }}
+          }}
+        }}"#,
+        payload_path.display(),
+        signature_path.display(),
+    );
+    let (manifest_url, server) = start_profile_catalog_manifest_server(manifest_json.clone()).await;
+    let mut settings =
+        capsem_core::settings_profiles::load_service_settings_or_default(&settings_path).unwrap();
+    settings.profile_catalog.manifest_url = Some(manifest_url);
+    settings.profile_catalog.profile_payload_pubkey = Some(pubkey.to_string());
+
+    let val = reconcile_configured_profile_catalog(&settings)
+        .await
+        .unwrap();
+
+    server.abort();
+    assert_eq!(val["summary"]["installed"], serde_json::json!(1));
+    assert_eq!(val["summary"]["errors"], serde_json::json!(0));
+    let installed = capsem_core::settings_profiles::load_installed_profile_revision(
+        &settings.profiles,
+        "everyday-work",
+    )
+    .unwrap()
+    .expect("configured catalog reconcile should install current revision");
     assert_eq!(installed.revision, "2026.0520.1");
     assert_eq!(installed.payload_hash, profile_hash);
     let stored_manifest = std::fs::read_to_string(

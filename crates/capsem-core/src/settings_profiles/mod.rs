@@ -125,6 +125,8 @@ pub struct ServiceSettings {
     pub telemetry: TelemetrySettings,
     #[serde(default)]
     pub remote_policy: RemotePolicySettings,
+    #[serde(default)]
+    pub profile_catalog: ProfileCatalogSettings,
     /// Org-deployed overrides applied after profile inheritance
     /// merges. Empty by default; serialized only when non-empty
     /// so existing `service.toml` files round-trip unchanged.
@@ -142,6 +144,7 @@ impl Default for ServiceSettings {
             credentials: CredentialSettings::default(),
             telemetry: TelemetrySettings::default(),
             remote_policy: RemotePolicySettings::default(),
+            profile_catalog: ProfileCatalogSettings::default(),
             corp_directives: Vec::new(),
         }
     }
@@ -166,6 +169,7 @@ impl ServiceSettings {
         self.credentials.validate("credentials")?;
         self.telemetry.validate("telemetry")?;
         self.remote_policy.validate("remote_policy")?;
+        self.profile_catalog.validate("profile_catalog")?;
         for (idx, directive) in self.corp_directives.iter().enumerate() {
             directive.validate(&format!("corp_directives[{idx}]"))?;
         }
@@ -1024,6 +1028,75 @@ pub enum RemotePolicyFailureMode {
     FailOpen,
     #[default]
     FailClosed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileCatalogSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_payload_pubkey: Option<String>,
+    #[serde(default = "default_profile_catalog_check_interval_secs")]
+    pub check_interval_secs: u64,
+}
+
+impl Default for ProfileCatalogSettings {
+    fn default() -> Self {
+        Self {
+            manifest_url: None,
+            profile_payload_pubkey: None,
+            check_interval_secs: default_profile_catalog_check_interval_secs(),
+        }
+    }
+}
+
+impl ProfileCatalogSettings {
+    pub fn is_configured(&self) -> bool {
+        self.manifest_url.is_some() || self.profile_payload_pubkey.is_some()
+    }
+
+    pub fn validate(&self, path: &str) -> Result<()> {
+        match (
+            self.manifest_url.as_deref(),
+            self.profile_payload_pubkey.as_deref(),
+        ) {
+            (None, None) => {}
+            (Some(url), Some(pubkey)) => {
+                crate::profile_manifest::parse_profile_catalog_manifest_url(url).map_err(
+                    |source| SettingsProfilesError::Validation {
+                        path: format!("{path}.manifest_url"),
+                        message: source.to_string(),
+                    },
+                )?;
+                if pubkey.trim().is_empty() {
+                    validation_error(
+                        &format!("{path}.profile_payload_pubkey"),
+                        "profile_payload_pubkey cannot be empty",
+                    )?;
+                }
+            }
+            (Some(_), None) => validation_error(
+                &format!("{path}.profile_payload_pubkey"),
+                "profile_payload_pubkey is required when manifest_url is set",
+            )?,
+            (None, Some(_)) => validation_error(
+                &format!("{path}.manifest_url"),
+                "manifest_url is required when profile_payload_pubkey is set",
+            )?,
+        }
+        if self.check_interval_secs < 60 {
+            validation_error(
+                &format!("{path}.check_interval_secs"),
+                "check_interval_secs must be at least 60",
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn default_profile_catalog_check_interval_secs() -> u64 {
+    6 * 60 * 60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

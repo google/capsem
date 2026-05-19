@@ -4029,17 +4029,107 @@ async fn handle_reconcile_profile_catalog(
     Json(body): Json<ProfileCatalogReconcileRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let settings = load_service_settings_for_profiles()?;
-    let manifest =
-        match capsem_core::profile_manifest::ProfileManifest::from_json(&body.manifest_json) {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                return Err(AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("parse profile catalog manifest: {error}"),
-                ));
+    let result = reconcile_profile_catalog_manifest(
+        &settings,
+        &body.manifest_json,
+        &body.profile_payload_pubkey,
+    )
+    .await?;
+    Ok(Json(result))
+}
+
+async fn reconcile_configured_profile_catalog(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+) -> Result<serde_json::Value, AppError> {
+    let manifest_url = settings
+        .profile_catalog
+        .manifest_url
+        .as_deref()
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                "profile catalog manifest_url is not configured".into(),
+            )
+        })?;
+    let profile_payload_pubkey = settings
+        .profile_catalog
+        .profile_payload_pubkey
+        .as_deref()
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                "profile catalog profile_payload_pubkey is not configured".into(),
+            )
+        })?;
+    let url = capsem_core::profile_manifest::parse_profile_catalog_manifest_url(manifest_url)
+        .map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("parse configured profile catalog manifest URL: {error}"),
+            )
+        })?;
+    let manifest_json = capsem_core::profile_manifest::fetch_profile_catalog_manifest_url(url)
+        .await
+        .map_err(|error| {
+            AppError(
+                StatusCode::BAD_GATEWAY,
+                format!("fetch configured profile catalog manifest: {error:#}"),
+            )
+        })?;
+    reconcile_profile_catalog_manifest(settings, &manifest_json, profile_payload_pubkey).await
+}
+
+fn spawn_profile_catalog_reconcile_task(
+    settings: capsem_core::settings_profiles::ServiceSettings,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !settings.profile_catalog.is_configured() {
+        return None;
+    }
+    let check_interval =
+        std::time::Duration::from_secs(settings.profile_catalog.check_interval_secs);
+    Some(tokio::spawn(async move {
+        loop {
+            match reconcile_configured_profile_catalog(&settings).await {
+                Ok(result) => {
+                    let summary = &result["summary"];
+                    info!(
+                        installed = summary["installed"].as_u64().unwrap_or_default(),
+                        unchanged = summary["unchanged"].as_u64().unwrap_or_default(),
+                        deprecated_kept = summary["deprecated_kept"].as_u64().unwrap_or_default(),
+                        revoked_removed = summary["revoked_removed"].as_u64().unwrap_or_default(),
+                        absent_removed = summary["absent_removed"].as_u64().unwrap_or_default(),
+                        errors = summary["errors"].as_u64().unwrap_or_default(),
+                        "profile catalog scheduled reconcile completed"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        status = error.0.as_u16(),
+                        error = %error.1,
+                        "profile catalog scheduled reconcile failed"
+                    );
+                }
             }
-        };
-    persist_profile_catalog_manifest(&settings, &body.manifest_json)?;
+            tokio::time::sleep(check_interval).await;
+        }
+    }))
+}
+
+async fn reconcile_profile_catalog_manifest(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+    manifest_json: &str,
+    profile_payload_pubkey: &str,
+) -> Result<serde_json::Value, AppError> {
+    let manifest = match capsem_core::profile_manifest::ProfileManifest::from_json(manifest_json) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("parse profile catalog manifest: {error}"),
+            ));
+        }
+    };
+    persist_profile_catalog_manifest(settings, manifest_json)?;
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
     for profile_id in manifest.profiles.keys() {
@@ -4078,7 +4168,7 @@ async fn handle_reconcile_profile_catalog(
         match capsem_core::settings_profiles::reconcile_profile_revision_from_manifest(
             &settings.profiles,
             revision,
-            &body.profile_payload_pubkey,
+            profile_payload_pubkey,
         )
         .await
         {
@@ -4109,11 +4199,11 @@ async fn handle_reconcile_profile_catalog(
         outcomes.push(profile_reconcile_outcome_json(outcome, &mut summary));
     }
 
-    Ok(Json(json!({
+    Ok(json!({
         "mode": "settings_profiles_v2",
         "summary": summary,
         "outcomes": outcomes,
-    })))
+    }))
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -6974,6 +7064,8 @@ async fn main() -> Result<()> {
     });
 
     Arc::clone(&state.asset_supervisor).spawn();
+    let _profile_catalog_reconcile_task =
+        spawn_profile_catalog_reconcile_task(state.service_settings.clone());
 
     // Reap capsem-process orphans from any prior service run sharing this
     // run_dir. A previous service that crashed (SIGKILL) or was killed by
