@@ -799,6 +799,14 @@ This sprint creates the contract consumed by later sprints:
   capsem-core --lib` (1616 passed / 1 ignored), `cargo test -p capsem-service`
   (109 library tests + 155 service tests), and `cargo test -p capsem` (242 CLI
   tests).
+  Real-VM fork lineage coverage now adds `uv run python -m pytest
+  tests/capsem-e2e/test_winterfell_fork_lineage.py -q -s` (1 test passed),
+  proving a profile-pinned VM can write a file, fork, delete the source, resume
+  the fork, delete/write descendant state, fork again, delete the middle VM,
+  and read the expected descendant-only file from the final fork. The shared
+  Profile V2 asset-backed E2E fixture was extracted to
+  `tests/helpers/profile_asset_fixture.py`; the existing live profile-asset
+  boot proof still passes.
   Remaining:
   cross-language schema fixture parity, rollback/stale
   catalog rejection, signature-key identity, full package version grammar
@@ -814,10 +822,10 @@ This sprint creates the contract consumed by later sprints:
   malformed package version, unsupported host arch, profile payload signed by an
   unauthorized key, profile/asset URL scheme rejection, path traversal in
   payload locations, interrupted downloads, and stale partial files.
-- E2E/VM or integration: service-level VM create with profile-backed first-use
-  asset download; resume an existing VM after catalog update; capsem-doctor or
-  equivalent in-guest probe verifies declared package/tool versions match the
-  booted VM.
+- E2E/VM or integration: live profile-backed VM boot/download and real-VM
+  fork-lineage proofs are covered. Remaining: resume an existing VM after
+  catalog update; capsem-doctor or equivalent in-guest probe verifies declared
+  package/tool versions match the booted VM.
 - Telemetry/observability: status/debug report catalog state, installed
   revisions, package contract, asset readiness, VM pin drift/revocation, last
   manifest identity, verification failures, and operator override events.

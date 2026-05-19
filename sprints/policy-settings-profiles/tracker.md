@@ -630,6 +630,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   update_assets_uses_explicit_uds_socket_when_provided` **1** passed, and `uv
   run python -m pytest tests/capsem-e2e/test_profile_asset_boot.py -q` **1**
   passed;
+  after real-VM fork-lineage coverage, `uv run python -m pytest
+  tests/capsem-e2e/test_winterfell_fork_lineage.py -q -s` **1** passed and the
+  existing profile-asset boot proof was re-run with `uv run python -m pytest
+  tests/capsem-e2e/test_profile_asset_boot.py -q -s` **1** passed;
   after file/URL profile catalog reconcile sources, `cargo test -p capsem
   profile_catalog` **7** passed, `cargo test -p capsem
   parse_profile_reconcile_catalog` **3** passed, and `cargo test -p capsem`

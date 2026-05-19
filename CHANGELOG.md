@@ -125,6 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   E2E coverage proving `capsem update --assets` can fill an empty asset cache,
   boot a real VM from the reconciled hash-named assets, exec inside it, and
   preserve the installed profile revision pin in `capsem info --json`.
+- Added a real-VM fork-lineage E2E proof that writes a file, forks, deletes the
+  source, resumes the fork, mutates filesystem state, forks again, deletes the
+  middle VM, and proves the final fork preserved only the expected descendant
+  state.
 - Changed `capsem update --assets` to honor the selected service UDS socket
   instead of assuming the default runtime socket.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,

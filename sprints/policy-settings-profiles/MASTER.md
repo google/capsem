@@ -439,6 +439,10 @@ Latest focused verification after the rescue/push transition:
   `cargo test -p capsem parse_profile_reconcile_catalog` passed with 3 tests,
   and `cargo test -p capsem` passed with 251 tests after adding file/URL
   profile catalog reconcile sources.
+- `uv run python -m pytest tests/capsem-e2e/test_winterfell_fork_lineage.py
+  -q -s` passed with 1 real-VM fork-lineage test, and `uv run python -m pytest
+  tests/capsem-e2e/test_profile_asset_boot.py -q -s` re-passed after extracting
+  the shared Profile V2 asset-backed E2E fixture.
 - `cargo test -p capsem setup::tests` passed with 16 tests.
 - `uv run python -m pytest tests/test_profiles.py` passed with 8 tests.
 
