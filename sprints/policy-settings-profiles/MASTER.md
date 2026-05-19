@@ -25,15 +25,15 @@ completely.
 ## Execution Mode
 
 **Rescue complete; push phase active.** As of 2026-05-18, the profile-v2 branch
-is coherent again and sits `68 ahead / 0 behind` `origin/main` in this
+is coherent again and sits `69 ahead / 0 behind` `origin/main` in this
 worktree. The tracker is now a push board:
 
 - Keep S07a as the active contract sprint until profile catalog install/update,
   mandatory VM profile/revision/package pins, retention, forward-only
   resume/create/fork/persist enforcement, and VM list/status profile-state
   reporting are landed and tested.
-- Do not start S07b implementation until S07a's runtime contract is stable
-  enough for `capsem-admin` to consume it.
+- Do not start S07b implementation until S07a's runtime contract is stable and
+  S07c has made profile asset update/check orchestration production-grade.
 - Do not resume HTTP/CLI/UI/docs lift work until the profile catalog and asset
   readiness semantics are no longer moving underneath those surfaces.
 
@@ -93,19 +93,20 @@ the next starts. The `#` column is the execution index;
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
 | 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, and VM list/status profile-state reporting have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
-| 15 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
-| 16 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
-| 17 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
-| 18 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |
-| 19 | [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md) | Not Started | Make status/debug explain active settings, profiles, derived rules, MCP, skills, profile catalog state, package contracts, asset readiness, and VM pins. |
-| 20 | [S12 - OpenTelemetry Metrics Architecture](S12-observability-plugin.md) | Not Started | Typed per-VM live-metrics architecture: `capsem-proto::metrics`, process-side accumulator, bincode IPC snapshot, service `/metrics/json` + `/metrics`, gateway proxy, UI typed-JSON. Inherits the release-team OTel handoff. |
-| 21 | [S13 - Remote Policy Plugin](S13-remote-policy-plugin.md) | Not Started | Add service plugin for remote policy events/decisions. |
-| 22 | [S14 - Rules UI Components](S14-rules-ui-components.md) | Not Started | One reusable rule editor/renderer + per-type rule blocks (DNS/HTTP/Model/MCP). **The editor is embedded by [S15](S15-confirm-ux.md) for forward-rule decisions -- design it for embedding from the start, pre-fillable from derived rule input.** |
-| 23 | [S15 - Confirm UX (Ask)](S15-confirm-ux.md) | Not Started | Production answer path for `decision = "ask"`: stacked pending-ask queue, UI prompter embedding the S14 rule editor, CLI parity, auto-rule derivation per callback, `policy_confirm_events` integration. Replaces the placeholder confirmer that ships from S06-pre. |
-| 24 | [S16 - Profile UI](S16-profile-ui.md) | Not Started | First-class profile catalog, selector, revision, package/asset readiness, create/fork/delete/edit, and VM create flows. |
-| 25 | [S17 - Security Capabilities UI](S17-security-capabilities-ui.md) | Not Started | Capability controls above canonical rule editing. |
-| 26 | [S19 - Documentation And Site](S19-documentation-and-site.md) | Not Started | Document the engine, corporate deployment, telemetry, remote policy, signed profile catalogs, package contracts, profile-owned VM assets, and `capsem-admin` workflows. |
-| 27 | [S18 - Full Verification And Release Gate](S18-full-verification-release-gate.md) | Not Started | Backend/UI/E2E/install proof. Last sprint. |
+| 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | Not Started | Unify background asset checks, manual `capsem update --assets`, status/debug provenance, structured download logs, and cleanup/create concurrency around Profile V2 asset authority. |
+| 16 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
+| 17 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
+| 18 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, and profile-backed VM create CLI flows. |
+| 19 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |
+| 20 | [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md) | Not Started | Make status/debug explain active settings, profiles, derived rules, MCP, skills, profile catalog state, package contracts, asset readiness, and VM pins. |
+| 21 | [S12 - OpenTelemetry Metrics Architecture](S12-observability-plugin.md) | Not Started | Typed per-VM live-metrics architecture: `capsem-proto::metrics`, process-side accumulator, bincode IPC snapshot, service `/metrics/json` + `/metrics`, gateway proxy, UI typed-JSON. Inherits the release-team OTel handoff. |
+| 22 | [S13 - Remote Policy Plugin](S13-remote-policy-plugin.md) | Not Started | Add service plugin for remote policy events/decisions. |
+| 23 | [S14 - Rules UI Components](S14-rules-ui-components.md) | Not Started | One reusable rule editor/renderer + per-type rule blocks (DNS/HTTP/Model/MCP). **The editor is embedded by [S15](S15-confirm-ux.md) for forward-rule decisions -- design it for embedding from the start, pre-fillable from derived rule input.** |
+| 24 | [S15 - Confirm UX (Ask)](S15-confirm-ux.md) | Not Started | Production answer path for `decision = "ask"`: stacked pending-ask queue, UI prompter embedding the S14 rule editor, CLI parity, auto-rule derivation per callback, `policy_confirm_events` integration. Replaces the placeholder confirmer that ships from S06-pre. |
+| 25 | [S16 - Profile UI](S16-profile-ui.md) | Not Started | First-class profile catalog, selector, revision, package/asset readiness, create/fork/delete/edit, and VM create flows. |
+| 26 | [S17 - Security Capabilities UI](S17-security-capabilities-ui.md) | Not Started | Capability controls above canonical rule editing. |
+| 27 | [S19 - Documentation And Site](S19-documentation-and-site.md) | Not Started | Document the engine, corporate deployment, telemetry, remote policy, signed profile catalogs, package contracts, profile-owned VM assets, and `capsem-admin` workflows. |
+| 28 | [S18 - Full Verification And Release Gate](S18-full-verification-release-gate.md) | Not Started | Backend/UI/E2E/install proof. Last sprint. |
 
 S15 was previously a "Settings UI Redesign" sprint; that scope is now
 folded into the descriptor-driven UI work in S14 / S16 / S17.
@@ -124,6 +125,9 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
 - Do not document or ship corp-admin profile/image/manifest workflows through
   raw Python scripts or hand-edited image settings. S07b must make
   `capsem-admin` the released, bootstrap-installed admin CLI.
+- Do not call profile asset updates production-ready while `capsem update
+  --assets` still uses old asset-manifest authority instead of the Profile V2
+  service asset reconciler.
 - Do not start S06 resolver cutover implementation until S06-pre network and
   confirm wiring gate passes.
 - Do not declare model policy rewrite-complete while `model.request` rewrite is
@@ -276,7 +280,11 @@ Remaining S07a push order:
 5. Status/debug readiness for profile catalog state, installed revisions,
    package contracts, asset verification, VM pins, and drift/revocation.
 
-Immediately after S07a, [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md)
+Immediately after S07a, [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md)
+turns the asset pieces into a production operator workflow: background checks,
+manual `capsem update --assets`, status/debug provenance, structured download
+logs, and cleanup/create concurrency must all use the same Profile V2 asset
+authority. After S07c, [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md)
 turns those contracts into operator tooling: `capsem-admin` creates/validates
 profiles, exports/validates the shared schema artifact, derives image build
 plans from profiles, verifies built images, and generates/checks/signs
@@ -284,7 +292,7 @@ manifests. Python admin internals use Pydantic v2 models for those data shapes,
 with JSON entering through Pydantic validation and leaving through Pydantic
 dumping, not raw nested dicts.
 
-[S07 - UDS service API](S07-uds-service-api.md), S07a, and S07b are the
+[S07 - UDS service API](S07-uds-service-api.md), S07a, S07c, and S07b are the
 public-contract foundation for every later layer. HTTP, CLI, UI, docs, and
 release tooling must consume those shapes rather than inventing independent
 profile/asset/admin semantics.

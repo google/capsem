@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-18, this branch is
-  `68 ahead / 0 behind` `origin/main` in this worktree after the
-  VM profile-payload-hash pinning slice. The rescue
+  `69 ahead / 0 behind` `origin/main` in this worktree after the
+  S07c asset-update orchestration planning slice. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -46,9 +46,12 @@ order:
    stop is telemetry identity: every session must expose the VM id, profile id,
    and user id as a durable session fact before we keep pushing profile
    pinning.
-2. Start S07b only after S07a's runtime contract is stable enough for
-   `capsem-admin` to generate and validate the same shapes.
-3. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
+2. Run S07c after S07a so background asset checks, manual `capsem update
+   --assets`, status/debug provenance, and structured download logs all use the
+   same Profile V2 asset authority.
+3. Start S07b only after S07a/S07c are stable enough for `capsem-admin` to
+   generate, validate, and check the same shapes.
+4. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
    asset contract are no longer moving underneath them.
 
 Winter readiness rules:
@@ -116,22 +119,26 @@ a valid claim -- mark it `[ ]` instead.
     profile revision, profile payload hash, package-contract hash, and pinned
     asset hashes. Remaining work adds manifest source fetch/scheduling, richer
     catalog clients/debug detail, and first-use selected-profile proof.
-15. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
+15. [ ] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
+    -- unify background asset checks, manual `capsem update --assets`,
+    status/debug provenance, structured download logs, and cleanup/create
+    concurrency around Profile V2 asset authority.
+16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
     settings as authority.
-16. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
-17. [ ] [S09 - CLI integration](S09-cli-integration.md)
-18. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
-19. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
-20. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
-21. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
-22. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- rule editor component is consumed by S15.
-23. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
-24. [ ] [S16 - Profile UI](S16-profile-ui.md)
-25. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-26. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
-27. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+17. [ ] [S08 - HTTP gateway API](S08-http-gateway-api.md)
+18. [ ] [S09 - CLI integration](S09-cli-integration.md)
+19. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+20. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+21. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
+22. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
+23. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- rule editor component is consumed by S15.
+24. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+25. [ ] [S16 - Profile UI](S16-profile-ui.md)
+26. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+27. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+28. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
@@ -167,7 +174,7 @@ When this sprint starts, promote the inline brief above into
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
-closed for the active branch: `HEAD...origin/main` is currently `68 ahead / 0
+closed for the active branch: `HEAD...origin/main` is currently `69 ahead / 0
 behind`. The remaining cleanup debt is now S06c plus the final V2 naming
 collapse and release gate. When executed, keep the order:
 
@@ -229,6 +236,10 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   asset declarations. S07a also defines first-use asset download, profile
   revision status, cleanup retention, and persistent VM profile/revision/asset
   pins.
+- **S07c is the asset-update bridge.** The background downloader exists, but
+  `capsem update --assets`, status/debug provenance, structured lifecycle logs,
+  and cleanup/create concurrency must be unified around the Profile V2 service
+  reconciler before profile asset operations are production-grade.
 - **S07b is the admin tooling bridge.** The current Python image builder and
   manifest scripts must be unified under a released `capsem-admin` package.
   Profiles become the source of truth for image build plans and manifest
