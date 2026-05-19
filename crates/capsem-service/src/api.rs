@@ -374,44 +374,6 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
-// ── MCP API types ──────────────────────────────────────────────────
-
-/// Response for GET /mcp/servers.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct McpServerInfoResponse {
-    pub name: String,
-    pub url: String,
-    pub has_bearer_token: bool,
-    pub custom_header_count: usize,
-    pub source: String,
-    pub enabled: bool,
-    pub running: bool,
-    pub tool_count: usize,
-    pub is_stdio: bool,
-}
-
-/// Response for GET /mcp/tools.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct McpToolInfoResponse {
-    pub namespaced_name: String,
-    pub original_name: String,
-    pub description: Option<String>,
-    pub server_name: String,
-    pub annotations: Option<serde_json::Value>,
-    pub pin_hash: Option<String>,
-    pub approved: bool,
-    pub pin_changed: bool,
-}
-
-/// Response for GET /mcp/policy.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct McpPolicyInfoResponse {
-    pub global_policy: Option<String>,
-    pub default_tool_permission: String,
-    pub blocked_servers: Vec<String>,
-    pub tool_permissions: HashMap<String, String>,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct InspectRequest {
     pub sql: String,

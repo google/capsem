@@ -2035,68 +2035,6 @@ fn cleanup_mixed_live_and_dead() {
 }
 
 #[tokio::test]
-async fn mcp_refresh_surfaces_process_failure() {
-    let (state, dir) = make_test_state_with_tempdir();
-    let sock_path = dir.path().join("process.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
-
-    let server = std::thread::spawn(move || {
-        let (mut std_stream, _) = listener.accept().unwrap();
-        capsem_core::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")
-            .unwrap();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async move {
-                let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
-                    channel_from_std(std_stream).unwrap();
-                match rx.recv().await.unwrap() {
-                    ServiceToProcess::McpRefreshTools { id } => {
-                        tx.send(ProcessToService::McpRefreshResult {
-                            id,
-                            success: false,
-                            error: Some("refresh exploded".into()),
-                        })
-                        .await
-                        .unwrap();
-                    }
-                    other => panic!("unexpected command: {other:?}"),
-                }
-            });
-    });
-
-    state.instances.lock().unwrap().insert(
-        "vm-refresh".to_string(),
-        InstanceInfo {
-            id: "vm-refresh".to_string(),
-            pid: std::process::id(),
-            uds_path: sock_path,
-            session_dir: dir.path().join("sessions/vm-refresh"),
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
-            persistent: false,
-            env: None,
-            forked_from: None,
-            base_assets: None,
-            profile_pin: None,
-        },
-    );
-
-    let err = handle_mcp_refresh(State(state)).await.unwrap_err();
-
-    server.join().unwrap();
-    assert_eq!(err.0, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(
-        err.1.contains("refresh exploded"),
-        "unexpected error body: {}",
-        err.1
-    );
-}
-
-#[tokio::test]
 async fn reload_config_returns_structured_failed_session_state() {
     let (state, dir) = make_test_state_with_tempdir();
     let sock_path = dir.path().join("process.sock");
@@ -5248,6 +5186,16 @@ fn test_profile_rule(
     }
 }
 
+fn test_mcp_connector() -> capsem_core::settings_profiles::McpConnectorConfig {
+    capsem_core::settings_profiles::McpConnectorConfig {
+        enabled: true,
+        connector_type: capsem_core::settings_profiles::ConnectorType::Mcp,
+        credential_refs: vec!["github-token".to_string()],
+        allowed_tools: vec!["repo.read".to_string()],
+        rules: capsem_core::settings_profiles::SecurityRules::default(),
+    }
+}
+
 #[tokio::test]
 async fn handle_create_profile_persists_user_profile() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
@@ -5513,6 +5461,138 @@ async fn handle_list_rules_returns_effective_rules_with_canonical_ids() {
     );
     assert_eq!(rule["rule"]["priority"], serde_json::json!(25));
     assert_eq!(rule["editable"], serde_json::json!(true));
+}
+
+#[tokio::test]
+async fn mcp_connectors_api_create_list_delete_roundtrip_updates_user_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("mcp-user", "MCP User")))
+        .await
+        .unwrap();
+
+    let Json(created) = handle_create_mcp_connector(Json(McpConnectorMutationRequest {
+        profile: Some("mcp-user".to_string()),
+        id: "github".to_string(),
+        connector: test_mcp_connector(),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(created["id"], serde_json::json!("github"));
+    assert_eq!(created["source_profile"], serde_json::json!("mcp-user"));
+    assert_eq!(created["editable"], serde_json::json!(true));
+    assert_eq!(
+        created["connector"]["allowed_tools"],
+        serde_json::json!(["repo.read"])
+    );
+
+    let Json(listed) = handle_mcp_connectors(Query(McpConnectorsQuery {
+        profile: Some("mcp-user".to_string()),
+    }))
+    .await
+    .unwrap();
+    assert!(listed["connectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|connector| connector["id"] == serde_json::json!("github")));
+
+    let Json(deleted) = handle_delete_mcp_connector(
+        Path("github".to_string()),
+        Query(McpConnectorsQuery {
+            profile: Some("mcp-user".to_string()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(deleted["connector_id"], serde_json::json!("github"));
+    assert_eq!(deleted["removed"], serde_json::json!(true));
+
+    let Json(after_delete) = handle_mcp_connectors(Query(McpConnectorsQuery {
+        profile: Some("mcp-user".to_string()),
+    }))
+    .await
+    .unwrap();
+    assert!(after_delete["connectors"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn handle_create_mcp_connector_materializes_default_builtin_profile_override() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
+
+    assert!(!user_profile_path.exists());
+    let Json(created) = handle_create_mcp_connector(Json(McpConnectorMutationRequest {
+        profile: None,
+        id: "github".to_string(),
+        connector: test_mcp_connector(),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(created["id"], serde_json::json!("github"));
+    assert!(user_profile_path.exists());
+    let text = std::fs::read_to_string(user_profile_path).unwrap();
+    assert!(text.contains("[mcp.connectors.github]"));
+    assert!(text.contains("allowed_tools = [\"repo.read\"]"));
+}
+
+#[tokio::test]
+async fn handle_create_mcp_connector_rejects_duplicate_direct_connector() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("mcp-user", "MCP User");
+    profile
+        .mcp
+        .connectors
+        .insert("github".to_string(), test_mcp_connector());
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let err = handle_create_mcp_connector(Json(McpConnectorMutationRequest {
+        profile: Some("mcp-user".to_string()),
+        id: "github".to_string(),
+        connector: test_mcp_connector(),
+    }))
+    .await
+    .expect_err("duplicate connector create should fail closed");
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("connector_exists"));
+}
+
+#[tokio::test]
+async fn handle_delete_mcp_connector_rejects_inherited_connector() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut parent = custom_profile("mcp-parent", "MCP Parent");
+    parent
+        .mcp
+        .connectors
+        .insert("github".to_string(), test_mcp_connector());
+    let _ = handle_create_profile(Json(parent)).await.unwrap();
+    let mut child = custom_profile("mcp-child", "MCP Child");
+    child.extends_profile_id = Some("mcp-parent".to_string());
+    let _ = handle_create_profile(Json(child)).await.unwrap();
+
+    let err = handle_delete_mcp_connector(
+        Path("github".to_string()),
+        Query(McpConnectorsQuery {
+            profile: Some("mcp-child".to_string()),
+        }),
+    )
+    .await
+    .expect_err("inherited connector delete should fail closed");
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("connector_is_locked"));
 }
 
 #[tokio::test]

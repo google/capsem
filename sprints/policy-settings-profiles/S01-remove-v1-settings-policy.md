@@ -116,8 +116,9 @@ the new skeleton path.
 - `capsem-process` now loads policy/runtime state from session-attached
   `vm-effective-settings.toml` and converts it into runtime `NetworkPolicy`,
   `DomainPolicy`, `McpPolicy`, and Policy V2 rule maps.
-- `ServiceToProcess::ReloadConfig` and `ServiceToProcess::McpRefreshTools` now
-  rebuild from the same vm-effective attachment path (not global v1 files).
+- `ServiceToProcess::ReloadConfig` rebuilds from the vm-effective attachment
+  path (not global v1 files). The old `McpRefreshTools` management IPC has
+  since been deleted by S07's connector replacement.
 - `/settings`, `/settings/presets`, `/settings/presets/{id}`, and
   `/settings/lint` now operate on typed `settings_profiles` service/profile
   state and no longer call v1 settings tree loader/update/preset/lint paths.

@@ -40,9 +40,9 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_version":   "version",
 
     # MCP bridge
-    "capsem_mcp_servers": "mcp servers",
-    "capsem_mcp_tools":   "mcp tools",
-    "capsem_mcp_call":    "mcp call",
+    "capsem_mcp_connectors": "mcp connectors",
+    "capsem_mcp_add":        "mcp add",
+    "capsem_mcp_delete":     "mcp delete",
 
     # File transfer
     "capsem_read_file":       "cp",
@@ -80,9 +80,6 @@ CLI_ONLY: dict[str, str] = {
     "stop":         "stop the background service daemon",
     "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
 
-    # MCP sub-namespace: not every entry has a tool
-    "mcp policy":   "read-only policy dump; AI callers don't need it",
-    "mcp refresh":  "forces tool re-discovery; AI callers re-list directly",
 }
 
 

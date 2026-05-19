@@ -442,7 +442,7 @@ async fn run_async_main_loop(
         spawn_mcp_aggregator(&mcp_servers, &session_dir, &args.id, &trace_id).await?;
 
     // Persist the aggregator's discovered tool catalog to the cache file
-    // so the service's GET /mcp/tools endpoint can serve it.
+    // for runtime diagnostics and policy reload accounting.
     if let Ok(tools) = aggregator_client.list_tools().await {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

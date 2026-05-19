@@ -93,15 +93,19 @@ a valid claim -- mark it `[ ]` instead.
   foundation slice landed `capsem_proto::metrics` plus
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
-  routes, profile create/fork/update/delete mutation routes, and rules
-  list/get/create/delete/evaluate routes landed. Rules read/evaluate is now
-  hardened with a chained service workflow, generated `http.read`/`http.write`
+  routes, profile create/fork/update/delete mutation routes, Profile V2 MCP
+  connector list/create/delete routes, and rules list/get/create/delete/evaluate
+  routes landed. The old `/mcp/{servers,tools,policy}` and `/mcp/tools/*`
+  service/CLI/capsem-mcp surface is removed rather than shimmed, along with
+  the dead MCP management IPC variants. Rules read/evaluate is
+  now hardened with a chained service workflow, generated `http.read`/`http.write`
   dry-run support, boolean catch-all CEL support, and a bounded large-profile
   evaluation test. Rules create/delete now materialize user-profile overrides
   for default built-ins, reject duplicate user rules, and fail closed on locked
   built-in deletes with `rule_is_builtin`.
   Profile/settings composition has additional service coverage for create-id
-  collisions across locked roots and selected-profile settings saves.
+  collisions across locked roots, selected-profile settings saves, and
+  Profile V2 MCP connector mutation/lock semantics.
   Confirm listing, skills, and full route proof remain open.
 14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
     -- started. Canonical profile catalog/status parser landed in

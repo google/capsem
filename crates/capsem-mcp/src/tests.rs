@@ -449,9 +449,9 @@ fn tool_router_registers_all_tools() {
         "capsem_service_logs",
         "capsem_version",
         "capsem_fork",
-        "capsem_mcp_servers",
-        "capsem_mcp_tools",
-        "capsem_mcp_call",
+        "capsem_mcp_connectors",
+        "capsem_mcp_add",
+        "capsem_mcp_delete",
         // Observability sprint additions (T2/T3):
         "capsem_panics",
         "capsem_triage",

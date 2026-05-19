@@ -213,28 +213,23 @@ Names containing `__` or matching `builtin` are rejected. Empty names are reject
 
 ## Hot reload
 
-The `refresh` operation allows live reconfiguration without restarting the VM:
+`POST /reload-config` allows live reconfiguration without restarting the VM:
 
 1. Service receives `POST /reload-config`
-2. Service sends `McpRefreshTools` IPC to capsem-process
-3. capsem-process reads fresh settings from disk, calls `build_server_list()`
-4. Client sends `refresh` with new definitions to the aggregator
+2. Service sends `ReloadConfig` IPC to capsem-process
+3. capsem-process reads the session-effective Profile V2 state and rebuilds MCP server definitions
+4. capsem-process sends `refresh` with new definitions to the aggregator
 5. Aggregator disconnects all servers, replaces definitions, reconnects
 
 This supports adding, removing, or reconfiguring MCP servers while a VM is running.
 
 ## Service API integration
 
-The service exposes MCP operations through its HTTP API, which capsem-process handles by delegating to the aggregator:
-
-| Service IPC message | capsem-process action |
-|---|---|
-| `McpListServers` | `aggregator.list_servers()` |
-| `McpListTools` | `aggregator.list_tools()` |
-| `McpRefreshTools` | Read settings, `aggregator.refresh(new_servers)` |
-| `McpCallTool` | `aggregator.call_tool(name, args)` |
-
-These IPC messages let the CLI, gateway, and frontend query and control MCP servers through the standard service API path.
+The service management API is Profile V2 connector based. `GET /mcp/connectors`
+lists effective connectors, `POST /mcp/connectors` adds a direct connector to a
+user profile, and `DELETE /mcp/connectors/{id}` removes a direct user connector.
+Tool calls are not exposed through the service management API; guest MCP calls
+flow through the framed MITM endpoint and aggregator runtime.
 
 ## Error handling
 

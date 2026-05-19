@@ -36,7 +36,11 @@ through CLI command families.
   --profile-revision` parsing and request forwarding have landed; remaining
   CLI work must show first-use asset download progress and print the resolved
   profile id/revision and asset hashes.
-- Add `capsem mcp list/add/delete/show`.
+- Add `capsem mcp list/add/delete/show`. Initial Profile V2 connector CLI
+  replacement has landed as `capsem mcp connectors`, `capsem mcp add`, and
+  `capsem mcp delete`; the old `servers/tools/policy/refresh/call` verbs are
+  removed instead of bridged. Remaining S09 work can refine naming/output if
+  the product wants `list/show` aliases.
 - Add `capsem skills list/add/delete/show`.
 - Add `capsem rules list/show/add/remove/evaluate` mirroring the
   [S07 Rules API](S07-uds-service-api.md#rules-api). `capsem rules
@@ -53,7 +57,8 @@ through CLI command families.
 
 ## Coverage Ledger
 
-- Unit/contract: parser tests; `capsem rules evaluate` parser tests
+- Unit/contract: parser tests; `capsem mcp connectors/add/delete` parser tests;
+  `capsem rules evaluate` parser tests
   (subject from `--subject path.json` vs stdin; rejects missing
   callback); profile catalog/revision output golden tests for all
   `ProfileRevisionStatus` enum values; VM create parser tests for `--profile`,

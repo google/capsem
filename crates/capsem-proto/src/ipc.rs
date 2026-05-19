@@ -42,26 +42,6 @@ pub enum ServiceToProcess {
     Suspend { checkpoint_path: String },
     /// Resume VM from checkpoint (warm restore).
     Resume,
-    /// Query MCP aggregator for server list with connection status.
-    McpListServers { id: u64 },
-    /// Query MCP aggregator for discovered tool catalog.
-    McpListTools { id: u64 },
-    /// Tell MCP aggregator to reconnect all servers with fresh config.
-    McpRefreshTools { id: u64 },
-    /// Call an MCP tool via the aggregator subprocess.
-    ///
-    /// `arguments_json` is the JSON-serialized argument object. We send it as
-    /// a `String`, not a `serde_json::Value`, because the IPC transport
-    /// (`tokio-unix-ipc` -> bincode) is not self-describing and bincode
-    /// refuses `serde_json::Value::deserialize` (which calls
-    /// `deserialize_any`). Without this, every `capsem_mcp_call` silently
-    /// dropped the message in capsem-process and the service hit its 60s
-    /// receive timeout.
-    McpCallTool {
-        id: u64,
-        namespaced_name: String,
-        arguments_json: String,
-    },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -112,49 +92,6 @@ pub enum ProcessToService {
     SuspendRequested { id: String },
     /// Guest quiescence complete: filesystem frozen, safe to snapshot.
     SnapshotReady { id: String },
-    /// Response to McpListServers.
-    McpServersResult {
-        id: u64,
-        servers: Vec<McpServerStatus>,
-    },
-    /// Response to McpListTools.
-    McpToolsResult { id: u64, tools: Vec<McpToolStatus> },
-    /// Response to McpRefreshTools.
-    McpRefreshResult {
-        id: u64,
-        success: bool,
-        error: Option<String>,
-    },
-    /// Response to McpCallTool. `result_json` is a JSON-serialized
-    /// `serde_json::Value`, wrapped for the same bincode reason as
-    /// `McpCallTool::arguments_json`.
-    McpCallToolResult {
-        id: u64,
-        result_json: Option<String>,
-        error: Option<String>,
-    },
-}
-
-/// Status of an MCP server as reported through IPC.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct McpServerStatus {
-    pub name: String,
-    pub url: String,
-    pub enabled: bool,
-    pub source: String,
-    pub is_stdio: bool,
-    pub connected: bool,
-    pub tool_count: usize,
-}
-
-/// Status of an MCP tool as reported through IPC.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct McpToolStatus {
-    pub namespaced_name: String,
-    pub original_name: String,
-    pub description: Option<String>,
-    pub server_name: String,
-    pub annotations: Option<serde_json::Value>,
 }
 
 #[cfg(test)]

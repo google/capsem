@@ -77,11 +77,9 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mstop\x1b[0m         Stop the background service
 
 \x1b[36;1;4mMCP:\x1b[0m
-  \x1b[32;1mmcp servers\x1b[0m  List configured MCP servers with connection status
-  \x1b[32;1mmcp tools\x1b[0m    List discovered MCP tools across all servers
-  \x1b[32;1mmcp policy\x1b[0m   Show the merged MCP policy
-  \x1b[32;1mmcp refresh\x1b[0m  Re-discover tools from all MCP servers
-  \x1b[32;1mmcp call\x1b[0m     Call an MCP tool
+  \x1b[32;1mmcp connectors\x1b[0m List Profile V2 MCP connectors
+  \x1b[32;1mmcp add\x1b[0m        Add a Profile V2 MCP connector
+  \x1b[32;1mmcp delete\x1b[0m     Delete a Profile V2 MCP connector
 
 \x1b[36;1;4mProfiles:\x1b[0m
   \x1b[32;1mprofile reconcile-catalog\x1b[0m Apply a signed profile catalog manifest
@@ -135,25 +133,45 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum McpCommands {
-    /// List configured MCP servers with connection status
-    Servers,
-    /// List discovered MCP tools across all servers
-    Tools {
-        /// Filter by server name
+    /// List Profile V2 MCP connectors
+    Connectors {
+        /// Profile id to inspect
         #[arg(long)]
-        server: Option<String>,
+        profile: Option<String>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
     },
-    /// Show the merged MCP policy
-    Policy,
-    /// Re-discover tools from all MCP servers
-    Refresh,
-    /// Call an MCP tool by namespaced name
-    Call {
-        /// Namespaced tool name (e.g. github__search_repos)
-        name: String,
-        /// JSON arguments
-        #[arg(long, default_value = "{}")]
-        args: String,
+    /// Add a Profile V2 MCP connector to a user profile
+    Add {
+        /// Connector id
+        id: String,
+        /// Profile id to mutate; defaults to the selected profile
+        #[arg(long)]
+        profile: Option<String>,
+        /// Store the connector disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Connector type: mcp, repository, or custom
+        #[arg(long = "type", default_value = "mcp")]
+        connector_type: String,
+        /// Credential reference id; repeat for multiple credentials
+        #[arg(long = "credential-ref")]
+        credential_refs: Vec<String>,
+        /// Allowed tool id; repeat for multiple tools
+        #[arg(long = "allowed-tool")]
+        allowed_tools: Vec<String>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a direct user Profile V2 MCP connector
+    Delete {
+        /// Connector id
+        id: String,
+        /// Profile id to mutate; defaults to the selected profile
+        #[arg(long)]
+        profile: Option<String>,
     },
 }
 
@@ -770,10 +788,6 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                 ProcessToService::ShutdownRequested { .. }
                 | ProcessToService::SuspendRequested { .. }
                 | ProcessToService::SnapshotReady { .. }
-                | ProcessToService::McpServersResult { .. }
-                | ProcessToService::McpToolsResult { .. }
-                | ProcessToService::McpRefreshResult { .. }
-                | ProcessToService::McpCallToolResult { .. }
                 | ProcessToService::MetricsSnapshot { .. } => {}
             }
         }
@@ -1570,88 +1584,97 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Mcp(McpCommands::Servers) => {
-            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers").await?;
-            let servers = resp.into_result()?;
-            if servers.is_empty() {
-                println!("No MCP servers configured.");
-            } else {
-                #[allow(clippy::print_literal)]
-                {
-                    println!(
-                        "{:<20} {:<8} {:<10} {:<8} {}",
-                        "NAME", "ENABLED", "SOURCE", "TOOLS", "URL"
-                    );
-                }
-                for s in &servers {
-                    println!(
-                        "{:<20} {:<8} {:<10} {:<8} {}",
-                        s["name"].as_str().unwrap_or("-"),
-                        if s["enabled"].as_bool().unwrap_or(false) {
-                            "yes"
-                        } else {
-                            "no"
-                        },
-                        s["source"].as_str().unwrap_or("-"),
-                        s["tool_count"].as_u64().unwrap_or(0),
-                        s["url"].as_str().unwrap_or("-"),
-                    );
-                }
+        Commands::Mcp(McpCommands::Connectors { profile, json }) => {
+            let mut path = "/mcp/connectors".to_string();
+            if let Some(profile) = profile {
+                path.push_str(&format!("?profile={}", urlencoding::encode(&profile)));
             }
-        }
-        Commands::Mcp(McpCommands::Tools { server }) => {
-            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/tools").await?;
-            let mut tools = resp.into_result()?;
-            if let Some(ref server_filter) = server {
-                tools.retain(|t| t["server_name"].as_str() == Some(server_filter));
-            }
-            if tools.is_empty() {
-                println!("No MCP tools discovered.");
-            } else {
-                #[allow(clippy::print_literal)]
-                {
-                    println!(
-                        "{:<40} {:<20} {:<10} {}",
-                        "TOOL", "SERVER", "APPROVED", "DESCRIPTION"
-                    );
-                }
-                for t in &tools {
-                    let desc = t["description"].as_str().unwrap_or("-");
-                    let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
-                    println!(
-                        "{:<40} {:<20} {:<10} {}",
-                        t["namespaced_name"].as_str().unwrap_or("-"),
-                        t["server_name"].as_str().unwrap_or("-"),
-                        if t["approved"].as_bool().unwrap_or(false) {
-                            "yes"
-                        } else {
-                            "no"
-                        },
-                        short_desc,
-                    );
-                }
-            }
-        }
-        Commands::Mcp(McpCommands::Policy) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/mcp/policy").await?;
-            let policy = resp.into_result()?;
-            println!("{}", serde_json::to_string_pretty(&policy)?);
-        }
-        Commands::Mcp(McpCommands::Refresh) => {
-            let resp: ApiResponse<serde_json::Value> = client
-                .post("/mcp/tools/refresh", &serde_json::json!({}))
-                .await?;
-            resp.into_result()?;
-            println!("MCP tools refreshed.");
-        }
-        Commands::Mcp(McpCommands::Call { name, args }) => {
-            let arguments: serde_json::Value =
-                serde_json::from_str(args).context("invalid JSON arguments")?;
-            let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/mcp/tools/{}/call", name), &arguments)
-                .await?;
+            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
             let result = resp.into_result()?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let connectors = result["connectors"].as_array().cloned().unwrap_or_default();
+                if connectors.is_empty() {
+                    println!("No MCP connectors configured.");
+                } else {
+                    #[allow(clippy::print_literal)]
+                    {
+                        println!(
+                            "{:<24} {:<8} {:<12} {:<10} {}",
+                            "ID", "ENABLED", "TYPE", "SOURCE", "ALLOWED_TOOLS"
+                        );
+                    }
+                    for connector in connectors {
+                        let config = &connector["connector"];
+                        let allowed = config["allowed_tools"]
+                            .as_array()
+                            .map(|tools| {
+                                tools
+                                    .iter()
+                                    .filter_map(serde_json::Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            })
+                            .unwrap_or_default();
+                        println!(
+                            "{:<24} {:<8} {:<12} {:<10} {}",
+                            connector["id"].as_str().unwrap_or("-"),
+                            if config["enabled"].as_bool().unwrap_or(false) {
+                                "yes"
+                            } else {
+                                "no"
+                            },
+                            config["connector_type"].as_str().unwrap_or("-"),
+                            connector["source_profile"].as_str().unwrap_or("-"),
+                            allowed,
+                        );
+                    }
+                }
+            }
+        }
+        Commands::Mcp(McpCommands::Add {
+            id,
+            profile,
+            disabled,
+            connector_type,
+            credential_refs,
+            allowed_tools,
+            json,
+        }) => {
+            let mut body = serde_json::json!({
+                "id": id,
+                "enabled": !*disabled,
+                "connector_type": connector_type,
+                "credential_refs": credential_refs,
+                "allowed_tools": allowed_tools,
+            });
+            if let Some(profile) = profile {
+                body["profile"] = serde_json::json!(profile);
+            }
+            let resp: ApiResponse<serde_json::Value> =
+                client.post("/mcp/connectors", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!(
+                    "MCP connector added: {}",
+                    result["id"].as_str().unwrap_or("-")
+                );
+            }
+        }
+        Commands::Mcp(McpCommands::Delete { id, profile }) => {
+            let mut path = format!("/mcp/connectors/{}", urlencoding::encode(&id));
+            if let Some(profile) = profile {
+                path.push_str(&format!("?profile={}", urlencoding::encode(&profile)));
+            }
+            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
+            let result = resp.into_result()?;
+            println!(
+                "MCP connector deleted: {}",
+                result["connector_id"].as_str().unwrap_or(&id)
+            );
         }
         Commands::Profile(ProfileCommands::ReconcileCatalog {
             manifest,
@@ -2624,6 +2647,69 @@ mod tests {
                 assert!(json);
             }
             _ => panic!("expected profile revisions"),
+        }
+    }
+
+    #[test]
+    fn parse_mcp_connectors_add_delete() {
+        let cli = Cli::parse_from([
+            "capsem",
+            "mcp",
+            "connectors",
+            "--profile",
+            "coding",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Mcp(McpCommands::Connectors { profile, json }) => {
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert!(json);
+            }
+            _ => panic!("expected mcp connectors"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "mcp",
+            "add",
+            "github",
+            "--profile",
+            "coding",
+            "--credential-ref",
+            "github-token",
+            "--allowed-tool",
+            "repo.read",
+            "--disabled",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Mcp(McpCommands::Add {
+                id,
+                profile,
+                disabled,
+                connector_type,
+                credential_refs,
+                allowed_tools,
+                json,
+            }) => {
+                assert_eq!(id, "github");
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert!(disabled);
+                assert_eq!(connector_type, "mcp");
+                assert_eq!(credential_refs, vec!["github-token"]);
+                assert_eq!(allowed_tools, vec!["repo.read"]);
+                assert!(json);
+            }
+            _ => panic!("expected mcp add"),
+        }
+
+        let cli = Cli::parse_from(["capsem", "mcp", "delete", "github", "--profile", "coding"]);
+        match cli.command.unwrap() {
+            Commands::Mcp(McpCommands::Delete { id, profile }) => {
+                assert_eq!(id, "github");
+                assert_eq!(profile.as_deref(), Some("coding"));
+            }
+            _ => panic!("expected mcp delete"),
         }
     }
 

@@ -68,9 +68,9 @@ telemetry) without having to drive `capsem_exec` by hand.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `capsem_mcp_servers` | -- | List configured MCP servers with connection status and tool counts. |
-| `capsem_mcp_tools` | `server?` | List discovered MCP tools across all connected servers. Filter by `server` name to scope to one. |
-| `capsem_mcp_call` | `name`, `arguments?` | Call an MCP tool by namespaced name (e.g. `github__search_repos`) with JSON arguments. |
+| `capsem_mcp_connectors` | `profile?` | List Profile V2 MCP connectors for the selected or requested profile. |
+| `capsem_mcp_add` | `id`, `profile?`, `disabled?`, `type?`, `credential_refs?`, `allowed_tools?` | Add a Profile V2 MCP connector to a user profile. |
+| `capsem_mcp_delete` | `id`, `profile?` | Delete a direct user Profile V2 MCP connector. |
 
 ## Diagnostics
 

@@ -5819,301 +5819,270 @@ async fn handle_corp_config(
 }
 
 // ---------------------------------------------------------------------------
-// MCP API Handlers
+// Profile V2 MCP connector API handlers
 // ---------------------------------------------------------------------------
 
-/// GET /mcp/servers -- list configured MCP servers with status.
-async fn handle_mcp_servers() -> Json<serde_json::Value> {
-    use capsem_core::mcp::policy::McpUserConfig;
-    use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
-
-    let user_mcp = current_mcp_user_config_from_profiles().unwrap_or_default();
-    let corp_mcp = McpUserConfig::default();
-
-    // Include the "local" builtin server if the binary exists.
-    let builtin_bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
-    let servers = build_server_list_with_builtin(
-        &user_mcp,
-        &corp_mcp,
-        builtin_bin.as_deref(),
-        std::collections::HashMap::new(),
-    );
-    let cache = load_tool_cache();
-
-    let resp: Vec<api::McpServerInfoResponse> = servers
-        .iter()
-        .map(|s| {
-            let tool_count = cache.iter().filter(|t| t.server_name == s.name).count();
-            api::McpServerInfoResponse {
-                name: s.name.clone(),
-                url: s.url.clone(),
-                has_bearer_token: s.bearer_token.is_some(),
-                custom_header_count: s.headers.len(),
-                source: s.source.clone(),
-                enabled: s.enabled,
-                running: false, // Config-level only; runtime status requires IPC.
-                tool_count,
-                is_stdio: s.is_stdio(),
-            }
-        })
-        .collect();
-    Json(serde_json::to_value(resp).unwrap_or_default())
+#[derive(Debug, Deserialize)]
+struct McpConnectorsQuery {
+    #[serde(default)]
+    profile: Option<String>,
 }
 
-/// GET /mcp/tools -- list discovered MCP tools with pin/approval status.
-async fn handle_mcp_tools() -> Json<serde_json::Value> {
-    use capsem_core::mcp::load_tool_cache;
-
-    let cache = load_tool_cache();
-    let resp: Vec<api::McpToolInfoResponse> = cache
-        .iter()
-        .map(|entry| {
-            api::McpToolInfoResponse {
-                namespaced_name: entry.namespaced_name.clone(),
-                original_name: entry.original_name.clone(),
-                description: entry.description.clone(),
-                server_name: entry.server_name.clone(),
-                annotations: entry.annotations.as_ref().map(|a| a.to_mcp_json()),
-                pin_hash: Some(entry.pin_hash.clone()),
-                approved: entry.approved,
-                pin_changed: false, // Would need live catalog comparison.
-            }
-        })
-        .collect();
-    Json(serde_json::to_value(resp).unwrap_or_default())
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpConnectorMutationRequest {
+    #[serde(default, alias = "profile_id")]
+    profile: Option<String>,
+    id: String,
+    #[serde(flatten)]
+    connector: capsem_core::settings_profiles::McpConnectorConfig,
 }
 
-/// GET /mcp/policy -- return the merged MCP policy.
-async fn handle_mcp_policy() -> Result<Json<serde_json::Value>, AppError> {
-    use capsem_core::mcp::policy::McpUserConfig;
-
-    let user_mcp = current_mcp_user_config_from_profiles().unwrap_or_default();
-    let corp_mcp = McpUserConfig::default();
-
-    let resp = api::McpPolicyInfoResponse {
-        global_policy: user_mcp.global_policy.clone(),
-        default_tool_permission: user_mcp
-            .default_tool_permission
-            .map(|d| format!("{d:?}").to_lowercase())
-            .unwrap_or_else(|| "allow".into()),
-        blocked_servers: {
-            let policy = user_mcp.to_policy(&corp_mcp);
-            policy.blocked_servers
-        },
-        tool_permissions: user_mcp
-            .tool_permissions
-            .iter()
-            .map(|(k, v)| (k.clone(), format!("{v:?}").to_lowercase()))
-            .collect(),
-    };
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+fn validate_mcp_connector_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("connector id cannot be empty".to_string());
+    }
+    if id
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_' | '.'))
+    {
+        Ok(())
+    } else {
+        Err(
+            "connector id may only contain lowercase letters, digits, '-', '_', and '.'"
+                .to_string(),
+        )
+    }
 }
 
-fn current_mcp_user_config_from_profiles() -> Result<capsem_core::mcp::policy::McpUserConfig, String>
-{
-    let (_, _, effective, _) = load_service_profiles_state()?;
-    Ok(mcp_user_config_from_effective(&effective))
+fn profile_has_mcp_connector(
+    profile: &capsem_core::settings_profiles::Profile,
+    connector_id: &str,
+) -> bool {
+    profile.mcp.connectors.contains_key(connector_id)
 }
 
-fn mcp_user_config_from_effective(
-    effective: &capsem_core::settings_profiles::EffectiveVmSettings,
-) -> capsem_core::mcp::policy::McpUserConfig {
-    use capsem_core::mcp::policy::{McpUserConfig, ToolDecision};
-    use capsem_core::settings_profiles::{CapabilityMode, RuleDecision};
+fn mcp_connector_owner<'a>(
+    catalog: &'a capsem_core::settings_profiles::ProfileCatalog,
+    profile_id: &str,
+    connector_id: &str,
+) -> Result<Option<&'a capsem_core::settings_profiles::ProfileRecord>, AppError> {
+    let chain = capsem_core::settings_profiles::resolve_ancestor_chain(catalog, profile_id)
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("resolve profile chain: {e}"),
+            )
+        })?;
+    Ok(chain
+        .into_iter()
+        .filter(|record| profile_has_mcp_connector(&record.profile, connector_id))
+        .last())
+}
 
-    let default_tool_permission = Some(match effective.security.value.capabilities.mcp_tools {
-        CapabilityMode::Allow | CapabilityMode::Audit => ToolDecision::Allow,
-        CapabilityMode::Ask => ToolDecision::Warn,
-        CapabilityMode::Block => ToolDecision::Block,
-    });
+fn mcp_connector_json(
+    id: &str,
+    connector: &capsem_core::settings_profiles::McpConnectorConfig,
+    owner: Option<&capsem_core::settings_profiles::ProfileRecord>,
+    selected_profile_id: &str,
+) -> serde_json::Value {
+    let source_profile = owner.map(|record| record.profile.id.as_str());
+    let source = owner.map(|record| record.source.as_str());
+    let direct = source_profile == Some(selected_profile_id);
+    let editable = direct
+        && owner
+            .map(|record| record.source == capsem_core::settings_profiles::ProfileSource::User)
+            .unwrap_or(false);
+    json!({
+        "id": id,
+        "source_profile": source_profile,
+        "source": source,
+        "direct": direct,
+        "editable": editable,
+        "connector": connector,
+    })
+}
 
-    let server_enabled = effective
+/// GET /mcp/connectors -- list effective Profile V2 MCP connectors.
+async fn handle_mcp_connectors(
+    Query(query): Query<McpConnectorsQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = query
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+        &settings,
+        Some(&target_profile_id),
+    )
+    .map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("resolve effective profile '{target_profile_id}': {e}"),
+        )
+    })?;
+
+    let mut connectors = effective
         .mcp
         .value
         .connectors
         .iter()
-        .map(|(id, connector)| (id.clone(), connector.enabled))
-        .collect::<HashMap<_, _>>();
+        .map(|(id, connector)| {
+            let owner = mcp_connector_owner(&catalog, &effective.profile_id, id)?;
+            Ok(mcp_connector_json(
+                id,
+                connector,
+                owner,
+                &effective.profile_id,
+            ))
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    connectors.sort_by(|left, right| {
+        left["id"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["id"].as_str().unwrap_or_default())
+    });
 
-    let mut tool_permissions = HashMap::new();
-    for rule in &effective.rules {
-        if rule.derived || rule.callback != "mcp.request" {
-            continue;
-        }
-        let Some(tool_name) = mcp_tool_name_from_condition(&rule.condition) else {
-            continue;
-        };
-        let decision = match rule.decision {
-            RuleDecision::Allow => ToolDecision::Allow,
-            RuleDecision::Ask => ToolDecision::Warn,
-            RuleDecision::Block => ToolDecision::Block,
-            RuleDecision::Rewrite => continue,
-        };
-        tool_permissions.entry(tool_name).or_insert(decision);
-    }
-
-    McpUserConfig {
-        global_policy: None,
-        default_tool_permission,
-        health_check_interval_secs: None,
-        servers: Vec::new(),
-        server_enabled,
-        tool_permissions,
-    }
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "profile_id": effective.profile_id,
+        "connectors": connectors,
+    })))
 }
 
-fn mcp_tool_name_from_condition(condition: &str) -> Option<String> {
-    let condition = condition.trim();
-    let after_name = condition.strip_prefix("tool.name")?;
-    let eq_idx = after_name.find("==")?;
-    let value = after_name[eq_idx + 2..].trim_start();
-    let mut chars = value.chars();
-    let quote = chars.next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
+/// POST /mcp/connectors -- create a direct Profile V2 MCP connector.
+async fn handle_create_mcp_connector(
+    Json(request): Json<McpConnectorMutationRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_mcp_connector_id(&request.id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = request
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile '{target_profile_id}' not found"),
+        )
+    })?;
+    if profile_has_mcp_connector(&selected.profile, &request.id) {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!("connector_exists: mcp.connectors.{}", request.id),
+        ));
     }
-    let tail = &value[quote.len_utf8()..];
-    let end = tail.find(quote)?;
-    if !tail[end + quote.len_utf8()..].trim().is_empty() {
-        return None;
+
+    let mut profile = selected.profile.clone();
+    profile
+        .mcp
+        .connectors
+        .insert(request.id.clone(), request.connector);
+    profile.validate().map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("profile validation failed: {e}"),
+        )
+    })?;
+    save_mutated_rule_profile(&settings, selected.source, profile)?;
+
+    let Json(listed) = handle_mcp_connectors(Query(McpConnectorsQuery {
+        profile: Some(target_profile_id),
+    }))
+    .await?;
+    let connector = listed["connectors"]
+        .as_array()
+        .and_then(|connectors| {
+            connectors
+                .iter()
+                .find(|connector| connector["id"] == serde_json::json!(request.id))
+                .cloned()
+        })
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "created MCP connector '{}' was not visible after profile save",
+                    request.id
+                ),
+            )
+        })?;
+    Ok(Json(connector))
+}
+
+/// DELETE /mcp/connectors/{id} -- remove a direct user Profile V2 MCP connector.
+async fn handle_delete_mcp_connector(
+    Path(connector_id): Path<String>,
+    Query(query): Query<McpConnectorsQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_mcp_connector_id(&connector_id).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = query
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile '{target_profile_id}' not found"),
+        )
+    })?;
+    if selected.source != capsem_core::settings_profiles::ProfileSource::User {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "connector_is_locked: profile '{}' is locked ({:?})",
+                selected.profile.id, selected.source
+            ),
+        ));
     }
-    let name = tail[..end].trim();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
+    if !profile_has_mcp_connector(&selected.profile, &connector_id) {
+        let owner = mcp_connector_owner(&catalog, &target_profile_id, &connector_id)?;
+        return match owner {
+            Some(owner) => Err(AppError(
+                StatusCode::CONFLICT,
+                format!(
+                    "connector_is_locked: connector '{}' is inherited from profile '{}'",
+                    connector_id, owner.profile.id
+                ),
+            )),
+            None => Err(AppError(
+                StatusCode::NOT_FOUND,
+                format!("MCP connector '{connector_id}' not found"),
+            )),
+        };
     }
+
+    let mut profile = selected.profile.clone();
+    profile.mcp.connectors.remove(&connector_id);
+    profile.validate().map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("profile validation failed: {e}"),
+        )
+    })?;
+    capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "profile_id": target_profile_id,
+        "connector_id": connector_id,
+        "removed": true,
+    })))
 }
 
 /// GET /policy-hook/spec -- export the Policy Hook Spec0 OpenAPI contract.
 async fn handle_policy_hook_spec() -> Json<serde_json::Value> {
     Json(capsem_core::net::policy_hook_spec::policy_hook_openapi_document())
-}
-
-/// POST /mcp/tools/refresh -- reload MCP servers from config.
-async fn handle_mcp_refresh(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    // Send McpRefreshTools to all running instances.
-    let uds_paths = {
-        let instances = state.instances.lock().unwrap();
-        instances
-            .values()
-            .map(|info| info.uds_path.clone())
-            .collect::<Vec<_>>()
-    };
-    let results = futures::future::join_all(uds_paths.iter().map(|uds_path| {
-        let id = state.next_job_id();
-        async move {
-            match send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30))
-                .await
-            {
-                Ok(ProcessToService::McpRefreshResult {
-                    success: true,
-                    error: _,
-                    ..
-                }) => None,
-                Ok(ProcessToService::McpRefreshResult {
-                    success: false,
-                    error,
-                    ..
-                }) => Some(error.unwrap_or_else(|| "MCP refresh failed".to_string())),
-                Ok(_) => Some("unexpected MCP refresh response".to_string()),
-                Err(e) => Some(e),
-            }
-        }
-    }))
-    .await;
-    let failures: Vec<String> = results.into_iter().flatten().collect();
-    if failures.is_empty() {
-        Ok(Json(
-            serde_json::json!({"success": true, "instances": uds_paths.len()}),
-        ))
-    } else {
-        Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "failed to refresh MCP tools in some instances: {}",
-                failures.join(", ")
-            ),
-        ))
-    }
-}
-
-/// POST /mcp/tools/:name/approve -- approve a tool (mark approved in cache).
-async fn handle_mcp_approve(Path(name): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    use capsem_core::mcp::{load_tool_cache, save_tool_cache};
-
-    let mut cache = load_tool_cache();
-    let found = cache.iter_mut().find(|e| e.namespaced_name == name);
-    match found {
-        Some(entry) => {
-            entry.approved = true;
-            save_tool_cache(&cache).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-            Ok(Json(serde_json::json!({"approved": true})))
-        }
-        None => Err(AppError(
-            StatusCode::NOT_FOUND,
-            format!("tool not found: {name}"),
-        )),
-    }
-}
-
-/// POST /mcp/tools/:name/call -- call an MCP tool via a running VM's aggregator.
-async fn handle_mcp_call(
-    State(state): State<Arc<ServiceState>>,
-    Path(name): Path<String>,
-    Json(arguments): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    // Find any running instance to route the call through.
-    let uds_path = {
-        let instances = state.instances.lock().unwrap();
-        instances.values().next().map(|i| i.uds_path.clone())
-    };
-    let uds_path = uds_path.ok_or_else(|| {
-        AppError(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no running sessions".into(),
-        )
-    })?;
-
-    let arguments_json = serde_json::to_string(&arguments)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
-    let msg = ServiceToProcess::McpCallTool {
-        id: state.next_job_id(),
-        namespaced_name: name.clone(),
-        arguments_json,
-    };
-    let resp = send_ipc_command(&uds_path, msg, Some(60))
-        .await
-        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
-
-    match resp {
-        ProcessToService::McpCallToolResult {
-            result_json, error, ..
-        } => {
-            if let Some(err) = error {
-                Err(AppError(StatusCode::BAD_GATEWAY, err))
-            } else {
-                let result = match result_json {
-                    Some(s) => serde_json::from_str(&s).map_err(|e| {
-                        AppError(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            format!("bad result_json from process: {e}"),
-                        )
-                    })?,
-                    None => serde_json::Value::Null,
-                };
-                Ok(Json(result))
-            }
-        }
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response".into(),
-        )),
-    }
 }
 
 async fn handle_inspect(
@@ -7938,13 +7907,12 @@ async fn main() -> Result<()> {
         .route("/setup/assets/reconcile", post(handle_asset_reconcile))
         .route("/setup/assets/cleanup", post(handle_asset_cleanup))
         .route("/setup/corp-config", post(handle_corp_config))
-        .route("/mcp/servers", get(handle_mcp_servers))
-        .route("/mcp/tools", get(handle_mcp_tools))
-        .route("/mcp/policy", get(handle_mcp_policy))
         .route("/policy-hook/spec", get(handle_policy_hook_spec))
-        .route("/mcp/tools/refresh", post(handle_mcp_refresh))
-        .route("/mcp/tools/{name}/approve", post(handle_mcp_approve))
-        .route("/mcp/tools/{name}/call", post(handle_mcp_call))
+        .route(
+            "/mcp/connectors",
+            get(handle_mcp_connectors).post(handle_create_mcp_connector),
+        )
+        .route("/mcp/connectors/{id}", delete(handle_delete_mcp_connector))
         .route("/history/{id}", get(handle_history))
         .route("/history/{id}/processes", get(handle_history_processes))
         .route("/history/{id}/counts", get(handle_history_counts))

@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UDS Rules API before mirroring it through the HTTP gateway.
 - Added Profile V2 service tests proving profile creation cannot shadow locked
   profile roots and settings saves follow the currently selected user profile.
+- Changed MCP management to use Profile V2 connectors: `/mcp/connectors` now
+  lists/adds connectors, `/mcp/connectors/{id}` deletes direct user connectors,
+  and the old `/mcp/{servers,tools,policy}` plus `/mcp/tools/*` service/CLI
+  surface, capsem-mcp debug tools, and service-to-process management IPC are
+  removed.
 - Added typed Profile V2 package/tool contracts and per-architecture VM asset
   declarations, including canonical BLAKE3 hash validation, path-traversal
   rejection, VM-effective serialization, and inherited resolver merge coverage.
