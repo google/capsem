@@ -2,8 +2,9 @@
 
 ## Goal
 
-Unify the Python image/profile/manifest tooling into a proper `capsem-admin`
-Python CLI package, installed by bootstrap and shipped in release packages.
+Unify the Python settings/profile/image/manifest tooling into a proper
+`capsem-admin` Python CLI package, installed by bootstrap and shipped in release
+packages.
 
 The source of truth becomes the signed profile payload. Image build inputs,
 package lists, tool versions, asset declarations, and manifest entries are
@@ -15,9 +16,11 @@ admin workflow.
 
 S07a defines the product trust model: the signed manifest lists profile
 revisions, and each signed profile declares the package/tool contract and VM
-assets it needs. S07b provides the operator tooling that makes that model
-practical:
+assets it needs. [S07d](S07d-service-settings-schema-admin-contract.md) defines
+the equivalent admin contract for service settings. S07b provides the operator
+tooling that makes both models practical:
 
+- Corp admins can validate service settings without raw dict/TOML spelunking.
 - Corp admins can create and validate profile payloads.
 - Corp admins can derive image build plans from profile payloads.
 - Corp admins can build images, verify the built guest satisfies the profile,
@@ -31,6 +34,9 @@ practical:
 - `capsem-admin` is the public Python admin CLI and package identity. It is
   packaged with `uv`, installed by bootstrap, and included in macOS/Linux
   release payloads.
+- `capsem-admin` consumes the S07d service-settings schema and Pydantic models.
+  It must not parse service settings as untyped raw JSON/TOML beyond the
+  immediate Pydantic validation boundary.
 - The existing Python builder modules may be reused internally, but public
   workflows move under `capsem-admin`. Do not preserve a legacy public
   `capsem-builder` compatibility CLI unless the user explicitly reopens that
@@ -53,6 +59,10 @@ capsem-admin profile init <profile-id>
 capsem-admin profile validate profile.toml
 capsem-admin profile schema --out schemas/capsem.profile.v2.schema.json
 capsem-admin profile derive-image profile.toml --out build/profile-image/
+
+capsem-admin settings validate service.toml
+capsem-admin settings schema --out schemas/capsem.service-settings.v2.schema.json
+capsem-admin settings doctor service.toml
 
 capsem-admin image plan profile.toml
 capsem-admin image build profile.toml --out assets/

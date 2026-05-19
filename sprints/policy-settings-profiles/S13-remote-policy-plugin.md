@@ -4,6 +4,14 @@
 
 Add a service-scoped remote policy plugin.
 
+## Dependency On S08a
+
+[S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
+must define the boundary between event streaming/detection and synchronous
+policy decisions before this plugin ships. A remote plugin may receive
+normalized events for detection or return decisions for live policy callbacks,
+but those are different contracts and must not be conflated.
+
 ## Tasks
 
 - Add service settings for endpoint, auth, timeout, and failure behavior.

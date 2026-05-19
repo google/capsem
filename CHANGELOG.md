@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status/body passthrough for malformed profile creation, locked
   skill/MCP/rule mutations, invalid rule evaluation, asset cleanup while
   updating, and revoked profile revision install.
+- Added regroup sprint specs for service-settings schema/admin parity and the
+  policy-rule versus detection/Sigma architecture decision before CLI,
+  telemetry, plugins, rule UI, and Confirm UX continue.
 - Added Profile V2 settings/profile provenance to the redacted service debug
   report, including selected profile, profile roots, effective VM summary,
   resolver trace summary, and credential-id-only reporting.

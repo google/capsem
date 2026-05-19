@@ -19,6 +19,10 @@ install.
 S08 is not closed yet. Remaining scope is the S15 confirm resolution routes and
 stream when S15 makes those production routes real.
 
+Regroup note: S08a now owns the wider rule/detection architecture question.
+Gateway rule routes continue to mirror the current Capsem-native policy-rule
+contract until S08a changes that contract explicitly.
+
 ## Goal
 
 Wire HTTP API to the already-tested UDS behavior, including profile catalog

@@ -33,6 +33,15 @@ The placeholder confirmer remains as a fallback (e.g. for headless
 benchmarks and dev VMs where no operator is available) but ceases to
 be the production answer path the moment S15 lands.
 
+## Dependency On S08a
+
+[S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
+must settle the rule taxonomy before Confirm promotion lands. `accept` and
+`deny` resolve one pending ask. `promote-allow` and `promote-deny` create
+synchronous Capsem policy rules unless S08a explicitly decides otherwise.
+Detection findings may inform or annotate prompts, but S15 must not silently
+turn detections into blocking policy.
+
 ## Hard constraints
 
 - **No duplicated rule editor.** The Confirm prompter embeds the

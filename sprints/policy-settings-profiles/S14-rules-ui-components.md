@@ -5,6 +5,14 @@
 Replace raw CEL as the primary rules UI with one reusable rule editor/renderer
 that powers per-type rule blocks.
 
+## Dependency On S08a
+
+[S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
+must decide whether this sprint edits only synchronous Capsem policy rules or
+also introduces detection-rule/finding views. Until then, S14's stable
+commitment is the shared policy-rule editor consumed by S15; detection UX is
+explicitly unresolved.
+
 ## Tasks
 
 - Build a **single shared rule editor** component (not one editor per rule type).

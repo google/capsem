@@ -16,8 +16,8 @@ is updated with the concrete branch and worktree path, verified by
   trusting any prose in this file** -- prose drifts; git history
   does not.
 - **Current git posture:** as of 2026-05-19, this branch is
-  expected to be `91 ahead / 0 behind` `origin/main` in this worktree after the
-  S08 adversarial typed-error gateway proof commit. The rescue
+  expected to be `92 ahead / 0 behind` `origin/main` in this worktree after the
+  S07d/S08a regroup planning commit. The rescue
   reconciliation is closed for the active profile sprint; do not
   resurrect the old "main is way ahead" warning unless `git
   rev-list --left-right --count HEAD...origin/main` says it is true
@@ -49,16 +49,25 @@ order:
 2. Run S07c after S07a so background asset checks, manual `capsem update
    --assets`, status/debug provenance, and structured download logs all use the
    same Profile V2 asset authority.
-3. Start S07b only after S07a/S07c are stable enough for `capsem-admin` to
-   generate, validate, and check the same shapes.
-4. Resume public-surface work in S07/S08/S09/S16 once the profile catalog and
-   asset contract are no longer moving underneath them.
+3. Run S07d before S07b so service settings have a formal schema, Pydantic v2
+   models, Rust/Python fixture parity, and `capsem-admin settings` hooks.
+4. Start S07b only after S07d gives `capsem-admin` both profile and service
+   settings contracts to consume.
+5. Run S08a before S11/S12/S13/S14/S15 so logging, telemetry, plugins, rule UI,
+   and Confirm UX do not freeze the wrong policy/detection abstraction.
+6. Resume public-surface work in S09/S16 once the profile/settings/rule
+   contracts are no longer moving underneath them.
 
 Winter readiness rules:
 
 - The old stack is dead and stays dead.
 - Profiles are the banner under which VM assets, package assumptions, and
   runtime policy march.
+- Service settings must be as typed, schematized, and admin-validatable as
+  profiles before `capsem-admin` exposes them.
+- Policy rules and detection rules must be deliberately separated or
+  deliberately unified before telemetry/plugins/UI/Confirm make that choice
+  expensive.
 - A VM without explicit profile/revision/package/asset identity is invalid and
   must fail closed; there is no pre-S07a compatibility lane.
 - The release gate is the wall: every claim needs tests, status/debug
@@ -158,11 +167,16 @@ a valid claim -- mark it `[ ]` instead.
   assets into an empty cache through `capsem update --assets`, boots a real VM,
   execs inside it, and verifies `capsem info --json` reports the installed
   profile revision pin.
-16. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
-    -- unify Python builder/manifest/profile tooling under released
+16. [ ] [S07d - Service settings schema and admin contract](S07d-service-settings-schema-admin-contract.md)
+    -- inserted during the 2026-05-19 regroup. Bring service settings to
+    Profile V2 contract strength before `capsem-admin` and public tooling rely
+    on them: JSON Schema Draft 2020-12, Pydantic v2 models, Rust/Python fixture
+    parity, and `capsem-admin settings validate|schema|doctor` hooks.
+17. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
+    -- unify Python builder/manifest/profile/settings tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
     settings as authority.
-17. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
+18. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile
     CRUD/resolve, skills, standard `mcpServers` server management,
@@ -179,17 +193,22 @@ a valid claim -- mark it `[ ]` instead.
     mutations, invalid rule evaluation, asset cleanup while updating, and
     revoked revision install. Remaining: S15 confirm resolution/stream once S15
     makes that production route real.
-18. [ ] [S09 - CLI integration](S09-cli-integration.md)
-19. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
-20. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
-21. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
-22. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
-23. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- rule editor component is consumed by S15.
-24. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
-25. [ ] [S16 - Profile UI](S16-profile-ui.md)
-26. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-27. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
-28. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+19. [ ] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
+    -- inserted during the 2026-05-19 regroup. Decide whether Capsem policy
+    rules and Sigma-style detection rules are separate families, and update
+    logging, telemetry, plugins, rule UI, Confirm UX, and docs before those
+    surfaces freeze around the wrong abstraction.
+20. [ ] [S09 - CLI integration](S09-cli-integration.md)
+21. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+22. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+23. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
+24. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
+25. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- policy-rule editor component is consumed by S15; detection UX waits on S08a.
+26. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+27. [ ] [S16 - Profile UI](S16-profile-ui.md)
+28. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+29. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+30. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
@@ -291,14 +310,24 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   `capsem update --assets`, status/debug provenance, structured lifecycle logs,
   and cleanup/create concurrency must be unified around the Profile V2 service
   reconciler before profile asset operations are production-grade.
+- **S07d is the service-settings parity bridge.** Profiles now have a stronger
+  contract than service settings. Before `capsem-admin` exposes service
+  settings, add `capsem.service-settings.v2` JSON Schema Draft 2020-12,
+  Pydantic v2 models, valid/invalid fixtures, Rust/Python drift tests, and
+  admin `settings validate/schema/doctor` hooks.
 - **S07b is the admin tooling bridge.** The current Python image builder and
   manifest scripts must be unified under a released `capsem-admin` package.
   Profiles become the source of truth for image build plans and manifest
-  entries; `capsem-admin profile validate/schema` consumes the shared JSON
-  Schema artifact and valid/invalid fixtures; Python admin internals use
-  Pydantic v2 models with Pydantic-only JSON input/output instead of raw nested
-  dicts; hand-edited `guest/config` image settings are not carried forward as
+  entries; service settings become a first-class admin object through S07d;
+  `capsem-admin profile/settings validate/schema` consumes shared JSON Schema
+  artifacts and valid/invalid fixtures; Python admin internals use Pydantic v2
+  models with Pydantic-only JSON input/output instead of raw nested dicts;
+  hand-edited `guest/config` image settings are not carried forward as
   compatibility input.
+- **S08a is the rules/detection architecture gate.** Before S11/S12/S13/S14/S15
+  harden logging, telemetry, plugins, rule UI, and Confirm UX, decide whether
+  Capsem runtime policy rules and Sigma-style detection rules are separate rule
+  families, and define the normalized event/finding schemas they consume.
 - **S12 architecture: single source of truth.** The in-memory
   per-VM accumulator in `capsem-process` is the only runtime
   source; `session.db` is read on the data path exactly twice in

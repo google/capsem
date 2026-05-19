@@ -39,6 +39,14 @@ VM's life:
 Everything else -- `/list`, `/info` on a running VM, gateway status,
 UI polling, scrape endpoints -- reads memory only.
 
+## Dependency On S08a
+
+[S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
+must settle the policy-rule versus detection-rule/finding model before this
+sprint freezes metric names, event schemas, or OTel labels for rule outcomes.
+S12 can still keep the no-SQL runtime accumulator contract, but detection and
+finding metrics must wait for S08a's normalized event taxonomy.
+
 ## Single Source Of Truth
 
 ```
