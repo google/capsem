@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UDS Rules API before mirroring it through the HTTP gateway.
 - Added Profile V2 service tests proving profile creation cannot shadow locked
   profile roots and settings saves follow the currently selected user profile.
+- Added the S07 UDS closeout surface: typed `GET /confirm/pending`, Profile V2
+  `GET /skills` / `POST /skills` / `DELETE /skills/{id}`, locked/duplicate
+  skills mutation coverage including inherited same-kind duplicates, and a
+  chained profile/skills/MCP/rules route proof.
 - Changed MCP management to use Profile V2 MCP servers: profiles now use the
   standard top-level `mcpServers` map with Capsem governance under
   `mcpServers.<id>.capsem`; `/mcp/connectors` now
@@ -214,6 +218,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed install E2E asset handling when the repo `assets/` path is a symlink,
   including file-only asset copying so nested/stale arch directories cannot
   poison install fixture refresh.
+- Fixed the Profile V2 valid-payload minisign fixture so profile catalog
+  install/reconcile tests exercise real signature verification with a matching
+  test public key.
+- Fixed service test fixtures so profile roots are created consistently and
+  asset lifecycle log assertions tolerate equivalent download event ordering.
 
 ## [1.1.1778860037] - 2026-05-15
 

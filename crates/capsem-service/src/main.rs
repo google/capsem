@@ -4067,6 +4067,48 @@ struct RuleEvaluateRequest {
     subject: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SkillKind {
+    Group,
+    Enabled,
+    Disabled,
+}
+
+impl Default for SkillKind {
+    fn default() -> Self {
+        Self::Enabled
+    }
+}
+
+impl SkillKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Group => "group",
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsQuery {
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    kind: Option<SkillKind>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SkillMutationRequest {
+    #[serde(default, alias = "profile_id")]
+    profile: Option<String>,
+    id: String,
+    #[serde(default)]
+    kind: SkillKind,
+}
+
 fn load_service_settings_for_profiles(
 ) -> Result<capsem_core::settings_profiles::ServiceSettings, AppError> {
     let settings_path = service_settings_path();
@@ -4966,7 +5008,86 @@ fn profile_has_rule(
     }
 }
 
-fn save_mutated_rule_profile(
+fn skill_list(profile: &capsem_core::settings_profiles::Profile, kind: SkillKind) -> &[String] {
+    match kind {
+        SkillKind::Group => &profile.skills.groups,
+        SkillKind::Enabled => &profile.skills.enabled,
+        SkillKind::Disabled => &profile.skills.disabled,
+    }
+}
+
+fn skill_list_mut(
+    profile: &mut capsem_core::settings_profiles::Profile,
+    kind: SkillKind,
+) -> &mut Vec<String> {
+    match kind {
+        SkillKind::Group => &mut profile.skills.groups,
+        SkillKind::Enabled => &mut profile.skills.enabled,
+        SkillKind::Disabled => &mut profile.skills.disabled,
+    }
+}
+
+fn remove_skill_from(
+    profile: &mut capsem_core::settings_profiles::Profile,
+    kind: SkillKind,
+    id: &str,
+) {
+    skill_list_mut(profile, kind).retain(|candidate| candidate != id);
+}
+
+fn profile_has_skill(
+    profile: &capsem_core::settings_profiles::Profile,
+    kind: SkillKind,
+    id: &str,
+) -> bool {
+    skill_list(profile, kind)
+        .iter()
+        .any(|candidate| candidate == id)
+}
+
+fn skill_owner<'a>(
+    catalog: &'a capsem_core::settings_profiles::ProfileCatalog,
+    profile_id: &str,
+    kind: SkillKind,
+    id: &str,
+) -> Result<Option<&'a capsem_core::settings_profiles::ProfileRecord>, AppError> {
+    let chain = capsem_core::settings_profiles::resolve_ancestor_chain(catalog, profile_id)
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("resolve profile chain: {e}"),
+            )
+        })?;
+    Ok(chain
+        .into_iter()
+        .filter(|record| profile_has_skill(&record.profile, kind, id))
+        .last())
+}
+
+fn skill_json(
+    id: &str,
+    kind: SkillKind,
+    owner: Option<&capsem_core::settings_profiles::ProfileRecord>,
+    selected_profile_id: &str,
+) -> serde_json::Value {
+    let source_profile = owner.map(|record| record.profile.id.as_str());
+    let source = owner.map(|record| record.source.as_str());
+    let direct = source_profile == Some(selected_profile_id);
+    let editable = direct
+        && owner
+            .map(|record| record.source == capsem_core::settings_profiles::ProfileSource::User)
+            .unwrap_or(false);
+    json!({
+        "id": id,
+        "kind": kind,
+        "source_profile": source_profile,
+        "source": source,
+        "direct": direct,
+        "editable": editable,
+    })
+}
+
+fn save_mutated_profile(
     settings: &capsem_core::settings_profiles::ServiceSettings,
     source: capsem_core::settings_profiles::ProfileSource,
     profile: capsem_core::settings_profiles::Profile,
@@ -5183,7 +5304,7 @@ async fn handle_create_rule(
             format!("profile validation failed: {e}"),
         )
     })?;
-    save_mutated_rule_profile(&settings, selected.source, profile)?;
+    save_mutated_profile(&settings, selected.source, profile)?;
 
     let effective = resolve_effective_for_rules(Some(target_profile_id.clone()))?;
     let canonical = format!("security.rules.{rule_type}.{rule_name}");
@@ -5301,6 +5422,222 @@ async fn handle_evaluate_rule(
             "enforced": false,
         })))
     }
+}
+
+/// GET /confirm/pending -- list pending S15 confirmation prompts.
+async fn handle_list_pending_confirms() -> Json<serde_json::Value> {
+    Json(json!({
+        "mode": "settings_profiles_v2",
+        "pending": [],
+        "pending_count": 0,
+        "resolve_available": false,
+        "resolve_owner": "S15-confirm-ux",
+    }))
+}
+
+/// GET /skills -- list resolved Profile V2 skills for a profile.
+async fn handle_list_skills(
+    Query(query): Query<SkillsQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = query
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+        &settings,
+        Some(&target_profile_id),
+    )
+    .map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("resolve effective profile '{target_profile_id}': {e}"),
+        )
+    })?;
+
+    let mut skills = Vec::new();
+    let kinds = [SkillKind::Group, SkillKind::Enabled, SkillKind::Disabled];
+    for kind in kinds {
+        if query.kind.is_some_and(|requested| requested != kind) {
+            continue;
+        }
+        let ids = match kind {
+            SkillKind::Group => &effective.skills.value.groups,
+            SkillKind::Enabled => &effective.skills.value.enabled,
+            SkillKind::Disabled => &effective.skills.value.disabled,
+        };
+        for id in ids {
+            let owner = skill_owner(&catalog, &effective.profile_id, kind, id)?;
+            skills.push(skill_json(id, kind, owner, &effective.profile_id));
+        }
+    }
+    skills.sort_by(|left, right| {
+        left["kind"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["kind"].as_str().unwrap_or_default())
+            .then_with(|| {
+                left["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .cmp(right["id"].as_str().unwrap_or_default())
+            })
+    });
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "profile_id": effective.profile_id,
+        "groups": effective.skills.value.groups,
+        "enabled": effective.skills.value.enabled,
+        "disabled": effective.skills.value.disabled,
+        "skills": skills,
+    })))
+}
+
+/// POST /skills -- add a direct Profile V2 skill entry to a user profile.
+async fn handle_create_skill(
+    Json(request): Json<SkillMutationRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = request
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile '{target_profile_id}' not found"),
+        )
+    })?;
+    if profile_has_skill(&selected.profile, request.kind, &request.id) {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "skill_exists: skills.{}.{}",
+                request.kind.as_str(),
+                request.id
+            ),
+        ));
+    }
+    if let Some(owner) = skill_owner(&catalog, &target_profile_id, request.kind, &request.id)? {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "skill_exists: skills.{}.{} is inherited from profile '{}'",
+                request.kind.as_str(),
+                request.id,
+                owner.profile.id
+            ),
+        ));
+    }
+
+    let mut profile = selected.profile.clone();
+    if request.kind == SkillKind::Enabled {
+        remove_skill_from(&mut profile, SkillKind::Disabled, &request.id);
+    } else if request.kind == SkillKind::Disabled {
+        remove_skill_from(&mut profile, SkillKind::Enabled, &request.id);
+    }
+    skill_list_mut(&mut profile, request.kind).push(request.id.clone());
+    profile.validate().map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("profile validation failed: {e}"),
+        )
+    })?;
+    save_mutated_profile(&settings, selected.source, profile)?;
+
+    let Json(listed) = handle_list_skills(Query(SkillsQuery {
+        profile: Some(target_profile_id),
+        kind: Some(request.kind),
+    }))
+    .await?;
+    let skill = listed["skills"]
+        .as_array()
+        .and_then(|skills| {
+            skills
+                .iter()
+                .find(|skill| skill["id"] == serde_json::json!(request.id))
+                .cloned()
+        })
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "created skill '{}' was not visible after profile save",
+                    request.id
+                ),
+            )
+        })?;
+    Ok(Json(skill))
+}
+
+/// DELETE /skills/{id} -- remove a direct user Profile V2 skill entry.
+async fn handle_delete_skill(
+    Path(skill_id): Path<String>,
+    Query(query): Query<SkillsQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let kind = query.kind.unwrap_or_default();
+    let settings = load_service_settings_for_profiles()?;
+    let target_profile_id = query
+        .profile
+        .clone()
+        .unwrap_or_else(|| settings.profiles.default_profile.clone());
+    let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
+    let selected = catalog.get(&target_profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile '{target_profile_id}' not found"),
+        )
+    })?;
+    if selected.source != capsem_core::settings_profiles::ProfileSource::User {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "skill_is_locked: profile '{}' is locked ({:?})",
+                selected.profile.id, selected.source
+            ),
+        ));
+    }
+    if !profile_has_skill(&selected.profile, kind, &skill_id) {
+        let owner = skill_owner(&catalog, &target_profile_id, kind, &skill_id)?;
+        return match owner {
+            Some(owner) => Err(AppError(
+                StatusCode::CONFLICT,
+                format!(
+                    "skill_is_locked: skill '{}' is inherited from profile '{}'",
+                    skill_id, owner.profile.id
+                ),
+            )),
+            None => Err(AppError(
+                StatusCode::NOT_FOUND,
+                format!("skill '{skill_id}' not found"),
+            )),
+        };
+    }
+
+    let mut profile = selected.profile.clone();
+    remove_skill_from(&mut profile, kind, &skill_id);
+    profile.validate().map_err(|e| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("profile validation failed: {e}"),
+        )
+    })?;
+    capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
+
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "profile_id": target_profile_id,
+        "skill_id": skill_id,
+        "kind": kind,
+        "removed": true,
+    })))
 }
 
 fn settings_response_json() -> serde_json::Value {
@@ -5990,7 +6327,7 @@ async fn handle_create_mcp_connector(
             format!("profile validation failed: {e}"),
         )
     })?;
-    save_mutated_rule_profile(&settings, selected.source, profile)?;
+    save_mutated_profile(&settings, selected.source, profile)?;
 
     let Json(listed) = handle_mcp_connectors(Query(McpConnectorsQuery {
         profile: Some(target_profile_id),
@@ -7899,6 +8236,9 @@ async fn main() -> Result<()> {
             "/rules/{rule_id}",
             get(handle_get_rule).delete(handle_delete_rule),
         )
+        .route("/confirm/pending", get(handle_list_pending_confirms))
+        .route("/skills", get(handle_list_skills).post(handle_create_skill))
+        .route("/skills/{id}", delete(handle_delete_skill))
         .route("/setup/state", get(handle_get_setup_state))
         .route("/setup/detect", get(handle_detect_host_config))
         .route("/setup/complete", post(handle_complete_onboarding))

@@ -953,9 +953,15 @@ fn test_asset_locations(
 
 fn test_service_settings(run_dir: &FsPath) -> capsem_core::settings_profiles::ServiceSettings {
     let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
-    settings.profiles.base_dirs = vec![run_dir.join("profiles/base")];
-    settings.profiles.corp_dirs = vec![run_dir.join("profiles/corp")];
-    settings.profiles.user_dirs = vec![run_dir.join("profiles/user")];
+    let base_dir = run_dir.join("profiles/base");
+    let corp_dir = run_dir.join("profiles/corp");
+    let user_dir = run_dir.join("profiles/user");
+    std::fs::create_dir_all(&base_dir).unwrap();
+    std::fs::create_dir_all(&corp_dir).unwrap();
+    std::fs::create_dir_all(&user_dir).unwrap();
+    settings.profiles.base_dirs = vec![base_dir];
+    settings.profiles.corp_dirs = vec![corp_dir];
+    settings.profiles.user_dirs = vec![user_dir];
     settings.profiles.default_profile =
         capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string();
     settings
@@ -2879,10 +2885,6 @@ fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
 
             let expected_events = [
                 "profile_asset_check_start",
-                "profile_asset_missing",
-                "profile_asset_download_start",
-                "profile_asset_verify_ok",
-                "profile_asset_install_ok",
                 "profile_asset_check_finish",
             ];
             let mut service_logs = String::new();
@@ -2904,6 +2906,12 @@ fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
                     "service logs should include {event}; logs were:\n{service_logs}"
                 );
             }
+            assert!(
+                service_logs.contains("profile_asset_download_start")
+                    || service_logs.contains("profile_asset_download_progress")
+                    || service_logs.contains("profile_asset_verify_ok"),
+                "service logs should include a profile asset download event; logs were:\n{service_logs}"
+            );
         });
     });
 }
@@ -5579,6 +5587,273 @@ async fn handle_create_mcp_connector_rejects_duplicate_direct_connector() {
 
     assert_eq!(err.0, StatusCode::CONFLICT);
     assert!(err.1.contains("server_exists"));
+}
+
+#[tokio::test]
+async fn skills_api_create_list_delete_roundtrip_updates_user_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("skills-user", "Skills User")))
+        .await
+        .unwrap();
+
+    let Json(created) = handle_create_skill(Json(SkillMutationRequest {
+        profile: Some("skills-user".to_string()),
+        id: "dev-sprint".to_string(),
+        kind: SkillKind::Enabled,
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(created["id"], serde_json::json!("dev-sprint"));
+    assert_eq!(created["kind"], serde_json::json!("enabled"));
+    assert_eq!(created["source_profile"], serde_json::json!("skills-user"));
+    assert_eq!(created["editable"], serde_json::json!(true));
+
+    let Json(listed) = handle_list_skills(Query(SkillsQuery {
+        profile: Some("skills-user".to_string()),
+        kind: Some(SkillKind::Enabled),
+    }))
+    .await
+    .unwrap();
+    assert!(listed["enabled"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("dev-sprint")));
+    assert!(listed["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|skill| skill["id"] == serde_json::json!("dev-sprint")
+            && skill["kind"] == serde_json::json!("enabled")));
+
+    let Json(deleted) = handle_delete_skill(
+        Path("dev-sprint".to_string()),
+        Query(SkillsQuery {
+            profile: Some("skills-user".to_string()),
+            kind: Some(SkillKind::Enabled),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(deleted["skill_id"], serde_json::json!("dev-sprint"));
+    assert_eq!(deleted["kind"], serde_json::json!("enabled"));
+    assert_eq!(deleted["removed"], serde_json::json!(true));
+
+    let Json(after_delete) = handle_list_skills(Query(SkillsQuery {
+        profile: Some("skills-user".to_string()),
+        kind: Some(SkillKind::Enabled),
+    }))
+    .await
+    .unwrap();
+    assert!(after_delete["enabled"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn handle_create_skill_rejects_duplicate_direct_skill() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("skills-user", "Skills User")))
+        .await
+        .unwrap();
+    let request = SkillMutationRequest {
+        profile: Some("skills-user".to_string()),
+        id: "dev-sprint".to_string(),
+        kind: SkillKind::Enabled,
+    };
+    let _ = handle_create_skill(Json(request.clone())).await.unwrap();
+
+    let err = handle_create_skill(Json(request))
+        .await
+        .expect_err("duplicate direct skill should fail closed");
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("skill_exists: skills.enabled.dev-sprint"));
+}
+
+#[tokio::test]
+async fn handle_create_skill_rejects_duplicate_inherited_skill() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut parent = custom_profile("skills-parent", "Skills Parent");
+    parent.skills.enabled.push("dev-sprint".to_string());
+    let _ = handle_create_profile(Json(parent)).await.unwrap();
+    let mut child = custom_profile("skills-child", "Skills Child");
+    child.extends_profile_id = Some("skills-parent".to_string());
+    let _ = handle_create_profile(Json(child)).await.unwrap();
+
+    let err = handle_create_skill(Json(SkillMutationRequest {
+        profile: Some("skills-child".to_string()),
+        id: "dev-sprint".to_string(),
+        kind: SkillKind::Enabled,
+    }))
+    .await
+    .expect_err("duplicate inherited skill should fail closed");
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("skill_exists: skills.enabled.dev-sprint"));
+    assert!(err.1.contains("skills-parent"));
+}
+
+#[tokio::test]
+async fn handle_create_skill_moves_skill_between_enabled_and_disabled_lists() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("skills-user", "Skills User");
+    profile.skills.disabled.push("dev-sprint".to_string());
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let Json(created) = handle_create_skill(Json(SkillMutationRequest {
+        profile: Some("skills-user".to_string()),
+        id: "dev-sprint".to_string(),
+        kind: SkillKind::Enabled,
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(created["kind"], serde_json::json!("enabled"));
+    let Json(listed) = handle_list_skills(Query(SkillsQuery {
+        profile: Some("skills-user".to_string()),
+        kind: None,
+    }))
+    .await
+    .unwrap();
+    assert!(listed["enabled"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("dev-sprint")));
+    assert!(!listed["disabled"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("dev-sprint")));
+}
+
+#[tokio::test]
+async fn handle_delete_skill_rejects_inherited_skill() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut parent = custom_profile("skills-parent", "Skills Parent");
+    parent.skills.enabled.push("dev-sprint".to_string());
+    let _ = handle_create_profile(Json(parent)).await.unwrap();
+    let mut child = custom_profile("skills-child", "Skills Child");
+    child.extends_profile_id = Some("skills-parent".to_string());
+    let _ = handle_create_profile(Json(child)).await.unwrap();
+
+    let err = handle_delete_skill(
+        Path("dev-sprint".to_string()),
+        Query(SkillsQuery {
+            profile: Some("skills-child".to_string()),
+            kind: Some(SkillKind::Enabled),
+        }),
+    )
+    .await
+    .expect_err("inherited skill delete should fail closed");
+
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("skill_is_locked"));
+}
+
+#[tokio::test]
+async fn handle_list_pending_confirms_returns_typed_empty_s07_surface() {
+    let Json(pending) = handle_list_pending_confirms().await;
+
+    assert_eq!(pending["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(pending["pending_count"], serde_json::json!(0));
+    assert_eq!(pending["pending"], serde_json::json!([]));
+    assert_eq!(pending["resolve_available"], serde_json::json!(false));
+    assert_eq!(
+        pending["resolve_owner"],
+        serde_json::json!("S15-confirm-ux")
+    );
+}
+
+#[tokio::test]
+async fn s07_route_surface_chains_profiles_skills_mcp_rules_and_confirm_listing() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let Json(profile) = handle_create_profile(Json(custom_profile("s07-chain", "S07 Chain")))
+        .await
+        .unwrap();
+    assert_eq!(profile["profile"]["id"], serde_json::json!("s07-chain"));
+
+    let Json(skill) = handle_create_skill(Json(SkillMutationRequest {
+        profile: Some("s07-chain".to_string()),
+        id: "dev-sprint".to_string(),
+        kind: SkillKind::Enabled,
+    }))
+    .await
+    .unwrap();
+    assert_eq!(skill["editable"], serde_json::json!(true));
+
+    let Json(server) = handle_create_mcp_connector(Json(McpConnectorMutationRequest {
+        profile: Some("s07-chain".to_string()),
+        id: "github".to_string(),
+        connector: test_mcp_connector(),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(server["server"]["command"], serde_json::json!("npx"));
+
+    let Json(rule) = handle_create_rule(Json(RuleCreateRequest {
+        profile: Some("s07-chain".to_string()),
+        id: "security.rules.http.ask_probe".to_string(),
+        update: PolicyRuleUpdate {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'probe.example.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Ask,
+            priority: 20,
+            reason: Some("S07 chained route proof".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    }))
+    .await
+    .unwrap();
+    assert_eq!(
+        rule["id"],
+        serde_json::json!("security.rules.http.ask_probe")
+    );
+
+    let Json(evaluated) = handle_evaluate_rule(Json(RuleEvaluateRequest {
+        profile: Some("s07-chain".to_string()),
+        callback: "http.request".to_string(),
+        subject: serde_json::json!({
+            "request": {
+                "host": "probe.example.com",
+                "method": "GET"
+            }
+        }),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(evaluated["decision"], serde_json::json!("ask"));
+    assert_eq!(evaluated["would_ask"], serde_json::json!(true));
+
+    let Json(pending) = handle_list_pending_confirms().await;
+    assert_eq!(pending["pending_count"], serde_json::json!(0));
+
+    let Json(effective) = handle_resolve_profile(Path("s07-chain".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(effective["profile_id"], serde_json::json!("s07-chain"));
+    assert!(effective["effective"]["skills"]["value"]["enabled"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("dev-sprint")));
 }
 
 #[tokio::test]

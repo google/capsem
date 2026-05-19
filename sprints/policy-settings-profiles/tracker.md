@@ -89,7 +89,7 @@ a valid claim -- mark it `[ ]` instead.
 10. [x] [S06b - Legacy allowlist migration + rule ownership locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) -- closed. Inventory found that S01's runtime cutover left the legacy v1 settings registry + allowlist builders as test-only dead code, so "migration" boiled down to deletion plus enriching the v2 model. Nine slices landed: 6b.0 deleted v1 (~12k LOC), 6b.1 added ownership metadata fields, 6b.2 enforced priority tiers (corp `[-1000, -1]`, toggle-derived `0`, user `[1, 999]`, catch-all reserved `1000`), 6b.3 added nestable rules under setting hosts, 6b.4 added `http.read` / `http.write` callbacks, 6b.5 added per-type catch-all rules at priority `1000`, 6b.6 added provider-toggle derived rules, 6b.7 added MCP `allowed_tools` derived rules, 6b.8 added the `ensure_rule_editable` mutation gate. 6b.9 documentation scope captured in [S19 spec](S19-documentation-and-site.md).
 11. [ ] [S06c - Ablate legacy NetworkPolicy runtime](#s06c---ablate-legacy-networkpolicy-runtime) -- new sprint, see inline brief below; promotes to a standalone spec when it starts.
 12. [ ] [Post-S06 cleanup milestone](#post-s06-cleanup-milestone) -- deferred cleanup debt: `git merge origin/main` -> v2 rename -> full verification gate.
-13. [~] [S07 - UDS service API](S07-uds-service-api.md) -- started; first
+13. [x] [S07 - UDS service API](S07-uds-service-api.md) -- closed; first
   foundation slice landed `capsem_proto::metrics` plus
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
@@ -107,8 +107,11 @@ a valid claim -- mark it `[ ]` instead.
   collisions across locked roots, selected-profile settings saves, and
   Profile V2 MCP server mutation/lock semantics. The profile file shape is now
   the standard `mcpServers` map, with Capsem-only governance nested under each
-  server's `capsem` key; legacy `[mcp.connectors]` is rejected.
-  Confirm listing, skills, and full route proof remain open.
+  server's `capsem` key; legacy `[mcp.connectors]` is rejected. Closeout added
+  typed `GET /confirm/pending`, Profile V2 skills list/create/delete, duplicate
+  and inherited-lock coverage, and a chained service proof across profiles,
+  skills, MCP servers, rules, evaluate, and confirm listing. HTTP, CLI,
+  production confirm resolution, and UI lift remain in S08/S09/S15/S16.
 14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
     -- started. Canonical profile catalog/status parser landed in
     `capsem-core::profile_manifest`; typed profile package/tool contracts and
@@ -452,7 +455,12 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   identity, and create-from-source/fork/persist reject missing, revisionless,
   or payload-hash-less pins before durable clone/move work. Fork cloning now
   preserves VM-effective profile attachments, rejects profile and payload-hash
-  drift, and has fork-plus-exec IPC coverage for same-profile execution.
+  drift, and has fork-plus-exec IPC coverage for same-profile execution. S07
+  closeout adds focused capsem-service tests for Profile V2 skills
+  create/list/delete, duplicate direct and inherited same-kind skill rejection,
+  enabled/disabled conflict cleanup, inherited skill delete rejection, typed
+  empty confirm listing, and a chained profile -> skills -> MCP -> rules ->
+  evaluate -> confirm-listing proof.
 - **Functional**: profile CRUD, VM-effective resolve via
   ancestor chain, layered merge, resolver trace artifact
   round-trip, corp directives end-to-end through
@@ -467,8 +475,9 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   retention, `/list`/`/info`/`capsem list`/`capsem info` profile-state
   rendering, create-from-source/fork/persist fail-closed profile pin gates,
   fork-plus-exec same-profile IPC coverage, profile payload-hash pin
-  enforcement, mitm_proxy integration test for model.request rewrite
-  redaction.
+  enforcement, Profile V2 skills and confirm listing through the live service
+  UDS HTTP harness, chained S07 profile/skills/MCP/rules route proof,
+  mitm_proxy integration test for model.request rewrite redaction.
 - **Adversarial**: profile load (unknown fields, malformed TOML,
   bad endpoint schemes, callback/type mismatches, duplicate
   profile ids, governance toggles). Inheritance graph: unknown
@@ -481,8 +490,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   pipeline: full malformed-input matrix. Priority validation:
   out-of-range high/low, reserved catch-all `1000`, corp
   priority in non-corp profile, corp directive at user-tier
-  priority. Model.request rewrite: unsupported target, no
-  match, non-UTF-8 body.
+  priority. S07 skills mutation: duplicate direct and inherited same-kind
+  skills fail with `skill_exists`, inherited deletes fail with
+  `skill_is_locked`, and enabled/disabled transitions remove contradictory
+  state. Model.request rewrite: unsupported target, no match, non-UTF-8 body.
 - **E2E/VM**: covered for the S03 service-settings asset
   runtime slice (real service + real gateway + malformed TOML
   startup + VM boot/exec) and the S06a mitm_proxy integration
@@ -647,6 +658,18 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   update_assets_uses_explicit_uds_socket_when_provided` **1** passed, and `uv
   run python -m pytest tests/capsem-e2e/test_profile_asset_boot.py -q` **1**
   passed;
+  after S07 closeout, focused `cargo test -p capsem-service skills_api`,
+  `handle_create_skill`, `handle_delete_skill_rejects_inherited_skill`,
+  `handle_list_pending_confirms`,
+  `s07_route_surface_chains_profiles_skills_mcp_rules_and_confirm_listing`,
+  and `mcp_connector` passed; `cargo build -p capsem-service` passed; and
+  `uv run pytest tests/capsem-service/test_svc_s07_surface.py
+  tests/capsem-service/test_svc_mcp_api.py -q` passed with **4** functional
+  UDS service tests. The final sweep also passed `cargo test -p
+  capsem-service` with **113** lib tests, **193** service-bin tests, and doc
+  tests, plus `cargo test -p capsem-core profile_manifest --lib` **20** passed
+  and `cargo test -p capsem-core reconcile_profile_revision_from_manifest
+  --lib` **5** passed after repairing the stale Profile V2 minisign fixture;
   after real-VM fork-lineage coverage, `uv run python -m pytest
   tests/capsem-e2e/test_winterfell_fork_lineage.py -q -s` **1** passed and the
   existing profile-asset boot proof was re-run with `uv run python -m pytest
