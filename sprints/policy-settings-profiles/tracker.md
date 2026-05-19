@@ -117,8 +117,10 @@ a valid claim -- mark it `[ ]` instead.
     settings. `session.db` now records VM/profile/user telemetry identity, and
     VM metadata now carries a profile pin with resolved profile id, signed
     profile revision, profile payload hash, package-contract hash, and pinned
-    asset hashes. Remaining work adds manifest source fetch/scheduling plus
-    richer catalog clients/debug detail.
+    asset hashes. `capsem profile reconcile-catalog` now accepts either a local
+    catalog file or a bounded HTTPS catalog URL, with cleartext HTTP restricted
+    to loopback development/test hosts. Remaining work adds persisted manifest
+    source scheduling plus richer catalog clients/debug detail.
 15. [x] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
   trigger, checked-at/profile provenance status propagation, structured
@@ -406,7 +408,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   revision install and revoked installed revision removal through
   `POST /profiles/catalog/reconcile`, including per-revision error summaries.
   The native CLI parser now covers `capsem profile reconcile-catalog
-  --manifest --pubkey [--json]`. Absent installed profile cleanup now has a
+  --manifest --pubkey [--json]` and `--manifest-url --pubkey`, and URL-source
+  contract tests cover local file reads, loopback URL fetches, non-loopback
+  HTTP rejection, missing/conflicting sources, and oversized response
+  rejection. Absent installed profile cleanup now has a
   core contract test for removing launchable current state while preserving the
   archived payload plus service-route coverage for the `absent_removed`
   summary/outcome. Retention-source coverage now proves installed current
@@ -620,6 +625,10 @@ Current as of 2026-05-16 after S06 / S06a / S06b closed.
   update_assets_uses_explicit_uds_socket_when_provided` **1** passed, and `uv
   run python -m pytest tests/capsem-e2e/test_profile_asset_boot.py -q` **1**
   passed;
+  after file/URL profile catalog reconcile sources, `cargo test -p capsem
+  profile_catalog` **7** passed, `cargo test -p capsem
+  parse_profile_reconcile_catalog` **3** passed, and `cargo test -p capsem`
+  **251** passed;
   `cargo test -p capsem-core profile_manifest --lib` **20** passed;
   `cargo test -p capsem-core settings_profiles --lib` **130** passed after
   core profile catalog reconciliation;

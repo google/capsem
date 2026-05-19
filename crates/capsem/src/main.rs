@@ -2,6 +2,7 @@ mod client;
 mod completions;
 mod paths;
 mod platform;
+mod profile_catalog_source;
 mod service_install;
 mod setup;
 mod shell_exit;
@@ -22,6 +23,7 @@ use client::{
     ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest,
     PurgeResponse, RunRequest, SessionInfo, SessionProfileStatus, UdsClient,
 };
+use profile_catalog_source::read_profile_catalog_manifest;
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -159,9 +161,20 @@ enum McpCommands {
 enum ProfileCommands {
     /// Apply a signed profile catalog manifest through the service
     ReconcileCatalog {
-        /// Profile catalog manifest JSON file
-        #[arg(long)]
-        manifest: PathBuf,
+        /// Profile catalog manifest JSON file.
+        #[arg(
+            long,
+            conflicts_with = "manifest_url",
+            required_unless_present = "manifest_url"
+        )]
+        manifest: Option<PathBuf>,
+        /// HTTPS profile catalog manifest URL (http:// is accepted only for loopback development).
+        #[arg(
+            long,
+            conflicts_with = "manifest",
+            required_unless_present = "manifest"
+        )]
+        manifest_url: Option<String>,
         /// Minisign public key file used to verify profile payloads
         #[arg(long)]
         pubkey: PathBuf,
@@ -1502,11 +1515,12 @@ async fn main() -> Result<()> {
         }
         Commands::Profile(ProfileCommands::ReconcileCatalog {
             manifest,
+            manifest_url,
             pubkey,
             json,
         }) => {
-            let manifest_json = std::fs::read_to_string(manifest)
-                .with_context(|| format!("read profile catalog manifest {}", manifest.display()))?;
+            let manifest_json =
+                read_profile_catalog_manifest(manifest.clone(), manifest_url.clone()).await?;
             let profile_payload_pubkey = std::fs::read_to_string(pubkey)
                 .with_context(|| format!("read profile payload pubkey {}", pubkey.display()))?;
             let body = serde_json::json!({
@@ -2346,15 +2360,63 @@ mod tests {
         match cli.command.unwrap() {
             Commands::Profile(ProfileCommands::ReconcileCatalog {
                 manifest,
+                manifest_url,
                 pubkey,
                 json,
             }) => {
-                assert_eq!(manifest, PathBuf::from("manifest.json"));
+                assert_eq!(manifest, Some(PathBuf::from("manifest.json")));
+                assert_eq!(manifest_url, None);
                 assert_eq!(pubkey, PathBuf::from("profile.pub"));
                 assert!(json);
             }
             _ => panic!("expected profile reconcile-catalog"),
         }
+    }
+
+    #[test]
+    fn parse_profile_reconcile_catalog_url() {
+        let cli = Cli::parse_from([
+            "capsem",
+            "profile",
+            "reconcile-catalog",
+            "--manifest-url",
+            "https://profiles.example.test/catalog.json",
+            "--pubkey",
+            "profile.pub",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::ReconcileCatalog {
+                manifest,
+                manifest_url,
+                pubkey,
+                json,
+            }) => {
+                assert_eq!(manifest, None);
+                assert_eq!(
+                    manifest_url.as_deref(),
+                    Some("https://profiles.example.test/catalog.json")
+                );
+                assert_eq!(pubkey, PathBuf::from("profile.pub"));
+                assert!(!json);
+            }
+            _ => panic!("expected profile reconcile-catalog"),
+        }
+    }
+
+    #[test]
+    fn parse_profile_reconcile_catalog_rejects_missing_source() {
+        let err = match Cli::try_parse_from([
+            "capsem",
+            "profile",
+            "reconcile-catalog",
+            "--pubkey",
+            "profile.pub",
+        ]) {
+            Ok(_) => panic!("expected missing source parse error"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]

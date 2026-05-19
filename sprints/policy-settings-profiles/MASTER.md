@@ -92,7 +92,7 @@ the next starts. The `#` column is the execution index;
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
 | 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
 | 13 | [S07 - UDS Service API](S07-uds-service-api.md) | In Progress | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, and rules list/get/evaluate have landed. Rules create/delete, confirm listing, skills, profile-backed VM create, and full route proof remain open. |
-| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, and first-use selected-profile asset reconciliation have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds manifest source fetch/scheduling plus richer catalog clients/debug detail. |
+| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, first-use selected-profile asset reconciliation, and file/HTTPS catalog reconcile sources have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds persisted manifest source scheduling plus richer catalog clients/debug detail. |
 | 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | Done | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile/payload/per-asset provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, profile-pin asset authority for source/fork/persist, chained service-level reconcile/status/debug/log proof, formal `file://` asset reconciliation, explicit UDS socket selection, and a live real-VM boot/exec proof from freshly reconciled profile assets have landed. |
 | 16 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
 | 17 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | Not Started | Wire HTTP endpoints to UDS behavior, including profile catalog/revision and profile-backed VM create/readiness. |
@@ -211,6 +211,8 @@ Landed S07a foundation:
 - Native profile catalog reconcile CLI. `capsem profile reconcile-catalog
   --manifest <path> --pubkey <path> [--json]` now calls the service reconciler
   and renders either a compact install/deprecate/revoke summary or raw JSON.
+  It also accepts `--manifest-url <https-url>` for remote signed catalog
+  sources, with cleartext HTTP restricted to loopback development/test hosts.
 - Absent installed profile cleanup. Catalog reconciliation now removes
   launchable current state for installed profile ids missing from the signed
   manifest and reports `absent_removed`, while preserving archived payloads for
@@ -254,10 +256,10 @@ Remaining S07a push order:
    Core verification/fetch/materialization/signature primitives and the typed
    lifecycle reconciler have landed; service UDS/gateway reconciliation has
    landed for current active revisions plus deprecated/revoked local-state
-   handling, and the first native CLI hook can apply a catalog file through the
-   service. Absent installed profile ids now lose launchable state during
-   reconcile. Manifest source fetch/scheduling, richer catalog/revision CLI
-   verbs, and UI clients remain.
+   handling, and the first native CLI hook can apply a catalog file or bounded
+   HTTPS catalog URL through the service. Absent installed profile ids now lose
+   launchable state during reconcile. Persisted manifest source scheduling,
+   richer catalog/revision CLI verbs, and UI clients remain.
 2. Persistent VM `profile_id`, `profile_revision`, profile payload hash,
    package contract hash, and pinned asset metadata. Landed for
    runtime/registry/API with installed revision/payload-hash capture; profile
@@ -431,6 +433,10 @@ Latest focused verification after the rescue/push transition:
 - `cargo test -p capsem-core --test profile_schema` passed with 6 tests.
 - `cargo test -p capsem-service` passed with 245 tests.
 - `cargo test -p capsem-process --no-run` passed.
+- `cargo test -p capsem profile_catalog` passed with 7 tests,
+  `cargo test -p capsem parse_profile_reconcile_catalog` passed with 3 tests,
+  and `cargo test -p capsem` passed with 251 tests after adding file/URL
+  profile catalog reconcile sources.
 - `cargo test -p capsem setup::tests` passed with 16 tests.
 - `uv run python -m pytest tests/test_profiles.py` passed with 8 tests.
 

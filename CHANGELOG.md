@@ -85,6 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem profile reconcile-catalog --manifest <path> --pubkey <path>`
   so the native CLI can apply a signed profile catalog through the service
   reconciler and print either a compact lifecycle summary or raw JSON.
+- Added `capsem profile reconcile-catalog --manifest-url <https-url>` so
+  operators can reconcile a signed Profile V2 catalog from a remote source,
+  with `http://` accepted only for loopback development/test hosts and a
+  bounded manifest body.
 - Changed profile catalog reconciliation to remove launchable installed
   profiles whose profile id is absent from the signed catalog while preserving
   the archived installed payload for retention/VM-pin cleanup.

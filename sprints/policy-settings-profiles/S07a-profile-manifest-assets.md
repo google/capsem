@@ -59,7 +59,10 @@ Landed:
   and error states.
 - Native CLI route `capsem profile reconcile-catalog --manifest <path>
   --pubkey <path> [--json]` now calls the same service reconciler and prints a
-  compact lifecycle summary or the raw JSON result.
+  compact lifecycle summary or the raw JSON result. Operators can also pass
+  `--manifest-url <https-url>` to fetch the signed Profile V2 catalog directly;
+  `http://` is restricted to loopback development/test hosts and the manifest
+  body is size-bounded.
 - Catalog reconciliation now removes launchable installed profile state when a
   local installed profile id is absent from the signed manifest, reporting the
   lifecycle outcome as `absent_removed` while preserving the archived payload
@@ -101,10 +104,11 @@ Push order from here:
    lifecycle reconciler for active/deprecated/revoked records. UDS/gateway
    `POST /profiles/catalog/reconcile` now runs manifest-wide current-revision
    install/update plus deprecated/revoked local-state handling, and `capsem
-   profile reconcile-catalog` gives operators a native CLI entry point. Absent
-   installed profile ids now lose launchable current state during reconcile.
-   Remaining: manifest source fetch/scheduling, richer catalog/revision CLI
-   verbs, and UI clients.
+   profile reconcile-catalog` gives operators a native CLI entry point. It can
+   now read the signed catalog from either a local file or a bounded HTTPS
+   source URL. Absent installed profile ids now lose launchable current state
+   during reconcile. Remaining: persisted manifest source scheduling, richer
+   catalog/revision CLI verbs, and UI clients.
 2. [x] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
@@ -635,10 +639,12 @@ This sprint creates the contract consumed by later sprints:
       reconciler across catalog current revisions and non-active records,
       returning a typed outcome summary. The native CLI can now call this route
       through `capsem profile reconcile-catalog --manifest <path> --pubkey
-      <path> [--json]`. Absent installed profile ids are now removed from
-      launchable current state and reported as `absent_removed`. Remaining:
-      manifest source fetch/scheduling, richer catalog/revision CLI verbs, and
-      UI clients.
+      <path> [--json]` or `--manifest-url <https-url>`. URL fetching is
+      bounded and allows cleartext HTTP only for loopback development/test
+      hosts. Absent installed profile ids are now removed from launchable
+      current state and reported as `absent_removed`. Remaining: persisted
+      manifest source scheduling, richer catalog/revision CLI verbs, and UI
+      clients.
 - [~] Add profile-driven asset resolution and first-use download. Service
       startup now builds an `AssetRequirement` from the default profile's
       `vm.assets.<arch>` declaration, rejects old manifest-backed release
@@ -708,8 +714,14 @@ This sprint creates the contract consumed by later sprints:
   the Draft 2020-12 artifact and checking valid/invalid golden fixtures.
   Rust schema helper coverage now runs `cargo test -p capsem-core --test
   profile_schema` (6 tests passed), covering schema compilation, valid/invalid
-  JSON fixtures, JSON helper validation, and TOML-to-schema validation. Core
-  catalog reconciliation coverage now runs `cargo test -p capsem-core
+  JSON fixtures, JSON helper validation, and TOML-to-schema validation. Native
+  CLI source coverage now includes `cargo test -p capsem profile_catalog` (7
+  tests) for local catalog files, loopback URL fetches, non-loopback HTTP
+  rejection, missing/conflicting sources, and oversized response rejection,
+  plus `cargo test -p capsem parse_profile_reconcile_catalog` (3 tests) for
+  local file, URL, and missing-source parser contracts; full CLI proof passed
+  with `cargo test -p capsem` (251 tests). Core catalog
+  reconciliation coverage now runs `cargo test -p capsem-core
   settings_profiles --lib` (130 tests passed), including active install,
   incomplete active re-install, complete active no-op, deprecated keep, and
   revoked launchable profile plus current-state removal. Python admin model
@@ -731,7 +743,8 @@ This sprint creates the contract consumed by later sprints:
   checks after the slice passed with `cargo test -p capsem-service` (108
   library + 145 service tests) and `cargo test -p capsem` (241 tests). The
   CLI coverage includes parser and compact-summary rendering for `profile
-  reconcile-catalog --manifest --pubkey [--json]`. Retention-source coverage
+  reconcile-catalog --manifest --pubkey [--json]`, plus file/URL source
+  validation for `--manifest-url`. Retention-source coverage
   now includes `cargo test -p capsem-core installed_profile_asset_filenames
   --lib` (2 tests), `cargo test -p capsem-core settings_profiles --lib` (133
   tests), and `cargo test -p capsem-service saved_vm_assets` (2 tests),

@@ -8,10 +8,10 @@ through CLI command families.
 ## Tasks
 
 - Initial S07a bridge landed: `capsem profile reconcile-catalog --manifest
-  <path> --pubkey <path> [--json]` posts a signed catalog file to
-  `POST /profiles/catalog/reconcile` and prints either a compact lifecycle
-  summary or raw JSON. Richer catalog/revision subcommands remain in this
-  sprint.
+  <path> --pubkey <path> [--json]` and `--manifest-url <https-url>` post a
+  signed catalog source to `POST /profiles/catalog/reconcile` and print either
+  a compact lifecycle summary or raw JSON. Richer catalog/revision subcommands
+  remain in this sprint.
 - Add `capsem profile list/create/fork/update/delete/show/resolve`.
 - Add `capsem profile catalog`, `capsem profile revisions <id>`,
   `capsem profile install/update/remove <id> [--revision ...]`, and status
