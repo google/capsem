@@ -165,6 +165,14 @@ enum ProfileCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Show signed revisions for one catalog profile
+    Revisions {
+        /// Profile id to inspect
+        profile_id: String,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// Apply a signed profile catalog manifest through the service
     ReconcileCatalog {
         /// Profile catalog manifest JSON file.
@@ -845,6 +853,37 @@ fn print_profile_catalog_summary(result: &serde_json::Value) {
             }
         }
     }
+}
+
+fn print_profile_revisions_summary(result: &serde_json::Value) {
+    println!("{}", profile_revisions_summary_line(result));
+    if let Some(revisions) = result["revisions"].as_array() {
+        for revision in revisions {
+            let revision_id = revision["revision"].as_str().unwrap_or("-");
+            let status = revision["status"].as_str().unwrap_or("unknown");
+            let marker = if revision["installed"].as_bool().unwrap_or(false) {
+                " installed"
+            } else if revision["current"].as_bool().unwrap_or(false) {
+                " current"
+            } else {
+                ""
+            };
+            println!("  {revision_id}: {status}{marker}");
+        }
+    }
+}
+
+fn profile_revisions_summary_line(result: &serde_json::Value) -> String {
+    let profile_id = result["profile_id"].as_str().unwrap_or("-");
+    let current = result["current_revision"].as_str().unwrap_or("-");
+    let installed = result["installed_revision"].as_str().unwrap_or("-");
+    let revisions = result["revisions"]
+        .as_array()
+        .map(|revisions| revisions.len())
+        .unwrap_or(0);
+    format!(
+        "Profile revisions: profile={profile_id} current={current} installed={installed} revisions={revisions}"
+    )
 }
 
 fn profile_catalog_summary_line(result: &serde_json::Value) -> String {
@@ -1587,6 +1626,17 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 print_profile_catalog_summary(&result);
+            }
+        }
+        Commands::Profile(ProfileCommands::Revisions { profile_id, json }) => {
+            let resp: ApiResponse<serde_json::Value> = client
+                .get(&format!("/profiles/{profile_id}/revisions"))
+                .await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_profile_revisions_summary(&result);
             }
         }
         Commands::Misc(MiscCommands::Debug) => {
@@ -2436,6 +2486,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_profile_revisions() {
+        let cli = Cli::parse_from(["capsem", "profile", "revisions", "everyday-work", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Revisions { profile_id, json }) => {
+                assert_eq!(profile_id, "everyday-work");
+                assert!(json);
+            }
+            _ => panic!("expected profile revisions"),
+        }
+    }
+
+    #[test]
     fn parse_profile_reconcile_catalog_url() {
         let cli = Cli::parse_from([
             "capsem",
@@ -2518,6 +2580,25 @@ mod tests {
         assert_eq!(
             profile_catalog_summary_line(&result),
             "Profile catalog: configured=true manifest_present=true profiles=1"
+        );
+    }
+
+    #[test]
+    fn profile_revisions_summary_line_counts_revisions() {
+        let result = serde_json::json!({
+            "profile_id": "everyday-work",
+            "current_revision": "2026.0520.2",
+            "installed_revision": "2026.0520.1",
+            "revisions": [
+                {"revision": "2026.0520.1", "status": "deprecated"},
+                {"revision": "2026.0520.2", "status": "active"},
+                {"revision": "2026.0520.3", "status": "revoked"}
+            ]
+        });
+
+        assert_eq!(
+            profile_revisions_summary_line(&result),
+            "Profile revisions: profile=everyday-work current=2026.0520.2 installed=2026.0520.1 revisions=3"
         );
     }
 

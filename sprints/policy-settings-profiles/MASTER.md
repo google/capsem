@@ -217,6 +217,10 @@ Landed S07a foundation:
   profile catalog [--json]` expose configured catalog source state, persisted
   manifest presence, profile ids, current/installed revisions, installed
   payload hashes, and canonical revision lifecycle status.
+- Per-profile revision inspection. `GET /profiles/{id}/revisions` and `capsem
+  profile revisions <id> [--json]` expose current/installed revision markers,
+  installed payload hash, and canonical lifecycle status for one catalog
+  profile, with missing manifests/unknown profiles failing as absence errors.
 - Absent installed profile cleanup. Catalog reconciliation now removes
   launchable current state for installed profile ids missing from the signed
   manifest and reports `absent_removed`, while preserving archived payloads for
@@ -264,10 +268,11 @@ Remaining S07a push order:
    HTTPS catalog URL through the service. Typed `[profile_catalog]` service
    settings now persist the catalog URL, profile payload public key, and check
    interval; service startup schedules the same reconcile path and logs summary
-   counts. `GET /profiles/catalog` and `capsem profile catalog [--json]`
+   counts. `GET /profiles/catalog`, `GET /profiles/{id}/revisions`, `capsem
+   profile catalog [--json]`, and `capsem profile revisions <id> [--json]`
    expose source, manifest, current/installed revision, and lifecycle status.
    Absent installed profile ids now lose launchable state during reconcile.
-   Richer revision CLI verbs and UI clients remain.
+   Install/update/remove revision CLI verbs and UI clients remain.
 2. Persistent VM `profile_id`, `profile_revision`, profile payload hash,
    package contract hash, and pinned asset metadata. Landed for
    runtime/registry/API with installed revision/payload-hash capture; profile
@@ -449,6 +454,15 @@ Latest focused verification after the rescue/push transition:
   `cargo test -p capsem parse_profile_catalog` passed with 1 test, and `cargo
   test -p capsem profile_catalog_summary` passed with 1 test after adding
   read-only catalog status API/CLI wiring.
+- `cargo test -p capsem-service handle_profile_revisions` passed with 3 tests,
+  `cargo test -p capsem parse_profile_revisions` passed with 1 test, and
+  `cargo test -p capsem profile_revisions_summary` passed with 1 test after
+  adding per-profile revision inspection API/CLI wiring.
+- `cargo test -p capsem` passed with 255 tests and `cargo test -p
+  capsem-service` passed with 112 lib tests, 174 service-bin tests, and doc
+  tests after the revision inspection slice; the service gate also now keeps
+  the profile asset operator-flow log capture on one dispatcher-bound runtime
+  so verification/install log assertions are stable under the full package run.
 - `uv run python -m pytest tests/capsem-e2e/test_winterfell_fork_lineage.py
   -q -s` passed with 1 real-VM fork-lineage test, and `uv run python -m pytest
   tests/capsem-e2e/test_profile_asset_boot.py -q -s` re-passed after extracting

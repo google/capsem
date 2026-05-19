@@ -16,9 +16,11 @@ through CLI command families.
   `GET /profiles/catalog` and prints configured source state, persisted
   manifest presence, profile ids, current/installed revisions, and canonical
   revision status values.
+- Initial revision inspection landed: `capsem profile revisions <id> [--json]`
+  calls `GET /profiles/{id}/revisions` and prints current/installed revision
+  markers plus canonical lifecycle status values.
 - Add `capsem profile list/create/fork/update/delete/show/resolve`.
-- Add `capsem profile revisions <id>`,
-  `capsem profile install/update/remove <id> [--revision ...]`, and status
+- Add `capsem profile install/update/remove <id> [--revision ...]` and status
   output using the canonical `ProfileRevisionStatus` enum values:
   `active`, `deprecated`, and `revoked`. A missing revision is rendered as
   absent/unknown, not as `removed`.

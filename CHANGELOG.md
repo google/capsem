@@ -96,6 +96,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog [--json]` so operators can inspect the persisted signed catalog,
   installed profile revisions, revision lifecycle status, and configured
   catalog source.
+- Added per-profile catalog revision inspection through
+  `GET /profiles/{id}/revisions` and `capsem profile revisions <id> [--json]`,
+  including current/installed revision markers and canonical lifecycle status.
 - Changed profile catalog reconciliation to remove launchable installed
   profiles whose profile id is absent from the signed catalog while preserving
   the archived installed payload for retention/VM-pin cleanup.

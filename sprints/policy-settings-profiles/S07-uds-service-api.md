@@ -68,6 +68,10 @@ Routes (UDS; mirrored on the gateway in [S08](S08-http-gateway-api.md)):
 - `GET  /profiles/catalog` -> signed catalog status: configured source,
   persisted manifest path/presence, profile ids, current revision, installed
   revision/payload hash, and per-revision lifecycle status.
+- `GET  /profiles/{id}/revisions` -> signed catalog revisions for one profile:
+  current revision, installed revision/payload hash, canonical lifecycle status,
+  and current/installed markers. Missing catalog manifests and unknown profile
+  ids fail as absence/not-found, never as a synthetic `removed` lifecycle.
 - `GET  /rules?profile=<id>&callback=<type>` -> list rules.
   Returns the canonical `security.rules.<type>.<name>` id, the rule
   body (typed, not raw TOML), the source profile, the priority, and

@@ -2862,9 +2862,13 @@ async fn handle_asset_reconcile_downloads_missing_profile_assets() {
     assert!(state.asset_supervisor.snapshot().ready);
 }
 
-#[tokio::test]
-async fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
-    let (base_url, server) = start_test_asset_server().await;
+#[test]
+fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (base_url, server) = runtime.block_on(start_test_asset_server());
     let (state, _dir) = make_test_state_with_profile_assets(&base_url);
     let log_path = state.run_dir.join("service.log");
     std::fs::create_dir_all(&state.run_dir).unwrap();
@@ -2880,55 +2884,58 @@ async fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
                 .unwrap()
         })
         .finish();
-    let _trace_guard = tracing::subscriber::set_default(subscriber);
+    let dispatch = tracing::Dispatch::new(subscriber);
 
-    let Json(reconcile) = handle_asset_reconcile(State(state.clone())).await.unwrap();
-    assert_eq!(reconcile["outcome"], serde_json::json!("downloaded"));
-    assert_eq!(reconcile["health"]["state"], serde_json::json!("ready"));
+    tracing::dispatcher::with_default(&dispatch, || {
+        runtime.block_on(async {
+            let Json(reconcile) = handle_asset_reconcile(State(state.clone())).await.unwrap();
+            assert_eq!(reconcile["outcome"], serde_json::json!("downloaded"));
+            assert_eq!(reconcile["health"]["state"], serde_json::json!("ready"));
 
-    let Json(setup_status) = handle_asset_status(State(state.clone())).await;
-    assert_eq!(setup_status["ready"], serde_json::json!(true));
-    assert_eq!(
-        setup_status["profile_payload_hash"],
-        serde_json::json!(test_profile_payload_hash())
-    );
-    assert_eq!(
-        setup_status["profile_assets"][0]["source_url"],
-        serde_json::json!("http://127.0.0.1/vmlinuz")
-    );
+            let Json(setup_status) = handle_asset_status(State(state.clone())).await;
+            assert_eq!(setup_status["ready"], serde_json::json!(true));
+            assert_eq!(
+                setup_status["profile_payload_hash"],
+                serde_json::json!(test_profile_payload_hash())
+            );
+            assert_eq!(
+                setup_status["profile_assets"][0]["source_url"],
+                serde_json::json!("http://127.0.0.1/vmlinuz")
+            );
 
-    let Json(list) = handle_list(State(state.clone())).await;
-    let list_health = list.asset_health.expect("list should include asset health");
-    assert!(list_health.ready);
-    assert_eq!(
-        list_health.profile_payload_hash.as_deref(),
-        Some(test_profile_payload_hash().as_str())
-    );
-    assert_eq!(list_health.profile_assets.len(), 3);
+            let Json(list) = handle_list(State(state.clone())).await;
+            let list_health = list.asset_health.expect("list should include asset health");
+            assert!(list_health.ready);
+            assert_eq!(
+                list_health.profile_payload_hash.as_deref(),
+                Some(test_profile_payload_hash().as_str())
+            );
+            assert_eq!(list_health.profile_assets.len(), 3);
 
-    let Json(debug) = handle_debug_report(State(state.clone())).await.unwrap();
-    assert!(debug
-        .text
-        .contains("profile_asset_profile_payload_hash: blake3:"));
-    assert!(debug.text.contains("profile_asset_source: vmlinuz"));
+            let Json(debug) = handle_debug_report(State(state.clone())).await.unwrap();
+            assert!(debug
+                .text
+                .contains("profile_asset_profile_payload_hash: blake3:"));
+            assert!(debug.text.contains("profile_asset_source: vmlinuz"));
 
-    drop(_trace_guard);
-    let service_logs = handle_service_logs(State(state.clone())).await.unwrap();
-    server.abort();
+            let service_logs = handle_service_logs(State(state.clone())).await.unwrap();
+            server.abort();
 
-    for event in [
-        "profile_asset_check_start",
-        "profile_asset_missing",
-        "profile_asset_download_start",
-        "profile_asset_verify_ok",
-        "profile_asset_install_ok",
-        "profile_asset_check_finish",
-    ] {
-        assert!(
-            service_logs.contains(event),
-            "service logs should include {event}; logs were:\n{service_logs}"
-        );
-    }
+            for event in [
+                "profile_asset_check_start",
+                "profile_asset_missing",
+                "profile_asset_download_start",
+                "profile_asset_verify_ok",
+                "profile_asset_install_ok",
+                "profile_asset_check_finish",
+            ] {
+                assert!(
+                    service_logs.contains(event),
+                    "service logs should include {event}; logs were:\n{service_logs}"
+                );
+            }
+        });
+    });
 }
 
 #[tokio::test]
@@ -4325,6 +4332,122 @@ async fn handle_profile_catalog_reports_empty_state_without_manifest() {
 
     assert_eq!(val["manifest_present"], serde_json::json!(false));
     assert_eq!(val["profiles"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn handle_profile_revisions_reports_current_and_installed_revision() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let home = dir.path().join("home");
+    let corp_dir = home.join("profiles").join("corp");
+    let manifest_json = r#"{
+      "format": 1,
+      "profiles": {
+        "everyday-work": {
+          "current_revision": "2026.0520.2",
+          "revisions": {
+            "2026.0520.1": {
+              "status": "deprecated",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///profiles/everyday-work/2026.0520.1/profile.json",
+              "profile_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "profile_signature_url": "file:///profiles/everyday-work/2026.0520.1/profile.json.minisig"
+            },
+            "2026.0520.2": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///profiles/everyday-work/2026.0520.2/profile.json",
+              "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "profile_signature_url": "file:///profiles/everyday-work/2026.0520.2/profile.json.minisig"
+            }
+          }
+        }
+      }
+    }"#;
+    std::fs::create_dir_all(corp_dir.join(".catalog/profiles/everyday-work")).unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profile-manifest.json"),
+        manifest_json,
+    )
+    .unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profiles/everyday-work/current.json"),
+        r#"{
+          "profile_id": "everyday-work",
+          "revision": "2026.0520.2",
+          "payload_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }"#,
+    )
+    .unwrap();
+
+    let Json(val) = handle_profile_revisions(Path("everyday-work".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(val["profile_id"], serde_json::json!("everyday-work"));
+    assert_eq!(val["current_revision"], serde_json::json!("2026.0520.2"));
+    assert_eq!(val["installed_revision"], serde_json::json!("2026.0520.2"));
+    assert_eq!(val["revisions"][0]["status"], "deprecated");
+    assert_eq!(val["revisions"][1]["status"], "active");
+    assert_eq!(val["revisions"][1]["current"], serde_json::json!(true));
+    assert_eq!(val["revisions"][1]["installed"], serde_json::json!(true));
+}
+
+#[tokio::test]
+async fn handle_profile_revisions_returns_not_found_without_manifest() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let err = handle_profile_revisions(Path("everyday-work".to_string()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err.1.contains("profile catalog manifest is not present"));
+}
+
+#[tokio::test]
+async fn handle_profile_revisions_returns_not_found_for_unknown_catalog_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+    let home = dir.path().join("home");
+    let corp_dir = home.join("profiles").join("corp");
+    let manifest_json = r#"{
+      "format": 1,
+      "profiles": {
+        "everyday-work": {
+          "current_revision": "2026.0520.2",
+          "revisions": {
+            "2026.0520.2": {
+              "status": "active",
+              "min_binary": "1.0.0",
+              "profile_url": "file:///profiles/everyday-work/2026.0520.2/profile.json",
+              "profile_hash": "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "profile_signature_url": "file:///profiles/everyday-work/2026.0520.2/profile.json.minisig"
+            }
+          }
+        }
+      }
+    }"#;
+    std::fs::create_dir_all(corp_dir.join(".catalog")).unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profile-manifest.json"),
+        manifest_json,
+    )
+    .unwrap();
+
+    let err = handle_profile_revisions(Path("missing-profile".to_string()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err
+        .1
+        .contains("profile catalog entry 'missing-profile' not found"));
 }
 
 #[tokio::test]
