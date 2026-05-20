@@ -12,6 +12,11 @@ from typing import Literal
 import click
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from capsem.builder.image_plan import (
+    ImageArch,
+    derive_image_plan,
+    dump_image_plan_json,
+)
 from capsem.builder.profiles import (
     ProfileType,
     create_profile_draft,
@@ -162,6 +167,11 @@ def settings() -> None:
 @cli.group()
 def profile() -> None:
     """Validate and inspect Profile V2 payloads."""
+
+
+@cli.group()
+def image() -> None:
+    """Derive and verify profile-backed image build plans."""
 
 
 @settings.command("schema")
@@ -350,6 +360,36 @@ def profile_validate(profile_path: str, json_output: bool) -> None:
             click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
     if not report.ok:
         raise SystemExit(1)
+
+
+@image.command("plan")
+@click.argument("profile_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--arch",
+    "arch",
+    default="all",
+    type=click.Choice(["all", "arm64", "x86_64"]),
+    show_default=True,
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit the typed image plan.")
+def image_plan(profile_path: str, arch: ImageArch, json_output: bool) -> None:
+    """Derive an image build plan from a Profile V2 payload."""
+    try:
+        profile = _load_profile(Path(profile_path))
+        plan = derive_image_plan(profile, arch=arch)
+    except (ValidationError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_image_plan_json(plan))
+        return
+
+    click.echo(f"profile: {plan.profile_id}@{plan.profile_revision}")
+    click.echo(f"guest ABI: {plan.guest_abi}")
+    click.echo(f"package contract: {plan.package_contract_hash}")
+    click.echo("arches: " + ", ".join(item.arch for item in plan.arches))
+    click.echo(f"system: {plan.packages.system.distro} {plan.packages.system.release}")
+    click.echo(f"tools: {len(plan.tools)}")
 
 
 @settings.command("doctor")

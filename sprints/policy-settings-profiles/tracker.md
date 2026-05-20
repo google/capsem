@@ -253,7 +253,7 @@ a valid claim -- mark it `[ ]` instead.
     passed with 64 tests; `cargo test -p capsem-core profile_parse --lib`
     passed with 4 tests; `cargo test -p capsem-core profile_payload --lib`
     passed with 11 tests; `uv run python -m pytest tests/test_profiles.py
-    tests/test_admin_cli.py -q` passed with 25 tests; `uv run capsem-admin
+    tests/test_admin_cli.py -q` passed with 26 tests; `uv run capsem-admin
     profile schema | rg -n 'editable|mcpServers|security_rules'` confirmed the
     admin schema exposes the editability contract. Third slice added
     `capsem-admin profile init <profile-id>` with Pydantic-generated Profile V2
@@ -263,7 +263,14 @@ a valid claim -- mark it `[ ]` instead.
     after reparsing. Verification: `uv run python -m pytest
     tests/test_profiles.py tests/test_admin_cli.py -q` passed with 36 tests;
     installed console-script smoke proved `profile init` output validates with
-    `profile validate`.
+    `profile validate`. Fourth slice added `capsem-admin image plan <profile>`
+    with typed `capsem.image-plan.v1` output derived from Profile V2 package/
+    tool contracts, VM resources, selected arches, declared per-arch assets, and
+    a package-contract BLAKE3 hash. `--arch all` is the default, single-arch
+    narrowing works for CI shards, and missing selected-arch assets fail closed.
+    Verification: `uv run python -m pytest tests/test_image_plan.py
+    tests/test_admin_cli.py -q` passed with 26 tests; installed console-script
+    smoke proved JSON and TOML profile inputs produce valid image plans.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

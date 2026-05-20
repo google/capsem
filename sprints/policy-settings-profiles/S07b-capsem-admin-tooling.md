@@ -49,7 +49,7 @@ Second slice landed on 2026-05-20:
   passed with 64 tests; `cargo test -p capsem-core profile_parse --lib` passed
   with 4 tests; `cargo test -p capsem-core profile_payload --lib` passed with
   11 tests; `uv run python -m pytest tests/test_profiles.py
-  tests/test_admin_cli.py -q` passed with 25 tests.
+  tests/test_admin_cli.py -q` passed with 26 tests.
 
 Third slice landed on 2026-05-20:
 
@@ -66,6 +66,21 @@ Third slice landed on 2026-05-20:
   tests/test_admin_cli.py -q` passed with 36 tests; installed console-script
   smoke for `capsem-admin profile init corp-dev --revision 2026.0520.9`
   produced a valid draft accepted by `capsem-admin profile validate`.
+
+Fourth slice landed on 2026-05-20:
+
+- `capsem-admin image plan <profile>` now derives a typed
+  `capsem.image-plan.v1` artifact from Profile V2 instead of `guest/config`.
+- The plan records profile id/revision/name, guest ABI, VM resources, selected
+  arches, declared per-arch VM assets, package/tool contracts, and a BLAKE3
+  package-contract hash. `--arch all` is the default; `--arch arm64` and
+  `--arch x86_64` narrow the plan for local or CI shards.
+- Planning fails closed if the selected architecture has no declared VM assets
+  in the profile, which prevents accidental all-arch release plans from
+  silently dropping an architecture.
+- Verification: `uv run python -m pytest tests/test_image_plan.py
+  tests/test_admin_cli.py -q` passed with 26 tests; installed console-script
+  smoke proved JSON and TOML profile inputs produce valid image plans.
 
 ## Why This Sprint Exists
 
@@ -380,7 +395,7 @@ The checker must fail closed for:
 - [x] Add profile TOML parser/adapter for admin tooling bound to
       `capsem.profile.v2.schema.json` through shared valid/invalid fixtures and
       Rust/Python conformance tests.
-- [ ] Implement profile-to-image build-plan derivation.
+- [x] Implement profile-to-image build-plan derivation.
 - [ ] Replace raw dict/list plumbing in admin workflows with Pydantic model
       parsing, validation, normalized accessors, `model_validate_json()` /
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.

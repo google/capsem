@@ -114,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON or TOML draft through the Pydantic model, with all-architecture VM asset
   placeholders, package/tool contract defaults, optional file output, and
   parity tests proving init JSON matches init TOML after reparsing.
+- Added `capsem-admin image plan <profile>` to derive a typed image build plan
+  from Profile V2 package/tool/VM asset contracts, with `--arch all` by default,
+  single-arch narrowing, and fail-closed missing-asset checks.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks

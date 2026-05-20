@@ -229,6 +229,69 @@ def test_capsem_admin_profile_init_rejects_invalid_profile_id() -> None:
     assert "pattern" in result.output
 
 
+def test_capsem_admin_image_plan_json_uses_profile_contract(tmp_path) -> None:
+    profile_path = tmp_path / "corp-dev.profile.toml"
+    init_result = CliRunner().invoke(
+        cli,
+        [
+            "profile",
+            "init",
+            "corp-dev",
+            "--revision",
+            "2026.0520.10",
+            "--out",
+            str(profile_path),
+        ],
+    )
+    assert init_result.exit_code == 0
+
+    result = CliRunner().invoke(
+        cli,
+        ["image", "plan", str(profile_path), "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert '"schema": "capsem.image-plan.v1"' in result.output
+    assert '"profile_id": "corp-dev"' in result.output
+    assert '"arch": "arm64"' in result.output
+    assert '"arch": "x86_64"' in result.output
+    assert '"package_contract_hash": "blake3:' in result.output
+
+
+def test_capsem_admin_image_plan_can_narrow_arch_for_partial_fixture() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "plan",
+            "schemas/fixtures/profile-v2-valid.json",
+            "--arch",
+            "arm64",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"profile_id": "everyday-work"' in result.output
+    assert '"arch": "arm64"' in result.output
+    assert '"arch": "x86_64"' not in result.output
+
+
+def test_capsem_admin_image_plan_rejects_default_all_when_profile_lacks_arch() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "plan",
+            "schemas/fixtures/profile-v2-valid.json",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing VM assets for arch 'x86_64'" in result.output
+
+
 def test_capsem_admin_settings_validate_accepts_json_fixture() -> None:
     result = CliRunner().invoke(
         cli,
