@@ -132,6 +132,7 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum McpCommands {
     /// List Profile V2 MCP servers
     Connectors {
@@ -345,6 +346,12 @@ enum SessionCommands {
         /// Timeout in seconds
         #[arg(long)]
         timeout: Option<u64>,
+        /// Profile id for the temporary VM
+        #[arg(long)]
+        profile: Option<String>,
+        /// Exact installed profile revision for the temporary VM
+        #[arg(long = "profile-revision")]
+        profile_revision: Option<String>,
         /// Set environment variables (repeatable: -e KEY=VALUE)
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
@@ -1361,11 +1368,15 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Run {
             command,
             timeout,
+            profile,
+            profile_revision,
             env,
         }) => {
             let req = RunRequest {
                 command: command.clone(),
                 timeout_secs: *timeout,
+                profile_id: profile.clone(),
+                profile_revision: profile_revision.clone(),
                 env: client::parse_env_vars(env)?,
             };
             let resp: ApiResponse<ExecResponse> = client.post("/run", &req).await?;
@@ -1605,7 +1616,7 @@ async fn main() -> Result<()> {
         Commands::Mcp(McpCommands::Connectors { profile, json }) => {
             let mut path = "/mcp/connectors".to_string();
             if let Some(profile) = profile {
-                path.push_str(&format!("?profile={}", urlencoding::encode(&profile)));
+                path.push_str(&format!("?profile={}", urlencoding::encode(profile)));
             }
             let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
             let result = resp.into_result()?;
@@ -1713,15 +1724,15 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Mcp(McpCommands::Delete { id, profile }) => {
-            let mut path = format!("/mcp/connectors/{}", urlencoding::encode(&id));
+            let mut path = format!("/mcp/connectors/{}", urlencoding::encode(id));
             if let Some(profile) = profile {
-                path.push_str(&format!("?profile={}", urlencoding::encode(&profile)));
+                path.push_str(&format!("?profile={}", urlencoding::encode(profile)));
             }
             let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
             let result = resp.into_result()?;
             println!(
                 "MCP server deleted: {}",
-                result["server_id"].as_str().unwrap_or(&id)
+                result["server_id"].as_str().unwrap_or(id)
             );
         }
         Commands::Profile(ProfileCommands::ReconcileCatalog {
@@ -2363,10 +2374,14 @@ mod tests {
             Commands::Session(SessionCommands::Run {
                 command,
                 timeout,
+                profile,
+                profile_revision,
                 env,
             }) => {
                 assert_eq!(command, "echo hello");
                 assert_eq!(timeout, None);
+                assert_eq!(profile, None);
+                assert_eq!(profile_revision, None);
                 assert!(env.is_empty());
             }
             _ => panic!("expected Run"),
@@ -2380,10 +2395,43 @@ mod tests {
             Commands::Session(SessionCommands::Run {
                 command,
                 timeout,
+                profile,
+                profile_revision,
                 env,
             }) => {
                 assert_eq!(command, "ls -la");
                 assert_eq!(timeout, Some(120));
+                assert_eq!(profile, None);
+                assert_eq!(profile_revision, None);
+                assert!(env.is_empty());
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn parse_run_with_profile_selection() {
+        let cli = Cli::parse_from([
+            "capsem",
+            "run",
+            "--profile",
+            "coding",
+            "--profile-revision",
+            "2026.0520.1",
+            "echo hello",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Run {
+                command,
+                timeout,
+                profile,
+                profile_revision,
+                env,
+            }) => {
+                assert_eq!(command, "echo hello");
+                assert_eq!(timeout, None);
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert_eq!(profile_revision.as_deref(), Some("2026.0520.1"));
                 assert!(env.is_empty());
             }
             _ => panic!("expected Run"),

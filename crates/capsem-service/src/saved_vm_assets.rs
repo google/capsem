@@ -143,7 +143,7 @@ mod tests {
     use crate::registry::{PersistentRegistry, SavedVmProfilePin};
 
     fn base_assets(label: &str, kernel: char, initrd: char, rootfs: char) -> SavedVmBaseAssets {
-        let hash = |ch: char| std::iter::repeat(ch).take(64).collect::<String>();
+        let hash = |ch: char| std::iter::repeat_n(ch, 64).collect::<String>();
         SavedVmBaseAssets {
             asset_version: format!("{label}@2026.0520.1"),
             arch: "arm64".to_string(),

@@ -48,7 +48,6 @@ pub(crate) async fn handle_ipc_connection(
     ipc_tx: broadcast::Sender<ProcessToService>,
     term_relay: Arc<TerminalRelay>,
     job_store: Arc<JobStore>,
-    net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
     vm_ready: Arc<AtomicBool>,
     vm_id: String,
@@ -204,7 +203,10 @@ pub(crate) async fn handle_ipc_connection(
                 capsem_core::try_send!(
                     "ipc_metrics_snapshot",
                     ipc_tx_out
-                        .send(ProcessToService::MetricsSnapshot { id, snapshot })
+                        .send(ProcessToService::MetricsSnapshot {
+                            id,
+                            snapshot: Box::new(snapshot),
+                        })
                         .await
                 );
             }
@@ -523,14 +525,12 @@ pub(crate) async fn handle_ipc_connection(
                 );
 
                 let new_domain = Arc::new(runtime_state.domain_policy);
-                let new_network = Arc::new(runtime_state.network_policy);
                 let new_mcp = Arc::new(runtime_state.mcp_policy);
-                let new_policy_v2 = Arc::new(runtime_state.policy_v2);
+                let new_policy = Arc::new(runtime_state.policy);
 
-                *net_state.policy.write().unwrap() = new_network;
                 *mcp_runtime.domain_policy.write().unwrap() = Arc::clone(&new_domain);
                 *mcp_runtime.policy.write().await = new_mcp;
-                *mcp_runtime.policy_v2.write().await = new_policy_v2;
+                *mcp_runtime.rules_policy.write().await = new_policy;
 
                 let reload_result = mcp_runtime.aggregator.refresh(servers).await;
                 let (success, error) = match reload_result {

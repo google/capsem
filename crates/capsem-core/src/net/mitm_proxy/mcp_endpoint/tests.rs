@@ -8,7 +8,7 @@ use crate::mcp::aggregator::{
 };
 use crate::mcp::policy::McpPolicy;
 use crate::mcp::types::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
-use crate::net::policy_v2::PolicyConfig;
+use crate::net::policy::PolicyConfig;
 
 use super::*;
 

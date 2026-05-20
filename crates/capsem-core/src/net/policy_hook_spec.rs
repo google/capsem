@@ -206,7 +206,7 @@ pub fn policy_hook_openapi_document() -> Value {
         "info": {
             "title": "Capsem Policy Hook Spec0",
             "version": POLICY_HOOK_SPEC_VERSION,
-            "description": "External decision hook contract for Capsem Policy V2."
+            "description": "External decision hook contract for Capsem Policy."
         },
         "paths": {
             "/v1/health": {

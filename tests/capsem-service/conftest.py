@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, select_editable_profile, wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
 
@@ -23,6 +23,19 @@ def service_env():
 def client(service_env):
     """UDS HTTP client connected to the test service."""
     return service_env.client()
+
+
+@pytest.fixture
+def editable_client():
+    """Isolated client selected onto a user-owned profile for mutation tests."""
+    svc = ServiceInstance()
+    svc.start()
+    try:
+        client = svc.client()
+        select_editable_profile(client, prefix="svc")
+        yield client
+    finally:
+        svc.stop()
 
 
 @pytest.fixture

@@ -135,7 +135,7 @@ fn build_event_process_name_passthrough() {
 }
 
 #[test]
-fn build_event_carries_policy_v2_fields() {
+fn build_event_carries_policy_fields() {
     let mut res = denied_result();
     res.matched_rule = Some("policy.dns.block_openai".into());
     res.policy_mode = Some("enforce".into());

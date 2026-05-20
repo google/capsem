@@ -863,7 +863,7 @@ fn dns_event_insert_populates_row() {
                     policy_mode: Some("enforce".into()),
                     policy_action: Some("block".into()),
                     policy_rule: Some("policy.dns.block_example".into()),
-                    policy_reason: Some("DNS block from Policy V2".into()),
+                    policy_reason: Some("DNS block from Policy".into()),
                 }))
                 .await;
         });
@@ -931,7 +931,7 @@ fn dns_event_insert_populates_row() {
     assert_eq!(mode.as_deref(), Some("enforce"));
     assert_eq!(action.as_deref(), Some("block"));
     assert_eq!(rule.as_deref(), Some("policy.dns.block_example"));
-    assert_eq!(reason.as_deref(), Some("DNS block from Policy V2"));
+    assert_eq!(reason.as_deref(), Some("DNS block from Policy"));
 }
 
 #[test]

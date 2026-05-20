@@ -25,7 +25,7 @@ pub struct AssetSupervisor {
 
 #[derive(Debug, Clone)]
 pub enum AssetRequirement {
-    Profile(ProfileAssetRequirement),
+    Profile(Box<ProfileAssetRequirement>),
     DevLogical { arch: String },
 }
 

@@ -1,4 +1,4 @@
-//! Shared `ask -> confirm()` plumbing for Policy V2.
+//! Shared `ask -> confirm()` plumbing for Policy.
 //!
 //! Every callback site that matches a rule with action `ask` calls a
 //! `Confirmer` to resolve the ask into a final `Accept | Deny` outcome.
@@ -14,7 +14,7 @@ use capsem_proto::poll::RetryOpts;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::net::policy_v2::PolicyCallback;
+use crate::net::policy::PolicyCallback;
 use crate::poll::poll_until;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

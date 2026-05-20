@@ -383,11 +383,7 @@ async fn run_async_main_loop(
 
     let guest_config = runtime_policy.guest_config.clone();
 
-    let net_state = Arc::new(capsem_core::create_net_state_with_policy(
-        &args.id,
-        Arc::clone(&db),
-        runtime_policy.network_policy.clone(),
-    )?);
+    let net_state = Arc::new(capsem_core::create_net_state(&args.id, Arc::clone(&db))?);
     // Locate the builtin MCP server binary next to our own binary.
     let builtin_bin = std::env::current_exe()
         .ok()
@@ -486,8 +482,8 @@ async fn run_async_main_loop(
     let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(
         runtime_policy.mcp_policy.clone(),
     )));
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        runtime_policy.policy_v2.clone(),
+    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(
+        runtime_policy.policy.clone(),
     )));
     let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(
         runtime_policy.domain_policy.clone(),
@@ -496,14 +492,14 @@ async fn run_async_main_loop(
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
         Arc::clone(&mcp_policy),
-        Arc::clone(&policy_v2),
+        Arc::clone(&policy),
         Arc::clone(&mcp_inflight),
         capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
     ));
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
         policy: Arc::clone(&mcp_policy),
-        policy_v2: Arc::clone(&policy_v2),
+        rules_policy: Arc::clone(&policy),
         domain_policy: Arc::clone(&mcp_domain_policy),
         session_dir: session_dir.clone(),
         builtin_binary: builtin_bin,
@@ -518,15 +514,13 @@ async fn run_async_main_loop(
             )),
         },
     );
-    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline_with_policy_v2(
-        Arc::clone(&net_state.policy),
-        Arc::clone(&policy_v2),
+    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline_with_policy(
+        Arc::clone(&policy),
         Arc::clone(&telemetry_deps),
     );
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
-        policy: Arc::clone(&net_state.policy),
-        policy_v2: Arc::clone(&policy_v2),
+        policy: Arc::clone(&policy),
         db: Arc::clone(&db),
         upstream_tls: Arc::clone(&net_state.upstream_tls),
         telemetry: telemetry_deps,
@@ -536,16 +530,11 @@ async fn run_async_main_loop(
         confirm_opts: capsem_core::net::policy_confirm::default_confirm_backoff("confirm-model"),
     });
 
-    // T3.2 -- DNS handler shares the same `NetworkPolicy` as the MITM
-    // proxy so an admin policy edit takes effect for both protocols at
-    // once. Default upstream nameservers (1.1.1.1, 8.8.8.8) until T5
-    // adds operator-configurable upstreams.
-    let dns_handler = Arc::new(
-        capsem_core::net::dns::DnsHandler::with_default_resolver_and_policy_v2(
-            Arc::clone(&net_state.policy),
-            Arc::clone(&policy_v2),
-        ),
-    );
+    // DNS and MITM share the same Policy handle so settings reload updates
+    // every inspected network boundary together.
+    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_default_resolver(
+        Arc::clone(&policy),
+    ));
 
     let db_clone = Arc::clone(&db);
     let sched_clone = Arc::clone(&scheduler);
@@ -728,7 +717,6 @@ async fn run_async_main_loop(
         let ipc_tx_pass = ipc_tx.clone();
         let term_c = Arc::clone(&term_relay);
         let job_c = Arc::clone(&job_store);
-        let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
         let ready_c = Arc::clone(&vm_ready);
         let vm_id_c = vm_id_ws.clone();
@@ -740,7 +728,6 @@ async fn run_async_main_loop(
                 ipc_tx_pass,
                 term_c,
                 job_c,
-                net_c,
                 mcp_c,
                 ready_c,
                 vm_id_c,

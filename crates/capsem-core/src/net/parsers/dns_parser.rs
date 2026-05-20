@@ -93,8 +93,7 @@ pub fn build_servfail(query_bytes: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Build a synthetic NoError response with one or more A/AAAA answer
-/// records (T3.d). Used by the policy-redirect path: an admin
-/// configures `DnsRedirect { qname, qtype, answers, ttl }` and we
+/// records (T3.d). Used by the Policy DNS rewrite path to
 /// synthesize the response locally instead of forwarding upstream.
 ///
 /// Filtering: only IPs whose family matches the query's qtype are

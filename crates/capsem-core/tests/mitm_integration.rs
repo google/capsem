@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
-use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
+use capsem_core::net::policy::PolicyConfig;
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -48,7 +48,7 @@ impl Drop for EnvVarGuard {
     }
 }
 
-/// Build a NetworkPolicy from allow/block lists for integration tests.
+/// Build a Policy config from allow/block host lists for integration tests.
 fn make_proxy_config(
     allowed: &[&str],
     blocked: &[&str],
@@ -57,34 +57,15 @@ fn make_proxy_config(
     make_proxy_config_full(allowed, blocked, default_allow, &[80])
 }
 
-/// Like `make_proxy_config` but lets the caller override the
-/// `http_upstream_ports` allowlist (T2.2). Used by T2.3's Ollama-shape
-/// test that runs a fake upstream on an OS-assigned port.
+/// Like `make_proxy_config`; the `http_ports` argument is retained for
+/// older call sites while port policy lives in Policy rules.
 fn make_proxy_config_full(
     allowed: &[&str],
     blocked: &[&str],
     default_allow: bool,
-    http_ports: &[u16],
+    _http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
-    let mut rules = Vec::new();
-    for pattern in blocked {
-        rules.push(PolicyRule {
-            matcher: DomainMatcher::parse(pattern),
-            allow_read: false,
-            allow_write: false,
-        });
-    }
-    for pattern in allowed {
-        rules.push(PolicyRule {
-            matcher: DomainMatcher::parse(pattern),
-            allow_read: true,
-            allow_write: true,
-        });
-    }
-    let mut policy_inner = NetworkPolicy::new(rules, default_allow, default_allow);
-    policy_inner.http_upstream_ports = http_ports.to_vec();
-    let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
     // Leak the tempdir so it lives for the test
@@ -96,18 +77,18 @@ fn make_proxy_config_full(
             capsem_core::net::ai_traffic::TraceState::new(),
         )),
     });
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        capsem_core::net::policy_v2::PolicyConfig::default(),
-    )));
-    let pipeline = mitm_proxy::make_production_pipeline_with_policy_v2(
+    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(integration_policy(
+        allowed,
+        blocked,
+        default_allow,
+    ))));
+    let pipeline = mitm_proxy::make_production_pipeline_with_policy(
         Arc::clone(&policy),
-        Arc::clone(&policy_v2),
         Arc::clone(&telemetry),
     );
     let config = Arc::new(MitmProxyConfig {
         ca,
         policy,
-        policy_v2,
         db: db.clone(),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
         telemetry,
@@ -119,6 +100,74 @@ fn make_proxy_config_full(
         ),
     });
     (config, db)
+}
+
+fn integration_policy(allowed: &[&str], blocked: &[&str], default_allow: bool) -> PolicyConfig {
+    let mut toml = String::new();
+    for (index, pattern) in blocked
+        .iter()
+        .filter(|pattern| !pattern.is_empty())
+        .enumerate()
+    {
+        toml.push_str(&format!(
+            r#"
+[policy.http.block_{index}]
+on = "http.request"
+if = '{}'
+decision = "block"
+priority = {}
+reason = "Integration blocked host"
+"#,
+            host_condition(pattern),
+            index
+        ));
+    }
+    for (index, pattern) in allowed
+        .iter()
+        .filter(|pattern| !pattern.is_empty())
+        .enumerate()
+    {
+        toml.push_str(&format!(
+            r#"
+[policy.http.allow_{index}]
+on = "http.request"
+if = '{}'
+decision = "allow"
+priority = {}
+reason = "Integration allowed host"
+"#,
+            host_condition(pattern),
+            100 + index
+        ));
+    }
+    if !default_allow {
+        toml.push_str(
+            r#"
+[policy.http.default_block]
+on = "http.request"
+if = 'request.host.matches(".*")'
+decision = "block"
+priority = 10000
+reason = "Integration default deny"
+"#,
+        );
+    }
+    if toml.trim().is_empty() {
+        PolicyConfig::default()
+    } else {
+        PolicyConfig::from_policy_toml_str(&toml).unwrap()
+    }
+}
+
+fn host_condition(pattern: &str) -> String {
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        format!(
+            r#"request.host.matches("(^|.*\.){}$")"#,
+            regex::escape(suffix)
+        )
+    } else {
+        format!(r#"request.host == "{}""#, pattern)
+    }
 }
 
 /// Build a rustls ClientConfig that trusts the Capsem MITM CA.
@@ -409,7 +458,7 @@ async fn mitm_proxy_handles_garbage_data() {
 }
 
 /// T2.2: a plain-HTTP request to a non-allowlisted domain reaches
-/// PolicyHook and is denied with 403 -- proving the plain-HTTP path
+/// Policy and is denied with 403 -- proving the plain-HTTP path
 /// now serves through the same hyper pipeline as TLS, with the same
 /// policy gates. (T2.1 would have stopped at the sniff with an
 /// Error connection event.)
@@ -421,13 +470,13 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     // Plain HTTP/1.1 request directly on the TCP socket, no TLS,
     // no \0CAPSEM_META prefix. Host is not on the allowlist (which
     // is "elie.net" only); default-deny applies -> 403 from
-    // PolicyHook.
+    // Policy.
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     tcp.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
         .await
         .unwrap();
 
-    // Drain the response (a 403 produced by PolicyHook).
+    // Drain the response (a 403 produced by Policy).
     let mut buf = vec![0u8; 4096];
     let _ = tcp.read(&mut buf).await;
     drop(tcp);
@@ -448,15 +497,13 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     );
 }
 
-/// T2.2: a plain-HTTP request whose Host carries a port not on the
-/// `http_upstream_ports` allowlist is rejected with 403 before the
-/// upstream dial. Default allowlist is `[80]`.
+/// T2.2: a plain-HTTP request whose Host is not allowed by Policy
+/// is rejected with 403 before the upstream dial.
 #[tokio::test]
 async fn mitm_proxy_plain_http_denies_port_not_in_allowlist() {
-    // Allow elie.net (so the domain policy passes) but keep the
-    // default port allowlist = [80]. The request explicitly
-    // targets port 8080, which must be denied at the port gate.
-    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+    // No allow rule means default-deny Policy blocks the request
+    // before the proxy dials the explicit upstream port.
+    let (config, db) = make_proxy_config(&[], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -482,15 +529,14 @@ async fn mitm_proxy_plain_http_denies_port_not_in_allowlist() {
     assert_eq!(events[0].port, 8080);
     let reason = events[0].matched_rule.as_deref().unwrap_or("");
     assert!(
-        reason.contains("http-port-not-allowlisted"),
-        "expected port-not-allowlisted marker, got matched_rule={reason:?}"
+        reason.contains("policy.http.default_block"),
+        "expected Policy default block marker, got matched_rule={reason:?}"
     );
 }
 
 /// T2.3: Ollama-shaped end-to-end. A fake plain-HTTP upstream binds
-/// on `127.0.0.1:0`; the proxy is configured with that port on its
-/// `http_upstream_ports` allowlist and `127.0.0.1` on the domain
-/// allowlist. We send `POST /api/generate` with the typical Ollama
+/// on `127.0.0.1:0`; the proxy is configured with `127.0.0.1` on
+/// the Policy allowlist. We send `POST /api/generate` with the typical Ollama
 /// request shape through the proxy and verify the response is
 /// forwarded verbatim from the upstream and `NetEvent` records
 /// method/path/status/port/conn_type correctly.
@@ -965,7 +1011,7 @@ async fn mitm_proxy_plain_http_preserves_host_header_to_upstream() {
 async fn mitm_proxy_plain_http_unresolvable_upstream_emits_502_netevent() {
     // Reserved domain (RFC 6761) that DNS will NXDOMAIN. Default-deny
     // policy + explicit allow on the .invalid host so we get past
-    // PolicyHook into the upstream dial.
+    // Policy into the upstream dial.
     let (config, db) = make_proxy_config_full(&["nonexistent.invalid"], &[], false, &[80, 11434]);
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 

@@ -638,7 +638,7 @@ fn inspect_schema_has_all_tables() {
 }
 
 #[test]
-fn timeline_tool_schema_exposes_policy_v2_layers() {
+fn timeline_tool_schema_exposes_policy_layers() {
     let schema = schemars::schema_for!(TimelineMcpParams);
     let text = serde_json::to_string(&schema).unwrap();
     for expected in ["traceId", "exec,mcp,net,dns,hook,audit,snapshot,fs,model"] {

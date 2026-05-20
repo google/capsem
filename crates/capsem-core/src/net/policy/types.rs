@@ -129,7 +129,7 @@ impl PolicyRuleType {
     }
 }
 
-/// One named `policy.<type>.<rule_name>` rule from a Profile V2 policy document.
+/// One named `policy.<type>.<rule_name>` rule from a Profile policy document.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct PolicyRuleConfig {
     #[serde(rename = "on")]
@@ -336,7 +336,7 @@ fn normalize_header_names(field: &str, headers: Vec<String>) -> Result<Vec<Strin
     Ok(normalized)
 }
 
-/// All configured named Policy V2 rules.
+/// All configured named Policy rules.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct PolicyConfig {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

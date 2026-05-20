@@ -37,9 +37,8 @@ pub(crate) struct VsockOptions {
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: GuestConfig,
     pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    /// T3.2: handler for DNS queries forwarded over vsock port 5007.
-    /// Shared by-Arc with main.rs so the same `NetworkPolicy` drives
-    /// both the MITM proxy and the DNS NXDOMAIN gate.
+    /// Handler for DNS queries forwarded over vsock port 5007. Shared by-Arc
+    /// with main.rs so the same Policy handle drives MITM and DNS.
     pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,

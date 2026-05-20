@@ -169,7 +169,7 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
 }
 
 #[tokio::test]
-async fn triage_session_db_surfaces_policy_v2_signals() {
+async fn triage_session_db_surfaces_policy_signals() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
@@ -334,7 +334,7 @@ async fn triage_session_db_surfaces_policy_v2_signals() {
 }
 
 #[test]
-fn timeline_allowed_layers_include_policy_v2_tables() {
+fn timeline_allowed_layers_include_policy_tables() {
     for expected in ["dns", "hook", "audit", "snapshot"] {
         assert!(
             ALLOWED_TIMELINE_LAYERS.contains(&expected),
@@ -344,7 +344,7 @@ fn timeline_allowed_layers_include_policy_v2_tables() {
 }
 
 #[test]
-fn timeline_existing_tables_lists_policy_v2_tables() {
+fn timeline_existing_tables_lists_policy_tables() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
@@ -409,7 +409,7 @@ fn timeline_column_helpers_emit_policy_suffix_for_current_schema() {
 }
 
 #[tokio::test]
-async fn timeline_handler_returns_policy_v2_layers_and_null_trace_rows() {
+async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
     let (state, _dir) = make_test_state_with_tempdir();
     let vm_id = "timeline-vm";
     let session_dir = state.run_dir.join("sessions").join(vm_id);
@@ -772,7 +772,7 @@ fn test_profile_asset_declaration(base_url: &str, name: &str, bytes: &[u8]) -> V
 fn test_profile_asset_supervisor(assets_dir: PathBuf, base_url: &str) -> Arc<AssetSupervisor> {
     Arc::new(AssetSupervisor::new(
         assets_dir,
-        AssetRequirement::Profile(
+        AssetRequirement::Profile(Box::new(
             ProfileAssetRequirement::new(
                 "everyday-work".to_string(),
                 Some("2026.0520.1".to_string()),
@@ -784,7 +784,7 @@ fn test_profile_asset_supervisor(assets_dir: PathBuf, base_url: &str) -> Arc<Ass
                 },
             )
             .with_profile_payload_hash(Some(test_profile_payload_hash())),
-        ),
+        )),
         std::time::Duration::from_secs(60),
     ))
 }
@@ -1341,12 +1341,12 @@ fn saved_vm_current_base_assets_from_profile_records_boot_hashes() {
     };
     let supervisor = AssetSupervisor::new(
         PathBuf::from("/tmp/assets"),
-        AssetRequirement::Profile(ProfileAssetRequirement::new(
+        AssetRequirement::Profile(Box::new(ProfileAssetRequirement::new(
             "everyday-work".to_string(),
             Some("2026.0415.1".to_string()),
             "arm64".to_string(),
             profile_assets,
-        )),
+        ))),
         std::time::Duration::from_secs(60),
     );
     let base_assets = supervisor.current_base_assets().unwrap();
@@ -2817,13 +2817,10 @@ async fn handle_asset_reconcile_downloads_missing_profile_assets() {
         result["health"]["profile_assets"][0]["logical_name"],
         serde_json::json!("vmlinuz")
     );
-    assert_eq!(
-        result["health"]["profile_assets"][0]["source_url"]
-            .as_str()
-            .unwrap()
-            .contains('?'),
-        false
-    );
+    assert!(!result["health"]["profile_assets"][0]["source_url"]
+        .as_str()
+        .unwrap()
+        .contains('?'));
     assert!(state.asset_supervisor.snapshot().ready);
 }
 
@@ -3051,7 +3048,7 @@ async fn provision_attempt_reconciles_selected_profile_assets_and_attachment() {
     };
     std::env::set_var("CAPSEM_HOME", &state.run_dir);
     capsem_core::settings_profiles::write_service_settings(
-        &state.run_dir.join("service.toml"),
+        state.run_dir.join("service.toml"),
         &state.service_settings,
     )
     .unwrap();
@@ -4928,7 +4925,7 @@ async fn handle_reconcile_profile_catalog_installs_current_active_revision() {
 
     let installed = capsem_core::settings_profiles::load_installed_profile_revision(
         &capsem_core::settings_profiles::load_service_settings_or_default(
-            &dir.path().join("home").join("service.toml"),
+            dir.path().join("home").join("service.toml"),
         )
         .unwrap()
         .profiles,
@@ -6929,7 +6926,7 @@ fn classify_ready_outcome_succeeds() {
             asset_health,
         } => {
             assert_eq!(uds_path, uds);
-            assert_eq!(asset_health, health);
+            assert_eq!(*asset_health, health);
         }
         other => panic!("expected Succeed, got {other:?}"),
     }
@@ -6951,7 +6948,7 @@ fn classify_still_booting_timeout_succeeds_with_uds() {
             asset_health,
         } => {
             assert_eq!(uds_path, uds);
-            assert_eq!(asset_health, health);
+            assert_eq!(*asset_health, health);
         }
         other => panic!("expected Succeed for still-booting envelope, got {other:?}"),
     }

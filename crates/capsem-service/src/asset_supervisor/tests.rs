@@ -57,7 +57,7 @@ fn supervisor_for_with_interval(
 ) -> AssetSupervisor {
     AssetSupervisor::new(
         assets_dir.to_path_buf(),
-        AssetRequirement::Profile(required),
+        AssetRequirement::Profile(Box::new(required)),
         check_interval,
     )
 }

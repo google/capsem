@@ -866,10 +866,9 @@ def _spawn_service_on_fixed_port(
     consecutive services collide on the same port (the real `just ui`
     scenario). Returns the Popen handle; caller owns shutdown.
 
-    The log-file handle is stashed on the returned proc as
-    `proc._log_file` so the caller can close it after `proc.wait()` --
-    Popen does not close file objects passed as stdout/stderr, and
-    filterwarnings=error promotes the leaked fd to a hard failure.
+    The parent owns no Python file object after spawn. The child inherits the
+    raw log fd, and we close the parent's copy immediately so pytest's
+    unraisable warning gate stays meaningful.
     """
     from helpers.service import (
         SERVICE_BINARY, PROCESS_BINARY, GATEWAY_BINARY, TRAY_BINARY, ASSETS_DIR,
@@ -882,23 +881,25 @@ def _spawn_service_on_fixed_port(
     env["RUST_LOG"] = "info"
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
     env["CAPSEM_TRAY_HEADLESS"] = "1"
-    log_file = open(log_path, "w")
-    proc = subprocess.Popen(
-        [
-            str(SERVICE_BINARY),
-            "--uds-path", str(uds_path),
-            "--assets-dir", str(assets_dir),
-            "--process-binary", str(PROCESS_BINARY),
-            "--gateway-binary", str(GATEWAY_BINARY),
-            "--gateway-port", str(gateway_port),
-            "--tray-binary", str(TRAY_BINARY),
-            "--foreground",
-        ],
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
-    proc._log_file = log_file  # type: ignore[attr-defined]
+    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        proc = subprocess.Popen(
+            [
+                str(SERVICE_BINARY),
+                "--uds-path", str(uds_path),
+                "--assets-dir", str(assets_dir),
+                "--process-binary", str(PROCESS_BINARY),
+                "--gateway-binary", str(GATEWAY_BINARY),
+                "--gateway-port", str(gateway_port),
+                "--tray-binary", str(TRAY_BINARY),
+                "--foreground",
+            ],
+            env=env,
+            stdout=log_fd,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        os.close(log_fd)
     proc._uds_path = uds_path  # type: ignore[attr-defined]
     # Wait for service UDS to accept.
     start = time.time()

@@ -20,7 +20,7 @@ use crate::mcp::policy::{
     McpDecisionRule, McpDecisionRuleAction, McpDecisionRuleMatch, McpPolicy, ToolDecision,
 };
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
-use crate::net::policy_v2::{
+use crate::net::policy::{
     PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig, PolicySubject,
     PolicySubjectValue,
 };
@@ -141,9 +141,9 @@ where
             let decision_request =
                 McpDecisionRequest::from_request(&process_name, &request, &summary);
             let policy = endpoint.policy.read().await.clone();
-            let policy_v2 = endpoint.policy_v2.read().await.clone();
+            let rules_policy = endpoint.rules_policy.read().await.clone();
             let decision_provider =
-                LocalMcpDecisionProvider::audit_only_arcs(Arc::clone(&policy), policy_v2)
+                LocalMcpDecisionProvider::audit_only_arcs(Arc::clone(&policy), rules_policy)
                     .with_confirmer(Arc::clone(&endpoint.confirmer))
                     .with_confirm_opts(endpoint.confirm_opts.clone());
             let request_decision = decision_provider
@@ -643,7 +643,7 @@ struct McpPolicyDecision {
     rewrite_target: Option<String>,
     rewrite_value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    policy_v2_rule_name: Option<String>,
+    policy_rule_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -744,7 +744,7 @@ async fn log_mcp_call_with_policy(
 #[derive(Clone)]
 struct LocalMcpDecisionProvider {
     policy: Arc<McpPolicy>,
-    policy_v2: Arc<PolicyConfig>,
+    rules_policy: Arc<PolicyConfig>,
     mode: McpPolicyMode,
     confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
     confirm_opts: capsem_proto::poll::RetryOpts,
@@ -757,27 +757,27 @@ impl LocalMcpDecisionProvider {
     }
 
     #[cfg(test)]
-    fn audit_only_with_policy_v2(policy: McpPolicy, policy_v2: Arc<PolicyConfig>) -> Self {
-        Self::audit_only_arcs(Arc::new(policy), policy_v2)
+    fn audit_only_with_policy(policy: McpPolicy, rules_policy: Arc<PolicyConfig>) -> Self {
+        Self::audit_only_arcs(Arc::new(policy), rules_policy)
     }
 
     #[cfg(test)]
-    fn audit_only_with_policy_v2_and_confirmer(
+    fn audit_only_with_policy_and_confirmer(
         policy: McpPolicy,
-        policy_v2: Arc<PolicyConfig>,
+        rules_policy: Arc<PolicyConfig>,
         confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
     ) -> Self {
-        Self::audit_only_arcs(Arc::new(policy), policy_v2).with_confirmer(confirmer)
+        Self::audit_only_arcs(Arc::new(policy), rules_policy).with_confirmer(confirmer)
     }
 
     fn audit_only_arc(policy: Arc<McpPolicy>) -> Self {
         Self::audit_only_arcs(policy, Arc::new(PolicyConfig::default()))
     }
 
-    fn audit_only_arcs(policy: Arc<McpPolicy>, policy_v2: Arc<PolicyConfig>) -> Self {
+    fn audit_only_arcs(policy: Arc<McpPolicy>, rules_policy: Arc<PolicyConfig>) -> Self {
         Self {
             policy,
-            policy_v2,
+            rules_policy,
             mode: McpPolicyMode::AuditOnly,
             confirmer: Arc::new(crate::net::policy_confirm::PlaceholderConfirmer),
             confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-mcp"),
@@ -795,8 +795,8 @@ impl LocalMcpDecisionProvider {
     }
 
     fn decide(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
-        let policy_v2_decision = self.matching_policy_v2_request_rule(request);
-        if let Some(decision) = &policy_v2_decision {
+        let policy_decision = self.matching_policy_request_rule(request);
+        if let Some(decision) = &policy_decision {
             if decision.action.blocks_dispatch() {
                 return decision.clone();
             }
@@ -807,7 +807,7 @@ impl LocalMcpDecisionProvider {
             if decision.action.blocks_dispatch() {
                 return decision;
             }
-            return policy_v2_decision.unwrap_or(decision);
+            return policy_decision.unwrap_or(decision);
         }
 
         let base = match request.method_kind.as_str() {
@@ -825,7 +825,7 @@ impl LocalMcpDecisionProvider {
         if base.action.blocks_dispatch() {
             base
         } else {
-            policy_v2_decision.unwrap_or(base)
+            policy_decision.unwrap_or(base)
         }
     }
 
@@ -838,8 +838,8 @@ impl LocalMcpDecisionProvider {
         if matches!(base.action, McpPolicyAction::Ask | McpPolicyAction::Block) {
             return base;
         }
-        let policy_v2_decision = self.matching_policy_v2_response_rule(request, response);
-        if let Some(decision) = &policy_v2_decision {
+        let policy_decision = self.matching_policy_response_rule(request, response);
+        if let Some(decision) = &policy_decision {
             if decision.action.blocks_dispatch() {
                 return decision.clone();
             }
@@ -850,7 +850,7 @@ impl LocalMcpDecisionProvider {
                 return decision;
             }
         }
-        policy_v2_decision.unwrap_or(base)
+        policy_decision.unwrap_or(base)
     }
 
     async fn resolve_ask_request(
@@ -861,12 +861,12 @@ impl LocalMcpDecisionProvider {
         if !matches!(decision.action, McpPolicyAction::Ask) {
             return decision;
         }
-        let Some(rule_name) = decision.policy_v2_rule_name.as_deref() else {
+        let Some(rule_name) = decision.policy_rule_name.as_deref() else {
             return decision;
         };
         let args = crate::net::policy_confirm::ConfirmArgs {
             callback: PolicyCallback::McpRequest,
-            rule_id: mcp_policy_v2_rule_id(rule_name),
+            rule_id: mcp_policy_rule_id(rule_name),
             args_snapshot: subject_snapshot_mcp_request(request),
             trace_id: None,
             session_id: None,
@@ -894,12 +894,12 @@ impl LocalMcpDecisionProvider {
         if !matches!(decision.action, McpPolicyAction::Ask) {
             return decision;
         }
-        let Some(rule_name) = decision.policy_v2_rule_name.as_deref() else {
+        let Some(rule_name) = decision.policy_rule_name.as_deref() else {
             return decision;
         };
         let args = crate::net::policy_confirm::ConfirmArgs {
             callback: PolicyCallback::McpResponse,
-            rule_id: mcp_policy_v2_rule_id(rule_name),
+            rule_id: mcp_policy_rule_id(rule_name),
             args_snapshot: subject_snapshot_mcp_response(request, response),
             trace_id: None,
             session_id: None,
@@ -998,44 +998,44 @@ impl LocalMcpDecisionProvider {
         )
     }
 
-    fn matching_policy_v2_request_rule(
+    fn matching_policy_request_rule(
         &self,
         request: &McpDecisionRequest,
     ) -> Option<McpPolicyDecision> {
         let matched = match self
-            .policy_v2
+            .rules_policy
             .find_matching_rule(PolicyCallback::McpRequest, request)
         {
             Ok(matched) => matched,
             Err(error) => {
                 return Some(self.block(
                     "policy.mcp.invalid_condition".to_string(),
-                    format!("Policy V2 condition evaluation failed closed: {error}"),
+                    format!("Policy condition evaluation failed closed: {error}"),
                 ));
             }
         }?;
-        Some(self.decision_from_policy_v2_rule(matched.name, matched.rule))
+        Some(self.decision_from_policy_rule(matched.name, matched.rule))
     }
 
-    fn matching_policy_v2_response_rule(
+    fn matching_policy_response_rule(
         &self,
         request: &McpDecisionRequest,
         response: &JsonRpcResponse,
     ) -> Option<McpPolicyDecision> {
         let subject = McpResponsePolicySubject { request, response };
         let matched = match self
-            .policy_v2
+            .rules_policy
             .find_matching_rule(PolicyCallback::McpResponse, &subject)
         {
             Ok(matched) => matched,
             Err(error) => {
                 return Some(self.block(
                     "policy.mcp.invalid_response_condition".to_string(),
-                    format!("Policy V2 response condition evaluation failed closed: {error}"),
+                    format!("Policy response condition evaluation failed closed: {error}"),
                 ));
             }
         }?;
-        Some(self.decision_from_policy_v2_rule(matched.name, matched.rule))
+        Some(self.decision_from_policy_rule(matched.name, matched.rule))
     }
 
     fn matching_response_rule(
@@ -1058,16 +1058,12 @@ impl LocalMcpDecisionProvider {
         }
     }
 
-    fn decision_from_policy_v2_rule(
-        &self,
-        name: &str,
-        rule: &PolicyRuleConfig,
-    ) -> McpPolicyDecision {
+    fn decision_from_policy_rule(&self, name: &str, rule: &PolicyRuleConfig) -> McpPolicyDecision {
         let rule_name = format!("policy.mcp.{name}");
         let reason = rule
             .reason
             .clone()
-            .unwrap_or_else(|| format!("Policy V2 {:?} rule {rule_name} matched", rule.decision));
+            .unwrap_or_else(|| format!("Policy {:?} rule {rule_name} matched", rule.decision));
         let mut decision = match rule.decision {
             PolicyDecisionKind::Allow => self.allow(rule_name, reason),
             PolicyDecisionKind::Ask => self.ask(rule_name, reason),
@@ -1080,7 +1076,7 @@ impl LocalMcpDecisionProvider {
             ),
         };
         decision.mode = McpPolicyMode::Enforce;
-        decision.policy_v2_rule_name = Some(name.to_string());
+        decision.policy_rule_name = Some(name.to_string());
         decision
     }
 
@@ -1092,7 +1088,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target: None,
             rewrite_value: None,
-            policy_v2_rule_name: None,
+            policy_rule_name: None,
         }
     }
 
@@ -1104,7 +1100,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target: None,
             rewrite_value: None,
-            policy_v2_rule_name: None,
+            policy_rule_name: None,
         }
     }
 
@@ -1116,7 +1112,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target: None,
             rewrite_value: None,
-            policy_v2_rule_name: None,
+            policy_rule_name: None,
         }
     }
 
@@ -1134,7 +1130,7 @@ impl LocalMcpDecisionProvider {
             reason,
             rewrite_target,
             rewrite_value,
-            policy_v2_rule_name: None,
+            policy_rule_name: None,
         }
     }
 }
@@ -1163,7 +1159,7 @@ fn disallowed_notification_decision(request: &JsonRpcRequest) -> McpPolicyDecisi
         reason: format!("MCP notification method {} is not allowed", request.method),
         rewrite_target: None,
         rewrite_value: None,
-        policy_v2_rule_name: None,
+        policy_rule_name: None,
     }
 }
 
@@ -1660,7 +1656,7 @@ async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, out: &OutboundFrame)
 
 const MCP_SNAPSHOT_FIELD_MAX_BYTES: usize = 256;
 
-fn mcp_policy_v2_rule_id(rule_name: &str) -> String {
+fn mcp_policy_rule_id(rule_name: &str) -> String {
     format!("security.rules.mcp.{rule_name}")
 }
 

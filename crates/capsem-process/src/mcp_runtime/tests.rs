@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 
 use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy_v2::PolicyCallback;
+use capsem_core::net::policy::PolicyCallback;
 use capsem_core::settings_profiles::{
     CapabilityMode, EffectiveRule, McpConnectorCapsemMetadata, McpConnectorConfig, RuleDecision,
 };
@@ -323,8 +323,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
 
     let runtime = load_runtime_policy_state_from_effective(&session_dir);
 
-    assert!(!runtime.network_policy.default_allow_read);
-    assert!(!runtime.network_policy.default_allow_write);
+    assert_eq!(runtime.domain_policy.default_action(), Action::Deny);
     assert_eq!(runtime.mcp_policy.default_tool_decision, ToolDecision::Warn);
     assert!(
         !runtime
@@ -349,30 +348,31 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         runtime.domain_policy.blocked_patterns(),
         vec!["bad.example".to_string()]
     );
-    assert!(
-        runtime
-            .network_policy
-            .evaluate("example.com", "GET")
-            .allowed,
-        "simple V2 domain allow rules must feed the coarse network policy"
+    assert_eq!(
+        runtime.domain_policy.evaluate("example.com").0,
+        Action::Allow
+    );
+    assert_eq!(
+        runtime.domain_policy.evaluate("bad.example").0,
+        Action::Deny
     );
     assert!(
         runtime
-            .network_policy
-            .is_fully_blocked("bad.example")
-            .is_some(),
-        "simple V2 domain block rules must feed DNS-level full-block policy"
+            .domain_policy
+            .blocked_patterns()
+            .contains(&"bad.example".to_string()),
+        "simple domain block rules must feed DNS-level full-block policy"
     );
     assert!(
-        runtime
-            .network_policy
-            .is_fully_blocked("example.com")
-            .is_none(),
-        "path-scoped V2 HTTP blocks must not become full-domain DNS blocks"
+        !runtime
+            .domain_policy
+            .blocked_patterns()
+            .contains(&"example.com".to_string()),
+        "path-scoped HTTP blocks must not become full-domain DNS blocks"
     );
 
     let mcp_rules = runtime
-        .policy_v2
+        .policy
         .rules_for_callback(PolicyCallback::McpRequest);
     assert_eq!(mcp_rules.len(), 2);
     assert!(mcp_rules
@@ -385,11 +385,11 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
             .unwrap()
             .1
             .decision,
-        capsem_core::net::policy_v2::PolicyDecisionKind::Block
+        capsem_core::net::policy::PolicyDecisionKind::Block
     );
 
     let http_rules = runtime
-        .policy_v2
+        .policy
         .rules_for_callback(PolicyCallback::HttpResponse);
     assert_eq!(http_rules.len(), 1);
     assert!(http_rules[0]
@@ -397,15 +397,11 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         .condition
         .contains("response.text.contains(\"secret\")"));
 
-    let http_read_rules = runtime
-        .policy_v2
-        .rules_for_callback(PolicyCallback::HttpRead);
+    let http_read_rules = runtime.policy.rules_for_callback(PolicyCallback::HttpRead);
     assert!(http_read_rules
         .iter()
         .any(|(name, rule)| *name == "user-read" && rule.condition == "true"));
-    let http_write_rules = runtime
-        .policy_v2
-        .rules_for_callback(PolicyCallback::HttpWrite);
+    let http_write_rules = runtime.policy.rules_for_callback(PolicyCallback::HttpWrite);
     assert!(http_write_rules
         .iter()
         .any(|(name, rule)| *name == "user-write" && rule.condition == "true"));
@@ -506,12 +502,8 @@ fn load_runtime_policy_state_ignores_global_legacy_user_toml() {
     let runtime = load_runtime_policy_state(&session_dir);
 
     assert!(
-        !runtime.network_policy.default_allow_read,
-        "V2 network_egress=block must win over legacy allow_read"
-    );
-    assert!(
-        !runtime.network_policy.default_allow_write,
-        "V2 network_egress=block must win over legacy allow_write"
+        runtime.domain_policy.default_action() == Action::Deny,
+        "network_egress=block must win over legacy network allow defaults"
     );
     assert!(
         !runtime
@@ -641,8 +633,7 @@ fn load_runtime_policy_state_falls_back_when_vm_effective_attachment_missing() {
     let dir = tempfile::tempdir().unwrap();
     let runtime = load_runtime_policy_state_from_effective(dir.path());
 
-    assert!(runtime.network_policy.default_allow_read);
-    assert!(!runtime.network_policy.default_allow_write);
+    assert_eq!(runtime.domain_policy.default_action(), Action::Deny);
     assert!(runtime
         .domain_policy
         .allowed_patterns()
@@ -704,9 +695,7 @@ fn load_runtime_policy_state_drops_legacy_dns_query_callback() {
 
     let runtime = load_runtime_policy_state_from_effective(&session_dir);
 
-    let dns_rules = runtime
-        .policy_v2
-        .rules_for_callback(PolicyCallback::DnsQuery);
+    let dns_rules = runtime.policy.rules_for_callback(PolicyCallback::DnsQuery);
     assert!(
         !dns_rules.iter().any(|(name, _)| *name == "legacy"),
         "legacy dns.query must be dropped while dns.request survives"

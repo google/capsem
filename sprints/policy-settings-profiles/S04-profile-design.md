@@ -41,7 +41,7 @@ runtime policy semantics are unambiguous before implementation completion.
 - Required fields: `on`, `if`, `decision`.
 - Optional: `priority` (default `1`), `reason`.
 - `decision` enum: `allow|ask|block|rewrite`.
-- Callback contract reuses policy-v2 callback space:
+- Callback contract reuses policy callback space:
   - `mcp.request`, `mcp.response`
   - `http.request`, `http.response`
   - `dns.request`, `dns.response`

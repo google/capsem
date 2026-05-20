@@ -224,6 +224,12 @@ pub struct RunRequest {
     pub command: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    /// Profile id to resolve for the temporary VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    /// Optional exact installed profile revision to require for the temporary VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
     /// Guest RAM in MiB. Falls back to merged VM settings
     /// (vm.resources.ram_gb, default 4 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -690,15 +696,26 @@ mod tests {
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.command, "echo hello");
         assert_eq!(r.timeout_secs, None);
+        assert_eq!(r.profile_id, None);
+        assert_eq!(r.profile_revision, None);
         assert_eq!(r.ram_mb, None);
         assert_eq!(r.cpus, None);
     }
 
     #[test]
     fn run_request_custom() {
-        let json = json!({"command": "ls", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
+        let json = json!({
+            "command": "ls",
+            "timeout_secs": 120,
+            "profile_id": "coding",
+            "profile_revision": "2026.0520.1",
+            "ram_mb": 4096,
+            "cpus": 4
+        });
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.timeout_secs, Some(120));
+        assert_eq!(r.profile_id.as_deref(), Some("coding"));
+        assert_eq!(r.profile_revision.as_deref(), Some("2026.0520.1"));
         assert_eq!(r.ram_mb, Some(4096));
         assert_eq!(r.cpus, Some(4));
     }

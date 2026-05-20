@@ -1,7 +1,7 @@
-//! Microbenchmarks for Policy V2 matching and hook wire decoding.
+//! Microbenchmarks for Policy matching and hook wire decoding.
 
+use capsem_core::net::policy::{PolicyCallback, PolicyConfig};
 use capsem_core::net::policy_hook_spec::HookDecisionResponse;
-use capsem_core::net::policy_v2::{PolicyCallback, PolicyConfig};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use serde_json::json;
 
@@ -112,7 +112,7 @@ fn bench_policy_matching(c: &mut Criterion) {
         .expect("bench hook decision rule must evaluate")
         .is_some());
 
-    c.bench_function("policy_v2_http_request_match", |b| {
+    c.bench_function("policy_http_request_match", |b| {
         b.iter(|| {
             black_box(
                 policy
@@ -121,7 +121,7 @@ fn bench_policy_matching(c: &mut Criterion) {
             )
         })
     });
-    c.bench_function("policy_v2_dns_query_match", |b| {
+    c.bench_function("policy_dns_query_match", |b| {
         b.iter(|| {
             black_box(
                 policy
@@ -130,7 +130,7 @@ fn bench_policy_matching(c: &mut Criterion) {
             )
         })
     });
-    c.bench_function("policy_v2_model_response_match", |b| {
+    c.bench_function("policy_model_response_match", |b| {
         b.iter(|| {
             black_box(
                 policy
@@ -142,7 +142,7 @@ fn bench_policy_matching(c: &mut Criterion) {
             )
         })
     });
-    c.bench_function("policy_v2_model_tool_call_match", |b| {
+    c.bench_function("policy_model_tool_call_match", |b| {
         b.iter(|| {
             black_box(
                 policy
@@ -154,7 +154,7 @@ fn bench_policy_matching(c: &mut Criterion) {
             )
         })
     });
-    c.bench_function("policy_v2_hook_decision_match", |b| {
+    c.bench_function("policy_hook_decision_match", |b| {
         b.iter(|| {
             black_box(
                 policy

@@ -20,7 +20,8 @@ class TestMcpConnectors:
             assert isinstance(server["editable"], bool)
             assert isinstance(server["server"], dict)
 
-    def test_connector_create_list_delete_roundtrip(self, client):
+    def test_connector_create_list_delete_roundtrip(self, editable_client):
+        client = editable_client
         connector_id = f"pytest-{uuid.uuid4().hex[:8]}"
         created = client.post(
             "/mcp/connectors",

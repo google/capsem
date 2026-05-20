@@ -1,4 +1,4 @@
-//! Policy V2 model enforcement helpers.
+//! Policy model enforcement helpers.
 //!
 //! Model request rules need request-body metadata, so they cannot run
 //! from the head-only HTTP policy hook. `handle_request` calls this
@@ -16,21 +16,21 @@ use crate::net::ai_traffic::events;
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::ai_traffic::request_parser::{self, RequestMeta};
 use crate::net::parsers::sse_parser::SseParser;
-use crate::net::policy_confirm::{ConfirmArgs, Confirmer, Decision};
-use crate::net::policy_v2::{
+use crate::net::policy::{
     PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig, PolicySubject,
     PolicySubjectValue,
 };
+use crate::net::policy_confirm::{ConfirmArgs, Confirmer, Decision};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LastModelPolicyV2Decision {
+pub struct LastModelPolicyDecision {
     pub policy_mode: Option<String>,
     pub policy_action: Option<String>,
     pub policy_rule: Option<String>,
     pub policy_reason: Option<String>,
 }
 
-impl LastModelPolicyV2Decision {
+impl LastModelPolicyDecision {
     fn from_match(name: &str, rule: &PolicyRuleConfig) -> Self {
         Self {
             policy_mode: Some("enforce".to_string()),
@@ -39,7 +39,7 @@ impl LastModelPolicyV2Decision {
             policy_reason: Some(
                 rule.reason
                     .clone()
-                    .unwrap_or_else(|| format!("Policy V2 model {:?} rule matched", rule.decision)),
+                    .unwrap_or_else(|| format!("Policy model {:?} rule matched", rule.decision)),
             ),
         }
     }
@@ -50,7 +50,7 @@ impl LastModelPolicyV2Decision {
             policy_action: Some("block".to_string()),
             policy_rule: Some("policy.model.invalid_condition".to_string()),
             policy_reason: Some(format!(
-                "Policy V2 model request condition failed closed: {error}"
+                "Policy model request condition failed closed: {error}"
             )),
         }
     }
@@ -58,26 +58,26 @@ impl LastModelPolicyV2Decision {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelRequestPolicyOutcome {
-    Continue(LastModelPolicyV2Decision),
-    Deny(LastModelPolicyV2Decision),
+    Continue(LastModelPolicyDecision),
+    Deny(LastModelPolicyDecision),
     RewriteBody {
-        decision: LastModelPolicyV2Decision,
+        decision: LastModelPolicyDecision,
         body: Vec<u8>,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelResponsePolicyOutcome {
-    Continue(LastModelPolicyV2Decision),
-    Deny(LastModelPolicyV2Decision),
+    Continue(LastModelPolicyDecision),
+    Deny(LastModelPolicyDecision),
     RewriteBody {
-        decision: LastModelPolicyV2Decision,
+        decision: LastModelPolicyDecision,
         body: Vec<u8>,
     },
 }
 
 impl ModelResponsePolicyOutcome {
-    pub fn decision(&self) -> &LastModelPolicyV2Decision {
+    pub fn decision(&self) -> &LastModelPolicyDecision {
         match self {
             Self::Continue(decision)
             | Self::Deny(decision)
@@ -87,7 +87,7 @@ impl ModelResponsePolicyOutcome {
 }
 
 impl ModelRequestPolicyOutcome {
-    pub fn decision(&self) -> &LastModelPolicyV2Decision {
+    pub fn decision(&self) -> &LastModelPolicyDecision {
         match self {
             Self::Continue(decision)
             | Self::Deny(decision)
@@ -129,7 +129,7 @@ pub async fn evaluate_model_request_policy(
         .find_matching_rule(PolicyCallback::ModelRequest, &request_subject)
     {
         Ok(Some(matched)) => {
-            let mut decision = LastModelPolicyV2Decision::from_match(matched.name, matched.rule);
+            let mut decision = LastModelPolicyDecision::from_match(matched.name, matched.rule);
             let resolved = resolve_model_ask(
                 matched.rule.decision,
                 PolicyCallback::ModelRequest,
@@ -156,7 +156,7 @@ pub async fn evaluate_model_request_policy(
                         }
                         Err(error) => {
                             return Some(ModelRequestPolicyOutcome::Deny(
-                                LastModelPolicyV2Decision::from_failure(
+                                LastModelPolicyDecision::from_failure(
                                     matched.name,
                                     matched.rule,
                                     error,
@@ -170,7 +170,7 @@ pub async fn evaluate_model_request_policy(
         Ok(None) => None,
         Err(error) => {
             return Some(ModelRequestPolicyOutcome::Deny(
-                LastModelPolicyV2Decision::invalid_condition(error),
+                LastModelPolicyDecision::invalid_condition(error),
             ));
         }
     };
@@ -217,7 +217,7 @@ async fn evaluate_model_tool_response_policy(
             Ok(None) => continue,
             Err(error) => {
                 return Some(ModelRequestPolicyOutcome::Deny(
-                    LastModelPolicyV2Decision::invalid_condition(error),
+                    LastModelPolicyDecision::invalid_condition(error),
                 ));
             }
         };
@@ -246,7 +246,7 @@ async fn evaluate_model_tool_response_policy(
     }
 
     if let Some((name, rule)) = deny_match {
-        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        let mut decision = LastModelPolicyDecision::from_match(name, rule);
         decision.policy_action = Some("block".to_string());
         return Some(ModelRequestPolicyOutcome::Deny(decision));
     }
@@ -265,20 +265,20 @@ async fn evaluate_model_tool_response_policy(
                 Ok(body) => body,
                 Err(error) => {
                     return Some(ModelRequestPolicyOutcome::Deny(
-                        LastModelPolicyV2Decision::from_failure(name, rule, error),
+                        LastModelPolicyDecision::from_failure(name, rule, error),
                     ));
                 }
             };
         }
         let (name, rule) = rewrite_match.expect("rewrite match exists");
         return Some(ModelRequestPolicyOutcome::RewriteBody {
-            decision: LastModelPolicyV2Decision::from_match(name, rule),
+            decision: LastModelPolicyDecision::from_match(name, rule),
             body: rewritten_body,
         });
     }
 
     allow_match.map(|(name, rule)| {
-        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        let mut decision = LastModelPolicyDecision::from_match(name, rule);
         decision.policy_action = Some("allow".to_string());
         ModelRequestPolicyOutcome::Continue(decision)
     })
@@ -347,7 +347,7 @@ pub async fn evaluate_model_response_policy(
             Ok(None) => {}
             Err(error) => {
                 return Some(ModelResponsePolicyOutcome::Deny(
-                    LastModelPolicyV2Decision::invalid_condition(error),
+                    LastModelPolicyDecision::invalid_condition(error),
                 ));
             }
         }
@@ -360,7 +360,7 @@ pub async fn evaluate_model_response_policy(
             Ok(None) => continue,
             Err(error) => {
                 return Some(ModelResponsePolicyOutcome::Deny(
-                    LastModelPolicyV2Decision::invalid_condition(error),
+                    LastModelPolicyDecision::invalid_condition(error),
                 ));
             }
         };
@@ -388,7 +388,7 @@ pub async fn evaluate_model_response_policy(
     }
 
     if let Some((name, rule)) = deny_match {
-        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        let mut decision = LastModelPolicyDecision::from_match(name, rule);
         decision.policy_action = Some("block".to_string());
         return Some(ModelResponsePolicyOutcome::Deny(decision));
     }
@@ -409,20 +409,20 @@ pub async fn evaluate_model_response_policy(
                 Ok(body) => body,
                 Err(error) => {
                     return Some(ModelResponsePolicyOutcome::Deny(
-                        LastModelPolicyV2Decision::from_failure(name, rule, error),
+                        LastModelPolicyDecision::from_failure(name, rule, error),
                     ));
                 }
             };
         }
         let (name, rule) = rewrite_match.expect("rewrite match exists");
         return Some(ModelResponsePolicyOutcome::RewriteBody {
-            decision: LastModelPolicyV2Decision::from_match(name, rule),
+            decision: LastModelPolicyDecision::from_match(name, rule),
             body: rewritten,
         });
     }
 
     allow_match.map(|(name, rule)| {
-        let mut decision = LastModelPolicyV2Decision::from_match(name, rule);
+        let mut decision = LastModelPolicyDecision::from_match(name, rule);
         decision.policy_action = Some("allow".to_string());
         ModelResponsePolicyOutcome::Continue(decision)
     })
@@ -1118,7 +1118,7 @@ impl PolicySubject for ModelToolResponsePolicySubject<'_> {
     }
 }
 
-impl LastModelPolicyV2Decision {
+impl LastModelPolicyDecision {
     fn from_failure(name: &str, rule: &PolicyRuleConfig, error: String) -> Self {
         let mut decision = Self::from_match(name, rule);
         let base = decision.policy_reason.clone().unwrap_or_default();
@@ -1150,7 +1150,7 @@ async fn resolve_model_ask(
     }
     let args = ConfirmArgs {
         callback,
-        rule_id: model_policy_v2_rule_id(rule_name),
+        rule_id: model_policy_rule_id(rule_name),
         args_snapshot: snapshot(),
         trace_id: None,
         session_id: None,
@@ -1162,7 +1162,7 @@ async fn resolve_model_ask(
     }
 }
 
-fn model_policy_v2_rule_id(rule_name: &str) -> String {
+fn model_policy_rule_id(rule_name: &str) -> String {
     format!("security.rules.model.{rule_name}")
 }
 

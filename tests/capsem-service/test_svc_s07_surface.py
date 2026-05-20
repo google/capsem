@@ -19,7 +19,8 @@ def test_confirm_pending_lists_typed_empty_surface(client):
     }
 
 
-def test_skills_add_list_delete_roundtrip(client):
+def test_skills_add_list_delete_roundtrip(editable_client):
+    client = editable_client
     skill_id = f"pytest-{uuid.uuid4().hex[:8]}"
 
     created = client.post(

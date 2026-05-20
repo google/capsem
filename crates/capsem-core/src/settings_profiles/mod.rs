@@ -3223,10 +3223,8 @@ fn collect_nested_rules_for_hosts(
 
 /// Static mapping from a built-in AI provider id to the hosts
 /// that need DNS/HTTP allow (or deny) when the provider is
-/// enabled (or disabled). Pulled forward from the V1
-/// `NetworkPolicy::default_dev()` metadata; unknown providers
-/// fall back to deriving the host from the configured
-/// `base_url`.
+/// enabled (or disabled). Unknown providers fall back to deriving
+/// the host from the configured `base_url`.
 fn well_known_provider_hosts(provider_id: &str) -> &'static [&'static str] {
     match provider_id {
         "openai" => &["api.openai.com"],

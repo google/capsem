@@ -4,10 +4,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::*;
+use crate::net::policy::{PolicyConfig, PolicyRuleConfig};
 use crate::net::policy_confirm::{
     ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision, PlaceholderConfirmer,
 };
-use crate::net::policy_v2::{PolicyConfig, PolicyRuleConfig};
 
 fn policy_from_toml(toml_text: &str) -> PolicyConfig {
     PolicyConfig::from_policy_toml_str(toml_text).unwrap()
@@ -434,7 +434,7 @@ reason = "Ask before sending this model request"
     assert_eq!(calls[0].rule_id, "security.rules.model.ask_openai");
     assert_eq!(
         calls[0].callback,
-        crate::net::policy_v2::PolicyCallback::ModelRequest
+        crate::net::policy::PolicyCallback::ModelRequest
     );
     let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
     assert!(
@@ -864,7 +864,7 @@ reason = "Ask before delivering model tool calls"
     );
     assert_eq!(
         calls[0].callback,
-        crate::net::policy_v2::PolicyCallback::ModelToolCall
+        crate::net::policy::PolicyCallback::ModelToolCall
     );
     let snapshot = serde_json::to_string(&calls[0].args_snapshot).unwrap();
     assert!(

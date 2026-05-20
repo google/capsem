@@ -475,12 +475,16 @@ fn run_request_serde() {
     let req = RunRequest {
         command: "echo hi".into(),
         timeout_secs: Some(60),
+        profile_id: Some("coding".into()),
+        profile_revision: Some("2026.0520.1".into()),
         env: Some(env),
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: RunRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.command, "echo hi");
     assert_eq!(req2.timeout_secs, Some(60));
+    assert_eq!(req2.profile_id.as_deref(), Some("coding"));
+    assert_eq!(req2.profile_revision.as_deref(), Some("2026.0520.1"));
     assert_eq!(req2.env.unwrap().get("KEY").unwrap(), "val");
 }
 
@@ -489,6 +493,8 @@ fn run_request_env_omitted_when_none() {
     let req = RunRequest {
         command: "ls".into(),
         timeout_secs: None,
+        profile_id: None,
+        profile_revision: None,
         env: None,
     };
     let json = serde_json::to_string(&req).unwrap();

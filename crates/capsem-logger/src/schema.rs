@@ -344,7 +344,7 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_rule TEXT", []);
     let _ = conn.execute("ALTER TABLE mcp_calls ADD COLUMN policy_reason TEXT", []);
-    // Add policy decision metadata to net_events for Policy V2 HTTP/DNS audit.
+    // Add policy decision metadata to net_events for Policy HTTP/DNS audit.
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_mode TEXT", []);
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE net_events ADD COLUMN policy_rule TEXT", []);

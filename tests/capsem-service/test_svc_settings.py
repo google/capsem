@@ -8,7 +8,7 @@ so mutations here never touch the developer's real ~/.capsem/.
 
 import pytest
 
-from helpers.service import ServiceInstance
+from helpers.service import ServiceInstance, select_editable_profile
 
 pytestmark = pytest.mark.integration
 
@@ -27,7 +27,9 @@ def isolated_client():
     svc = ServiceInstance()
     svc.start()
     try:
-        yield svc.client()
+        client = svc.client()
+        select_editable_profile(client, prefix="settings")
+        yield client
     finally:
         svc.stop()
 

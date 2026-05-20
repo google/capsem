@@ -193,7 +193,7 @@ fn profile_asset_requirement_for_selection(
                 }
                 None => required,
             };
-            Ok(AssetRequirement::Profile(required))
+            Ok(AssetRequirement::Profile(Box::new(required)))
         }
         Err(err) if allow_dev_logical_assets => {
             warn!(
@@ -419,9 +419,10 @@ impl ServiceState {
             .context("load vm-effective settings for profile pin")?;
         let package_json = serde_json::to_vec(&effective.packages.value)
             .context("serialize package contract for profile pin")?;
+        let settings = self.current_service_settings();
         let installed_revision =
             capsem_core::settings_profiles::load_complete_installed_profile_revision(
-                &self.service_settings.profiles,
+                &settings.profiles,
                 &effective.profile_id,
             )
             .context("load complete installed profile revision for profile pin")?;
@@ -455,10 +456,14 @@ impl ServiceState {
     }
 
     fn resolve_vm_runtime_defaults(&self) -> VmRuntimeDefaults {
+        self.resolve_vm_runtime_defaults_for(None)
+    }
+
+    fn resolve_vm_runtime_defaults_for(&self, profile_id: Option<&str>) -> VmRuntimeDefaults {
         let fallback_vm = capsem_core::settings_profiles::VmProfileSettings::default();
         let settings = self.current_service_settings();
         match capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
-            &settings, None,
+            &settings, profile_id,
         ) {
             Ok((effective, _trace)) => VmRuntimeDefaults {
                 ram_mb: effective.vm.value.memory_mib as u64,
@@ -468,6 +473,7 @@ impl ServiceState {
             Err(error) => {
                 warn!(
                     error = %error,
+                    profile_id,
                     "failed to resolve vm-effective defaults, using built-in profile defaults"
                 );
                 VmRuntimeDefaults {
@@ -2277,7 +2283,7 @@ enum ProvisionAttemptOutcome {
 enum AttemptDecision {
     Succeed {
         uds_path: PathBuf,
-        asset_health: AssetHealth,
+        asset_health: Box<AssetHealth>,
     },
     BailWithError(AppError),
     RetryAfterCleanup,
@@ -2298,7 +2304,7 @@ fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &str) -> Atte
             asset_health,
         } => AttemptDecision::Succeed {
             uds_path,
-            asset_health,
+            asset_health: Box::new(asset_health),
         },
         ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
         ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError(
@@ -2328,8 +2334,8 @@ async fn handle_provision(
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     });
 
-    // Missing ram_mb/cpus fall back to the resolved default profile VM settings.
-    let vm_defaults = state.resolve_vm_runtime_defaults();
+    // Missing ram_mb/cpus fall back to the selected profile VM settings.
+    let vm_defaults = state.resolve_vm_runtime_defaults_for(payload.profile_id.as_deref());
     let ram_mb = payload.ram_mb.unwrap_or(vm_defaults.ram_mb);
     let cpus = payload.cpus.unwrap_or(vm_defaults.cpus);
 
@@ -2403,7 +2409,7 @@ async fn handle_provision(
                 AttemptDecision::Succeed {
                     uds_path,
                     asset_health,
-                } => Some(Ok((uds_path, asset_health))),
+                } => Some(Ok((uds_path, *asset_health))),
                 AttemptDecision::RetryAfterCleanup => None, // poll_until retries
                 AttemptDecision::BailWithError(err) => Some(Err(err)),
             }
@@ -3868,10 +3874,8 @@ fn normalize_header_names(headers: Vec<String>) -> Vec<String> {
     normalized
 }
 
-fn map_policy_callback(
-    callback: &str,
-) -> Result<capsem_core::net::policy_v2::PolicyCallback, String> {
-    use capsem_core::net::policy_v2::PolicyCallback;
+fn map_policy_callback(callback: &str) -> Result<capsem_core::net::policy::PolicyCallback, String> {
+    use capsem_core::net::policy::PolicyCallback;
     match callback {
         "mcp.request" => Ok(PolicyCallback::McpRequest),
         "mcp.response" => Ok(PolicyCallback::McpResponse),
@@ -3892,8 +3896,8 @@ fn map_policy_callback(
 
 fn map_policy_decision(
     decision: capsem_core::settings_profiles::RuleDecision,
-) -> capsem_core::net::policy_v2::PolicyDecisionKind {
-    use capsem_core::net::policy_v2::PolicyDecisionKind;
+) -> capsem_core::net::policy::PolicyDecisionKind {
+    use capsem_core::net::policy::PolicyDecisionKind;
     match decision {
         capsem_core::settings_profiles::RuleDecision::Allow => PolicyDecisionKind::Allow,
         capsem_core::settings_profiles::RuleDecision::Ask => PolicyDecisionKind::Ask,
@@ -3909,19 +3913,19 @@ fn validate_policy_rule_update(
 ) -> Result<(), String> {
     let callback = map_policy_callback(&update.callback)?;
     let callback_type = match callback {
-        capsem_core::net::policy_v2::PolicyCallback::McpRequest
-        | capsem_core::net::policy_v2::PolicyCallback::McpResponse => "mcp",
-        capsem_core::net::policy_v2::PolicyCallback::HttpRequest
-        | capsem_core::net::policy_v2::PolicyCallback::HttpRead
-        | capsem_core::net::policy_v2::PolicyCallback::HttpWrite
-        | capsem_core::net::policy_v2::PolicyCallback::HttpResponse => "http",
-        capsem_core::net::policy_v2::PolicyCallback::DnsQuery
-        | capsem_core::net::policy_v2::PolicyCallback::DnsResponse => "dns",
-        capsem_core::net::policy_v2::PolicyCallback::ModelRequest
-        | capsem_core::net::policy_v2::PolicyCallback::ModelResponse
-        | capsem_core::net::policy_v2::PolicyCallback::ModelToolCall
-        | capsem_core::net::policy_v2::PolicyCallback::ModelToolResponse => "model",
-        capsem_core::net::policy_v2::PolicyCallback::HookDecision => "hook",
+        capsem_core::net::policy::PolicyCallback::McpRequest
+        | capsem_core::net::policy::PolicyCallback::McpResponse => "mcp",
+        capsem_core::net::policy::PolicyCallback::HttpRequest
+        | capsem_core::net::policy::PolicyCallback::HttpRead
+        | capsem_core::net::policy::PolicyCallback::HttpWrite
+        | capsem_core::net::policy::PolicyCallback::HttpResponse => "http",
+        capsem_core::net::policy::PolicyCallback::DnsQuery
+        | capsem_core::net::policy::PolicyCallback::DnsResponse => "dns",
+        capsem_core::net::policy::PolicyCallback::ModelRequest
+        | capsem_core::net::policy::PolicyCallback::ModelResponse
+        | capsem_core::net::policy::PolicyCallback::ModelToolCall
+        | capsem_core::net::policy::PolicyCallback::ModelToolResponse => "model",
+        capsem_core::net::policy::PolicyCallback::HookDecision => "hook",
     };
     if callback_type != rule_type {
         return Err(format!(
@@ -3936,7 +3940,7 @@ fn validate_policy_rule_update(
         return Ok(());
     }
 
-    let policy_rule = capsem_core::net::policy_v2::PolicyRuleConfig {
+    let policy_rule = capsem_core::net::policy::PolicyRuleConfig {
         on: callback,
         condition: update.condition.clone(),
         decision: map_policy_decision(update.decision),
@@ -4132,18 +4136,13 @@ struct RuleEvaluateRequest {
     subject: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum SkillKind {
     Group,
+    #[default]
     Enabled,
     Disabled,
-}
-
-impl Default for SkillKind {
-    fn default() -> Self {
-        Self::Enabled
-    }
 }
 
 impl SkillKind {
@@ -5125,8 +5124,7 @@ fn skill_owner<'a>(
         })?;
     Ok(chain
         .into_iter()
-        .filter(|record| profile_has_skill(&record.profile, kind, id))
-        .last())
+        .rfind(|record| profile_has_skill(&record.profile, kind, id)))
 }
 
 fn skill_json(
@@ -5187,9 +5185,9 @@ fn save_mutated_profile(
 
 fn effective_policy_rule_config(
     rule: &capsem_core::settings_profiles::EffectiveRule,
-) -> Result<capsem_core::net::policy_v2::PolicyRuleConfig, String> {
+) -> Result<capsem_core::net::policy::PolicyRuleConfig, String> {
     let callback = map_policy_callback(&rule.callback)?;
-    let policy_rule = capsem_core::net::policy_v2::PolicyRuleConfig {
+    let policy_rule = capsem_core::net::policy::PolicyRuleConfig {
         on: callback,
         condition: rule.condition.clone(),
         decision: map_policy_decision(rule.decision),
@@ -5209,12 +5207,12 @@ fn build_effective_policy_for_callback(
     requested_callback: &str,
 ) -> Result<
     (
-        capsem_core::net::policy_v2::PolicyConfig,
+        capsem_core::net::policy::PolicyConfig,
         HashMap<String, String>,
     ),
     AppError,
 > {
-    let mut config = capsem_core::net::policy_v2::PolicyConfig::default();
+    let mut config = capsem_core::net::policy::PolicyConfig::default();
     let mut ids_by_name = HashMap::new();
     for rule in &effective.rules {
         if rule.callback != requested_callback {
@@ -5472,7 +5470,7 @@ async fn handle_evaluate_rule(
             "profile_id": effective.profile_id,
             "matched_rule_id": matched_rule_id,
             "decision": decision,
-            "would_ask": decision == capsem_core::net::policy_v2::PolicyDecisionKind::Ask,
+            "would_ask": decision == capsem_core::net::policy::PolicyDecisionKind::Ask,
             "reason": matched.rule.reason,
             "enforced": false,
         })))
@@ -6278,8 +6276,7 @@ fn mcp_connector_owner<'a>(
         })?;
     Ok(chain
         .into_iter()
-        .filter(|record| profile_has_mcp_connector(&record.profile, connector_id))
-        .last())
+        .rfind(|record| profile_has_mcp_connector(&record.profile, connector_id)))
 }
 
 fn mcp_connector_json(
@@ -7788,8 +7785,8 @@ async fn handle_run(
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     };
 
-    // Resolve ram/cpu from the default profile VM settings if omitted.
-    let vm_defaults = state.resolve_vm_runtime_defaults();
+    // Resolve ram/cpu from the selected profile VM settings if omitted.
+    let vm_defaults = state.resolve_vm_runtime_defaults_for(payload.profile_id.as_deref());
     let ram_mb = payload.ram_mb.unwrap_or(vm_defaults.ram_mb);
     let cpus = payload.cpus.unwrap_or(vm_defaults.cpus);
 
@@ -7802,7 +7799,10 @@ async fn handle_run(
     // tokio::process::Command::spawn inside still works because
     // spawn_blocking preserves the runtime handle via thread-locals.
     state
-        .ensure_current_profile_assets_ready()
+        .ensure_selected_profile_assets_ready(
+            payload.profile_id.as_deref(),
+            payload.profile_revision.as_deref(),
+        )
         .await
         .map_err(|e| {
             AppError(
@@ -7814,6 +7814,8 @@ async fn handle_run(
     let id_clone = id.clone();
     let version = state.current_version.clone();
     let env = payload.env.clone();
+    let profile_id = payload.profile_id.clone();
+    let profile_revision = payload.profile_revision.clone();
     let provision_result = tokio::task::spawn_blocking(move || {
         state_clone.provision_sandbox(ProvisionOptions {
             id: &id_clone,
@@ -7823,8 +7825,8 @@ async fn handle_run(
             persistent: false,
             env,
             from: None,
-            profile_id: None,
-            profile_revision: None,
+            profile_id,
+            profile_revision,
             description: None,
         })
     })

@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from .constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from .profile_asset_fixture import find_asset, write_profile_home
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
@@ -191,6 +192,7 @@ class ServiceInstance:
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
         assets_dir = self.assets_dir or (ASSETS_DIR / arch)
+        asset_cache = self.tmp_dir / "assets"
 
         env = os.environ.copy()
         env["RUST_LOG"] = "debug"
@@ -201,10 +203,17 @@ class ServiceInstance:
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")
-        self._log_file = open(log_path, "w")
 
         if self.service_toml is not None:
             (self.tmp_dir / "service.toml").write_text(self.service_toml)
+        else:
+            assets = {
+                "vmlinuz": find_asset(assets_dir, "vmlinuz"),
+                "initrd.img": find_asset(assets_dir, "initrd.img"),
+                "rootfs.squashfs": find_asset(assets_dir, "rootfs.squashfs"),
+            }
+            write_profile_home(self.tmp_dir, asset_cache, assets)
+            assets_dir = asset_cache
 
         # Deliberately omit --tray-binary: the tray is a user-facing macOS
         # menu bar icon and spawning it on every test instance flashes the
@@ -227,12 +236,16 @@ class ServiceInstance:
         if self.pass_assets_dir:
             cmd += ["--assets-dir", str(assets_dir)]
 
-        self.proc = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=self._log_file,
-            stderr=self._log_file,
-        )
+        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=log_fd,
+                stderr=log_fd,
+            )
+        finally:
+            os.close(log_fd)
 
         start = time.time()
         while time.time() - start < 15:
@@ -310,6 +323,28 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
         return resp is not None and "ready" in resp.get("stdout", "")
     except Exception:
         return False
+
+
+def select_editable_profile(client, source_profile="profile-asset-boot", prefix="pytest"):
+    """Fork the locked E2E profile and select the fork for mutation tests."""
+    profile_id = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        f"/profiles/{source_profile}/fork",
+        {"id": profile_id, "name": f"{prefix} editable profile"},
+    )
+    assert created is not None and created.get("profile", {}).get("id") == profile_id, (
+        f"failed to fork editable profile: {created}"
+    )
+    selected = client.post(f"/settings/presets/{profile_id}", {})
+    selected_default = (
+        selected.get("settings_profiles", {}).get("service", {}).get("default_profile")
+        if selected
+        else None
+    )
+    assert selected is not None and selected_default == profile_id, (
+        f"failed to select editable profile {profile_id}: {selected}"
+    )
+    return profile_id
 
 
 def vm_name(prefix="test"):

@@ -8,7 +8,7 @@ struct PolicyDocument {
 
 fn policy_from_toml(toml_text: &str) -> PolicyConfig {
     toml::from_str::<PolicyDocument>(toml_text)
-        .expect("Policy V2 TOML should parse")
+        .expect("Policy TOML should parse")
         .policy
 }
 
@@ -41,8 +41,8 @@ fn runtime_call_sites_do_not_import_legacy_policy_config() {
         "crates/capsem-core/src/net/mitm_proxy/mod.rs",
         "crates/capsem-core/src/net/mitm_proxy/mcp_endpoint.rs",
         "crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs",
-        "crates/capsem-core/src/net/mitm_proxy/policy_v2_http_hook.rs",
-        "crates/capsem-core/src/net/mitm_proxy/policy_v2_model.rs",
+        "crates/capsem-core/src/net/mitm_proxy/policy_http_hook.rs",
+        "crates/capsem-core/src/net/mitm_proxy/policy_model.rs",
         "crates/capsem-process/src/mcp_runtime.rs",
         "crates/capsem-service/src/main.rs",
         "crates/capsem/src/setup.rs",
@@ -59,7 +59,58 @@ fn runtime_call_sites_do_not_import_legacy_policy_config() {
 }
 
 #[test]
-fn policy_v2_parses_named_rules_with_priority_and_rewrite_captures() {
+fn runtime_call_sites_do_not_import_legacy_network_policy_runtime() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("capsem-core should live under crates/");
+
+    for deleted in [
+        "src/net/policy.rs",
+        "src/net/policy_hook.rs",
+        "src/net/policy_hook/tests.rs",
+        "src/net/mitm_proxy/policy_hook.rs",
+        "src/net/mitm_proxy/policy_hook/tests.rs",
+    ] {
+        assert!(
+            !manifest_dir.join(deleted).exists(),
+            "legacy NetworkPolicy/V1 hook file must stay deleted: {deleted}"
+        );
+    }
+
+    let runtime_files = [
+        "crates/capsem-core/src/lib.rs",
+        "crates/capsem-core/src/net/mod.rs",
+        "crates/capsem-core/src/net/dns/server.rs",
+        "crates/capsem-core/src/net/mitm_proxy/mod.rs",
+        "crates/capsem-core/src/vm/boot.rs",
+        "crates/capsem-core/src/vm/registry.rs",
+        "crates/capsem-process/src/main.rs",
+        "crates/capsem-process/src/mcp_runtime.rs",
+        "crates/capsem-process/src/vsock.rs",
+    ];
+
+    for file in runtime_files {
+        let source = std::fs::read_to_string(repo_root.join(file))
+            .unwrap_or_else(|err| panic!("failed to read {file}: {err}"));
+        for forbidden in [
+            "NetworkPolicy",
+            "crate::net::policy::",
+            "net::policy::",
+            "policy_hook::PolicyHook",
+            "mitm_proxy::policy_hook",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{file} must not import or call legacy NetworkPolicy/V1 hook token {forbidden:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn policy_parses_named_rules_with_priority_and_rewrite_captures() {
     let policy = policy_from_toml(
         r#"
 [policy.http.block_openai_github]
@@ -110,7 +161,7 @@ reason = "Route the strawman repository namespace through the allowed mirror"
 }
 
 #[test]
-fn policy_v2_supports_http_read_write_callbacks() {
+fn policy_supports_http_read_write_callbacks() {
     let policy = policy_from_toml(
         r#"
 [policy.http.default_read]
@@ -150,7 +201,7 @@ reason = "default write gate"
 }
 
 #[test]
-fn policy_v2_rejects_invalid_rule_shapes() {
+fn policy_rejects_invalid_rule_shapes() {
     let cases = [
         (
             "warn_is_not_a_decision",
@@ -200,13 +251,13 @@ rewrite_value = "https://github.com/openclaw/${missing}"
     for (name, toml_text) in cases {
         assert!(
             toml::from_str::<PolicyDocument>(toml_text).is_err(),
-            "case {name} should reject invalid Policy V2 config"
+            "case {name} should reject invalid Policy config"
         );
     }
 }
 
 #[test]
-fn policy_v2_evaluates_http_rules_by_priority_and_condition() {
+fn policy_evaluates_http_rules_by_priority_and_condition() {
     let policy = policy_from_toml(
         r#"
 [policy.http.allow_github]
@@ -251,7 +302,7 @@ priority = 10
 }
 
 #[test]
-fn policy_v2_cel_allows_method_like_text_inside_string_literals() {
+fn policy_cel_allows_method_like_text_inside_string_literals() {
     let policy = policy_from_toml(
         r#"
 [policy.http.block_literal_method_text]
@@ -276,7 +327,7 @@ priority = 10
 }
 
 #[test]
-fn policy_v2_cel_does_not_match_not_equal_against_missing_fields() {
+fn policy_cel_does_not_match_not_equal_against_missing_fields() {
     let policy = policy_from_toml(
         r#"
 [policy.http.block_missing_auth]
@@ -303,7 +354,7 @@ priority = 10
 }
 
 #[test]
-fn policy_v2_evaluates_http_response_body_headers_and_request_context() {
+fn policy_evaluates_http_response_body_headers_and_request_context() {
     let policy = policy_from_toml(
         r#"
 [policy.http.block_secret_json]
@@ -360,7 +411,7 @@ priority = 20
 }
 
 #[test]
-fn policy_v2_http_response_header_rule_does_not_match_when_header_missing() {
+fn policy_http_response_header_rule_does_not_match_when_header_missing() {
     let policy = policy_from_toml(
         r#"
 [policy.http.block_sensitive_download]

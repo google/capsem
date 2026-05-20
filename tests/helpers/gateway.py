@@ -56,7 +56,6 @@ class GatewayInstance:
 
         log_path = self.tmp_dir / "gateway.log"
         print(f"GATEWAY LOG: {log_path}")
-        self._log_file = open(log_path, "w")
 
         # capsem-gateway refuses to run without a live parent service (see
         # capsem-guard). Standalone test invocations pass the pytest worker PID
@@ -74,12 +73,16 @@ class GatewayInstance:
         if self.frontend_dir:
             cmd += ["--frontend-dir", self.frontend_dir]
 
-        self.proc = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=self._log_file,
-            stderr=self._log_file,
-        )
+        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=log_fd,
+                stderr=log_fd,
+            )
+        finally:
+            os.close(log_fd)
 
         # Wait for gateway to start and write runtime files
         token_path = run_dir / "gateway.token"
@@ -117,6 +120,7 @@ class GatewayInstance:
                 self.proc.wait()
         if self._log_file:
             self._log_file.close()
+            self._log_file = None
 
     @property
     def base_url(self) -> str:

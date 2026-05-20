@@ -439,7 +439,10 @@ fn metrics_snapshot_ipc_roundtrip_bincode() {
     assert_eq!(snapshot.http.http_requests_total, 0);
     assert_eq!(snapshot.model.model_estimated_cost_micros_total, 0);
 
-    let response = ProcessToService::MetricsSnapshot { id: 44, snapshot };
+    let response = ProcessToService::MetricsSnapshot {
+        id: 44,
+        snapshot: Box::new(snapshot),
+    };
     let response_bytes = bincode::serialize(&response).unwrap();
     let response2: ProcessToService = bincode::deserialize(&response_bytes).unwrap();
     match response2 {

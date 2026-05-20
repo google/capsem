@@ -5,8 +5,7 @@ use capsem_core::mcp::aggregator::AggregatorClient;
 use capsem_core::mcp::policy::{McpManualServer, McpPolicy, McpUserConfig, ToolDecision};
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
-use capsem_core::net::policy_v2::{
+use capsem_core::net::policy::{
     PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
 };
 use capsem_core::settings_profiles::{
@@ -28,7 +27,7 @@ const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 300;
 pub(crate) struct McpRuntime {
     pub(crate) aggregator: AggregatorClient,
     pub(crate) policy: Arc<tokio::sync::RwLock<Arc<McpPolicy>>>,
-    pub(crate) policy_v2: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>,
+    pub(crate) rules_policy: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>,
     pub(crate) domain_policy: Arc<std::sync::RwLock<Arc<DomainPolicy>>>,
     pub(crate) session_dir: PathBuf,
     pub(crate) builtin_binary: Option<PathBuf>,
@@ -38,10 +37,9 @@ pub(crate) struct McpRuntime {
 pub(crate) struct RuntimePolicyState {
     pub(crate) profile_id: String,
     pub(crate) guest_config: GuestConfig,
-    pub(crate) network_policy: NetworkPolicy,
     pub(crate) domain_policy: DomainPolicy,
     pub(crate) mcp_policy: McpPolicy,
-    pub(crate) policy_v2: PolicyConfig,
+    pub(crate) policy: PolicyConfig,
     pub(crate) mcp_user: McpUserConfig,
     pub(crate) mcp_corp: McpUserConfig,
     pub(crate) snapshot_auto_max: usize,
@@ -56,13 +54,6 @@ pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyStat
 fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicyState {
     let effective = load_effective_vm_settings_with_fallback(session_dir);
 
-    let (default_allow_read, default_allow_write) =
-        network_defaults_from_effective(effective.as_ref());
-    let network_policy = NetworkPolicy::new(
-        network_policy_rules_from_effective(effective.as_ref()),
-        default_allow_read,
-        default_allow_write,
-    );
     let domain_default_allow = effective
         .as_ref()
         .map(|effective| {
@@ -89,9 +80,9 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
         .unwrap_or_default();
     let mcp_corp = McpUserConfig::default();
     let mcp_policy = mcp_user.to_policy(&mcp_corp);
-    let policy_v2 = effective
+    let policy = effective
         .as_ref()
-        .map(policy_v2_from_effective_rules)
+        .map(policy_from_effective_rules)
         .unwrap_or_default();
     let guest_config = guest_config_from_effective(effective.as_ref());
     let profile_id = effective
@@ -102,10 +93,9 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
     RuntimePolicyState {
         profile_id,
         guest_config,
-        network_policy,
         domain_policy,
         mcp_policy,
-        policy_v2,
+        policy,
         mcp_user,
         mcp_corp,
         snapshot_auto_max: DEFAULT_SNAPSHOT_AUTO_MAX,
@@ -258,40 +248,6 @@ fn domain_policy_lists_from_effective(
     (allow, block)
 }
 
-fn network_policy_rules_from_effective(
-    effective: Option<&settings_profiles::EffectiveVmSettings>,
-) -> Vec<PolicyRule> {
-    let Some(effective) = effective else {
-        return Vec::new();
-    };
-
-    let mut rules = effective
-        .rules
-        .iter()
-        .enumerate()
-        .filter_map(|(index, rule)| {
-            let domain = domain_from_simple_network_condition(rule)?;
-            let (allow_read, allow_write) = match rule.decision {
-                RuleDecision::Allow => (true, true),
-                RuleDecision::Ask | RuleDecision::Block => (false, false),
-                RuleDecision::Rewrite => return None,
-            };
-            Some((
-                rule.priority,
-                index,
-                PolicyRule {
-                    matcher: DomainMatcher::parse(&domain),
-                    allow_read,
-                    allow_write,
-                },
-            ))
-        })
-        .collect::<Vec<_>>();
-
-    rules.sort_by_key(|(priority, index, _)| (*priority, *index));
-    rules.into_iter().map(|(_, _, rule)| rule).collect()
-}
-
 fn domain_from_simple_network_condition(rule: &EffectiveRule) -> Option<String> {
     match rule.callback.as_str() {
         "dns.request" => extract_condition_eq(&rule.condition, "qname"),
@@ -422,9 +378,7 @@ fn mcp_user_config_from_effective(
     }
 }
 
-fn policy_v2_from_effective_rules(
-    effective: &settings_profiles::EffectiveVmSettings,
-) -> PolicyConfig {
+fn policy_from_effective_rules(effective: &settings_profiles::EffectiveVmSettings) -> PolicyConfig {
     let mut config = PolicyConfig::default();
     for (index, rule) in effective.rules.iter().enumerate() {
         if rule.derived {

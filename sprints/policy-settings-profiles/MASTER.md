@@ -1,6 +1,6 @@
 # Policy, Settings, Profiles Master
 
-Last updated: 2026-05-18
+Last updated: 2026-05-20
 
 ## Where this sprint lives
 
@@ -43,6 +43,12 @@ the profile trust chain is signed, profile payloads are installed from the
 catalog, VMs pin exact profile/revision/package/asset identity, old config stays
 dead, and every public surface can explain what happened.
 
+**Latest verification.** `just smoke` passed on 2026-05-20 in 272s after the
+smoke harness was made less host-starved: service/CLI and MCP VM-heavy suites
+no longer overlap, log fds are closed in parent fixtures, e2e services receive
+Profile V2 asset homes, and MCP tests now separate signed VM lifecycle fixtures
+from editable unsigned profile-mutation fixtures.
+
 ## Product Contract
 
 - **Service settings are service/app-scoped.** They configure app/service
@@ -55,9 +61,25 @@ dead, and every public surface can explain what happened.
   debug reports, status, guest materialization, and UI truth read the resolved
   VM-effective profile state.
 - **Policy rules and detection rules are under review.** Runtime blocking rules
-  currently remain Capsem-native synchronous policy. S08a decides whether
-  Sigma-compatible detection rules become a separate signed/profile-scoped
-  family before telemetry, plugins, rule UI, and Confirm UX freeze the model.
+  currently remain Capsem-native synchronous policy. S08a decides the real CEL
+  enforcement language, the real Sigma-compatible detection path, and whether
+  detection rules become a separate signed/profile-scoped family before
+  telemetry, plugins, rule UI, and Confirm UX freeze the model.
+- **Activity engines must be separated.** Network transport, file/snapshot
+  mechanics, process/audit mechanics, security decisions, and resolved-event
+  emission are separate engines. S08b creates those boundaries so
+  network/file/process code parses and applies typed responses, while the
+  Security Engine owns policy, ask/confirm, detection, postprocessing, and the
+  complete resolved-event journal.
+- **Session DB must become a resolved-event store.** Existing domain tables are
+  useful read models, but S08b must add a canonical resolved-event journal and
+  route migrated event-family writes through the emitter instead of direct
+  subsystem SQLite writes.
+- **Everyday work needs a unified structured timeline.** SDK-backed
+  Codex/Claude work and terminal fallback workflows must feed a first-class
+  Conversation Engine and the single `/timeline/{id}` read model so sessions
+  can be reviewed, searched, grouped, and explained without spelunking raw
+  tables or PTY logs.
 - **The signed manifest is the profile catalog.** The binary owns the manifest
   signing trust root; the manifest lists profile ids, immutable revisions,
   lifecycle status, payload locations, payload hashes/signatures, and binary
@@ -94,26 +116,30 @@ the next starts. The `#` column is the execution index;
 | 8 | [S06 - Assembly And VM-Effective Settings](S06-assembly-vm-effective-settings.md) | Done | Resolve profiles/corp governance into VM-attached settings and derived rules. Parent-chain validation, layered merge, resolver trace, corp directives, lock/forbid, runtime cutover, and status/debug exposure have landed; in-VM probe remains visible debt. |
 | 9 | [S06a - Model Request Rewrite Support](S06a-model-request-rewrite-support.md) | Done | Implement `model.request` rewrite for `request.data` and remove unsupported fail-closed placeholder behavior. |
 | 10 | [S06b - Legacy Allowlist Migration And Rule Ownership Locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) | Done | Delete legacy allowlist/v1 settings dead code and enforce generated-rule ownership (`managed by <setting>`, uneditable). |
-| 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) | Not Started | Delete `policy.rs` + `policy_hook.rs`; remove the V1 hook from production pipeline; collapse `SharedPolicyV2` -> `SharedPolicy`. Closes the V1 runtime that S01 left behind. |
-| 12 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Deferred cleanup debt | `git merge origin/main` -> v2 rename -> full verification gate. Current branch has already advanced into S07; keep the debt visible before release. |
-| 13 | [S07 - UDS Service API](S07-uds-service-api.md) | Done | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, profile-backed VM create request shape, standard `mcpServers` profile format plus Profile V2 MCP server list/create/delete across service/CLI/capsem-mcp, old MCP management API/IPC removal, rules list/get/create/delete/evaluate, typed `GET /confirm/pending`, Profile V2 skills list/create/delete, and chained S07 route proof have landed. HTTP, CLI, production confirm resolution, and UI lift remain in S08/S09/S15/S16. |
-| 14 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, complete installed-payload trust checks, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, first-use selected-profile asset reconciliation, file/HTTPS catalog reconcile sources, and scheduled `[profile_catalog]` service reconciliation have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds richer catalog clients/debug detail. |
-| 15 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | Done | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile/payload/per-asset provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, profile-pin asset authority for source/fork/persist, chained service-level reconcile/status/debug/log proof, formal `file://` asset reconciliation, explicit UDS socket selection, and a live real-VM boot/exec proof from freshly reconciled profile assets have landed. |
-| 16 | [S07d - Service Settings Schema And Admin Contract](S07d-service-settings-schema-admin-contract.md) | Not Started | Bring service settings to Profile V2 contract strength: JSON Schema Draft 2020-12, Pydantic v2 models, Rust/Python fixture parity, and `capsem-admin settings` validation/schema/doctor hooks. |
-| 17 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for settings validation, profile creation, profile-derived image builds, image verification, and manifest generate/check/sign. |
-| 18 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | In Progress | Profile V2 gateway contract slices landed: catalog/revision, profile CRUD/resolve, skills, standard MCP servers, rules/evaluate, confirm-pending read, profile-selected VM create response payloads, `/status` and `/setup/assets` profile asset provenance/progress, `/debug/report` profile provenance, exact typed-error passthrough, debug-report gateway runtime mismatch diagnostics, live selected-profile HTTP create/download/boot/exec with `/info` pin echo, and adversarial typed-error passthrough for malformed, locked, invalid, updating, and revoked Profile V2 cases. Remaining: S15 confirm resolution/stream. |
-| 19 | [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md) | Not Started | Decide the split between synchronous Capsem policy rules and detection/Sigma-compatible rules before logging, telemetry, plugins, rule UI, and Confirm UX freeze the wrong abstraction. |
-| 20 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, settings validation, and profile-backed VM create CLI flows. |
-| 21 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |
-| 22 | [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md) | Not Started | Make status/debug explain active settings, profiles, derived rules, MCP, skills, profile catalog state, package contracts, asset readiness, VM pins, and policy/detection provenance after S08a. |
-| 23 | [S12 - OpenTelemetry Metrics Architecture](S12-observability-plugin.md) | Not Started | Typed per-VM live-metrics architecture: `capsem-proto::metrics`, process-side accumulator, bincode IPC snapshot, service `/metrics/json` + `/metrics`, gateway proxy, UI typed-JSON. Inherits the release-team OTel handoff and depends on S08a's event/finding taxonomy. |
-| 24 | [S13 - Remote Policy Plugin](S13-remote-policy-plugin.md) | Not Started | Add service plugin for remote policy events/decisions after S08a separates event streaming from synchronous decision authority. |
-| 25 | [S14 - Rules UI Components](S14-rules-ui-components.md) | Not Started | One reusable policy-rule editor/renderer plus detection-rule/finding UX decision from S08a. **The policy editor is embedded by [S15](S15-confirm-ux.md) for forward-rule decisions.** |
-| 26 | [S15 - Confirm UX (Ask)](S15-confirm-ux.md) | Not Started | Production answer path for `decision = "ask"`: stacked pending-ask queue, UI prompter embedding the S14 policy-rule editor, CLI parity, auto-rule derivation per callback, `policy_confirm_events` integration. Replaces the placeholder confirmer that ships from S06-pre. |
-| 27 | [S16 - Profile UI](S16-profile-ui.md) | Not Started | First-class profile catalog, selector, revision, package/asset readiness, create/fork/delete/edit, and VM create flows. |
-| 28 | [S17 - Security Capabilities UI](S17-security-capabilities-ui.md) | Not Started | Capability controls above canonical policy-rule editing and any S08a-approved detection/finding views. |
-| 29 | [S19 - Documentation And Site](S19-documentation-and-site.md) | Not Started | Document the engine, corporate deployment, telemetry, remote policy, signed profile catalogs, package contracts, profile-owned VM assets, settings schema, policy/detection split, and `capsem-admin` workflows. |
-| 30 | [S18 - Full Verification And Release Gate](S18-full-verification-release-gate.md) | Not Started | Backend/UI/E2E/install proof. Last sprint. |
+| 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](S06c-ablate-legacy-networkpolicy.md) | Done | Deleted `policy.rs` + `policy_hook.rs`; removed the V1 hook from production pipeline; collapsed DNS/MITM/runtime policy authority to Profile V2 `PolicyConfig`. |
+| 12 | [S06d - Core Structure And Test Boundaries](S06d-core-structure-and-test-boundaries.md) | Done | Split oversized MITM/DNS modules and tests inside `capsem-core` before the rename and S08b engine contracts; defer new crate boundaries to S08b. |
+| 13 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | In Progress | Branch is `92 ahead / 0 behind` `origin/main`; code/docs now use the singular `policy` runtime name, with focused cargo gates passing. Remaining: decide/run heavyweight `just test`/doctor release gate before marking closed. |
+| 14 | [S07 - UDS Service API](S07-uds-service-api.md) | Done | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, profile-backed VM create request shape, standard `mcpServers` profile format plus Profile V2 MCP server list/create/delete across service/CLI/capsem-mcp, old MCP management API/IPC removal, rules list/get/create/delete/evaluate, typed `GET /confirm/pending`, Profile V2 skills list/create/delete, and chained S07 route proof have landed. HTTP, CLI, production confirm resolution, and UI lift remain in S08/S09/S15/S16. |
+| 15 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, complete installed-payload trust checks, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, first-use selected-profile asset reconciliation, file/HTTPS catalog reconcile sources, and scheduled `[profile_catalog]` service reconciliation have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds richer catalog clients/debug detail. |
+| 16 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | Done | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile/payload/per-asset provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, profile-pin asset authority for source/fork/persist, chained service-level reconcile/status/debug/log proof, formal `file://` asset reconciliation, explicit UDS socket selection, and a live real-VM boot/exec proof from freshly reconciled profile assets have landed. |
+| 17 | [S07d - Service Settings Schema And Admin Contract](S07d-service-settings-schema-admin-contract.md) | Not Started | Bring service settings to Profile V2 contract strength: JSON Schema Draft 2020-12, Pydantic v2 models, Rust/Python fixture parity, and `capsem-admin settings` validation/schema/doctor hooks. |
+| 18 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Not Started | Ship `capsem-admin` Python admin tooling for settings validation, profile creation, profile-derived image builds, image verification, manifest generate/check/sign, and typed policy/detection pack validation once S08a finalizes the rule formats. |
+| 19 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | In Progress | Profile V2 gateway contract slices landed: catalog/revision, profile CRUD/resolve, skills, standard MCP servers, rules/evaluate, confirm-pending read, profile-selected VM create response payloads, `/status` and `/setup/assets` profile asset provenance/progress, `/debug/report` profile provenance, exact typed-error passthrough, debug-report gateway runtime mismatch diagnostics, live selected-profile HTTP create/download/boot/exec with `/info` pin echo, and adversarial typed-error passthrough for malformed, locked, invalid, updating, and revoked Profile V2 cases. Remaining: S15 confirm resolution/stream. |
+| 20 | [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md) | Not Started | Decide real CEL enforcement, real Sigma-compatible detection, profile-owned rule packs, admin validation/schema requirements, and the split between synchronous policy rules and detection rules before logging, telemetry, plugins, rule UI, and Confirm UX freeze the wrong abstraction. |
+| 21 | [S08b - Security Event Engine, Network Engine, File Engine, And Process Engine](S08b-security-event-engine-and-file-engine.md) | Not Started | Split Network Engine, File Engine, Process Engine, Security Engine, and Resolved Event Emitter into clear contracts/crates before public surfaces consume the event model; consume S08a's real CEL/Sigma/profile-owned rule-pack decisions; reshape `session.db` around a canonical resolved-event journal plus projections. |
+| 22 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `confirm`, settings validation, and profile-backed VM create CLI flows. |
+| 23 | [S10 - Credential Brokerage](S10-credential-brokerage.md) | Not Started | Define credential release from service settings into sessions. |
+| 24 | [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md) | Not Started | Make status/debug explain active settings, profiles, derived rules, MCP, skills, profile catalog state, package contracts, asset readiness, VM pins, live VM health metrics, and policy/detection/engine provenance after S08a/S08b/S12. |
+| 25 | [S12 - OpenTelemetry Metrics Architecture](S12-observability-plugin.md) | Not Started | Typed per-VM live-metrics architecture: `capsem-proto::metrics`, process-side accumulator, bincode IPC snapshot, VM status health, model/provider/token/cost counters, detection finding metrics, service `/metrics/json` + `/metrics`, gateway proxy, UI typed-JSON. Inherits the release-team OTel handoff and depends on S08a's event/finding taxonomy plus S08b's emitter contract. |
+| 26 | [S13 - Remote Policy Plugin](S13-remote-policy-plugin.md) | Not Started | Add service plugin for remote policy events/decisions after S08a separates event streaming from synchronous decision authority and S08b defines the engine/emitter boundary. |
+| 27 | [S14 - Rules UI Components](S14-rules-ui-components.md) | Not Started | One reusable policy-rule editor/renderer plus detection-rule/finding UX decision from S08a and resolved-event provenance from S08b. **The policy editor is embedded by [S15](S15-confirm-ux.md) for forward-rule decisions.** |
+| 28 | [S15 - Confirm UX (Ask)](S15-confirm-ux.md) | Not Started | Production answer path for `decision = "ask"` inside the Security Engine: stacked pending-ask queue, UI prompter embedding the S14 policy-rule editor, CLI parity, auto-rule derivation per callback, confirm event integration. Replaces the placeholder confirmer that ships from S06-pre. |
+| 29 | [S16 - Profile UI](S16-profile-ui.md) | Not Started | First-class profile catalog, selector, revision, package/asset readiness, create/fork/delete/edit, and VM create flows. |
+| 30 | [S16a - Unified Timeline And Agent Workbench](S16a-unified-timeline-and-agent-workbench.md) | Not Started | Friendly everyday-work UI for Codex/Claude SDK-backed and terminal-fallback sessions, backed by S08b's structured `/timeline/{id}` API and resolved-event store. |
+| 31 | [S17 - Security Capabilities UI](S17-security-capabilities-ui.md) | Not Started | Capability controls above canonical policy-rule editing and any S08a-approved detection/finding views. |
+| 32 | [S19 - Documentation And Site](S19-documentation-and-site.md) | Not Started | Document the engine, corporate deployment, telemetry/VM health, remote policy, signed profile catalogs, package contracts, profile-owned VM assets, settings schema, enforcement page, detection-format page, unified timeline, and corp/admin `capsem-admin` workflows. |
+| 33 | [S19a - Marketing Site Refresh](S19a-marketing-site-refresh.md) | Not Started | Refresh the landing page around four pillars: Ship Fast With AI, Ship Safely, Scale Your Productivity Without Drag, and Enterprise Ready, with claims aligned to the new profile/security/observability architecture. |
+| 34 | [S18 - Full Verification And Release Gate](S18-full-verification-release-gate.md) | Not Started | Backend/UI/E2E/install proof. Last sprint. |
 
 S15 was previously a "Settings UI Redesign" sprint; that scope is now
 folded into the descriptor-driven UI work in S14 / S16 / S17.
@@ -137,7 +163,21 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
   and admin validation commands first.
 - Do not build rules UI, Confirm promotion, OTel detection/finding metrics, or
   remote policy plugin event contracts until S08a decides the policy-rule versus
-  detection-rule abstraction.
+  detection-rule abstraction, the real CEL runtime, the real Sigma-compatible
+  detection path, and how policy/detection packs live in signed profiles.
+- Do not build CLI/UI/telemetry/plugin contracts directly against today's mixed
+  HTTP/DNS/MCP/file telemetry paths. S08b must split the Network Engine, File
+  Engine, Process Engine, Security Engine, and Resolved Event Emitter first,
+  with file/snapshot/process activity represented as normalized security events.
+- Do not add more independent `session.db` tables as security authority. S08b
+  must define the canonical resolved-event journal and decide which existing
+  domain tables remain projections/read models.
+- Do not build the everyday-work UI directly against raw `pty.log`, `/inspect`
+  SQL, or legacy telemetry tables. S16a consumes S08b's structured
+  `/timeline/{id}` API, with cursor pagination over typed timeline blocks.
+  Conversation, turn, process, activity, trace, finding, and artifact views are
+  client-side filtering/formatting modes over those blocks. Raw transcript is
+  only a forensic artifact/fallback input.
 - Do not call profile asset updates production-ready until S07c proves debug
   provenance plus duplicate-download and cleanup/create concurrency behavior
   around the Profile V2 service asset reconciler.
@@ -190,8 +230,20 @@ is the next architecture discussion gate. It decides how Capsem-native
 synchronous policy rules relate to detection/Sigma-compatible rules before
 logging, telemetry, plugins, rule UI, and Confirm UX harden around that model.
 
+[S08b - Security Event Engine, Network Engine, File Engine, And Process Engine](S08b-security-event-engine-and-file-engine.md)
+is the implementation architecture gate immediately after S08a. It turns the
+rule/detection decision into real crate/module boundaries: Network Engine for
+transport, File Engine for file/snapshot mechanics, Process Engine for
+process/audit mechanics and attribution, Conversation Engine for SDK/terminal
+conversation capture and timeline normalization, Security Engine for
+preprocessors, enforcement, ask/confirm, detection and postprocessing, and a
+Resolved Event Emitter for telemetry/audit/logging/detection export.
+
 S07b remains a release-blocking admin-tooling sprint. It now consumes both the
-Profile V2 contract and the S07d service-settings contract.
+Profile V2 contract and the S07d service-settings contract. Once S08a chooses
+the final enforcement/detection formats, `capsem-admin` must also validate,
+schema-export, and report policy/detection packs through typed Pydantic models
+before S19 documents those corp workflows as supported.
 
 S07a/S07c foundation carried into S08:
 
@@ -349,9 +401,9 @@ Pydantic dumping, not raw nested dicts.
 
 [S07 - UDS service API](S07-uds-service-api.md), S07a, S07c, S07d, S07b, and
 [S08a](S08a-rule-abstraction-detection-architecture.md) are the
-public-contract foundation for every later layer. HTTP, CLI, UI, docs, telemetry,
-plugins, and release tooling must consume those shapes rather than inventing
-independent profile/settings/rule/admin semantics.
+public-contract foundation for every later layer. HTTP, CLI, UI, docs,
+marketing, telemetry, plugins, and release tooling must consume those shapes
+rather than inventing independent profile/settings/rule/admin semantics.
 
 **Deferred cleanup debt remains visible.** S06c legacy NetworkPolicy ablation
 and the final V2 naming collapse are still tracked in

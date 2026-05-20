@@ -57,7 +57,7 @@ pub enum ProcessToService {
     /// Response to GetMetricsSnapshot.
     MetricsSnapshot {
         id: u64,
-        snapshot: VmMetricsSnapshot,
+        snapshot: Box<VmMetricsSnapshot>,
     },
     /// Output bytes from the guest PTY.
     TerminalOutput { data: Vec<u8> },

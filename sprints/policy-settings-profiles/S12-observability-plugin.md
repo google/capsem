@@ -39,6 +39,13 @@ VM's life:
 Everything else -- `/list`, `/info` on a running VM, gateway status,
 UI polling, scrape endpoints -- reads memory only.
 
+VM status health is a live point-in-time view. Running VM status surfaces read
+the in-memory accumulator. Persistent VMs seed/recompute cumulative totals from
+`session.db` exactly once at process load, then continue from memory. This is
+the agreed model for cost, model call count, provider/model usage, policy,
+detection, and activity health: accurate enough for live operations without
+reopening SQLite on status fan-out paths.
+
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
@@ -135,6 +142,7 @@ pub struct VmMetricsSnapshot {
     pub http: VmHttpMetrics,
     pub dns: VmDnsMetrics,
     pub model: VmModelMetrics,
+    pub detection: VmDetectionMetrics,
     pub mcp: VmMcpMetrics,
     pub filesystem: VmFilesystemMetrics,
     pub captured_at_unix_ms: u64,
@@ -268,10 +276,41 @@ Counters:
 - `model_requests_warned_total`
 - `model_requests_denied_total`
 - `model_requests_errored_total`
+- `model_calls_total` (alias/compat rendering may point at
+  `model_requests_total`, but the health vocabulary must expose "model call
+  count" clearly)
 - `model_input_tokens_total`
 - `model_output_tokens_total`
 - `model_estimated_cost_micros_total`  (integer micros; floating-point
   cost is renderer-only)
+
+Bounded JSON-only summaries:
+
+- calls by provider;
+- calls by model;
+- token totals by provider/model;
+- estimated cost by provider/model in integer micros;
+- recent model errors without raw prompt/error-string labels.
+
+Provider and model may be OTel labels only when sourced from the VM-effective
+profile/provider registry and bounded to configured values. Unknown or
+unconfigured values collapse to `unknown` / JSON-only detail. Raw prompts,
+request bodies, and error strings are never labels.
+
+### Detection / Findings
+
+S08a chooses the detection format and S08b owns resolved-event emission, but
+S12 must reserve typed metrics for the result:
+
+- `detection_events_evaluated_total`
+- `detection_findings_total`
+- `detection_findings_by_severity_total`
+- `detection_errors_total`
+
+Exported labels stay low-cardinality: profile id/revision, VM id, detection
+pack id, severity, and event family where bounded. Rule names, free-form
+finding text, paths, URLs, prompts, and commands stay in bounded JSON summaries
+or the resolved-event store.
 
 ### Resources
 
@@ -359,6 +398,10 @@ starts.
 
 - Consume typed metrics JSON for VM cards/status panels.
 - Render ask pass rate from counters in the UI, not server-side.
+- Render model call count, provider/model usage, token counts, and estimated
+  cost from typed live metrics. The UI may format cost, but it must not invent
+  cost values absent from the accumulator.
+- Render detection finding health from typed metrics once S08a/S08b land.
 - Resource labels distinguish configured / host-side / guest-side
   sources.
 
@@ -383,6 +426,10 @@ starts.
 - Unit tests for ask counters and pass-rate inputs.
 - Unit tests for HTTP/DNS/model/MCP/filesystem/resource accumulator
   updates without `DbWriter`/SQLite.
+- Unit tests for model health counters and bounded provider/model summaries,
+  including unknown provider/model collapse and integer-micros cost handling.
+- Unit tests for detection metric counters once S08a/S08b provide the finding
+  schema.
 - `seed_accumulator_from_session_db` test: persistent VM with an
   existing session.db starts with the durable totals; ephemeral VM or
   missing DB starts at zero.
@@ -409,10 +456,14 @@ starts.
 - Test that ask split counters survive gateway translation.
 - Test that MCP server summaries are not collapsed into one ambiguous
   total.
+- Test that model provider/model/cost summaries and detection finding counters
+  survive gateway translation without label/cardinality leaks.
 
 ### Client / UI
 
 - VM list/card renders live counters from typed JSON.
+- VM status health renders model call count, provider/model summaries, token
+  counts, estimated cost, and detection finding health from the live snapshot.
 - Ask pass rate derives from `total_asks` and `asks_allowed` only.
 - Resource labels show configured / host-side / guest-side distinctly.
 
@@ -525,7 +576,8 @@ rather than being committed up front.
   zero-start, boot-to-shutdown counter parity, durable DB still
   carries forensic truth post-stop.
 - Telemetry: this sprint owns the telemetry redesign; no SQL on any
-  hot fan-out path.
+  hot fan-out path; VM status health exposes model/provider/cost and detection
+  finding counters from the live accumulator with boot-time recompute only.
 - Performance: snapshot RTT bounded; seed cost paid once per VM
   launch; batched export overhead measured.
 

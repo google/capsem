@@ -4,7 +4,7 @@ Last updated: 2026-05-15
 
 ## Why this exists
 
-[S06-pre](S06-pre-network-contract-and-confirm.md) wired every Policy V2
+[S06-pre](S06-pre-network-contract-and-confirm.md) wired every Policy
 ask callsite (DNS, HTTP, MCP, model) through a `Confirmer` trait, and
 shipped a placeholder implementation that always returns
 `Decision::Accept`. That unblocked the rest of the runtime without

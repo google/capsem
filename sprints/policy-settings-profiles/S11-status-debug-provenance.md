@@ -23,6 +23,11 @@ binding visible.
 - [ ] Add selected/resolved package/tool contract and VM asset readiness.
 - [ ] Add persistent VM pin rendering: profile id/revision, package contract
       hash, pinned asset hashes, and drift/deprecated/revoked warnings.
+- [ ] Add VM live health rendering sourced from S12 typed metrics snapshots:
+      model call count, providers, models, token totals, estimated cost,
+      detection finding counts/severity, ask/policy counters, and stale/partial
+      metrics state. Running VM status must use the live accumulator; stopped
+      VM detail may use the one-shot cold `session.db` fallback.
 - [ ] Add chain-of-trust rendering for profile-backed VMs: manifest identity,
       profile payload verification, package/tool contract, asset verification,
       and VM pin status.
@@ -65,5 +70,6 @@ settings/profile load-error rendering.
 - E2E/VM: debug report explains launched session profile revision and pinned
   verified assets.
 - Telemetry: report includes audit-relevant settings/profile/rule summaries at
-  model level plus profile catalog/update and VM pin state.
+  model level plus profile catalog/update, VM pin state, and S12 live health
+  summaries for model/provider/cost/detection counters.
 - Performance: report generation remains bounded.

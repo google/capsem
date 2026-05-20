@@ -180,8 +180,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source, resumes the fork, mutates filesystem state, forks again, deletes the
   middle VM, and proves the final fork preserved only the expected descendant
   state.
+- Added current UI baseline screenshots for the marketing-site refresh sprint,
+  covering the hero plus the feature, security, how-it-works, and FAQ sections.
 - Changed `capsem update --assets` to honor the selected service UDS socket
   instead of assuming the default runtime socket.
+- Changed the runtime network policy module names from transitional
+  `policy_v2`/`policy_v2_*` paths to the forward `policy`, `policy_model`,
+  and `policy_http_hook` surfaces, with DNS/MITM tests split into focused
+  behavior modules.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,
   manifest-driven downloader, and manifest-driven cleanup path. CLI status and
   service debug reports now rely on Profile V2 asset health instead of legacy
@@ -243,6 +249,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test public key.
 - Fixed service test fixtures so profile roots are created consistently and
   asset lifecycle log assertions tolerate equivalent download event ordering.
+- Fixed full smoke stability by closing inherited Python fixture log fds,
+  provisioning E2E services with Profile V2 asset homes, separating signed MCP
+  VM-lifecycle fixtures from editable profile-mutation fixtures, and running
+  VM-heavy service/CLI and MCP smoke groups sequentially to avoid Apple VZ
+  cleanup starvation.
 
 ## [1.1.1778860037] - 2026-05-15
 

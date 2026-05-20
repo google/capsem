@@ -72,6 +72,11 @@ capsem-admin manifest generate --profiles profiles/ --assets-dir assets/ --out m
 capsem-admin manifest check manifest.json --fast
 capsem-admin manifest check manifest.json --download
 capsem-admin manifest sign manifest.json --key private/manifest.key
+
+capsem-admin policy validate policy-pack.toml
+capsem-admin policy schema --out schemas/capsem.policy.v2.schema.json
+capsem-admin detection validate detection-pack.yml
+capsem-admin detection schema --out schemas/capsem.detection.v2.schema.json
 ```
 
 Required semantics:
@@ -103,11 +108,17 @@ Required semantics:
   output for admins.
 - Python implementation code must use Pydantic v2 models end to end for profile
   payloads, manifest records, asset records, package/tool contracts, build
-  plans, doctor checks, verification reports, and command JSON output. Raw dict
-  manipulation is not an internal API. JSON input must use
+  plans, policy packs, detection packs/findings/check reports, doctor checks,
+  verification reports, and command JSON output. Raw dict manipulation is not
+  an internal API. JSON input must use
   `model_validate_json()` or `TypeAdapter.validate_json()`; JSON output must use
   `model_dump_json()`. TOML input may create one temporary parsed value only to
   construct the Pydantic model immediately.
+- Policy/detection commands are gated on S08a's final CEL/Sigma-compatible
+  detection decision. If S07b lands before S08a, it must leave the typed command
+  and model extension point explicit; release cannot claim detection admin
+  support until S08a's selected format is represented by Pydantic models,
+  schema export, validation, and JSON reports.
 
 ## Source-Of-Truth Flow
 
@@ -174,6 +185,10 @@ this sprint.
   tests. Do not pass untyped nested dicts between admin modules. JSON tests must
   exercise `model_validate_json()` / `TypeAdapter.validate_json()` and
   `model_dump_json()`, not `json.loads` / `json.dumps`.
+- Add policy/detection admin model layer after S08a:
+  policy packs, detection packs, Sigma-compatible imports, finding schemas,
+  validation reports, and schema artifacts must be typed Pydantic models with
+  stable error paths and no raw JSON/dict plumbing.
 - Remove hand-edited image settings as accepted input for release builds. Tests
   must fail if a release build reads package/tool/image settings from
   `guest/config` instead of the selected profile.
@@ -290,6 +305,9 @@ The checker must fail closed for:
 - [ ] Add Pydantic v2 models for profile payloads, manifest records, package/
       tool contracts, assets, build plans, doctor checks, verification reports,
       and command JSON output.
+- [ ] Add Pydantic v2 models and schema/export commands for policy packs and
+      detection packs once S08a chooses real CEL and the Sigma-compatible
+      detection format.
 - [ ] Add `capsem-admin` package/distribution entry point and bootstrap install
       wiring.
 - [ ] Update Justfile recipes and shell scripts to use `capsem-admin`, with
@@ -315,6 +333,9 @@ The checker must fail closed for:
 - [ ] Update docs and release gates to use `capsem-admin`, including separate
       enterprise PyPI install/usage docs and developer editable-install/
       internals docs.
+- [ ] Add `capsem-admin policy validate|schema` and
+      `capsem-admin detection validate|schema` release/docs proof before S19
+      documents enforcement/detection formats as supported corp workflows.
 
 ## Coverage Ledger
 

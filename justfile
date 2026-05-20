@@ -97,27 +97,75 @@ _ensure-service: _sign
     RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
     mkdir -p "$RUN_DIR"
     PIDFILE="$RUN_DIR/service.pid"
+    GATEWAY_PIDFILE="$RUN_DIR/gateway.pid"
     SOCKET="$RUN_DIR/service.sock"
-    # Kill ONLY the service this pidfile tracks -- no pkill by name.
-    # Killing by pattern would take down a user's locally installed capsem
-    # (or a parallel test run with a different CAPSEM_HOME).
-    if [ -f "$PIDFILE" ]; then
-        OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
-        if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-            # SIGTERM the service; it propagates to child capsem-process VMs.
-            kill "$OLD_PID" 2>/dev/null || true
-            for _ in 1 2 3 4 5 6; do
-                kill -0 "$OLD_PID" 2>/dev/null || break
+    socket_owner_pids() {
+        lsof -nU 2>/dev/null | awk -v socket="$SOCKET" 'index($0, socket) { print $2 }' | sort -u
+    }
+    kill_service_tree() {
+        local pid="$1"
+        if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+            return
+        fi
+        kill "$pid" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.25
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            pgrep -P "$pid" | xargs -r kill -9 2>/dev/null || true
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    }
+    pid_command() {
+        local pid="$1"
+        ps -p "$pid" -o command= 2>/dev/null || true
+    }
+    cleanup_runtime_processes() {
+        # Kill ONLY the service this pidfile tracks -- no pkill by name.
+        # Killing by pattern would take down a user's locally installed capsem
+        # (or a parallel test run with a different CAPSEM_HOME).
+        if [ -f "$PIDFILE" ]; then
+            OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+            kill_service_tree "$OLD_PID"
+        fi
+        if [ -f "$GATEWAY_PIDFILE" ]; then
+            OLD_GATEWAY_PID=$(cat "$GATEWAY_PIDFILE" 2>/dev/null || true)
+            kill_service_tree "$OLD_GATEWAY_PID"
+        fi
+        # A stale pidfile is not enough proof that the socket is free: a previous
+        # isolated smoke/test service can survive with the same run dir and cause
+        # the fresh service to exit as "already running" before it owns the gateway.
+        if [ -S "$SOCKET" ]; then
+            for SOCKET_PID in $(socket_owner_pids); do
+                kill_service_tree "$SOCKET_PID"
+            done
+            for _ in 1 2 3 4 5 6 7 8; do
+                [ -z "$(socket_owner_pids)" ] && break
                 sleep 0.25
             done
-            # Force-kill if still alive.
-            if kill -0 "$OLD_PID" 2>/dev/null; then
-                pgrep -P "$OLD_PID" | xargs -r kill -9 2>/dev/null || true
-                kill -9 "$OLD_PID" 2>/dev/null || true
+            REMAINING_SOCKET_PIDS=$(socket_owner_pids)
+            if [ -n "$REMAINING_SOCKET_PIDS" ]; then
+                echo "ERROR: could not clear existing capsem-service socket owners: $REMAINING_SOCKET_PIDS" >&2
+                exit 1
             fi
         fi
-    fi
-    rm -f "$PIDFILE" "$SOCKET"
+        if [ -f "$RUN_DIR/gateway.lock" ]; then
+            LOCK_PID=$(cat "$RUN_DIR/gateway.lock" 2>/dev/null || true)
+            if [ -z "$LOCK_PID" ] || ! kill -0 "$LOCK_PID" 2>/dev/null; then
+                rm -f "$RUN_DIR/gateway.lock"
+            else
+                LOCK_CMD=$(pid_command "$LOCK_PID")
+                if [[ "$LOCK_CMD" == *"capsem-gateway"* && "$LOCK_CMD" == *"$RUN_DIR"* ]]; then
+                    kill_service_tree "$LOCK_PID"
+                else
+                    rm -f "$RUN_DIR/gateway.lock"
+                fi
+            fi
+        fi
+        rm -f "$PIDFILE" "$GATEWAY_PIDFILE" "$SOCKET" "$RUN_DIR/gateway.lock" "$RUN_DIR/gateway.token" "$RUN_DIR/gateway.port"
+    }
+    cleanup_runtime_processes
     # Symlink <capsem_home>/assets -> repo assets so installed tools (MCP, CLI)
     # see the same repacked initrd as the dev service.
     ASSETS_LINK="$CAPSEM_HOME_DIR/assets"
@@ -140,6 +188,10 @@ _ensure-service: _sign
         ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
         echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
     fi
+    if [ -n "${CAPSEM_ASSETS_DIR:-}" ]; then
+        {{cli_binary}} setup --non-interactive --accept-detected
+        cleanup_runtime_processes
+    fi
     GATEWAY_ARGS=(--gateway-binary {{gateway_binary}})
     if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
         # Isolated smoke/test services must not contend with a locally
@@ -147,18 +199,36 @@ _ensure-service: _sign
         GATEWAY_ARGS+=(--gateway-port 0)
     fi
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
+    cleanup_runtime_processes
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.
-    RUST_LOG=capsem=debug {{service_binary}} \
+    RUST_LOG=capsem=debug nohup {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
         "${GATEWAY_ARGS[@]}" \
-        --foreground 3>&- &
+        --foreground 3>&- >/dev/null 2>&1 &
     SVC_PID=$!
     echo "$SVC_PID" > "$PIDFILE"
     for i in $(seq 1 30); do
+        if ! kill -0 "$SVC_PID" 2>/dev/null; then
+            echo "ERROR: capsem-service exited during startup"
+            rm -f "$PIDFILE"
+            exit 1
+        fi
         if [ -S "$SOCKET" ] && curl -s --unix-socket "$SOCKET" --max-time 2 http://localhost/list >/dev/null 2>&1; then
+            if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
+                for _ in 1 2 3 4 5 6 7 8 9 10; do
+                    [ -s "$RUN_DIR/gateway.token" ] && [ -s "$RUN_DIR/gateway.port" ] && break
+                    sleep 0.25
+                done
+                if [ ! -s "$RUN_DIR/gateway.token" ] || [ ! -s "$RUN_DIR/gateway.port" ]; then
+                    echo "ERROR: capsem-gateway did not publish token/port files"
+                    kill "$SVC_PID" 2>/dev/null || true
+                    rm -f "$PIDFILE"
+                    exit 1
+                fi
+            fi
             echo "capsem-service running (PID $SVC_PID)"
             exit 0
         fi
@@ -313,12 +383,27 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
+    export CAPSEM_ASSETS_DIR="{{justfile_directory()}}/{{assets_dir}}"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
     # and the second would flock a brand-new inode unchallenged.
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "{{justfile_directory()}}/target/capsem-test-execution.lock"
+    cleanup_isolated_home_processes() {
+        [ -e "$CAPSEM_HOME" ] || return 0
+        PIDS=$(lsof -n 2>/dev/null | awk -v home="$CAPSEM_HOME" 'index($0, home) { print $2 }' | sort -u)
+        for PID in $PIDS; do
+            [ "$PID" != "$$" ] || continue
+            kill "$PID" 2>/dev/null || true
+        done
+        sleep 0.5
+        for PID in $PIDS; do
+            [ "$PID" != "$$" ] || continue
+            kill -9 "$PID" 2>/dev/null || true
+        done
+    }
+    cleanup_isolated_home_processes
     rm -rf "$CAPSEM_HOME"
     mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
 
@@ -631,6 +716,7 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     # (not as a just dep) so it inherits the exported env vars.
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
+    export CAPSEM_ASSETS_DIR="{{justfile_directory()}}/{{assets_dir}}"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just smoke` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
@@ -642,6 +728,20 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     # (e.g. a 0-entry capsem-app launch log left by a crashed Tauri shell).
     # Matches the `just test` preamble; smoke inherited the leak when
     # CAPSEM_HOME isolation was introduced.
+    cleanup_isolated_home_processes() {
+        [ -e "$CAPSEM_HOME" ] || return 0
+        PIDS=$(lsof -n 2>/dev/null | awk -v home="$CAPSEM_HOME" 'index($0, home) { print $2 }' | sort -u)
+        for PID in $PIDS; do
+            [ "$PID" != "$$" ] || continue
+            kill "$PID" 2>/dev/null || true
+        done
+        sleep 0.5
+        for PID in $PIDS; do
+            [ "$PID" != "$$" ] || continue
+            kill -9 "$PID" 2>/dev/null || true
+        done
+    }
+    cleanup_isolated_home_processes
     rm -rf "$CAPSEM_HOME"
     mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
     just _ensure-service
@@ -694,9 +794,9 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
         "tests/capsem-service/test_svc_suspend_corruption.py"
         "tests/capsem-service/test_svc_loop_device_after_resume.py"
     )
-    CAPSEM_TEST_RUN_ID=smoke-mcp uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" \
-        --ignore="$MCP_SERIAL" &
-    PID_MCP=$!
+    # Keep the two VM-heavy groups from overlapping. Both service+CLI and MCP
+    # boot/resume real VMs; running them at the same time can starve Apple VZ
+    # enough that otherwise healthy service requests hit client timeouts.
     CAPSEM_TEST_RUN_ID=smoke-service-cli uv run python -m pytest tests/capsem-service/ tests/capsem-cli/ \
         -v --tb=short -m "integration" -n 2 --dist=loadfile \
         --ignore="${SVC_SERIAL[0]}" \
@@ -706,10 +806,11 @@ smoke: _install-tools _frontend-dist _check-assets _pack-initrd
     CAPSEM_TEST_RUN_ID=smoke-gateway uv run python -m pytest tests/capsem-gateway/ -v --tb=short -m "gateway" &
     PID_GW=$!
     FAIL=0
-    wait $PID_MCP || FAIL=1
     wait $PID_SVC || FAIL=1
     wait $PID_GW || FAIL=1
     [ $FAIL -eq 0 ] || { echo "Python tests failed"; exit 1; }
+    CAPSEM_TEST_RUN_ID=smoke-mcp uv run python -m pytest tests/capsem-mcp/ -v --tb=short -m "mcp" \
+        --ignore="$MCP_SERIAL"
     CAPSEM_TEST_RUN_ID=smoke-mcp-serial uv run python -m pytest "$MCP_SERIAL" -v --tb=short -m "mcp"
     CAPSEM_TEST_RUN_ID=smoke-service-serial uv run python -m pytest "${SVC_SERIAL[@]}" -v --tb=short -m "integration"
     step_done

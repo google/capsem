@@ -23,6 +23,20 @@ is updated with the concrete branch and worktree path, verified by
   rev-list --left-right --count HEAD...origin/main` says it is true
   again.
 
+## Latest Green Gate
+
+- **2026-05-20:** `just smoke` passed in 272s after the long-term smoke
+  hygiene pass. The VM-heavy service/CLI and MCP suites now run in sequence
+  inside smoke so Apple VZ cleanup pressure does not turn healthy service
+  requests into client timeouts. The final pass also split MCP fixtures so
+  VM lifecycle/destructive tests use the signed catalog-backed profile, while
+  profile mutation tests opt into an editable unsigned fork explicitly.
+- Focused proof before the full gate: `uv run python -m pytest
+  tests/capsem-mcp/test_state_transitions.py::test_purge_all
+  tests/capsem-mcp/test_state_transitions.py::test_isolated_mcp_session_does_not_affect_shared_service
+  tests/capsem-mcp/test_mcp_connectors.py -v --tb=short -m mcp` passed with
+  4 tests.
+
 ## Operating Mode
 
 **Rescue is closed; push phase is active.** The S00-S06 audit and the
@@ -30,7 +44,7 @@ S07/S07a rescue work brought the branch back to a coherent profile-v2
 contract:
 
 - V1 settings/defaults authority is removed from the active runtime path.
-- Profile V2 settings, resolver trace, Policy V2 runtime wiring, UDS profile
+- Profile V2 settings, resolver trace, Policy runtime wiring, UDS profile
   and rule routes, package/tool contracts, profile schema artifacts, Pydantic
   admin contracts, and profile-driven VM asset readiness have landed.
 - Old asset-only manifests are no longer runtime authority. `assets.manifest.*`
@@ -55,7 +69,10 @@ order:
    settings contracts to consume.
 5. Run S08a before S11/S12/S13/S14/S15 so logging, telemetry, plugins, rule UI,
    and Confirm UX do not freeze the wrong policy/detection abstraction.
-6. Resume public-surface work in S09/S16 once the profile/settings/rule
+6. Run S08b immediately after S08a so Network Engine, File Engine, Process
+   Engine, Security Engine, and Resolved Event Emitter boundaries are cut before
+   CLI/UI/status/telemetry/plugin work consume the event model.
+7. Resume public-surface work in S09/S16 once the profile/settings/rule/engine
    contracts are no longer moving underneath them.
 
 Winter readiness rules:
@@ -67,7 +84,24 @@ Winter readiness rules:
   profiles before `capsem-admin` exposes them.
 - Policy rules and detection rules must be deliberately separated or
   deliberately unified before telemetry/plugins/UI/Confirm make that choice
-  expensive.
+  expensive. S08a must pick real CEL for enforcement and a real
+  Sigma-compatible detection path; the current CEL-like shortcut is not the
+  final rule language.
+- Detection is profile-owned. Signed profile revisions must resolve policy and
+  detection packs for a VM; detections are not loose telemetry queries.
+- Network transport, file/snapshot mechanics, process/audit mechanics, security
+  decisions, and resolved-event emission must be separate contracts before
+  public surfaces or enterprise plugin contracts harden around today's mixed
+  paths.
+- `session.db` must stop growing as independent authority tables. S08b must
+  introduce a canonical resolved-event journal, then keep existing domain tables
+  only as projections/read models unless a table is explicitly retired.
+- Everyday agent work needs a first-class structured timeline. Codex/Claude SDK
+  sessions and terminal fallback sessions must be reviewable/searchable through
+  the single `/timeline/{id}` API with cursor pagination over typed timeline
+  blocks, not raw PTY logs, a parallel conversation API, or direct SQL over
+  legacy tables. Filtering and formatting belong in the client workbench over
+  the loaded block window.
 - A VM without explicit profile/revision/package/asset identity is invalid and
   must fail closed; there is no pre-S07a compatibility lane.
 - The release gate is the wall: every claim needs tests, status/debug
@@ -94,11 +128,12 @@ a valid claim -- mark it `[ ]` instead.
 6. [x] [S05 - Profile implementation](S05-profile-implementation.md)
 7. [x] [S06-pre - Network contract + confirm wiring](S06-pre-network-contract-and-confirm.md) -- closed. Callback wiring (slices 6a-6e), backoff refactor, adversarial backfill, and slice 6f exit tests all landed; details in [Completed sub-sprints](#completed-sub-sprints). Slice 6f's E2E capsem-doctor ask probe is **deferred** (see [Deferred items](#deferred-items-visible-debt)); slice 7 (`policy_confirm_events` table + remaining deferrals) is tracked separately as future S06-pre+ work.
 8. [x] [S06 - Assembly and VM-effective settings](S06-assembly-vm-effective-settings.md) -- six sub-slices closed (parent-chain validation 6.1, layered merge 6.2, resolver trace 6.3, corp directives add/remove/replace 6.4, lock/forbid 6.5, runtime cutover + status/debug exposure 6.6). The in-VM E2E probe is **deferred** (see [Deferred items](#deferred-items-visible-debt)).
-9. [x] [S06a - Model request rewrite support](S06a-model-request-rewrite-support.md) -- closed. `evaluate_model_request_policy` now applies the rewrite via `rewrite_model_request_body` against the `request.data` field (unified with the canonical condition vocabulary), forwards the redacted body upstream, and attributes telemetry to the matched rewrite rule. Fail-closed paths: unsupported target, non-UTF-8 body, pattern non-match. The `LastModelPolicyV2Decision::unsupported_rewrite` shim is removed.
+9. [x] [S06a - Model request rewrite support](S06a-model-request-rewrite-support.md) -- closed. `evaluate_model_request_policy` now applies the rewrite via `rewrite_model_request_body` against the `request.data` field (unified with the canonical condition vocabulary), forwards the redacted body upstream, and attributes telemetry to the matched rewrite rule. Fail-closed paths: unsupported target, non-UTF-8 body, pattern non-match. The `LastModelPolicyDecision::unsupported_rewrite` shim is removed.
 10. [x] [S06b - Legacy allowlist migration + rule ownership locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) -- closed. Inventory found that S01's runtime cutover left the legacy v1 settings registry + allowlist builders as test-only dead code, so "migration" boiled down to deletion plus enriching the v2 model. Nine slices landed: 6b.0 deleted v1 (~12k LOC), 6b.1 added ownership metadata fields, 6b.2 enforced priority tiers (corp `[-1000, -1]`, toggle-derived `0`, user `[1, 999]`, catch-all reserved `1000`), 6b.3 added nestable rules under setting hosts, 6b.4 added `http.read` / `http.write` callbacks, 6b.5 added per-type catch-all rules at priority `1000`, 6b.6 added provider-toggle derived rules, 6b.7 added MCP `allowed_tools` derived rules, 6b.8 added the `ensure_rule_editable` mutation gate. 6b.9 documentation scope captured in [S19 spec](S19-documentation-and-site.md).
-11. [ ] [S06c - Ablate legacy NetworkPolicy runtime](#s06c---ablate-legacy-networkpolicy-runtime) -- new sprint, see inline brief below; promotes to a standalone spec when it starts.
-12. [ ] [Post-S06 cleanup milestone](#post-s06-cleanup-milestone) -- deferred cleanup debt: `git merge origin/main` -> v2 rename -> full verification gate.
-13. [x] [S07 - UDS service API](S07-uds-service-api.md) -- closed; first
+11. [x] [S06c - Ablate legacy NetworkPolicy runtime](S06c-ablate-legacy-networkpolicy.md) -- closed. Deleted legacy `NetworkPolicy` + V1 MITM policy hook runtime, collapsed DNS/MITM/process policy authority to the shared Profile V2 `PolicyConfig` handle, and migrated DNS/HTTP tests to equivalent Policy rules.
+12. [x] [S06d - Core structure and test boundaries](S06d-core-structure-and-test-boundaries.md) -- closed. DNS behavior tests now live in focused modules; MITM connection, HTTP policy, and model policy buckets are split; production MITM upstream, pipeline construction, and gzip response helpers are internal modules; V1 `NetworkPolicy`/hook source guard added. New engine crate boundaries remain deferred to S08b.
+13. [~] [Post-S06 cleanup milestone](#post-s06-cleanup-milestone) -- in progress. Branch check is `92 ahead / 0 behind` `origin/main`; singular `policy` runtime rename is implemented and focused cargo gates pass. Remaining: decide/run heavyweight `just test`/doctor release gate before marking closed.
+14. [x] [S07 - UDS service API](S07-uds-service-api.md) -- closed; first
   foundation slice landed `capsem_proto::metrics` plus
   `ServiceToProcess::GetMetricsSnapshot` /
   `ProcessToService::MetricsSnapshot`; read-only profile list/get/resolve
@@ -121,7 +156,7 @@ a valid claim -- mark it `[ ]` instead.
   and inherited-lock coverage, and a chained service proof across profiles,
   skills, MCP servers, rules, evaluate, and confirm listing. HTTP, CLI,
   production confirm resolution, and UI lift remain in S08/S09/S15/S16.
-14. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
+15. [~] [S07a - Profile manifest, packages, and assets](S07a-profile-manifest-assets.md)
     -- started. Canonical profile catalog/status parser landed in
     `capsem-core::profile_manifest`; typed profile package/tool contracts and
     per-arch VM asset declarations now parse, validate, serialize through
@@ -152,7 +187,7 @@ a valid claim -- mark it `[ ]` instead.
     profile/revision selection, reconciles that profile's assets before spawn,
     attaches the selected VM-effective profile, and refuses incomplete
     installed revision payloads. Remaining work adds UI/debug detail.
-15. [x] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
+16. [x] [S07c - Profile asset update orchestration](S07c-profile-asset-update-orchestration.md)
   -- manual service reconcile endpoint, `capsem update --assets` service
   trigger, checked-at/profile provenance status propagation, structured
   lifecycle logs, service debug Profile V2 asset-health reporting, old Rust
@@ -167,16 +202,18 @@ a valid claim -- mark it `[ ]` instead.
   assets into an empty cache through `capsem update --assets`, boots a real VM,
   execs inside it, and verifies `capsem info --json` reports the installed
   profile revision pin.
-16. [ ] [S07d - Service settings schema and admin contract](S07d-service-settings-schema-admin-contract.md)
+17. [ ] [S07d - Service settings schema and admin contract](S07d-service-settings-schema-admin-contract.md)
     -- inserted during the 2026-05-19 regroup. Bring service settings to
     Profile V2 contract strength before `capsem-admin` and public tooling rely
     on them: JSON Schema Draft 2020-12, Pydantic v2 models, Rust/Python fixture
     parity, and `capsem-admin settings validate|schema|doctor` hooks.
-17. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
+18. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile/settings tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
-    settings as authority.
-18. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
+    settings as authority. After S08a finalizes real CEL and the
+    Sigma-compatible detection format, `capsem-admin` also owns typed
+    policy/detection pack validation, schema export, and JSON reports.
+19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile
     CRUD/resolve, skills, standard `mcpServers` server management,
@@ -193,26 +230,66 @@ a valid claim -- mark it `[ ]` instead.
     mutations, invalid rule evaluation, asset cleanup while updating, and
     revoked revision install. Remaining: S15 confirm resolution/stream once S15
     makes that production route real.
-19. [ ] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
-    -- inserted during the 2026-05-19 regroup. Decide whether Capsem policy
-    rules and Sigma-style detection rules are separate families, and update
-    logging, telemetry, plugins, rule UI, Confirm UX, and docs before those
-    surfaces freeze around the wrong abstraction.
-20. [ ] [S09 - CLI integration](S09-cli-integration.md)
-21. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
-22. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
-23. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
-24. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
-25. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- policy-rule editor component is consumed by S15; detection UX waits on S08a.
-26. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
-27. [ ] [S16 - Profile UI](S16-profile-ui.md)
-28. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-29. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
-30. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+20. [ ] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
+    -- inserted during the 2026-05-19 regroup. Decide real CEL enforcement,
+    real Sigma-compatible detection, profile-owned policy/detection packs, and
+    whether Capsem policy rules and Sigma-style detection rules are separate
+    families. Update logging, telemetry, plugins, rule UI, Confirm UX, and docs
+    before those surfaces freeze around the wrong abstraction. This sprint also
+    defines `capsem-admin` validation/schema requirements and VM health/OTel
+    attribution for detection findings plus model provider/model/cost usage.
+21. [ ] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
+    -- inserted during the 2026-05-19 engine-boundary regroup. Split runtime
+    activity handling into Network Engine, File Engine, Process Engine, Security
+    Engine, and Resolved Event Emitter contracts/crates. File writes, deletes,
+    snapshots, restores, observe-only file behavior, exec chains, and
+    process/audit attribution must feed the same normalized security event
+    pipeline as network/DNS/MCP/model activity without collapsing file and
+    process mechanics into one engine. Security Engine consumes S08a's real
+    CEL/Sigma/profile-owned rule-pack decisions. Session DB moves toward a
+    canonical resolved-event journal with existing domain tables treated as
+    emitter-written projections. Conversation Engine capture and the structured
+    `/timeline/{id}` read API become part of the canonical session DB story.
+22. [ ] [S09 - CLI integration](S09-cli-integration.md)
+23. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+24. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+    -- includes live VM health rendering from S12 snapshots: model call count,
+    providers, models, token totals, estimated cost, detection findings, and
+    stale/partial metrics state.
+25. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
+    -- typed live accumulator and OTel/status metrics for model/provider/token/
+    cost usage plus detection finding health. Running status reads memory only;
+    persistent VMs seed/recompute from `session.db` exactly once at load.
+26. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
+27. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- policy-rule editor component is consumed by S15; detection UX waits on S08a/S08b.
+28. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+29. [ ] [S16 - Profile UI](S16-profile-ui.md)
+30. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
+    -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
+    everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
+    sessions, backed by S08b's structured `/timeline/{id}` API. Users must be
+    able to review/search prompts, assistant responses, tools, files, network,
+    processes, findings, asks/confirms, snapshots, artifacts, and profile/rule
+    provenance from one coherent timeline. The API provides stable pagination
+    over typed blocks; the UI provides conversation/turn/process/activity/trace/
+    finding/artifact filtering and formatting with one renderer per block type.
+31. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+32. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+    -- adds first-class enforcement and detection-format pages, corporate admin
+    security links, `capsem-admin` policy/detection validation docs, and VM
+    health/OTel docs for model/provider/token/cost and detection metrics.
+33. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
+    -- refresh the landing page around four pillars: Ship Fast With AI, Ship
+    Safely, Scale Your Productivity Without Drag, and Enterprise Ready. Include
+    shipped and planned profile/security/performance/enterprise features without
+    overclaiming beyond the sprint tracker. Current-site baseline screenshots
+    were captured in `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`;
+    refreshed pillar screenshots remain part of S19a's final gate.
+34. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
-Goal: remove the second policy runtime so V1 is gone end-to-end.
+Status: done. Goal: remove the second policy runtime so V1 is gone end-to-end.
 
 S01 removed the V1 settings registry but kept the V1 runtime
 plumbing (`crates/capsem-core/src/net/policy.rs`,
@@ -229,45 +306,111 @@ Scope:
   (the V1 hook) and its tests.
 - Remove the V1 hook from `make_production_pipeline*` registration.
 - Remove the `policy: SharedPolicy` field from `MitmProxyConfig`,
-  `DnsHandler`, etc. The V2 `policy_v2` field becomes the only
+  `DnsHandler`, etc. The V2 `policy` field becomes the only
   policy field.
-- Collapse `SharedPolicyV2` -> `SharedPolicy` (single alias).
+- Collapse `SharedPolicy` -> `SharedPolicy` (single alias).
 - Reroute the DNS `is_fully_blocked(qname)` check to V2 rule lookup;
   the `dns.request` callsite already handles this path.
 - Regression test: confirm the migrated V1 denial behavior is
   preserved by the equivalent V2 rule (uses the migration tables
   produced by S06b).
 
-When this sprint starts, promote the inline brief above into
+Proof:
+
+- `cargo check -p capsem-core -p capsem-process`
+- `cargo test -p capsem-core --all-targets --no-run`
+- `cargo test -p capsem-core net::dns:: --lib`
+- `cargo test -p capsem-core policy_hot_reload --lib`
+- `cargo test -p capsem-core policy_http_ --lib`
+- `cargo test -p capsem-core --test mitm_integration mitm_proxy_plain_http_denies_disallowed_host`
+- `cargo test -p capsem-core --test mitm_integration mitm_proxy_plain_http_denies_port_not_in_allowlist`
+
+Details live in
 `sprints/policy-settings-profiles/S06c-ablate-legacy-networkpolicy.md`.
+
+## S06d - Core structure and test boundaries
+
+Status: done. Goal: split oversized MITM/DNS modules and behavior test
+buckets before the post-S06 rename and S08b engine extraction.
+
+Scope:
+
+- Split `crates/capsem-core/src/net/mitm_proxy/mod.rs` into smaller internal
+  modules for config/shared deps, connection/TLS handshake, request handling,
+  upstream dispatch, and direct telemetry helpers.
+- Split `crates/capsem-core/src/net/mitm_proxy/tests.rs` into focused test
+  files for connection behavior, HTTP Policy, hot reload, model policy,
+  upstream failures, telemetry, and body preview behavior.
+- Split `crates/capsem-core/src/net/dns/tests.rs` into focused test files for
+  Policy decisions, cache semantics, resolver failover/errors, metrics/
+  telemetry, and rewrite response behavior.
+- Split `crates/capsem-core/tests/mitm_integration.rs` if the resulting
+  integration test filters remain straightforward.
+- Keep all moves behavior-preserving. New engine crates are explicitly
+  deferred to S08b, after S08a/S08b define the contracts.
+
+Details live in
+`sprints/policy-settings-profiles/S06d-core-structure-and-test-boundaries.md`.
+
+Progress:
+
+- DNS unit tests are split into `policy_decisions`, `resolver_behavior`,
+  `rewrite_behavior`, `metrics_behavior`, and `cache_behavior`.
+- MITM policy regression tests are split into `tests/model_policy.rs` and
+  `tests/http_policy.rs`; connection/metadata/FD/TLS behavior is split into
+  `tests/connection_behavior.rs`; the remaining `tests.rs` harness carries
+  shared fixtures plus smaller utility/body/upstream behavior.
+- Production MITM helpers are split into `upstream.rs`, `pipeline_factory.rs`,
+  and `response.rs`.
+- Added `runtime_call_sites_do_not_import_legacy_network_policy_runtime` so the
+  removed V1 `NetworkPolicy`/MITM hook runtime cannot creep back.
+
+Proof:
+
+- `cargo fmt --package capsem-core`
+- `cargo check -p capsem-core -p capsem-process`
+- `cargo test -p capsem-core runtime_call_sites_do_not_import_legacy_network_policy_runtime --lib`
+- `cargo test -p capsem-core net::mitm_proxy::tests::connection_behavior --lib`
+- `cargo test -p capsem-core net::mitm_proxy::tests::response_uses_gzip_content_encoding_accepts_token_lists_case_insensitively --lib`
+- `cargo test -p capsem-core net::mitm_proxy::tests::upstream_connect_target_honors_debug_test_override --lib`
+- `cargo test -p capsem-core policy_model_ --lib`
+- `cargo test -p capsem-core policy_http_ --lib`
+- `cargo test -p capsem-core policy_hot_reload --lib`
+- `cargo test -p capsem-core net::dns:: --lib`
+- `cargo test -p capsem-core --all-targets --no-run`
+- `git diff --check`
 
 ## Post-S06 cleanup milestone
 
 Originally planned to run before S07. The rescue merge/reconciliation portion is
 closed for the active branch: `HEAD...origin/main` is currently `70 ahead / 0
-behind`. The remaining cleanup debt is now S06c plus the final V2 naming
-collapse and release gate. When executed, keep the order:
+behind`. S06d structural hygiene is closed; the remaining cleanup debt is the
+final V2 naming collapse and release gate. When executed, keep the order:
 
-1. **Confirm branch remains caught up.** Run `git rev-list --left-right --count
-   HEAD...origin/main`. If the right-hand count is non-zero, merge/reconcile
-   before rename work.
-2. **V2 rename across the crate.** With V1 ablated by S06c the
-   rename collapses cleanly:
-   - Files: `policy_v2_http_hook.rs` -> `policy_http_hook.rs`,
-     `policy_v2_model.rs` -> `policy_model.rs`,
-     `benches/policy_v2.rs` -> `benches/policy.rs` (incl. dirs).
-   - Types: `PolicyV2HttpHook` -> `PolicyHttpHook`,
-     `LastHttpPolicyV2Decision` -> `LastHttpPolicyDecision`,
-     `LastModelPolicyV2Decision` -> `LastModelPolicyDecision`.
-   - Fields: `policy_v2_rule_name` -> `policy_rule_name`;
-     `policy_v2_decision` -> `policy_decision`;
-     `policy_v2_snapshot` -> `policy_snapshot`.
-   - Helpers: `policy_v2_from_toml` -> `policy_from_toml`;
-     `resolve_policy_v2_action` -> `resolve_ask_action`.
-   - All `policy_v2_*` test function names drop the prefix.
-   - The `policy_v2: SharedPolicyV2` field collapses to
-     `policy: SharedPolicy` once S06c removed the V1 field.
-3. **Full verification gate.**
+1. **Confirm branch remains caught up.** Done: `git rev-list --left-right
+   --count HEAD...origin/main` returned `92 0`.
+2. **S06d structural hygiene is closed.** Keep crate extraction deferred to
+   S08b.
+3. **V2 rename across the crate.** Done.
+   - Files moved to `net/policy`, `policy_http_hook.rs`,
+     `policy_model.rs`, and `benches/policy.rs`.
+   - Types now use `PolicyHttpHook`, `LastHttpPolicyDecision`, and
+     `LastModelPolicyDecision`.
+   - Runtime fields/helpers/test filters now use singular `policy` names.
+   - MCP keeps `rules_policy` only where the unified rules config must coexist
+     with the existing local `McpPolicy`.
+4. **Focused verification passed.**
+   - `cargo check -p capsem-core -p capsem-process`
+   - `cargo test -p capsem-core policy_model_ --lib`
+   - `cargo test -p capsem-core policy_http_ --lib`
+   - `cargo test -p capsem-core policy_hot_reload --lib`
+   - `cargo test -p capsem-core policy_mcp --lib`
+   - `cargo test -p capsem-core net::dns:: --lib`
+   - `cargo test -p capsem-core --all-targets --no-run`
+   - `cargo test -p capsem-process mcp_runtime`
+   - `cargo test -p capsem-process --no-run`
+   - `git diff --check`
+5. **Full verification gate remains before closing.**
    `just test`, `just smoke`, `just run "capsem-doctor"`,
    `just inspect-session`. No warnings.
 
@@ -450,7 +593,7 @@ proof slice.
   HTTP/DNS/MCP/model confirm wiring covered;
   `confirm_with_backoff` covered by 5 dedicated tests.
   `http.read` / `http.write` callback split covered by **5**
-  hook-boundary tests in `policy_v2_http_hook/tests.rs`.
+  hook-boundary tests in `policy_http_hook/tests.rs`.
   S07 metrics proto foundation adds **36** focused `capsem-proto`
   IPC tests and **18** focused `capsem-process` IPC tests. S07a
   telemetry identity now has focused logger schema/writer/reader,

@@ -53,8 +53,10 @@ def toml_string(value: str) -> str:
 
 def write_profile_home(capsem_home: Path, asset_cache: Path, assets: dict[str, Path]):
     profile_dir = capsem_home / "profiles" / "corp"
-    profile_dir.mkdir(parents=True)
-    asset_cache.mkdir(parents=True)
+    user_profile_dir = capsem_home / "profiles" / "user"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    user_profile_dir.mkdir(parents=True, exist_ok=True)
+    asset_cache.mkdir(parents=True, exist_ok=True)
 
     declarations = {
         logical_name: {
@@ -102,6 +104,20 @@ hash = {toml_string(declarations["rootfs.squashfs"]["hash"])}
 signature_url = {toml_string(declarations["rootfs.squashfs"]["url"] + ".minisig")}
 size = {declarations["rootfs.squashfs"]["size"]}
 content_type = {toml_string(declarations["rootfs.squashfs"]["content_type"])}
+
+[security.rules.dns.block_mitm_telemetry]
+on = "dns.request"
+if = "qname == 'blocked-mitm-policy.invalid'"
+decision = "block"
+priority = 1
+reason = "gateway telemetry denial fixture"
+
+[security.rules.http.block_mitm_telemetry]
+on = "http.request"
+if = "request.host == 'blocked-mitm-policy.invalid'"
+decision = "block"
+priority = 1
+reason = "gateway telemetry denial fixture"
 """.lstrip()
     profile_path = profile_dir / "profile-asset-boot.toml"
     profile_path.write_text(profile_content, encoding="utf-8")
@@ -166,13 +182,32 @@ content_type = {toml_string(declarations["rootfs.squashfs"]["content_type"])}
                 "file_boundaries": "ask",
                 "audit": "audit",
             },
-            "rules": {},
+            "rules": {
+                "dns": {
+                    "block_mitm_telemetry": {
+                        "on": "dns.request",
+                        "if": "qname == 'blocked-mitm-policy.invalid'",
+                        "decision": "block",
+                        "priority": 1,
+                        "reason": "gateway telemetry denial fixture",
+                    }
+                },
+                "http": {
+                    "block_mitm_telemetry": {
+                        "on": "http.request",
+                        "if": "request.host == 'blocked-mitm-policy.invalid'",
+                        "decision": "block",
+                        "priority": 1,
+                        "reason": "gateway telemetry denial fixture",
+                    }
+                },
+            },
         },
     }
     payload_json = json.dumps(profile_payload, indent=2, sort_keys=True)
     payload_hash = f"blake3:{blake3.blake3(payload_json.encode()).hexdigest()}"
     revision_dir = profile_dir / ".catalog" / "profiles" / "profile-asset-boot"
-    (revision_dir / revision).mkdir(parents=True)
+    (revision_dir / revision).mkdir(parents=True, exist_ok=True)
     (revision_dir / revision / "profile.json").write_text(payload_json, encoding="utf-8")
     (revision_dir / "current.json").write_text(
         json.dumps(
@@ -191,7 +226,7 @@ version = 1
 
 [profiles]
 corp_dirs = [{toml_string(str(profile_dir))}]
-user_dirs = []
+user_dirs = [{toml_string(str(user_profile_dir))}]
 default_profile = "profile-asset-boot"
 
 [assets]

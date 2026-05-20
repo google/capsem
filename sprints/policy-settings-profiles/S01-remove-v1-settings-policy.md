@@ -115,7 +115,7 @@ the new skeleton path.
   `net::policy_config::MergedPolicies`.
 - `capsem-process` now loads policy/runtime state from session-attached
   `vm-effective-settings.toml` and converts it into runtime `NetworkPolicy`,
-  `DomainPolicy`, `McpPolicy`, and Policy V2 rule maps.
+  `DomainPolicy`, `McpPolicy`, and Policy rule maps.
 - `ServiceToProcess::ReloadConfig` rebuilds from the vm-effective attachment
   path (not global v1 files). The old `McpRefreshTools` management IPC has
   since been deleted by S07's connector replacement.

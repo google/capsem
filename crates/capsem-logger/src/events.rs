@@ -371,7 +371,7 @@ pub struct DnsEvent {
     #[serde(default)]
     pub policy_mode: Option<String>,
     /// Typed policy action (`allow`, `ask`, `block`, `rewrite`) when
-    /// Policy V2 matched.
+    /// Policy matched.
     #[serde(default)]
     pub policy_action: Option<String>,
     /// Fully qualified policy rule id, e.g. `policy.dns.block_openai`.

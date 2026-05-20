@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use serde_json::json;
 
 use capsem_core::setup_state::SetupState;
 
@@ -45,7 +46,7 @@ const SETUP_SERVICE_TRUTH_TIMEOUT: Duration = Duration::from_secs(8);
 const SETUP_SERVICE_TRUTH_POLL: Duration = Duration::from_millis(250);
 
 enum SetupAssetProbe {
-    Available(client::AssetHealth),
+    Available(Box<client::AssetHealth>),
     Unavailable(String),
 }
 
@@ -96,7 +97,7 @@ async fn fetch_setup_asset_health(capsem_dir: &Path) -> SetupAssetProbe {
                 Ok(resp) => match resp.into_result() {
                     Ok(list) => {
                         if let Some(asset_health) = list.asset_health {
-                            return SetupAssetProbe::Available(asset_health);
+                            return SetupAssetProbe::Available(Box::new(asset_health));
                         }
                         "service /list response missing asset_health".to_string()
                     }
@@ -113,7 +114,7 @@ async fn fetch_setup_asset_health(capsem_dir: &Path) -> SetupAssetProbe {
                     Ok(resp) => match resp.into_result() {
                         Ok(list) => {
                             if let Some(asset_health) = list.asset_health {
-                                return SetupAssetProbe::Available(asset_health);
+                                return SetupAssetProbe::Available(Box::new(asset_health));
                             }
                             "service /list response missing asset_health".to_string()
                         }
@@ -176,6 +177,12 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
     // Step 4: AI Providers
     if opts.force || !state.is_step_done("providers") {
         step_providers(&cd, &mut state, &opts)?;
+    }
+    if let Some(profile_id) = state.security_preset.as_deref() {
+        if std::env::var_os("CAPSEM_ASSETS_DIR").is_some() {
+            install_local_profile_revision_from_assets(&cd, profile_id)
+                .context("install local profile revision from CAPSEM_ASSETS_DIR")?;
+        }
     }
 
     // Step 5: Repositories
@@ -276,6 +283,10 @@ fn step_security_preset(
     service_settings.profiles.default_profile = selected_profile.clone();
     capsem_core::settings_profiles::write_service_settings(&service_path, &service_settings)
         .map_err(|e| anyhow::anyhow!(e))?;
+    if std::env::var_os("CAPSEM_ASSETS_DIR").is_some() {
+        install_local_profile_revision_from_assets(capsem_dir, &selected_profile)
+            .context("install local profile revision from CAPSEM_ASSETS_DIR")?;
+    }
     println!("  Using default profile: {selected_profile}");
     state.security_preset = Some(selected_profile);
 
@@ -288,6 +299,267 @@ fn normalize_setup_profile_id(value: &str) -> String {
     match value {
         "medium" | "high" => capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID.to_string(),
         other => other.to_string(),
+    }
+}
+
+fn install_local_profile_revision_from_assets(capsem_dir: &Path, profile_id: &str) -> Result<()> {
+    let assets_root = std::env::var_os("CAPSEM_ASSETS_DIR")
+        .map(PathBuf::from)
+        .context("CAPSEM_ASSETS_DIR is not set")?;
+    install_local_profile_revision_from_asset_root(
+        capsem_dir,
+        profile_id,
+        &assets_root,
+        host_profile_asset_arch(),
+    )
+}
+
+fn install_local_profile_revision_from_asset_root(
+    capsem_dir: &Path,
+    profile_id: &str,
+    assets_root: &Path,
+    arch: &str,
+) -> Result<()> {
+    const LOCAL_PROFILE_REVISION: &str = "2026.0520.1";
+
+    let kernel = local_asset_path(assets_root, arch, "vmlinuz")?;
+    let initrd = local_asset_path(assets_root, arch, "initrd.img")?;
+    let rootfs = local_asset_path(assets_root, arch, "rootfs.squashfs")?;
+
+    let service_path = capsem_dir.join("service.toml");
+    let mut service_settings =
+        capsem_core::settings_profiles::load_service_settings_or_default(&service_path)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    if service_settings.profiles.corp_dirs.is_empty() {
+        service_settings
+            .profiles
+            .corp_dirs
+            .push(capsem_dir.join("profiles").join("corp"));
+    }
+    service_settings.profiles.default_profile = profile_id.to_string();
+    capsem_core::settings_profiles::write_service_settings(&service_path, &service_settings)
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let payload = json!({
+        "schema": "capsem.profile.v2",
+        "version": 2,
+        "id": profile_id,
+        "revision": LOCAL_PROFILE_REVISION,
+        "name": "Everyday Work",
+        "description": "Local development profile derived from the active VM assets.",
+        "best_for": "Local development and smoke diagnostics.",
+        "profile_type": "everyday-work",
+        "compatibility": {
+            "min_binary": env!("CARGO_PKG_VERSION"),
+            "guest_abi": "capsem-guest-v2"
+        },
+        "vm": {
+            "memory_mib": 8192,
+            "cpus": 4,
+            "disk_mib": 32768,
+            "network": "proxied",
+            "track_rootfs_dependencies": true,
+            "assets": {
+                arch: {
+                    "kernel": local_asset_json(&kernel, "application/octet-stream")?,
+                    "initrd": local_asset_json(&initrd, "application/octet-stream")?,
+                    "rootfs": local_asset_json(&rootfs, "application/vnd.squashfs")?
+                }
+            }
+        },
+        "packages": {
+            "runtimes": {
+                "python": "3.12",
+                "node": "22",
+                "uv": "0.4"
+            },
+            "python_modules": {},
+            "node_packages": {},
+            "system": {
+                "distro": "debian",
+                "release": "bookworm",
+                "apt": {}
+            }
+        },
+        "tools": {
+            "capsem_doctor": {
+                "version": "dev",
+                "required": true,
+                "source": "guest"
+            }
+        },
+        "security": {
+            "capabilities": {
+                "credential_brokerage": "ask",
+                "pii_detection": "ask",
+                "mcp_rag": "allow",
+                "mcp_tools": "allow",
+                "network_egress": "ask",
+                "file_boundaries": "ask",
+                "audit": "audit"
+            },
+            "rules": {
+                "dns": {
+                    "allow_elie_net": {
+                        "on": "dns.request",
+                        "if": "qname == 'elie.net'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    },
+                    "allow_wildcard_elie_net": {
+                        "on": "dns.request",
+                        "if": "qname == '*.elie.net'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    },
+                    "allow_en_wikipedia_org": {
+                        "on": "dns.request",
+                        "if": "qname == 'en.wikipedia.org'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    },
+                    "allow_wildcard_wikipedia_org": {
+                        "on": "dns.request",
+                        "if": "qname == '*.wikipedia.org'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    }
+                },
+                "http": {
+                    "block_example_post": {
+                        "on": "http.request",
+                        "if": "request.host == 'example.com' && request.method == 'POST'",
+                        "decision": "block",
+                        "priority": 0,
+                        "reason": "Doctor write-deny fixture."
+                    },
+                    "allow_elie_net": {
+                        "on": "http.request",
+                        "if": "request.host == 'elie.net'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    },
+                    "allow_wildcard_elie_net": {
+                        "on": "http.request",
+                        "if": "request.host == '*.elie.net'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    },
+                    "allow_en_wikipedia_org": {
+                        "on": "http.request",
+                        "if": "request.host == 'en.wikipedia.org'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    },
+                    "allow_wildcard_wikipedia_org": {
+                        "on": "http.request",
+                        "if": "request.host == '*.wikipedia.org'",
+                        "decision": "allow",
+                        "priority": 1,
+                        "reason": "Local development read allowlist."
+                    }
+                }
+            }
+        }
+    });
+    let payload_json =
+        serde_json::to_string_pretty(&payload).context("serialize local profile payload")?;
+    let manifest = capsem_core::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "{profile_id}": {{
+              "current_revision": "{LOCAL_PROFILE_REVISION}",
+              "revisions": {{
+                "{LOCAL_PROFILE_REVISION}": {{
+                  "status": "active",
+                  "min_binary": "{}",
+                  "profile_url": "file://local-dev-profile.json",
+                  "profile_hash": "blake3:{}",
+                  "profile_signature_url": "file://local-dev-profile.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}"#,
+        env!("CARGO_PKG_VERSION"),
+        blake3::hash(payload_json.as_bytes()).to_hex()
+    ))
+    .context("build local profile manifest")?;
+    let revision = manifest
+        .revision(profile_id, LOCAL_PROFILE_REVISION)
+        .context("resolve local profile manifest revision")?;
+    let verified =
+        capsem_core::profile_manifest::verify_installable_profile_payload(revision, &payload_json)
+            .context("verify local profile payload")?;
+    capsem_core::settings_profiles::install_verified_profile_payload(
+        &service_settings.profiles,
+        &verified,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(())
+}
+
+fn local_asset_path(assets_root: &Path, arch: &str, logical_name: &str) -> Result<PathBuf> {
+    let arch_path = assets_root.join(arch).join(logical_name);
+    if arch_path.is_file() {
+        return arch_path
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", arch_path.display()));
+    }
+    let flat_path = assets_root.join(logical_name);
+    if flat_path.is_file() {
+        return flat_path
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", flat_path.display()));
+    }
+    anyhow::bail!(
+        "missing local profile asset {logical_name}; checked {} and {}",
+        arch_path.display(),
+        flat_path.display()
+    );
+}
+
+fn local_asset_json(path: &Path, content_type: &str) -> Result<serde_json::Value> {
+    let hash = capsem_core::asset_manager::hash_file(path)
+        .with_context(|| format!("hash local profile asset {}", path.display()))?;
+    let size = std::fs::metadata(path)
+        .with_context(|| format!("stat local profile asset {}", path.display()))?
+        .len();
+    let url = reqwest::Url::from_file_path(path).map_err(|_| {
+        anyhow::anyhow!(
+            "asset path cannot be converted to file URL: {}",
+            path.display()
+        )
+    })?;
+    let signature_path = PathBuf::from(format!("{}.minisig", path.display()));
+    let signature_url = reqwest::Url::from_file_path(&signature_path).map_err(|_| {
+        anyhow::anyhow!(
+            "asset signature path cannot be converted to file URL: {}",
+            path.display()
+        )
+    })?;
+    Ok(json!({
+        "url": url.as_str(),
+        "hash": format!("blake3:{hash}"),
+        "signature_url": signature_url.as_str(),
+        "size": size,
+        "content_type": content_type
+    }))
+}
+
+fn host_profile_asset_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x86_64",
+        _ => std::env::consts::ARCH,
     }
 }
 
@@ -682,6 +954,71 @@ decision = "allow"
         };
         assert!(o.non_interactive);
         assert!(!o.force);
+    }
+
+    #[test]
+    fn local_profile_revision_installs_signed_catalog_shape_from_assets() {
+        let d = tmp_dir();
+        let assets = d.path().join("assets").join("arm64");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("vmlinuz"), b"kernel").unwrap();
+        std::fs::write(assets.join("initrd.img"), b"initrd").unwrap();
+        std::fs::write(assets.join("rootfs.squashfs"), b"rootfs").unwrap();
+
+        install_local_profile_revision_from_asset_root(
+            d.path(),
+            capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+            &d.path().join("assets"),
+            "arm64",
+        )
+        .unwrap();
+
+        let settings = capsem_core::settings_profiles::load_service_settings_or_default(
+            d.path().join("service.toml"),
+        )
+        .unwrap();
+        let installed = capsem_core::settings_profiles::load_complete_installed_profile_revision(
+            &settings.profiles,
+            capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+        )
+        .unwrap()
+        .expect("local setup should install a complete profile revision");
+        assert_eq!(installed.revision, "2026.0520.1");
+
+        let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+            .expect("installed runtime profile should parse");
+        let profile = &catalog
+            .get(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+            .expect("installed profile should be discoverable")
+            .profile;
+        let arm64 = &profile.vm.assets["arm64"];
+        assert_eq!(
+            arm64.kernel.hash,
+            format!(
+                "blake3:{}",
+                capsem_core::asset_manager::hash_file(&assets.join("vmlinuz")).unwrap()
+            )
+        );
+        assert_eq!(
+            arm64.initrd.hash,
+            format!(
+                "blake3:{}",
+                capsem_core::asset_manager::hash_file(&assets.join("initrd.img")).unwrap()
+            )
+        );
+        assert_eq!(
+            arm64.rootfs.hash,
+            format!(
+                "blake3:{}",
+                capsem_core::asset_manager::hash_file(&assets.join("rootfs.squashfs")).unwrap()
+            )
+        );
+        assert!(profile.security.rules.http.contains_key("allow_elie_net"));
+        assert!(profile.security.rules.dns.contains_key("allow_elie_net"));
+        assert_eq!(
+            profile.security.rules.http["block_example_post"].condition,
+            "request.host == 'example.com' && request.method == 'POST'"
+        );
     }
 
     // ---- --force-onboarding fast path ---------------------------------

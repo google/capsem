@@ -31,27 +31,12 @@ use super::registry::SandboxNetworkState;
 pub const CA_KEY_PEM: &str = include_str!("../../../../config/capsem-ca.key");
 pub const CA_CERT_PEM: &str = include_str!("../../../../config/capsem-ca.crt");
 
-/// Create per-sandbox network state (CA + policy for MITM proxy).
+/// Create per-sandbox network state (CA + telemetry DB + upstream TLS config).
 pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetworkState> {
-    create_net_state_with_policy(vm_id, db, crate::net::policy::NetworkPolicy::default_dev())
-}
-
-/// Create per-sandbox network state with a pre-loaded policy (avoids redundant disk reads).
-pub fn create_net_state_with_policy(
-    vm_id: &str,
-    db: Arc<DbWriter>,
-    policy: crate::net::policy::NetworkPolicy,
-) -> Result<SandboxNetworkState> {
     let ca = CertAuthority::load(CA_KEY_PEM, CA_CERT_PEM).context("failed to load MITM CA")?;
     info!(vm_id, "loaded MITM CA");
-    info!(
-        vm_id,
-        "loaded network policy ({} rules)",
-        policy.rules.len()
-    );
 
     Ok(SandboxNetworkState {
-        policy: Arc::new(std::sync::RwLock::new(Arc::new(policy))),
         db,
         ca: Arc::new(ca),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),

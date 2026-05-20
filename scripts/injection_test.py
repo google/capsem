@@ -25,6 +25,8 @@ RED = "\033[31m"
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INJECTION_TMP_ROOT = PROJECT_ROOT / "target" / "it"
 
 
 class Results:
@@ -138,7 +140,11 @@ def run_scenario(
     print(f"  {DIM}{scenario['description']}{RESET}")
 
     try:
-        with tempfile.TemporaryDirectory(prefix=f"capsem-injection-{name}-") as capsem_home:
+        INJECTION_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=f"ci-{name}-",
+            dir=INJECTION_TMP_ROOT,
+        ) as capsem_home:
             capsem_home_path = Path(capsem_home)
             profile_dir = capsem_home_path / "profiles"
             profile_dir.mkdir(parents=True, exist_ok=True)
@@ -212,10 +218,11 @@ def main():
         help="Run only this scenario (by name). Default: run all.",
     )
     args = parser.parse_args()
+    assets_dir = str(Path(args.assets).resolve())
 
     print(f"{BOLD}=== Capsem Injection Test ==={RESET}")
     print(f"  binary: {args.binary}")
-    print(f"  assets: {args.assets}")
+    print(f"  assets: {assets_dir}")
 
     results = Results()
 
@@ -228,7 +235,7 @@ def main():
             sys.exit(1)
 
     for scenario in scenarios:
-        run_scenario(args.binary, args.assets, scenario, results)
+        run_scenario(args.binary, assets_dir, scenario, results)
 
     # Summary.
     print(f"\n{BOLD}{'=' * 60}{RESET}")

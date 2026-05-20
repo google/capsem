@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
+from helpers.profile_asset_fixture import find_asset, write_profile_home
 from helpers.service import preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 
@@ -65,34 +66,50 @@ class RealService:
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
         assets_dir = self.assets_dir or (ASSETS_DIR / arch)
+        capsem_home = self.capsem_home or self.tmp_dir
+
+        if self.capsem_home is None:
+            asset_cache = self.tmp_dir / "assets"
+            assets = {
+                "vmlinuz": find_asset(assets_dir, "vmlinuz"),
+                "initrd.img": find_asset(assets_dir, "initrd.img"),
+                "rootfs.squashfs": find_asset(assets_dir, "rootfs.squashfs"),
+            }
+            write_profile_home(capsem_home, asset_cache, assets)
+            assets_dir = asset_cache
 
         env = os.environ.copy()
         env["RUST_LOG"] = "capsem=debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
-        if self.capsem_home:
-            env["CAPSEM_HOME"] = str(self.capsem_home)
-            env["CAPSEM_ASSETS_DIR"] = str(assets_dir)
+        env["CAPSEM_HOME"] = str(capsem_home)
+        env["CAPSEM_ASSETS_DIR"] = str(assets_dir)
         env.update(self.extra_env)
         self.env = env
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"
-        self._log_file = open(log_path, "w")
-        self._stderr_file = open(stderr_path, "w")
 
-        self.proc = subprocess.Popen(
-            [
-                str(SERVICE_BINARY),
-                "--uds-path", str(self.uds_path),
-                "--assets-dir", str(assets_dir),
-                "--process-binary", str(PROCESS_BINARY),
-                "--parent-pid", str(os.getpid()),
-                "--foreground",
-            ],
-            env=env,
-            stdout=self._log_file,
-            stderr=self._stderr_file,
-        )
+        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            try:
+                self.proc = subprocess.Popen(
+                    [
+                        str(SERVICE_BINARY),
+                        "--uds-path", str(self.uds_path),
+                        "--assets-dir", str(assets_dir),
+                        "--process-binary", str(PROCESS_BINARY),
+                        "--parent-pid", str(os.getpid()),
+                        "--foreground",
+                    ],
+                    env=env,
+                    stdout=log_fd,
+                    stderr=stderr_fd,
+                )
+            finally:
+                os.close(stderr_fd)
+        finally:
+            os.close(log_fd)
 
         # Readiness check: matches production (just run-service).
         # Socket file exists AND service responds to HTTP.

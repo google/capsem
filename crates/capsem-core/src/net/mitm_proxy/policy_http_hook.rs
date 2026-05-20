@@ -1,4 +1,4 @@
-//! Policy V2 HTTP enforcement hook.
+//! Policy HTTP enforcement hook.
 //!
 //! Runs on `RawRequestHead` before upstream dispatch, and on
 //! `RawResponseHead` after upstream response headers arrive but before
@@ -19,20 +19,20 @@ use super::events::{Event, EventKind, EventMask};
 use super::hooks::{Hook, HookCtx, HookOutcome, StopAction};
 use super::protocol::Protocol;
 use super::util::split_path_query;
-use crate::net::policy_v2::{
+use crate::net::policy::{
     MatchedPolicyRule, PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
     PolicySubject, PolicySubjectValue,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LastHttpPolicyV2Decision {
+pub struct LastHttpPolicyDecision {
     pub policy_mode: Option<String>,
     pub policy_action: Option<String>,
     pub policy_rule: Option<String>,
     pub policy_reason: Option<String>,
 }
 
-impl LastHttpPolicyV2Decision {
+impl LastHttpPolicyDecision {
     fn from_match(name: &str, rule: &PolicyRuleConfig) -> Self {
         Self {
             policy_mode: Some("enforce".to_string()),
@@ -41,22 +41,22 @@ impl LastHttpPolicyV2Decision {
             policy_reason: Some(
                 rule.reason
                     .clone()
-                    .unwrap_or_else(|| format!("Policy V2 HTTP {:?} rule matched", rule.decision)),
+                    .unwrap_or_else(|| format!("Policy HTTP {:?} rule matched", rule.decision)),
             ),
         }
     }
 }
 
-pub struct PolicyV2HttpHook {
-    policy_v2: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>,
+pub struct PolicyHttpHook {
+    policy: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>,
     confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
     confirm_opts: capsem_proto::poll::RetryOpts,
 }
 
-impl PolicyV2HttpHook {
-    pub fn new(policy_v2: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>) -> Self {
+impl PolicyHttpHook {
+    pub fn new(policy: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>) -> Self {
         Self {
-            policy_v2,
+            policy,
             confirmer: Arc::new(crate::net::policy_confirm::PlaceholderConfirmer),
             confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-http"),
         }
@@ -76,9 +76,9 @@ impl PolicyV2HttpHook {
     }
 }
 
-impl Hook for PolicyV2HttpHook {
+impl Hook for PolicyHttpHook {
     fn name(&self) -> &'static str {
-        "policy-v2-http"
+        "policy-http"
     }
 
     fn interest(&self) -> EventMask {
@@ -97,7 +97,7 @@ impl Hook for PolicyV2HttpHook {
     where
         'a: 'b,
     {
-        let policy_v2 = Arc::clone(&self.policy_v2);
+        let policy = Arc::clone(&self.policy);
         let confirmer = Arc::clone(&self.confirmer);
         let confirm_opts = self.confirm_opts.clone();
         Box::pin(async move {
@@ -108,33 +108,30 @@ impl Hook for PolicyV2HttpHook {
                         &ctx.conn().domain,
                         parts,
                     );
-                    let policy = policy_v2.read().await.clone();
+                    let policy = policy.read().await.clone();
                     let matched = match policy
                         .find_matching_rule(PolicyCallback::HttpRequest, &subject)
                     {
                         Ok(Some(matched)) => matched,
                         Ok(None) => return HookOutcome::Continue,
                         Err(error) => {
-                            let slot = ctx.state::<LastHttpPolicyV2Decision>(
-                                LastHttpPolicyV2Decision::default,
-                            );
+                            let slot = ctx
+                                .state::<LastHttpPolicyDecision>(LastHttpPolicyDecision::default);
                             slot.policy_mode = Some("enforce".to_string());
                             slot.policy_action = Some("block".to_string());
                             slot.policy_rule = Some("policy.http.invalid_condition".to_string());
                             slot.policy_reason = Some(format!(
-                                "Policy V2 HTTP request condition failed closed: {error}"
+                                "Policy HTTP request condition failed closed: {error}"
                             ));
-                            return reject(
-                                "capsem: HTTP request blocked by invalid Policy V2 rule\n",
-                            );
+                            return reject("capsem: HTTP request blocked by invalid Policy rule\n");
                         }
                     };
 
-                    let decision = LastHttpPolicyV2Decision::from_match(matched.name, matched.rule);
-                    *ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default) =
+                    let decision = LastHttpPolicyDecision::from_match(matched.name, matched.rule);
+                    *ctx.state::<LastHttpPolicyDecision>(LastHttpPolicyDecision::default) =
                         decision.clone();
 
-                    let resolved = resolve_policy_v2_action(
+                    let resolved = resolve_policy_action(
                         matched.rule.decision,
                         PolicyCallback::HttpRequest,
                         matched.name,
@@ -144,7 +141,7 @@ impl Hook for PolicyV2HttpHook {
                         &confirm_opts,
                     )
                     .await;
-                    ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default)
+                    ctx.state::<LastHttpPolicyDecision>(LastHttpPolicyDecision::default)
                         .policy_action = Some(policy_action(resolved).to_string());
 
                     match resolved {
@@ -160,8 +157,8 @@ impl Hook for PolicyV2HttpHook {
                             match rewrite_request(parts, matched, ctx.conn().protocol) {
                                 Ok(()) => HookOutcome::Rewrote,
                                 Err(error) => {
-                                    let slot = ctx.state::<LastHttpPolicyV2Decision>(
-                                        LastHttpPolicyV2Decision::default,
+                                    let slot = ctx.state::<LastHttpPolicyDecision>(
+                                        LastHttpPolicyDecision::default,
                                     );
                                     slot.policy_reason = Some(format!(
                                         "{}; rewrite failed closed: {error}",
@@ -182,33 +179,32 @@ impl Hook for PolicyV2HttpHook {
                         })
                         .clone();
                     let subject = HttpResponsePolicySubject::from_parts(request_context, parts);
-                    let policy = policy_v2.read().await.clone();
+                    let policy = policy.read().await.clone();
                     let matched = match policy
                         .find_matching_rule(PolicyCallback::HttpResponse, &subject)
                     {
                         Ok(Some(matched)) => matched,
                         Ok(None) => return HookOutcome::Continue,
                         Err(error) => {
-                            let slot = ctx.state::<LastHttpPolicyV2Decision>(
-                                LastHttpPolicyV2Decision::default,
-                            );
+                            let slot = ctx
+                                .state::<LastHttpPolicyDecision>(LastHttpPolicyDecision::default);
                             slot.policy_mode = Some("enforce".to_string());
                             slot.policy_action = Some("block".to_string());
                             slot.policy_rule = Some("policy.http.invalid_condition".to_string());
                             slot.policy_reason = Some(format!(
-                                "Policy V2 HTTP response condition failed closed: {error}"
+                                "Policy HTTP response condition failed closed: {error}"
                             ));
                             return reject(
-                                "capsem: HTTP response blocked by invalid Policy V2 rule\n",
+                                "capsem: HTTP response blocked by invalid Policy rule\n",
                             );
                         }
                     };
 
-                    let decision = LastHttpPolicyV2Decision::from_match(matched.name, matched.rule);
-                    *ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default) =
+                    let decision = LastHttpPolicyDecision::from_match(matched.name, matched.rule);
+                    *ctx.state::<LastHttpPolicyDecision>(LastHttpPolicyDecision::default) =
                         decision.clone();
 
-                    let resolved = resolve_policy_v2_action(
+                    let resolved = resolve_policy_action(
                         matched.rule.decision,
                         PolicyCallback::HttpResponse,
                         matched.name,
@@ -218,7 +214,7 @@ impl Hook for PolicyV2HttpHook {
                         &confirm_opts,
                     )
                     .await;
-                    ctx.state::<LastHttpPolicyV2Decision>(LastHttpPolicyV2Decision::default)
+                    ctx.state::<LastHttpPolicyDecision>(LastHttpPolicyDecision::default)
                         .policy_action = Some(policy_action(resolved).to_string());
 
                     match resolved {
@@ -233,8 +229,8 @@ impl Hook for PolicyV2HttpHook {
                         PolicyDecisionKind::Rewrite => match rewrite_response(parts, matched) {
                             Ok(()) => HookOutcome::Rewrote,
                             Err(error) => {
-                                let slot = ctx.state::<LastHttpPolicyV2Decision>(
-                                    LastHttpPolicyV2Decision::default,
+                                let slot = ctx.state::<LastHttpPolicyDecision>(
+                                    LastHttpPolicyDecision::default,
                                 );
                                 slot.policy_reason = Some(format!(
                                     "{}; rewrite failed closed: {error}",
@@ -755,7 +751,7 @@ fn reject(message: &str) -> HookOutcome {
     HookOutcome::Stop(StopAction::Reject(response))
 }
 
-async fn resolve_policy_v2_action(
+async fn resolve_policy_action(
     declared: PolicyDecisionKind,
     callback: PolicyCallback,
     rule_name: &str,
@@ -769,7 +765,7 @@ async fn resolve_policy_v2_action(
     }
     let args = crate::net::policy_confirm::ConfirmArgs {
         callback,
-        rule_id: http_policy_v2_rule_id(rule_name),
+        rule_id: http_policy_rule_id(rule_name),
         args_snapshot: snapshot(),
         trace_id: None,
         session_id: None,
@@ -781,7 +777,7 @@ async fn resolve_policy_v2_action(
     }
 }
 
-fn http_policy_v2_rule_id(rule_name: &str) -> String {
+fn http_policy_rule_id(rule_name: &str) -> String {
     format!("security.rules.http.{rule_name}")
 }
 

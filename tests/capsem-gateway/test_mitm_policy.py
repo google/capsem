@@ -31,26 +31,9 @@ def test_mitm_policy_telemetry(service_env, client):
     vm_name = f"mitm-telemetry-{uuid.uuid4().hex[:8]}"
     blocked_domain = "blocked-mitm-policy.invalid"
 
-    # Make the policy contract explicit. The default Profile V2 preset is
-    # allowed to permit broad egress; this test owns its denial fixture.
-    saved = client.post("/settings", {
-        "policy.dns.block_mitm_telemetry": {
-            "on": "dns.request",
-            "if": f'qname == "{blocked_domain}"',
-            "decision": "block",
-            "priority": 1,
-            "reason": "gateway telemetry denial fixture",
-        },
-        "policy.http.block_mitm_telemetry": {
-            "on": "http.request",
-            "if": f'request.host == "{blocked_domain}"',
-            "decision": "block",
-            "priority": 1,
-            "reason": "gateway telemetry denial fixture",
-        },
-    })
-    assert saved is not None, "failed to install MITM telemetry policy fixture"
-    
+    # The shared Profile V2 asset fixture owns this denial rule so the
+    # gateway path exercises signed profile policy, not ad hoc legacy config.
+
     # Provision VM
     client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     

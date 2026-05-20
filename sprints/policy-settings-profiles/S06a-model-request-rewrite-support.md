@@ -27,7 +27,7 @@ format promised in S04.
 ## Tasks
 
 - [ ] Implement `model.request` rewrite path in
-      `policy_v2_model::evaluate_model_request_policy`.
+      `policy_model::evaluate_model_request_policy`.
 - [ ] Support rewrite target `request.body` for this callback in v1.
 - [ ] Keep deterministic deny behavior for invalid rewrite or rewrite runtime
       failures (with explicit policy reason).
@@ -43,8 +43,8 @@ format promised in S04.
 Run after implementation:
 
 ```sh
-cargo test -p capsem-core policy_v2_model
-cargo test -p capsem-core policy_v2_model_request_rewrite
+cargo test -p capsem-core policy_model
+cargo test -p capsem-core policy_model_request_rewrite
 cargo test -p capsem-core -p capsem-service -p capsem-process
 ```
 

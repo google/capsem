@@ -351,7 +351,8 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     }
 
     // -- Profile V2 settings (redacted) --
-    for name in ["service.toml"] {
+    {
+        let name = "service.toml";
         let path = home.join(name);
         let entry_path = format!("{bundle_root}/config/{name}");
         if let Ok(text) = fs::read_to_string(&path) {

@@ -68,69 +68,21 @@ def _gemini_api_key() -> Optional[str]:
     return None
 
 
-def _integration_block_domain() -> str:
-    """Domain blocked by the temporary Profile V2 smoke profile."""
-    return "example.com"
+INTEGRATION_PROFILE_ID = "everyday-work"
 
 
-def _toml_string(value: str) -> str:
-    return json.dumps(value)
+def _install_integration_profile() -> dict[Path, Optional[bytes]]:
+    """Snapshot any harness-owned profile state for restore.
+
+    Smoke runs against the installed signed everyday-work profile. The harness
+    deliberately does not write a transient unsigned profile or replace
+    service.toml, because service.toml carries the corp profile roots used to
+    resolve profile-owned VM assets.
+    """
+    return {}
 
 
-def _install_integration_v2_profile() -> dict[Path, Optional[bytes]]:
-    """Install a temporary Profile V2 service selection for this smoke run."""
-    block_domain = _integration_block_domain()
-    profile_dir = CAPSEM_HOME / "profiles"
-    profile_path = profile_dir / "integration-smoke.toml"
-    service_path = CAPSEM_HOME / "service.toml"
-    snapshot = {
-        profile_path: profile_path.read_bytes() if profile_path.exists() else None,
-        service_path: service_path.read_bytes() if service_path.exists() else None,
-    }
-
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    profile_path.write_text(
-        f"""
-version = 1
-id = "integration-smoke"
-name = "Integration Smoke"
-description = "Profile V2 policy fixture for smoke and integration diagnostics."
-best_for = "Deterministic VM smoke tests."
-profile_type = "coding"
-extends_profile_id = "everyday-work"
-
-[security.rules.dns.block_integration_domain]
-on = "dns.request"
-if = "qname == '{block_domain}'"
-decision = "block"
-priority = 1
-reason = "Integration smoke blocked domain."
-
-[security.rules.http.block_integration_domain]
-on = "http.request"
-if = "request.host == '{block_domain}'"
-decision = "block"
-priority = 1
-reason = "Integration smoke blocked domain."
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    service_path.parent.mkdir(parents=True, exist_ok=True)
-    service_path.write_text(
-        f"""
-version = 1
-
-[profiles]
-user_dirs = [{_toml_string(str(profile_dir))}]
-default_profile = "integration-smoke"
-""".lstrip(),
-        encoding="utf-8",
-    )
-    return snapshot
-
-
-def _restore_integration_v2_profile(snapshot: dict[Path, Optional[bytes]]) -> None:
+def _restore_integration_profile(snapshot: dict[Path, Optional[bytes]]) -> None:
     for path, previous in snapshot.items():
         if previous is None:
             try:
@@ -158,8 +110,8 @@ def _vm_command(include_gemini_probe: bool) -> str:
     "rm /root/delete_me.txt",
 
     # -- net_events: HTTPS fetch to allowed + denied domains --
-    "curl -sf https://google.com -o /dev/null",
-    "curl -sf https://example.com/ -o /dev/null || true",  # denied by policy
+    "curl -sf https://elie.net -o /dev/null",
+    "curl -sf -X POST https://example.com/ -o /dev/null || true",  # denied by policy
 
     # -- throughput: ~10MB PDF through the full MITM proxy pipeline --
     # cdn.elie.net 301-redirects to elie.net; -L proves the proxy handles
@@ -254,19 +206,22 @@ def _start_service_with_test_config(assets_dir: str) -> subprocess.Popen:
 
     log_path = project_root / "target/integration-test-service.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = open(log_path, "w")
 
-    proc = subprocess.Popen(
-        [
-            str(service_bin),
-            "--assets-dir", f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
-            "--process-binary", str(process_bin),
-            "--foreground",
-        ],
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
+    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        proc = subprocess.Popen(
+            [
+                str(service_bin),
+                "--assets-dir", f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
+                "--process-binary", str(process_bin),
+                "--foreground",
+            ],
+            env=env,
+            stdout=log_fd,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        os.close(log_fd)
     SERVICE_PIDFILE.write_text(str(proc.pid))
 
     deadline = time.monotonic() + 15.0
@@ -304,20 +259,20 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
 
     google_key = _gemini_api_key()
 
-    # Restart the dev service with a Profile V2 fixture selected in service.toml.
+    # Restart the dev service, then request the installed signed profile per VM.
     _kill_dev_service()
-    profile_snapshot = _install_integration_v2_profile()
+    profile_snapshot = _install_integration_profile()
     try:
         service_proc = _start_service_with_test_config(assets_dir)
     except Exception:
-        _restore_integration_v2_profile(profile_snapshot)
+        _restore_integration_profile(profile_snapshot)
         raise
 
     # Snapshot session dirs before so we can find the new one after.
     existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
     # Pass API key via --env so it reaches the VM through the service.
-    cmd = [binary, "run", "--timeout", "300"]
+    cmd = [binary, "run", "--profile", INTEGRATION_PROFILE_ID, "--timeout", "300"]
     if google_key:
         cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])
     cmd.append(_vm_command(include_gemini_probe=google_key is not None))
@@ -341,7 +296,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
             SERVICE_PIDFILE.unlink()
         except FileNotFoundError:
             pass
-        _restore_integration_v2_profile(profile_snapshot)
+        _restore_integration_profile(profile_snapshot)
     exit_code = proc.returncode
     if proc.stdout.strip():
         print(proc.stdout.strip())
@@ -452,22 +407,22 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         "no net_events recorded",
     )
 
-    # google.com from the curl.
+    # elie.net from the curl.
     elie = conn.execute(
-        "SELECT * FROM net_events WHERE domain = 'google.com'"
+        "SELECT * FROM net_events WHERE domain = 'elie.net'"
     ).fetchone()
     r.check(
         elie is not None,
-        "google.com request logged (curl)",
-        "google.com NOT found in net_events (curl may have failed)",
+        "elie.net request logged (curl)",
+        "elie.net NOT found in net_events (curl may have failed)",
     )
 
     # Allowed decision.
     if elie:
         r.check(
             elie["decision"] == "allowed",
-            "google.com decision = allowed",
-            f"google.com decision = {elie['decision']} (expected allowed)",
+            "elie.net decision = allowed",
+            f"elie.net decision = {elie['decision']} (expected allowed)",
         )
 
     # Google/Gemini API requests are live-credential dependent. Smoke must pass
@@ -520,18 +475,16 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         "no net_events with HTTP status codes (MITM proxy may not be recording)",
     )
 
-    # Denied DNS event from curl to blocked domain (from test config). A DNS
-    # deny never reaches the HTTP MITM layer, so the custom block belongs in
-    # dns_events, while MCP builtin blocked fetches below prove denied net_events.
-    deny_domain = _integration_block_domain()
-    dns_denied_count = conn.execute(
-        "SELECT COUNT(*) FROM dns_events WHERE decision = 'denied' AND qname = ?",
-        (deny_domain,)
+    # Denied HTTP event from the installed profile's example.com POST block.
+    deny_domain = "example.com"
+    http_denied_count = conn.execute(
+        "SELECT COUNT(*) FROM net_events WHERE decision = 'denied' AND domain = ?",
+        (deny_domain,),
     ).fetchone()[0]
     r.check(
-        dns_denied_count >= 1,
-        f"{dns_denied_count} denied dns_events for {deny_domain} (policy enforcement working)",
-        f"no denied dns_events for {deny_domain} (curl to blocked domain may have failed silently)",
+        http_denied_count >= 1,
+        f"{http_denied_count} denied net_events for {deny_domain} (policy enforcement working)",
+        f"no denied net_events for {deny_domain} (curl POST to blocked domain may have failed silently)",
     )
 
     denied_count = conn.execute(
@@ -998,16 +951,16 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
     }
 
     _kill_dev_service()
-    profile_snapshot = _install_integration_v2_profile()
+    profile_snapshot = _install_integration_profile()
     try:
         service_proc = _start_service_with_test_config(assets_dir)
     except Exception:
-        _restore_integration_v2_profile(profile_snapshot)
+        _restore_integration_profile(profile_snapshot)
         raise
     try:
         print("  Invocation 1: writing sentinel file...")
         proc1 = subprocess.run(
-            [binary, "run", PERSISTENCE_WRITE_CMD],
+            [binary, "run", "--profile", INTEGRATION_PROFILE_ID, PERSISTENCE_WRITE_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output1 = proc1.stdout + "\n" + proc1.stderr
@@ -1019,7 +972,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
 
         print("  Invocation 2: checking sentinel is absent...")
         proc2 = subprocess.run(
-            [binary, "run", PERSISTENCE_CHECK_CMD],
+            [binary, "run", "--profile", INTEGRATION_PROFILE_ID, PERSISTENCE_CHECK_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output2 = proc2.stdout + "\n" + proc2.stderr
@@ -1043,7 +996,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
             SERVICE_PIDFILE.unlink()
         except FileNotFoundError:
             pass
-        _restore_integration_v2_profile(profile_snapshot)
+        _restore_integration_profile(profile_snapshot)
 
 
 def main():

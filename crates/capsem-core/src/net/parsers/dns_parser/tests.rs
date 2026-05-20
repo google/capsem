@@ -544,7 +544,7 @@ fn build_servfail_for_undecodable_input_errors() {
 // (T3.d) -- build_redirect_response unit tests
 //
 // `build_redirect_response` is the wire-format builder for synthetic
-// answers produced by the DnsRedirect policy rule. The handler-level
+// answers produced by the Policy DNS rewrite rule. The handler-level
 // integration is covered by `net::dns::tests`; these tests pin the
 // pure-builder semantics in isolation.
 // =====================================================================

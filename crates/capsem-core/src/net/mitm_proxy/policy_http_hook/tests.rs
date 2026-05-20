@@ -5,10 +5,10 @@ use async_trait::async_trait;
 use crate::net::mitm_proxy::hooks::{ConnMeta, HookState};
 use crate::net::mitm_proxy::pipeline::{DispatchOutcome, Pipeline};
 use crate::net::mitm_proxy::protocol::Protocol;
+use crate::net::policy::PolicyConfig;
 use crate::net::policy_confirm::{
     ConfirmArgs, Confirmer, ConfirmerKind, Decision as ConfirmDecision,
 };
-use crate::net::policy_v2::PolicyConfig;
 
 use super::*;
 
@@ -16,7 +16,7 @@ fn pipeline_for(toml_text: &str) -> Pipeline {
     let policy = PolicyConfig::from_policy_toml_str(toml_text).unwrap();
     let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(policy)));
     Pipeline::builder()
-        .register(Arc::new(PolicyV2HttpHook::new(policy)))
+        .register(Arc::new(PolicyHttpHook::new(policy)))
         .build()
 }
 
@@ -25,7 +25,7 @@ fn pipeline_for_confirmer(toml_text: &str, confirmer: Arc<dyn Confirmer>) -> Pip
     let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(policy)));
     Pipeline::builder()
         .register(Arc::new(
-            PolicyV2HttpHook::new(policy).with_confirmer(confirmer),
+            PolicyHttpHook::new(policy).with_confirmer(confirmer),
         ))
         .build()
 }
@@ -93,7 +93,7 @@ fn conn() -> ConnMeta {
 }
 
 #[tokio::test]
-async fn http_policy_v2_block_stops_before_upstream() {
+async fn http_policy_block_stops_before_upstream() {
     let pipeline = pipeline_for(
         r#"
 [policy.http.block_openai_github]
@@ -113,8 +113,8 @@ reason = "Do not fetch OpenAI-owned GitHub code"
 
     assert!(matches!(outcome, DispatchOutcome::Stopped(_)));
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP decision should be stashed");
     assert_eq!(decision.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(decision.policy_action.as_deref(), Some("block"));
     assert_eq!(
@@ -128,7 +128,7 @@ reason = "Do not fetch OpenAI-owned GitHub code"
 }
 
 #[tokio::test]
-async fn http_policy_v2_request_ask_accept_confirmer_continues() {
+async fn http_policy_request_ask_accept_confirmer_continues() {
     let confirmer = MockConfirmer::new(ConfirmDecision::Accept);
     let pipeline = pipeline_for_confirmer(
         r#"
@@ -150,8 +150,8 @@ reason = "Ask before fetching OpenAI-owned GitHub code"
 
     assert!(matches!(outcome, DispatchOutcome::Completed));
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP decision should be stashed");
     assert_eq!(decision.policy_action.as_deref(), Some("allow"));
     assert_eq!(
         decision.policy_rule.as_deref(),
@@ -162,7 +162,7 @@ reason = "Ask before fetching OpenAI-owned GitHub code"
     assert_eq!(calls[0].rule_id, "security.rules.http.ask_openai_github");
     assert_eq!(
         calls[0].callback,
-        crate::net::policy_v2::PolicyCallback::HttpRequest
+        crate::net::policy::PolicyCallback::HttpRequest
     );
     assert_eq!(
         calls[0]
@@ -179,7 +179,7 @@ reason = "Ask before fetching OpenAI-owned GitHub code"
 }
 
 #[tokio::test]
-async fn http_policy_v2_request_ask_deny_confirmer_blocks() {
+async fn http_policy_request_ask_deny_confirmer_blocks() {
     let confirmer = MockConfirmer::new(ConfirmDecision::Deny);
     let pipeline = pipeline_for_confirmer(
         r#"
@@ -201,8 +201,8 @@ reason = "Ask before fetching OpenAI-owned GitHub code"
 
     assert!(matches!(outcome, DispatchOutcome::Stopped(_)));
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP decision should be stashed");
     assert_eq!(decision.policy_action.as_deref(), Some("block"));
     assert_eq!(
         decision.policy_rule.as_deref(),
@@ -212,7 +212,7 @@ reason = "Ask before fetching OpenAI-owned GitHub code"
 }
 
 #[tokio::test]
-async fn http_policy_v2_rewrite_strips_headers_and_mutates_path() {
+async fn http_policy_rewrite_strips_headers_and_mutates_path() {
     let pipeline = pipeline_for(
         r#"
 [policy.http.rewrite_openai_github]
@@ -243,8 +243,8 @@ strip_request_headers = ["authorization"]
         "credential header must be stripped before upstream dispatch"
     );
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP rewrite decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP rewrite decision should be stashed");
     assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
     assert_eq!(
         decision.policy_rule.as_deref(),
@@ -253,7 +253,7 @@ strip_request_headers = ["authorization"]
 }
 
 #[tokio::test]
-async fn http_policy_v2_rewrite_rejects_cross_host_url_rewrites() {
+async fn http_policy_rewrite_rejects_cross_host_url_rewrites() {
     let pipeline = pipeline_for(
         r#"
 [policy.http.rewrite_to_other_host]
@@ -279,8 +279,8 @@ rewrite_value = "https://evil.example/stolen"
         "failed host-changing rewrites must not mutate the request head"
     );
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP rewrite decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP rewrite decision should be stashed");
     assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
     assert!(decision
         .policy_reason
@@ -289,7 +289,7 @@ rewrite_value = "https://evil.example/stolen"
 }
 
 #[tokio::test]
-async fn http_policy_v2_response_rewrite_strips_secret_headers() {
+async fn http_policy_response_rewrite_strips_secret_headers() {
     let pipeline = pipeline_for(
         r#"
 [policy.http.strip_response_credentials]
@@ -327,8 +327,8 @@ strip_response_headers = ["Set-Cookie", "X-Secret-Token"]
         "unlisted response headers must be preserved"
     );
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP response rewrite decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP response rewrite decision should be stashed");
     assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
     assert_eq!(
         decision.policy_rule.as_deref(),
@@ -337,7 +337,7 @@ strip_response_headers = ["Set-Cookie", "X-Secret-Token"]
 }
 
 #[tokio::test]
-async fn http_policy_v2_response_ask_confirmer_resolves() {
+async fn http_policy_response_ask_confirmer_resolves() {
     let toml = r#"
 [policy.http.ask_redirect]
 on = "http.response"
@@ -363,13 +363,13 @@ reason = "Ask before returning redirects"
     assert!(matches!(outcome, DispatchOutcome::Completed));
     assert_eq!(
         accept_state
-            .peek::<LastHttpPolicyV2Decision>()
+            .peek::<LastHttpPolicyDecision>()
             .and_then(|decision| decision.policy_action.as_deref()),
         Some("allow")
     );
     assert_eq!(
         accept_confirmer.calls()[0].callback,
-        crate::net::policy_v2::PolicyCallback::HttpResponse
+        crate::net::policy::PolicyCallback::HttpResponse
     );
     assert_eq!(
         accept_confirmer.calls()[0]
@@ -394,7 +394,7 @@ reason = "Ask before returning redirects"
     assert!(matches!(outcome, DispatchOutcome::Stopped(_)));
     assert_eq!(
         deny_state
-            .peek::<LastHttpPolicyV2Decision>()
+            .peek::<LastHttpPolicyDecision>()
             .and_then(|decision| decision.policy_action.as_deref()),
         Some("block")
     );
@@ -405,7 +405,7 @@ reason = "Ask before returning redirects"
 }
 
 #[tokio::test]
-async fn http_policy_v2_response_rewrite_mutates_header_value() {
+async fn http_policy_response_rewrite_mutates_header_value() {
     let pipeline = pipeline_for(
         r#"
 [policy.http.rewrite_response_location]
@@ -439,8 +439,8 @@ rewrite_value = "https://github.com/openclaw/${repo}${rest}"
         Some("https://github.com/openclaw/capsem?ref=secret")
     );
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP response rewrite decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP response rewrite decision should be stashed");
     assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
     assert_eq!(
         decision.policy_rule.as_deref(),
@@ -449,7 +449,7 @@ rewrite_value = "https://github.com/openclaw/${repo}${rest}"
 }
 
 #[tokio::test]
-async fn http_policy_v2_response_rewrite_rejects_unsupported_targets() {
+async fn http_policy_response_rewrite_rejects_unsupported_targets() {
     let pipeline = pipeline_for(
         r#"
 [policy.http.rewrite_response_body]
@@ -482,8 +482,8 @@ rewrite_value = "[redacted]"
         "failed response rewrites must not partially mutate the upstream response head"
     );
     let decision = state
-        .peek::<LastHttpPolicyV2Decision>()
-        .expect("Policy V2 HTTP response rewrite decision should be stashed");
+        .peek::<LastHttpPolicyDecision>()
+        .expect("Policy HTTP response rewrite decision should be stashed");
     assert_eq!(decision.policy_action.as_deref(), Some("rewrite"));
     assert!(decision
         .policy_reason
