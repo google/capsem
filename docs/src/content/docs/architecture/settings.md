@@ -38,6 +38,13 @@ credential references, and carries corp directives. Profile files describe
 capabilities, AI providers, standard MCP servers, VM resources, and policy
 rules.
 
+Profiles also carry an `editable` block for section-level governance. Each
+boolean marks whether user-facing mutation routes may change that section after
+the profile is selected or forked. For example, a corp profile can allow
+`editable.skills = true` and `editable.mcpServers = true` while keeping
+`editable.ai = false` and `editable.security_rules = false`. Forks preserve the
+same editability map, and profile update routes cannot mutate the map itself.
+
 ## Service Settings V2
 
 Service settings use schema id `capsem.service-settings.v2`. The committed

@@ -237,7 +237,19 @@ a valid claim -- mark it `[ ]` instead.
     passed against `schemas/fixtures/profile-v2-valid.json`. Remaining:
     profile init, image plan/build/verify, manifest generate/check/sign,
     bootstrap/release install proof, and policy/detection admin models after
-    S08a.
+    S08a. Second slice added the Profile V2 `editable` block with section-level
+    gates for `general`, `appearance`, `ai`, `mcpServers`, `skills`,
+    `packages`, `tools`, `vm`, `security_capabilities`, and `security_rules`.
+    Service routes now enforce those locks for skills, MCP servers, rules,
+    settings-save rule updates, and whole-profile `PUT`; forks preserve the
+    lock map, and profile `PUT` cannot mutate the `editable` map itself.
+    Verification: `cargo test -p capsem-service profile --bin capsem-service`
+    passed with 64 tests; `cargo test -p capsem-core profile_parse --lib`
+    passed with 4 tests; `cargo test -p capsem-core profile_payload --lib`
+    passed with 11 tests; `uv run python -m pytest tests/test_profiles.py
+    tests/test_admin_cli.py -q` passed with 25 tests; `uv run capsem-admin
+    profile schema | rg -n 'editable|mcpServers|security_rules'` confirmed the
+    admin schema exposes the editability contract.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

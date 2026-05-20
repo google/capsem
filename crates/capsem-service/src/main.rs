@@ -363,14 +363,19 @@ impl ServiceState {
     }
 
     fn current_service_settings(&self) -> capsem_core::settings_profiles::ServiceSettings {
-        capsem_core::settings_profiles::load_service_settings_or_default(service_settings_path())
-            .unwrap_or_else(|error| {
+        let settings_path = service_settings_path();
+        if !settings_path.exists() {
+            return self.service_settings.clone();
+        }
+        capsem_core::settings_profiles::load_service_settings(&settings_path).unwrap_or_else(
+            |error| {
                 warn!(
                     error = %error,
                     "failed to reload service settings from disk, using startup snapshot"
                 );
                 self.service_settings.clone()
-            })
+            },
+        )
     }
 
     fn refresh_vm_effective_settings_for_profile(
@@ -420,12 +425,20 @@ impl ServiceState {
         let package_json = serde_json::to_vec(&effective.packages.value)
             .context("serialize package contract for profile pin")?;
         let settings = self.current_service_settings();
-        let installed_revision =
+        let mut installed_revision =
             capsem_core::settings_profiles::load_complete_installed_profile_revision(
                 &settings.profiles,
                 &effective.profile_id,
             )
             .context("load complete installed profile revision for profile pin")?;
+        if installed_revision.is_none() && settings.profiles != self.service_settings.profiles {
+            installed_revision =
+                capsem_core::settings_profiles::load_complete_installed_profile_revision(
+                    &self.service_settings.profiles,
+                    &effective.profile_id,
+                )
+                .context("load startup installed profile revision for profile pin")?;
+        }
         let (profile_revision, profile_payload_hash) = installed_revision
             .map(|record| (Some(record.revision), Some(record.payload_hash)))
             .unwrap_or((profile_revision, profile_payload_hash));
@@ -4609,6 +4622,7 @@ async fn handle_update_profile(
                 format!("profile '{id}' is locked ({})", record.source.as_str()),
             ));
         }
+        ensure_locked_profile_sections_unchanged(&record.profile, &profile)?;
     }
     let record = capsem_core::settings_profiles::update_user_profile(&settings.profiles, profile)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("update profile: {e}")))?;
@@ -5183,6 +5197,127 @@ fn save_mutated_profile(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ProfileEditableSection {
+    General,
+    Appearance,
+    Ai,
+    McpServers,
+    Skills,
+    Packages,
+    Tools,
+    Vm,
+    SecurityCapabilities,
+    SecurityRules,
+}
+
+impl ProfileEditableSection {
+    fn path(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Appearance => "appearance",
+            Self::Ai => "ai",
+            Self::McpServers => "mcpServers",
+            Self::Skills => "skills",
+            Self::Packages => "packages",
+            Self::Tools => "tools",
+            Self::Vm => "vm",
+            Self::SecurityCapabilities => "security.capabilities",
+            Self::SecurityRules => "security.rules",
+        }
+    }
+
+    fn is_editable(self, profile: &capsem_core::settings_profiles::Profile) -> bool {
+        match self {
+            Self::General => profile.editable.general,
+            Self::Appearance => profile.editable.appearance,
+            Self::Ai => profile.editable.ai,
+            Self::McpServers => profile.editable.mcp_servers,
+            Self::Skills => profile.editable.skills,
+            Self::Packages => profile.editable.packages,
+            Self::Tools => profile.editable.tools,
+            Self::Vm => profile.editable.vm,
+            Self::SecurityCapabilities => profile.editable.security_capabilities,
+            Self::SecurityRules => profile.editable.security_rules,
+        }
+    }
+}
+
+fn ensure_profile_section_editable(
+    profile: &capsem_core::settings_profiles::Profile,
+    section: ProfileEditableSection,
+) -> Result<(), AppError> {
+    if section.is_editable(profile) {
+        return Ok(());
+    }
+    Err(AppError(
+        StatusCode::CONFLICT,
+        format!(
+            "profile_section_locked: profile '{}' section '{}' is not editable",
+            profile.id,
+            section.path()
+        ),
+    ))
+}
+
+fn ensure_locked_profile_sections_unchanged(
+    previous: &capsem_core::settings_profiles::Profile,
+    updated: &capsem_core::settings_profiles::Profile,
+) -> Result<(), AppError> {
+    if previous.editable != updated.editable {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            format!(
+                "profile_section_locked: profile '{}' section 'editable' is not editable",
+                previous.id
+            ),
+        ));
+    }
+
+    let checks = [
+        (
+            ProfileEditableSection::General,
+            previous.general == updated.general,
+        ),
+        (
+            ProfileEditableSection::Appearance,
+            previous.appearance == updated.appearance,
+        ),
+        (ProfileEditableSection::Ai, previous.ai == updated.ai),
+        (
+            ProfileEditableSection::McpServers,
+            previous.mcp == updated.mcp,
+        ),
+        (
+            ProfileEditableSection::Skills,
+            previous.skills == updated.skills,
+        ),
+        (
+            ProfileEditableSection::Packages,
+            previous.packages == updated.packages,
+        ),
+        (
+            ProfileEditableSection::Tools,
+            previous.tools == updated.tools,
+        ),
+        (ProfileEditableSection::Vm, previous.vm == updated.vm),
+        (
+            ProfileEditableSection::SecurityCapabilities,
+            previous.security.capabilities == updated.security.capabilities,
+        ),
+        (
+            ProfileEditableSection::SecurityRules,
+            previous.security.rules == updated.security.rules,
+        ),
+    ];
+    for (section, unchanged) in checks {
+        if !unchanged {
+            ensure_profile_section_editable(previous, section)?;
+        }
+    }
+    Ok(())
+}
+
 fn effective_policy_rule_config(
     rule: &capsem_core::settings_profiles::EffectiveRule,
 ) -> Result<capsem_core::net::policy::PolicyRuleConfig, String> {
@@ -5348,6 +5483,7 @@ async fn handle_create_rule(
             format!("profile '{target_profile_id}' not found"),
         )
     })?;
+    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::SecurityRules)?;
     let mut profile = selected.profile.clone();
     if profile_has_rule(&profile, &rule_type, &rule_name) {
         return Err(AppError(
@@ -5400,6 +5536,7 @@ async fn handle_delete_rule(
             format!("profile '{target_profile_id}' not found"),
         )
     })?;
+    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::SecurityRules)?;
     if selected.source != capsem_core::settings_profiles::ProfileSource::User {
         return Err(AppError(
             StatusCode::CONFLICT,
@@ -5576,6 +5713,7 @@ async fn handle_create_skill(
             format!("profile '{target_profile_id}' not found"),
         )
     })?;
+    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::Skills)?;
     if profile_has_skill(&selected.profile, request.kind, &request.id) {
         return Err(AppError(
             StatusCode::CONFLICT,
@@ -5657,6 +5795,7 @@ async fn handle_delete_skill(
             format!("profile '{target_profile_id}' not found"),
         )
     })?;
+    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::Skills)?;
     if selected.source != capsem_core::settings_profiles::ProfileSource::User {
         return Err(AppError(
             StatusCode::CONFLICT,
@@ -5755,6 +5894,7 @@ async fn handle_save_settings(
             format!("default profile '{selected_id}' not found"),
         )
     })?;
+    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::SecurityRules)?;
 
     let mut profile = selected.profile.clone();
     for (key, value) in raw {
@@ -6371,6 +6511,7 @@ async fn handle_create_mcp_connector(
             format!("profile '{target_profile_id}' not found"),
         )
     })?;
+    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::McpServers)?;
     if profile_has_mcp_connector(&selected.profile, &request.id) {
         return Err(AppError(
             StatusCode::CONFLICT,
@@ -6434,6 +6575,7 @@ async fn handle_delete_mcp_connector(
             format!("profile '{target_profile_id}' not found"),
         )
     })?;
+    ensure_profile_section_editable(&selected.profile, ProfileEditableSection::McpServers)?;
     if selected.source != capsem_core::settings_profiles::ProfileSource::User {
         return Err(AppError(
             StatusCode::CONFLICT,

@@ -107,6 +107,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem-admin profile schema` and `capsem-admin profile validate`
   for Profile V2 JSON/TOML payloads, including typed JSON reports with profile
   id and revision.
+- Added Profile V2 section-level editability gates so profiles can allow user
+  skill or MCP edits while locking AI providers, rules, VM assets, package
+  contracts, or other sections; service mutations enforce the locks and forks
+  preserve them. The editability map itself is immutable through profile update
+  routes to prevent unlock-then-edit bypasses.
+- Changed service settings reload fallback to reuse the startup settings
+  snapshot when `service.toml` is absent or unreadable, preventing profile roots
+  from silently falling back to defaults.
 - Added Rust Profile V2 payload schema validation helpers for JSON and TOML
   payloads backed by the production Draft 2020-12 schema artifact.
 - Changed the signed profile catalog manifest to the canonical

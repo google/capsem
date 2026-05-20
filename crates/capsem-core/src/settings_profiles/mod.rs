@@ -1201,6 +1201,8 @@ pub struct Profile {
     #[serde(default)]
     pub appearance: ProfileAppearanceSettings,
     #[serde(default)]
+    pub editable: ProfileSectionEditability,
+    #[serde(default)]
     pub ai: AiProvidersProfileSettings,
     #[serde(default, rename = "mcpServers")]
     pub mcp: McpConnectorsProfileSettings,
@@ -1268,6 +1270,7 @@ impl Profile {
             extends_profile_id: None,
             general: ProfileGeneralSettings::default(),
             appearance: ProfileAppearanceSettings::default(),
+            editable: ProfileSectionEditability::default(),
             ai: AiProvidersProfileSettings::default(),
             mcp: McpConnectorsProfileSettings::default(),
             skills: SkillsProfileSettings::default(),
@@ -1314,6 +1317,48 @@ impl Profile {
         self.vm.validate("vm")?;
         self.security.validate("security")?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileSectionEditability {
+    #[serde(default = "default_true")]
+    pub general: bool,
+    #[serde(default = "default_true")]
+    pub appearance: bool,
+    #[serde(default = "default_true")]
+    pub ai: bool,
+    #[serde(default = "default_true", rename = "mcpServers")]
+    pub mcp_servers: bool,
+    #[serde(default = "default_true")]
+    pub skills: bool,
+    #[serde(default = "default_true")]
+    pub packages: bool,
+    #[serde(default = "default_true")]
+    pub tools: bool,
+    #[serde(default = "default_true")]
+    pub vm: bool,
+    #[serde(default = "default_true")]
+    pub security_capabilities: bool,
+    #[serde(default = "default_true")]
+    pub security_rules: bool,
+}
+
+impl Default for ProfileSectionEditability {
+    fn default() -> Self {
+        Self {
+            general: true,
+            appearance: true,
+            ai: true,
+            mcp_servers: true,
+            skills: true,
+            packages: true,
+            tools: true,
+            vm: true,
+            security_capabilities: true,
+            security_rules: true,
+        }
     }
 }
 
@@ -2992,6 +3037,7 @@ fn merge_profile_chain(chain: &[&ProfileRecord]) -> Profile {
 
         acc.general = child.general.clone();
         acc.appearance = child.appearance.clone();
+        acc.editable = child.editable.clone();
         acc.vm = merge_vm_profile_settings(&acc.vm, &child.vm);
         acc.security.capabilities = child.security.capabilities.clone();
 

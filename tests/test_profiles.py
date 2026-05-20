@@ -91,6 +91,24 @@ def test_profile_payload_rejects_legacy_mcp_connectors_shape() -> None:
         validate_profile_json(json.dumps(payload))
 
 
+def test_profile_payload_accepts_section_editability_contract() -> None:
+    payload = json.loads((FIXTURE_DIR / "profile-v2-valid.json").read_text())
+    payload["editable"] = {
+        "ai": False,
+        "mcpServers": True,
+        "skills": True,
+        "security_rules": False,
+    }
+
+    profile = validate_profile_json(json.dumps(payload))
+    dumped = dump_profile_json(profile)
+
+    assert profile.editable.ai is False
+    assert profile.editable.mcp_servers is True
+    assert profile.editable.security_rules is False
+    assert '"mcpServers": true' in dumped
+
+
 @pytest.mark.parametrize(
     "fixture_name",
     [

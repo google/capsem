@@ -29,6 +29,28 @@ First slice landed on 2026-05-20:
   smoke for `capsem-admin profile schema`, `profile validate`, and `profile
   validate --json` passed against `schemas/fixtures/profile-v2-valid.json`.
 
+Second slice landed on 2026-05-20:
+
+- Profile V2 now has a typed top-level `editable` block for section-level edit
+  gates: `general`, `appearance`, `ai`, `mcpServers`, `skills`, `packages`,
+  `tools`, `vm`, `security_capabilities`, and `security_rules`.
+- Service mutation routes enforce section locks for Profile V2 skills, MCP
+  servers, policy rules, settings-save rule updates, and whole-profile `PUT`
+  attempts that try to smuggle changes into locked sections. Whole-profile
+  updates also reject changes to the `editable` map itself so callers cannot
+  unlock a section and mutate it in a later request.
+- Profile forks copy the `editable` block so corp/root profiles can allow
+  user-added skills or MCP servers while blocking AI providers or rules in the
+  forked user profile.
+- `ServiceState::current_service_settings()` now falls back to the startup
+  settings snapshot when `service.toml` is absent or unreadable instead of
+  silently losing profile roots to default settings.
+- Verification: `cargo test -p capsem-service profile --bin capsem-service`
+  passed with 64 tests; `cargo test -p capsem-core profile_parse --lib` passed
+  with 4 tests; `cargo test -p capsem-core profile_payload --lib` passed with
+  11 tests; `uv run python -m pytest tests/test_profiles.py
+  tests/test_admin_cli.py -q` passed with 25 tests.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile

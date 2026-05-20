@@ -37,6 +37,7 @@
     "compatibility": { "$ref": "#/$defs/compatibility" },
     "general": { "$ref": "#/$defs/general" },
     "appearance": { "$ref": "#/$defs/appearance" },
+    "editable": { "$ref": "#/$defs/editable" },
     "ai": { "$ref": "#/$defs/ai" },
     "mcpServers": { "$ref": "#/$defs/mcp_servers" },
     "skills": { "$ref": "#/$defs/skills" },
@@ -111,6 +112,22 @@
           "type": "string",
           "pattern": "^#[0-9a-fA-F]{6}$"
         }
+      }
+    },
+    "editable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "general": { "type": "boolean" },
+        "appearance": { "type": "boolean" },
+        "ai": { "type": "boolean" },
+        "mcpServers": { "type": "boolean" },
+        "skills": { "type": "boolean" },
+        "packages": { "type": "boolean" },
+        "tools": { "type": "boolean" },
+        "vm": { "type": "boolean" },
+        "security_capabilities": { "type": "boolean" },
+        "security_rules": { "type": "boolean" }
       }
     },
     "ai": {

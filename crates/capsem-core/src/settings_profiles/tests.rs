@@ -18,8 +18,9 @@ fn service_settings_defaults_validate() {
 #[test]
 fn service_settings_defaults_match_committed_python_contract() {
     let mut expected = ServiceSettings::default();
-    expected.profiles.user_dirs =
-        vec![PathBuf::from("/tmp/capsem-service-settings-defaults/profiles")];
+    expected.profiles.user_dirs = vec![PathBuf::from(
+        "/tmp/capsem-service-settings-defaults/profiles",
+    )];
     let fixture: ServiceSettings = serde_json::from_str(include_str!(
         "../../../../schemas/fixtures/service-settings-v2-defaults.json"
     ))
@@ -45,7 +46,10 @@ fn service_settings_json_fixture_matches_runtime_contract() {
         settings.profile_catalog.manifest_url.as_deref(),
         Some("https://profiles.example.com/capsem/manifest.json")
     );
-    assert_eq!(settings.corp_directives[0].operation, CorpDirectiveOperation::Lock);
+    assert_eq!(
+        settings.corp_directives[0].operation,
+        CorpDirectiveOperation::Lock
+    );
 }
 
 #[test]
@@ -55,9 +59,7 @@ fn service_settings_json_invalid_fixtures_match_runtime_rejections() {
         include_str!(
             "../../../../schemas/fixtures/service-settings-v2-invalid-profile-catalog.json"
         ),
-        include_str!(
-            "../../../../schemas/fixtures/service-settings-v2-invalid-profile-roots.json"
-        ),
+        include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-profile-roots.json"),
         include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-telemetry.json"),
         include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-remote-policy.json"),
         include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-credential.json"),
@@ -546,6 +548,31 @@ allowed_tools = ["repo.read"]
         err.to_string().contains("unknown field `mcp`"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn profile_parse_accepts_section_editability_contract() {
+    let profile = Profile::from_toml_str(
+        r#"
+version = 1
+id = "coding"
+name = "For Coding"
+best_for = "Coding."
+profile_type = "coding"
+
+[editable]
+ai = false
+mcpServers = true
+skills = true
+security_rules = false
+"#,
+    )
+    .unwrap();
+
+    assert!(!profile.editable.ai);
+    assert!(profile.editable.mcp_servers);
+    assert!(profile.editable.skills);
+    assert!(!profile.editable.security_rules);
 }
 
 #[test]

@@ -110,6 +110,19 @@ class AppearanceSettings(StrictModel):
     accent: str | None = None
 
 
+class ProfileSectionEditability(StrictModel):
+    general: bool = True
+    appearance: bool = True
+    ai: bool = True
+    mcp_servers: bool = Field(default=True, alias="mcpServers")
+    skills: bool = True
+    packages: bool = True
+    tools: bool = True
+    vm: bool = True
+    security_capabilities: bool = True
+    security_rules: bool = True
+
+
 class SecurityRule(StrictModel):
     callback: NonEmptyStr = Field(alias="on")
     condition: NonEmptyStr = Field(alias="if")
@@ -253,6 +266,7 @@ class ProfilePayloadV2(StrictModel):
     compatibility: Compatibility
     general: GeneralSettings = Field(default_factory=GeneralSettings)
     appearance: AppearanceSettings = Field(default_factory=AppearanceSettings)
+    editable: ProfileSectionEditability = Field(default_factory=ProfileSectionEditability)
     ai: AiSettings = Field(default_factory=AiSettings)
     mcp_servers: dict[str, McpServer] = Field(default_factory=dict, alias="mcpServers")
     skills: SkillsSettings = Field(default_factory=SkillsSettings)

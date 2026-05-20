@@ -5328,6 +5328,91 @@ async fn handle_update_profile_persists_existing_user_profile() {
 }
 
 #[tokio::test]
+async fn profile_section_locks_allow_skills_and_mcp_but_block_ai_and_rules() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut profile = custom_profile("section-locks", "Section Locks");
+    profile.editable.ai = false;
+    profile.editable.security_rules = false;
+    profile.editable.skills = true;
+    profile.editable.mcp_servers = true;
+    let _ = handle_create_profile(Json(profile)).await.unwrap();
+
+    let Json(skill) = handle_create_skill(Json(SkillMutationRequest {
+        profile: Some("section-locks".to_string()),
+        id: "dev-sprint".to_string(),
+        kind: SkillKind::Enabled,
+    }))
+    .await
+    .unwrap();
+    assert_eq!(skill["editable"], serde_json::json!(true));
+
+    let Json(server) = handle_create_mcp_connector(Json(McpConnectorMutationRequest {
+        profile: Some("section-locks".to_string()),
+        id: "github".to_string(),
+        connector: test_mcp_connector(),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(server["editable"], serde_json::json!(true));
+
+    let err = handle_create_rule(Json(RuleCreateRequest {
+        profile: Some("section-locks".to_string()),
+        id: "security.rules.http.ask_probe".to_string(),
+        update: PolicyRuleUpdate {
+            callback: "http.request".to_string(),
+            condition: "request.host == 'probe.example.com'".to_string(),
+            decision: capsem_core::settings_profiles::RuleDecision::Ask,
+            priority: 20,
+            reason: Some("section lock proof".to_string()),
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+        },
+    }))
+    .await
+    .expect_err("security.rules lock must block rule creation");
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("profile_section_locked"));
+    assert!(err.1.contains("security.rules"));
+
+    let mut updated = handle_get_profile(Path("section-locks".to_string()))
+        .await
+        .unwrap()
+        .0["profile"]
+        .clone();
+    updated["ai"]["providers"]["openai"] = serde_json::json!({
+        "enabled": true,
+        "model": "gpt-5.2",
+        "base_url": "https://api.openai.com/v1"
+    });
+    let updated: capsem_core::settings_profiles::Profile = serde_json::from_value(updated).unwrap();
+    let err = handle_update_profile(Path("section-locks".to_string()), Json(updated))
+        .await
+        .expect_err("ai lock must block whole-profile update smuggling");
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("profile_section_locked"));
+    assert!(err.1.contains("ai"));
+
+    let mut updated = handle_get_profile(Path("section-locks".to_string()))
+        .await
+        .unwrap()
+        .0["profile"]
+        .clone();
+    updated["editable"]["security_rules"] = serde_json::json!(true);
+    let updated: capsem_core::settings_profiles::Profile = serde_json::from_value(updated).unwrap();
+    let err = handle_update_profile(Path("section-locks".to_string()), Json(updated))
+        .await
+        .expect_err("editable lock map must not be mutable through whole-profile update");
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("profile_section_locked"));
+    assert!(err.1.contains("editable"));
+}
+
+#[tokio::test]
 async fn handle_fork_profile_creates_user_copy() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -5346,6 +5431,57 @@ async fn handle_fork_profile_creates_user_copy() {
     assert_eq!(val["profile"]["id"], serde_json::json!("daily-strict"));
     assert_eq!(val["profile"]["name"], serde_json::json!("Daily Strict"));
     assert_eq!(val["source"], serde_json::json!("user"));
+}
+
+#[tokio::test]
+async fn handle_fork_profile_propagates_section_locks() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
+
+    let mut source = custom_profile("locked-source", "Locked Source");
+    source.editable.skills = false;
+    source.editable.mcp_servers = true;
+    let _ = handle_create_profile(Json(source)).await.unwrap();
+
+    let Json(forked) = handle_fork_profile(
+        Path("locked-source".to_string()),
+        Json(ProfileForkRequest {
+            id: "locked-fork".to_string(),
+            name: "Locked Fork".to_string(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        forked["profile"]["editable"]["skills"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        forked["profile"]["editable"]["mcpServers"],
+        serde_json::json!(true)
+    );
+
+    let err = handle_create_skill(Json(SkillMutationRequest {
+        profile: Some("locked-fork".to_string()),
+        id: "dev-sprint".to_string(),
+        kind: SkillKind::Enabled,
+    }))
+    .await
+    .expect_err("forked profile must preserve skills section lock");
+    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert!(err.1.contains("profile_section_locked"));
+    assert!(err.1.contains("skills"));
+
+    let Json(server) = handle_create_mcp_connector(Json(McpConnectorMutationRequest {
+        profile: Some("locked-fork".to_string()),
+        id: "github".to_string(),
+        connector: test_mcp_connector(),
+    }))
+    .await
+    .unwrap();
+    assert_eq!(server["editable"], serde_json::json!(true));
 }
 
 #[tokio::test]
