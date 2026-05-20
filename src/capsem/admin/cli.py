@@ -26,13 +26,15 @@ from capsem.builder.manifest_check import (
     check_profile_manifest_fast,
     dump_manifest_check_report_json,
 )
+from capsem.builder.manifest_generate import generate_profile_manifest
 from capsem.builder.profiles import (
+    ProfilePayloadV2,
     ProfileType,
     create_profile_draft,
+    dump_manifest_json,
     dump_profile_json,
-    dump_profile_toml,
-    ProfilePayloadV2,
     dump_profile_schema_json,
+    dump_profile_toml,
     validate_profile_json,
     validate_profile_toml,
 )
@@ -527,6 +529,85 @@ def manifest_check(
 
     if not report.ok:
         raise SystemExit(1)
+
+
+def _parse_manifest_status_overrides(values: tuple[str, ...]) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise click.ClickException("--status must use profile@revision=status")
+        key, status = value.split("=", 1)
+        if "@" not in key:
+            raise click.ClickException("--status must use profile@revision=status")
+        overrides[key] = status
+    return overrides
+
+
+def _parse_manifest_current_overrides(values: tuple[str, ...]) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise click.ClickException("--current must use profile=revision")
+        profile_id, revision = value.split("=", 1)
+        overrides[profile_id] = revision
+    return overrides
+
+
+@manifest.command("generate")
+@click.option(
+    "--profiles",
+    "profiles_dir",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Directory containing Profile V2 JSON/TOML payloads.",
+)
+@click.option(
+    "--base-url",
+    default=None,
+    help="Base URL for generated profile payload URLs. Defaults to file:// URLs.",
+)
+@click.option(
+    "--status",
+    "status_overrides",
+    multiple=True,
+    help="Revision status override as profile@revision=active|deprecated|revoked.",
+)
+@click.option(
+    "--current",
+    "current_overrides",
+    multiple=True,
+    help="Current revision override as profile=revision.",
+)
+@click.option("--out", "output_path", default=None, type=click.Path(dir_okay=False))
+@click.option("--force", is_flag=True, help="Overwrite --out if it already exists.")
+def manifest_generate(
+    profiles_dir: str,
+    base_url: str | None,
+    status_overrides: tuple[str, ...],
+    current_overrides: tuple[str, ...],
+    output_path: str | None,
+    force: bool,
+) -> None:
+    """Generate a Profile V2 catalog manifest from local profile payloads."""
+    try:
+        manifest_payload = generate_profile_manifest(
+            Path(profiles_dir),
+            base_url=base_url,
+            status_overrides=_parse_manifest_status_overrides(status_overrides),
+            current_overrides=_parse_manifest_current_overrides(current_overrides),
+        )
+        payload = dump_manifest_json(manifest_payload)
+    except (ValidationError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+
+    path = Path(output_path) if output_path is not None else None
+    if path is None:
+        click.echo(payload)
+        return
+    if path.exists() and not force:
+        raise click.ClickException(f"{path} already exists; pass --force to overwrite")
+    path.write_text(payload + ("" if payload.endswith("\n") else "\n"), encoding="utf-8")
+    click.echo(f"created {path}")
 
 
 @settings.command("doctor")

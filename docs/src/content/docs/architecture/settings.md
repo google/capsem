@@ -89,6 +89,7 @@ capsem-admin profile validate corp-dev.profile.json
 capsem-admin profile validate corp-dev.profile.json --json
 capsem-admin image plan corp-dev.profile.toml --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
+capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
 capsem-admin manifest check manifest.json --fast --json
 capsem-admin manifest check manifest.json --download --download-dir downloaded/ --json
 ```
@@ -112,6 +113,12 @@ signature, VM asset, and VM asset signature, then verifies profile payload
 hashes plus profile-declared VM asset sizes and BLAKE3 hashes. Signature bytes
 are downloaded and required to be present; cryptographic signing/verification is
 tracked separately from the byte-completeness check.
+
+`manifest generate` creates the Profile V2 catalog manifest from local JSON or
+TOML profile payloads. It hashes the exact payload bytes that will be published,
+derives `.minisig` URLs, chooses the newest active revision as current unless
+overridden with `--current profile=revision`, and supports
+`--status profile@revision=deprecated|revoked` for lifecycle planning.
 
 Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
 config, asset-manifest settings, and ad hoc builder settings are not runtime

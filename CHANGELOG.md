@@ -130,6 +130,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   referenced profile payload, profile signature, VM asset, and VM asset
   signature into a temp or explicit download directory, verifying profile
   payload hashes and profile-declared VM asset sizes and BLAKE3 hashes.
+- Added `capsem-admin manifest generate --profiles <dir>` to produce typed
+  Profile V2 catalog manifests from local JSON/TOML profile payloads, deriving
+  exact payload hashes, `.minisig` URLs, status/current-revision overrides, and
+  file or hosted profile URLs without hand-authored manifest JSON.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks
