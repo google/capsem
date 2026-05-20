@@ -270,7 +270,14 @@ a valid claim -- mark it `[ ]` instead.
     narrowing works for CI shards, and missing selected-arch assets fail closed.
     Verification: `uv run python -m pytest tests/test_image_plan.py
     tests/test_admin_cli.py -q` passed with 26 tests; installed console-script
-    smoke proved JSON and TOML profile inputs produce valid image plans.
+    smoke proved JSON and TOML profile inputs produce valid image plans. Fifth
+    slice added `capsem-admin image verify <profile> --assets-dir <dir>` with a
+    typed `capsem.image-verification.v1` report derived from the image plan.
+    The verifier checks local per-arch kernel/initrd/rootfs assets for
+    existence, declared size, and BLAKE3 hash, supports default `--arch all`
+    plus single-arch narrowing, and exits non-zero on missing or mismatched
+    assets. Verification: `uv run python -m pytest tests/test_image_verify.py
+    tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 32 tests.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

@@ -117,6 +117,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem-admin image plan <profile>` to derive a typed image build plan
   from Profile V2 package/tool/VM asset contracts, with `--arch all` by default,
   single-arch narrowing, and fail-closed missing-asset checks.
+- Added `capsem-admin image verify <profile> --assets-dir <dir>` to verify
+  profile-declared local kernel/initrd/rootfs assets by architecture, size, and
+  BLAKE3 hash, with typed `capsem.image-verification.v1` JSON output and
+  non-zero exits on missing or mismatched assets.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks

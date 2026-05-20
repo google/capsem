@@ -88,6 +88,7 @@ capsem-admin profile schema
 capsem-admin profile validate corp-dev.profile.json
 capsem-admin profile validate corp-dev.profile.json --json
 capsem-admin image plan corp-dev.profile.toml --json
+capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
 ```
 
 `profile init` writes a valid JSON or TOML draft for the selected profile id.
@@ -95,7 +96,10 @@ The draft uses Profile V2 defaults, includes both release architectures, and
 should be edited before signing or publishing. `image plan` derives a typed
 build plan from the profile's package/tool contract, VM resources, and declared
 per-architecture assets; it defaults to all supported release architectures and
-can be narrowed with `--arch arm64` or `--arch x86_64`.
+can be narrowed with `--arch arm64` or `--arch x86_64`. `image verify` consumes
+the same derived plan and checks local assets under
+`<assets-dir>/<arch>/<asset filename>` for existence, declared byte size, and
+BLAKE3 hash before a manifest or release workflow trusts them.
 
 Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
 config, asset-manifest settings, and ad hoc builder settings are not runtime

@@ -17,6 +17,10 @@ from capsem.builder.image_plan import (
     derive_image_plan,
     dump_image_plan_json,
 )
+from capsem.builder.image_verify import (
+    dump_image_verification_report_json,
+    verify_image_assets,
+)
 from capsem.builder.profiles import (
     ProfileType,
     create_profile_draft,
@@ -390,6 +394,59 @@ def image_plan(profile_path: str, arch: ImageArch, json_output: bool) -> None:
     click.echo("arches: " + ", ".join(item.arch for item in plan.arches))
     click.echo(f"system: {plan.packages.system.distro} {plan.packages.system.release}")
     click.echo(f"tools: {len(plan.tools)}")
+
+
+@image.command("verify")
+@click.argument("profile_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--assets-dir",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Local asset directory laid out as <assets-dir>/<arch>/<asset filename>.",
+)
+@click.option(
+    "--arch",
+    "arch",
+    default="all",
+    type=click.Choice(["all", "arm64", "x86_64"]),
+    show_default=True,
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit a typed verification report.",
+)
+def image_verify(
+    profile_path: str,
+    assets_dir: str,
+    arch: ImageArch,
+    json_output: bool,
+) -> None:
+    """Verify profile-declared image assets in a local asset directory."""
+    try:
+        profile = _load_profile(Path(profile_path))
+        plan = derive_image_plan(profile, arch=arch)
+        report = verify_image_assets(plan, Path(assets_dir))
+    except (ValidationError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_image_verification_report_json(report))
+    else:
+        click.echo(f"profile: {report.profile_id}@{report.profile_revision}")
+        click.echo(f"assets dir: {report.assets_dir}")
+        ok_assets = sum(1 for asset in report.assets if asset.ok)
+        click.echo(f"assets: {ok_assets}/{len(report.assets)} ok")
+        for asset in report.assets:
+            if not asset.ok:
+                click.echo(
+                    f"{asset.arch}/{asset.kind}: {asset.failure} {asset.path}",
+                    err=True,
+                )
+
+    if not report.ok:
+        raise SystemExit(1)
 
 
 @settings.command("doctor")

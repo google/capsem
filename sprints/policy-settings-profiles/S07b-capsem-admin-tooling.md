@@ -82,6 +82,23 @@ Fourth slice landed on 2026-05-20:
   tests/test_admin_cli.py -q` passed with 26 tests; installed console-script
   smoke proved JSON and TOML profile inputs produce valid image plans.
 
+Fifth slice landed on 2026-05-20:
+
+- `capsem-admin image verify <profile> --assets-dir <dir>` now emits a typed
+  `capsem.image-verification.v1` report from the same profile-derived image
+  plan.
+- The first verifier slice checks local kernel/initrd/rootfs assets under
+  `<assets-dir>/<arch>/<asset filename>` for existence, declared byte size, and
+  BLAKE3 hash. `--arch all` remains the default, and `--arch arm64` /
+  `--arch x86_64` narrow verification for local debugging or CI shards.
+- Verification fails closed with a non-zero process exit on missing,
+  size-mismatched, or hash-mismatched assets while still emitting machine
+  readable JSON for CI.
+- Remaining image verification scope still includes profile package/tool
+  contract proof, SBOM checks, and in-guest probes against a built image.
+- Verification: `uv run python -m pytest tests/test_image_verify.py
+  tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 32 tests.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -379,8 +396,9 @@ The checker must fail closed for:
       tool contracts, assets, build plans, doctor checks, verification reports,
       and command JSON output. Profile payloads, profile manifests, package/
       tool contracts, assets, settings doctor, validation reports, and profile
-      init drafts have landed; build-plan, image-verify, manifest-check, and
-      richer doctor reports remain.
+      init drafts have landed; build-plan and local asset image-verify reports
+      have landed; manifest-check, package/tool image proof, and richer doctor
+      reports remain.
 - [ ] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
@@ -403,7 +421,9 @@ The checker must fail closed for:
 - [ ] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
 - [ ] Implement full manifest download/verify checks.
-- [ ] Implement image verification against profile package/tool contract.
+- [~] Implement image verification against profile package/tool contract. Local
+      profile-declared asset existence/size/hash verification has landed;
+      package/tool, SBOM, and in-guest image proof remain.
 - [ ] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests.
 - [ ] Update docs and release gates to use `capsem-admin`, including separate
