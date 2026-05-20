@@ -89,6 +89,28 @@ def test_create_service_settings_draft_round_trips_through_json_and_toml(
     assert reparsed_toml == reparsed_json
 
 
+def test_service_settings_toml_json_toml_round_trip_is_canonical(
+    tmp_path: Path,
+) -> None:
+    draft = create_service_settings_draft(
+        default_profile="corp-dev",
+        base_dirs=["/opt/capsem/profiles/base"],
+        corp_dirs=["/opt/capsem/profiles/corp"],
+        user_dirs=["/var/lib/capsem/profiles/user"],
+        assets_dir="/var/lib/capsem/assets",
+    )
+    toml = dump_service_settings_toml(draft)
+
+    settings_path = tmp_path / "service.toml"
+    settings_path.write_text(toml, encoding="utf-8")
+    from_toml = validate_service_settings_toml(settings_path)
+    json_payload = dump_service_settings_json(from_toml)
+    from_json = validate_service_settings_json(json_payload)
+    toml2 = dump_service_settings_toml(from_json)
+
+    assert toml == toml2
+
+
 @pytest.mark.parametrize(
     "fixture_name",
     [
