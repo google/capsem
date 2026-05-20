@@ -21,6 +21,10 @@ from capsem.builder.image_verify import (
     dump_image_verification_report_json,
     verify_image_assets,
 )
+from capsem.builder.manifest_check import (
+    check_profile_manifest_fast,
+    dump_manifest_check_report_json,
+)
 from capsem.builder.profiles import (
     ProfileType,
     create_profile_draft,
@@ -176,6 +180,11 @@ def profile() -> None:
 @cli.group()
 def image() -> None:
     """Derive and verify profile-backed image build plans."""
+
+
+@cli.group()
+def manifest() -> None:
+    """Check and manage signed profile catalog manifests."""
 
 
 @settings.command("schema")
@@ -444,6 +453,62 @@ def image_verify(
                     f"{asset.arch}/{asset.kind}: {asset.failure} {asset.path}",
                     err=True,
                 )
+
+    if not report.ok:
+        raise SystemExit(1)
+
+
+@manifest.command("check")
+@click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--fast", "fast", is_flag=True, help="Run HEAD/local metadata checks.")
+@click.option(
+    "--download",
+    "download",
+    is_flag=True,
+    help="Download and verify every referenced payload and asset. Not implemented yet.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed check report.")
+def manifest_check(
+    manifest_path: str,
+    fast: bool,
+    download: bool,
+    json_output: bool,
+) -> None:
+    """Check a Profile V2 catalog manifest."""
+    if download:
+        raise click.ClickException("manifest check --download is not implemented yet")
+    if not fast:
+        raise click.ClickException("pass --fast for the current manifest check mode")
+
+    try:
+        report = check_profile_manifest_fast(Path(manifest_path))
+    except (ValidationError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_manifest_check_report_json(report))
+    else:
+        checked = sum(len(profile.checks) for profile in report.profiles)
+        failed = sum(
+            1
+            for profile in report.profiles
+            for check in profile.checks
+            if not check.ok
+        )
+        click.echo(f"manifest: {report.manifest_path}")
+        click.echo(f"mode: {report.mode}")
+        click.echo(f"profiles: {len(report.profiles)}")
+        click.echo(f"checks: {checked - failed}/{checked} ok")
+        for profile in report.profiles:
+            for check in profile.checks:
+                if not check.ok:
+                    click.echo(
+                        (
+                            f"{profile.profile_id}@{profile.revision} "
+                            f"{check.kind}: {check.failure} {check.url}"
+                        ),
+                        err=True,
+                    )
 
     if not report.ok:
         raise SystemExit(1)

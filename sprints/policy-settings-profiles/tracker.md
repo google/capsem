@@ -278,6 +278,14 @@ a valid claim -- mark it `[ ]` instead.
     plus single-arch narrowing, and exits non-zero on missing or mismatched
     assets. Verification: `uv run python -m pytest tests/test_image_verify.py
     tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 32 tests.
+    Sixth slice added `capsem-admin manifest check <manifest> --fast` with a
+    typed `capsem.manifest-check.v1` report. The checker validates the Profile
+    V2 catalog manifest through Pydantic, checks remote profile payload and
+    signature URLs with HTTP(S) `HEAD`, verifies local `file://` profile payload
+    BLAKE3 hash plus id/revision parity, and exits non-zero on missing local
+    signatures, hash drift, invalid payloads, unsupported schemes, unexpected
+    profile content types, or remote HTTP errors. Verification: `uv run python
+    -m pytest tests/test_manifest_check.py -q` passed with 4 tests.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

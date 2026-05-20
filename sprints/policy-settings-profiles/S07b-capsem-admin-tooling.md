@@ -99,6 +99,20 @@ Fifth slice landed on 2026-05-20:
 - Verification: `uv run python -m pytest tests/test_image_verify.py
   tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 32 tests.
 
+Sixth slice landed on 2026-05-20:
+
+- `capsem-admin manifest check <manifest> --fast` now emits a typed
+  `capsem.manifest-check.v1` report for the Profile V2 catalog manifest.
+- The fast checker validates the manifest through Pydantic, checks remote
+  HTTP(S) profile payload and signature URLs with `HEAD`, and checks local
+  `file://` profile payloads by BLAKE3 hash plus profile id/revision parity.
+- The checker exits non-zero on missing local signatures, local profile hash
+  drift, remote HTTP errors, unsupported URL schemes, unexpected profile
+  content types, or invalid local profile payloads. `--download` remains
+  explicit but unimplemented until the full byte/signature verifier lands.
+- Verification: `uv run python -m pytest tests/test_manifest_check.py -q`
+  passed with 4 tests.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -397,8 +411,9 @@ The checker must fail closed for:
       and command JSON output. Profile payloads, profile manifests, package/
       tool contracts, assets, settings doctor, validation reports, and profile
       init drafts have landed; build-plan and local asset image-verify reports
-      have landed; manifest-check, package/tool image proof, and richer doctor
-      reports remain.
+      have landed; fast manifest-check reports have landed; manifest-generate,
+      full manifest download/signature checks, package/tool image proof, and
+      richer doctor reports remain.
 - [ ] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
@@ -418,7 +433,7 @@ The checker must fail closed for:
       parsing, validation, normalized accessors, `model_validate_json()` /
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
 - [ ] Remove hand-edited image settings as release-build authority.
-- [ ] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
+- [x] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
 - [ ] Implement full manifest download/verify checks.
 - [~] Implement image verification against profile package/tool contract. Local

@@ -121,6 +121,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile-declared local kernel/initrd/rootfs assets by architecture, size, and
   BLAKE3 hash, with typed `capsem.image-verification.v1` JSON output and
   non-zero exits on missing or mismatched assets.
+- Added `capsem-admin manifest check <manifest> --fast` with typed
+  `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
+  `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`
+  checks, and non-zero exits on missing or mismatched profile payloads or
+  signatures.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks
