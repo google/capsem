@@ -149,6 +149,29 @@ Eighth slice landed on 2026-05-20:
 - Verification: `uv run python -m pytest tests/test_manifest_generate.py -q`
   passed with 4 tests.
 
+Ninth slice landed on 2026-05-20:
+
+- `capsem-admin manifest sign <manifest> --key <secret>` now signs Profile V2
+  catalog manifests with the repo-standard `minisign` tool and emits a typed
+  `capsem.manifest-sign.v1` report with `--json`.
+- `capsem-admin manifest verify-signature <manifest> --signature <sig>
+  --pubkey <pubkey>` verifies the signed manifest and emits typed
+  `capsem.manifest-signature-verification.v1` output.
+- `capsem-admin manifest check --download --pubkey <pubkey>` now verifies
+  downloaded profile payload signatures and VM asset signatures after
+  payload/asset byte, size, hash, and id/revision checks pass.
+- Missing `minisign` fails closed with a typed `signature_tool_missing` check
+  result for download verification or a clear CLI error for signing.
+- Linux support is explicit: corp/admin hosts install the distro `minisign`
+  package before signing or cryptographic verification.
+- Verification: `uv run python -m pytest tests/test_manifest_crypto.py
+  tests/test_manifest_generate.py tests/test_manifest_check.py
+  tests/test_profiles.py tests/test_manifest.py tests/test_service_settings.py
+  tests/test_image_plan.py tests/test_image_verify.py tests/test_admin_cli.py
+  -q` passed with 124 tests, including real throwaway minisign key generation,
+  profile/asset signing, manifest signing, valid verification, and bad-signature
+  rejection.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -448,9 +471,10 @@ The checker must fail closed for:
       tool contracts, assets, settings doctor, validation reports, and profile
       init drafts have landed; build-plan and local asset image-verify reports
       have landed; fast manifest-check reports have landed; manifest-generate,
-      profile-manifest generation has landed; cryptographic manifest/profile/
-      asset signature checks, package/tool image proof, and richer doctor
-      reports remain. Full manifest byte/hash download checks have landed.
+      profile-manifest generation has landed; minisign-backed manifest signing,
+      manifest signature verification, and profile/asset signature verification
+      have landed; package/tool image proof and richer doctor reports remain.
+      Full manifest byte/hash download checks have landed.
 - [ ] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
@@ -462,7 +486,7 @@ The checker must fail closed for:
       input authority.
 - [~] Refactor manifest generation/check/sign scripts into importable Python
       library modules. Manifest generate plus fast/download check modules have
-      landed; signing remains.
+      landed; minisign-backed signing and verification have landed.
 - [x] Add profile TOML parser/adapter for admin tooling bound to
       `capsem.profile.v2.schema.json` through shared valid/invalid fixtures and
       Rust/Python conformance tests.

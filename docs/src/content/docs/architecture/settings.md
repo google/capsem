@@ -91,7 +91,9 @@ capsem-admin image plan corp-dev.profile.toml --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
 capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
 capsem-admin manifest check manifest.json --fast --json
-capsem-admin manifest check manifest.json --download --download-dir downloaded/ --json
+capsem-admin manifest check manifest.json --download --download-dir downloaded/ --pubkey profile-sign.pub --json
+capsem-admin manifest sign manifest.json --key manifest-sign.key --out manifest.json.minisig
+capsem-admin manifest verify-signature manifest.json --signature manifest.json.minisig --pubkey manifest-sign.pub --json
 ```
 
 `profile init` writes a valid JSON or TOML draft for the selected profile id.
@@ -110,15 +112,19 @@ and validated against their manifest profile id and revision; HTTP(S) profile
 payload and signature URLs are checked with `HEAD` without downloading bytes.
 `manifest check --download` fetches every referenced profile payload, profile
 signature, VM asset, and VM asset signature, then verifies profile payload
-hashes plus profile-declared VM asset sizes and BLAKE3 hashes. Signature bytes
-are downloaded and required to be present; cryptographic signing/verification is
-tracked separately from the byte-completeness check.
+hashes plus profile-declared VM asset sizes and BLAKE3 hashes. With `--pubkey`,
+it also verifies downloaded profile and VM asset `.minisig` files with
+`minisign`.
 
 `manifest generate` creates the Profile V2 catalog manifest from local JSON or
 TOML profile payloads. It hashes the exact payload bytes that will be published,
 derives `.minisig` URLs, chooses the newest active revision as current unless
 overridden with `--current profile=revision`, and supports
 `--status profile@revision=deprecated|revoked` for lifecycle planning.
+
+`manifest sign` and `manifest verify-signature` use the standard `minisign`
+tool. Linux admins should install the distro package named `minisign` before
+using signing or signature-verification commands.
 
 Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
 config, asset-manifest settings, and ad hoc builder settings are not runtime

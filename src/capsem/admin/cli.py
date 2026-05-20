@@ -26,6 +26,12 @@ from capsem.builder.manifest_check import (
     check_profile_manifest_fast,
     dump_manifest_check_report_json,
 )
+from capsem.builder.manifest_crypto import (
+    dump_manifest_signature_verification_report_json,
+    dump_manifest_sign_report_json,
+    sign_manifest,
+    verify_manifest_signature,
+)
 from capsem.builder.manifest_generate import generate_profile_manifest
 from capsem.builder.profiles import (
     ProfilePayloadV2,
@@ -476,23 +482,34 @@ def image_verify(
     type=click.Path(file_okay=False),
     help="Directory for downloaded payloads and assets. Defaults to a temp directory.",
 )
+@click.option(
+    "--pubkey",
+    "pubkey_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Minisign public key for cryptographic signature verification.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit a typed check report.")
 def manifest_check(
     manifest_path: str,
     fast: bool,
     download: bool,
     download_dir: str | None,
+    pubkey_path: str | None,
     json_output: bool,
 ) -> None:
     """Check a Profile V2 catalog manifest."""
     if fast == download:
         raise click.ClickException("pass exactly one of --fast or --download")
+    if fast and pubkey_path is not None:
+        raise click.ClickException("--pubkey requires --download")
 
     try:
         report = (
             check_profile_manifest_download(
                 Path(manifest_path),
                 download_dir=Path(download_dir) if download_dir is not None else None,
+                pubkey_path=Path(pubkey_path) if pubkey_path is not None else None,
             )
             if download
             else check_profile_manifest_fast(Path(manifest_path))
@@ -608,6 +625,93 @@ def manifest_generate(
         raise click.ClickException(f"{path} already exists; pass --force to overwrite")
     path.write_text(payload + ("" if payload.endswith("\n") else "\n"), encoding="utf-8")
     click.echo(f"created {path}")
+
+
+@manifest.command("sign")
+@click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--key",
+    "key_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Minisign secret key used to sign the manifest.",
+)
+@click.option(
+    "--out",
+    "signature_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Output signature path. Defaults to <manifest>.minisig.",
+)
+@click.option(
+    "--password-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Optional file containing the minisign key password.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed sign report.")
+def manifest_sign(
+    manifest_path: str,
+    key_path: str,
+    signature_path: str | None,
+    password_file: str | None,
+    json_output: bool,
+) -> None:
+    """Sign a Profile V2 catalog manifest with minisign."""
+    try:
+        report = sign_manifest(
+            Path(manifest_path),
+            Path(key_path),
+            signature_path=Path(signature_path) if signature_path is not None else None,
+            password_file=Path(password_file) if password_file is not None else None,
+        )
+    except RuntimeError as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_manifest_sign_report_json(report))
+    else:
+        click.echo(f"signed {report.manifest_path}")
+        click.echo(f"signature: {report.signature_path}")
+
+
+@manifest.command("verify-signature")
+@click.argument("manifest_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--signature",
+    "signature_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Minisign signature for the manifest.",
+)
+@click.option(
+    "--pubkey",
+    "pubkey_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Minisign public key used to verify the manifest signature.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed verify report.")
+def manifest_verify_signature(
+    manifest_path: str,
+    signature_path: str,
+    pubkey_path: str,
+    json_output: bool,
+) -> None:
+    """Verify a Profile V2 catalog manifest minisign signature."""
+    report = verify_manifest_signature(
+        Path(manifest_path),
+        Path(signature_path),
+        Path(pubkey_path),
+    )
+    if json_output:
+        click.echo(dump_manifest_signature_verification_report_json(report))
+    elif report.ok:
+        click.echo(f"verified {report.manifest_path}")
+    else:
+        click.echo(report.message or "manifest signature verification failed", err=True)
+    if not report.ok:
+        raise SystemExit(1)
 
 
 @settings.command("doctor")

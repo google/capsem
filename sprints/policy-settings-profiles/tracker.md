@@ -305,7 +305,18 @@ a valid claim -- mark it `[ ]` instead.
     `--status profile@revision=...`, and `--current profile=revision`
     overrides, and produces manifests immediately checkable by `manifest check
     --fast`. Verification: `uv run python -m pytest
-    tests/test_manifest_generate.py -q` passed with 4 tests.
+    tests/test_manifest_generate.py -q` passed with 4 tests. Ninth slice added
+    minisign-backed `capsem-admin manifest sign`, `manifest verify-signature`,
+    and `manifest check --download --pubkey` cryptographic verification for
+    downloaded profile payload signatures and VM asset signatures. Missing
+    `minisign` fails closed; Linux/corp admin docs now call out installing the
+    distro `minisign` package. Verification: `uv run python -m pytest
+    tests/test_manifest_crypto.py tests/test_manifest_generate.py
+    tests/test_manifest_check.py tests/test_profiles.py tests/test_manifest.py
+    tests/test_service_settings.py tests/test_image_plan.py
+    tests/test_image_verify.py tests/test_admin_cli.py -q` passed with 124
+    tests, including real throwaway minisign key generation, valid
+    profile/asset/manifest signature verification, and bad-signature rejection.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

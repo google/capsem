@@ -22,6 +22,7 @@ from capsem.builder.profiles import (
     validate_profile_json,
     validate_profile_toml,
 )
+from capsem.builder.manifest_crypto import verify_minisign_signature
 
 _ACCEPTABLE_PROFILE_CONTENT_TYPES = {
     "application/json",
@@ -67,6 +68,8 @@ class ManifestUrlCheck(StrictModel):
             "invalid_scheme",
             "size_mismatch",
             "empty_signature",
+            "signature_invalid",
+            "signature_tool_missing",
             "http_error",
             "head_failed",
             "download_failed",
@@ -266,6 +269,8 @@ def _download_signature(
     timeout_seconds: float,
     arch: Literal["arm64", "x86_64"] | None = None,
     asset_kind: Literal["kernel", "initrd", "rootfs"] | None = None,
+    signed_payload_path: Path | None = None,
+    pubkey_path: Path | None = None,
 ) -> ManifestUrlCheck:
     fetched, failure = _fetch_bytes(
         kind,
@@ -303,6 +308,32 @@ def _download_signature(
             failure="empty_signature",
             message="signature payload is empty",
         )
+    if pubkey_path is not None and signed_payload_path is not None:
+        verification = verify_minisign_signature(
+            signed_payload_path,
+            download_path,
+            pubkey_path,
+        )
+        if not verification.ok:
+            return ManifestUrlCheck(
+                kind=kind,
+                url=str(url),
+                scheme=url.scheme,
+                ok=False,
+                arch=arch,
+                asset_kind=asset_kind,
+                download_path=str(download_path),
+                status_code=fetched.status_code,
+                content_length=fetched.content_length,
+                content_type=fetched.content_type,
+                actual_size=len(fetched.payload),
+                failure=(
+                    "signature_tool_missing"
+                    if verification.failure == "tool_missing"
+                    else "signature_invalid"
+                ),
+                message=verification.stderr or verification.stdout,
+            )
     return ManifestUrlCheck(
         kind=kind,
         url=str(url),
@@ -731,6 +762,7 @@ def _profile_download_checks(
     *,
     download_dir: Path,
     timeout_seconds: float,
+    pubkey_path: Path | None = None,
 ) -> list[ManifestProfileCheck]:
     checks: list[ManifestProfileCheck] = []
     for profile_id, manifest_profile in manifest.profiles.items():
@@ -752,6 +784,12 @@ def _profile_download_checks(
                     profile_id=profile_id,
                     revision=revision,
                     timeout_seconds=timeout_seconds,
+                    signed_payload_path=(
+                        Path(payload_check.download_path)
+                        if payload_check.ok and payload_check.download_path is not None
+                        else None
+                    ),
+                    pubkey_path=pubkey_path,
                 ),
             ]
             if profile is not None:
@@ -783,6 +821,13 @@ def _profile_download_checks(
                                 timeout_seconds=timeout_seconds,
                                 arch=arch,
                                 asset_kind=asset_kind,
+                                signed_payload_path=(
+                                    Path(item_checks[-1].download_path)
+                                    if item_checks[-1].ok
+                                    and item_checks[-1].download_path is not None
+                                    else None
+                                ),
+                                pubkey_path=pubkey_path,
                             )
                         )
             checks.append(
@@ -817,6 +862,7 @@ def check_profile_manifest_download(
     *,
     download_dir: Path | None = None,
     timeout_seconds: float = 30.0,
+    pubkey_path: Path | None = None,
 ) -> ManifestCheckReport:
     manifest = validate_manifest_json(manifest_path.read_text(encoding="utf-8"))
     resolved_download_dir = download_dir or Path(
@@ -827,6 +873,7 @@ def check_profile_manifest_download(
         manifest,
         download_dir=resolved_download_dir,
         timeout_seconds=timeout_seconds,
+        pubkey_path=pubkey_path,
     )
     return ManifestCheckReport(
         ok=all(profile.ok for profile in profiles),

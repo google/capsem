@@ -134,6 +134,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Profile V2 catalog manifests from local JSON/TOML profile payloads, deriving
   exact payload hashes, `.minisig` URLs, status/current-revision overrides, and
   file or hosted profile URLs without hand-authored manifest JSON.
+- Added minisign-backed `capsem-admin manifest sign`,
+  `manifest verify-signature`, and `manifest check --download --pubkey`
+  cryptographic verification for downloaded profile payload and VM asset
+  signatures.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks
