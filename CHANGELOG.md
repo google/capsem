@@ -95,6 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service-settings models, Pydantic-only JSON/TOML validation and dump helpers,
   a committed Draft 2020-12 schema artifact, valid/invalid golden fixtures, and
   Rust/Python fixture parity tests.
+- Added the first `capsem-admin settings` commands: schema export,
+  TOML/JSON validation, doctor summaries, typed JSON reports, and focused CLI
+  coverage over the Service Settings V2 contract.
 - Added Rust Profile V2 payload schema validation helpers for JSON and TOML
   payloads backed by the production Draft 2020-12 schema artifact.
 - Changed the signed profile catalog manifest to the canonical

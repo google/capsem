@@ -210,8 +210,15 @@ a valid claim -- mark it `[ ]` instead.
     telemetry/remote-policy/credentials/assets, and Rust/Python fixture parity.
     Verification: `uv run python -m pytest tests/test_service_settings.py -q`
     passed with 11 tests; `cargo test -p capsem-core service_settings_json
-    --lib` passed with 2 tests. Remaining: `capsem-admin settings
-    validate|schema|doctor`, drift tests against Rust defaults, and docs.
+    --lib` passed with 2 tests. Second slice landed `capsem-admin settings
+    schema|validate|doctor`, typed Pydantic JSON reports, TOML/JSON validation,
+    and installed console-script smoke coverage. Verification: `uv run python
+    -m pytest tests/test_admin_cli.py tests/test_service_settings.py -q` passed
+    with 17 tests; `uv run capsem-admin settings validate
+    schemas/fixtures/service-settings-v2-complete.json` and `uv run
+    capsem-admin settings doctor
+    schemas/fixtures/service-settings-v2-complete.json --json` passed.
+    Remaining: drift tests against Rust defaults and docs.
 18. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile/settings tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -462,7 +469,9 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   contract than service settings. Before `capsem-admin` exposes service
   settings, add `capsem.service-settings.v2` JSON Schema Draft 2020-12,
   Pydantic v2 models, valid/invalid fixtures, Rust/Python drift tests, and
-  admin `settings validate/schema/doctor` hooks.
+  admin `settings validate/schema/doctor` hooks. The schema/Pydantic/fixture
+  contract and first `capsem-admin settings` commands have landed; remaining
+  S07d work is Rust-default drift proof and documentation.
 - **S07b is the admin tooling bridge.** The current Python image builder and
   manifest scripts must be unified under a released `capsem-admin` package.
   Profiles become the source of truth for image build plans and manifest

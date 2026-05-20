@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 capsem-builder = "capsem.builder.cli:main"
+capsem-admin = "capsem.admin.cli:main"
 
 [build-system]
 requires = ["hatchling"]

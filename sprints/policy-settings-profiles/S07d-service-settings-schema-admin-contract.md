@@ -20,6 +20,21 @@ First slice landed on 2026-05-20:
   11 tests; `cargo test -p capsem-core service_settings_json --lib` passed with
   2 tests.
 
+Second slice landed on 2026-05-20:
+
+- `pyproject.toml` now installs `capsem-admin` as the public Python admin CLI.
+- `src/capsem/admin/cli.py` adds typed `capsem-admin settings schema`,
+  `capsem-admin settings validate <settings.json|settings.toml> [--json]`, and
+  `capsem-admin settings doctor <settings.json|settings.toml> [--json]`
+  commands.
+- JSON command reports are Pydantic models dumped through
+  `model_dump_json(by_alias=True)` with `schema = capsem.service-settings.v2`.
+- Verification: `uv run python -m pytest tests/test_admin_cli.py
+  tests/test_service_settings.py -q` passed with 17 tests; `uv run
+  capsem-admin settings validate schemas/fixtures/service-settings-v2-complete.json`
+  and `uv run capsem-admin settings doctor
+  schemas/fixtures/service-settings-v2-complete.json --json` both passed.
+
 ## Goal
 
 Bring service settings to the same production-quality contract level as Profile
@@ -128,7 +143,8 @@ runtime `ServiceSettings` contract.
 - Unit/contract: Rust service-settings fixture load/reject tests; Python
   Pydantic model validation/dump tests; schema generation/stability tests.
 - Functional: `capsem-admin settings validate/schema/doctor` against valid and
-  invalid TOML/JSON fixtures.
+  invalid TOML/JSON fixtures; installed console-script smoke for validate,
+  schema, and doctor output.
 - Adversarial: unknown fields, invalid URLs/paths, missing required catalog
   trust fields, malformed credential references, type mismatches, default drift.
 - E2E/VM: not primary; one service-start fixture may be enough if runtime
@@ -141,8 +157,8 @@ runtime `ServiceSettings` contract.
 
 - Service settings have a committed schema artifact and fixtures.
 - Rust and Pydantic validate the same shapes with stable errors.
-- `capsem-admin` has settings validation/schema/doctor coverage or a committed
-  implementation stub with failing tests that S07b consumes immediately.
+- `capsem-admin` has settings validation/schema/doctor coverage that S07b
+  consumes immediately.
 - Docs explain service settings versus profiles.
 - Tracker/MASTER/S07b are synchronized so admin tooling consumes the formal
   settings contract instead of raw dicts.
