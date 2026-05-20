@@ -1,5 +1,8 @@
 """Doctor and setup sentinel tests."""
 
+import subprocess
+import tomllib
+
 import pytest
 
 from pathlib import Path
@@ -44,3 +47,30 @@ class TestDevSetup:
 
     def test_cargo_toml_exists(self):
         assert (PROJECT_ROOT / "Cargo.toml").exists()
+
+    def test_pyproject_exposes_capsem_admin_script(self):
+        pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+
+        scripts = pyproject["project"]["scripts"]
+        assert scripts["capsem-admin"] == "capsem.admin.cli:main"
+
+    def test_bootstrap_smokes_capsem_admin_after_uv_sync(self):
+        bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
+
+        assert "uv run capsem-admin --version" in bootstrap
+        assert bootstrap.index("uv sync") < bootstrap.index(
+            "uv run capsem-admin --version"
+        )
+
+    def test_capsem_admin_entrypoint_runs_from_uv_environment(self):
+        result = subprocess.run(
+            ["uv", "run", "capsem-admin", "--version"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "capsem-admin" in result.stdout

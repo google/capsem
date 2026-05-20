@@ -317,6 +317,12 @@ a valid claim -- mark it `[ ]` instead.
     tests/test_image_verify.py tests/test_admin_cli.py -q` passed with 124
     tests, including real throwaway minisign key generation, valid
     profile/asset/manifest signature verification, and bad-signature rejection.
+    Tenth slice added a developer bootstrap proof for `capsem-admin`: after
+    `uv sync`, `bootstrap.sh` runs `uv run capsem-admin --version`; bootstrap
+    tests pin the pyproject script entry point, smoke ordering, and real uv
+    entrypoint execution. Verification: `uv run python -m pytest
+    tests/capsem-bootstrap/test_dev_setup.py -q` passed with 8 tests and 1
+    existing setup-sentinel skip.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

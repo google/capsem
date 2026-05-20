@@ -172,6 +172,19 @@ Ninth slice landed on 2026-05-20:
   profile/asset signing, manifest signing, valid verification, and bad-signature
   rejection.
 
+Tenth slice landed on 2026-05-20:
+
+- Developer bootstrap now proves `capsem-admin` after `uv sync` by running
+  `uv run capsem-admin --version`.
+- Bootstrap tests now pin the `pyproject.toml` script entry point, the ordering
+  of `uv sync` before the entrypoint smoke, and the real `uv run capsem-admin
+  --version` path.
+- Development docs now state that `uv sync` installs both `capsem-builder` and
+  `capsem-admin` in the editable environment and that bootstrap verifies the
+  admin entrypoint.
+- Verification: `uv run python -m pytest tests/capsem-bootstrap/test_dev_setup.py
+  -q` passed with 8 tests and 1 existing setup-sentinel skip.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -478,7 +491,7 @@ The checker must fail closed for:
 - [ ] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
-- [ ] Add `capsem-admin` package/distribution entry point and bootstrap install
+- [x] Add `capsem-admin` package/distribution entry point and bootstrap install
       wiring.
 - [ ] Update Justfile recipes and shell scripts to use `capsem-admin`, with
       `--arch all` as the default and single-arch overrides for CI shards.
@@ -503,8 +516,9 @@ The checker must fail closed for:
 - [~] Implement image verification against profile package/tool contract. Local
       profile-declared asset existence/size/hash verification has landed;
       package/tool, SBOM, and in-guest image proof remain.
-- [ ] Add packaged-install proof for `capsem-admin` in bootstrap and release
-      tests.
+- [~] Add packaged-install proof for `capsem-admin` in bootstrap and release
+      tests. Developer bootstrap proof has landed; release packaged-layout proof
+      remains.
 - [ ] Update docs and release gates to use `capsem-admin`, including separate
       enterprise PyPI install/usage docs and developer editable-install/
       internals docs.

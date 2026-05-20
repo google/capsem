@@ -42,8 +42,8 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 1 (hard prereqs) | `bash`, `git`, `curl` | system package manager (you install) | Without curl we can't fetch any installer |
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` official installer | Source of `cargo` |
 | 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
-| 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
-| 2 | Python deps | `uv sync` | Locked via `uv.lock` |
+| 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` and `capsem-admin` |
+| 2 | Python deps and admin CLI | `uv sync`, then `uv run capsem-admin --version` | Locked via `uv.lock`; proves the editable developer `capsem-admin` entrypoint is installed |
 | 2 (macOS) | `flock`, `minisign`, `pnpm` | `brew` | flock = multi-agent recipe lock; minisign = local asset manifest signatures; pnpm = frontend deps |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` | Runs Docker; Rosetta enables x86_64 cross-builds |

@@ -102,6 +102,8 @@ fi
 if command -v uv >/dev/null 2>&1; then
     printf "  Python deps (uv sync)...\n"
     uv sync
+    printf "  Python admin CLI (capsem-admin)...\n"
+    uv run capsem-admin --version >/dev/null
 else
     printf "  [SKIP] Python deps (uv not installed -- some just recipes will fail)\n"
 fi
