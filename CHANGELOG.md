@@ -91,6 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Pydantic v2 Profile V2 payload and manifest models for admin tooling,
   including Pydantic-only JSON validation/dumping helpers, TOML-to-Pydantic
   validation, and the canonical `active`/`deprecated`/`revoked` status enum.
+- Added the first Service Settings V2 admin contract slice: Pydantic v2
+  service-settings models, Pydantic-only JSON/TOML validation and dump helpers,
+  a committed Draft 2020-12 schema artifact, valid/invalid golden fixtures, and
+  Rust/Python fixture parity tests.
 - Added Rust Profile V2 payload schema validation helpers for JSON and TOML
   payloads backed by the production Draft 2020-12 schema artifact.
 - Changed the signed profile catalog manifest to the canonical

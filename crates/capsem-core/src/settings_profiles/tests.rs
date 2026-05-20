@@ -16,6 +16,47 @@ fn service_settings_defaults_validate() {
 }
 
 #[test]
+fn service_settings_json_fixture_matches_runtime_contract() {
+    let settings: ServiceSettings = serde_json::from_str(include_str!(
+        "../../../../schemas/fixtures/service-settings-v2-complete.json"
+    ))
+    .unwrap();
+
+    settings.validate().unwrap();
+    assert_eq!(
+        settings.assets.assets_dir.as_deref(),
+        Some(std::path::Path::new("/var/lib/capsem/assets"))
+    );
+    assert_eq!(
+        settings.profile_catalog.manifest_url.as_deref(),
+        Some("https://profiles.example.com/capsem/manifest.json")
+    );
+    assert_eq!(settings.corp_directives[0].operation, CorpDirectiveOperation::Lock);
+}
+
+#[test]
+fn service_settings_json_invalid_fixtures_match_runtime_rejections() {
+    for fixture in [
+        include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-unknown-field.json"),
+        include_str!(
+            "../../../../schemas/fixtures/service-settings-v2-invalid-profile-catalog.json"
+        ),
+        include_str!(
+            "../../../../schemas/fixtures/service-settings-v2-invalid-profile-roots.json"
+        ),
+        include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-telemetry.json"),
+        include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-remote-policy.json"),
+        include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-credential.json"),
+        include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-assets.json"),
+    ] {
+        match serde_json::from_str::<ServiceSettings>(fixture) {
+            Ok(settings) => assert!(settings.validate().is_err()),
+            Err(_) => {}
+        }
+    }
+}
+
+#[test]
 fn service_settings_parse_toml_with_plugins_and_credentials() {
     let settings = ServiceSettings::from_toml_str(
         r#"

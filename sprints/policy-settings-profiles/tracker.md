@@ -202,11 +202,16 @@ a valid claim -- mark it `[ ]` instead.
   assets into an empty cache through `capsem update --assets`, boots a real VM,
   execs inside it, and verifies `capsem info --json` reports the installed
   profile revision pin.
-17. [ ] [S07d - Service settings schema and admin contract](S07d-service-settings-schema-admin-contract.md)
-    -- inserted during the 2026-05-19 regroup. Bring service settings to
-    Profile V2 contract strength before `capsem-admin` and public tooling rely
-    on them: JSON Schema Draft 2020-12, Pydantic v2 models, Rust/Python fixture
-    parity, and `capsem-admin settings validate|schema|doctor` hooks.
+17. [~] [S07d - Service settings schema and admin contract](S07d-service-settings-schema-admin-contract.md)
+    -- started on 2026-05-20. First contract slice landed:
+    `ServiceSettingsV2` Pydantic models, Pydantic-only JSON/TOML helpers,
+    committed `schemas/capsem.service-settings.v2.schema.json`, minimal/complete
+    valid fixtures, invalid fixture coverage for unknown fields/catalog/roots/
+    telemetry/remote-policy/credentials/assets, and Rust/Python fixture parity.
+    Verification: `uv run python -m pytest tests/test_service_settings.py -q`
+    passed with 11 tests; `cargo test -p capsem-core service_settings_json
+    --lib` passed with 2 tests. Remaining: `capsem-admin settings
+    validate|schema|doctor`, drift tests against Rust defaults, and docs.
 18. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile/settings tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image

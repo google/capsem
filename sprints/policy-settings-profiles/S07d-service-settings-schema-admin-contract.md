@@ -2,8 +2,23 @@
 
 ## Status
 
-Not started. Inserted during the 2026-05-19 regroup after S08 exposed that
+In progress. Inserted during the 2026-05-19 regroup after S08 exposed that
 Profile V2 now has a stronger formal contract than service settings.
+
+First slice landed on 2026-05-20:
+
+- `src/capsem/builder/service_settings.py` adds Pydantic v2
+  `ServiceSettingsV2` models and helpers for JSON validation, JSON dumping,
+  TOML-to-Pydantic validation, and schema export.
+- `schemas/capsem.service-settings.v2.schema.json` is generated from the
+  Pydantic model and checked into the repo.
+- `schemas/fixtures/service-settings-v2-*.json` contains minimal/complete valid
+  fixtures plus invalid unknown-field, catalog, root, telemetry, remote-policy,
+  credential, and asset-location fixtures.
+- Verification:
+  `uv run python -m pytest tests/test_service_settings.py -q` passed with
+  11 tests; `cargo test -p capsem-core service_settings_json --lib` passed with
+  2 tests.
 
 ## Goal
 
