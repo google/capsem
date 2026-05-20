@@ -63,9 +63,9 @@ Admin ergonomics follow-up landed on 2026-05-20:
   `--default-profile`, `--assets-dir`, and overwrite protection.
 - TOML output is produced through `tomli-w` from the Pydantic JSON-mode model
   dump, then reparsed through the existing TOML-to-Pydantic validation path in
-  tests.
+  tests. CLI parity tests also prove init JSON matches init TOML after reparsing.
 - Verification: `uv run python -m pytest tests/test_service_settings.py
-  tests/test_admin_cli.py -q` passed with 30 tests.
+  tests/test_admin_cli.py -q` passed with 34 tests.
 
 ## Goal
 

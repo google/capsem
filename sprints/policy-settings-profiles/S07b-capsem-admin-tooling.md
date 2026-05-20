@@ -53,16 +53,17 @@ Second slice landed on 2026-05-20:
 
 Third slice landed on 2026-05-20:
 
-- `capsem-admin profile init <profile-id>` now emits a valid Profile V2 JSON
+- `capsem-admin profile init <profile-id>` now emits a valid Profile V2 JSON or TOML
   draft from the Pydantic model, with optional `--revision`, `--name`,
-  `--description`, `--best-for`, `--profile-type`, `--out`, and `--force`.
+  `--description`, `--best-for`, `--profile-type`, `--format`, `--out`, and
+  `--force`.
 - Drafts include both release architectures by default, placeholder signed VM
   asset URLs/hashes, package/tool contract defaults, security capability
   defaults, and the section-level `editable` map. JSON output uses
   `model_dump_json()`, and tests reparse the draft through
   `model_validate_json()`.
 - Verification: `uv run python -m pytest tests/test_profiles.py
-  tests/test_admin_cli.py -q` passed with 29 tests; installed console-script
+  tests/test_admin_cli.py -q` passed with 36 tests; installed console-script
   smoke for `capsem-admin profile init corp-dev --revision 2026.0520.9`
   produced a valid draft accepted by `capsem-admin profile validate`.
 

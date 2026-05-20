@@ -111,8 +111,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for Profile V2 JSON/TOML payloads, including typed JSON reports with profile
   id and revision.
 - Added `capsem-admin profile init <profile-id>` to emit a valid Profile V2
-  JSON draft through the Pydantic model, with all-architecture VM asset
-  placeholders, package/tool contract defaults, and optional file output.
+  JSON or TOML draft through the Pydantic model, with all-architecture VM asset
+  placeholders, package/tool contract defaults, optional file output, and
+  parity tests proving init JSON matches init TOML after reparsing.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks

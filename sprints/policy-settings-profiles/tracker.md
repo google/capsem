@@ -229,9 +229,10 @@ a valid claim -- mark it `[ ]` instead.
     descriptor schema. Admin ergonomics follow-up added `capsem-admin settings
     init` with Pydantic-generated JSON/TOML drafts, profile-root options,
     `--default-profile`, `--assets-dir`, overwrite protection, and TOML
-    round-trip validation through `tomli-w`. Verification: `uv run python -m
+    round-trip validation through `tomli-w`, plus parity tests proving init
+    JSON matches init TOML after reparsing. Verification: `uv run python -m
     pytest tests/test_service_settings.py tests/test_admin_cli.py -q` passed
-    with 30 tests.
+    with 34 tests.
 18. [~] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- started on 2026-05-20 after S07d closeout. First slice landed
     `capsem-admin profile schema` and `capsem-admin profile validate
@@ -256,11 +257,13 @@ a valid claim -- mark it `[ ]` instead.
     profile schema | rg -n 'editable|mcpServers|security_rules'` confirmed the
     admin schema exposes the editability contract. Third slice added
     `capsem-admin profile init <profile-id>` with Pydantic-generated Profile V2
-    JSON drafts, all-architecture VM asset placeholders, package/tool contract
-    defaults, section editability defaults, optional file output, and overwrite
-    protection. Verification: `uv run python -m pytest tests/test_profiles.py
-    tests/test_admin_cli.py -q` passed with 29 tests; installed console-script
-    smoke proved `profile init` output validates with `profile validate`.
+    JSON/TOML drafts, all-architecture VM asset placeholders, package/tool
+    contract defaults, section editability defaults, optional file output,
+    overwrite protection, and parity tests proving init JSON matches init TOML
+    after reparsing. Verification: `uv run python -m pytest
+    tests/test_profiles.py tests/test_admin_cli.py -q` passed with 36 tests;
+    installed console-script smoke proved `profile init` output validates with
+    `profile validate`.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

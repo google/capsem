@@ -3,9 +3,14 @@ from __future__ import annotations
 from click.testing import CliRunner
 
 from capsem.admin.cli import cli
-from capsem.builder.profiles import validate_profile_json
+from capsem.builder.profiles import (
+    dump_profile_json,
+    validate_profile_json,
+    validate_profile_toml,
+)
 from capsem.builder.service_settings import (
     ServiceSettingsV2,
+    dump_service_settings_json,
     validate_service_settings_json,
     validate_service_settings_toml,
 )
@@ -67,6 +72,32 @@ def test_capsem_admin_settings_init_writes_toml_and_refuses_overwrite(tmp_path) 
 
     assert result.exit_code == 1
     assert "already exists" in result.output
+
+
+def test_capsem_admin_settings_init_json_matches_toml_reparsed_json(tmp_path) -> None:
+    args = [
+        "settings",
+        "init",
+        "--default-profile",
+        "corp-dev",
+        "--base-dir",
+        "/opt/capsem/profiles/base",
+        "--corp-dir",
+        "/opt/capsem/profiles/corp",
+        "--user-dir",
+        "/var/lib/capsem/profiles/user",
+        "--assets-dir",
+        "/var/lib/capsem/assets",
+    ]
+    json_result = CliRunner().invoke(cli, args)
+    toml_result = CliRunner().invoke(cli, [*args, "--format", "toml"])
+    toml_path = tmp_path / "service.toml"
+    toml_path.write_text(toml_result.output, encoding="utf-8")
+    from_toml = validate_service_settings_toml(toml_path)
+
+    assert json_result.exit_code == 0
+    assert toml_result.exit_code == 0
+    assert json_result.output.rstrip("\n") == dump_service_settings_json(from_toml)
 
 
 def test_capsem_admin_settings_init_rejects_invalid_default_profile() -> None:
@@ -137,6 +168,57 @@ def test_capsem_admin_profile_init_writes_file_and_refuses_overwrite(tmp_path) -
 
     assert result.exit_code == 1
     assert "already exists" in result.output
+
+
+def test_capsem_admin_profile_init_writes_toml_and_refuses_overwrite(tmp_path) -> None:
+    output_path = tmp_path / "corp-dev.profile.toml"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "profile",
+            "init",
+            "corp-dev",
+            "--revision",
+            "2026.0520.8",
+            "--out",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"created {output_path}" in result.output
+    profile = validate_profile_toml(output_path)
+    assert profile.id == "corp-dev"
+    assert profile.revision == "2026.0520.8"
+
+    result = CliRunner().invoke(
+        cli,
+        ["profile", "init", "corp-dev", "--out", str(output_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "already exists" in result.output
+
+
+def test_capsem_admin_profile_init_json_matches_toml_reparsed_json(tmp_path) -> None:
+    args = [
+        "profile",
+        "init",
+        "corp-dev",
+        "--revision",
+        "2026.0520.9",
+        "--name",
+        "Corp Dev",
+    ]
+    json_result = CliRunner().invoke(cli, args)
+    toml_result = CliRunner().invoke(cli, [*args, "--format", "toml"])
+    profile_path = tmp_path / "profile.toml"
+    profile_path.write_text(toml_result.output, encoding="utf-8")
+    from_toml = validate_profile_toml(profile_path)
+
+    assert json_result.exit_code == 0
+    assert toml_result.exit_code == 0
+    assert json_result.output.rstrip("\n") == dump_profile_json(from_toml)
 
 
 def test_capsem_admin_profile_init_rejects_invalid_profile_id() -> None:

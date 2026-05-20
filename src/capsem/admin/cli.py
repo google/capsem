@@ -16,6 +16,7 @@ from capsem.builder.profiles import (
     ProfileType,
     create_profile_draft,
     dump_profile_json,
+    dump_profile_toml,
     ProfilePayloadV2,
     dump_profile_schema_json,
     validate_profile_json,
@@ -278,6 +279,13 @@ def profile_schema() -> None:
     type=click.Choice([item.value for item in ProfileType]),
     show_default=True,
 )
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json", "toml"]),
+    default=None,
+    help="Output format. Defaults to --out suffix, or json for stdout.",
+)
 @click.option("--out", "output_path", default=None, type=click.Path(dir_okay=False))
 @click.option("--force", is_flag=True, help="Overwrite --out if it already exists.")
 def profile_init(
@@ -287,6 +295,7 @@ def profile_init(
     description: str | None,
     best_for: str | None,
     profile_type: str,
+    output_format: str | None,
     output_path: str | None,
     force: bool,
 ) -> None:
@@ -300,18 +309,28 @@ def profile_init(
             best_for=best_for,
             profile_type=ProfileType(profile_type),
         )
-        payload = dump_profile_json(draft)
     except ValidationError as error:
         raise click.ClickException(str(error)) from error
 
-    if output_path is None:
-        click.echo(payload)
+    path = Path(output_path) if output_path is not None else None
+    resolved_format = output_format
+    if resolved_format is None:
+        resolved_format = (
+            "toml" if path is not None and path.suffix.lower() == ".toml" else "json"
+        )
+    payload = (
+        dump_profile_toml(draft)
+        if resolved_format == "toml"
+        else dump_profile_json(draft)
+    )
+
+    if path is None:
+        click.echo(payload, nl=not payload.endswith("\n"))
         return
 
-    path = Path(output_path)
     if path.exists() and not force:
         raise click.ClickException(f"{path} already exists; pass --force to overwrite")
-    path.write_text(payload + "\n", encoding="utf-8")
+    path.write_text(payload + ("" if payload.endswith("\n") else "\n"), encoding="utf-8")
     click.echo(f"created {path}")
 
 

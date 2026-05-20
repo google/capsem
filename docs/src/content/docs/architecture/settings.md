@@ -83,14 +83,15 @@ Profile V2 admin commands currently include:
 
 ```bash
 capsem-admin profile init corp-dev --out corp-dev.profile.json
+capsem-admin profile init corp-dev --out corp-dev.profile.toml
 capsem-admin profile schema
 capsem-admin profile validate corp-dev.profile.json
 capsem-admin profile validate corp-dev.profile.json --json
 ```
 
-`profile init` writes a valid JSON draft for the selected profile id. The draft
-uses Profile V2 defaults, includes both release architectures, and should be
-edited before signing or publishing.
+`profile init` writes a valid JSON or TOML draft for the selected profile id.
+The draft uses Profile V2 defaults, includes both release architectures, and
+should be edited before signing or publishing.
 
 Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
 config, asset-manifest settings, and ad hoc builder settings are not runtime
