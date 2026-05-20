@@ -226,7 +226,12 @@ a valid claim -- mark it `[ ]` instead.
     capsem-core service_settings --lib` passed with 21 tests. Closeout docs now
     explain service settings versus profiles, the `capsem.service-settings.v2`
     schema, `capsem-admin settings` usage, and the split from the guest/UI
-    descriptor schema.
+    descriptor schema. Admin ergonomics follow-up added `capsem-admin settings
+    init` with Pydantic-generated JSON/TOML drafts, profile-root options,
+    `--default-profile`, `--assets-dir`, overwrite protection, and TOML
+    round-trip validation through `tomli-w`. Verification: `uv run python -m
+    pytest tests/test_service_settings.py tests/test_admin_cli.py -q` passed
+    with 30 tests.
 18. [~] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- started on 2026-05-20 after S07d closeout. First slice landed
     `capsem-admin profile schema` and `capsem-admin profile validate

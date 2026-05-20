@@ -18,6 +18,7 @@ from typing import Annotated, Any, Literal
 import re
 import tomllib
 
+import tomli_w
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 
@@ -213,6 +214,31 @@ def validate_service_settings_json(payload: str | bytes) -> ServiceSettingsV2:
 
 def dump_service_settings_json(settings: ServiceSettingsV2) -> str:
     return settings.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+
+
+def dump_service_settings_toml(settings: ServiceSettingsV2) -> str:
+    return tomli_w.dumps(
+        settings.model_dump(mode="json", by_alias=True, exclude_none=True)
+    )
+
+
+def create_service_settings_draft(
+    *,
+    default_profile: str = "everyday-work",
+    base_dirs: list[str] | None = None,
+    corp_dirs: list[str] | None = None,
+    user_dirs: list[str] | None = None,
+    assets_dir: str | None = None,
+) -> ServiceSettingsV2:
+    return ServiceSettingsV2(
+        profiles=ProfileRootSettings(
+            base_dirs=base_dirs or ["/Library/Application Support/Capsem/profiles/base"],
+            corp_dirs=corp_dirs or [],
+            user_dirs=user_dirs or _default_user_profile_dirs(),
+            default_profile=default_profile,
+        ),
+        assets=AssetLocationSettings(assets_dir=assets_dir),
+    )
 
 
 def validate_service_settings_toml(path: Path) -> ServiceSettingsV2:

@@ -8,8 +8,10 @@ from pydantic import ValidationError
 
 from capsem.builder.service_settings import (
     ServiceSettingsV2,
+    create_service_settings_draft,
     dump_service_settings_json,
     dump_service_settings_schema_json,
+    dump_service_settings_toml,
     validate_service_settings_json,
     validate_service_settings_toml,
 )
@@ -60,6 +62,31 @@ def test_service_settings_complete_json_enters_and_leaves_through_pydantic() -> 
         "https://profiles.example.com/capsem/manifest.json"
     )
     assert settings.corp_directives[0].operation.value == "lock"
+
+
+def test_create_service_settings_draft_round_trips_through_json_and_toml(
+    tmp_path: Path,
+) -> None:
+    draft = create_service_settings_draft(
+        default_profile="corp-dev",
+        base_dirs=["/opt/capsem/profiles/base"],
+        corp_dirs=["/opt/capsem/profiles/corp"],
+        user_dirs=["/var/lib/capsem/profiles/user"],
+        assets_dir="/var/lib/capsem/assets",
+    )
+    json_payload = dump_service_settings_json(draft)
+    reparsed_json = validate_service_settings_json(json_payload)
+
+    assert reparsed_json.profiles.default_profile == "corp-dev"
+    assert reparsed_json.profiles.base_dirs == ["/opt/capsem/profiles/base"]
+    assert reparsed_json.profiles.corp_dirs == ["/opt/capsem/profiles/corp"]
+    assert reparsed_json.assets.assets_dir == "/var/lib/capsem/assets"
+
+    toml_path = tmp_path / "service.toml"
+    toml_path.write_text(dump_service_settings_toml(draft), encoding="utf-8")
+    reparsed_toml = validate_service_settings_toml(toml_path)
+
+    assert reparsed_toml == reparsed_json
 
 
 @pytest.mark.parametrize(

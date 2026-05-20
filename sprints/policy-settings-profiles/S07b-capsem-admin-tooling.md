@@ -114,6 +114,7 @@ capsem-admin profile validate profile.toml
 capsem-admin profile schema --out schemas/capsem.profile.v2.schema.json
 capsem-admin profile derive-image profile.toml --out build/profile-image/
 
+capsem-admin settings init --out service.toml
 capsem-admin settings validate service.toml
 capsem-admin settings schema --out schemas/capsem.service-settings.v2.schema.json
 capsem-admin settings doctor service.toml

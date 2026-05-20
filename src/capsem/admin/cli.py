@@ -23,7 +23,10 @@ from capsem.builder.profiles import (
 )
 from capsem.builder.service_settings import (
     ServiceSettingsV2,
+    create_service_settings_draft,
     dump_service_settings_schema_json,
+    dump_service_settings_json,
+    dump_service_settings_toml,
     validate_service_settings_json,
     validate_service_settings_toml,
 )
@@ -164,6 +167,79 @@ def profile() -> None:
 def settings_schema() -> None:
     """Print the Service Settings V2 JSON Schema."""
     click.echo(dump_service_settings_schema_json())
+
+
+@settings.command("init")
+@click.option("--default-profile", default="everyday-work", show_default=True)
+@click.option(
+    "--base-dir",
+    "base_dirs",
+    multiple=True,
+    help="Base profile directory. Repeat for multiple directories.",
+)
+@click.option(
+    "--corp-dir",
+    "corp_dirs",
+    multiple=True,
+    help="Corp profile directory. Repeat for multiple directories.",
+)
+@click.option(
+    "--user-dir",
+    "user_dirs",
+    multiple=True,
+    help="User profile directory. Repeat for multiple directories.",
+)
+@click.option("--assets-dir", default=None, help="Local profile VM asset cache directory.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json", "toml"]),
+    default=None,
+    help="Output format. Defaults to --out suffix, or json for stdout.",
+)
+@click.option("--out", "output_path", default=None, type=click.Path(dir_okay=False))
+@click.option("--force", is_flag=True, help="Overwrite --out if it already exists.")
+def settings_init(
+    default_profile: str,
+    base_dirs: tuple[str, ...],
+    corp_dirs: tuple[str, ...],
+    user_dirs: tuple[str, ...],
+    assets_dir: str | None,
+    output_format: str | None,
+    output_path: str | None,
+    force: bool,
+) -> None:
+    """Create a valid Service Settings V2 draft."""
+    try:
+        draft = create_service_settings_draft(
+            default_profile=default_profile,
+            base_dirs=list(base_dirs) or None,
+            corp_dirs=list(corp_dirs) or None,
+            user_dirs=list(user_dirs) or None,
+            assets_dir=assets_dir,
+        )
+    except ValidationError as error:
+        raise click.ClickException(str(error)) from error
+
+    path = Path(output_path) if output_path is not None else None
+    resolved_format = output_format
+    if resolved_format is None:
+        resolved_format = (
+            "toml" if path is not None and path.suffix.lower() == ".toml" else "json"
+        )
+    payload = (
+        dump_service_settings_toml(draft)
+        if resolved_format == "toml"
+        else dump_service_settings_json(draft)
+    )
+
+    if path is None:
+        click.echo(payload, nl=not payload.endswith("\n"))
+        return
+    if path.exists() and not force:
+        raise click.ClickException(f"{path} already exists; pass --force to overwrite")
+    path.write_text(payload + ("" if payload.endswith("\n") else "\n"), encoding="utf-8")
+    click.echo(f"created {path}")
 
 
 @settings.command("validate")

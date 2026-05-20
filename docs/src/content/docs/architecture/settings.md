@@ -62,12 +62,18 @@ parsed once and immediately validated through the same Pydantic model.
 The supported admin commands are:
 
 ```bash
+capsem-admin settings init --out service.toml
 capsem-admin settings schema
 capsem-admin settings validate service.toml
 capsem-admin settings validate service.toml --json
 capsem-admin settings doctor service.toml
 capsem-admin settings doctor service.toml --json
 ```
+
+`settings init` writes a valid JSON or TOML draft from the typed
+`ServiceSettingsV2` model. Use `--base-dir`, `--corp-dir`, `--user-dir`,
+`--default-profile`, and `--assets-dir` to seed the service control plane
+without hand-authoring the initial shape.
 
 `settings doctor` reports the schema id, default profile, profile-catalog
 configuration, telemetry state, remote-policy state, and credential backend

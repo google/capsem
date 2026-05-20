@@ -8,6 +8,7 @@ dependencies = [
     "jinja2>=3.0",
     "blake3>=1.0.8",
     "zstandard>=0.25.0",
+    "tomli-w>=1.0",
 ]
 
 [project.scripts]

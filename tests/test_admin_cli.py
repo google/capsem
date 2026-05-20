@@ -4,7 +4,11 @@ from click.testing import CliRunner
 
 from capsem.admin.cli import cli
 from capsem.builder.profiles import validate_profile_json
-from capsem.builder.service_settings import ServiceSettingsV2
+from capsem.builder.service_settings import (
+    ServiceSettingsV2,
+    validate_service_settings_json,
+    validate_service_settings_toml,
+)
 
 
 def test_capsem_admin_settings_schema_outputs_service_settings_schema() -> None:
@@ -13,6 +17,64 @@ def test_capsem_admin_settings_schema_outputs_service_settings_schema() -> None:
     assert result.exit_code == 0
     assert '"title": "ServiceSettingsV2"' in result.output
     assert '"$defs"' in result.output
+
+
+def test_capsem_admin_settings_init_outputs_valid_json_settings() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "settings",
+            "init",
+            "--default-profile",
+            "corp-dev",
+            "--base-dir",
+            "/opt/capsem/profiles/base",
+            "--user-dir",
+            "/var/lib/capsem/profiles/user",
+        ],
+    )
+
+    assert result.exit_code == 0
+    settings = validate_service_settings_json(result.output)
+    assert settings.profiles.default_profile == "corp-dev"
+    assert settings.profiles.base_dirs == ["/opt/capsem/profiles/base"]
+    assert settings.profiles.user_dirs == ["/var/lib/capsem/profiles/user"]
+
+
+def test_capsem_admin_settings_init_writes_toml_and_refuses_overwrite(tmp_path) -> None:
+    output_path = tmp_path / "service.toml"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "settings",
+            "init",
+            "--default-profile",
+            "corp-dev",
+            "--corp-dir",
+            "/opt/capsem/profiles/corp",
+            "--out",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"created {output_path}" in result.output
+    settings = validate_service_settings_toml(output_path)
+    assert settings.profiles.default_profile == "corp-dev"
+    assert settings.profiles.corp_dirs == ["/opt/capsem/profiles/corp"]
+
+    result = CliRunner().invoke(cli, ["settings", "init", "--out", str(output_path)])
+
+    assert result.exit_code == 1
+    assert "already exists" in result.output
+
+
+def test_capsem_admin_settings_init_rejects_invalid_default_profile() -> None:
+    result = CliRunner().invoke(cli, ["settings", "init", "--default-profile", "Bad"])
+
+    assert result.exit_code == 1
+    assert "default_profile" in result.output
+    assert "pattern" in result.output
 
 
 def test_capsem_admin_profile_schema_outputs_profile_schema() -> None:

@@ -55,6 +55,18 @@ Closeout slice landed on 2026-05-20:
   Settings V2 from the older guest/UI descriptor schema and lists the
   cross-runtime fixture/tests that pin drift.
 
+Admin ergonomics follow-up landed on 2026-05-20:
+
+- `capsem-admin settings init` now emits a valid Service Settings V2 draft from
+  the Pydantic model. It supports JSON stdout by default, TOML output when
+  `--out service.toml` or `--format toml` is used, profile-root options,
+  `--default-profile`, `--assets-dir`, and overwrite protection.
+- TOML output is produced through `tomli-w` from the Pydantic JSON-mode model
+  dump, then reparsed through the existing TOML-to-Pydantic validation path in
+  tests.
+- Verification: `uv run python -m pytest tests/test_service_settings.py
+  tests/test_admin_cli.py -q` passed with 30 tests.
+
 ## Goal
 
 Bring service settings to the same production-quality contract level as Profile

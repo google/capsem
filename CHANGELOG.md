@@ -101,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a shared Service Settings V2 defaults fixture checked by both Python
   and Rust, and aligned Python's default user profile roots with the Rust
   `CAPSEM_HOME` / `$HOME/.capsem` path contract.
+- Added `capsem-admin settings init` to emit Pydantic-generated Service
+  Settings V2 JSON or TOML drafts with profile-root options, asset cache
+  selection, overwrite protection, and validation tests.
 - Documented the Service Settings V2 versus Profile V2 boundary, the
   `capsem-admin settings` validation flow, and the split from the guest/UI
   descriptor schema.
