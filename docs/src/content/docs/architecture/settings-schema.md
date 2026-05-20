@@ -5,21 +5,74 @@ sidebar:
   order: 20
 ---
 
-The settings schema is the structural contract between guest TOML configs, the Rust backend, and the TypeScript frontend. Pydantic models in Python are the single source of truth. JSON Schema is generated from them. Three languages -- Python, Rust, TypeScript -- must parse settings identically.
+Capsem has two schema families. Service Settings V2 is the service/app control
+plane contract used by corp admins and `capsem-admin`. The guest/UI descriptor
+schema is the build-time contract for generated setting descriptors and frontend
+rendering. They are intentionally separate.
 
 Key files:
 
 | File | Role |
 |---|---|
-| `src/capsem/builder/schema.py` | Pydantic models (canonical schema) |
-| `config/settings-schema.json` | Generated JSON Schema |
-| `config/defaults.json` | Generated defaults from guest TOML configs |
-| `crates/capsem-core/src/net/policy_config/types.rs` | Rust settings and Policy serde contract |
+| `src/capsem/builder/service_settings.py` | Pydantic Service Settings V2 admin model |
+| `schemas/capsem.service-settings.v2.schema.json` | Generated JSON Schema for `capsem.service-settings.v2` |
+| `schemas/fixtures/service-settings-v2-*.json` | Valid, invalid, and defaults contract fixtures shared with Rust/Python tests |
+| `crates/capsem-core/src/settings_profiles/mod.rs` | Rust `ServiceSettings` runtime model and validation |
+| `src/capsem/admin/cli.py` | `capsem-admin settings schema/validate/doctor` |
+| `src/capsem/builder/schema.py` | Guest/UI descriptor Pydantic models |
+| `config/settings-schema.json` | Guest/UI descriptor JSON Schema |
+| `config/defaults.json` | Generated guest/UI descriptor defaults |
+| `crates/capsem-core/src/net/policy_config/types.rs` | Rust Policy serde contract for generated settings descriptors |
 | `frontend/src/lib/types/settings.ts` | TypeScript settings and Policy wire types |
 | `crates/capsem-core/tests/settings_spec.rs` | Rust conformance tests |
 | `frontend/src/lib/__tests__/settings_spec.test.ts` | TypeScript conformance tests |
 | `tests/test_settings_spec.py` | Python schema + conformance tests |
 | `tests/settings_spec/golden.json` | Golden fixture (shared by all three) |
+
+## Service Settings V2
+
+Service settings configure the service control plane:
+
+| Section | Purpose |
+|---|---|
+| `app` | Host app behavior and appearance defaults |
+| `profiles` | Built-in, corp, and user profile roots plus selected default profile |
+| `assets` | Service asset/cache locations and optional download base URL |
+| `credentials` | Credential backend and credential references |
+| `telemetry` | Export endpoint, headers, retry, redaction, and failure mode |
+| `remote_policy` | Remote policy plugin endpoint, timeout, token reference, and failure behavior |
+| `profile_catalog` | Signed profile catalog URL, payload public key, and check interval |
+| `corp_directives` | Corp-applied profile overrides after profile inheritance |
+
+The schema id is `capsem.service-settings.v2`; the artifact is
+`schemas/capsem.service-settings.v2.schema.json`.
+
+Admin validation is through `capsem-admin`:
+
+```bash
+capsem-admin settings schema
+capsem-admin settings validate service.toml
+capsem-admin settings validate service.toml --json
+capsem-admin settings doctor service.toml --json
+```
+
+JSON input uses Pydantic `model_validate_json()`. JSON output uses
+`model_dump_json()`. TOML is parsed once and immediately validated through the
+same model. Raw nested JSON or TOML dictionaries are not a public admin API.
+
+Cross-runtime drift is pinned by:
+
+| Test | Proof |
+|---|---|
+| `tests/test_service_settings.py` | Python validates/dumps fixtures and checks schema/default stability |
+| `crates/capsem-core/src/settings_profiles/tests.rs` | Rust parses the same fixtures and rejects the same invalid shapes |
+| `schemas/fixtures/service-settings-v2-defaults.json` | Shared defaults contract; Python dumps it and Rust compares it to `ServiceSettings::default()` |
+
+## Guest/UI Descriptor Schema
+
+The remaining sections describe the guest/UI descriptor schema. It is not the
+Service Settings V2 runtime contract and is not a compatibility layer for old
+v1 service settings.
 
 ## Two-Node-Type Design
 

@@ -2,8 +2,8 @@
 
 ## Status
 
-In progress. Inserted during the 2026-05-19 regroup after S08 exposed that
-Profile V2 now has a stronger formal contract than service settings.
+Closed on 2026-05-20. Inserted during the 2026-05-19 regroup after S08 exposed
+that Profile V2 had a stronger formal contract than service settings.
 
 First slice landed on 2026-05-20:
 
@@ -45,6 +45,15 @@ Third slice landed on 2026-05-20:
 - Verification: `uv run python -m pytest tests/test_service_settings.py
   tests/test_admin_cli.py -q` passed with 18 tests; `cargo test -p capsem-core
   service_settings --lib` passed with 21 service-settings tests.
+
+Closeout slice landed on 2026-05-20:
+
+- `docs/src/content/docs/architecture/settings.md` now explains service
+  settings versus profiles, the `capsem.service-settings.v2` contract, and
+  `capsem-admin settings` commands.
+- `docs/src/content/docs/architecture/settings-schema.md` now separates Service
+  Settings V2 from the older guest/UI descriptor schema and lists the
+  cross-runtime fixture/tests that pin drift.
 
 ## Goal
 

@@ -9,6 +9,17 @@ Capsem settings are Profile V2-only. Host state lives in `service.toml` and
 profile TOML files; VM runtime state is a resolved, session-local
 `vm-effective-settings.toml` attachment.
 
+There are two different contracts:
+
+| Contract | Scope | Owned by |
+|---|---|---|
+| Service settings | App/service control plane: profile roots, default profile, catalog source, telemetry export, remote policy plugin config, credential references, and asset/cache locations. | `service.toml` plus `capsem.service-settings.v2` schema |
+| Profiles | VM/session product policy: package and tool assumptions, VM resources, AI providers, MCP servers, skills, security capabilities, and policy rules. | Profile V2 payloads plus signed profile catalog |
+
+Do not put VM/session policy into service settings. Do not put service-wide
+profile roots, telemetry endpoints, or credential backend configuration into a
+profile.
+
 ## Sources
 
 ```mermaid
@@ -26,6 +37,38 @@ flowchart TD
 credential references, and carries corp directives. Profile files describe
 capabilities, AI providers, standard MCP servers, VM resources, and policy
 rules.
+
+## Service Settings V2
+
+Service settings use schema id `capsem.service-settings.v2`. The committed
+schema artifact is:
+
+```text
+schemas/capsem.service-settings.v2.schema.json
+```
+
+The Python admin model is `ServiceSettingsV2` in
+`src/capsem/builder/service_settings.py`. JSON enters through Pydantic
+`model_validate_json()` and JSON leaves through `model_dump_json()`. TOML is
+parsed once and immediately validated through the same Pydantic model.
+
+The supported admin commands are:
+
+```bash
+capsem-admin settings schema
+capsem-admin settings validate service.toml
+capsem-admin settings validate service.toml --json
+capsem-admin settings doctor service.toml
+capsem-admin settings doctor service.toml --json
+```
+
+`settings doctor` reports the schema id, default profile, profile-catalog
+configuration, telemetry state, remote-policy state, and credential backend
+without printing credential values.
+
+Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
+config, asset-manifest settings, and ad hoc builder settings are not runtime
+compatibility inputs.
 
 ## Resolution
 

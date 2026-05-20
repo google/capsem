@@ -65,7 +65,7 @@ order:
    same Profile V2 asset authority.
 3. Run S07d before S07b so service settings have a formal schema, Pydantic v2
    models, Rust/Python fixture parity, and `capsem-admin settings` hooks.
-4. Start S07b only after S07d gives `capsem-admin` both profile and service
+4. Start S07b now that S07d gives `capsem-admin` both profile and service
    settings contracts to consume.
 5. Run S08a before S11/S12/S13/S14/S15 so logging, telemetry, plugins, rule UI,
    and Confirm UX do not freeze the wrong policy/detection abstraction.
@@ -202,8 +202,8 @@ a valid claim -- mark it `[ ]` instead.
   assets into an empty cache through `capsem update --assets`, boots a real VM,
   execs inside it, and verifies `capsem info --json` reports the installed
   profile revision pin.
-17. [~] [S07d - Service settings schema and admin contract](S07d-service-settings-schema-admin-contract.md)
-    -- started on 2026-05-20. First contract slice landed:
+17. [x] [S07d - Service settings schema and admin contract](S07d-service-settings-schema-admin-contract.md)
+    -- closed on 2026-05-20. First contract slice landed:
     `ServiceSettingsV2` Pydantic models, Pydantic-only JSON/TOML helpers,
     committed `schemas/capsem.service-settings.v2.schema.json`, minimal/complete
     valid fixtures, invalid fixture coverage for unknown fields/catalog/roots/
@@ -223,7 +223,10 @@ a valid claim -- mark it `[ ]` instead.
     `service-settings-v2-defaults.json` fixture consumed by Python and Rust.
     Verification: `uv run python -m pytest tests/test_service_settings.py
     tests/test_admin_cli.py -q` passed with 18 tests; `cargo test -p
-    capsem-core service_settings --lib` passed with 21 tests. Remaining: docs.
+    capsem-core service_settings --lib` passed with 21 tests. Closeout docs now
+    explain service settings versus profiles, the `capsem.service-settings.v2`
+    schema, `capsem-admin settings` usage, and the split from the guest/UI
+    descriptor schema.
 18. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile/settings tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -475,8 +478,8 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   settings, add `capsem.service-settings.v2` JSON Schema Draft 2020-12,
   Pydantic v2 models, valid/invalid fixtures, Rust/Python drift tests, and
   admin `settings validate/schema/doctor` hooks. The schema/Pydantic/fixture
-  contract, first `capsem-admin settings` commands, and cross-runtime defaults
-  drift proof have landed; remaining S07d work is documentation.
+  contract, first `capsem-admin settings` commands, cross-runtime defaults
+  drift proof, and closeout docs have landed.
 - **S07b is the admin tooling bridge.** The current Python image builder and
   manifest scripts must be unified under a released `capsem-admin` package.
   Profiles become the source of truth for image build plans and manifest
