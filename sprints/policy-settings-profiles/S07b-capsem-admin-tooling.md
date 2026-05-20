@@ -51,6 +51,21 @@ Second slice landed on 2026-05-20:
   11 tests; `uv run python -m pytest tests/test_profiles.py
   tests/test_admin_cli.py -q` passed with 25 tests.
 
+Third slice landed on 2026-05-20:
+
+- `capsem-admin profile init <profile-id>` now emits a valid Profile V2 JSON
+  draft from the Pydantic model, with optional `--revision`, `--name`,
+  `--description`, `--best-for`, `--profile-type`, `--out`, and `--force`.
+- Drafts include both release architectures by default, placeholder signed VM
+  asset URLs/hashes, package/tool contract defaults, security capability
+  defaults, and the section-level `editable` map. JSON output uses
+  `model_dump_json()`, and tests reparse the draft through
+  `model_validate_json()`.
+- Verification: `uv run python -m pytest tests/test_profiles.py
+  tests/test_admin_cli.py -q` passed with 29 tests; installed console-script
+  smoke for `capsem-admin profile init corp-dev --revision 2026.0520.9`
+  produced a valid draft accepted by `capsem-admin profile validate`.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -335,16 +350,20 @@ The checker must fail closed for:
 
 ## Tasks
 
-- [~] Design `capsem-admin` command tree and JSON report schema. First profile
-      and settings validation/schema report shape has landed.
+- [~] Design `capsem-admin` command tree and JSON report schema. Profile
+      init, profile/settings validation/schema, and settings doctor report
+      shapes have landed.
 - [ ] Add `capsem.profile.v2` JSON Schema Draft 2020-12 export and golden
       fixtures.
 - [ ] Add standard schema tooling dependencies: Rust JSON Schema validation/
       generation tooling chosen in S07a, and no Python `jsonschema` dependency
       in admin workflows unless a later sprint explicitly reopens that choice.
-- [ ] Add Pydantic v2 models for profile payloads, manifest records, package/
+- [~] Add Pydantic v2 models for profile payloads, manifest records, package/
       tool contracts, assets, build plans, doctor checks, verification reports,
-      and command JSON output.
+      and command JSON output. Profile payloads, profile manifests, package/
+      tool contracts, assets, settings doctor, validation reports, and profile
+      init drafts have landed; build-plan, image-verify, manifest-check, and
+      richer doctor reports remain.
 - [ ] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.

@@ -13,6 +13,9 @@ import click
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from capsem.builder.profiles import (
+    ProfileType,
+    create_profile_draft,
+    dump_profile_json,
     ProfilePayloadV2,
     dump_profile_schema_json,
     validate_profile_json,
@@ -185,6 +188,55 @@ def settings_validate(settings_path: str, json_output: bool) -> None:
 def profile_schema() -> None:
     """Print the Profile V2 JSON Schema."""
     click.echo(dump_profile_schema_json())
+
+
+@profile.command("init")
+@click.argument("profile_id")
+@click.option("--revision", default=None, help="Profile revision, for example 2026.0520.1.")
+@click.option("--name", default=None, help="Human-readable profile name.")
+@click.option("--description", default=None, help="Human-readable profile description.")
+@click.option("--best-for", default=None, help="Short operator-facing profile fit summary.")
+@click.option(
+    "--profile-type",
+    default=ProfileType.CODING.value,
+    type=click.Choice([item.value for item in ProfileType]),
+    show_default=True,
+)
+@click.option("--out", "output_path", default=None, type=click.Path(dir_okay=False))
+@click.option("--force", is_flag=True, help="Overwrite --out if it already exists.")
+def profile_init(
+    profile_id: str,
+    revision: str | None,
+    name: str | None,
+    description: str | None,
+    best_for: str | None,
+    profile_type: str,
+    output_path: str | None,
+    force: bool,
+) -> None:
+    """Create a valid Profile V2 JSON draft."""
+    try:
+        draft = create_profile_draft(
+            profile_id,
+            revision=revision,
+            name=name,
+            description=description,
+            best_for=best_for,
+            profile_type=ProfileType(profile_type),
+        )
+        payload = dump_profile_json(draft)
+    except ValidationError as error:
+        raise click.ClickException(str(error)) from error
+
+    if output_path is None:
+        click.echo(payload)
+        return
+
+    path = Path(output_path)
+    if path.exists() and not force:
+        raise click.ClickException(f"{path} already exists; pass --force to overwrite")
+    path.write_text(payload + "\n", encoding="utf-8")
+    click.echo(f"created {path}")
 
 
 @profile.command("validate")

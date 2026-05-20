@@ -12,6 +12,7 @@ from capsem.builder.profiles import (
     ProfileManifest,
     ProfilePayloadV2,
     ProfileRevisionStatus,
+    create_profile_draft,
     dump_manifest_json,
     dump_profile_json,
     validate_manifest_json,
@@ -107,6 +108,24 @@ def test_profile_payload_accepts_section_editability_contract() -> None:
     assert profile.editable.mcp_servers is True
     assert profile.editable.security_rules is False
     assert '"mcpServers": true' in dumped
+
+
+def test_create_profile_draft_round_trips_through_pydantic_json() -> None:
+    draft = create_profile_draft(
+        "corp-dev",
+        revision="2026.0520.9",
+        name="Corp Dev",
+    )
+    payload = dump_profile_json(draft)
+    reparsed = validate_profile_json(payload)
+
+    assert reparsed.id == "corp-dev"
+    assert reparsed.revision == "2026.0520.9"
+    assert reparsed.name == "Corp Dev"
+    assert reparsed.profile_type.value == "coding"
+    assert reparsed.editable.ai is True
+    assert set(reparsed.vm.assets) == {"arm64", "x86_64"}
+    assert reparsed.packages.system.release == "bookworm"
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from click.testing import CliRunner
 
 from capsem.admin.cli import cli
+from capsem.builder.profiles import validate_profile_json
 from capsem.builder.service_settings import ServiceSettingsV2
 
 
@@ -20,6 +21,68 @@ def test_capsem_admin_profile_schema_outputs_profile_schema() -> None:
     assert result.exit_code == 0
     assert '"title": "ProfilePayloadV2"' in result.output
     assert '"capsem.profile.v2"' in result.output
+
+
+def test_capsem_admin_profile_init_outputs_valid_json_profile() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "profile",
+            "init",
+            "corp-dev",
+            "--revision",
+            "2026.0520.7",
+            "--name",
+            "Corp Dev",
+        ],
+    )
+
+    assert result.exit_code == 0
+    profile = validate_profile_json(result.output)
+    assert profile.id == "corp-dev"
+    assert profile.revision == "2026.0520.7"
+    assert profile.name == "Corp Dev"
+    assert profile.editable.mcp_servers is True
+    assert profile.editable.security_rules is True
+    assert set(profile.vm.assets) == {"arm64", "x86_64"}
+
+
+def test_capsem_admin_profile_init_writes_file_and_refuses_overwrite(tmp_path) -> None:
+    output_path = tmp_path / "corp-dev.profile.json"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "profile",
+            "init",
+            "corp-dev",
+            "--revision",
+            "2026.0520.8",
+            "--out",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"created {output_path}" in result.output
+    profile = validate_profile_json(output_path.read_text(encoding="utf-8"))
+    assert profile.id == "corp-dev"
+    assert profile.revision == "2026.0520.8"
+
+    result = CliRunner().invoke(
+        cli,
+        ["profile", "init", "corp-dev", "--out", str(output_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "already exists" in result.output
+
+
+def test_capsem_admin_profile_init_rejects_invalid_profile_id() -> None:
+    result = CliRunner().invoke(cli, ["profile", "init", "Bad"])
+
+    assert result.exit_code == 1
+    assert "id" in result.output
+    assert "pattern" in result.output
 
 
 def test_capsem_admin_settings_validate_accepts_json_fixture() -> None:

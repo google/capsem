@@ -249,7 +249,13 @@ a valid claim -- mark it `[ ]` instead.
     passed with 11 tests; `uv run python -m pytest tests/test_profiles.py
     tests/test_admin_cli.py -q` passed with 25 tests; `uv run capsem-admin
     profile schema | rg -n 'editable|mcpServers|security_rules'` confirmed the
-    admin schema exposes the editability contract.
+    admin schema exposes the editability contract. Third slice added
+    `capsem-admin profile init <profile-id>` with Pydantic-generated Profile V2
+    JSON drafts, all-architecture VM asset placeholders, package/tool contract
+    defaults, section editability defaults, optional file output, and overwrite
+    protection. Verification: `uv run python -m pytest tests/test_profiles.py
+    tests/test_admin_cli.py -q` passed with 29 tests; installed console-script
+    smoke proved `profile init` output validates with `profile validate`.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

@@ -8,6 +8,7 @@ encoded through Pydantic's JSON serializer, then validated as the same payload.
 
 from __future__ import annotations
 
+from datetime import date
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -377,6 +378,151 @@ def dump_profile_schema_json() -> str:
         ref_template="#/$defs/{model}",
     )
     return _RawTomlAdapter.dump_json(schema, indent=2).decode()
+
+
+def default_profile_revision(today: date | None = None) -> str:
+    value = today or date.today()
+    return f"{value:%Y.%m%d}.1"
+
+
+def _placeholder_asset(
+    profile_id: str,
+    revision: str,
+    arch: Literal["arm64", "x86_64"],
+    kind: Literal["kernel", "initrd", "rootfs"],
+    hash_hex: str,
+    size: int,
+    content_type: str,
+) -> AssetDeclaration:
+    return AssetDeclaration(
+        url=(
+            "https://assets.example.invalid/capsem/profiles/"
+            f"{profile_id}/{revision}/{arch}/{kind}"
+        ),
+        hash=f"blake3:{hash_hex}",
+        signature_url=(
+            "https://assets.example.invalid/capsem/profiles/"
+            f"{profile_id}/{revision}/{arch}/{kind}.minisig"
+        ),
+        size=size,
+        content_type=content_type,
+    )
+
+
+def create_profile_draft(
+    profile_id: str,
+    *,
+    revision: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    best_for: str | None = None,
+    profile_type: ProfileType = ProfileType.CODING,
+) -> ProfilePayloadV2:
+    resolved_revision = revision or default_profile_revision()
+    resolved_name = name or profile_id.replace("-", " ").title()
+    resolved_description = description or f"{resolved_name} Profile V2 draft."
+    resolved_best_for = best_for or "Profile-backed Capsem workspaces."
+
+    return ProfilePayloadV2(
+        schema="capsem.profile.v2",
+        version=2,
+        id=profile_id,
+        revision=resolved_revision,
+        name=resolved_name,
+        description=resolved_description,
+        best_for=resolved_best_for,
+        profile_type=profile_type,
+        compatibility=Compatibility(
+            min_binary="1.0.0",
+            guest_abi="capsem-guest-v2",
+        ),
+        editable=ProfileSectionEditability(),
+        vm=VmSettings(
+            memory_mib=8192,
+            cpus=4,
+            disk_mib=32768,
+            network=VmNetworkMode.PROXIED,
+            assets={
+                "arm64": ArchAssets(
+                    kernel=_placeholder_asset(
+                        profile_id,
+                        resolved_revision,
+                        "arm64",
+                        "kernel",
+                        "a" * 64,
+                        1,
+                        "application/octet-stream",
+                    ),
+                    initrd=_placeholder_asset(
+                        profile_id,
+                        resolved_revision,
+                        "arm64",
+                        "initrd",
+                        "b" * 64,
+                        1,
+                        "application/octet-stream",
+                    ),
+                    rootfs=_placeholder_asset(
+                        profile_id,
+                        resolved_revision,
+                        "arm64",
+                        "rootfs",
+                        "c" * 64,
+                        1,
+                        "application/vnd.squashfs",
+                    ),
+                ),
+                "x86_64": ArchAssets(
+                    kernel=_placeholder_asset(
+                        profile_id,
+                        resolved_revision,
+                        "x86_64",
+                        "kernel",
+                        "d" * 64,
+                        1,
+                        "application/octet-stream",
+                    ),
+                    initrd=_placeholder_asset(
+                        profile_id,
+                        resolved_revision,
+                        "x86_64",
+                        "initrd",
+                        "e" * 64,
+                        1,
+                        "application/octet-stream",
+                    ),
+                    rootfs=_placeholder_asset(
+                        profile_id,
+                        resolved_revision,
+                        "x86_64",
+                        "rootfs",
+                        "f" * 64,
+                        1,
+                        "application/vnd.squashfs",
+                    ),
+                ),
+            },
+        ),
+        packages=PackageContract(
+            runtimes={"python": "3.12"},
+            system=SystemPackages(distro="debian", release="bookworm"),
+        ),
+        tools={
+            "capsem_doctor": ToolContract(
+                version="2026.05.20",
+                required=True,
+                source=ToolSource.GUEST,
+            )
+        },
+        security=SecuritySettings(
+            capabilities=SecurityCapabilities(
+                credential_brokerage=CapabilityMode.ASK,
+                network_egress=CapabilityMode.ASK,
+                file_boundaries=CapabilityMode.AUDIT,
+                audit=CapabilityMode.ALLOW,
+            )
+        ),
+    )
 
 
 def validate_manifest_json(payload: str | bytes) -> ProfileManifest:
