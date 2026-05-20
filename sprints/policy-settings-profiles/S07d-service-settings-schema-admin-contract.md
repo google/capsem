@@ -35,6 +35,17 @@ Second slice landed on 2026-05-20:
   and `uv run capsem-admin settings doctor
   schemas/fixtures/service-settings-v2-complete.json --json` both passed.
 
+Third slice landed on 2026-05-20:
+
+- Python `ServiceSettingsV2` now derives default user profile roots from the
+  same `CAPSEM_HOME` / `$HOME/.capsem` contract as Rust instead of using a
+  literal `~/.capsem/profiles` string.
+- `schemas/fixtures/service-settings-v2-defaults.json` is a committed defaults
+  contract fixture used by both Python and Rust.
+- Verification: `uv run python -m pytest tests/test_service_settings.py
+  tests/test_admin_cli.py -q` passed with 18 tests; `cargo test -p capsem-core
+  service_settings --lib` passed with 21 service-settings tests.
+
 ## Goal
 
 Bring service settings to the same production-quality contract level as Profile
@@ -86,6 +97,7 @@ profiles, and public tooling must not manipulate raw nested JSON/TOML blobs.
 - Add `schemas/capsem.service-settings.v2.schema.json`.
 - Add valid and invalid fixtures under `schemas/fixtures/`, including:
   - minimal default-valid settings;
+  - full defaults contract fixture shared by Python and Rust;
   - complete corp deployment settings;
   - invalid unknown field;
   - invalid profile catalog source;
@@ -141,7 +153,8 @@ runtime `ServiceSettings` contract.
 ## Coverage Ledger
 
 - Unit/contract: Rust service-settings fixture load/reject tests; Python
-  Pydantic model validation/dump tests; schema generation/stability tests.
+  Pydantic model validation/dump tests; schema generation/stability tests;
+  cross-runtime defaults fixture.
 - Functional: `capsem-admin settings validate/schema/doctor` against valid and
   invalid TOML/JSON fixtures; installed console-script smoke for validate,
   schema, and doctor output.

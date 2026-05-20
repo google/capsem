@@ -218,7 +218,12 @@ a valid claim -- mark it `[ ]` instead.
     schemas/fixtures/service-settings-v2-complete.json` and `uv run
     capsem-admin settings doctor
     schemas/fixtures/service-settings-v2-complete.json --json` passed.
-    Remaining: drift tests against Rust defaults and docs.
+    Third slice aligned Python's default profile user roots with Rust's
+    `CAPSEM_HOME` / `$HOME/.capsem` contract and added a shared
+    `service-settings-v2-defaults.json` fixture consumed by Python and Rust.
+    Verification: `uv run python -m pytest tests/test_service_settings.py
+    tests/test_admin_cli.py -q` passed with 18 tests; `cargo test -p
+    capsem-core service_settings --lib` passed with 21 tests. Remaining: docs.
 18. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- unify Python builder/manifest/profile/settings tooling under released
     `capsem-admin`; derive images from profiles; remove hand-edited image
@@ -470,8 +475,8 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   settings, add `capsem.service-settings.v2` JSON Schema Draft 2020-12,
   Pydantic v2 models, valid/invalid fixtures, Rust/Python drift tests, and
   admin `settings validate/schema/doctor` hooks. The schema/Pydantic/fixture
-  contract and first `capsem-admin settings` commands have landed; remaining
-  S07d work is Rust-default drift proof and documentation.
+  contract, first `capsem-admin settings` commands, and cross-runtime defaults
+  drift proof have landed; remaining S07d work is documentation.
 - **S07b is the admin tooling bridge.** The current Python image builder and
   manifest scripts must be unified under a released `capsem-admin` package.
   Profiles become the source of truth for image build plans and manifest

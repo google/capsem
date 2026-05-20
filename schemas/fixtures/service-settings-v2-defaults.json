@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "app": {
+    "auto_launch": true,
+    "appearance": {
+      "theme": "system",
+      "accent": "blue"
+    }
+  },
+  "profiles": {
+    "base_dirs": [
+      "/Library/Application Support/Capsem/profiles/base"
+    ],
+    "corp_dirs": [],
+    "user_dirs": [
+      "/tmp/capsem-service-settings-defaults/profiles"
+    ],
+    "default_profile": "everyday-work",
+    "allow_user_profiles": true,
+    "allow_user_fork": true,
+    "allow_user_delete": true
+  },
+  "assets": {
+    "image_roots": []
+  },
+  "credentials": {
+    "backend": "toml",
+    "items": {}
+  },
+  "telemetry": {
+    "enabled": false,
+    "headers": {},
+    "batch_max_events": 128,
+    "flush_interval_ms": 5000,
+    "redact_secrets": true,
+    "retry_attempts": 3,
+    "failure_mode": "drop"
+  },
+  "remote_policy": {
+    "enabled": false,
+    "timeout_ms": 1500,
+    "failure_mode": "fail-closed"
+  },
+  "profile_catalog": {
+    "check_interval_secs": 21600
+  },
+  "corp_directives": []
+}

@@ -12,6 +12,7 @@ encoded through Pydantic's JSON serializer, then validated as the same payload.
 from __future__ import annotations
 
 from enum import Enum
+import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 import re
@@ -29,6 +30,20 @@ NonEmptyStr = Annotated[str, Field(min_length=1)]
 PathStr = Annotated[str, Field(min_length=1)]
 ProfileId = Annotated[str, Field(pattern=_PROFILE_ID_RE.pattern)]
 ConfigId = Annotated[str, Field(pattern=_CONFIG_ID_RE.pattern)]
+
+
+def _default_capsem_home() -> str:
+    capsem_home = os.environ.get("CAPSEM_HOME")
+    if capsem_home:
+        return capsem_home
+    home = os.environ.get("HOME")
+    if home:
+        return str(Path(home) / ".capsem")
+    return ".capsem"
+
+
+def _default_user_profile_dirs() -> list[str]:
+    return [str(Path(_default_capsem_home()) / "profiles")]
 
 
 class StrictModel(BaseModel):
@@ -81,7 +96,7 @@ class ProfileRootSettings(StrictModel):
         default_factory=lambda: ["/Library/Application Support/Capsem/profiles/base"]
     )
     corp_dirs: list[PathStr] = Field(default_factory=list)
-    user_dirs: list[PathStr] = Field(default_factory=lambda: ["~/.capsem/profiles"])
+    user_dirs: list[PathStr] = Field(default_factory=_default_user_profile_dirs)
     default_profile: ProfileId = "everyday-work"
     allow_user_profiles: bool = True
     allow_user_fork: bool = True

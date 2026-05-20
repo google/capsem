@@ -16,6 +16,20 @@ fn service_settings_defaults_validate() {
 }
 
 #[test]
+fn service_settings_defaults_match_committed_python_contract() {
+    let mut expected = ServiceSettings::default();
+    expected.profiles.user_dirs =
+        vec![PathBuf::from("/tmp/capsem-service-settings-defaults/profiles")];
+    let fixture: ServiceSettings = serde_json::from_str(include_str!(
+        "../../../../schemas/fixtures/service-settings-v2-defaults.json"
+    ))
+    .unwrap();
+
+    fixture.validate().unwrap();
+    assert_eq!(fixture, expected);
+}
+
+#[test]
 fn service_settings_json_fixture_matches_runtime_contract() {
     let settings: ServiceSettings = serde_json::from_str(include_str!(
         "../../../../schemas/fixtures/service-settings-v2-complete.json"

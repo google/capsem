@@ -18,6 +18,7 @@ from capsem.builder.service_settings import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = PROJECT_ROOT / "schemas" / "fixtures"
 SCHEMA_PATH = PROJECT_ROOT / "schemas" / "capsem.service-settings.v2.schema.json"
+DEFAULTS_FIXTURE_PATH = FIXTURE_DIR / "service-settings-v2-defaults.json"
 
 
 def test_service_settings_minimal_json_enters_and_leaves_through_pydantic() -> None:
@@ -31,6 +32,20 @@ def test_service_settings_minimal_json_enters_and_leaves_through_pydantic() -> N
     assert settings.version == 1
     assert settings.profiles.default_profile == "everyday-work"
     assert settings.profile_catalog.check_interval_secs == 21600
+
+
+def test_service_settings_defaults_match_committed_rust_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAPSEM_HOME", "/tmp/capsem-service-settings-defaults")
+    settings = ServiceSettingsV2()
+
+    assert dump_service_settings_json(settings) == DEFAULTS_FIXTURE_PATH.read_text(
+        encoding="utf-8"
+    ).rstrip("\n")
+    assert settings.profiles.user_dirs == [
+        "/tmp/capsem-service-settings-defaults/profiles"
+    ]
 
 
 def test_service_settings_complete_json_enters_and_leaves_through_pydantic() -> None:
