@@ -185,6 +185,24 @@ Tenth slice landed on 2026-05-20:
 - Verification: `uv run python -m pytest tests/capsem-bootstrap/test_dev_setup.py
   -q` passed with 8 tests and 1 existing setup-sentinel skip.
 
+Eleventh slice landed on 2026-05-20:
+
+- Release package assembly now treats `capsem-admin` as a two-part packaged
+  payload: a relocatable `capsem-admin` wrapper plus `capsem-admin-python/`
+  containing the installed Python package/dependencies.
+- `scripts/prepare-admin-cli.sh` builds that payload with `uv`, records the
+  Python minor version used for native wheels, self-tests the wrapper with that
+  interpreter, and refuses missing/too-old/mismatched Python instead of falling
+  into system-Python tracebacks.
+- macOS `.pkg`, Linux `.deb`, postinstall, and release workflow paths now fail
+  closed if the admin wrapper or Python payload is missing.
+- Verification: `uv run python -m pytest tests/test_package_scripts.py
+  tests/test_verify_deb_payload.py tests/test_release_workflow_policy.py -q`
+  passed with 37 tests; `uv run python -m pytest tests/test_repack_deb.py -q`
+  skipped 7 Linux-only `dpkg-deb` tests on this macOS host; a real
+  `scripts/prepare-admin-cli.sh` temp-payload smoke plus wrapper `--version`
+  succeeded with the uv interpreter.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -510,15 +528,15 @@ The checker must fail closed for:
 - [ ] Remove hand-edited image settings as release-build authority.
 - [x] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
-- [~] Implement full manifest download/verify checks. Full byte download plus
-      profile-payload and VM-asset hash/size verification has landed;
-      cryptographic signature verification remains.
+- [x] Implement full manifest download/verify checks. Full byte download,
+      profile-payload and VM-asset hash/size verification, and minisign
+      profile/asset signature verification have landed.
 - [~] Implement image verification against profile package/tool contract. Local
       profile-declared asset existence/size/hash verification has landed;
       package/tool, SBOM, and in-guest image proof remain.
-- [~] Add packaged-install proof for `capsem-admin` in bootstrap and release
-      tests. Developer bootstrap proof has landed; release packaged-layout proof
-      remains.
+- [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
+      tests. Developer bootstrap proof and OS package layout/release-policy
+      proof have landed.
 - [ ] Update docs and release gates to use `capsem-admin`, including separate
       enterprise PyPI install/usage docs and developer editable-install/
       internals docs.

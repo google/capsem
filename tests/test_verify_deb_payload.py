@@ -122,7 +122,7 @@ def test_verify_deb_accepts_zstd_payload_without_content_size(tmp_path):
 
 def test_verify_deb_rejects_missing_required_payload(tmp_path):
     deb = tmp_path / "Capsem_1.1.0_amd64.deb"
-    _write_deb(deb, omit="usr/bin/capsem-tray")
+    _write_deb(deb, omit="usr/bin/capsem-admin")
 
     try:
         verify_deb_payload.verify_deb(
@@ -132,7 +132,7 @@ def test_verify_deb_rejects_missing_required_payload(tmp_path):
             minisign_pubkey=None,
         )
     except verify_deb_payload.VerificationError as exc:
-        assert "usr/bin/capsem-tray" in str(exc)
+        assert "usr/bin/capsem-admin" in str(exc)
     else:
         raise AssertionError("missing payload was accepted")
 

@@ -1000,6 +1000,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         eval cargo tauri build --bundles app $TAURI_FLAGS
         echo "=== Signing local asset manifest for package payload ==="
         bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
+        echo "=== Preparing capsem-admin package payload ==="
+        bash scripts/prepare-admin-cli.sh "target/release"
         echo "=== Assembling .pkg (v$VERSION) ==="
         bash scripts/build-pkg.sh \
             "target/release/bundle/macos/Capsem.app" \
@@ -1015,6 +1017,8 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         eval cargo tauri build --bundles deb $TAURI_FLAGS
         echo "=== Signing local asset manifest for package payload ==="
         bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
+        echo "=== Preparing capsem-admin package payload ==="
+        bash scripts/prepare-admin-cli.sh "target/release"
         DEB=$(ls -t target/release/bundle/deb/*.deb | head -1)
         bash scripts/repack-deb.sh "$DEB" "target/release" "{{assets_dir}}"
         echo "=== Installing .deb ==="
@@ -1227,7 +1231,7 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
+        'cd /src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
     echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
         'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'

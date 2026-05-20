@@ -323,6 +323,18 @@ a valid claim -- mark it `[ ]` instead.
     entrypoint execution. Verification: `uv run python -m pytest
     tests/capsem-bootstrap/test_dev_setup.py -q` passed with 8 tests and 1
     existing setup-sentinel skip.
+    Eleventh slice added release package layout proof for `capsem-admin`:
+    `scripts/prepare-admin-cli.sh` produces a relocatable wrapper plus
+    `capsem-admin-python/`, macOS `.pkg` and Linux `.deb` packaging require
+    both pieces, postinstall exposes the wrapper, `.deb` payload verification
+    checks the admin payload, and release workflow policy tests prove the
+    payload is prepared before OS packages are assembled. `uv run python -m
+    pytest tests/test_package_scripts.py tests/test_verify_deb_payload.py
+    tests/test_release_workflow_policy.py -q` passed with 37 tests; `uv run
+    python -m pytest tests/test_repack_deb.py -q` skipped 7 Linux-only
+    `dpkg-deb` tests on this macOS host; real temp-payload
+    `scripts/prepare-admin-cli.sh` smoke plus wrapper `--version` passed with
+    the uv interpreter.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

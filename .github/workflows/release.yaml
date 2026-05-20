@@ -386,6 +386,9 @@ jobs:
             -p capsem-gateway \
             -p capsem-tray
 
+      - name: Prepare capsem-admin package payload
+        run: bash scripts/prepare-admin-cli.sh target/release
+
       - name: Codesign companion binaries
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -587,6 +590,9 @@ jobs:
       - name: Build companion binaries
         run: |
           cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray
+
+      - name: Prepare capsem-admin package payload
+        run: bash scripts/prepare-admin-cli.sh target/release
 
       - name: Repack .deb with companion binaries
         run: |

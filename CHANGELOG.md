@@ -141,6 +141,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a developer bootstrap proof that `uv sync` exposes the `capsem-admin`
   entrypoint and that `uv run capsem-admin --version` succeeds after Python
   dependencies are installed.
+- Added release package layout proof for `capsem-admin`: macOS `.pkg` and
+  Linux `.deb` assembly now require the relocatable admin wrapper plus its
+  packaged Python payload, and release policy tests verify the helper is
+  prepared before OS packages are built.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks

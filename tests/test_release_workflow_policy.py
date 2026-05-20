@@ -195,6 +195,7 @@ def test_linux_deb_contents_validation_checks_each_required_payload():
     assert build_linux, "build-app-linux job missing"
     body = build_linux.group("body")
     assert "python3 scripts/verify_deb_payload.py" in body
+    assert "bash scripts/prepare-admin-cli.sh target/release" in body
     assert "--minisign-pubkey config/manifest-sign.pub" in body
     assert "deb_arch=arm64" in body
     assert "deb_arch=amd64" in body
@@ -207,10 +208,38 @@ def test_linux_deb_contents_validation_checks_each_required_payload():
         "usr/bin/capsem-mcp-builtin",
         "usr/bin/capsem-gateway",
         "usr/bin/capsem-tray",
+        "usr/bin/capsem-admin",
+        "usr/share/capsem/admin-python/capsem/admin/cli.py",
         "usr/share/capsem/assets/manifest.json",
         "usr/share/capsem/assets/manifest.json.minisig",
     ):
         assert payload in verifier
+
+
+def test_release_prepares_packaged_admin_cli_before_os_packages():
+    """Release packaging must include a relocatable capsem-admin payload."""
+    text = _workflow_text()
+    build_macos = re.search(
+        r"(?ms)^  build-app-macos:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert build_macos, "build-app-macos job missing"
+    mac_body = build_macos.group("body")
+    assert "bash scripts/prepare-admin-cli.sh target/release" in mac_body
+    assert mac_body.index("bash scripts/prepare-admin-cli.sh target/release") < mac_body.index(
+        "bash scripts/build-pkg.sh"
+    )
+
+    build_linux = re.search(
+        r"(?ms)^  build-app-linux:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:|\Z)",
+        text,
+    )
+    assert build_linux, "build-app-linux job missing"
+    linux_body = build_linux.group("body")
+    assert "bash scripts/prepare-admin-cli.sh target/release" in linux_body
+    assert linux_body.index("bash scripts/prepare-admin-cli.sh target/release") < linux_body.index(
+        "bash scripts/repack-deb.sh"
+    )
 
 
 def test_macos_pkg_signature_and_gatekeeper_are_release_blocking():

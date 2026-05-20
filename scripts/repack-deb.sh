@@ -18,6 +18,8 @@
 #   /usr/bin/capsem-mcp-builtin
 #   /usr/bin/capsem-gateway
 #   /usr/bin/capsem-tray
+#   /usr/bin/capsem-admin
+#   /usr/share/capsem/admin-python/
 #   /usr/share/capsem/assets/manifest.json{,.minisig} when assets_dir is provided
 #   DEBIAN/postinst script
 set -euo pipefail
@@ -51,7 +53,7 @@ dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$WORK_DIR/deb/usr/bin/$bin"
@@ -62,6 +64,18 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator
         exit 1
     fi
 done
+
+ADMIN_PYTHON_DIR="$BIN_DIR/capsem-admin-python"
+if [ -d "$ADMIN_PYTHON_DIR" ]; then
+    mkdir -p "$WORK_DIR/deb/usr/share/capsem"
+    rm -rf "$WORK_DIR/deb/usr/share/capsem/admin-python"
+    cp -R "$ADMIN_PYTHON_DIR" "$WORK_DIR/deb/usr/share/capsem/admin-python"
+    echo "  Added: capsem-admin-python"
+else
+    echo "  ERROR: capsem-admin Python payload not found: $ADMIN_PYTHON_DIR" >&2
+    echo "         Run scripts/prepare-admin-cli.sh $BIN_DIR before packaging." >&2
+    exit 1
+fi
 
 if [ -n "$ASSETS_DIR" ]; then
     echo "=== Adding signed manifest ==="

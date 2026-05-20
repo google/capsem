@@ -15,6 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 BUILD_PKG = REPO_ROOT / "scripts" / "build-pkg.sh"
 REPACK_DEB = REPO_ROOT / "scripts" / "repack-deb.sh"
+PREPARE_ADMIN_CLI = REPO_ROOT / "scripts" / "prepare-admin-cli.sh"
 PKG_POSTINSTALL = REPO_ROOT / "scripts" / "pkg-scripts" / "postinstall"
 DEB_POSTINST = REPO_ROOT / "scripts" / "deb-postinst.sh"
 
@@ -27,6 +28,7 @@ HOST_BINARIES = [
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
+    "capsem-admin",
 ]
 
 
@@ -36,6 +38,14 @@ def _seed_host_binaries(bin_dir: Path) -> None:
         binary = bin_dir / name
         binary.write_text(f"#!/bin/sh\necho {name}\n")
         binary.chmod(0o755)
+    _seed_admin_python_payload(bin_dir)
+
+
+def _seed_admin_python_payload(bin_dir: Path) -> None:
+    admin_pkg = bin_dir / "capsem-admin-python" / "capsem" / "admin"
+    admin_pkg.mkdir(parents=True)
+    (admin_pkg / "__init__.py").write_text("")
+    (admin_pkg / "cli.py").write_text("def main(): return 0\n")
 
 
 def _seed_assets(assets_dir: Path) -> None:
@@ -77,7 +87,8 @@ test -f "$root/usr/local/share/capsem/assets/manifest.json"
 test -f "$root/usr/local/share/capsem/assets/manifest.json.minisig"
 test -f "$root/usr/local/share/capsem/assets/manifest-sign.dev.pub"
 test -f "$root/usr/local/share/capsem/Capsem.app/Contents/Info.plist"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+test -f "$root/usr/local/share/capsem/admin-python/capsem/admin/cli.py"
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
   test -x "$root/usr/local/share/capsem/bin/$bin"
 done
 mkdir -p "$(dirname "$out")"
@@ -148,7 +159,8 @@ case "$1" in
     test -f "$root/usr/share/capsem/assets/manifest.json"
     test -f "$root/usr/share/capsem/assets/manifest.json.minisig"
     test -f "$root/usr/share/capsem/assets/manifest-sign.dev.pub"
-    for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+    test -f "$root/usr/share/capsem/admin-python/capsem/admin/cli.py"
+    for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
       test -x "$root/usr/bin/$bin"
     done
     printf deb > "$out"
@@ -233,6 +245,82 @@ esac
     assert "assets_dir is not a directory" in result.stderr
     assert not missing_assets_dir.exists()
     assert not output_deb.exists()
+
+
+def test_prepare_admin_cli_builds_relocatable_wrapper_and_python_payload(tmp_path):
+    """Release packaging must use a relocatable wrapper, never a .venv shebang."""
+    tool_dir = _fake_tool_dir(tmp_path)
+    (tool_dir / "uv").write_text(
+        """#!/bin/sh
+set -eu
+if [ "$1" = "run" ] && [ "$2" = "python" ]; then
+  command -v python3
+  exit 0
+fi
+if [ "$1" != "pip" ] || [ "$2" != "install" ]; then
+  echo "unexpected uv args: $*" >&2
+  exit 2
+fi
+shift 2
+target=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --python) shift 2 ;;
+    --target) target="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -z "$target" ]; then
+  echo "missing --target" >&2
+  exit 2
+fi
+mkdir -p "$target/capsem/admin"
+printf '' > "$target/capsem/__init__.py"
+printf '' > "$target/capsem/admin/__init__.py"
+cat > "$target/capsem/admin/cli.py" <<'PY'
+def main():
+    return 0
+PY
+"""
+    )
+    (tool_dir / "python3").write_text(
+        """#!/bin/sh
+set -eu
+if [ "${1:-}" = "-c" ]; then
+  echo "3.11"
+  exit 0
+fi
+case "$PYTHONPATH" in
+  *capsem-admin-python*) exit 0 ;;
+  *) echo "missing packaged python path: $PYTHONPATH" >&2; exit 3 ;;
+esac
+"""
+    )
+    for tool in ("uv", "python3"):
+        (tool_dir / tool).chmod(0o755)
+
+    out_dir = tmp_path / "release-bin"
+    env = os.environ.copy()
+    env["PATH"] = f"{tool_dir}:{env['PATH']}"
+    result = subprocess.run(
+        [str(PREPARE_ADMIN_CLI), str(out_dir)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    wrapper = out_dir / "capsem-admin"
+    assert wrapper.exists()
+    assert os.access(wrapper, os.X_OK)
+    assert (out_dir / "capsem-admin-python" / "capsem" / "admin" / "cli.py").exists()
+    assert (out_dir / "capsem-admin-python" / ".capsem-python-version").read_text() == "3.11\n"
+    text = wrapper.read_text()
+    assert ".venv" not in text
+    assert ".capsem-python-version" in text
+    assert "/usr/local/share/capsem/admin-python" in text
+    assert "/usr/share/capsem/admin-python" in text
 
 
 def test_postinstall_release_critical_commands_fail_loudly():

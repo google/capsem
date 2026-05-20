@@ -33,6 +33,7 @@ REQUIRED_BINARIES = [
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
+    "capsem-admin",
 ]
 
 pytestmark = pytest.mark.skipif(
@@ -74,6 +75,10 @@ def _seed_binaries(bin_dir: Path, which: list[str] = None):
         # bytes, doesn't care about ELF validity.
         path.write_text(f"#!/bin/sh\necho {name} stub\n")
         path.chmod(0o755)
+    admin_pkg = bin_dir / "capsem-admin-python" / "capsem" / "admin"
+    admin_pkg.mkdir(parents=True, exist_ok=True)
+    (admin_pkg / "__init__.py").write_text("")
+    (admin_pkg / "cli.py").write_text("def main(): return 0\n")
 
 
 def _run_repack(input_deb: Path, bin_dir: Path, output_deb: Path = None,

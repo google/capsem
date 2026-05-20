@@ -26,6 +26,8 @@ REQUIRED_PAYLOADS = (
     "usr/bin/capsem-mcp-builtin",
     "usr/bin/capsem-gateway",
     "usr/bin/capsem-tray",
+    "usr/bin/capsem-admin",
+    "usr/share/capsem/admin-python/capsem/admin/cli.py",
     "usr/share/capsem/assets/manifest.json",
     "usr/share/capsem/assets/manifest.json.minisig",
 )

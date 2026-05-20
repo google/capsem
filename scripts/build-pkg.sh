@@ -15,6 +15,7 @@
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
 #   /usr/local/share/capsem/bin/       -- companion binaries
+#   /usr/local/share/capsem/admin-python/ -- capsem-admin Python payload
 #   /usr/local/share/capsem/assets/    -- signed manifest only (heavy assets downloaded on first use)
 #   /usr/local/share/capsem/entitlements.plist
 #
@@ -41,7 +42,7 @@ cp -R "$APP_PATH" "$WORK_DIR/payload/Applications/Capsem.app"
 # Companion binaries
 SHARE_DIR="$WORK_DIR/payload/usr/local/share/capsem"
 mkdir -p "$SHARE_DIR/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$SHARE_DIR/bin/$bin"
@@ -51,6 +52,15 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator
         exit 1
     fi
 done
+
+ADMIN_PYTHON_DIR="$BIN_DIR/capsem-admin-python"
+if [ -d "$ADMIN_PYTHON_DIR" ]; then
+    cp -R "$ADMIN_PYTHON_DIR" "$SHARE_DIR/admin-python"
+else
+    echo "ERROR: capsem-admin Python payload not found: $ADMIN_PYTHON_DIR" >&2
+    echo "       Run scripts/prepare-admin-cli.sh $BIN_DIR before packaging." >&2
+    exit 1
+fi
 
 # Fallback app copy used by postinstall. The package payload also installs
 # /Applications/Capsem.app directly, but postinstall verifies/materializes the
