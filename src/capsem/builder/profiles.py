@@ -16,6 +16,7 @@ import re
 import tomllib
 
 import blake3
+import tomli_w
 from pydantic import (
     AnyUrl,
     BaseModel,
@@ -370,6 +371,12 @@ def validate_profile_json(payload: str | bytes) -> ProfilePayloadV2:
 
 def dump_profile_json(profile: ProfilePayloadV2) -> str:
     return profile.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+
+
+def dump_profile_toml(profile: ProfilePayloadV2) -> str:
+    return tomli_w.dumps(
+        profile.model_dump(mode="json", by_alias=True, exclude_none=True)
+    )
 
 
 def dump_profile_schema_json() -> str:

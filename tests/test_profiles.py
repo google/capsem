@@ -15,6 +15,7 @@ from capsem.builder.profiles import (
     create_profile_draft,
     dump_manifest_json,
     dump_profile_json,
+    dump_profile_toml,
     validate_manifest_json,
     validate_profile_json,
     validate_profile_toml,
@@ -126,6 +127,24 @@ def test_create_profile_draft_round_trips_through_pydantic_json() -> None:
     assert reparsed.editable.ai is True
     assert set(reparsed.vm.assets) == {"arm64", "x86_64"}
     assert reparsed.packages.system.release == "bookworm"
+
+
+def test_profile_toml_json_toml_round_trip_is_canonical(tmp_path: Path) -> None:
+    draft = create_profile_draft(
+        "corp-dev",
+        revision="2026.0520.9",
+        name="Corp Dev",
+    )
+    toml = dump_profile_toml(draft)
+
+    profile_path = tmp_path / "profile.toml"
+    profile_path.write_text(toml, encoding="utf-8")
+    from_toml = validate_profile_toml(profile_path)
+    json_payload = dump_profile_json(from_toml)
+    from_json = validate_profile_json(json_payload)
+    toml2 = dump_profile_toml(from_json)
+
+    assert toml == toml2
 
 
 @pytest.mark.parametrize(
