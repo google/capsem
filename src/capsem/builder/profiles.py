@@ -357,6 +357,14 @@ def dump_profile_json(profile: ProfilePayloadV2) -> str:
     return profile.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
+def dump_profile_schema_json() -> str:
+    schema = TypeAdapter(ProfilePayloadV2).json_schema(
+        by_alias=True,
+        ref_template="#/$defs/{model}",
+    )
+    return _RawTomlAdapter.dump_json(schema, indent=2).decode()
+
+
 def validate_manifest_json(payload: str | bytes) -> ProfileManifest:
     return ProfileManifest.model_validate_json(payload)
 

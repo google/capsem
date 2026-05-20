@@ -227,12 +227,17 @@ a valid claim -- mark it `[ ]` instead.
     explain service settings versus profiles, the `capsem.service-settings.v2`
     schema, `capsem-admin settings` usage, and the split from the guest/UI
     descriptor schema.
-18. [ ] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
-    -- unify Python builder/manifest/profile/settings tooling under released
-    `capsem-admin`; derive images from profiles; remove hand-edited image
-    settings as authority. After S08a finalizes real CEL and the
-    Sigma-compatible detection format, `capsem-admin` also owns typed
-    policy/detection pack validation, schema export, and JSON reports.
+18. [~] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
+    -- started on 2026-05-20 after S07d closeout. First slice landed
+    `capsem-admin profile schema` and `capsem-admin profile validate
+    <profile.json|profile.toml> [--json]`, using the existing Profile V2
+    Pydantic model and typed JSON report output. Verification: `uv run python
+    -m pytest tests/test_admin_cli.py tests/test_profiles.py -q` passed with 24
+    tests; installed console-script smoke for schema, validate, and JSON report
+    passed against `schemas/fixtures/profile-v2-valid.json`. Remaining:
+    profile init, image plan/build/verify, manifest generate/check/sign,
+    bootstrap/release install proof, and policy/detection admin models after
+    S08a.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

@@ -12,6 +12,23 @@ derived from profiles. Hand-edited image settings are removed as an authority.
 No backwards compatibility layer is provided for the old `guest/config`-driven
 admin workflow.
 
+## Status
+
+Started on 2026-05-20 after S07d closed the Service Settings V2 schema/admin
+contract.
+
+First slice landed on 2026-05-20:
+
+- `capsem-admin profile schema` prints the Profile V2 JSON Schema from the
+  existing Pydantic `ProfilePayloadV2` model.
+- `capsem-admin profile validate <profile.json|profile.toml> [--json]`
+  validates Profile V2 payloads through Pydantic JSON/TOML helpers and emits a
+  typed JSON report with profile id and revision for CI.
+- Verification: `uv run python -m pytest tests/test_admin_cli.py
+  tests/test_profiles.py -q` passed with 24 tests; installed console-script
+  smoke for `capsem-admin profile schema`, `profile validate`, and `profile
+  validate --json` passed against `schemas/fixtures/profile-v2-valid.json`.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -296,7 +313,8 @@ The checker must fail closed for:
 
 ## Tasks
 
-- [ ] Design `capsem-admin` command tree and JSON report schema.
+- [~] Design `capsem-admin` command tree and JSON report schema. First profile
+      and settings validation/schema report shape has landed.
 - [ ] Add `capsem.profile.v2` JSON Schema Draft 2020-12 export and golden
       fixtures.
 - [ ] Add standard schema tooling dependencies: Rust JSON Schema validation/
@@ -316,7 +334,7 @@ The checker must fail closed for:
       input authority.
 - [ ] Refactor manifest generation/check/sign scripts into importable Python
       library modules.
-- [ ] Add profile TOML parser/adapter for admin tooling bound to
+- [x] Add profile TOML parser/adapter for admin tooling bound to
       `capsem.profile.v2.schema.json` through shared valid/invalid fixtures and
       Rust/Python conformance tests.
 - [ ] Implement profile-to-image build-plan derivation.

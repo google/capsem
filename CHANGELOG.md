@@ -104,6 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the Service Settings V2 versus Profile V2 boundary, the
   `capsem-admin settings` validation flow, and the split from the guest/UI
   descriptor schema.
+- Added `capsem-admin profile schema` and `capsem-admin profile validate`
+  for Profile V2 JSON/TOML payloads, including typed JSON reports with profile
+  id and revision.
 - Added Rust Profile V2 payload schema validation helpers for JSON and TOML
   payloads backed by the production Draft 2020-12 schema artifact.
 - Changed the signed profile catalog manifest to the canonical
