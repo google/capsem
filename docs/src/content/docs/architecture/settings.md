@@ -90,6 +90,7 @@ capsem-admin profile validate corp-dev.profile.json --json
 capsem-admin image plan corp-dev.profile.toml --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
 capsem-admin manifest check manifest.json --fast --json
+capsem-admin manifest check manifest.json --download --download-dir downloaded/ --json
 ```
 
 `profile init` writes a valid JSON or TOML draft for the selected profile id.
@@ -106,6 +107,11 @@ BLAKE3 hash before a manifest or release workflow trusts them.
 performs cheap reachability checks. Local `file://` profile payloads are hashed
 and validated against their manifest profile id and revision; HTTP(S) profile
 payload and signature URLs are checked with `HEAD` without downloading bytes.
+`manifest check --download` fetches every referenced profile payload, profile
+signature, VM asset, and VM asset signature, then verifies profile payload
+hashes plus profile-declared VM asset sizes and BLAKE3 hashes. Signature bytes
+are downloaded and required to be present; cryptographic signing/verification is
+tracked separately from the byte-completeness check.
 
 Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
 config, asset-manifest settings, and ad hoc builder settings are not runtime

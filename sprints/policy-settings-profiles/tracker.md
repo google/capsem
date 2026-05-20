@@ -286,6 +286,18 @@ a valid claim -- mark it `[ ]` instead.
     signatures, hash drift, invalid payloads, unsupported schemes, unexpected
     profile content types, or remote HTTP errors. Verification: `uv run python
     -m pytest tests/test_manifest_check.py -q` passed with 4 tests.
+    Seventh slice added `capsem-admin manifest check <manifest> --download`
+    with optional `--download-dir`, GET-based download of every referenced
+    profile payload/signature and every profile-declared VM asset/signature,
+    profile payload BLAKE3 hash and id/revision checks, non-empty signature
+    byte checks, and VM asset size/BLAKE3 verification. Fast mode remains
+    HEAD-only; download mode records downloaded paths in the typed report.
+    Remaining manifest scope includes cryptographic signature verification,
+    manifest generation, and manifest signing. Verification: `uv run python -m
+    pytest tests/test_manifest_check.py tests/test_profiles.py
+    tests/test_manifest.py tests/test_service_settings.py tests/test_image_plan.py
+    tests/test_image_verify.py tests/test_admin_cli.py -q` passed with 117
+    tests.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

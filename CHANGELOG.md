@@ -126,6 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`
   checks, and non-zero exits on missing or mismatched profile payloads or
   signatures.
+- Added `capsem-admin manifest check <manifest> --download` to fetch every
+  referenced profile payload, profile signature, VM asset, and VM asset
+  signature into a temp or explicit download directory, verifying profile
+  payload hashes and profile-declared VM asset sizes and BLAKE3 hashes.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks

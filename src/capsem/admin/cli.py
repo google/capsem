@@ -22,6 +22,7 @@ from capsem.builder.image_verify import (
     verify_image_assets,
 )
 from capsem.builder.manifest_check import (
+    check_profile_manifest_download,
     check_profile_manifest_fast,
     dump_manifest_check_report_json,
 )
@@ -465,23 +466,35 @@ def image_verify(
     "--download",
     "download",
     is_flag=True,
-    help="Download and verify every referenced payload and asset. Not implemented yet.",
+    help="Download and verify every referenced profile payload and VM asset.",
+)
+@click.option(
+    "--download-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Directory for downloaded payloads and assets. Defaults to a temp directory.",
 )
 @click.option("--json", "json_output", is_flag=True, help="Emit a typed check report.")
 def manifest_check(
     manifest_path: str,
     fast: bool,
     download: bool,
+    download_dir: str | None,
     json_output: bool,
 ) -> None:
     """Check a Profile V2 catalog manifest."""
-    if download:
-        raise click.ClickException("manifest check --download is not implemented yet")
-    if not fast:
-        raise click.ClickException("pass --fast for the current manifest check mode")
+    if fast == download:
+        raise click.ClickException("pass exactly one of --fast or --download")
 
     try:
-        report = check_profile_manifest_fast(Path(manifest_path))
+        report = (
+            check_profile_manifest_download(
+                Path(manifest_path),
+                download_dir=Path(download_dir) if download_dir is not None else None,
+            )
+            if download
+            else check_profile_manifest_fast(Path(manifest_path))
+        )
     except (ValidationError, ValueError) as error:
         raise click.ClickException(str(error)) from error
 
@@ -497,6 +510,8 @@ def manifest_check(
         )
         click.echo(f"manifest: {report.manifest_path}")
         click.echo(f"mode: {report.mode}")
+        if report.download_dir is not None:
+            click.echo(f"download dir: {report.download_dir}")
         click.echo(f"profiles: {len(report.profiles)}")
         click.echo(f"checks: {checked - failed}/{checked} ok")
         for profile in report.profiles:
