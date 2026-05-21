@@ -71,6 +71,12 @@ class TestDevSetup:
         for agent_dir in [".claude", ".agents", ".gemini", ".codex", ".cursor"]:
             assert agent_dir in bootstrap
 
+    def test_repo_shared_agent_skill_symlinks_point_to_skills_root(self):
+        for agent_dir in [".claude", ".agents", ".gemini", ".codex", ".cursor"]:
+            link = PROJECT_ROOT / agent_dir / "skills"
+            assert link.is_symlink(), f"{agent_dir}/skills should be a symlink"
+            assert link.readlink() == Path("../skills")
+
     def test_capsem_admin_entrypoint_runs_from_uv_environment(self):
         result = subprocess.run(
             ["uv", "run", "capsem-admin", "--version"],

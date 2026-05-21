@@ -89,7 +89,7 @@ skills/
 ```
 
 Categories we use: `meta-*`, `dev-*`, `build-*`, `release-*`, `site-*`,
-`frontend-*`, `admin-*`.
+`frontend-*`.
 
 ## Bundled resources pattern
 
