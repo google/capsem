@@ -99,6 +99,12 @@ capsem-admin manifest check manifest.json --fast --json
 capsem-admin manifest check manifest.json --download --download-dir downloaded/ --pubkey profile-sign.pub --json
 capsem-admin manifest sign manifest.json --key manifest-sign.key --out manifest.json.minisig
 capsem-admin manifest verify-signature manifest.json --signature manifest.json.minisig --pubkey manifest-sign.pub --json
+capsem-admin policy schema
+capsem-admin policy validate corp-policy.toml --json
+capsem-admin detection schema
+capsem-admin detection validate corp-detections.yml --json
+capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
+capsem-admin detection check corp-detections.yml --events events.jsonl --json
 ```
 
 `profile init` writes a valid JSON or TOML draft for the selected profile id.
@@ -142,6 +148,13 @@ overridden with `--current profile=revision`, and supports
 `manifest sign` and `manifest verify-signature` use the standard `minisign`
 tool. Linux admins should install the distro package named `minisign` before
 using signing or signature-verification commands.
+
+Policy packs and detection packs are profile-owned security contracts. Policy
+packs are enforcement rules and detection packs are finding rules. Detection
+packs may contain Sigma YAML, but `capsem-admin detection compile` validates
+that YAML with pySigma and emits `capsem.detection.ir.v1` before Rust runtime
+code consumes it. See [Enforcement](/security/enforcement/) and
+[Detection Format](/security/detection/).
 
 Service settings accept only the V2 shape. Legacy defaults JSON, old v1 policy
 config, asset-manifest settings, and ad hoc builder settings are not runtime

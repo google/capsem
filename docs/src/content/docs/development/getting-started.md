@@ -103,7 +103,20 @@ No Apple Developer ID certificate is needed for local development -- ad-hoc sign
 
 ## Customizing the VM image
 
-To add packages, AI providers, or change security policy, edit the TOML configs in `guest/config/` and rebuild. See [Customizing VM Images](./custom-images) for the workflow.
+To add packages, MCP servers, AI providers, VM assets, policy packs, or
+detection packs, edit a Profile V2 payload and use `uv run capsem-admin` to
+validate and derive the build artifacts. The old hand-edited `guest/config`
+workflow is only a transitional generation input for built-in profiles, not
+the release authority.
+
+```bash
+uv run capsem-admin profile validate config/profiles/base/coding.profile.toml --json
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
+uv run capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
+```
+
+See [Admin CLI](/usage/admin-cli/) and [Development Custom Images](./custom-images)
+for the workflow.
 
 ## API keys (optional)
 

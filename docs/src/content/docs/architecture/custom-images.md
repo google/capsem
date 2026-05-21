@@ -5,21 +5,30 @@ sidebar:
   order: 40
 ---
 
-Capsem images are defined declaratively using TOML configuration files. Organizations can create custom images with their own AI providers, pre-installed packages, MCP servers, and security policies.
+Capsem images are defined by signed Profile V2 payloads. Organizations create
+profiles with their own packages, tools, MCP servers, VM assets, policy packs,
+and detection packs, then use `capsem-admin` to derive build plans, verify
+assets, generate manifests, and sign the catalog.
 
 ## Quick Start
 
 ```bash
-pip install capsem
-capsem-builder init my-corp-image/
-capsem-builder validate my-corp-image/
-capsem-builder build my-corp-image/
+python -m pip install capsem
+capsem-admin profile init corp-dev --out profiles/corp-dev.profile.toml
+capsem-admin profile validate profiles/corp-dev.profile.toml --json
+capsem-admin image build profiles/corp-dev.profile.toml --arch all --json
+capsem-admin image verify profiles/corp-dev.profile.toml --assets-dir assets/ --json
+capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
 ```
 
-## Directory Structure
+The generated build workspace still contains TOML files consumed by the Docker
+templates, but those files are derived artifacts. The profile is the source of
+truth.
+
+## Generated Build Workspace
 
 ```
-my-corp-image/
+build/corp-dev-image/
     config/
         build.toml              Architectures, compression, base images
         ai/
@@ -79,10 +88,12 @@ path = "/root/.claude/settings.json"
 content = '{"permissions":{"defaultMode":"bypassPermissions"}}'
 ```
 
-Add a custom provider:
+Add a custom provider by editing the profile package/tool/provider contract,
+then validate the profile:
 
 ```bash
-capsem-builder add ai-provider my-llm
+capsem-admin profile validate profiles/corp-dev.profile.toml --json
+capsem-admin image plan profiles/corp-dev.profile.toml --json
 ```
 
 ### Package Sets
@@ -226,17 +237,17 @@ The `PATH` is set by the host at boot via the settings registry -- do not set PA
 
 | Command | What it does |
 |---------|-------------|
+| `capsem-admin profile init <id> --out <profile>` | Create a valid Profile V2 draft |
+| `capsem-admin profile validate <profile> --json` | Validate profile JSON/TOML |
 | `capsem-admin image build <profile>` | Build all architectures from a Profile V2 payload |
 | `capsem-admin image build <profile> --arch arm64` | Single architecture |
 | `capsem-admin image build <profile> --dry-run --json` | Preview without building |
-| `capsem-builder validate [DIR]` | Lint configs with diagnostics |
-| `capsem-builder inspect [DIR]` | Render build manifest |
-| `capsem-builder audit` | Vulnerability scan |
-| `capsem-builder init NAME/` | Scaffold new image |
-| `capsem-builder add ai-provider NAME` | Add provider template |
-| `capsem-builder add packages NAME` | Add package set template |
-| `capsem-builder add mcp NAME` | Add MCP server template |
-| `capsem-builder doctor` | Check build prerequisites |
+| `capsem-admin image verify <profile> --assets-dir assets/ --json` | Verify local assets, hashes, and package/tool inventory |
+| `capsem-admin image sbom <profile> --assets-dir assets/ --out-dir sboms/` | Emit guest-image SPDX SBOMs |
+| `capsem-admin manifest generate --profiles profiles/ --out manifest.json` | Build a profile catalog manifest |
+| `capsem-admin manifest check manifest.json --download --pubkey profile-sign.pub --json` | Download and verify profile/assets/signatures |
+| `capsem-admin policy validate <policy-pack> --json` | Validate enforcement policy packs |
+| `capsem-admin detection compile <detection-pack> --out detection.ir.json --json` | Validate Sigma with pySigma and compile Detection IR |
 
 ## Manifest
 
@@ -281,26 +292,27 @@ The runtime boots only when the asset hashes match. `min_binary`/`min_assets` ga
 
 ### Workflow
 
-1. `capsem-builder init corp-image/` -- scaffold from defaults
-2. Remove unwanted providers: delete `config/ai/openai.toml`
-3. Add internal providers: `capsem-builder add ai-provider internal-llm`
-4. Edit security policy: lock down domains in `config/security/web.toml`
-5. Add corporate packages: edit `config/packages/python.toml`
-6. Validate: `capsem-builder validate corp-image/`
-7. Build: `capsem-builder build corp-image/`
-8. Distribute: ship the `assets/` directory
+1. `capsem-admin profile init corp-image --out profiles/corp-image.profile.toml` -- create a typed draft.
+2. Remove unwanted providers, MCP servers, packages, policy packs, or detection packs from the profile.
+3. Add internal providers and package/tool requirements to the profile.
+4. Validate: `capsem-admin profile validate profiles/corp-image.profile.toml --json`.
+5. Build: `capsem-admin image build profiles/corp-image.profile.toml --arch all --json`.
+6. Verify: `capsem-admin image verify profiles/corp-image.profile.toml --assets-dir assets/ --json`.
+7. Generate and sign the profile catalog manifest.
 
 ### Lockdown Example
 
-Remove all AI providers except Anthropic, block external search, allow only internal registries:
+Create a corp profile draft, then keep only the approved providers and security
+packs:
 
 ```bash
-capsem-builder init corp-image/
-rm corp-image/config/ai/google.toml
-rm corp-image/config/ai/openai.toml
+capsem-admin profile init corp-image --out profiles/corp-image.profile.toml
+capsem-admin profile validate profiles/corp-image.profile.toml --json
+capsem-admin policy validate corp-policy.toml --json
+capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
 ```
 
-Edit `corp-image/config/security/web.toml`:
+Policy packs carry blocking rules:
 
 ```toml
 [web]

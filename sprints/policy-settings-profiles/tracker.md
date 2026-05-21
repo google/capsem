@@ -489,6 +489,14 @@ a valid claim -- mark it `[ ]` instead.
     passed with 6 tests; `cargo clippy -p capsem-core --test security_packs --
     -D warnings` passed. Remaining policy/detection admin work: docs/release
     proof.
+    Twenty-seventh slice added corp-facing Admin CLI, Enforcement, and
+    Detection Format docs; the detection docs explicitly require pySigma
+    validation and Detection IR instead of an ad hoc Sigma validator. The docs
+    also distinguish PyPI operator install from editable `uv` development
+    usage. Verification: `uv run python -m pytest tests/test_admin_docs.py -q`
+    passed with 4 tests; `uv run python -m pytest tests/test_admin_docs.py
+    tests/test_security_packs.py -q` passed with 20 tests; docs build passed
+    with `pnpm run build`.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

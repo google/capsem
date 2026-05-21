@@ -64,3 +64,5 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 - [Network Isolation](/security/network-isolation/) -- air-gapped networking and MITM proxy
 - [Virtualization Security](/security/virtualization/) -- VirtioFS sandboxing and hypervisor hardening
 - [Build Verification](/security/build-verification/) -- code signing, notarization, and supply chain
+- [Enforcement](/security/enforcement/) -- profile-owned policy packs and blocking decisions
+- [Detection Format](/security/detection/) -- Sigma-backed detection packs and Detection IR

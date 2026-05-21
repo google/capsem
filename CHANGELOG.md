@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Rust Detection IR V1 schema/serde/evaluator parity fixtures so
   `capsem-core` consumes the same `capsem.detection.ir.v1` artifact emitted by
   `capsem-admin detection compile`.
+- Added corp-facing admin CLI, enforcement, and detection-format docs covering
+  PyPI install, developer editable usage, pySigma validation, Detection IR, and
+  policy/detection command proofs.
 - Added Profile V2 settings/profile provenance to the redacted service debug
   report, including selected profile, profile roots, effective VM summary,
   resolver trace summary, and credential-id-only reporting.

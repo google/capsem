@@ -5,7 +5,14 @@ sidebar:
   order: 15
 ---
 
-The VM image is defined by TOML configs in `guest/config/`. To change what's installed in the VM -- packages, AI providers, MCP servers, security policy -- you edit these configs and rebuild.
+Release VM images are defined by Profile V2 payloads and built through
+`capsem-admin image build`. The TOML configs under `guest/config/` remain a
+developer input for built-in profile generation and the current Docker
+templates; they are not the corporate release authority.
+
+For corp/operator workflows, use [Admin CLI](/usage/admin-cli/) and
+[Custom Images Reference](/architecture/custom-images/). This page is for
+developers editing the repo internals.
 
 ## The config directory
 

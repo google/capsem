@@ -423,6 +423,24 @@ Twenty-sixth slice landed on 2026-05-21:
   passed with 6 tests; `cargo clippy -p capsem-core --test security_packs --
   -D warnings` passed.
 
+Twenty-seventh slice landed on 2026-05-21:
+
+- Corp-facing docs now include a dedicated [Admin CLI](/usage/admin-cli/) page
+  that distinguishes PyPI install for operators from editable `uv` development
+  usage, and lists settings/profile/image/manifest/policy/detection command
+  groups.
+- Security docs now include [Enforcement](/security/enforcement/) and
+  [Detection Format](/security/detection/) pages. The detection page explicitly
+  states that Sigma YAML is parsed and validated with pySigma, then compiled to
+  `capsem.detection.ir.v1` before Rust runtime consumption.
+- Architecture and developer quick-start docs now point users at Profile V2
+  plus `capsem-admin`, rather than hand-edited image settings as release
+  authority.
+- Verification: `uv run python -m pytest tests/test_admin_docs.py -q` passed
+  with 4 tests; `uv run python -m pytest tests/test_admin_docs.py
+  tests/test_security_packs.py -q` passed with 20 tests; docs build passed
+  with `pnpm run build`.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -775,15 +793,15 @@ The checker must fail closed for:
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
-- [ ] Update docs and release gates to use `capsem-admin`, including separate
+- [~] Update docs and release gates to use `capsem-admin`, including separate
       enterprise PyPI install/usage docs and developer editable-install/
-      internals docs.
+      internals docs. Corp admin CLI, enforcement, and detection-format docs
+      have landed; broader S19 site polish remains.
 - [~] Add `capsem-admin policy validate|schema` and
       `capsem-admin detection validate|schema|compile|check` release/docs proof
       before S19 documents enforcement/detection formats as supported corp
       workflows. Validate/schema plus pySigma-backed detection compile/check
-      and Rust Detection IR parity fixtures have landed; release/docs proof
-      remains.
+      and Rust Detection IR parity fixtures have landed; docs proof has landed.
 
 ## Coverage Ledger
 
@@ -801,7 +819,7 @@ The checker must fail closed for:
   policy/detection pack Pydantic/schema tests; Detection IR schema tests;
   pySigma-backed Sigma import/compile tests; detection check report tests;
   Rust Detection IR serde/schema/evaluator parity tests; admin doctor checks;
-  no-hand-edited-settings guard tests.
+  admin docs regression tests; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`;
   `image sbom`; `manifest generate`; `manifest check --fast`;
@@ -809,6 +827,7 @@ The checker must fail closed for:
   `policy validate`; `policy schema`; `detection validate`;
   `detection schema`; `detection compile`; `detection check`;
   Rust `capsem-core` Detection IR parse/evaluate;
+  corp admin CLI docs; enforcement docs; detection-format docs;
   profile-required `scripts/build-assets.sh --profile`; Justfile
   `build-assets`/`build-kernel`/`build-rootfs` routing through
   `capsem-admin image build`; bootstrap-installed CLI smoke.
@@ -836,6 +855,9 @@ The checker must fail closed for:
   manifest identity, asset hashes, package contract hash, check mode, timings,
   and failure category; detection check reports include event/rule/match counts,
   findings, diagnostics, and timing.
+- Docs/release proof: `tests/test_admin_docs.py` guards the corp/developer
+  install split, `capsem-admin` policy/detection command references, pySigma
+  wording, and Detection IR docs; `pnpm run build` proves the Starlight docs.
 - Performance: fast manifest check uses bounded concurrency and never downloads
   full assets; full download check streams to disk and verifies incrementally.
 - Missing/deferred: full Docker image build may stay in release gates if too
