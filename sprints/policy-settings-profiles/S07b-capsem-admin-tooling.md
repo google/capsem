@@ -203,6 +203,23 @@ Eleventh slice landed on 2026-05-20:
   `scripts/prepare-admin-cli.sh` temp-payload smoke plus wrapper `--version`
   succeeded with the uv interpreter.
 
+Twelfth slice landed on 2026-05-20:
+
+- `capsem-admin image build-workspace <profile> --out <dir>` now materializes a
+  profile-derived build workspace without reading repo `guest/config`.
+- The workspace writes the source profile TOML, typed image plan JSON,
+  `config/build.toml`, `config/manifest.toml`, `config/vm/resources.toml`, and
+  generated package TOML for apt, Python, and npm contracts when present.
+- The output report is a typed `capsem.image-workspace.v1` Pydantic model with
+  profile id/revision, selected arches, package-contract hash, generated file
+  sizes, and generated file BLAKE3 hashes.
+- Generated TOML is parsed back through the existing builder `load_guest_config`
+  models in tests, proving the profile-derived workspace is a valid bridge for
+  the current Docker templates while the full `image build`/SBOM/in-guest
+  verification work remains open.
+- Verification: `uv run python -m pytest tests/test_image_workspace.py
+  tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 30 tests.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -500,12 +517,13 @@ The checker must fail closed for:
       tool contracts, assets, build plans, doctor checks, verification reports,
       and command JSON output. Profile payloads, profile manifests, package/
       tool contracts, assets, settings doctor, validation reports, and profile
-      init drafts have landed; build-plan and local asset image-verify reports
-      have landed; fast manifest-check reports have landed; manifest-generate,
-      profile-manifest generation has landed; minisign-backed manifest signing,
-      manifest signature verification, and profile/asset signature verification
-      have landed; package/tool image proof and richer doctor reports remain.
-      Full manifest byte/hash download checks have landed.
+      init drafts have landed; build-plan, image-workspace, and local asset
+      image-verify reports have landed; fast manifest-check reports have
+      landed; manifest-generate, profile-manifest generation has landed;
+      minisign-backed manifest signing, manifest signature verification, and
+      profile/asset signature verification have landed; package/tool image
+      proof and richer doctor reports remain. Full manifest byte/hash download
+      checks have landed.
 - [ ] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
@@ -525,7 +543,9 @@ The checker must fail closed for:
 - [ ] Replace raw dict/list plumbing in admin workflows with Pydantic model
       parsing, validation, normalized accessors, `model_validate_json()` /
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
-- [ ] Remove hand-edited image settings as release-build authority.
+- [~] Remove hand-edited image settings as release-build authority. Profile-
+      derived build workspace materialization has landed; release build recipes
+      still need to consume it before this closes.
 - [x] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
 - [x] Implement full manifest download/verify checks. Full byte download,

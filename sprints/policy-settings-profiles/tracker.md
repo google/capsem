@@ -335,6 +335,14 @@ a valid claim -- mark it `[ ]` instead.
     `dpkg-deb` tests on this macOS host; real temp-payload
     `scripts/prepare-admin-cli.sh` smoke plus wrapper `--version` passed with
     the uv interpreter.
+    Twelfth slice added `capsem-admin image build-workspace <profile> --out
+    <dir>` and the typed `capsem.image-workspace.v1` report. It materializes
+    source profile TOML, image-plan JSON, build/manifest/vm resources TOML, and
+    apt/Python/npm package TOML directly from the Profile V2 package/tool
+    contract without reading repo `guest/config`; tests parse the generated
+    workspace with `load_guest_config`. Verification: `uv run python -m pytest
+    tests/test_image_workspace.py tests/test_image_plan.py
+    tests/test_admin_cli.py -q` passed with 30 tests.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

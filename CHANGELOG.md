@@ -145,6 +145,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Linux `.deb` assembly now require the relocatable admin wrapper plus its
   packaged Python payload, and release policy tests verify the helper is
   prepared before OS packages are built.
+- Added `capsem-admin image build-workspace` to materialize a profile-derived
+  build workspace from the Profile V2 package/tool contract, emitting
+  `capsem.image-workspace.v1` reports and generated `guest/config`-compatible
+  TOML without reading repo hand-authored image settings.
 - Added Profile V2 section-level editability gates so profiles can allow user
   skill or MCP edits while locking AI providers, rules, VM assets, package
   contracts, or other sections; service mutations enforce the locks and forks

@@ -21,6 +21,10 @@ from capsem.builder.image_verify import (
     dump_image_verification_report_json,
     verify_image_assets,
 )
+from capsem.builder.image_workspace import (
+    dump_image_workspace_report_json,
+    materialize_profile_image_workspace,
+)
 from capsem.builder.manifest_check import (
     check_profile_manifest_download,
     check_profile_manifest_fast,
@@ -465,6 +469,54 @@ def image_verify(
 
     if not report.ok:
         raise SystemExit(1)
+
+
+@image.command("build-workspace")
+@click.argument("profile_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="Directory where the profile-derived build workspace will be written.",
+)
+@click.option(
+    "--arch",
+    "arch",
+    default="all",
+    type=click.Choice(["all", "arm64", "x86_64"]),
+    show_default=True,
+)
+@click.option("--force", is_flag=True, help="Write into a non-empty output directory.")
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed workspace report.")
+def image_build_workspace(
+    profile_path: str,
+    out_dir: str,
+    arch: ImageArch,
+    force: bool,
+    json_output: bool,
+) -> None:
+    """Materialize a build workspace from a Profile V2 package contract."""
+    try:
+        profile = _load_profile(Path(profile_path))
+        report = materialize_profile_image_workspace(
+            profile,
+            Path(out_dir),
+            arch=arch,
+            force=force,
+        )
+    except (ValidationError, ValueError, FileExistsError) as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_image_workspace_report_json(report))
+        return
+
+    click.echo(f"profile: {report.profile_id}@{report.profile_revision}")
+    click.echo(f"workspace: {report.out_dir}")
+    click.echo(f"package contract: {report.package_contract_hash}")
+    click.echo("arches: " + ", ".join(report.arches))
+    click.echo(f"files: {len(report.files)}")
 
 
 @manifest.command("check")

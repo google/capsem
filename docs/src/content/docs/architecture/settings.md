@@ -88,6 +88,7 @@ capsem-admin profile schema
 capsem-admin profile validate corp-dev.profile.json
 capsem-admin profile validate corp-dev.profile.json --json
 capsem-admin image plan corp-dev.profile.toml --json
+capsem-admin image build-workspace corp-dev.profile.toml --out build/corp-dev-image --arch all --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
 capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
 capsem-admin manifest check manifest.json --fast --json
@@ -101,8 +102,11 @@ The draft uses Profile V2 defaults, includes both release architectures, and
 should be edited before signing or publishing. `image plan` derives a typed
 build plan from the profile's package/tool contract, VM resources, and declared
 per-architecture assets; it defaults to all supported release architectures and
-can be narrowed with `--arch arm64` or `--arch x86_64`. `image verify` consumes
-the same derived plan and checks local assets under
+can be narrowed with `--arch arm64` or `--arch x86_64`. `image build-workspace`
+materializes a generated build workspace from the same profile contract, so the
+profile is the source of truth and generated `guest/config` TOML is only an
+intermediate for the current Docker templates. `image verify` consumes
+the derived plan and checks local assets under
 `<assets-dir>/<arch>/<asset filename>` for existence, declared byte size, and
 BLAKE3 hash before a manifest or release workflow trusts them.
 
