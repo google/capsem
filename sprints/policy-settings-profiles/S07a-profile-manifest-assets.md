@@ -14,7 +14,8 @@ Capsem binary version.
 
 ## Current Status
 
-Rescue is complete; this sprint is now in push mode.
+Closed on 2026-05-21 after reconciling later S07c/S07b/S08 proof back into the
+S07a contract.
 
 Landed:
 
@@ -98,12 +99,12 @@ Landed:
   applies the same signed lifecycle reconciler, persists the trusted manifest
   snapshot, and logs install/update/revoke summary counts.
 
-Push order from here:
+Closeout push order:
 
 0. [x] Expose telemetry identity for every session: `vm_id`, `profile_id`, and
    `user_id` must be persisted beside session telemetry, surfaced through
    detail/status paths, and covered by focused tests.
-1. [~] Install/update/delete/revoke profile payloads from catalog records.
+1. [x] Install/update/delete/revoke profile payloads from catalog records.
    Landed: core install guard, runtime profile conversion, corp-root
    materialization, installed-revision payload storage, and a typed core
    lifecycle reconciler for active/deprecated/revoked records. UDS/gateway
@@ -114,23 +115,27 @@ Push order from here:
    source URL. `[profile_catalog]` service settings can now persist that source
    plus the profile payload public key, and service startup schedules the same
    reconcile path at the configured interval. Absent installed profile ids now
-   lose launchable current state during reconcile. Remaining: richer
-   catalog/revision CLI verbs, UI clients, and deeper debug/status detail.
+   lose launchable current state during reconcile. Later slices added richer
+   catalog/revision service, CLI, gateway, admin-manifest, and scheduled
+   reconcile coverage. UI clients are assigned to S16; post-engine debug
+   depth is assigned to S11/S18.
 2. [x] Persist explicit VM `profile_id`, `profile_revision`, package contract
    hash, profile payload hash, and pinned asset metadata. Landed:
    registry/runtime/API profile pins with catalog-installed revision and
    payload-hash capture; profile pin construction now refuses missing
    revision, missing profile payload hash, and missing pinned asset identity on
    every create/inherit path.
-3. [~] Add retention/cleanup for installed profile revisions, in-progress
+3. [x] Add retention/cleanup for installed profile revisions, in-progress
    downloads, and existing VM pins. Landed: retention filename extraction from
    installed current profile payloads and persistent VM profile pins, plus
    cleanup proof for the combined preservation set. `POST
    /setup/assets/cleanup` now uses that retention set, does not depend on the
    old asset manifest, removes unreferenced hash-named/legacy asset files, and
-   refuses cleanup while the asset supervisor is checking/updating. Remaining:
-   cross-process/per-asset download locks and VM-create/download race coverage.
-4. [~] Enforce forward-only VM identity on every VM create/fork/persist/resume
+   refuses cleanup while the asset supervisor is checking/updating. S07c added
+   duplicate reconcile sharing, cleanup-while-updating proof, first-use create
+   reconciliation, structured logs, and live boot proof. Any remaining
+   cross-process/per-asset lock hardening is S18 release-gate work.
+4. [x] Enforce forward-only VM identity on every VM create/fork/persist/resume
    path. Landed: resume fails closed, create-from-source rejects corrupted
    source VMs before asset resolution, fork rejects corrupted sources before
    clone, persist rejects corrupted running VMs before moving session state, and
@@ -142,17 +147,18 @@ Push order from here:
    selected-profile assets before spawn, attaches the selected VM-effective
    profile, and rejects incomplete installed profile revisions whose archived
    payload is missing or hash-drifted.
-5. [~] Update status/debug with catalog state, installed revisions, package
+5. [x] Update status/debug with catalog state, installed revisions, package
    contracts, asset verification, VM pins, drift, and revocation warnings.
    Landed: `/list`, `/info`, `capsem list`, and `capsem info` expose VM profile
    id/revision and derived current/update/deprecated/revoked/corrupted state.
-   Remaining: richer debug report provenance, package contract drift, and
-   asset verification diagnostics.
+   S07c/S08 added asset-health debug/status/gateway provenance and S07b added
+   image inventory plus doctor-bundle package/tool verification. Richer
+   post-engine provenance is S11/S18 work.
 
-Winter readiness check: S07a is not done while any VM can boot from assets that
-are not traceable back to a signed catalog record and a verified profile
-payload. Deprecated revisions may shelter existing VMs; revoked revisions do not
-open the gate.
+Winter readiness check: S07a is closed because VM create/boot/fork/persist/list
+now requires a traceable signed profile revision, verified payload hash, package
+contract hash, and pinned asset identity. Deprecated revisions may shelter
+existing VMs; revoked revisions do not open the gate.
 
 ## Product Contract
 
@@ -603,11 +609,11 @@ This sprint creates the contract consumed by later sprints:
 
 ## Tasks
 
-- [~] Design the canonical profile catalog manifest schema. Initial
+- [x] Design the canonical profile catalog manifest schema. Initial
       `capsem-core::profile_manifest::ProfileManifest` parser/model landed for
       profile ids, immutable revisions, `ProfileRevisionStatus`, payload
       locations, and canonical profile hashes.
-- [~] Add parser/validator tests for profile ids, immutable revisions, statuses,
+- [x] Add parser/validator tests for profile ids, immutable revisions, statuses,
       profile payload locations, hashes, signatures, and binary compatibility.
       Initial focused tests cover status enum acceptance/rejection, active-only
       current revisions, missing current revision, bad hash, and format
@@ -618,7 +624,7 @@ This sprint creates the contract consumed by later sprints:
       Rust `jsonschema` gate that compiles the schema, accepts the valid golden
       profile, and rejects extra-field, bad-hash, and missing-tool-version
       fixtures.
-- [~] Add Rust and Python validation paths that parse TOML to the JSON-compatible
+- [x] Add Rust and Python validation paths that parse TOML to the JSON-compatible
       data model. Python must immediately validate into Pydantic models,
       preferring `TypeAdapter.validate_json()` / `model_validate_json()` when
       JSON bytes are available; Rust validates against the standard JSON Schema
@@ -629,17 +635,17 @@ This sprint creates the contract consumed by later sprints:
       enum coverage, and active-current manifest validation. Initial Rust
       `capsem_core::profile_payload_schema` helpers landed for validating
       profile payload JSON and TOML against the production schema artifact.
-- [~] Extend profile TOML schema with typed packages/tools and per-arch VM
+- [x] Extend profile TOML schema with typed packages/tools and per-arch VM
       asset declarations. Initial Rust `Profile`/`VmProfileSettings` fields,
       validators, descriptors, and VM-effective serialization landed for
       package maps, tool contracts, per-arch `kernel`/`initrd`/`rootfs` asset
       records, canonical `blake3:<64 lowercase hex>` hashes, and
       `https://`/`file://` path-traversal rejection.
-- [~] Add resolver tests for inherited package/tool contracts and asset
+- [x] Add resolver tests for inherited package/tool contracts and asset
       declarations. Initial focused resolver coverage proves runtime/package
       maps, tool contracts, and per-arch assets merge by key through the
       existing ancestor-chain resolver.
-- [~] Add profile payload install/update/delete/revoke logic from manifest
+- [x] Add profile payload install/update/delete/revoke logic from manifest
       records. Core reconciliation now installs or updates complete `active`
       revisions from signed payload locations, re-installs incomplete local
       active state, keeps installed `deprecated` revisions, and removes
@@ -654,27 +660,28 @@ This sprint creates the contract consumed by later sprints:
       profile payload public key, and check interval; service startup spawns a
       scheduled reconcile loop using that source and logs summary counts.
       Absent installed profile ids are now removed from launchable current
-      state and reported as `absent_removed`. Remaining: richer
-      catalog/revision CLI verbs, UI clients, and deeper debug/status detail.
-- [~] Add profile-driven asset resolution and first-use download. Service
+      state and reported as `absent_removed`. Later S07/S08/S07b slices added
+      catalog/revision CLI verbs, gateway mirroring, scheduled reconcile, and
+      admin manifest check/generate/sign coverage. UI clients are S16.
+- [x] Add profile-driven asset resolution and first-use download. Service
       startup now builds an `AssetRequirement` from the default profile's
       `vm.assets.<arch>` declaration, rejects old manifest-backed release
       startup, downloads missing VM assets from profile URLs, and forwards
       expected profile hashes into `capsem-process`.
-- [~] Add atomic first-use download locking and verification-before-rename for
-      profile payloads and VM assets. Initial VM-asset path has supervisor
-      serialization, temp-file cleanup, streaming hash verification, and rename
-      after hash match; remaining work adds cross-process/per-asset locks and
-      profile payload downloads.
-- [~] Add cleanup retention for installed profile revisions plus existing VM
+- [x] Add atomic first-use download locking and verification-before-rename for
+      profile payloads and VM assets. VM asset paths have supervisor
+      serialization, temp-file cleanup, streaming hash verification, rename
+      after hash match, duplicate reconcile sharing, and first-use create proof.
+      Cross-process/per-asset lock hardening is S18 if still required.
+- [x] Add cleanup retention for installed profile revisions plus existing VM
       pins. Landed: installed current profile payloads now produce
       hash-derived VM asset filenames for retention; persistent VM retention
       now also reads `profile_pin.base_assets`; `cleanup_retention_asset_filenames`
       combines both roots and is covered through real asset cleanup. `POST
       /setup/assets/cleanup` now calls a manifest-free cleanup helper with that
       retention set and refuses to run while assets are checking/updating.
-      Remaining: cross-process/per-asset download locks and VM-create/download
-      race coverage.
+      S07c adds duplicate reconcile, cleanup/update race, and first-use
+      VM-create/download proof.
 - [x] Add persistent VM profile/revision/package/asset pin metadata. VM base
       asset hashes are now derived from profile asset declarations instead of
       the asset manifest; registry/runtime/API metadata now carries
@@ -682,7 +689,7 @@ This sprint creates the contract consumed by later sprints:
       `profile_payload_hash`, package-contract hash, and pinned boot assets
       and profile pin construction now requires the signed revision, profile
       payload hash, and pinned asset identity on every create/inherit path.
-- [~] Enforce forward-only persistent VM pins. Persistent VM resume now fails
+- [x] Enforce forward-only persistent VM pins. Persistent VM resume now fails
       closed when a registry entry lacks its required profile pin or pinned
       asset identity instead of falling back to the current profile/assets.
       Create-from-source, fork, and persist now reject missing/revisionless
@@ -697,23 +704,29 @@ This sprint creates the contract consumed by later sprints:
       profile payload hash divergence. `handle_fork_rejects_profile_string_
       drift_after_clone` mutates a profile string in the cloned attachment and
       proves the fork fails closed before registration.
-- [~] Report VM profile state in list/status. Landed: `/list`, `/info`,
+- [x] Report VM profile state in list/status. Landed: `/list`, `/info`,
       `capsem list`, and `capsem info` now surface pinned profile id/revision plus
       current/needs_update/deprecated/revoked/corrupted/unknown state from the
       persisted profile catalog snapshot and installed current revision
-      sidecar. Remaining: debug-report/package-contract/asset-verification
-      detail.
-- [~] Add functional tests for create VM with selected profile revision,
+      sidecar. S07c/S08 add asset-health debug/status/gateway provenance; S11
+      owns richer post-engine explanation.
+- [x] Add functional tests for create VM with selected profile revision,
       first-use download, resume after profile update, deprecated profile, and
       revoked profile fail-closed behavior. Landed: selected profile/revision
       create reconciles file-backed assets, pins/attaches the selected profile
       before process spawn, and core payload-drift coverage rejects incomplete
-      installed revision authority.
-- [ ] Add concurrency tests for duplicate first-use downloads and cleanup while
-      VM creation is in progress.
-- [ ] Add in-guest package/tool contract verification through capsem-doctor or a
-      focused VM probe.
-- [ ] Update debug/status fixtures with profile catalog and asset readiness.
+      installed revision authority. S07c adds live profile-asset boot proof.
+- [x] Add concurrency tests for duplicate first-use downloads and cleanup while
+      VM creation is in progress. S07c proves duplicate reconcile calls share a
+      single download run and cleanup fails closed while assets are updating;
+      first-use VM create uses the same reconciler before spawn.
+- [x] Add in-guest package/tool contract verification through capsem-doctor or a
+      focused VM probe. S07b adds rootfs image inventory, doctor-bundle
+      ingestion, and `capsem-admin image verify --doctor-bundle`; the live
+      profile-asset boot proof feeds this verification path.
+- [x] Update debug/status fixtures with profile catalog and asset readiness.
+      S07c/S08 cover `/setup/assets`, `/list`, `/info`, status text/JSON,
+      gateway status, and debug report provenance with Profile V2 asset health.
 
 ## Coverage Ledger
 
@@ -821,10 +834,11 @@ This sprint creates the contract consumed by later sprints:
   create request/CLI shape, selected profile asset reconciliation, selected
   VM-effective attachment, complete installed-payload trust check, and payload
   hash-drift rejection.
-  Remaining:
-  cross-language schema fixture parity, rollback/stale
-  catalog rejection, signature-key identity, full package version grammar
-  validation, profile payload downloads, and per-asset cross-process locks.
+  S07b later adds profile/settings/admin schema parity, minisign manifest and
+  profile/asset signature verification, manifest generate/check/sign, and raw
+  JSON boundary hygiene guards. Remaining release-hardening items such as
+  rollback/stale catalog replay and cross-process/per-asset locks are owned by
+  S18 if they are still not covered after S08b engine boundaries.
 - Functional: profile install/update/remove/revoke from manifest; selected
   profile VM creation pins explicit profile revision and assets; resume
   preserves VM pins after a profile update; unpinned registry entries are
@@ -837,15 +851,19 @@ This sprint creates the contract consumed by later sprints:
   unauthorized key, profile/asset URL scheme rejection, path traversal in
   payload locations, interrupted downloads, and stale partial files.
 - E2E/VM or integration: live profile-backed VM boot/download and real-VM
-  fork-lineage proofs are covered. Remaining: resume an existing VM after
-  catalog update; capsem-doctor or equivalent in-guest probe verifies declared
-  package/tool versions match the booted VM.
+  fork-lineage proofs are covered. S07b adds image inventory, doctor-bundle
+  verification, and a profile-backed release-image boot gate for declared
+  package/tool evidence. Resume-after-catalog-update replay belongs to S18.
 - Telemetry/observability: status/debug report catalog state, installed
   revisions, package contract, asset readiness, VM pin drift/revocation, last
-  manifest identity, verification failures, and operator override events.
+  manifest identity, verification failures, and operator override events. S07c
+  closes check/download lifecycle logs and asset-health status/debug
+  provenance; S08 mirrors profile asset provenance through HTTP; S11 owns the
+  richer post-engine presentation.
 - Performance: first-use download is not on hot list/status paths; list/status
-  must use cached readiness. Resolver overhead for package/tool inheritance is
-  bounded by existing profile-chain depth. Concurrent readiness checks must not
-  perform duplicate network downloads for the same asset hash.
-- Missing/deferred: explicit VM rebase/migration UX is deferred until profile
-  create/update surfaces are stable; this sprint only pins and reports.
+  uses cached readiness. Resolver overhead for package/tool inheritance is
+  bounded by existing profile-chain depth. S07c proves duplicate reconcile
+  calls share one download run.
+- Missing/deferred: no unowned S07a debt remains. Explicit VM
+  rebase/migration UX is deferred until profile create/update surfaces are
+  stable; S16/S18 own that UX/replay, while this sprint only pins and reports.

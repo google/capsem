@@ -171,6 +171,7 @@ impl AssetSupervisor {
                     "profile assets already ready"
                 );
                 self.record_ready(status);
+                self.log_check_finish("already_ready");
                 return;
             }
             Ok(status) => status,
@@ -181,6 +182,7 @@ impl AssetSupervisor {
                     "profile asset check failed"
                 );
                 self.record_error(format!("{e:#}"), false);
+                self.log_check_finish("error");
                 return;
             }
         };
@@ -202,12 +204,16 @@ impl AssetSupervisor {
             }
             AssetRequirement::DevLogical { .. } => {
                 self.record_error("required development assets are missing", false);
+                self.log_check_finish("error");
                 return;
             }
         };
 
         match result {
-            Ok(_) => self.refresh_local_state(),
+            Ok(_) => {
+                self.refresh_local_state();
+                self.log_check_finish("downloaded");
+            }
             Err(e) => {
                 warn!(
                     event = "profile_asset_download_retryable_error",
@@ -215,8 +221,23 @@ impl AssetSupervisor {
                     "profile asset download failed; will retry"
                 );
                 self.record_error(format!("{e:#}"), true);
+                self.log_check_finish("error");
             }
         }
+    }
+
+    fn log_check_finish(&self, outcome: &'static str) {
+        let health = self.snapshot();
+        info!(
+            event = "profile_asset_check_finish",
+            outcome,
+            state = health.state.as_str(),
+            ready = health.ready,
+            retryable = health.retryable,
+            error = health.error.as_deref().unwrap_or(""),
+            missing = ?health.missing,
+            "profile asset supervisor check finished"
+        );
     }
 
     fn set_checking(&self) {

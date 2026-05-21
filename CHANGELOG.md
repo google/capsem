@@ -433,6 +433,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the split between JSON status surfaces and `/metrics`.
 
 ### Changed
+- Closed the Profile V2 S07/Post-S06 sprint ledger after reconciling later
+  S07c/S07b/S08 proof: remaining confirm, event-journal, UI, debug, telemetry,
+  docs, and release-replay work is now assigned to later sprints instead of
+  sitting as unowned S07 debt.
+- Changed Profile V2 asset reconciliation logging so the asset supervisor emits
+  a `profile_asset_check_finish` lifecycle event for every check path, including
+  scheduled/background checks rather than only route-triggered reconciles.
 - Changed `capsem uninstall` to remove the installed runtime while preserving
   durable user state such as config, setup state, assets, logs, session/audit
   data, and persistent VM state.

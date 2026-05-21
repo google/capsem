@@ -2831,7 +2831,10 @@ fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
         .build()
         .unwrap();
     let (base_url, server) = runtime.block_on(start_test_asset_server());
-    let (state, _dir) = make_test_state_with_profile_assets(&base_url);
+    let (state, dir) = make_test_state_with_profile_assets(&base_url);
+    // The process-wide test subscriber below keeps writing after this test's
+    // assertions when parallel service tests emit tracing events.
+    let _dir = Box::leak(Box::new(dir));
     let log_path = state.run_dir.join("service.log");
     std::fs::create_dir_all(&state.run_dir).unwrap();
     let log_writer_path = log_path.clone();
@@ -2847,6 +2850,7 @@ fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
         })
         .finish();
     let dispatch = tracing::Dispatch::new(subscriber);
+    let _ = tracing::dispatcher::set_global_default(dispatch.clone());
 
     tracing::dispatcher::with_default(&dispatch, || {
         runtime.block_on(async {

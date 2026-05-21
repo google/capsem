@@ -1,6 +1,6 @@
 # Policy, Settings, Profiles Master
 
-Last updated: 2026-05-20
+Last updated: 2026-05-21
 
 ## Where this sprint lives
 
@@ -24,30 +24,24 @@ completely.
 
 ## Execution Mode
 
-**Rescue complete; push phase active.** As of 2026-05-19, the profile-v2 branch
-is coherent again and is expected to sit `92 ahead / 0 behind` `origin/main` in this
-worktree after the S07d/S08a regroup planning commit. The tracker is now a push
-board:
-
-- Keep S07a as the active contract sprint until profile catalog install/update,
-  mandatory VM profile/revision/package pins, retention, forward-only
-  resume/create/fork/persist enforcement, and VM list/status profile-state
-  reporting are landed and tested.
-- Do not start S07b implementation until S07d gives service settings the same
-  formal schema/Pydantic/admin-validation footing as Profile V2 payloads.
-- Do not resume CLI/UI/telemetry/plugin lift work until S08a settles the
-  policy-rule versus detection-rule abstraction.
+**Rescue complete; S07 foundation closed.** As of 2026-05-21, the profile-v2
+branch is coherent and sits `138 ahead / 0 behind` `origin/main` in this
+worktree. S00-S07, S07a, S07c, S07d, and S07b are closed. S08a is closed.
+S08b is the next implementation gate, after this closeout audit records that
+remaining work is owned by later sprints rather than left as pre-S08 debt.
 
 **Winter readiness.** The wall is the release gate. Nothing crosses it unless
 the profile trust chain is signed, profile payloads are installed from the
 catalog, VMs pin exact profile/revision/package/asset identity, old config stays
 dead, and every public surface can explain what happened.
 
-**Latest verification.** `just smoke` passed on 2026-05-20 in 272s after the
-smoke harness was made less host-starved: service/CLI and MCP VM-heavy suites
-no longer overlap, log fds are closed in parent fixtures, e2e services receive
-Profile V2 asset homes, and MCP tests now separate signed VM lifecycle fixtures
-from editable unsigned profile-mutation fixtures.
+**Latest verification.** `just smoke` passed on 2026-05-20 in 272s. The S07b
+closeout gate on 2026-05-21 also passed the focused admin/profile/image/
+manifest/security/doc/doctor suite (`174 passed, 1 skipped`), `uv run python
+-m compileall src/capsem`, and the docs build. The 2026-05-21 S07 closeout
+audit re-ran profile manifest/schema checks, profile asset service probes,
+fork/pin service probes, Python admin/profile/image tests, `git diff --check`,
+and the docs build after fixing asset supervisor finish-event logging.
 
 ## Product Contract
 
@@ -118,9 +112,9 @@ the next starts. The `#` column is the execution index;
 | 10 | [S06b - Legacy Allowlist Migration And Rule Ownership Locks](S06b-legacy-allowlist-migration-and-rule-ownership.md) | Done | Delete legacy allowlist/v1 settings dead code and enforce generated-rule ownership (`managed by <setting>`, uneditable). |
 | 11 | [S06c - Ablate Legacy NetworkPolicy Runtime](S06c-ablate-legacy-networkpolicy.md) | Done | Deleted `policy.rs` + `policy_hook.rs`; removed the V1 hook from production pipeline; collapsed DNS/MITM/runtime policy authority to Profile V2 `PolicyConfig`. |
 | 12 | [S06d - Core Structure And Test Boundaries](S06d-core-structure-and-test-boundaries.md) | Done | Split oversized MITM/DNS modules and tests inside `capsem-core` before the rename and S08b engine contracts; defer new crate boundaries to S08b. |
-| 13 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | In Progress | Branch is `92 ahead / 0 behind` `origin/main`; code/docs now use the singular `policy` runtime name, with focused cargo gates passing. Remaining: decide/run heavyweight `just test`/doctor release gate before marking closed. |
+| 13 | [Post-S06 cleanup milestone](tracker.md#post-s06-cleanup-milestone) | Done | Closed after the singular `policy` rename, S06c/S06d structural cleanup, `just smoke`, S07/S07a route proof, S07c live asset boot proof, and S07b admin closeout gates. Remaining confirm/journal/release hardening is owned by S08b/S15/S18, not Post-S06 cleanup. |
 | 14 | [S07 - UDS Service API](S07-uds-service-api.md) | Done | Metrics IPC foundation, profile list/get/resolve, profile create/fork/update/delete, profile-backed VM create request shape, standard `mcpServers` profile format plus Profile V2 MCP server list/create/delete across service/CLI/capsem-mcp, old MCP management API/IPC removal, rules list/get/create/delete/evaluate, typed `GET /confirm/pending`, Profile V2 skills list/create/delete, and chained S07 route proof have landed. HTTP, CLI, production confirm resolution, and UI lift remain in S08/S09/S15/S16. |
-| 15 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | In Progress | Canonical profile catalog/status parser, typed profile package/tool contracts, per-arch VM asset declarations, Draft 2020-12 schema + Rust validation, Python Pydantic v2 profile/manifest models, profile-driven service asset resolution/download, profile-aware cleanup caller, complete installed-payload trust checks, signed revision/payload-hash/asset VM pins, forward-only resume/create-from-source/fork/persist pin enforcement, VM list/status profile-state reporting, first-use selected-profile asset reconciliation, file/HTTPS catalog reconcile sources, and scheduled `[profile_catalog]` service reconciliation have landed; old asset-manifest service settings/setup/runtime authority are removed. Remaining scope adds richer catalog clients/debug detail. |
+| 15 | [S07a - Profile Manifest, Packages, And Assets](S07a-profile-manifest-assets.md) | Done | Canonical signed profile catalog, status enum, Profile V2 schema/Pydantic models, package/tool contracts, per-arch VM assets, profile-driven download/reconcile, cleanup retention, signed payload checks, revision/payload/package/asset pins, forward-only VM identity gates, VM list/status profile state, CLI/service/gateway catalog and revision actions, scheduled `[profile_catalog]` reconciliation, and old asset-manifest authority removal have landed. UI richness and deeper post-engine provenance are owned by S11/S16/S18. |
 | 16 | [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md) | Done | Manual service asset reconcile endpoint, `capsem update --assets` service trigger, status checked-at/profile/payload/per-asset provenance propagation, structured check/download logs, service debug Profile V2 asset-health reporting, old Rust asset-manifest parser/loader/downloader removal, duplicate-download/active-cleanup race proof, first-use VM create reconciliation, profile-pin asset authority for source/fork/persist, chained service-level reconcile/status/debug/log proof, formal `file://` asset reconciliation, explicit UDS socket selection, and a live real-VM boot/exec proof from freshly reconciled profile assets have landed. |
 | 17 | [S07d - Service Settings Schema And Admin Contract](S07d-service-settings-schema-admin-contract.md) | Done | Pydantic v2 `ServiceSettingsV2`, Pydantic-only JSON/TOML helpers, committed Draft 2020-12 schema artifact, valid/invalid fixtures, Rust/Python fixture parity, `capsem-admin settings init|schema|validate|doctor`, cross-runtime defaults drift proof, and closeout docs have landed. |
 | 18 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Done | Profile-admin validation/schema, required Profile V2 `ui`, `profile init`, guest-config-derived `profile init-builtins` generated `everyday-work`/`coding` base profiles, `settings init`, typed section editability gates, `capsem-admin image plan`, profile-derived `image build-workspace`, public `image build` routing, profile-required local/release asset build recipes, rootfs-generated package/tool inventory, local asset plus per-arch inventory-backed `image verify`, typed guest SPDX SBOM generation, typed doctor-bundle probe ingestion, profile-backed release-image boot gate, `manifest generate`, fast/download `manifest check`, minisign manifest signing/verification, profile/asset signature verification, developer bootstrap proof, OS package layout proof for the `capsem-admin` wrapper/Python payload, typed policy/detection pack validate/schema commands, pySigma-backed `detection compile|check` with Detection IR output, Rust Detection IR parity fixtures, corp admin/detection/enforcement docs proof, `capsem-admin doctor`, raw JSON boundary hygiene guards, and bootstrap symlinks for Claude/Gemini/Codex/Cursor have landed. |
@@ -214,41 +208,20 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
 
 ## Current Active Work
 
-Current execution is regrouping after the S08 gateway slices. S08 now mirrors
-the S07/S07a/S07c Profile V2 service contracts through the authenticated local
-HTTP gateway, proves live selected-profile create/download/boot/exec, and
-preserves adversarial typed-error status/body responses for malformed, locked,
-invalid, updating, and revoked Profile V2 cases.
-
-The next inserted foundation sprint is
-[S07d - Service Settings Schema And Admin Contract](S07d-service-settings-schema-admin-contract.md).
-It exists because profiles now have a stronger formal contract than service
-settings. `capsem-admin` now has its first typed settings boundary:
-schema export, TOML/JSON validation, and doctor reports all flow through the
-Service Settings V2 Pydantic model. The Python defaults now follow Rust's
-`CAPSEM_HOME` / `$HOME/.capsem` profile-root contract, with a committed
-defaults fixture checked by both runtimes. S07d is closed; S07b can now expand
-the admin package.
-
-[S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-is the next architecture discussion gate. It decides how Capsem-native
-synchronous policy rules relate to detection/Sigma-compatible rules before
-logging, telemetry, plugins, rule UI, and Confirm UX harden around that model.
+Current execution is the debt closeout before S08b. S07/S07a/S07c/S07d/S07b
+are closed, S08 mirrors the Profile V2 service contracts through the
+authenticated local HTTP gateway, and S08a has locked the policy/detection
+architecture. No remaining item is allowed to float as "S07 debt"; it must be
+closed here or assigned to a named later sprint.
 
 [S08b - Security Event Engine, Network Engine, File Engine, And Process Engine](S08b-security-event-engine-and-file-engine.md)
-is the implementation architecture gate immediately after S08a. It turns the
-rule/detection decision into real crate/module boundaries: Network Engine for
-transport, File Engine for file/snapshot mechanics, Process Engine for
-process/audit mechanics and attribution, Conversation Engine for SDK/terminal
-conversation capture and timeline normalization, Security Engine for
-preprocessors, enforcement, ask/confirm, detection and postprocessing, and a
-Resolved Event Emitter for telemetry/audit/logging/detection export.
-
-S07b remains a release-blocking admin-tooling sprint. It now consumes both the
-Profile V2 contract and the S07d service-settings contract. Once S08a chooses
-the final enforcement/detection formats, `capsem-admin` must also validate,
-schema-export, and report policy/detection packs through typed Pydantic models
-before S19 documents those corp workflows as supported.
+is the next implementation gate. It turns the S08a rule/detection decision
+into real crate/module boundaries: Network Engine for transport, File Engine
+for file/snapshot mechanics, Process Engine for process/audit mechanics and
+attribution, Conversation Engine for SDK/terminal conversation capture and
+timeline normalization, Security Engine for preprocessors, enforcement,
+ask/confirm, detection and postprocessing, and a Resolved Event Emitter for
+telemetry/audit/logging/detection export.
 
 S07a/S07c foundation carried into S08:
 
@@ -348,61 +321,25 @@ S07a/S07c foundation carried into S08:
   read together, signature is verified before parsing, then hash/schema/id/
   revision checks produce the verified payload for materialization.
 
-Remaining S07a push order:
+S07a/S07c/S07d/S07b closeout:
 
-1. Catalog-driven profile payload install/update/delete/revoke from manifest
-   records, including `deprecated` and `revoked` fail-closed semantics.
-   Core verification/fetch/materialization/signature primitives and the typed
-   lifecycle reconciler have landed; service UDS/gateway reconciliation has
-   landed for current active revisions plus deprecated/revoked local-state
-   handling, and the first native CLI hook can apply a catalog file or bounded
-   HTTPS catalog URL through the service. Typed `[profile_catalog]` service
-   settings now persist the catalog URL, profile payload public key, and check
-   interval; service startup schedules the same reconcile path and logs summary
-   counts. `GET /profiles/catalog`, `GET /profiles/{id}/revisions`, `capsem
-   profile catalog [--json]`, and `capsem profile revisions <id> [--json]`
-   expose source, manifest, current/installed revision, and lifecycle status.
-   Revision install/update/remove actions now exist in both service and CLI.
-   Absent installed profile ids now lose launchable state during reconcile. UI
-   clients remain.
-2. Persistent VM `profile_id`, `profile_revision`, profile payload hash,
-   package contract hash, and pinned asset metadata. Landed for
-   runtime/registry/API with installed revision/payload-hash capture; profile
-   pin construction now requires a signed catalog revision, profile payload
-   hash, and pinned asset identity on every create/inherit path.
-3. Retention and cleanup that preserve active/deprecated installed revisions,
-   in-progress downloads, and existing VM pins. Retention filename extraction
-   has landed for installed current profile payloads and persistent VM profile
-   pins; `POST /setup/assets/cleanup` now uses that retention set and fails
-   closed while assets are checking/updating. Duplicate manual reconcile and
-   active-cleanup races are covered; first-use VM create now uses the same
-   reconciler before spawn. Remaining: cross-process/per-asset download locks.
-4. Forward-only VM identity enforcement on every create/fork/persist/resume
-   path. Resume now rejects registry entries without profile pins or pinned
-   asset identity. Create-from-source, fork, and persist now reject
-   missing/revisionless pins or missing profile payload hashes before asset
-   resolution, clone, or session move work. Fork now preserves VM-effective
-   profile attachments and rejects profile or payload-hash drift before
-   registry state is created. First-use selected-profile create now validates
-   the selected installed revision, rejects missing/hash-drifted archived
-   payloads, downloads missing profile assets, and attaches the selected
-   VM-effective profile before process spawn.
-5. Status/debug readiness for profile catalog state, installed revisions,
-   package contracts, asset verification, VM pins, and drift/revocation.
-
-Immediately after S07a, [S07c - Profile Asset Update Orchestration](S07c-profile-asset-update-orchestration.md)
-turned the asset pieces into a production operator workflow: background checks,
-manual `capsem update --assets`, status/debug provenance, structured download
-logs, cleanup/create concurrency, and live boot proof all use the same Profile
-V2 asset authority. After S07c, [S07d - Service Settings Schema And Admin Contract](S07d-service-settings-schema-admin-contract.md)
-brings service settings up to the same schema/Pydantic/admin-validation level
-as profiles. After S07d, [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md)
-turns those contracts into operator tooling: `capsem-admin` creates/validates
-settings and profiles, exports/validates the shared schema artifacts, derives
-image build plans from profiles, verifies built images, and generates/checks/
-signs manifests. Python admin internals use Pydantic v2 models for those data
-shapes, with JSON entering through Pydantic validation and leaving through
-Pydantic dumping, not raw nested dicts.
+1. Catalog-driven profile payload install/update/remove/revoke from manifest
+   records is closed in service, CLI, gateway, scheduled reconcile, and
+   `capsem-admin` manifest workflows.
+2. VM profile identity is closed: create, source, fork, persist, resume, list,
+   info, and telemetry carry explicit profile id, revision, payload hash,
+   package-contract hash, and pinned asset hashes.
+3. Asset reconciliation is closed for S07: profile-aware cleanup, duplicate
+   reconcile sharing, cleanup-while-updating fail-closed behavior,
+   first-use selected-profile downloads, structured logs, status/debug
+   provenance, and live profile-asset boot proof all use Profile V2 authority.
+   Cross-process/per-asset lock hardening, if still required after S08b
+   engine boundaries, belongs to S18 release verification.
+4. In-guest package/tool proof is closed through S07b's image inventory,
+   doctor-bundle verification, and profile-backed release-image boot gate.
+5. UI-rich catalog/profile editing belongs to S16. Post-engine provenance and
+   deeper debug presentation belongs to S11. Release-scale replay and upgrade
+   probes belong to S18.
 
 [S07 - UDS service API](S07-uds-service-api.md), S07a, S07c, S07d, S07b, and
 [S08a](S08a-rule-abstraction-detection-architecture.md) are the
@@ -410,11 +347,12 @@ public-contract foundation for every later layer. HTTP, CLI, UI, docs,
 marketing, telemetry, plugins, and release tooling must consume those shapes
 rather than inventing independent profile/settings/rule/admin semantics.
 
-**Deferred cleanup debt remains visible.** S06c legacy NetworkPolicy ablation
-and the final V2 naming collapse are still tracked in
-[tracker.md](tracker.md#s06c---ablate-legacy-networkpolicy-runtime) and
-[tracker.md](tracker.md#post-s06-cleanup-milestone). They are not blockers for
-the immediate S07a push, but they remain release blockers.
+**Deferred work remains visible and owned.** S06c legacy NetworkPolicy
+ablation, S06d structure, and the final V2 naming collapse are closed. The
+remaining release holds are not hidden cleanup debt: real confirm UX is S15,
+the canonical resolved-event journal and engine split are S08b, richer
+status/debug is S11, profile UI is S16, OTel metrics/finding propagation is
+S12, docs/site are S19/S19a, and final replay/doctor/release gates are S18.
 
 Historical S00-S06 rescue context: a first typed replacement model now exists in
 `capsem-core::settings_profiles`: service settings, profile TOML, the built-in
