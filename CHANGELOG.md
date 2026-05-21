@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added explicit canonical-AI-evidence enum persistence traits and SQLite
   `CHECK` constraints so session DB evidence rows can only store approved enum
   spellings.
+- Added first canonical AI/MCP execution linkage: framed MCP tool calls now
+  link to model-emitted MCP tool calls when trace id and normalized tool name
+  agree, updating both queryable evidence rows and the legacy tool-call
+  projection.
 - Added the first S08b `capsem-security-engine` contract crate with normalized
   security events, resolved-event actions, detection findings, quota dimensions,
   and throttle-ready serialization tests.

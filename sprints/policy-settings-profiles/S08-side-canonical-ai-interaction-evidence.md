@@ -26,6 +26,14 @@ now uses a dedicated SQL enum text trait instead of generic serde conversion,
 and the new evidence tables enforce allowed enum domains with SQLite `CHECK`
 constraints.
 
+The fifth slice added first production linkage from framed MCP execution rows
+to model-emitted MCP tool calls. When trace id and normalized tool name match,
+the logger records `ai_mcp_execution_evidence.link_status = linked`, fills the
+model interaction/tool-call ids, updates the canonical model tool-call
+`linked_mcp_call_id` and status, and backfills the legacy `tool_calls.mcp_call_id`
+projection. Missing or ambiguous matches remain explicit link statuses rather
+than being invented from name heuristics.
+
 This is intentionally a side document rather than another numbered board item:
 S08b remains the active engine implementation sprint, but S08b must not harden
 model/MCP enforcement, detection, telemetry, quotas, timeline, or plugin

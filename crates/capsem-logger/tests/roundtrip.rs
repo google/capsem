@@ -371,6 +371,99 @@ async fn ai_evidence_is_stored_in_queryable_tables() {
     assert_eq!(mcp_rows["rows"][0][3], "linked");
 }
 
+#[tokio::test]
+async fn mcp_call_links_to_canonical_ai_tool_call_by_trace_and_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+    let mut evidence = sample_ai_evidence();
+    evidence.interaction_id = "interaction_link".to_string();
+    evidence.trace_id = "trace_link".to_string();
+    evidence.mcp_executions.clear();
+    evidence.tool_calls[0].raw_name = "filesystem__read_file".to_string();
+    evidence.tool_calls[0].normalized_name = "filesystem.read_file".to_string();
+    evidence.tool_calls[0].linked_mcp_call_id = None;
+    evidence.tool_calls[0].status = ToolCallStatus::Proposed;
+
+    let mut call = sample_model_call("anthropic");
+    call.trace_id = Some("trace_link".to_string());
+    call.ai_evidence = Some(evidence);
+    call.tool_calls = vec![ToolCallEntry {
+        call_index: 0,
+        call_id: "toolu_01".to_string(),
+        tool_name: "filesystem__read_file".to_string(),
+        arguments: Some(r#"{"path":"/tmp/a"}"#.to_string()),
+        origin: "mcp_proxy".to_string(),
+        trace_id: Some("trace_link".to_string()),
+    }];
+    writer.write(WriteOp::ModelCall(call)).await;
+    writer
+        .write(WriteOp::McpCall(McpCall {
+            timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000001),
+            server_name: "filesystem".to_string(),
+            method: "tools/call".to_string(),
+            tool_name: Some("filesystem__read_file".to_string()),
+            request_id: Some("jsonrpc-1".to_string()),
+            request_preview: Some(
+                r#"{"name":"filesystem__read_file","arguments":{"path":"/tmp/a"}}"#.to_string(),
+            ),
+            response_preview: Some(r#"{"content":[{"type":"text","text":"ok"}]}"#.to_string()),
+            decision: "allowed".to_string(),
+            duration_ms: 12,
+            error_message: None,
+            process_name: Some("agent".to_string()),
+            bytes_sent: 64,
+            bytes_received: 42,
+            policy_mode: None,
+            policy_action: None,
+            policy_rule: None,
+            policy_reason: None,
+            trace_id: Some("trace_link".to_string()),
+        }))
+        .await;
+    drop(writer);
+
+    let reader = capsem_logger::DbReader::open(&path).unwrap();
+    let linked_tool: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw(
+                "SELECT linked_mcp_call_id, status
+                 FROM ai_model_tool_calls
+                 WHERE tool_call_id = 'toolu_01'",
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(linked_tool["rows"][0][0], "1");
+    assert_eq!(linked_tool["rows"][0][1], "executed");
+
+    let execution: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw(
+                "SELECT server_id, tool_name, request_arguments_json,
+                        linked_model_interaction_id, linked_model_tool_call_id,
+                        link_status
+                 FROM ai_mcp_execution_evidence",
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(execution["rows"][0][0], "filesystem");
+    assert_eq!(execution["rows"][0][1], "read_file");
+    assert_eq!(execution["rows"][0][2], r#"{"path":"/tmp/a"}"#);
+    assert_eq!(execution["rows"][0][3], "interaction_link");
+    assert_eq!(execution["rows"][0][4], "toolu_01");
+    assert_eq!(execution["rows"][0][5], "linked");
+
+    let legacy_tool_link: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw("SELECT mcp_call_id FROM tool_calls WHERE call_id = 'toolu_01'")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(legacy_tool_link["rows"][0][0], 1);
+}
+
 // ── Count queries ────────────────────────────────────────────────────
 
 #[tokio::test]

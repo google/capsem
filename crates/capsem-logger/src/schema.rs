@@ -160,7 +160,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS ai_mcp_execution_evidence (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        interaction_id INTEGER NOT NULL,
+        interaction_id INTEGER,
         mcp_call_id TEXT NOT NULL,
         server_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
@@ -563,7 +563,7 @@ pub fn migrate(conn: &Connection) {
         );
         CREATE TABLE IF NOT EXISTS ai_mcp_execution_evidence (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            interaction_id INTEGER NOT NULL,
+            interaction_id INTEGER,
             mcp_call_id TEXT NOT NULL,
             server_id TEXT NOT NULL,
             tool_name TEXT NOT NULL,

@@ -23,10 +23,13 @@ pub mod events;
 ///
 /// # Correlation gaps (next-gen TODOs)
 ///
-/// - `tool_calls.mcp_call_id` column exists but is never populated.
-///   No FK links a model's tool_use to the MCP call that executed it.
-/// - `mcp_calls` has no `trace_id`, so MCP tool executions cannot be grouped
-///   by agent turn.
+/// - `tool_calls.mcp_call_id` is populated opportunistically when the framed
+///   MCP call shares the same trace id and normalized tool name as a model
+///   tool-use event. The canonical AI evidence tables carry the richer link
+///   status (`linked`, `ambiguous`, `orphan_mcp_execution`, etc.).
+/// - `mcp_calls.trace_id` is present, but guest/provider trace propagation can
+///   still be partial; unknown linkage must remain explicit rather than being
+///   inferred from tool-name heuristics alone.
 /// - Builtin tool NetEvents are not linked to their tool_call entries.
 /// - `tool_origin()` imports `mcp::builtin_tools::is_builtin_tool()` --
 ///   cross-module coupling that should be replaced by a shared registry.

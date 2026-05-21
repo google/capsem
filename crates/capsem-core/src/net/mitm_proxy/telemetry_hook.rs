@@ -373,6 +373,7 @@ pub fn maybe_build_model_call(
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
         let tid = state
             .lookup(&tool_response_ids)
+            .or_else(crate::telemetry::ambient_capsem_trace_id)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let is_tool_use = !tool_call_ids.is_empty()
             || stop_reason_str

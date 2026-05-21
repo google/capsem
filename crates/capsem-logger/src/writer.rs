@@ -991,7 +991,156 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
             call.trace_id,
         ],
     )?;
+    let mcp_row_id = conn.last_insert_rowid();
+    link_mcp_execution_evidence(conn, mcp_row_id, call)?;
     Ok(())
+}
+
+fn link_mcp_execution_evidence(
+    conn: &Connection,
+    mcp_row_id: i64,
+    call: &McpCall,
+) -> rusqlite::Result<()> {
+    if call.method != "tools/call" {
+        return Ok(());
+    }
+    let Some(namespaced_tool_name) = call.tool_name.as_deref() else {
+        return Ok(());
+    };
+    let normalized_tool_name = namespaced_tool_name.replace("__", ".");
+    let (server_id, tool_name) = namespaced_tool_name
+        .split_once("__")
+        .map(|(server, tool)| (server.to_string(), tool.to_string()))
+        .unwrap_or_else(|| (call.server_name.clone(), namespaced_tool_name.to_string()));
+    let mcp_call_id = mcp_row_id.to_string();
+    let result_kind = if call
+        .response_preview
+        .as_deref()
+        .and_then(|preview| serde_json::from_str::<serde_json::Value>(preview).ok())
+        .is_some()
+    {
+        AiContentKind::Json
+    } else {
+        AiContentKind::Text
+    };
+    let request_arguments = mcp_request_arguments_json(call.request_preview.as_deref());
+    let (linked_interaction_row_id, linked_interaction_id, linked_tool_call_id, link_status) =
+        find_matching_model_tool_call(conn, call.trace_id.as_deref(), &normalized_tool_name)?;
+    let status = mcp_decision_tool_status(&call.decision);
+
+    conn.execute(
+        "INSERT INTO ai_mcp_execution_evidence (
+            interaction_id, mcp_call_id, server_id, tool_name,
+            namespaced_tool_name, transport, request_arguments_raw,
+            request_arguments_json, result_kind, result_preview,
+            result_json, is_error, latency_ms, linked_model_interaction_id,
+            linked_model_tool_call_id, link_status
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![
+            linked_interaction_row_id,
+            mcp_call_id,
+            server_id,
+            tool_name,
+            namespaced_tool_name,
+            "mcp-framed",
+            request_arguments,
+            request_arguments,
+            result_kind.sql_text(),
+            cap_field(&call.response_preview),
+            call.response_preview,
+            (call.decision == "error" || call.error_message.is_some()) as i64,
+            call.duration_ms as i64,
+            linked_interaction_id,
+            linked_tool_call_id,
+            link_status.sql_text(),
+        ],
+    )?;
+
+    if let (Some(interaction_row_id), Some(tool_call_id)) =
+        (linked_interaction_row_id, linked_tool_call_id.as_deref())
+    {
+        conn.execute(
+            "UPDATE ai_model_tool_calls
+             SET linked_mcp_call_id = ?1, status = ?2
+             WHERE interaction_id = ?3 AND tool_call_id = ?4",
+            params![
+                mcp_call_id,
+                status.sql_text(),
+                interaction_row_id,
+                tool_call_id
+            ],
+        )?;
+        if let Some(trace_id) = call.trace_id.as_deref() {
+            conn.execute(
+                "UPDATE tool_calls
+                 SET mcp_call_id = ?1
+                 WHERE trace_id = ?2
+                   AND replace(tool_name, '__', '.') = ?3
+                   AND mcp_call_id IS NULL",
+                params![mcp_row_id, trace_id, normalized_tool_name],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn find_matching_model_tool_call(
+    conn: &Connection,
+    trace_id: Option<&str>,
+    normalized_tool_name: &str,
+) -> rusqlite::Result<(Option<i64>, Option<String>, Option<String>, LinkStatus)> {
+    let Some(trace_id) = trace_id else {
+        return Ok((None, None, None, LinkStatus::UnlinkedPending));
+    };
+    let mut stmt = conn.prepare(
+        "SELECT ami.id, ami.interaction_id, atc.tool_call_id
+         FROM ai_model_interactions ami
+         JOIN ai_model_tool_calls atc ON atc.interaction_id = ami.id
+         WHERE ami.trace_id = ?1
+           AND atc.normalized_name = ?2
+           AND atc.linked_mcp_call_id IS NULL
+         ORDER BY atc.id ASC",
+    )?;
+    let rows = stmt
+        .query_map(params![trace_id, normalized_tool_name], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    match rows.len() {
+        0 => Ok((None, None, None, LinkStatus::OrphanMcpExecution)),
+        1 => {
+            let (row_id, interaction_id, tool_call_id) = rows[0].clone();
+            Ok((
+                Some(row_id),
+                Some(interaction_id),
+                Some(tool_call_id),
+                LinkStatus::Linked,
+            ))
+        }
+        _ => Ok((None, None, None, LinkStatus::Ambiguous)),
+    }
+}
+
+fn mcp_request_arguments_json(request_preview: Option<&str>) -> Option<String> {
+    let preview = request_preview?;
+    let value = serde_json::from_str::<serde_json::Value>(preview).ok()?;
+    value
+        .get("arguments")
+        .and_then(|arguments| serde_json::to_string(arguments).ok())
+}
+
+fn mcp_decision_tool_status(decision: &str) -> ToolCallStatus {
+    match decision {
+        "denied" => ToolCallStatus::Blocked,
+        "error" => ToolCallStatus::Error,
+        _ => ToolCallStatus::Executed,
+    }
 }
 
 fn insert_snapshot_event(conn: &Connection, event: &SnapshotEvent) -> rusqlite::Result<()> {

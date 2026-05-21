@@ -733,6 +733,15 @@ a valid claim -- mark it `[ ]` instead.
     Verification: `cargo test -p capsem-logger` passed with 229 tests,
     including enum spelling parity and invalid enum DB constraint tests;
     `cargo test -p capsem-core telemetry_hook` passed with 8 tests.
+    Sixteenth linkage slice connected framed MCP `tools/call` telemetry to
+    canonical model tool-call evidence when trace id and normalized tool name
+    agree, records explicit link status for unmatched/ambiguous executions,
+    and backfills the legacy `tool_calls.mcp_call_id` projection. The model
+    AI trace state now prefers ambient Capsem trace ids when starting a new
+    tool chain so model/MCP rows can share a join key. Verification:
+    `cargo test -p capsem-logger` passed with 230 tests, `cargo test -p
+    capsem-core telemetry_hook` passed with 8 tests, and `cargo test -p
+    capsem-core ai_traffic::evidence` passed with 5 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

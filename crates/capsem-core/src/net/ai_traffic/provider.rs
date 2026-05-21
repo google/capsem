@@ -105,11 +105,11 @@ pub fn extract_model_from_path(path: &str) -> Option<String> {
 ///   cleaner but premature until next-gen unifies tool tracking.
 /// - **Heuristic-only**: uses `__` as MCP namespace separator. If a native
 ///   tool name contains `__`, it would be misclassified as mcp_proxy.
-/// - **No correlation to mcp_calls**: the `mcp_call_id` column in
-///   `tool_calls` is defined but never populated. There is no mechanism to
-///   link a model_call's tool_call entry to the corresponding mcp_calls row.
-///   Next-gen should propagate a shared call_id or request_id through the
-///   guest MCP endpoint.
+/// - **Correlation is still evidence-based**: logger-side linking can connect
+///   model tool calls to framed MCP executions when trace id and normalized
+///   tool name agree, but this classifier remains heuristic. The canonical AI
+///   evidence link status is the authority for whether a call is linked,
+///   ambiguous, pending, or orphaned.
 pub fn tool_origin(name: &str) -> &'static str {
     if crate::mcp::builtin_tools::is_builtin_tool(name) {
         "local"
