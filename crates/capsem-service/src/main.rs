@@ -4185,6 +4185,34 @@ struct RuntimeDetectionRuleRequest {
     enabled: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeBacktestEvent {
+    #[serde(default)]
+    event_ref: Option<seceng::BacktestEventRef>,
+    event: seceng::SecurityEvent,
+    #[serde(default)]
+    expected: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeEnforcementBacktestRequest {
+    rule: RuntimeEnforcementRuleRequest,
+    events: Vec<RuntimeBacktestEvent>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDetectionBacktestRequest {
+    rule: RuntimeDetectionRuleRequest,
+    events: Vec<RuntimeBacktestEvent>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -5774,6 +5802,81 @@ fn runtime_registry_rules_json(
         .collect())
 }
 
+fn runtime_backtest_limit(limit: Option<usize>) -> usize {
+    limit.unwrap_or(seceng::DEFAULT_BACKTEST_MATCH_LIMIT)
+}
+
+fn inline_backtest_event_ref(input: &RuntimeBacktestEvent) -> seceng::BacktestEventRef {
+    input
+        .event_ref
+        .clone()
+        .unwrap_or_else(|| seceng::BacktestEventRef {
+            corpus: "inline".into(),
+            session_id: input.event.common.session_id.clone(),
+            event_id: input.event.common.event_id.clone(),
+            sequence_no: input.event.common.sequence_no,
+            timestamp_unix_ms: input.event.common.timestamp_unix_ms,
+        })
+}
+
+fn backtest_evidence_signature(event: &seceng::SecurityEvent) -> Result<String, AppError> {
+    let evidence = serde_json::json!({
+        "event_type": &event.common.event_type,
+        "subject": &event.subject,
+    });
+    let evidence = serde_json::to_vec(&evidence).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("serialize backtest evidence: {error}"),
+        )
+    })?;
+    Ok(blake3::hash(&evidence).to_hex().to_string())
+}
+
+fn backtest_matched_fields(
+    event: &seceng::SecurityEvent,
+) -> Result<Vec<seceng::MatchedField>, AppError> {
+    Ok(vec![seceng::MatchedField {
+        path: "subject".into(),
+        value: serde_json::to_value(&event.subject).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("serialize backtest matched field: {error}"),
+            )
+        })?,
+    }])
+}
+
+fn backtest_outcome(expected: Option<&str>, actual: &str) -> seceng::BacktestOutcome {
+    match expected {
+        Some(expected) if expected != actual => seceng::BacktestOutcome::Mismatch {
+            expected: expected.to_owned(),
+            actual: actual.to_owned(),
+        },
+        _ => seceng::BacktestOutcome::Matched,
+    }
+}
+
+fn security_decision_action_text(
+    action: seceng::SecurityDecisionAction,
+) -> Result<String, AppError> {
+    serde_json::to_value(action)
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("serialize security decision action: {error}"),
+            )
+        })?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "security decision action did not serialize as a string".into(),
+            )
+        })
+}
+
 async fn handle_compile_enforcement_rule(
     Json(request): Json<RuntimeEnforcementRuleRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -5891,6 +5994,56 @@ async fn handle_enforcement_stats(
     })))
 }
 
+async fn handle_enforcement_backtest(
+    Json(request): Json<RuntimeEnforcementBacktestRequest>,
+) -> Result<Json<seceng::BacktestResult>, AppError> {
+    validate_runtime_rule_id(&request.rule.id)?;
+    let mut evaluator =
+        seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
+            id: request.rule.id.clone(),
+            pack_id: request.rule.pack_id.clone(),
+            condition: request.rule.condition.clone(),
+            decision: request.rule.decision,
+            reason: request.rule.reason.clone(),
+        }])
+        .map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("compile enforcement rule: {error}"),
+            )
+        })?;
+
+    let mut rows = Vec::new();
+    for input in &request.events {
+        if let Some(decision) = seceng::EnforcementEvaluator::evaluate(&mut evaluator, &input.event)
+            .map_err(|error| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("backtest enforcement rule: {error}"),
+                )
+            })?
+        {
+            let actual = security_decision_action_text(decision.action)?;
+            rows.push(seceng::BacktestMatchRow {
+                event_ref: inline_backtest_event_ref(input),
+                rule_id: decision.rule.unwrap_or_else(|| request.rule.id.clone()),
+                pack_id: decision
+                    .pack_id
+                    .or_else(|| request.rule.pack_id.clone())
+                    .unwrap_or_else(|| "runtime".into()),
+                evidence_signature: backtest_evidence_signature(&input.event)?,
+                matched_fields: backtest_matched_fields(&input.event)?,
+                outcome: backtest_outcome(input.expected.as_deref(), &actual),
+            });
+        }
+    }
+
+    Ok(Json(seceng::dedupe_backtest_matches(
+        rows,
+        runtime_backtest_limit(request.limit),
+    )))
+}
+
 async fn handle_compile_detection_rule(
     Json(request): Json<RuntimeDetectionRuleRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -6003,6 +6156,55 @@ async fn handle_detection_stats(
         "kind": "detection",
         "rules": runtime_registry_rules_json(&state.detection_registry)?,
     })))
+}
+
+async fn handle_detection_backtest(
+    Json(request): Json<RuntimeDetectionBacktestRequest>,
+) -> Result<Json<seceng::BacktestResult>, AppError> {
+    validate_runtime_rule_id(&request.rule.id)?;
+    let mut evaluator = seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
+        id: request.rule.id.clone(),
+        pack_id: request.rule.pack_id.clone(),
+        sigma_id: request.rule.sigma_id.clone(),
+        title: request.rule.title.clone(),
+        condition: request.rule.condition.clone(),
+        severity: request.rule.severity,
+        confidence: request.rule.confidence,
+        tags: request.rule.tags.clone(),
+    }])
+    .map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("compile detection rule: {error}"),
+        )
+    })?;
+
+    let mut rows = Vec::new();
+    for input in &request.events {
+        let findings = seceng::DetectionEvaluator::evaluate(&mut evaluator, &input.event).map_err(
+            |error| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("backtest detection rule: {error}"),
+                )
+            },
+        )?;
+        for finding in findings {
+            rows.push(seceng::BacktestMatchRow {
+                event_ref: inline_backtest_event_ref(input),
+                rule_id: finding.rule_id,
+                pack_id: finding.pack_id,
+                evidence_signature: backtest_evidence_signature(&input.event)?,
+                matched_fields: backtest_matched_fields(&input.event)?,
+                outcome: backtest_outcome(input.expected.as_deref(), "finding"),
+            });
+        }
+    }
+
+    Ok(Json(seceng::dedupe_backtest_matches(
+        rows,
+        runtime_backtest_limit(request.limit),
+    )))
 }
 
 /// GET /confirm/pending -- list pending S15 confirmation prompts.
@@ -8841,6 +9043,7 @@ async fn main() -> Result<()> {
             "/enforcement/compile",
             post(handle_compile_enforcement_rule),
         )
+        .route("/enforcement/backtest", post(handle_enforcement_backtest))
         .route("/enforcement/stats", get(handle_enforcement_stats))
         .route(
             "/enforcement/{id}",
@@ -8852,6 +9055,7 @@ async fn main() -> Result<()> {
         )
         .route("/detection/validate", post(handle_validate_detection_rule))
         .route("/detection/compile", post(handle_compile_detection_rule))
+        .route("/detection/backtest", post(handle_detection_backtest))
         .route("/detection/stats", get(handle_detection_stats))
         .route(
             "/detection/{id}",

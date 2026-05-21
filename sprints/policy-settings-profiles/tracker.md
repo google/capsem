@@ -830,6 +830,20 @@ a valid claim -- mark it `[ ]` instead.
     resolved-event/session journal, gateway/CLI/UI route exposure, persistence
     or profile-pack seeding for installed runtime plans, and VM/runtime
     integration.
+    Twenty-fifth S08b.2 slice added local typed backtest handlers for
+    `POST /enforcement/backtest` and `POST /detection/backtest`. Both compile
+    candidate rules through the real CEL evaluators, run them against supplied
+    normalized `SecurityEvent` values, return shared `BacktestResult` rows with
+    event refs and matched subject evidence, and apply the shared evidence
+    signature dedupe/default limit path. Verification: `cargo test -p
+    capsem-service
+    handle_enforcement_backtest_matches_and_dedupes_inline_events` passed and
+    `cargo test -p capsem-service
+    handle_detection_backtest_returns_finding_rows_with_event_refs` passed.
+    Still missing for S08b.2: historical resolved-event/session-journal
+    backtest source selection, `/detection/hunt` and
+    `/sessions/{id}/detection/hunt`, gateway/CLI/UI route exposure,
+    persistence/profile-pack seeding, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

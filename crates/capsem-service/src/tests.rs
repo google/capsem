@@ -6461,6 +6461,54 @@ async fn handle_evaluate_rule_rejects_unknown_callback() {
     assert!(err.1.contains("unsupported policy callback"));
 }
 
+fn runtime_http_event(
+    event_id: &str,
+    sequence_no: u64,
+    host: &str,
+) -> capsem_security_engine::SecurityEvent {
+    capsem_security_engine::SecurityEvent::http(
+        capsem_security_engine::SecurityEventCommon {
+            event_id: event_id.into(),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: Some("activity-1".into()),
+            sequence_no: Some(sequence_no),
+            source_engine: capsem_security_engine::SourceEngine::Network,
+            attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+            origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:vm-1".into()),
+            enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+            trace_id: Some("trace-1".into()),
+            span_id: None,
+            timestamp_unix_ms: 1_789 + sequence_no,
+            vm_id: Some("vm-1".into()),
+            session_id: Some("session-1".into()),
+            profile_id: Some("coding".into()),
+            profile_revision: Some("rev-a".into()),
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: Some("user-1".into()),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: capsem_security_engine::RedactionState::Raw,
+        },
+        capsem_security_engine::HttpSecuritySubject {
+            method: "GET".into(),
+            host: host.into(),
+            path_class: "/metadata".into(),
+            request_bytes: 64,
+            response_bytes: None,
+        },
+    )
+}
+
 #[tokio::test]
 async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     let state = make_test_state();
@@ -6646,6 +6694,92 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
     assert_eq!(deleted["removed"], true);
     let Json(listed_after_delete) = handle_list_detection_rules(State(state)).await.unwrap();
     assert!(listed_after_delete["rules"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn handle_enforcement_backtest_matches_and_dedupes_inline_events() {
+    let Json(result) = handle_enforcement_backtest(Json(RuntimeEnforcementBacktestRequest {
+        rule: RuntimeEnforcementRuleRequest {
+            id: "block-metadata".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("metadata access".into()),
+            enabled: true,
+        },
+        events: vec![
+            RuntimeBacktestEvent {
+                event_ref: None,
+                event: runtime_http_event("evt-1", 1, "metadata.google.internal"),
+                expected: None,
+            },
+            RuntimeBacktestEvent {
+                event_ref: None,
+                event: runtime_http_event("evt-2", 2, "metadata.google.internal"),
+                expected: None,
+            },
+            RuntimeBacktestEvent {
+                event_ref: None,
+                event: runtime_http_event("evt-3", 3, "api.example.test"),
+                expected: None,
+            },
+        ],
+        limit: None,
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(result.total_matches, 2);
+    assert_eq!(result.unique_evidence_matches, 1);
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0].event_ref.event_id, "evt-1");
+    assert_eq!(result.rows[0].rule_id, "block-metadata");
+    assert_eq!(result.rows[0].pack_id, "runtime-pack");
+}
+
+#[tokio::test]
+async fn handle_detection_backtest_returns_finding_rows_with_event_refs() {
+    let Json(result) = handle_detection_backtest(Json(RuntimeDetectionBacktestRequest {
+        rule: RuntimeDetectionRuleRequest {
+            id: "detect-metadata".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-1".into()),
+            title: "Metadata access".into(),
+            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::High,
+            tags: vec!["metadata".into()],
+            enabled: true,
+        },
+        events: vec![
+            RuntimeBacktestEvent {
+                event_ref: Some(capsem_security_engine::BacktestEventRef {
+                    corpus: "fixture".into(),
+                    session_id: Some("session-1".into()),
+                    event_id: "evt-custom".into(),
+                    sequence_no: Some(42),
+                    timestamp_unix_ms: 1_800,
+                }),
+                event: runtime_http_event("evt-4", 4, "metadata.google.internal"),
+                expected: None,
+            },
+            RuntimeBacktestEvent {
+                event_ref: None,
+                event: runtime_http_event("evt-5", 5, "api.example.test"),
+                expected: None,
+            },
+        ],
+        limit: Some(100),
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(result.total_matches, 1);
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0].event_ref.corpus, "fixture");
+    assert_eq!(result.rows[0].event_ref.event_id, "evt-custom");
+    assert_eq!(result.rows[0].rule_id, "detect-metadata");
+    assert_eq!(result.rows[0].pack_id, "runtime-detection");
 }
 
 #[tokio::test]

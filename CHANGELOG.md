@@ -65,6 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added first service-owned runtime `/enforcement/*` and `/detection/*`
   handlers for validate/compile, live add/update/delete/list, and stats backed
   by real CEL compilation and compile-first registry installs.
+- Added service-owned runtime enforcement and detection backtest handlers that
+  evaluate candidate CEL rules against typed normalized `SecurityEvent` inputs
+  and return the shared deduplicated `BacktestResult` shape.
 - Added Rust Detection IR evaluation against the new S08b normalized
   `SecurityEvent` contract so Sigma-derived findings can run on the shared
   event model instead of a parallel fixture-only shape.
