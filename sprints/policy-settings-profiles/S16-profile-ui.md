@@ -18,23 +18,34 @@ readiness, and profile-backed VM creation first-class in the UI.
 - Show icon, name, description, best-for, type, version/revision.
 - Show package/tool contract and VM asset readiness for the selected profile.
 - Add General, Appearance, AI Providers, MCP & Connectors, Skills, VM, Security.
+- Show profile-owned enforcement packs and detection packs as separate
+  sections. Enforcement controls link to blocking-capable CEL rule editing and
+  enforcement backtest. Detection controls link to Sigma/detection pack
+  validation, detection backtest, stats, findings, and hunt.
 - Make VM/session launch use an explicit selected profile id and resolved
   revision. The create flow must surface first-use asset download progress and
   block revoked/incompatible profiles.
 - Show existing VM bindings: profile id/revision, package contract hash, pinned
   asset hashes, and drift/deprecation/revocation warnings.
+- Backtest UI defaults use the service result shape: summary counts plus up to
+  100 matched events, deduped by evidence signature, with event refs and full
+  local matched evidence. Redacted views are explicit export/support-bundle
+  flows.
 
 ## Coverage Ledger
 
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
-  values, revisions, package/tool contracts, asset readiness, and VM pin fields.
+  values, revisions, package/tool contracts, asset readiness, VM pin fields,
+  enforcement-pack summaries, detection-pack summaries, and backtest result
+  rows.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states.
 - Adversarial: locked/forbidden profile actions, revoked profile, incompatible
   profile revision, stale catalog rollback warning, asset download failure,
   interrupted download retry, and invalid/missing VM pin display.
 - E2E/VM: launch session with selected profile revision and verified assets.
-- Telemetry: UI links to status/debug provenance for profile revision and asset
-  verification failures.
+- Telemetry: UI links to status/debug provenance for profile revision, asset
+  verification failures, enforcement matches, detection findings, and rule
+  stats.
 - Performance: profile switching remains responsive and does not trigger network
   fetches or hash scans on every selection change.

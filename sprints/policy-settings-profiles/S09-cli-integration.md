@@ -42,12 +42,22 @@ through CLI command families.
   removed instead of bridged. Remaining S09 work can refine naming/output if
   the product wants `list/show` aliases.
 - Add `capsem skills list/add/delete/show`.
-- Add `capsem rules list/show/add/remove/evaluate` mirroring the
-  [S07 Rules API](S07-uds-service-api.md#rules-api). `capsem rules
-  evaluate` takes a subject (file or stdin JSON), a callback type,
-  and an optional profile, and prints the would-be decision
-  (matched rule, action, reason) without enforcing -- the CLI
-  primitive for scripted policy debugging and CI.
+- Do not extend `capsem rules` for post-S08b behavior. If the legacy S07
+  command family still exists when this sprint starts, either retire it or keep
+  it explicitly documented as a compatibility shim for the closed S07 surface.
+  New scripted debugging and CI use `capsem enforcement ...` and
+  `capsem detection ...`.
+- Add `capsem enforcement validate|compile|backtest|list|add|update|delete|stats`
+  mirroring the S08b service routes. This is the runtime-installed surface for
+  blocking-capable CEL enforcement rules. `backtest` prints summary counts plus
+  event-level rows; default output includes up to 100 matched events, deduped
+  by simple evidence signature for diversity.
+- Add `capsem detection validate|compile|backtest|list|add|update|delete|stats|hunt`
+  mirroring the S08b service routes. Detection `hunt` is forensic over
+  historical resolved-event journals; enforcement does not use the word hunt.
+- CLI backtest/hunt output includes event refs (`session_id`, `event_id`,
+  `sequence`) and full matched field evidence by default. Redacted output is an
+  explicit export/support-bundle mode, not the local debugging default.
 - Add `capsem confirm list/accept/deny/promote-allow/promote-deny`
   for the [S15 ask resolve path](S15-confirm-ux.md). Two operators
   on the same session must see the same pending queue; the CLI
@@ -58,20 +68,23 @@ through CLI command families.
 ## Coverage Ledger
 
 - Unit/contract: parser tests; `capsem mcp connectors/add/delete` parser tests;
-  `capsem rules evaluate` parser tests
-  (subject from `--subject path.json` vs stdin; rejects missing
-  callback); profile catalog/revision output golden tests for all
+  legacy `capsem rules` retirement or compatibility-shim parser tests if the
+  command still ships; `capsem enforcement backtest` and
+  `capsem detection backtest` parser/output tests for default 100 matched-row
+  evidence; profile
+  catalog/revision output golden tests for all
   `ProfileRevisionStatus` enum values; VM create parser tests for `--profile`,
   `--profile-revision` have landed. Remaining parser coverage covers download
   progress and revoked/incompatible profile errors.
-- Functional: CLI to service integration tests; `capsem rules add`
-  then `capsem rules evaluate` roundtrip; `capsem confirm list` +
+- Functional: CLI to service integration tests; enforcement add/backtest/list
+  and detection add/backtest/list/hunt roundtrips; `capsem confirm list` +
   `capsem confirm accept <id>` resolves a real pending ask end to
-  end. CLI-created VM with `--profile` pins the selected profile revision and
-  assets.
-- Adversarial: bad ids, bad files, locked actions, service
-  unavailable, attempt to `capsem rules remove` a built-in rule
-  surfaces the typed `rule_is_builtin` error verbatim, accept on a
+  end. Enforcement/detection CLI commands validate, compile, backtest, install,
+  list stats, and detection-hunt through the service. CLI-created VM with
+  `--profile` pins the selected profile revision and assets.
+- Adversarial: bad ids, bad files, locked actions, service unavailable,
+  attempt to mutate locked/generated enforcement through the new CLI surfaces a
+  typed ownership error verbatim, accept on a
   non-existent ask id returns a typed error rather than hanging, revoked
   profile cannot be used for new VM create, incompatible profile revision
   explains the binary compatibility failure, interrupted first-use download

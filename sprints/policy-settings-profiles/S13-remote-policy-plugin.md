@@ -1,23 +1,30 @@
-# S13 - Remote Policy Plugin
+# S13 - Remote Enforcement Plugin
 
 ## Goal
 
-Add a service-scoped remote policy plugin.
+Add a service-scoped remote enforcement plugin and observer integration.
 
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-defines the boundary between event streaming/detection and synchronous policy
-decisions. A remote plugin can have two explicit modes:
+defines the boundary between event streaming/detection and synchronous
+enforcement decisions. A remote plugin can have two explicit modes:
 
-- **Decision mode:** consumes a redacted `SecurityEvent` plus policy context and
-  returns a bounded `SecurityDecision` for synchronous enforcement.
+- **Decision mode:** consumes a redacted `SecurityEvent` plus enforcement
+  context and returns a bounded `SecurityDecision` for synchronous enforcement.
 - **Observer mode:** consumes `ResolvedSecurityEvent` records after local
-  policy/confirm/detection/postprocessing and may export or enrich findings,
+  enforcement/confirm/detection/postprocessing and may export or enrich findings,
   but cannot block or rewrite the already-resolved event.
 
 The plugin contract must never let a detection finding silently become a
 blocking decision.
+
+Post-regroup route contract: the plugin consumes the S08b service-owned
+`/enforcement/*` and `/detection/*` model. Decision mode participates only in
+the enforcement path. Observer mode may receive resolved events with attached
+detection findings and match stats, but it does not mutate `/detection/*` rules
+or convert findings into enforcement. Runtime add/update/delete/list/stats,
+backtest, and detection hunt remain owned by the Capsem service APIs.
 
 ## Tasks
 
@@ -25,14 +32,17 @@ blocking decision.
 - Define forwarded events/context.
 - Define fail-open/fail-closed behavior by decision surface.
 - Define separate decision-mode and observer-mode payloads.
-- Wire remote decisions into policy paths without profile TOML depending on the
-  endpoint.
+- Wire remote decisions into enforcement paths without profile TOML depending
+  on the endpoint.
+- Ensure remote-origin decisions, confirms, timeouts, denials, and observer
+  exports are attached to the resolved event before telemetry/audit/logging
+  fan-out.
 - Test allow/block/ask, endpoint failure, timeout, auth failure, redaction, and
   audit output.
 
 ### Confirmer integration
 
-The remote policy plugin plugs in behind the same `Confirmer` trait
+The remote enforcement plugin plugs in behind the same `Confirmer` trait
 introduced in S06-pre, alongside the placeholder and the
 [S15 UI/CLI prompter](S15-confirm-ux.md). All three are switchable
 authorities for the same `decision = "ask"` resolution path:
@@ -58,5 +68,6 @@ authorities for the same `decision = "ask"` resolution path:
 - Functional: remote decision tests.
 - Adversarial: endpoint failure, timeout, invalid decision, auth failure.
 - E2E/VM: remote block/allow proof.
-- Telemetry: audit output proves remote decisions.
+- Telemetry: audit output proves remote decisions, observer exports, and
+  detection findings remain separate from enforcement decisions.
 - Performance: timeout budget tested.

@@ -2,22 +2,28 @@
 
 ## Goal
 
-Replace raw CEL as the primary rules UI with one reusable rule editor/renderer
-that powers per-type rule blocks.
+Replace raw CEL as the primary enforcement UI with reusable rule editor,
+renderer, backtest, and finding components that respect the split between
+enforcement and detection.
 
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-decides that this sprint edits synchronous Capsem policy rules. Detection packs
-and findings are separate: S14 may render detection references/finding badges
-when available, but the primary editor writes `capsem.policy-pack.v1` policy
-rules and never edits Sigma YAML as if it were enforcement policy.
+decides that this sprint edits synchronous Capsem enforcement rules. Detection
+packs and findings are separate: S14 may render detection references, finding
+badges, detection backtest results, and detection suggestions, but the primary
+enforcement editor writes enforcement CEL rules and never edits Sigma YAML as
+if it were enforcement policy.
 
 ## Tasks
 
-- Build a **single shared rule editor** component (not one editor per rule type).
+- Build a **single shared enforcement rule editor** component (not one editor
+  per rule type).
 - Build a **single shared rule renderer/list item** component used by every
-  rules block.
+  enforcement and detection block.
+- Build a shared backtest result table/card component for enforcement and
+  detection. Default view shows summary counts plus up to 100 matched events
+  returned by the service, preserving event refs and full local evidence.
 - Build per-type visual rule blocks on Profile > Security for:
   - DNS rules
   - HTTP rules
@@ -39,17 +45,26 @@ rules and never edits Sigma YAML as if it were enforcement policy.
 - Keep raw CEL as advanced escape hatch only.
 - Show detection-originated policy suggestions as suggestions that open the
   policy editor prefilled; saving them creates policy rules, not detections.
+- Add detection pack/rule list and backtest views that call `/detection/*`.
+  Detection edit/import UX may support Sigma YAML, but must not present Sigma
+  as a blocking rule language.
+- Add enforcement backtest actions that call `/enforcement/backtest` before a
+  rule is installed or saved.
+- Full matched evidence is visible in local UI backtest/hunt results by
+  default; redaction belongs to export/support-bundle flows.
 
 ## Coverage Ledger
 
-- Unit/contract: shared editor/renderer tests and per-type adapter contract
-  tests.
-- Functional: each rules block can list and add rules; edits round-trip through
-  the shared editor; generated/owned rules show managed-by labels and cannot be
-  edited.
+- Unit/contract: shared editor/renderer tests, backtest result component tests,
+  and per-type adapter contract tests.
+- Functional: each enforcement block can list and add rules; edits round-trip
+  through the shared editor; generated/owned rules show managed-by labels and
+  cannot be edited. Detection blocks list findings/rules and can backtest
+  candidate detection content without turning it into enforcement.
 - Adversarial: invalid expressions, callback/type mismatches, and locked rule
-  edits.
+  edits; unsupported Sigma constructs show typed detection diagnostics.
 - E2E/VM: not primary.
-- Telemetry: not primary.
+- Telemetry: finding/rule stats display consumes S08b counters without inventing
+  UI-only counters.
 - Performance: autocomplete remains responsive and rule-block rendering remains
   responsive with larger rule sets.

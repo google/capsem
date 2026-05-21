@@ -42,21 +42,27 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
   - VM profile/revision/asset pinning and why existing VMs do not silently move
     when a profile updates.
   - VM-effective settings attachment.
-  - canonical rules, derived/generated rules, ownership locks, provenance, and
-    "why is this here?"
-    debugging.
-  - canonical rule grammar:
+  - canonical enforcement rules, derived/generated rules, ownership locks,
+    provenance, and "why is this here?" debugging.
+  - canonical enforcement rule grammar:
     `security.rules.<type>.<rule_name>`, callback matrix, condition grammar,
     rewrite constraints, and default priority behavior.
   - enforcement architecture: what is evaluated inline, what decisions exist,
-    what can block/rewrite/ask, how ask/confirm is logged, and how the Security
-    Engine emits the resolved event before telemetry/audit/logging.
+    what can block/rewrite/ask, how `/enforcement/*` validate/compile/backtest/
+    live registry/stats routes work, how ask/confirm is logged, and how the
+    Security Engine emits the resolved event before telemetry/audit/logging.
   - detection architecture: what detection rules/finding formats are accepted
-    after S08a, how they differ from enforcement policy, how findings attach to
-    normalized events, and how detection packs live in signed profiles.
+    after S08a/S08b, how `/detection/*` validate/compile/backtest/live
+    registry/stats/hunt routes work, how they differ from enforcement policy,
+    how findings attach to normalized events, and how detection packs live in
+    signed profiles.
+  - backtest and hunt evidence behavior: aggregate counts plus up to 100 matched
+    event rows by default, simple evidence-signature deduplication for
+    diversity, event refs, full local evidence, and the distinction between
+    local/API evidence and exported telemetry/redaction.
   - `confirm()` semantics for `ask` decisions, including telemetry
     (`policy_confirm_events`) and current placeholder behavior.
-  - how MCP, skills, credentials, telemetry, remote policy, and VM settings fit
+  - how MCP, skills, credentials, telemetry, remote enforcement, and VM settings fit
     into the model.
 - Write corporate system docs:
   - deploying base and corp profile directories.
@@ -71,9 +77,9 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
   - building a profile from scratch, including package/tool contracts,
     per-arch VM asset declarations, custom images, and controls.
   - setting service-scoped telemetry.
-  - configuring enforcement policy packs and detection packs with
+  - configuring enforcement packs and detection packs with
     `capsem-admin` typed validation/schema/check commands.
-  - configuring remote policy decisions.
+  - configuring remote enforcement decisions.
   - configuring signed profile catalogs, profile payload hosting, asset
     locations, and custom images.
   - using `capsem-admin manifest check --fast` for HTTP HEAD reachability checks
@@ -104,9 +110,9 @@ Under `docs/src/content/docs/`, likely pages:
 
 - `architecture/settings-profiles.md` - engine overview and resolution flow.
 - `architecture/policy-engine.md` - canonical rules, derived/generated rules,
-  provenance, enforcement points, remote policy interaction.
+  provenance, enforcement points, remote enforcement interaction.
 - `configuration/service-settings.md` - service TOML, profile roots, telemetry,
-  remote policy, credentials, manifest source, asset directory, image roots, and
+  remote enforcement, credentials, manifest source, asset directory, image roots, and
   asset download endpoint.
 - `getting-started/custom-profiles-images.md` - first successful path for using
   Capsem with your own controls/images: install/select a profile, build or
@@ -123,16 +129,16 @@ Under `docs/src/content/docs/`, likely pages:
   signatures, lazy download, and asset retention.
 - `configuration/capsem-admin.md` - corp-admin CLI workflows for profile
   creation/validation, profile-derived image build/verify, manifest
-  generate/check/sign, enforcement/detection pack validation, PyPI install for
-  enterprise admins, bootstrap editable install for development, and release
-  package verification.
+  generate/check/sign, offline enforcement/detection pack validation/backtest,
+  PyPI install for enterprise admins, bootstrap editable install for
+  development, and release package verification.
 - `configuration/corporate-deployment.md` - corp roots, governance, locks,
   custom images, rollout patterns.
 - `configuration/corporate-profiles.md` - enterprise profile format guide:
   how profile payloads work, how statuses affect rollout, how profile-owned
   packages/assets map to VMs, and how corp admins use `capsem-admin` with them.
 - `configuration/corporate-security.md` - corp admin entry page linking profile
-  governance, enforcement policy packs, detection packs, remote policy,
+  governance, enforcement packs, detection packs, remote enforcement,
   telemetry, and audit/export operations.
 - `development/capsem-admin.md` - developer reference for the admin package:
   module layout, Pydantic models, JSON I/O boundaries, schema generation,
@@ -141,14 +147,17 @@ Under `docs/src/content/docs/`, likely pages:
 - `security/profile-capabilities.md` - credential brokerage, PII, MCP RAG/tools,
   network egress, file boundaries, audit posture.
 - `security/enforcement.md` - inline enforcement model: normalized security
-  events, policy CEL, decisions, ask/confirm, rewrite/block semantics,
-  profile-owned policy packs, and resolved-event evidence.
+  events, enforcement CEL, decisions, ask/confirm, rewrite/block semantics,
+  profile-owned enforcement packs, `/enforcement/*` routes, backtest evidence, and
+  resolved-event evidence.
 - `security/detection-format.md` - S08a-selected detection format:
   Sigma-compatible shape/import/compile path, normalized event fields,
   detection pack typing/signing, finding schema, telemetry/OTel mapping, and
-  `capsem-admin` validation/check workflows.
+  `/detection/*` validation/backtest/hunt workflows plus `capsem-admin`
+  offline validation/check workflows.
 - `observability/vm-health.md` - live VM status health and metrics: model call
-  count, provider/model summaries, token counts, estimated cost, ask/policy,
+  count, provider/model summaries, token counts, estimated cost,
+  ask/enforcement,
   HTTP/DNS/MCP/file/process counters, OTel export rules, and the no-hot-SQL
   accumulator/boot-recompute contract.
 - Updates to existing `architecture/settings.md`,
@@ -168,15 +177,20 @@ Final paths should follow the actual docs tree present when this sprint starts.
 - [ ] Write rule-engine grammar reference:
       callbacks, fields, decisions, rewrite rules, priority defaults.
 - [ ] Write enforcement security page:
-      Security Engine pipeline, inline policy evaluation, real CEL function
-      set, allow/block/ask/rewrite semantics, ask/confirm logging, policy pack
-      profile ownership, resolved-event evidence, and remote-policy boundary.
+      Security Engine pipeline, inline enforcement evaluation, real CEL function
+      set, allow/block/ask/rewrite semantics, ask/confirm logging, enforcement pack
+      profile ownership, `/enforcement/*` validate/compile/backtest/list/
+      add/update/delete/stats API behavior, default 100-row evidence-dedup
+      backtest result behavior, resolved-event evidence, and remote-enforcement
+      boundary.
 - [ ] Write detection format security page:
       S08a-selected `capsem.detection-pack.v1` format, Sigma-compatible
       import/compile path, `capsem.detection.ir.v1`, normalized event-field
       mapping, finding schema, detection pack profile ownership,
       schema/versioning rules, examples, validation errors, telemetry/OTel
-      mapping, and why detections do not silently become enforcement.
+      mapping, `/detection/*` validate/compile/backtest/list/add/update/delete/
+      stats/hunt API behavior, default 100-row evidence-dedup result behavior,
+      and why detections do not silently become enforcement.
 - [ ] Write service settings reference with TOML examples.
 - [ ] Write profile reference with TOML examples, custom-profile workflow, the
       closed `capsem.profile.v2` field table, JSON Schema Draft 2020-12
@@ -191,8 +205,8 @@ Final paths should follow the actual docs tree present when this sprint starts.
       explain the profile TOML/JSON Schema contract, package/tool contracts,
       per-arch VM assets, status enum semantics, VM pinning, and how
       `capsem-admin` validates and publishes the profile.
-- [ ] Write corporate security/admin page that links enforcement policy packs,
-      detection packs, profile governance, remote policy, VM health, telemetry,
+- [ ] Write corporate security/admin page that links enforcement packs,
+      detection packs, profile governance, remote enforcement, VM health, telemetry,
       and `capsem-admin` validation workflows from the corp admin section.
 - [ ] Write "build a profile" guide with a complete worked example:
       draft profile, add controls, declare package/tool contract, declare or
@@ -207,10 +221,10 @@ Final paths should follow the actual docs tree present when this sprint starts.
       profile create/validate/schema, image plan/build/verify, manifest
       generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
       reports, omitted `--arch` defaulting to all supported release arches,
-      enforcement/detection pack validate/schema/check commands once S08a
-      finalizes the format, enterprise PyPI install, bootstrap editable
-      development install, packaged release usage, and the Pydantic model layer
-      that backs
+      offline enforcement/detection pack validate/schema/check/backtest
+      commands, S08c shared-corpus parity expectations, enterprise PyPI
+      install, bootstrap editable development install, packaged release usage,
+      and the Pydantic model layer that backs
       validation/errors/reports through `model_validate_json()` /
       `TypeAdapter.validate_json()` and `model_dump_json()`.
 - [ ] Write developer `capsem-admin` internals page:
@@ -222,12 +236,14 @@ Final paths should follow the actual docs tree present when this sprint starts.
       profile id/revision selection, first-use download, verification,
       persistent VM pins, and no implicit migration on profile update.
 - [ ] Write corporate deployment guide.
-- [ ] Write telemetry and remote policy configuration guide.
+- [ ] Write telemetry and remote enforcement configuration guide.
 - [ ] Write VM health/metrics guide covering live status values, boot-time
       recompute/seed from `session.db`, no hot-path SQL reads, OTel labels,
       redaction/cardinality rules, model call count, provider/model summaries,
-      token counts, estimated cost, and how those values appear in status,
-      `/info`, `/metrics/json`, `/metrics`, gateway status, and UI panels.
+      token counts, estimated cost, enforcement/detection match stats, and how
+      those values appear in status, `/info`, `/metrics/json`, `/metrics`,
+      gateway status, and UI panels. Make clear that full local evidence appears
+      in backtest/hunt/timeline APIs, not as OTel labels.
 - [ ] Write custom manifest/profile payload/assets/images/rootfs dependency
   guide or update the existing page.
 - [ ] Remove docs that tell admins to edit `guest/config` image settings by hand
@@ -297,7 +313,7 @@ listed revision that must not be installed or launched is `revoked`.
   `capsem-admin` commands, and CLI/API names.
 - Functional: docs site builds successfully.
 - Adversarial: docs explicitly cover bad config, forbidden corp actions, bad
-  remote policy endpoint, missing profile roots, bad profile/asset signatures,
+  remote enforcement endpoint, missing profile roots, bad profile/asset signatures,
   revoked profiles, rollback/downgrade attempts, missing assets, concurrent
   first-use downloads, cleanup retention races, and debug-report diagnosis.
 - E2E/VM: docs examples are checked against actual CLI/API once those sprints
@@ -307,7 +323,7 @@ listed revision that must not be installed or launched is `revoked`.
   failure semantics after S12, including live VM health model metrics
   (provider, model, call count, token counts, estimated cost) and detection
   finding attribution.
-- Performance: docs mention profile discovery/remote policy timeout behavior
+- Performance: docs mention profile discovery/remote enforcement timeout behavior
   only once measured or specified.
 - Missing/deferred: concrete page paths and examples must be finalized after
   S07-S13 stabilize public interfaces.

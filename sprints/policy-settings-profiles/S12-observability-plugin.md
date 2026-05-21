@@ -42,18 +42,24 @@ UI polling, scrape endpoints -- reads memory only.
 VM status health is a live point-in-time view. Running VM status surfaces read
 the in-memory accumulator. Persistent VMs seed/recompute cumulative totals from
 `session.db` exactly once at process load, then continue from memory. This is
-the agreed model for cost, model call count, provider/model usage, policy,
+the agreed model for cost, model call count, provider/model usage, enforcement,
 detection, and activity health: accurate enough for live operations without
 reopening SQLite on status fan-out paths.
 
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-settled the first contract slice: policy and detection are separate
+settled the first contract slice: enforcement and detection are separate
 profile-owned rule families, detections emit typed findings on
 `ResolvedSecurityEvent`, and OTel labels must stay bounded. S12 can freeze the
 no-SQL runtime accumulator contract, but metric implementation must consume the
 S08a/S08b finding schema rather than inventing a parallel detection model.
+
+Post-regroup terminology: S08b owns the runtime `/enforcement/*` and
+`/detection/*` route groups. S12 exports their live health, counters, and match
+stats; it does not create a third generic "rules" metrics family. Full match
+evidence stays in the resolved-event journal and local backtest/hunt responses,
+not in OpenTelemetry labels.
 
 ## Single Source Of Truth
 
@@ -139,7 +145,7 @@ pub struct VmMetricsSnapshot {
     pub persistent: bool,
     pub lifecycle: VmLifecycleMetrics,
     pub resources: VmResourceMetrics,
-    pub ask: VmAskMetrics,
+    pub enforcement: VmEnforcementMetrics,
     pub http: VmHttpMetrics,
     pub dns: VmDnsMetrics,
     pub model: VmModelMetrics,
@@ -162,14 +168,14 @@ Principles:
 
 ## Metric Taxonomy
 
-### Ask / Policy
+### Ask / Enforcement
 
 The `ask` event boundary is owned by S06-pre. Its definition for this
 sprint:
 
-**An "ask" is any policy callback that matched a rule with
-`decision = "ask"` (set in profile or admin TOML) and was resolved
-through the `Confirmer` trait into a final `Decision::Accept | Deny`.**
+**An "ask" is any enforcement callback that matched a rule with
+`decision = "ask"` (set in profile or admin TOML) and was resolved through the
+`Confirmer` trait into a final `Decision::Accept | Deny`.**
 
 The durable source of truth is the `policy_confirm_events` table
 (landing in S06-pre slice 7). The accumulator increments on the same
@@ -196,11 +202,27 @@ binary (`Accept | Deny`). The legacy MCP `ToolDecision::Warn` concept
 the user-facing surface, not a third policy outcome at the engine
 boundary -- the engine still resolves to allow or deny.
 
-This sprint therefore **drops `asks_warned` from the policy ask metric
+This sprint therefore **drops `asks_warned` from the enforcement ask metric
 family**. The "warn" UX retains a separate home in MCP-specific
 tool-invocation metrics (see MCP section: `mcp_tool_invocations_warned_total`)
-where the legacy ToolDecision::Warn path lives. The policy ask family
+where the legacy ToolDecision::Warn path lives. The enforcement ask family
 stays clean and binary.
+
+Enforcement rule counters:
+
+- `enforcement_events_evaluated_total`
+- `enforcement_rule_matches_total`
+- `enforcement_decisions_allowed_total`
+- `enforcement_decisions_denied_total`
+- `enforcement_decisions_asked_total`
+- `enforcement_decisions_rewritten_total`
+- `enforcement_errors_total`
+
+JSON-only summaries include bounded top-N rule ids/pack ids by match count,
+recent typed failure reasons, and last-match timestamps. Rule ids are allowed in
+bounded JSON summaries and service status payloads; exported metrics should keep
+labels to profile id/revision, VM id, event family, decision, and coarse rule
+origin/scope unless S08b defines a bounded registry label set.
 
 ### HTTP / HTTPS
 
@@ -307,6 +329,9 @@ accumulator:
 - `detection_events_evaluated_total`
 - `detection_findings_total`
 - `detection_findings_by_severity_total`
+- `detection_rule_matches_total`
+- `detection_hunt_queries_total`
+- `detection_backtest_queries_total`
 - `detection_errors_total`
 
 Exported labels stay low-cardinality: profile id/revision, VM id, detection
@@ -316,6 +341,11 @@ stay in bounded JSON summaries or the resolved-event store. Provider/model/cost
 metrics follow the same rule: provider and normalized model family may be
 labels only after capping/normalization; raw model strings and prompts are not
 labels.
+
+Backtest/hunt responses can return full local evidence through the owning API,
+but OTel only exports aggregate counters and bounded summaries. The live
+accumulator records runtime match totals; S08b/S08c own historical backtest
+correctness and evidence diversity.
 
 ### Resources
 
@@ -403,6 +433,8 @@ starts.
 
 - Consume typed metrics JSON for VM cards/status panels.
 - Render ask pass rate from counters in the UI, not server-side.
+- Render enforcement and detection match stats from typed live metrics, while
+  linking into S08b/S08c backtest/hunt surfaces for event-level evidence.
 - Render model call count, provider/model usage, token counts, and estimated
   cost from typed live metrics. The UI may format cost, but it must not invent
   cost values absent from the accumulator.
@@ -429,6 +461,7 @@ starts.
 ### Process
 
 - Unit tests for ask counters and pass-rate inputs.
+- Unit tests for enforcement decision and match counters.
 - Unit tests for HTTP/DNS/model/MCP/filesystem/resource accumulator
   updates without `DbWriter`/SQLite.
 - Unit tests for model health counters and bounded provider/model summaries,
@@ -458,7 +491,7 @@ starts.
 ### Gateway
 
 - Status/metrics proxy tests preserving typed metric fields.
-- Test that ask split counters survive gateway translation.
+- Test that ask/enforcement split counters survive gateway translation.
 - Test that MCP server summaries are not collapsed into one ambiguous
   total.
 - Test that model provider/model/cost summaries and detection finding counters
@@ -470,6 +503,8 @@ starts.
 - VM status health renders model call count, provider/model summaries, token
   counts, estimated cost, and detection finding health from the live snapshot.
 - Ask pass rate derives from `total_asks` and `asks_allowed` only.
+- Enforcement/detection match stats render separately and do not collapse into
+  a generic policy/rules total.
 - Resource labels show configured / host-side / guest-side distinctly.
 
 ### Integration
@@ -494,7 +529,7 @@ starts.
 
 ## Open Questions Decided In This Doc
 
-- **What is an ask?** The S06-pre Confirmer-resolved policy callback
+- **What is an ask?** The S06-pre Confirmer-resolved enforcement callback
   with matched `decision = "ask"`. Binary outcome. Four counters
   (total / allowed / denied / errored). No `asks_warned` in this family.
 - **Does /info keep durable DB reads?** Not on running VMs. Running
@@ -581,8 +616,9 @@ rather than being committed up front.
   zero-start, boot-to-shutdown counter parity, durable DB still
   carries forensic truth post-stop.
 - Telemetry: this sprint owns the telemetry redesign; no SQL on any
-  hot fan-out path; VM status health exposes model/provider/cost and detection
-  finding counters from the live accumulator with boot-time recompute only.
+  hot fan-out path; VM status health exposes model/provider/cost,
+  enforcement match, and detection finding counters from the live accumulator
+  with boot-time recompute only.
 - Performance: snapshot RTT bounded; seed cost paid once per VM
   launch; batched export overhead measured.
 

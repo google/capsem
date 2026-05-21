@@ -23,6 +23,11 @@ Regroup note: S08a now owns the wider rule/detection architecture question.
 Gateway rule routes continue to mirror the current Capsem-native policy-rule
 contract until S08a changes that contract explicitly.
 
+Post-S08b note: the long-term HTTP surface mirrors UDS with separate
+`/enforcement/*` and `/detection/*` route groups. Do not add new
+post-S08b behavior to generic `/rules/*`; that surface is legacy S07 policy
+compatibility until replaced.
+
 ## Goal
 
 Wire HTTP API to the already-tested UDS behavior, including profile catalog
@@ -58,6 +63,22 @@ state and profile-backed VM creation.
   Python E2E test harness (capsem-doctor ask probe, external CI)
   talks to; it must use the same typed-error envelope as the UDS
   side so a client only needs to learn one schema.
+- **Mirror S08b enforcement routes** once the UDS/service runtime exists:
+  `POST /enforcement/validate`, `POST /enforcement/compile`,
+  `POST /enforcement/backtest`, `GET /enforcement`, `POST /enforcement`,
+  `PUT /enforcement/{id}`, `DELETE /enforcement/{id}`, and
+  `GET /enforcement/stats`.
+- **Mirror S08b detection routes** once the UDS/service runtime exists:
+  `POST /detection/validate`, `POST /detection/compile`,
+  `POST /detection/backtest`, `GET /detection`, `POST /detection`,
+  `PUT /detection/{id}`, `DELETE /detection/{id}`,
+  `GET /detection/stats`, `POST /detection/hunt`, and
+  `POST /sessions/{id}/detection/hunt`.
+- HTTP backtest responses must preserve the UDS contract: aggregate counts plus
+  up to 100 matched event rows by default, deduplicated by simple evidence
+  signature for diversity, with event refs and full local evidence. Gateway
+  redaction is not automatic for local authenticated backtest/hunt; export
+  routes own redaction.
 
 ## Coverage Ledger
 
@@ -82,6 +103,9 @@ state and profile-backed VM creation.
   profile-scoped first-use asset reconciliation, waits for gateway exec-ready,
   execs inside the VM, and verifies `/info/{vm_id}` reports the same pinned
   profile identity/status.
+  Future S08b/S08c lift adds HTTP parity for enforcement/detection validate,
+  compile, backtest, live add/update/delete/list/stats, and detection hunt with
+  the same event-row evidence as UDS.
 - Adversarial: malformed requests, locked mutations (built-in rule
   delete attempt, profile lock), gateway/service mismatch, revoked profile,
   stale catalog, incompatible revision, interrupted download, and repeated

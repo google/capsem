@@ -4,22 +4,25 @@
 
 Not started. Inserted during the 2026-05-19 architecture regroup after S08a.
 
-S08a first decision slice now fixes the input contract for this sprint:
-policy and detection are separate profile-owned rule families; policy
-enforcement uses real CEL via the Rust `cel` crate family; Sigma is a detection
-authoring/import format; detection compiles to Capsem normalized detection IR
-and emits typed findings on `ResolvedSecurityEvent` before sink fan-out.
+S08a fixes the input contract for this sprint: enforcement and detection are
+separate profile-owned rule families with separate public route groups.
+Enforcement uses real CEL via the Rust `cel` crate family. Sigma is a detection
+authoring/import format, not an enforcement language. Detection compiles into
+the S08b runtime predicate plan and emits typed findings on
+`ResolvedSecurityEvent` before sink fan-out.
 
 S08a second decision slice names the concrete contracts S08b must implement:
 `SecurityEvent`, `ResolvedSecurityEvent`, `DetectionFinding`,
 `capsem.policy-pack.v1`, `capsem.detection-pack.v1`, and
 `capsem.detection.ir.v1`.
 
-S07b has now landed the first cross-runtime Detection IR contract proof:
+S07b has now landed the first offline admin contract proof:
 `capsem-admin detection compile` emits `capsem.detection.ir.v1`, Python golden
 tests pin the compiler output, and `capsem-core::security_packs` validates,
-parses, and evaluates the same Detection IR fixture. S08b should build the
-runtime Security Engine on that module instead of inventing a second IR parser.
+parses, and evaluates the same Detection IR fixture. S08b must not treat
+`capsem-admin` as runtime authority. The service/security engine owns runtime
+validation, compilation, hot reload, listing, stats, enforcement backtest,
+detection backtest, and detection hunt when Capsem is installed.
 
 ## Placement
 
@@ -30,7 +33,7 @@ S16a consumes this sprint's Conversation Engine and unified timeline API for
 the user-facing agent workbench.
 
 Reason: CLI, status/debug, telemetry, plugins, rules UI, Confirm UX, Profile UI,
-and documentation must not freeze around the current mixed transport/policy/
+and documentation must not freeze around the current mixed transport/enforcement/
 telemetry paths.
 
 ## Goal
@@ -54,9 +57,9 @@ contracts:
   transcript correlation, conversation turns, artifacts, and conversation
   timeline normalization.
 - **Security Engine** owns security meaning: normalized activity events,
-  preprocessors, real-CEL enforcement rules, ask/confirm, Sigma-compatible
-  detection IR, postprocessors, final security actions, and the resolved-event
-  journal.
+  preprocessors, real-CEL enforcement rules, runtime detection rules,
+  ask/confirm, Sigma-compatible detection import, backtest, detection hunt,
+  postprocessors, final security actions, and the resolved-event journal.
 - **Resolved Event Emitter** owns fan-out to telemetry, audit/logging, detection
   export, and any future enterprise sink.
 
@@ -64,13 +67,13 @@ contracts:
 
 The current runtime grew around separate paths:
 
-- HTTP(S) has a hook pipeline with policy and telemetry hooks.
-- DNS has direct policy and telemetry logic.
-- MCP has its own policy/telemetry path.
+- HTTP(S) has a hook pipeline with enforcement and telemetry hooks.
+- DNS has direct enforcement and telemetry logic.
+- MCP has its own enforcement/telemetry path.
 - Model stream interpretation rides inside HTTP chunk hooks.
 - File writes/deletes, fs watcher events, snapshot/revert actions, auditd
   records, exec chains, and process attribution mostly write telemetry directly
-  or live outside the policy/detection path.
+  or live outside the enforcement/detection path.
 - User-facing agent work is not represented in a strong enough timeline. Today
   we have raw PTY transcript files, model/tool telemetry, and a legacy timeline
   union, but the timeline lacks first-class ids such as conversation id, turn id,
@@ -157,10 +160,69 @@ resolved event can include the challenge, answer, timeout/default, and final
 action in one journal. The UI/CLI prompt implementation is behind a
 `ConfirmService` trait, but the lifecycle belongs to the Security Engine.
 
-Policy and detection content is profile-owned. The Security Engine receives the
-VM-effective policy and detection packs resolved from a signed profile revision;
-it does not discover loose rules from telemetry, local mutable state, or
+Enforcement and detection content is profile-owned. The Security Engine receives the
+VM-effective enforcement and detection packs resolved from a signed profile revision;
+runtime additions/updates/deletes are service-owned overlays with provenance,
+scope, stats, and audit. It does not discover loose rules from telemetry or
 transport internals.
+
+## Runtime Rule Registry And Backtest
+
+S08b replaces the generic `/rules/*` runtime shape with two route groups:
+
+```text
+/enforcement/*
+/detection/*
+```
+
+They may share parser and CEL infrastructure internally, but they are not the
+same product surface.
+
+Enforcement routes:
+
+- `POST /enforcement/validate`
+- `POST /enforcement/compile`
+- `POST /enforcement/backtest`
+- `GET /enforcement`
+- `POST /enforcement`
+- `PUT /enforcement/{id}`
+- `DELETE /enforcement/{id}`
+- `GET /enforcement/stats`
+
+Detection routes:
+
+- `POST /detection/validate`
+- `POST /detection/compile`
+- `POST /detection/backtest`
+- `GET /detection`
+- `POST /detection`
+- `PUT /detection/{id}`
+- `DELETE /detection/{id}`
+- `GET /detection/stats`
+- `POST /detection/hunt`
+- `POST /sessions/{id}/detection/hunt`
+
+Runtime add/update/delete must validate and compile first, then atomically
+swap an `Arc<CompiledRulePlan>` or equivalent. Invalid input never poisons the
+running plan. Listing and stats expose rule id, pack id, source profile/scope,
+origin (`profile`, `user`, `corp`, `runtime`), enabled state, compile status,
+match count, last matched event, last matched timestamp, and last compile/runtime
+error.
+
+Backtest is first-class for both enforcement and detection. It evaluates
+candidate rules over normalized event corpora or selected resolved-event
+journals without installing the rules. Backtest responses include aggregate
+counts plus event-level rows; default output returns up to 100 matched events
+and deduplicates by a simple evidence signature so operators see diversity
+rather than 100 identical matches. Rows include exact event refs
+(`corpus`, `session_id`, `event_id`, `sequence`, timestamp), rule id, pack id,
+actual decision/finding, expected label if present, full matched field values,
+and pass/fail/mismatch outcome. Local backtest and hunt do not redact evidence
+by default; redaction is an export/support-bundle concern.
+
+Detection hunt is forensic and detection-only. It runs installed or candidate
+detection rules against historical resolved events and returns full local
+evidence with finding context.
 
 ## Session Database Architecture
 
@@ -181,7 +243,7 @@ The canonical tables should represent normalized security truth:
 - `security_events`: one row per resolved event, keyed by stable `event_id`.
   Carries timestamp, event family/kind, source engine, VM/profile/user identity,
   trace/stream/parent ids, sequence number, final action, enforceability,
-  profile revision, policy-pack identity, detection-pack identity, and compact
+  profile revision, enforcement-pack identity, detection-pack identity, and compact
   resolved JSON.
 - `security_event_steps`: ordered journal entries for preprocessors,
   enforcement matches, ask/confirm, detection matches, postprocessors, and
@@ -212,7 +274,7 @@ retire one explicitly:
 - `net_events`, `dns_events`, `mcp_calls`, `model_calls`;
 - `fs_events`, `snapshot_events`;
 - `exec_events`, `audit_events`;
-- `policy_hook_events` until policy/confirm journals fully replace it.
+- `policy_hook_events` until enforcement/confirm journals fully replace it.
 
 Projection rule: after cutover, these tables are written by the emitter from a
 `ResolvedSecurityEvent`, not directly by network/file/process internals. They
@@ -354,43 +416,42 @@ The Security Engine owns:
 - synchronous enforcement policy evaluated by a real CEL implementation;
 - ask/confirm lifecycle;
 - detection evaluation after preprocessors/enforcement/confirm and before
-  emission, using a real Sigma-compatible representation/engine or the
-  S08a-approved Sigma import/compile path;
-- profile-owned policy and detection pack loading, validation, and version
+  emission, using the S08a-approved Sigma import/compile path;
+- profile-owned enforcement and detection pack loading, validation, and version
   identity;
+- service-owned live enforcement and detection registries with atomic compiled
+  plan swaps;
+- enforcement and detection backtest over normalized event corpora;
+- detection hunt over historical resolved-event journals;
+- per-rule stats and match counters;
 - postprocessor enrichment;
 - final resolved-event construction;
 - handoff to the Resolved Event Emitter.
 
 Sigma, as decided by S08a, is a detection input/adapter inside this engine. It
 is not the Security Engine itself, not an enforcement language, and not a
-transport concern. The current Capsem CEL-like shortcut is not a final rule
-language; S08b consumes S08a's real CEL decision.
-
-Open S08b design question before implementation: decide whether the supported
-Sigma detection subset should compile down to CEL instead of a separate runtime
-Detection IR evaluator. The working hypothesis to evaluate is that Capsem's
-normalized Sigma categories, field mappings, exact matches, lists, conjunctions,
-and disjunctions are a strict subset of CEL predicates over `SecurityEvent`, so
-a deterministic Sigma-to-CEL compiler/functor could produce CEL expressions and
-let one CEL matching pass evaluate both enforcement predicates and detection
-predicates. The ADR must still preserve semantics: policy CEL can emit
-enforcement actions (`allow`, `block`, `ask`, `rewrite`), while Sigma-derived
-CEL can only emit detection findings. Do not wire the runtime until this
-Sigma-to-CEL question has an ADR answer with compiler limits, diagnostics,
-golden tests, and performance implications.
+transport concern. S08b should implement the supported Sigma subset as a
+deterministic lowering into the same CEL-backed predicate plan wherever the
+mapping is exact. If a Sigma construct cannot lower to the supported normalized
+event predicate model, validation fails closed with typed diagnostics. The ADR
+must preserve semantics: enforcement CEL can emit enforcement actions
+(`allow`, `block`, `ask`, `rewrite`, quarantine if modeled), while
+Sigma-derived CEL can only emit detection findings.
 
 S08b implementation starts with typed contracts before engine rewiring:
 
 1. Add shared Rust model types for `SecurityEvent`, `ResolvedSecurityEvent`,
-   `PolicyResult`, `ConfirmResult`, `DetectionFinding`, and pack identity.
+   `EnforcementResult`, `ConfirmResult`, `DetectionFinding`, and pack identity.
 2. Add event-family subject structs for DNS, HTTP, MCP, model, file, process,
    credential, VM/profile, and conversation events.
 3. Add real CEL compile/evaluate adapter behind a trait, with legacy evaluator
    retained only behind migration tests until removal.
 4. Add detection IR loader/evaluator behind a trait that can consume S08a's
-   Sigma-compatible compiled form.
-5. Add emitter tests proving all sinks receive the same resolved event id and
+   Sigma-compatible compiled form or the Sigma-to-CEL lowered form selected by
+   the ADR.
+5. Add runtime `/enforcement/*` and `/detection/*` registry/backtest/stats/hunt
+   contracts before public HTTP/CLI/UI work consumes them.
+6. Add emitter tests proving all sinks receive the same resolved event id and
    finding ids.
 
 ## Crate And Module Separation
@@ -399,9 +460,10 @@ Expected split:
 
 - `crates/capsem-security-engine`: `SecurityEvent`, `SecurityResult`,
   `SecurityAction`, normalized event schema, profile-owned rule pack identity,
-  preprocessors, real CEL enforcement, Sigma-compatible detection, ask/confirm
-  orchestration, postprocessors, resolved-event builder, and engine contract
-  tests.
+  runtime enforcement/detection registries, real CEL enforcement,
+  Sigma-compatible detection import/lowering, backtest, detection hunt,
+  ask/confirm orchestration, postprocessors, resolved-event builder, and engine
+  contract tests.
 - `crates/capsem-network-engine`: network transport/parsing/transmission layer
   that depends on the security-engine contract but not on logger schema details.
 - `crates/capsem-file-engine`: file/snapshot/process activity layer that depends
@@ -476,7 +538,7 @@ Each event carries at least:
 - Add event identity helpers and schema-versioning hooks.
 - Add golden fixtures for network, DNS, MCP, model, file, process, snapshot,
   conversation, VM lifecycle, and profile events.
-- Add profile-owned policy-pack and detection-pack identity types, including
+- Add profile-owned enforcement-pack and detection-pack identity types, including
   rule-pack ids, revisions, hashes/signatures, and VM-effective pins.
 
 ### S08b.2 - Security Engine Core
@@ -486,16 +548,24 @@ Each event carries at least:
   resolved event -> emitter.
 - Replace the current CEL-like evaluator dependency with S08a's selected real
   CEL implementation and type mapping.
-- Add S08a's selected Sigma-compatible detection path behind the detection
-  phase.
+- Add S08a's selected Sigma-compatible detection import/lowering path behind
+  the detection phase.
+- Add runtime enforcement/detection registries with compile-first atomic
+  hot-swap semantics.
+- Add enforcement and detection backtest. Default results return at most 100
+  matched event rows, deduped by simple evidence signature, with full local
+  evidence.
+- Add detection hunt over historical resolved-event journals.
+- Add match stats and last-match/last-error accounting for list/stats routes.
 - Keep existing rule behavior equivalent while changing the path.
 - Add unit/contract tests for ordering, fail-closed enforcement, confirm
-  timeout, detection annotation, and emission.
+  timeout, detection annotation, backtest rows, evidence deduplication, stats,
+  hunt, and emission.
 
 ### S08b.3 - Network Engine Cutover
 
 - Move HTTP/DNS/MCP/model paths behind the Network Engine contract.
-- Replace direct policy/telemetry calls with `SecurityEvent` submission and
+- Replace direct enforcement/telemetry calls with `SecurityEvent` submission and
   `SecurityAction` application.
 - Preserve streaming behavior without buffering whole responses by default.
 

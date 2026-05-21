@@ -5,6 +5,11 @@ Status: **Done** as of 2026-05-19. HTTP mirroring remains owned by
 the production confirm resolution path by [S15](S15-confirm-ux.md), and
 profile/UI lift by [S16](S16-profile-ui.md).
 
+Post-S08b note: S07 closed the original Profile V2 policy-rule UDS surface as
+`/rules/*`. S08b replaces that generic successor surface with distinct
+`/enforcement/*` and `/detection/*` route groups. Future UDS/API work must not
+extend `/rules/*` for new enforcement or detection behavior.
+
 ## Goal
 
 Expose typed settings, profiles, profile catalog state, and profile-backed VM
@@ -148,6 +153,40 @@ through the VM that matches it, picks up the pending ask via
 `GET /confirm/pending`, and calls `POST /confirm/pending/{id}/accept`
 to resolve. Listing + evaluate also unlocks Python contract tests
 for the rule engine that do not need a VM.
+
+## S08b Successor Routes
+
+The post-S08b UDS API must expose two distinct route groups.
+
+Enforcement:
+
+- `POST /enforcement/validate`
+- `POST /enforcement/compile`
+- `POST /enforcement/backtest`
+- `GET /enforcement`
+- `POST /enforcement`
+- `PUT /enforcement/{id}`
+- `DELETE /enforcement/{id}`
+- `GET /enforcement/stats`
+
+Detection:
+
+- `POST /detection/validate`
+- `POST /detection/compile`
+- `POST /detection/backtest`
+- `GET /detection`
+- `POST /detection`
+- `PUT /detection/{id}`
+- `DELETE /detection/{id}`
+- `GET /detection/stats`
+- `POST /detection/hunt`
+- `POST /sessions/{id}/detection/hunt`
+
+Backtest defaults are part of the contract: return aggregate counts plus up to
+100 matched event rows, deduplicated by simple evidence signature for match
+diversity. Rows include event refs and full local matched field evidence.
+Backtest is not redacted by default. Redaction belongs to export/support-bundle
+flows.
 
 ## Coverage Ledger
 

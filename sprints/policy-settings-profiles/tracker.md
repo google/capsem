@@ -64,6 +64,12 @@ contract:
 - Old asset-only manifests are no longer runtime authority. `assets.manifest.*`
   service settings and setup-time signed asset manifest checks are removed.
 
+Legacy sprint directories are retired as Profile V2 planning authority. See
+[RETIRED-LEGACY-SPRINTS.md](RETIRED-LEGACY-SPRINTS.md). They may provide
+historical context, but active scope must be promoted into this board before it
+can affect sequencing, product requirements, public surfaces, or release
+claims.
+
 The tracker is now an implementation board for the post-S07 engine work. Work
 proceeds in this order:
 
@@ -553,14 +559,14 @@ a valid claim -- mark it `[ ]` instead.
     makes that production route real.
 20. [x] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
     -- inserted during the 2026-05-19 regroup. Decide real CEL enforcement,
-    real Sigma-compatible detection, profile-owned policy/detection packs, and
-    whether Capsem policy rules and Sigma-style detection rules are separate
-    families. Update logging, telemetry, plugins, rule UI, Confirm UX, and docs
+    real Sigma-compatible detection, profile-owned enforcement/detection packs,
+    and whether Capsem enforcement rules and Sigma-style detection rules are
+    separate families. Update logging, telemetry, plugins, rule UI, Confirm UX, and docs
     before those surfaces freeze around the wrong abstraction. This sprint also
     defines `capsem-admin` validation/schema requirements and VM health/OTel
     attribution for detection findings plus model provider/model/cost usage.
-    First decision slice landed on 2026-05-21: policy and detection are
-    separate profile-owned rule families; policy uses real CEL through the Rust
+    First decision slice landed on 2026-05-21: enforcement and detection are
+    separate profile-owned rule families; enforcement uses real CEL through the Rust
     `cel` crate family; Sigma is a detection authoring/import format, not a
     blocking language; detection compiles into Capsem normalized detection IR
     and attaches typed findings to resolved security events before
@@ -569,13 +575,18 @@ a valid claim -- mark it `[ ]` instead.
     `capsem.policy-pack.v1`, `capsem.detection-pack.v1`,
     `capsem.detection.ir.v1`, `DetectionFinding`, `SecurityEvent`,
     `ResolvedSecurityEvent`, Sigma logsource mapping, and
-    `capsem-admin policy|detection validate/schema/compile/check` command
+    `capsem-admin enforcement|detection validate/schema/compile/check` command
     requirements. S07b, S12, S13, S14, S15, S16a, and S19 now reference those
     contracts instead of generic "real CEL/Sigma later" placeholders.
     Third slice closed the ADR with rejected alternatives, implementation
     ordering, and a testing matrix. S08a is now done; next implementation work
     is S07b admin schemas/commands followed by S08b Rust event/security-engine
     contracts.
+    Fourth regroup slice split the public runtime surfaces into
+    `/enforcement/*` and `/detection/*`, made backtest first-class for both
+    families, kept detection hunt forensic/detection-only, and clarified that
+    `capsem-admin` must work offline while S08b service routes own runtime
+    validation/compile/live registry/stats/backtest/hunt.
 21. [ ] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
     -- inserted during the 2026-05-19 engine-boundary regroup. Split runtime
     activity handling into Network Engine, File Engine, Process Engine, Security
@@ -588,27 +599,38 @@ a valid claim -- mark it `[ ]` instead.
     canonical resolved-event journal with existing domain tables treated as
     emitter-written projections. Conversation Engine capture and the structured
     `/timeline/{id}` read API become part of the canonical session DB story.
-    Before implementation, S08b must explicitly decide whether the supported
-    Sigma detection subset should compile down to CEL. The hypothesis to test:
-    Sigma categories/field mappings/exact matches/lists/conjunctions/
-    disjunctions are a strict CEL subset over normalized `SecurityEvent`, so a
-    deterministic Sigma-to-CEL compiler/functor could allow one CEL matching
-    pass while preserving enforcement-vs-finding semantics.
-22. [ ] [S09 - CLI integration](S09-cli-integration.md)
-23. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
-24. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+    S08b must add service-owned runtime `/enforcement/*` and `/detection/*`
+    routes for validate, compile, backtest, live add/update/delete/list, stats,
+    plus detection hunt. Supported Sigma detection constructs should lower into
+    the CEL-backed predicate plan wherever exact; unsupported constructs fail
+    closed with typed diagnostics. Backtest returns up to 100 matched event
+    rows by default, deduped by simple evidence signature, with full local
+    evidence and event refs.
+22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
+    -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
+    enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
+    Rust runtime parity, and real-session fixture generation after S08b's
+    resolved-event journal stabilizes.
+23. [ ] [S09 - CLI integration](S09-cli-integration.md)
+24. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+25. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
     -- includes live VM health rendering from S12 snapshots: model call count,
     providers, models, token totals, estimated cost, detection findings, and
     stale/partial metrics state.
-25. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
+26. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
     cost usage plus detection finding health. Running status reads memory only;
     persistent VMs seed/recompute from `session.db` exactly once at load.
-26. [ ] [S13 - Remote policy plugin](S13-remote-policy-plugin.md)
-27. [ ] [S14 - Rules UI components](S14-rules-ui-components.md) -- policy-rule editor component is consumed by S15; detection UX waits on S08a/S08b.
-28. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
-29. [ ] [S16 - Profile UI](S16-profile-ui.md)
-30. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
+27. [ ] [S13 - Remote enforcement plugin](S13-remote-policy-plugin.md)
+    -- decision mode participates only in `/enforcement/*`; observer mode can
+    receive resolved events and detection findings but cannot convert detection
+    into blocking decisions.
+28. [ ] [S14 - Rules UI components](S14-rules-ui-components.md)
+    -- enforcement-rule editor component is consumed by S15; detection
+    rule/finding/backtest UX consumes S08b/S08c.
+29. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+30. [ ] [S16 - Profile UI](S16-profile-ui.md)
+31. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
     sessions, backed by S08b's structured `/timeline/{id}` API. Users must be
@@ -617,19 +639,31 @@ a valid claim -- mark it `[ ]` instead.
     provenance from one coherent timeline. The API provides stable pagination
     over typed blocks; the UI provides conversation/turn/process/activity/trace/
     finding/artifact filtering and formatting with one renderer per block type.
-31. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-32. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+32. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+33. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
     -- adds first-class enforcement and detection-format pages, corporate admin
-    security links, `capsem-admin` policy/detection validation docs, and VM
+    security links, `capsem-admin` enforcement/detection validation docs, and VM
     health/OTel docs for model/provider/token/cost and detection metrics.
-33. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
+34. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
     -- refresh the landing page around four pillars: Ship Fast With AI, Ship
     Safely, Scale Your Productivity Without Drag, and Enterprise Ready. Include
     shipped and planned profile/security/performance/enterprise features without
     overclaiming beyond the sprint tracker. Current-site baseline screenshots
     were captured in `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`;
     refreshed pillar screenshots remain part of S19a's final gate.
-34. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+35. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+    -- core Profile V2 release replay and verification gate.
+36. [ ] [S20 - OpenAPI to MCP](S20-openapi-to-mcp.md)
+    -- proposed standalone product sprint. Convert reviewed OpenAPI-described
+    HTTP services into profile-owned MCP tools with provenance, diagnostics,
+    UI visibility, and normal security/audit/timeline treatment.
+37. [ ] [S21 - Local LLM](S21-local-llm.md)
+    -- proposed standalone product sprint. Make local model services
+    first-class profile/VM AI providers instead of generic HTTP traffic.
+38. [ ] [S19b - Reporting setup](S19b-reporting-setup.md)
+    -- proposed standalone, non-blocking operations sprint. Provide reporting
+    setup docs, collector examples, privacy guidance, and dashboard packaging
+    after S12/runtime fields are stable.
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
@@ -819,9 +853,9 @@ a closed slice/sprint moved to [completed sub-sprints](#completed-sub-sprints).)
   models with Pydantic-only JSON input/output instead of raw nested dicts;
   hand-edited `guest/config` image settings are not carried forward as
   compatibility input. That tooling now exists, including doctor closeout.
-- **S08a is the rules/detection architecture gate.** Before S11/S12/S13/S14/S15
+- **S08a is the enforcement/detection architecture gate.** Before S11/S12/S13/S14/S15
   harden logging, telemetry, plugins, rule UI, and Confirm UX, decide whether
-  Capsem runtime policy rules and Sigma-style detection rules are separate rule
+  Capsem runtime enforcement rules and Sigma-style detection rules are separate rule
   families, and define the normalized event/finding schemas they consume.
 - **S12 architecture: single source of truth.** The in-memory
   per-VM accumulator in `capsem-process` is the only runtime

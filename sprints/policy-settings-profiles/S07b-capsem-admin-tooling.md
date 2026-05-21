@@ -592,6 +592,24 @@ Required semantics:
   those formats are represented by Pydantic models, schema export, validation,
   fixture evaluation, and JSON reports.
 
+Post-S08b/S08c refinement:
+
+- `capsem-admin` must work without Capsem installed. It is offline authority
+  for producing valid profile, service-settings, image, manifest, enforcement,
+  and detection artifacts, not runtime authority for installed rules.
+- Runtime validation, hot-loaded registries, match stats, enforcement backtest,
+  detection backtest, and detection hunt belong to the Capsem service through
+  `/enforcement/*` and `/detection/*`.
+- `capsem-admin` may optionally target a running service for live install,
+  stats, or hunt workflows, but every offline authoring/CI command must still
+  function without that service.
+- S08c owns the shared corpus that proves `capsem-admin` generated
+  enforcement CEL packs and Sigma detection packs are accepted by Rust and
+  produce the same backtest outcomes on the same normalized events.
+- Offline backtest commands default to the same evidence contract as the
+  service: aggregate counts plus up to 100 matched event rows, deduplicated by
+  simple evidence signature, with full local matched field evidence.
+
 ## Source-Of-Truth Flow
 
 ```mermaid
