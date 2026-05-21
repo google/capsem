@@ -6,6 +6,11 @@ In progress. Inserted during the 2026-05-19 architecture regroup after S08a.
 First implementation slice added `crates/capsem-security-engine` with the
 shared normalized event/result/action contract, detection finding shape,
 resolved-event steps, quota dimensions, and reserved throttle action.
+The latest implementation slice added the first `SecurityEngine` core pipeline
+shell: preprocessor callbacks, enforcement evaluation, Security Engine-owned
+confirm resolution, detection evaluation before resolved-event emission,
+postprocessors, final action projection, and fail-closed error results for
+phase failures.
 
 S08a fixes the input contract for this sprint: enforcement and detection are
 separate profile-owned rule families with separate public route groups.

@@ -691,6 +691,87 @@ fn security_action_roundtrips_ask() {
     assert_eq!(parsed, action);
 }
 
+#[test]
+fn security_engine_pipeline_orders_confirm_detection_and_postprocessors() {
+    let mut engine = SecurityEngine::default();
+    engine.add_preprocessor(Box::new(LabelProcessor::new(
+        "preprocessor",
+        "preprocessed",
+    )));
+    engine.set_enforcement(Box::new(AskEnforcement));
+    engine.set_confirm(Box::new(AllowConfirm));
+    engine.set_detection(Box::new(StaticDetection));
+    engine.add_postprocessor(Box::new(LabelProcessor::new(
+        "postprocessor",
+        "postprocessed",
+    )));
+
+    let result = engine.evaluate(http_request_event("evt-engine")).unwrap();
+
+    assert!(matches!(result.action, SecurityAction::Continue));
+    assert_eq!(
+        result.resolved_event.event.labels,
+        vec!["preprocessed", "postprocessed"]
+    );
+    assert_eq!(result.resolved_event.detection_findings.len(), 1);
+    assert_eq!(
+        result.resolved_event.event.findings,
+        result.resolved_event.detection_findings
+    );
+    assert_eq!(
+        result
+            .resolved_event
+            .steps
+            .iter()
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ResolvedEventStepKind::Preprocessor,
+            ResolvedEventStepKind::EnforcementMatch,
+            ResolvedEventStepKind::Confirm,
+            ResolvedEventStepKind::DetectionMatch,
+            ResolvedEventStepKind::Postprocessor,
+        ]
+    );
+    assert_eq!(
+        result
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .unwrap()
+            .action,
+        SecurityDecisionAction::Allow
+    );
+}
+
+#[test]
+fn security_engine_fails_closed_when_enforcement_errors() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(FailingEnforcement));
+
+    let result = engine
+        .evaluate(http_request_event("evt-engine-error"))
+        .unwrap();
+
+    assert!(matches!(result.action, SecurityAction::Error(_)));
+    assert!(matches!(
+        result.resolved_event.final_action,
+        SecurityAction::Error(_)
+    ));
+    assert_eq!(result.resolved_event.steps.len(), 1);
+    assert_eq!(
+        result.resolved_event.steps[0].kind,
+        ResolvedEventStepKind::EnforcementMatch
+    );
+    assert_eq!(result.resolved_event.steps[0].status, StepStatus::Error);
+    assert!(result.resolved_event.steps[0]
+        .message
+        .as_deref()
+        .unwrap()
+        .contains("enforcement exploded"));
+}
+
 fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> SecurityEventCommon {
     SecurityEventCommon {
         event_id: event_id.into(),
@@ -1244,5 +1325,112 @@ impl ResolvedEventSink for FailingSink {
 
     fn emit(&mut self, _event: &ResolvedSecurityEvent) -> Result<(), EmitterError> {
         Err(EmitterError::new("sink unavailable"))
+    }
+}
+
+fn http_request_event(event_id: &str) -> SecurityEvent {
+    SecurityEvent::http(
+        common(event_id, "http.request", SourceEngine::Network),
+        HttpSecuritySubject {
+            method: "GET".into(),
+            host: "metadata.google.internal".into(),
+            path_class: "metadata".into(),
+            request_bytes: 42,
+            response_bytes: None,
+        },
+    )
+}
+
+struct LabelProcessor {
+    name: String,
+    label: String,
+}
+
+impl LabelProcessor {
+    fn new(name: &str, label: &str) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+        }
+    }
+}
+
+impl SecurityEventProcessor for LabelProcessor {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn process(&mut self, mut event: SecurityEvent) -> Result<SecurityEvent, SecurityEngineError> {
+        event.labels.push(self.label.clone());
+        Ok(event)
+    }
+}
+
+struct AskEnforcement;
+
+impl EnforcementEvaluator for AskEnforcement {
+    fn evaluate(
+        &mut self,
+        _event: &SecurityEvent,
+    ) -> Result<Option<SecurityDecision>, SecurityEngineError> {
+        Ok(Some(SecurityDecision {
+            action: SecurityDecisionAction::Ask,
+            rule: Some("enforcement.ask".into()),
+            reason: Some("operator approval required".into()),
+            terminal: false,
+        }))
+    }
+}
+
+struct AllowConfirm;
+
+impl ConfirmResolver for AllowConfirm {
+    fn resolve(
+        &mut self,
+        _event: &SecurityEvent,
+        decision: &SecurityDecision,
+    ) -> Result<SecurityDecision, SecurityEngineError> {
+        assert_eq!(decision.action, SecurityDecisionAction::Ask);
+        Ok(SecurityDecision {
+            action: SecurityDecisionAction::Allow,
+            rule: decision.rule.clone(),
+            reason: Some("operator allowed".into()),
+            terminal: false,
+        })
+    }
+}
+
+struct StaticDetection;
+
+impl DetectionEvaluator for StaticDetection {
+    fn evaluate(
+        &mut self,
+        event: &SecurityEvent,
+    ) -> Result<Vec<DetectionFinding>, SecurityEngineError> {
+        Ok(vec![DetectionFinding {
+            finding_id: "finding-engine".into(),
+            event_id: event.common.event_id.clone(),
+            rule_id: "detect.metadata".into(),
+            pack_id: "pack-detection".into(),
+            sigma_id: Some("sigma-metadata".into()),
+            title: "Metadata access".into(),
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            tags: vec!["network".into()],
+        }])
+    }
+}
+
+struct FailingEnforcement;
+
+impl EnforcementEvaluator for FailingEnforcement {
+    fn evaluate(
+        &mut self,
+        _event: &SecurityEvent,
+    ) -> Result<Option<SecurityDecision>, SecurityEngineError> {
+        Err(SecurityEngineError::PhaseFailed {
+            phase: SecurityEnginePhase::Enforcement,
+            message: "enforcement exploded".into(),
+        })
     }
 }

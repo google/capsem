@@ -763,6 +763,17 @@ a valid claim -- mark it `[ ]` instead.
     closeout gate re-ran the focused side-sprint suites before commit. Full
     VM-originated E2E, live resolved-event journal, timeline, runtime
     enforcement/detection routes, and performance remain S08b/S08d work.
+    Nineteenth Security Engine core slice added the first ordered runtime
+    pipeline shell inside `capsem-security-engine`: preprocessors,
+    enforcement, Security Engine-owned confirm, detection, postprocessors, and
+    resolved-event construction now execute in that order, detection findings
+    attach to both the event and resolved event before emission, and
+    enforcement errors fail closed as `SecurityAction::Error` with an error
+    step. Verification: `cargo test -p capsem-security-engine` passed with
+    24 tests, including the new ordered-pipeline and fail-closed enforcement
+    tests. Still missing for S08b.2: real CEL adapter replacement,
+    Sigma-to-runtime detection lowering, runtime service routes, historical
+    hunt over the session journal, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

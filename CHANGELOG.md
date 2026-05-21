@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first S08b `capsem-security-engine` contract crate with normalized
   security events, resolved-event actions, detection findings, quota dimensions,
   and throttle-ready serialization tests.
+- Added the first S08b Security Engine core pipeline shell, ordering
+  preprocessors, enforcement, confirm, detection, postprocessors, and resolved
+  event construction with fail-closed enforcement errors.
 - Added Rust Detection IR evaluation against the new S08b normalized
   `SecurityEvent` contract so Sigma-derived findings can run on the shared
   event model instead of a parallel fixture-only shape.

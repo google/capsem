@@ -1361,6 +1361,380 @@ pub struct EmitOutcome {
     pub required_sink_failed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecurityEnginePhase {
+    Preprocessor,
+    Enforcement,
+    Confirm,
+    Detection,
+    Postprocessor,
+}
+
+impl SecurityEnginePhase {
+    fn step_kind(self) -> ResolvedEventStepKind {
+        match self {
+            Self::Preprocessor => ResolvedEventStepKind::Preprocessor,
+            Self::Enforcement => ResolvedEventStepKind::EnforcementMatch,
+            Self::Confirm => ResolvedEventStepKind::Confirm,
+            Self::Detection => ResolvedEventStepKind::DetectionMatch,
+            Self::Postprocessor => ResolvedEventStepKind::Postprocessor,
+        }
+    }
+
+    fn code(self) -> &'static str {
+        match self {
+            Self::Preprocessor => "preprocessor_failed",
+            Self::Enforcement => "enforcement_failed",
+            Self::Confirm => "confirm_failed",
+            Self::Detection => "detection_failed",
+            Self::Postprocessor => "postprocessor_failed",
+        }
+    }
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum SecurityEngineError {
+    #[error("{phase:?} phase failed: {message}")]
+    PhaseFailed {
+        phase: SecurityEnginePhase,
+        message: String,
+    },
+}
+
+pub trait SecurityEventProcessor {
+    fn name(&self) -> &str;
+    fn process(&mut self, event: SecurityEvent) -> Result<SecurityEvent, SecurityEngineError>;
+}
+
+pub trait EnforcementEvaluator {
+    fn evaluate(
+        &mut self,
+        event: &SecurityEvent,
+    ) -> Result<Option<SecurityDecision>, SecurityEngineError>;
+}
+
+pub trait ConfirmResolver {
+    fn resolve(
+        &mut self,
+        event: &SecurityEvent,
+        decision: &SecurityDecision,
+    ) -> Result<SecurityDecision, SecurityEngineError>;
+}
+
+pub trait DetectionEvaluator {
+    fn evaluate(
+        &mut self,
+        event: &SecurityEvent,
+    ) -> Result<Vec<DetectionFinding>, SecurityEngineError>;
+}
+
+#[derive(Default)]
+pub struct SecurityEngine {
+    preprocessors: Vec<Box<dyn SecurityEventProcessor>>,
+    enforcement: Option<Box<dyn EnforcementEvaluator>>,
+    confirm: Option<Box<dyn ConfirmResolver>>,
+    detection: Option<Box<dyn DetectionEvaluator>>,
+    postprocessors: Vec<Box<dyn SecurityEventProcessor>>,
+}
+
+impl SecurityEngine {
+    pub fn add_preprocessor(&mut self, processor: Box<dyn SecurityEventProcessor>) {
+        self.preprocessors.push(processor);
+    }
+
+    pub fn set_enforcement(&mut self, enforcement: Box<dyn EnforcementEvaluator>) {
+        self.enforcement = Some(enforcement);
+    }
+
+    pub fn set_confirm(&mut self, confirm: Box<dyn ConfirmResolver>) {
+        self.confirm = Some(confirm);
+    }
+
+    pub fn set_detection(&mut self, detection: Box<dyn DetectionEvaluator>) {
+        self.detection = Some(detection);
+    }
+
+    pub fn add_postprocessor(&mut self, processor: Box<dyn SecurityEventProcessor>) {
+        self.postprocessors.push(processor);
+    }
+
+    pub fn evaluate(
+        &mut self,
+        mut event: SecurityEvent,
+    ) -> Result<SecurityResult, SecurityEngineError> {
+        let mut steps = Vec::new();
+
+        for processor in &mut self.preprocessors {
+            match processor.process(event.clone()) {
+                Ok(next_event) => {
+                    event = next_event;
+                    steps.push(phase_step(
+                        SecurityEnginePhase::Preprocessor,
+                        StepStatus::Applied,
+                        None,
+                        None,
+                        Some(format!("{} applied", processor.name())),
+                    ));
+                }
+                Err(error) => {
+                    return Ok(error_result(
+                        event,
+                        steps,
+                        SecurityEnginePhase::Preprocessor,
+                        error,
+                    ));
+                }
+            }
+        }
+
+        if let Some(enforcement) = &mut self.enforcement {
+            match enforcement.evaluate(&event) {
+                Ok(Some(decision)) => {
+                    steps.push(phase_step(
+                        SecurityEnginePhase::Enforcement,
+                        StepStatus::Matched,
+                        decision.rule.clone(),
+                        None,
+                        decision.reason.clone(),
+                    ));
+                    event.decision = Some(decision);
+                }
+                Ok(None) => {
+                    steps.push(phase_step(
+                        SecurityEnginePhase::Enforcement,
+                        StepStatus::Skipped,
+                        None,
+                        None,
+                        None,
+                    ));
+                }
+                Err(error) => {
+                    return Ok(error_result(
+                        event,
+                        steps,
+                        SecurityEnginePhase::Enforcement,
+                        error,
+                    ));
+                }
+            }
+        }
+
+        if event
+            .decision
+            .as_ref()
+            .is_some_and(|decision| decision.action == SecurityDecisionAction::Ask)
+        {
+            if let Some(confirm) = &mut self.confirm {
+                let ask_decision = event.decision.clone().expect("decision checked above");
+                match confirm.resolve(&event, &ask_decision) {
+                    Ok(resolved_decision) => {
+                        steps.push(phase_step(
+                            SecurityEnginePhase::Confirm,
+                            StepStatus::Applied,
+                            resolved_decision.rule.clone(),
+                            None,
+                            resolved_decision.reason.clone(),
+                        ));
+                        event.decision = Some(resolved_decision);
+                    }
+                    Err(error) => {
+                        return Ok(error_result(
+                            event,
+                            steps,
+                            SecurityEnginePhase::Confirm,
+                            error,
+                        ));
+                    }
+                }
+            } else {
+                steps.push(phase_step(
+                    SecurityEnginePhase::Confirm,
+                    StepStatus::Skipped,
+                    event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.rule.clone()),
+                    None,
+                    Some("no confirm resolver configured".into()),
+                ));
+            }
+        }
+
+        let mut detection_findings = Vec::new();
+        if let Some(detection) = &mut self.detection {
+            match detection.evaluate(&event) {
+                Ok(findings) => {
+                    let status = if findings.is_empty() {
+                        StepStatus::Skipped
+                    } else {
+                        StepStatus::Matched
+                    };
+                    steps.push(phase_step(
+                        SecurityEnginePhase::Detection,
+                        status,
+                        findings.first().map(|finding| finding.rule_id.clone()),
+                        findings.first().map(|finding| finding.pack_id.clone()),
+                        None,
+                    ));
+                    event.findings.extend(findings.clone());
+                    detection_findings = findings;
+                }
+                Err(error) => {
+                    return Ok(error_result(
+                        event,
+                        steps,
+                        SecurityEnginePhase::Detection,
+                        error,
+                    ));
+                }
+            }
+        }
+
+        for processor in &mut self.postprocessors {
+            match processor.process(event.clone()) {
+                Ok(next_event) => {
+                    event = next_event;
+                    steps.push(phase_step(
+                        SecurityEnginePhase::Postprocessor,
+                        StepStatus::Applied,
+                        None,
+                        None,
+                        Some(format!("{} applied", processor.name())),
+                    ));
+                }
+                Err(error) => {
+                    return Ok(error_result(
+                        event,
+                        steps,
+                        SecurityEnginePhase::Postprocessor,
+                        error,
+                    ));
+                }
+            }
+        }
+
+        let action = security_action_from_event(&event);
+        Ok(SecurityResult {
+            event_id: event.common.event_id.clone(),
+            action: action.clone(),
+            resolved_event: ResolvedSecurityEvent {
+                schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+                event,
+                steps,
+                plugin_transforms: Vec::new(),
+                detection_findings,
+                final_action: action,
+                emitter_results: Vec::new(),
+            },
+        })
+    }
+}
+
+fn phase_step(
+    phase: SecurityEnginePhase,
+    status: StepStatus,
+    rule_id: Option<String>,
+    pack_id: Option<String>,
+    message: Option<String>,
+) -> ResolvedEventStep {
+    ResolvedEventStep {
+        kind: phase.step_kind(),
+        status,
+        rule_id,
+        pack_id,
+        message,
+    }
+}
+
+fn error_result(
+    event: SecurityEvent,
+    mut steps: Vec<ResolvedEventStep>,
+    phase: SecurityEnginePhase,
+    error: SecurityEngineError,
+) -> SecurityResult {
+    let message = error.to_string();
+    steps.push(phase_step(
+        phase,
+        StepStatus::Error,
+        None,
+        None,
+        Some(message.clone()),
+    ));
+    let action = SecurityAction::Error(SecurityError {
+        code: phase.code().into(),
+        message,
+    });
+    SecurityResult {
+        event_id: event.common.event_id.clone(),
+        action: action.clone(),
+        resolved_event: ResolvedSecurityEvent {
+            schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+            event,
+            steps,
+            plugin_transforms: Vec::new(),
+            detection_findings: Vec::new(),
+            final_action: action,
+            emitter_results: Vec::new(),
+        },
+    }
+}
+
+fn security_action_from_event(event: &SecurityEvent) -> SecurityAction {
+    match event.decision.as_ref().map(|decision| decision.action) {
+        Some(SecurityDecisionAction::Ask) => SecurityAction::Ask(AskPlan {
+            prompt_id: format!("ask-{}", event.common.event_id),
+            reason_code: decision_reason_code(event, "ask"),
+            default_action: Box::new(SecurityAction::Block(BlockResponse {
+                reason_code: "ask_default_block".into(),
+                rule_id: event
+                    .decision
+                    .as_ref()
+                    .and_then(|decision| decision.rule.clone()),
+            })),
+        }),
+        Some(SecurityDecisionAction::Block) => SecurityAction::Block(BlockResponse {
+            reason_code: decision_reason_code(event, "blocked"),
+            rule_id: event
+                .decision
+                .as_ref()
+                .and_then(|decision| decision.rule.clone()),
+        }),
+        Some(SecurityDecisionAction::Rewrite) => SecurityAction::Rewrite(RewritePatch {
+            target: "event.mutations".into(),
+            replacement_ref: event.common.event_id.clone(),
+        }),
+        Some(SecurityDecisionAction::Throttle) => SecurityAction::Throttle(ThrottlePlan {
+            delay_ms: 0,
+            quota_id: event
+                .decision
+                .as_ref()
+                .and_then(|decision| decision.rule.clone())
+                .unwrap_or_else(|| "runtime".into()),
+            scope: event
+                .common
+                .accounting_owner
+                .clone()
+                .unwrap_or_else(|| "unknown".into()),
+            reason_code: decision_reason_code(event, "throttled"),
+            provider_source: Some("security_engine".into()),
+        }),
+        Some(SecurityDecisionAction::Allow) => SecurityAction::Continue,
+        None if !event.mutations.is_empty() => SecurityAction::Rewrite(RewritePatch {
+            target: "event.mutations".into(),
+            replacement_ref: event.common.event_id.clone(),
+        }),
+        None => SecurityAction::Continue,
+    }
+}
+
+fn decision_reason_code(event: &SecurityEvent, fallback: &str) -> String {
+    event
+        .decision
+        .as_ref()
+        .and_then(|decision| decision.reason.clone())
+        .unwrap_or_else(|| fallback.into())
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PluginValidationError {
     #[error("mutation target is not allowed for {event_type}: {path}")]
