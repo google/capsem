@@ -657,6 +657,12 @@ a valid claim -- mark it `[ ]` instead.
     transport behavior; plugins do not return `HookOutcome`. Verification:
     `cargo test -p capsem-security-engine` passed with 15 tests and
     `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Ninth plugin-determinism slice added canonical BLAKE3 event hashes,
+    `PluginIdentity`, plugin transform records, immutable core field validation
+    (`schema_version`, `common`, `subject`, `context`, `trace`), and guards that
+    plugin output cannot drop prior labels/findings/mutations. Verification:
+    `cargo test -p capsem-security-engine` passed with 18 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

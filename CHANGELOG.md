@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added S08b plugin-groundwork event semantics: first-class ask/block/rewrite/
   throttle decisions, labels/context/history snapshots, findings, declarative
   mutations, mutation target validation, and internal transport projection.
+- Added deterministic S08b plugin transform validation with canonical event
+  hashes, immutable core event enforcement, and prior label/finding/mutation
+  preservation.
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.

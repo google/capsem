@@ -238,6 +238,13 @@ then validates the final event decision plus mutations and maps them to the
 internal dispatch projection (`Continue`, `Rewrote`, or `Stop`) for the current
 transport/file/process engine.
 
+Plugins may add labels, findings, decisions, and mutations. They must not
+directly mutate immutable event identity, subject payload, context, or trace
+snapshot as authority. If a plugin wants to change real request/response/model/
+MCP content, it must return declarative mutations and let Rust validate and
+apply them. The runtime records input and output event hashes with plugin
+identity so replay can prove deterministic behavior.
+
 Legal mutation targets are allowlisted per event type. Initial targets:
 
 ```text

@@ -155,6 +155,126 @@ fn plugin_mutation_allowlist_rejects_illegal_targets() {
 }
 
 #[test]
+fn plugin_transform_preserves_core_event_and_records_hashes() {
+    let mut input = SecurityEvent::http(
+        common("evt-transform", "http.request", SourceEngine::Network),
+        HttpSecuritySubject {
+            method: "POST".into(),
+            host: "api.example.test".into(),
+            path_class: "api".into(),
+            request_bytes: 10,
+            response_bytes: None,
+        },
+    );
+    input.labels.push("network".into());
+
+    let mut output = input.clone();
+    output.labels.push("pii_access".into());
+    output.mutations.push(EventMutation::StripHeader {
+        path: "subject.headers.authorization".into(),
+        reason: Some("drop credential before egress".into()),
+    });
+
+    let plugin = PluginIdentity {
+        id: "pii-egress".into(),
+        version: "1.0.0".into(),
+        hash: "blake3:plugin".into(),
+    };
+    let record = validate_plugin_transform(&plugin, &input, &output).unwrap();
+
+    assert_eq!(record.plugin, plugin);
+    assert_eq!(record.input_event_hash, canonical_event_hash(&input));
+    assert_eq!(record.output_event_hash, canonical_event_hash(&output));
+    assert_ne!(record.input_event_hash, record.output_event_hash);
+    assert_eq!(
+        validate_plugin_transform(&record.plugin, &input, &output).unwrap(),
+        record
+    );
+}
+
+#[test]
+fn plugin_transform_rejects_hidden_subject_mutation() {
+    let input = SecurityEvent::http(
+        common("evt-hidden", "http.request", SourceEngine::Network),
+        HttpSecuritySubject {
+            method: "POST".into(),
+            host: "api.example.test".into(),
+            path_class: "api".into(),
+            request_bytes: 10,
+            response_bytes: None,
+        },
+    );
+    let mut output = input.clone();
+    output.subject = SecurityEventSubject::Http(HttpSecuritySubject {
+        method: "POST".into(),
+        host: "attacker.example.test".into(),
+        path_class: "api".into(),
+        request_bytes: 10,
+        response_bytes: None,
+    });
+
+    let error = validate_plugin_transform(&plugin_identity(), &input, &output).unwrap_err();
+    assert!(matches!(
+        error,
+        PluginValidationError::ImmutableFieldChanged { field: "subject" }
+    ));
+}
+
+#[test]
+fn plugin_transform_rejects_dropping_prior_findings_labels_or_mutations() {
+    let mut input = SecurityEvent::http(
+        common("evt-drop", "http.request", SourceEngine::Network),
+        HttpSecuritySubject {
+            method: "POST".into(),
+            host: "api.example.test".into(),
+            path_class: "api".into(),
+            request_bytes: 10,
+            response_bytes: None,
+        },
+    );
+    input.labels.push("pii_access".into());
+    input.findings.push(DetectionFinding {
+        finding_id: "finding-existing".into(),
+        event_id: "evt-drop".into(),
+        rule_id: "rule-existing".into(),
+        pack_id: "pack-existing".into(),
+        sigma_id: None,
+        title: "Existing finding".into(),
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        tags: Vec::new(),
+    });
+    input.mutations.push(EventMutation::StripHeader {
+        path: "subject.headers.authorization".into(),
+        reason: None,
+    });
+
+    let mut output = input.clone();
+    output.labels.clear();
+    let error = validate_plugin_transform(&plugin_identity(), &input, &output).unwrap_err();
+    assert!(matches!(
+        error,
+        PluginValidationError::PriorEventDataRemoved { field: "labels" }
+    ));
+
+    let mut output = input.clone();
+    output.findings.clear();
+    let error = validate_plugin_transform(&plugin_identity(), &input, &output).unwrap_err();
+    assert!(matches!(
+        error,
+        PluginValidationError::PriorEventDataRemoved { field: "findings" }
+    ));
+
+    let mut output = input.clone();
+    output.mutations.clear();
+    let error = validate_plugin_transform(&plugin_identity(), &input, &output).unwrap_err();
+    assert!(matches!(
+        error,
+        PluginValidationError::PriorEventDataRemoved { field: "mutations" }
+    ));
+}
+
+#[test]
 fn security_decision_projects_to_internal_transport_projection() {
     let mut event = SecurityEvent::http(
         common("evt-project", "http.request", SourceEngine::Network),
@@ -626,6 +746,14 @@ fn compile_rule_source(source: &str) -> Result<String, RuleRegistryError> {
         Err(RuleRegistryError::CompileFailed("invalid rule".into()))
     } else {
         Ok(format!("compiled:{source}"))
+    }
+}
+
+fn plugin_identity() -> PluginIdentity {
+    PluginIdentity {
+        id: "pii-egress".into(),
+        version: "1.0.0".into(),
+        hash: "blake3:plugin".into(),
     }
 }
 

@@ -923,6 +923,10 @@ pub struct EmitOutcome {
 pub enum PluginValidationError {
     #[error("mutation target is not allowed for {event_type}: {path}")]
     MutationTargetNotAllowed { event_type: String, path: String },
+    #[error("plugin attempted to change immutable event field: {field}")]
+    ImmutableFieldChanged { field: &'static str },
+    #[error("plugin attempted to remove prior event data: {field}")]
+    PriorEventDataRemoved { field: &'static str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -930,6 +934,27 @@ pub enum TransportProjection {
     Continue,
     Rewrote,
     Stop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginIdentity {
+    pub id: String,
+    pub version: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginTransformRecord {
+    pub plugin: PluginIdentity,
+    pub input_event_hash: String,
+    pub output_event_hash: String,
+}
+
+pub fn canonical_event_hash(event: &SecurityEvent) -> String {
+    let encoded = serde_json::to_vec(event).expect("SecurityEvent serialization should not fail");
+    format!("blake3:{}", blake3::hash(&encoded).to_hex())
 }
 
 pub fn validate_plugin_output(event: &SecurityEvent) -> Result<(), PluginValidationError> {
@@ -943,6 +968,21 @@ pub fn validate_plugin_output(event: &SecurityEvent) -> Result<(), PluginValidat
         }
     }
     Ok(())
+}
+
+pub fn validate_plugin_transform(
+    plugin: &PluginIdentity,
+    input: &SecurityEvent,
+    output: &SecurityEvent,
+) -> Result<PluginTransformRecord, PluginValidationError> {
+    validate_plugin_output(output)?;
+    validate_immutable_plugin_fields(input, output)?;
+    validate_prior_event_data_preserved(input, output)?;
+    Ok(PluginTransformRecord {
+        plugin: plugin.clone(),
+        input_event_hash: canonical_event_hash(input),
+        output_event_hash: canonical_event_hash(output),
+    })
 }
 
 pub fn project_transport_outcome(
@@ -959,6 +999,50 @@ pub fn project_transport_outcome(
         }
         Some(SecurityDecisionAction::Allow) | None => Ok(TransportProjection::Continue),
     }
+}
+
+fn validate_immutable_plugin_fields(
+    input: &SecurityEvent,
+    output: &SecurityEvent,
+) -> Result<(), PluginValidationError> {
+    if input.schema_version != output.schema_version {
+        return Err(PluginValidationError::ImmutableFieldChanged {
+            field: "schema_version",
+        });
+    }
+    if input.common != output.common {
+        return Err(PluginValidationError::ImmutableFieldChanged { field: "common" });
+    }
+    if input.subject != output.subject {
+        return Err(PluginValidationError::ImmutableFieldChanged { field: "subject" });
+    }
+    if input.context != output.context {
+        return Err(PluginValidationError::ImmutableFieldChanged { field: "context" });
+    }
+    if input.trace != output.trace {
+        return Err(PluginValidationError::ImmutableFieldChanged { field: "trace" });
+    }
+    Ok(())
+}
+
+fn validate_prior_event_data_preserved(
+    input: &SecurityEvent,
+    output: &SecurityEvent,
+) -> Result<(), PluginValidationError> {
+    if !contains_all(&output.labels, &input.labels) {
+        return Err(PluginValidationError::PriorEventDataRemoved { field: "labels" });
+    }
+    if !contains_all(&output.findings, &input.findings) {
+        return Err(PluginValidationError::PriorEventDataRemoved { field: "findings" });
+    }
+    if !contains_all(&output.mutations, &input.mutations) {
+        return Err(PluginValidationError::PriorEventDataRemoved { field: "mutations" });
+    }
+    Ok(())
+}
+
+fn contains_all<T: PartialEq>(haystack: &[T], needles: &[T]) -> bool {
+    needles.iter().all(|needle| haystack.contains(needle))
 }
 
 fn mutation_target_allowed(event_type: &str, path: &str) -> bool {
