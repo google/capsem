@@ -399,6 +399,19 @@ Detection hunt is forensic and detection-only. It runs installed or candidate
 detection rules against historical resolved events and returns full local
 evidence with finding context.
 
+Implementation status as of the first service-route slice:
+
+- Landed: `capsem-service` handlers for enforcement/detection validate,
+  compile, live add/update/delete/list, and stats, backed by the
+  `capsem-security-engine` runtime registry and real CEL compile checks.
+- Guardrail: malformed CEL fails before registry mutation; list/stats expose
+  rule id, pack id, origin/scope, enabled state, compile status, generation,
+  compiled plan id, match count, and last matched event/timestamp.
+- Still open: `/enforcement/backtest`, `/detection/backtest`,
+  `/detection/hunt`, `/sessions/{id}/detection/hunt`, resolved-event/session
+  journal reads, gateway/CLI/UI exposure, persisted/profile-seeded rule plans,
+  and VM/runtime cutover.
+
 ## Session Database Architecture
 
 `session.db` should move to a resolved-event journal plus query projections.

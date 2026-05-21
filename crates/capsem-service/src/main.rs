@@ -2,11 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_security_engine as seceng;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -95,6 +96,10 @@ struct ServiceState {
     job_counter: AtomicU64,
     /// Service-owned asset state machine and background reconciler.
     asset_supervisor: Arc<AssetSupervisor>,
+    /// Runtime CEL enforcement rules installed through the service API.
+    enforcement_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+    /// Runtime CEL/Sigma-lowered detection rules installed through the service API.
+    detection_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
     current_version: String,
     /// Magika file-type detection session (thread-safe, shared)
     magika: Mutex<magika::Session>,
@@ -4149,6 +4154,41 @@ struct RuleEvaluateRequest {
     subject: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeEnforcementRuleRequest {
+    id: String,
+    #[serde(default)]
+    pack_id: Option<String>,
+    condition: String,
+    decision: seceng::SecurityDecisionAction,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDetectionRuleRequest {
+    id: String,
+    pack_id: String,
+    #[serde(default)]
+    sigma_id: Option<String>,
+    title: String,
+    condition: String,
+    severity: seceng::Severity,
+    confidence: seceng::Confidence,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum SkillKind {
@@ -5622,6 +5662,347 @@ async fn handle_evaluate_rule(
             "enforced": false,
         })))
     }
+}
+
+fn validate_runtime_rule_id(id: &str) -> Result<(), AppError> {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+    {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid runtime rule id '{id}'"),
+        ));
+    }
+    Ok(())
+}
+
+fn runtime_rule_plan_id(condition: &str) -> String {
+    format!("cel:{}", blake3::hash(condition.as_bytes()).to_hex())
+}
+
+fn compile_runtime_enforcement_rule(
+    request: &RuntimeEnforcementRuleRequest,
+) -> Result<String, seceng::SecurityEngineError> {
+    seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
+        id: request.id.clone(),
+        pack_id: request.pack_id.clone(),
+        condition: request.condition.clone(),
+        decision: request.decision,
+        reason: request.reason.clone(),
+    }])?;
+    Ok(runtime_rule_plan_id(&request.condition))
+}
+
+fn compile_runtime_detection_rule(
+    request: &RuntimeDetectionRuleRequest,
+) -> Result<String, seceng::SecurityEngineError> {
+    seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
+        id: request.id.clone(),
+        pack_id: request.pack_id.clone(),
+        sigma_id: request.sigma_id.clone(),
+        title: request.title.clone(),
+        condition: request.condition.clone(),
+        severity: request.severity,
+        confidence: request.confidence,
+        tags: request.tags.clone(),
+    }])?;
+    Ok(runtime_rule_plan_id(&request.condition))
+}
+
+fn runtime_enforcement_record(
+    request: &RuntimeEnforcementRuleRequest,
+) -> seceng::RuntimeRuleRecord {
+    seceng::RuntimeRuleRecord {
+        metadata: seceng::RuntimeRuleMetadata {
+            id: request.id.clone(),
+            pack_id: request.pack_id.clone(),
+            scope: seceng::RuleScope::Runtime,
+            origin: seceng::RuleOrigin::Runtime,
+        },
+        source: request.condition.clone(),
+        enabled: request.enabled,
+    }
+}
+
+fn runtime_detection_record(request: &RuntimeDetectionRuleRequest) -> seceng::RuntimeRuleRecord {
+    seceng::RuntimeRuleRecord {
+        metadata: seceng::RuntimeRuleMetadata {
+            id: request.id.clone(),
+            pack_id: Some(request.pack_id.clone()),
+            scope: seceng::RuleScope::Runtime,
+            origin: seceng::RuleOrigin::Runtime,
+        },
+        source: request.condition.clone(),
+        enabled: request.enabled,
+    }
+}
+
+fn runtime_rule_entry_json(entry: &seceng::RuntimeRuleEntry) -> serde_json::Value {
+    let compiled = matches!(&entry.compile_status, seceng::CompileStatus::Compiled);
+    json!({
+        "id": &entry.metadata.id,
+        "pack_id": &entry.metadata.pack_id,
+        "scope": entry.metadata.scope,
+        "origin": entry.metadata.origin,
+        "enabled": entry.enabled,
+        "compiled": compiled,
+        "compile_status": &entry.compile_status,
+        "generation": entry.generation,
+        "condition": &entry.source,
+        "compiled_plan": &entry.compiled_plan,
+        "match_count": entry.stats.match_count,
+        "last_matched_event": &entry.stats.last_matched_event,
+        "last_matched_unix_ms": entry.stats.last_matched_unix_ms,
+    })
+}
+
+fn runtime_registry_rules_json(
+    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let registry = registry.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime rule registry lock poisoned: {error}"),
+        )
+    })?;
+    Ok(registry
+        .list()
+        .into_iter()
+        .map(runtime_rule_entry_json)
+        .collect())
+}
+
+async fn handle_compile_enforcement_rule(
+    Json(request): Json<RuntimeEnforcementRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_runtime_rule_id(&request.id)?;
+    let compiled_plan = compile_runtime_enforcement_rule(&request).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("compile enforcement rule: {error}"),
+        )
+    })?;
+    Ok(Json(json!({
+        "compiled": true,
+        "id": request.id,
+        "compiled_plan": compiled_plan,
+    })))
+}
+
+async fn handle_validate_enforcement_rule(
+    Json(request): Json<RuntimeEnforcementRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    handle_compile_enforcement_rule(Json(request)).await
+}
+
+async fn handle_create_enforcement_rule(
+    State(state): State<Arc<ServiceState>>,
+    Json(request): Json<RuntimeEnforcementRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_runtime_rule_id(&request.id)?;
+    let compiled_plan = compile_runtime_enforcement_rule(&request).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("compile enforcement rule: {error}"),
+        )
+    })?;
+    let record = runtime_enforcement_record(&request);
+    let mut registry = state.enforcement_registry.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime enforcement registry lock poisoned: {error}"),
+        )
+    })?;
+    registry
+        .add_or_update(record, |_| Ok(compiled_plan.clone()))
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
+    let rule = registry
+        .list()
+        .into_iter()
+        .find(|entry| entry.metadata.id == request.id)
+        .map(runtime_rule_entry_json)
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "installed enforcement rule '{}' was not readable",
+                    request.id
+                ),
+            )
+        })?;
+    Ok(Json(json!({
+        "kind": "enforcement",
+        "rule": rule,
+    })))
+}
+
+async fn handle_update_enforcement_rule(
+    Path(id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+    Json(request): Json<RuntimeEnforcementRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if request.id != id {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "path rule id must match request id".into(),
+        ));
+    }
+    handle_create_enforcement_rule(State(state), Json(request)).await
+}
+
+async fn handle_delete_enforcement_rule(
+    Path(id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_runtime_rule_id(&id)?;
+    let mut registry = state.enforcement_registry.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime enforcement registry lock poisoned: {error}"),
+        )
+    })?;
+    registry
+        .delete(&id)
+        .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
+    Ok(Json(json!({
+        "kind": "enforcement",
+        "id": id,
+        "removed": true,
+    })))
+}
+
+async fn handle_list_enforcement_rules(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(Json(json!({
+        "kind": "enforcement",
+        "rules": runtime_registry_rules_json(&state.enforcement_registry)?,
+    })))
+}
+
+async fn handle_enforcement_stats(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(Json(json!({
+        "kind": "enforcement",
+        "rules": runtime_registry_rules_json(&state.enforcement_registry)?,
+    })))
+}
+
+async fn handle_compile_detection_rule(
+    Json(request): Json<RuntimeDetectionRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_runtime_rule_id(&request.id)?;
+    let compiled_plan = compile_runtime_detection_rule(&request).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("compile detection rule: {error}"),
+        )
+    })?;
+    Ok(Json(json!({
+        "compiled": true,
+        "id": request.id,
+        "compiled_plan": compiled_plan,
+    })))
+}
+
+async fn handle_validate_detection_rule(
+    Json(request): Json<RuntimeDetectionRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    handle_compile_detection_rule(Json(request)).await
+}
+
+async fn handle_create_detection_rule(
+    State(state): State<Arc<ServiceState>>,
+    Json(request): Json<RuntimeDetectionRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_runtime_rule_id(&request.id)?;
+    let compiled_plan = compile_runtime_detection_rule(&request).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("compile detection rule: {error}"),
+        )
+    })?;
+    let record = runtime_detection_record(&request);
+    let mut registry = state.detection_registry.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime detection registry lock poisoned: {error}"),
+        )
+    })?;
+    registry
+        .add_or_update(record, |_| Ok(compiled_plan.clone()))
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
+    let rule = registry
+        .list()
+        .into_iter()
+        .find(|entry| entry.metadata.id == request.id)
+        .map(runtime_rule_entry_json)
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("installed detection rule '{}' was not readable", request.id),
+            )
+        })?;
+    Ok(Json(json!({
+        "kind": "detection",
+        "rule": rule,
+    })))
+}
+
+async fn handle_update_detection_rule(
+    Path(id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+    Json(request): Json<RuntimeDetectionRuleRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if request.id != id {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "path rule id must match request id".into(),
+        ));
+    }
+    handle_create_detection_rule(State(state), Json(request)).await
+}
+
+async fn handle_delete_detection_rule(
+    Path(id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_runtime_rule_id(&id)?;
+    let mut registry = state.detection_registry.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime detection registry lock poisoned: {error}"),
+        )
+    })?;
+    registry
+        .delete(&id)
+        .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
+    Ok(Json(json!({
+        "kind": "detection",
+        "id": id,
+        "removed": true,
+    })))
+}
+
+async fn handle_list_detection_rules(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(Json(json!({
+        "kind": "detection",
+        "rules": runtime_registry_rules_json(&state.detection_registry)?,
+    })))
+}
+
+async fn handle_detection_stats(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    Ok(Json(json!({
+        "kind": "detection",
+        "rules": runtime_registry_rules_json(&state.detection_registry)?,
+    })))
 }
 
 /// GET /confirm/pending -- list pending S15 confirmation prompts.
@@ -8304,6 +8685,8 @@ async fn main() -> Result<()> {
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         asset_supervisor,
+        enforcement_registry: Arc::new(Mutex::new(seceng::RuntimeRuleRegistry::default())),
+        detection_registry: Arc::new(Mutex::new(seceng::RuntimeRuleRegistry::default())),
         current_version,
         magika: Mutex::new(magika_session),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -8445,6 +8828,34 @@ async fn main() -> Result<()> {
         .route(
             "/rules/{rule_id}",
             get(handle_get_rule).delete(handle_delete_rule),
+        )
+        .route(
+            "/enforcement",
+            get(handle_list_enforcement_rules).post(handle_create_enforcement_rule),
+        )
+        .route(
+            "/enforcement/validate",
+            post(handle_validate_enforcement_rule),
+        )
+        .route(
+            "/enforcement/compile",
+            post(handle_compile_enforcement_rule),
+        )
+        .route("/enforcement/stats", get(handle_enforcement_stats))
+        .route(
+            "/enforcement/{id}",
+            put(handle_update_enforcement_rule).delete(handle_delete_enforcement_rule),
+        )
+        .route(
+            "/detection",
+            get(handle_list_detection_rules).post(handle_create_detection_rule),
+        )
+        .route("/detection/validate", post(handle_validate_detection_rule))
+        .route("/detection/compile", post(handle_compile_detection_rule))
+        .route("/detection/stats", get(handle_detection_stats))
+        .route(
+            "/detection/{id}",
+            put(handle_update_detection_rule).delete(handle_delete_detection_rule),
         )
         .route("/confirm/pending", get(handle_list_pending_confirms))
         .route("/skills", get(handle_list_skills).post(handle_create_skill))

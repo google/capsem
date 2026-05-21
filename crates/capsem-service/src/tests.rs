@@ -982,6 +982,12 @@ fn make_test_state() -> Arc<ServiceState> {
         run_dir: PathBuf::from("/tmp/capsem-test-svc"),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
+        enforcement_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
+        detection_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -2179,6 +2185,12 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         run_dir,
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
+        enforcement_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
+        detection_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -2729,6 +2741,12 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         run_dir: dir.path().to_path_buf(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
+        enforcement_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
+        detection_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -2762,6 +2780,12 @@ fn make_test_state_with_profile_assets_and_process(
         run_dir: dir.path().to_path_buf(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_profile_asset_supervisor(assets_dir, base_url),
+        enforcement_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
+        detection_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -6438,6 +6462,193 @@ async fn handle_evaluate_rule_rejects_unknown_callback() {
 }
 
 #[tokio::test]
+async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
+    let state = make_test_state();
+    let Json(compiled) = handle_compile_enforcement_rule(Json(RuntimeEnforcementRuleRequest {
+        id: "block-metadata".into(),
+        pack_id: Some("runtime-pack".into()),
+        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        decision: capsem_security_engine::SecurityDecisionAction::Block,
+        reason: Some("metadata access".into()),
+        enabled: true,
+    }))
+    .await
+    .unwrap();
+    assert_eq!(compiled["compiled"], true);
+
+    let Json(installed) = handle_create_enforcement_rule(
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "block-metadata".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("metadata access".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(installed["rule"]["id"], "block-metadata");
+    assert_eq!(installed["rule"]["compiled"], true);
+
+    state
+        .enforcement_registry
+        .lock()
+        .unwrap()
+        .record_match("block-metadata", "evt-1", 1_789)
+        .unwrap();
+
+    let Json(stats) = handle_enforcement_stats(State(state.clone()))
+        .await
+        .unwrap();
+    assert_eq!(stats["rules"][0]["id"], "block-metadata");
+    assert_eq!(stats["rules"][0]["match_count"], 1);
+    assert_eq!(stats["rules"][0]["last_matched_event"], "evt-1");
+
+    let Json(listed) = handle_list_enforcement_rules(State(state)).await.unwrap();
+    assert_eq!(listed["rules"][0]["id"], "block-metadata");
+
+    let state = make_test_state();
+    let _ = handle_create_enforcement_rule(
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "ask-sensitive".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "event.common.event_type == 'model.request'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Ask,
+            reason: Some("sensitive model request".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let Json(updated) = handle_update_enforcement_rule(
+        Path("ask-sensitive".into()),
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "ask-sensitive".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "event.common.event_type == 'model.response'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("sensitive model response".into()),
+            enabled: false,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated["rule"]["generation"], 2);
+    assert_eq!(updated["rule"]["enabled"], false);
+
+    let Json(deleted) =
+        handle_delete_enforcement_rule(Path("ask-sensitive".into()), State(state.clone()))
+            .await
+            .unwrap();
+    assert_eq!(deleted["removed"], true);
+    let Json(listed_after_delete) = handle_list_enforcement_rules(State(state)).await.unwrap();
+    assert!(listed_after_delete["rules"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn handle_detection_runtime_routes_reject_invalid_without_poisoning_registry() {
+    let state = make_test_state();
+    let err = handle_create_detection_rule(
+        State(state.clone()),
+        Json(RuntimeDetectionRuleRequest {
+            id: "bad-detection".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: None,
+            title: "Bad detection".into(),
+            condition: "event.subject.host ==".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::High,
+            tags: Vec::new(),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("CEL compile failed"));
+    assert!(state.detection_registry.lock().unwrap().list().is_empty());
+}
+
+#[tokio::test]
+async fn handle_detection_runtime_routes_compile_install_update_delete() {
+    let state = make_test_state();
+    let Json(compiled) = handle_compile_detection_rule(Json(RuntimeDetectionRuleRequest {
+        id: "detect-model-request".into(),
+        pack_id: "runtime-detection".into(),
+        sigma_id: Some("sigma-1".into()),
+        title: "Model request".into(),
+        condition: "event.common.event_type == 'model.request'".into(),
+        severity: capsem_security_engine::Severity::Medium,
+        confidence: capsem_security_engine::Confidence::High,
+        tags: vec!["model".into()],
+        enabled: true,
+    }))
+    .await
+    .unwrap();
+    assert_eq!(compiled["compiled"], true);
+
+    let Json(installed) = handle_create_detection_rule(
+        State(state.clone()),
+        Json(RuntimeDetectionRuleRequest {
+            id: "detect-model-request".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-1".into()),
+            title: "Model request".into(),
+            condition: "event.common.event_type == 'model.request'".into(),
+            severity: capsem_security_engine::Severity::Medium,
+            confidence: capsem_security_engine::Confidence::High,
+            tags: vec!["model".into()],
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(installed["rule"]["id"], "detect-model-request");
+
+    let Json(updated) = handle_update_detection_rule(
+        Path("detect-model-request".into()),
+        State(state.clone()),
+        Json(RuntimeDetectionRuleRequest {
+            id: "detect-model-request".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-1".into()),
+            title: "Model response".into(),
+            condition: "event.common.event_type == 'model.response'".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::Medium,
+            tags: vec!["model".into(), "response".into()],
+            enabled: false,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated["rule"]["generation"], 2);
+    assert_eq!(updated["rule"]["enabled"], false);
+
+    state
+        .detection_registry
+        .lock()
+        .unwrap()
+        .record_match("detect-model-request", "evt-2", 1_790)
+        .unwrap();
+    let Json(stats) = handle_detection_stats(State(state.clone())).await.unwrap();
+    assert_eq!(stats["rules"][0]["match_count"], 1);
+
+    let Json(deleted) =
+        handle_delete_detection_rule(Path("detect-model-request".into()), State(state.clone()))
+            .await
+            .unwrap();
+    assert_eq!(deleted["removed"], true);
+    let Json(listed_after_delete) = handle_list_detection_rules(State(state)).await.unwrap();
+    assert!(listed_after_delete["rules"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn rules_api_evaluate_stays_bounded_for_large_profiles() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -6697,6 +6908,12 @@ fn make_test_state_with_tempdir_at(
         run_dir,
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
+        enforcement_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
+        detection_registry: Arc::new(Mutex::new(
+            capsem_security_engine::RuntimeRuleRegistry::default(),
+        )),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),

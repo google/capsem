@@ -816,6 +816,20 @@ a valid claim -- mark it `[ ]` instead.
     `cargo test -p capsem-core --test security_packs` passed with 8 tests.
     Still missing for S08b.2: service route wiring, historical hunt over the
     session journal, and VM/runtime integration.
+    Twenty-fourth S08b.2 slice added the first service-owned runtime
+    enforcement/detection API spine. `capsem-service` now has in-memory
+    runtime registries for `/enforcement/*` and `/detection/*`, handlers for
+    validate/compile, live add/update/delete/list, and stats, and compile-first
+    installs through the real CEL enforcement/detection evaluators so malformed
+    candidate rules fail before touching the registry. Verification:
+    `cargo test -p capsem-service
+    handle_enforcement_runtime_routes_compile_install_and_report_stats` passed
+    and `cargo test -p capsem-service
+    handle_detection_runtime_routes` passed with both detection route tests.
+    Still missing for S08b.2: historical backtest/hunt over the
+    resolved-event/session journal, gateway/CLI/UI route exposure, persistence
+    or profile-pack seeding for installed runtime plans, and VM/runtime
+    integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
