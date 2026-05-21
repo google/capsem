@@ -345,6 +345,24 @@ Twenty-second slice landed on 2026-05-21:
 - Verification: `uv run python -m pytest tests/test_image_sbom.py -q` passed
   with 5 tests.
 
+Twenty-third slice landed on 2026-05-21:
+
+- The profile-backed E2E boot proof now has a release-image verification gate:
+  reconcile profile assets, boot the image through `capsem doctor --fast
+  --bundle`, require the generated `doctor-latest.tar`, and feed that bundle
+  plus the host-arch `image-inventory.json` through
+  `capsem-admin image verify --doctor-bundle`.
+- `CAPSEM_REQUIRE_ARTIFACTS=1` now requires
+  `assets/<arch>/image-inventory.json` so CI/release artifact-gated tests cannot
+  silently skip the package/tool contract proof. `_check-assets` now treats a
+  missing host-arch image inventory as a rebuild trigger alongside the bootable
+  VM files.
+- Verification: `uv run python -m pytest
+  tests/capsem-e2e/test_profile_asset_boot.py -q` passed locally with one boot
+  test and one asset-dependent skip; `uv run python -m pytest
+  tests/test_image_verify.py tests/test_image_sbom.py tests/test_leak_detection.py
+  -q` passed.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -688,8 +706,9 @@ The checker must fail closed for:
       profile-declared asset existence/size/hash verification and typed
       package/tool inventory extraction plus required per-architecture contract
       comparison have landed; release host SBOM attestation covers `.pkg` and
-      `.deb`; typed guest SPDX SBOM generation and `capsem-doctor --bundle`
-      probe ingestion have landed; a live release-image boot gate remains.
+      `.deb`; typed guest SPDX SBOM generation, `capsem-doctor --bundle`
+      probe ingestion, and the profile-backed release-image boot gate have
+      landed.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
@@ -733,9 +752,10 @@ The checker must fail closed for:
   untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin module
   tests.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
-  supported release arches by default, boot at least the host-arch image through
-  Capsem, and run an in-guest verification probe that proves declared
-  packages/tools are present.
+  supported release arches by default; the profile-backed host-arch E2E gate
+  reconciles selected assets, boots through Capsem, captures
+  `capsem-doctor --bundle`, and verifies the bundle plus typed image inventory
+  through `capsem-admin image verify`.
 - Telemetry/observability: command JSON reports include profile id/revision,
   manifest identity, asset hashes, package contract hash, check mode, timings,
   and failure category.

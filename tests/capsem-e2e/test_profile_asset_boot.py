@@ -8,10 +8,12 @@ asks `capsem update --assets` to reconcile them, then boots and execs in a VM.
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 
 import pytest
 
+from capsem.builder.image_verify import ImageInventory
 from helpers.profile_asset_fixture import (
     asset_source_dir,
     find_asset,
@@ -73,5 +75,92 @@ def test_profile_asset_download_boots_and_execs(tmp_path, real_service_factory):
             assert info["profile_revision"] == "2026.0519.e2e"
         finally:
             svc.cli("delete", name, timeout=60)
+    finally:
+        svc.stop()
+
+
+def test_profile_asset_doctor_bundle_is_admin_verified(
+    tmp_path, real_service_factory
+):
+    source_dir = asset_source_dir()
+    if not source_dir.exists():
+        pytest.skip(f"asset source dir missing: {source_dir}")
+    inventory_path = source_dir / "image-inventory.json"
+    if not inventory_path.exists():
+        pytest.skip(f"image inventory missing: {inventory_path}")
+
+    inventory = ImageInventory.model_validate_json(
+        inventory_path.read_text(encoding="utf-8")
+    )
+    assets = {
+        "vmlinuz": find_asset(source_dir, "vmlinuz"),
+        "initrd.img": find_asset(source_dir, "initrd.img"),
+        "rootfs.squashfs": find_asset(source_dir, "rootfs.squashfs"),
+    }
+    capsem_home = tmp_path / "capsem-home"
+    asset_cache = tmp_path / "downloaded-assets"
+
+    write_profile_home(
+        capsem_home,
+        asset_cache,
+        assets,
+        image_inventory=inventory,
+    )
+    profile_json = (
+        capsem_home
+        / "profiles"
+        / "corp"
+        / ".catalog"
+        / "profiles"
+        / "profile-asset-boot"
+        / "2026.0519.e2e"
+        / "profile.json"
+    )
+    svc = real_service_factory(capsem_home=capsem_home, assets_dir=asset_cache)
+    try:
+        svc.start()
+        update = svc.cli_ok("update", "--assets", timeout=240)
+        assert (
+            "Profile VM assets reconciled" in update.stdout
+            or "already ready" in update.stdout
+        )
+
+        doctor = svc.cli_ok("doctor", "--fast", "--bundle", timeout=420)
+        assert "RESULT: PASS" in doctor.stdout
+        bundle_path = svc.tmp_dir / "doctor-latest.tar"
+        assert bundle_path.is_file()
+
+        result = subprocess.run(
+            [
+                "uv",
+                "run",
+                "capsem-admin",
+                "image",
+                "verify",
+                str(profile_json),
+                "--assets-dir",
+                str(source_dir.parent),
+                "--arch",
+                host_arch(),
+                "--inventory",
+                str(inventory_path),
+                "--doctor-bundle",
+                str(bundle_path),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=svc.env,
+        )
+        assert result.returncode == 0, (
+            f"capsem-admin image verify failed\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        report = json.loads(result.stdout)
+        assert report["ok"] is True
+        assert report["profile_id"] == "profile-asset-boot"
+        assert report["probes"][0]["kind"] == "capsem_doctor_bundle"
+        assert report["probes"][0]["ok"] is True
     finally:
         svc.stop()

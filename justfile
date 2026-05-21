@@ -1542,7 +1542,7 @@ _install-tools:
         cargo install cargo-sbom --locked
     fi
 
-# Verify VM assets exist (vmlinuz, initrd.img, rootfs)
+# Verify VM assets exist (vmlinuz, initrd.img, rootfs, image-inventory)
 _check-assets:
     #!/bin/bash
     set -euo pipefail
@@ -1552,7 +1552,7 @@ _check-assets:
     missing=()
     if [ -f "$dir/$arch/vmlinuz" ]; then
         # Per-arch layout: assets/{arch}/vmlinuz
-        for f in vmlinuz initrd.img rootfs.squashfs; do
+        for f in vmlinuz initrd.img rootfs.squashfs image-inventory.json; do
             [ -f "$dir/$arch/$f" ] || missing+=("$arch/$f")
         done
     elif [ -f "$dir/vmlinuz" ]; then

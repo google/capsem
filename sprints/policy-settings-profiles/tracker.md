@@ -448,6 +448,18 @@ a valid claim -- mark it `[ ]` instead.
     profile id, revision, arch, and package-contract hash, and apt/Python/node
     rows carry package-manager purl references. Verification:
     `uv run python -m pytest tests/test_image_sbom.py -q` passed with 5 tests.
+    Twenty-third slice added the release-image boot gate: the profile-backed
+    E2E test reconciles selected assets, runs `capsem doctor --fast --bundle`,
+    requires `doctor-latest.tar`, and feeds that doctor bundle plus the
+    host-arch `image-inventory.json` into `capsem-admin image verify`.
+    `CAPSEM_REQUIRE_ARTIFACTS=1` now also requires the host-arch
+    `image-inventory.json`, preventing artifact-gated runs from silently
+    skipping the package/tool proof; `_check-assets` now rebuilds when that
+    inventory is missing. Verification: `uv run python -m pytest
+    tests/capsem-e2e/test_profile_asset_boot.py -q` passed locally with one
+    boot test and one asset-dependent skip; `uv run python -m pytest
+    tests/test_image_verify.py tests/test_image_sbom.py tests/test_leak_detection.py
+    -q` passed.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

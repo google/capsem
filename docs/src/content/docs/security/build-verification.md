@@ -93,6 +93,13 @@ archives as in-VM probe evidence. The admin verifier reads the bundled JUnit
 result without extracting the tar archive and fails the image verification
 report when the booted VM diagnostics have failures or errors.
 
+The release-image boot gate uses the profile-backed E2E path: reconcile the
+selected profile assets, boot the host-arch image, run
+`capsem-doctor --fast --bundle`, then pass the generated doctor bundle and
+host-arch `image-inventory.json` through `capsem-admin image verify`. When
+artifact-gated tests run, the host-arch image inventory is required so this
+proof cannot silently downgrade to an asset-only boot.
+
 ## SLSA attestation
 
 Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation via `actions/attest-build-provenance@v4`:

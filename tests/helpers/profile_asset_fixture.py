@@ -9,6 +9,8 @@ from pathlib import Path
 import blake3
 import pytest
 
+from capsem.builder.image_verify import ImageInventory
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
@@ -51,7 +53,61 @@ def toml_string(value: str) -> str:
     return json.dumps(value)
 
 
-def write_profile_home(capsem_home: Path, asset_cache: Path, assets: dict[str, Path]):
+def _package_contract_from_inventory(image_inventory: ImageInventory | None) -> dict:
+    return {
+        "runtimes": {
+            "python": "3.12.3",
+            "node": "22.1.0",
+            "uv": "0.4.30",
+        },
+        "python_modules": (
+            dict(sorted(image_inventory.python_modules.items()))
+            if image_inventory is not None
+            else {}
+        ),
+        "node_packages": (
+            dict(sorted(image_inventory.node_packages.items()))
+            if image_inventory is not None
+            else {}
+        ),
+        "system": {
+            "distro": "debian",
+            "release": "bookworm",
+            "apt": (
+                dict(sorted(image_inventory.apt.items()))
+                if image_inventory is not None
+                else {}
+            ),
+        },
+    }
+
+
+def _tool_contract_from_inventory(image_inventory: ImageInventory | None) -> dict:
+    if image_inventory is None:
+        return {
+            "capsem_doctor": {
+                "version": "2026.05.18",
+                "required": True,
+                "source": "guest",
+            },
+        }
+    return {
+        name: {
+            "version": version,
+            "required": True,
+            "source": "guest",
+        }
+        for name, version in sorted(image_inventory.tools.items())
+    }
+
+
+def write_profile_home(
+    capsem_home: Path,
+    asset_cache: Path,
+    assets: dict[str, Path],
+    *,
+    image_inventory: ImageInventory | None = None,
+):
     profile_dir = capsem_home / "profiles" / "corp"
     user_profile_dir = capsem_home / "profiles" / "user"
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -150,27 +206,8 @@ reason = "gateway telemetry denial fixture"
             "track_rootfs_dependencies": True,
             "assets": {host_arch(): arch_assets},
         },
-        "packages": {
-            "runtimes": {
-                "python": "3.12.3",
-                "node": "22.1.0",
-                "uv": "0.4.30",
-            },
-            "python_modules": {},
-            "node_packages": {},
-            "system": {
-                "distro": "debian",
-                "release": "bookworm",
-                "apt": {},
-            },
-        },
-        "tools": {
-            "capsem_doctor": {
-                "version": "2026.05.18",
-                "required": True,
-                "source": "guest",
-            },
-        },
+        "packages": _package_contract_from_inventory(image_inventory),
+        "tools": _tool_contract_from_inventory(image_inventory),
         "mcpServers": {},
         "security": {
             "capabilities": {

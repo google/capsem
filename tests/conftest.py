@@ -164,6 +164,10 @@ _REQUIRED_ARTIFACTS = {
     # on this path. A per-arch entry here never resolved on a real build.
     "assets/manifest.json": _PROJECT_ROOT / "assets" / "manifest.json",
     "assets/<arch>/initrd.img": _PROJECT_ROOT / "assets" / _ARCH / "initrd.img",
+    "assets/<arch>/image-inventory.json": _PROJECT_ROOT
+    / "assets"
+    / _ARCH
+    / "image-inventory.json",
     "entitlements.plist": _PROJECT_ROOT / "entitlements.plist",
     "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,
 }

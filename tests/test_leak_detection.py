@@ -273,6 +273,16 @@ def test_required_artifacts_manifest_path_is_flat():
     )
 
 
+def test_required_artifacts_include_host_arch_image_inventory():
+    from tests.conftest import _ARCH, _PROJECT_ROOT, _REQUIRED_ARTIFACTS
+
+    assert "assets/<arch>/image-inventory.json" in _REQUIRED_ARTIFACTS
+    assert (
+        _REQUIRED_ARTIFACTS["assets/<arch>/image-inventory.json"]
+        == _PROJECT_ROOT / "assets" / _ARCH / "image-inventory.json"
+    )
+
+
 # ---------------------------------------------------------------------------
 # MCP proc-teardown helper. The capsem-mcp fixtures and the capsem-e2e MCP
 # tests spawn capsem-mcp via subprocess.Popen with stdin=PIPE, stdout=PIPE,

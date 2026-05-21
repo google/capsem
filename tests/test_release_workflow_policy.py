@@ -435,6 +435,20 @@ def test_local_cross_compile_validates_one_fresh_deb_artifact():
     assert 'dpkg -i \\"\\$DEB\\"' in body
 
 
+def test_check_assets_requires_profile_image_inventory():
+    """Artifact-gated tests need image inventory, not only bootable files."""
+    justfile = (REPO_ROOT / "justfile").read_text()
+    check_assets = re.search(
+        r"(?ms)^_check-assets:\n(?P<body>.*?)(?=^_pnpm-install:)",
+        justfile,
+    )
+    assert check_assets, "_check-assets recipe missing"
+    body = check_assets.group("body")
+
+    assert "vmlinuz initrd.img rootfs.squashfs image-inventory.json" in body
+    assert 'missing+=("$arch/$f")' in body
+
+
 def _just_install_body() -> str:
     justfile = (REPO_ROOT / "justfile").read_text()
     install = re.search(
