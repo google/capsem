@@ -179,6 +179,10 @@ Under `docs/src/content/docs/`, likely pages:
   add unified telemetry: emit normalized resolved events first, update typed
   VM accumulators, preserve low-cardinality OTel labels, expose live VM status
   fields, and keep full evidence in timeline/backtest/hunt rather than metrics.
+- `benchmarks/security-engine.md` - S08d benchmark results and methodology for
+  VM-originated enforcement allow/block/ask latency, detection matching speed,
+  rule-count scaling, backtest/hunt scan rates, correctness checks, and how to
+  interpret any marketing numbers.
 - Updates to existing `architecture/settings.md`,
   `architecture/custom-images.md`, `security/overview.md`,
   `security/network-isolation.md`, and `debugging/troubleshooting.md` as needed.
@@ -288,6 +292,11 @@ Final paths should follow the actual docs tree present when this sprint starts.
       new fields safely: normalized event field first, resolved-event evidence
       second, VM accumulator summary third, OTel labels only when bounded, and
       UI/status rendering through the typed metrics contract.
+- [ ] Write security-engine benchmark page:
+      explain S08d methodology, `capsem-bench security-engine`, host serial
+      artifact capture, VM-originated event paths, CEL/Sigma rule-pack scale,
+      backtest/hunt scan-rate methodology, correctness assertions, and the rule
+      that marketing numbers must cite recorded benchmark artifacts.
 - [ ] Write custom manifest/profile payload/assets/images/rootfs dependency
   guide or update the existing page.
 - [ ] Remove docs that tell admins to edit `guest/config` image settings by hand
@@ -368,8 +377,9 @@ listed revision that must not be installed or launched is `revoked`.
   (provider, model, call count, token counts, estimated cost), enforcement
   match counters, detection finding attribution, centralized forward-plugin
   attribution, and the unified event/timeline evidence model.
-- Performance: docs mention profile discovery/remote enforcement timeout behavior
-  only once measured or specified.
+- Performance: docs mention profile discovery/remote enforcement timeout
+  behavior only once measured or specified; security-engine speed claims cite
+  S08d benchmark artifacts with host/arch/profile/rule-pack context.
 - Missing/deferred: concrete page paths and examples must be finalized after
   S07-S13 stabilize public interfaces.
 

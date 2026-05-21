@@ -1,0 +1,161 @@
+# S08d - Security Engine Performance Benchmarks
+
+## Status
+
+Not started. Inserted on 2026-05-21 as the S08 exit benchmark sprint.
+
+## Goal
+
+Prove the runtime speed of Capsem's normalized Security Engine before public
+CLI/UI/docs/marketing surfaces make speed claims.
+
+This sprint measures real VM-originated events flowing through Network/File/
+Process/MCP/model paths into the Security Engine, then records how quickly
+Capsem can allow, block, ask, and detect using CEL enforcement and
+Sigma-compatible detection.
+
+## Product Contract
+
+- Performance claims must be backed by measured data, not intuition about CEL
+  or Sigma.
+- Benchmarks must include VM-originated events that cross the real transport/
+  service/process boundary. Microbenchmarks are useful, but they are not enough
+  for marketing or release claims.
+- The benchmark harness must distinguish:
+  - normalization latency;
+  - preprocessor time;
+  - CEL enforcement evaluation time;
+  - ask/confirm handoff time when applicable;
+  - detection evaluation time;
+  - postprocessor time;
+  - emitter/journal/write time;
+  - end-to-end action latency visible to the VM.
+- Results must include correctness and performance together: every measured
+  event asserts the expected allow/block/detect result and the persisted
+  resolved-event evidence.
+- No marketing number ships unless S08d records the exact command, host/arch,
+  profile/rule pack, event shape, sample size, and percentile summary.
+
+## Benchmark Scope
+
+### VM-Originated End-To-End Benchmarks
+
+Extend the existing benchmark infrastructure with a security-engine benchmark
+mode, likely under `capsem-bench security-engine` plus a host-side serial pytest
+wrapper for stable artifact capture.
+
+Measured scenarios:
+
+- HTTP allow, block, and detection-only finding from inside the VM.
+- DNS allow, block, and detection-only finding from inside the VM.
+- MCP tool allow, block, and detection-only finding from inside the VM.
+- Model request allow, block/rewrite where available, and detection-only
+  finding from inside the VM.
+- File write/create/delete detection and enforcement paths once File Engine
+  cutover lands.
+- Process exec detection and enforcement paths once Process Engine cutover
+  lands.
+- Mixed workload that exercises multiple event families concurrently.
+
+For each scenario, capture:
+
+- p50/p95/p99 end-to-end decision latency;
+- events/sec throughput at low, medium, and burst concurrency;
+- rule count scale: no-match, first-match, last-match, 10 rules, 100 rules,
+  1,000 rules where reasonable;
+- detection pack scale: single Sigma rule, common small pack, larger pack;
+- cold compiled-plan load versus warm steady-state evaluation;
+- resolved-event journal write overhead;
+- false-negative/false-positive correctness assertions.
+
+### Evaluator Microbenchmarks
+
+Add Criterion or equivalent Rust microbenchmarks for the pieces that should be
+extremely fast:
+
+- CEL parse/compile once per rule pack.
+- CEL warm evaluation over normalized events.
+- Sigma-compatible detection lowering into the runtime predicate/CEL plan.
+- Detection warm evaluation over normalized events.
+- Evidence-signature dedup for default 100-row backtest responses.
+- Registry atomic plan swap cost.
+
+Microbenchmarks must not replace VM-originated benchmarks; they explain where
+time goes when an end-to-end number regresses.
+
+### Backtest And Hunt Benchmarks
+
+S08c proves correctness. S08d adds time-series performance:
+
+- enforcement backtest over shared corpus;
+- detection backtest over shared corpus;
+- detection hunt over a real session/timeline journal;
+- default 100 matched-row evidence dedup path;
+- larger historical corpus scans with documented event/rule counts.
+
+## Output Artifacts
+
+Commit benchmark outputs in the same style as existing benchmark artifacts:
+
+```text
+benchmarks/security-engine/data_<version>_<arch>.json
+benchmarks/security-engine/README.md
+```
+
+The JSON should include:
+
+- Capsem version/commit;
+- host OS, architecture, CPU model where available;
+- VM profile id/revision and asset identity;
+- rule/detection pack ids, revisions, hashes, and rule counts;
+- event family and workload name;
+- sample count, warmup count, concurrency, and duration;
+- p50/p95/p99/min/max latency;
+- throughput;
+- correctness counters;
+- links or ids for captured resolved-event evidence.
+
+Docs consume these artifacts through the benchmark docs page and S19a marketing
+copy. Marketing may use qualitative claims before numbers only if the claim is
+clearly not numerical and matches the sprint tracker.
+
+## Tasks
+
+- Extend `capsem-bench` with `security-engine` mode or add an equivalent
+  VM-originated benchmark harness that is invoked by `just bench`.
+- Add host-side serial pytest artifact capture for security-engine benchmark
+  JSON under `benchmarks/security-engine/`.
+- Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
+  evidence dedup, and registry plan swaps.
+- Add correctness assertions for every benchmark scenario: expected final
+  action, expected detection finding, and persisted resolved-event evidence.
+- Add rule-pack and event fixtures for low/medium/high rule-count cases.
+- Add concurrency/load cases that prove engine work remains bounded under burst
+  VM activity.
+- Update `docs/src/content/docs/development/benchmarking.md` and
+  `docs/src/content/docs/benchmarks/results.md` with the new benchmark mode and
+  latest recorded results.
+- Feed measured results into S19a marketing copy only after benchmark artifacts
+  exist.
+- Add regression gates for gross latency regressions once the first stable
+  baseline is recorded.
+
+## Coverage Ledger
+
+- Unit/contract: benchmark JSON schema, benchmark fixture parsing, rule-pack
+  scale fixture generation, evaluator microbench setup.
+- Functional: VM-originated allow/block/detect scenarios assert correct actions
+  and findings through the real service/process path.
+- Adversarial: invalid rules, unsupported Sigma constructs, missing event
+  fields, high-cardinality evidence, oversized packs, slow emitter/journal path.
+- E2E/VM: real VM sends HTTP/DNS/MCP/model/file/process events; benchmark
+  verifies action latency visible to the VM and resolved-event evidence in
+  session storage.
+- Telemetry: benchmark runs confirm VM status/OTel counters increment for
+  enforcement evaluations, detection evaluations, matches, findings, errors,
+  and forward-plugin metrics when enabled.
+- Performance: p50/p95/p99, throughput, rule-count scaling, cold/warm compiled
+  plan behavior, concurrency scaling, backtest/hunt scan rates.
+- Missing/deferred: exact threshold gates are chosen after the first stable
+  S08d baseline; until then, marketing uses artifact-backed qualitative claims
+  or explicit measured numbers with context.

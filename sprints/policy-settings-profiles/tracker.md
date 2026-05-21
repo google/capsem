@@ -76,9 +76,10 @@ proceeds in this order:
 1. S08b cuts the Network Engine, File Engine, Process Engine, Security Engine,
    Conversation Engine, and Resolved Event Emitter boundaries before public
    surfaces consume the event model.
-2. S09/S11/S12/S13/S14/S15/S16/S16a/S17 then lift CLI, status/debug,
-   telemetry, plugins, rule UI, Confirm UX, profile UI, timeline/workbench,
-   and security controls onto those contracts.
+2. S08d records VM-originated security-engine performance before speed claims;
+   S09/S11/S12/S13/S14/S15/S16/S16a/S17 then lift CLI, status/debug,
+   telemetry, plugins, rule UI, Confirm UX, profile UI, timeline/workbench, and
+   security controls onto those contracts.
 3. S19/S19a document and market only the behavior proven by those contracts.
 4. S18 performs final release replay, doctor/VM/install verification, and any
    remaining cross-process/per-asset lock or upgrade hardening.
@@ -611,29 +612,35 @@ a valid claim -- mark it `[ ]` instead.
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
     Rust runtime parity, and real-session fixture generation after S08b's
     resolved-event journal stabilizes.
-23. [ ] [S09 - CLI integration](S09-cli-integration.md)
-24. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
-25. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
+    -- inserted during the 2026-05-21 performance/marketing regroup. Extend
+    `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to
+    prove VM-originated allow/block/ask/detect latency, rule-count scaling,
+    Sigma/CEL matching speed, backtest/hunt scan rates, and resolved-event
+    evidence correctness before public surfaces or marketing make speed claims.
+24. [ ] [S09 - CLI integration](S09-cli-integration.md)
+25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
     -- includes live VM health rendering from S12 snapshots: model call count,
     providers, models, token totals, estimated cost, detection findings, and
     stale/partial metrics state.
-26. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
+27. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
     cost usage, enforcement/detection match stats, detection finding health,
     and centralized forward-plugin health. Running status reads memory only;
     persistent VMs seed/recompute from `session.db` exactly once at load.
-27. [ ] [S13 - Remote enforcement plugin](S13-remote-policy-plugin.md)
+28. [ ] [S13 - Remote enforcement plugin](S13-remote-policy-plugin.md)
     -- decision mode participates only in `/enforcement/*`; observer mode can
     receive resolved events and detection findings but cannot convert detection
     into blocking decisions. This is also the centralized forward-plugin sprint:
     forwarded decisions/findings keep the same resolved-event ids and expose
     VM-status/OTel health without bypassing local runtime APIs.
-28. [ ] [S14 - Rules UI components](S14-rules-ui-components.md)
+29. [ ] [S14 - Rules UI components](S14-rules-ui-components.md)
     -- enforcement-rule editor component is consumed by S15; detection
     rule/finding/backtest UX consumes S08b/S08c.
-29. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
-30. [ ] [S16 - Profile UI](S16-profile-ui.md)
-31. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
+30. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+31. [ ] [S16 - Profile UI](S16-profile-ui.md)
+32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
     sessions, backed by S08b's structured `/timeline/{id}` API. Users must be
@@ -642,34 +649,34 @@ a valid claim -- mark it `[ ]` instead.
     provenance from one coherent timeline. The API provides stable pagination
     over typed blocks; the UI provides conversation/turn/process/activity/trace/
     finding/artifact filtering and formatting with one renderer per block type.
-32. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-33. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+33. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+34. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
     -- adds first-class enforcement and detection-format pages, corporate admin
     security links, `capsem-admin` enforcement/detection validation/backtest
     docs, add-detection/add-enforcement admin guides, centralized forward-plugin
     guide, telemetry extension guide, and VM health/OTel docs for model/provider/
     token/cost, enforcement counters, detection metrics, and unified event
     evidence.
-34. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
+35. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
     -- refresh the landing page around four pillars: Ship Fast With AI, Ship
     Safely, Scale Your Productivity Without Drag, and Enterprise Ready. Include
     realtime CEL enforcement, Sigma-compatible detection with backtest and
     forensic timeline/session analysis, fast matching over unified events,
-    forward-plugin observability, and shipped/planned profile/security/
-    performance/enterprise features without overclaiming beyond the sprint
-    tracker. Current-site baseline screenshots were captured in
+    forward-plugin observability, and S08d artifact-backed engine performance
+    claims without overclaiming beyond the sprint tracker. Current-site
+    baseline screenshots were captured in
     `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`; refreshed
     pillar screenshots remain part of S19a's final gate.
-35. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+36. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- core Profile V2 release replay and verification gate.
-36. [ ] [S20 - OpenAPI to MCP](S20-openapi-to-mcp.md)
+37. [ ] [S20 - OpenAPI to MCP](S20-openapi-to-mcp.md)
     -- proposed standalone product sprint. Convert reviewed OpenAPI-described
     HTTP services into profile-owned MCP tools with provenance, diagnostics,
     UI visibility, and normal security/audit/timeline treatment.
-37. [ ] [S21 - Local LLM](S21-local-llm.md)
+38. [ ] [S21 - Local LLM](S21-local-llm.md)
     -- proposed standalone product sprint. Make local model services
     first-class profile/VM AI providers instead of generic HTTP traffic.
-38. [ ] [S19b - Reporting setup](S19b-reporting-setup.md)
+39. [ ] [S19b - Reporting setup](S19b-reporting-setup.md)
     -- proposed standalone, non-blocking operations sprint. Provide reporting
     setup docs, collector examples, privacy guidance, and dashboard packaging
     after S12/runtime fields are stable.

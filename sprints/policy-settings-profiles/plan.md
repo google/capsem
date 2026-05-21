@@ -83,15 +83,20 @@ migrated.
     migrate existing event-family writes behind the emitter. Add Conversation
     Engine capture and the structured `/timeline/{id}` read API as part of the
     same session DB story.
-14. Add CLI.
-15. Add credential brokerage, status/debug, observability, remote policy.
-16. Build reusable rule/settings UI components.
-17. Build settings/profile/security UI.
-18. Build unified timeline and agent workbench UI for SDK-backed and
+14. Add shared rule/evidence corpus parity in S08c, then S08d security-engine
+    performance benchmarks that measure real VM-originated allow/block/ask/
+    detect latency, CEL/Sigma matching speed, rule-count scaling, and
+    backtest/hunt scan rates before public speed claims.
+15. Add CLI.
+16. Add credential brokerage, status/debug, observability, remote enforcement.
+17. Build reusable rule/settings UI components.
+18. Build settings/profile/security UI.
+19. Build unified timeline and agent workbench UI for SDK-backed and
     terminal-fallback sessions.
-19. Update public docs/site architecture, security, and configuration pages.
-20. Refresh the marketing landing page around the four-pillar product story.
-21. Run full verification and install/release gate.
+20. Update public docs/site architecture, security, and configuration pages.
+21. Refresh the marketing landing page around the four-pillar product story,
+    using S08d benchmark artifacts for any security-engine speed claims.
+22. Run full verification and install/release gate.
 
 ## Done Definition
 
@@ -108,6 +113,9 @@ migrated.
   detection packs through typed Pydantic models. Release image builds fail if
   package/tool/image settings are read from hand-edited image config instead of
   profiles.
+- Security-engine performance claims are backed by S08d benchmark artifacts that
+  include real VM-originated allow/block/detect paths, correctness assertions,
+  percentile latency, and rule/detection-pack scale context.
 - Status/debug/CLI/UI expose installed profile revision, package/tool contract,
   asset readiness, and VM profile/revision/asset pins.
 - Network, DNS, MCP/model, file, process, snapshot, VM lifecycle, and profile

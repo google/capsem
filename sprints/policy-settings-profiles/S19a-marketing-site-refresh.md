@@ -92,6 +92,10 @@ The landing page should be organized around four product pillars:
   detection with backtest, default diverse evidence samples, fast matching over
   normalized events, and forensic Sigma analysis against a chosen timeline or
   session.
+- Add performance copy for the Security Engine only from S08d benchmark
+  artifacts: VM-originated allow/block/detect latency, CEL/Sigma match speed,
+  rule-count scaling, and backtest/hunt scan rates. No numeric speed claim may
+  appear unless it cites or links to the recorded benchmark result page.
 - Explain the unified event/timeline story as the reason enforcement, Sigma
   findings, telemetry, audit, and support bundles line up. Use strong language
   around a "bulletproof forensic trail" only when paired with concrete proof
@@ -124,7 +128,8 @@ The landing page should be organized around four product pillars:
 - Reuse existing components where possible. Add a new component only if the
   four-pillar story cannot be represented cleanly with the current sections.
 - The performance/scaling pillar should feel operational and concrete, not like
-  benchmark theater. Use numbers only when measured or documented by a sprint.
+  benchmark theater. Use numbers only when measured by S08d or another recorded
+  benchmark artifact.
 - The enterprise pillar should mention observability, forensic trails, Sigma
   timeline analysis, SOAR/centralized forward plugin, OpenTelemetry, and corp
   profile governance as one coherent operating story.
@@ -144,6 +149,8 @@ The landing page should be organized around four product pillars:
 - Performance: landing page build output remains lightweight; no unnecessary
   client hydration for static marketing sections.
 - Documentation: linked docs pages exist or are tracked in S19 before release.
+- Benchmarks: any CEL/Sigma/security-engine speed claim has a matching S08d
+  benchmark artifact and benchmark docs link.
 
 ## Done Means
 
