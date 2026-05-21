@@ -244,7 +244,7 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 # sudo apt install docker.io
 ```
 
-`just doctor` and `capsem-builder doctor` both check these resources automatically and fail if below minimum.
+`just doctor` and `capsem-admin doctor` both check these resources automatically and fail if below minimum.
 
 ## Install Manager Types
 

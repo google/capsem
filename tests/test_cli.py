@@ -812,7 +812,7 @@ class TestDoctorCommand:
         runner = CliRunner()
         result = runner.invoke(cli, ["doctor", "guest/"])
         # May pass or fail depending on environment, but should not crash
-        assert "capsem-builder doctor" in result.output
+        assert "capsem-admin doctor" in result.output
         assert "passed" in result.output
 
     def test_doctor_nonexistent_dir(self, tmp_path):

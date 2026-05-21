@@ -233,7 +233,7 @@ a valid claim -- mark it `[ ]` instead.
     JSON matches init TOML after reparsing. Verification: `uv run python -m
     pytest tests/test_service_settings.py tests/test_admin_cli.py -q` passed
     with 34 tests.
-18. [~] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
+18. [x] [S07b - Capsem admin tooling and profile-derived images](S07b-capsem-admin-tooling.md)
     -- started on 2026-05-20 after S07d closeout. First slice landed
     `capsem-admin profile schema` and `capsem-admin profile validate
     <profile.json|profile.toml> [--json]`, using the existing Profile V2
@@ -505,6 +505,26 @@ a valid claim -- mark it `[ ]` instead.
     and sprint contracts. Verification: `uv run python -m pytest
     tests/capsem-bootstrap/test_dev_setup.py -q` passed with 10 tests and 1
     existing setup-sentinel skip; docs build passed with `pnpm run build`.
+    Twenty-ninth slice closed S07b with typed `capsem-admin doctor` output:
+    the admin doctor checks local toolchain/source readiness and optional
+    Profile V2 image-plan derivation without reading `guest/config` as
+    operator input. Shared doctor output and fix hints now point to
+    `capsem-admin doctor` / `capsem-admin profile init-builtins`, and
+    `tests/test_admin_hygiene.py` guards S07b admin contract modules against
+    raw `json.loads` / `json.dumps` command-boundary regressions. Verification:
+    `uv run python -m pytest tests/test_admin_cli.py tests/test_admin_hygiene.py
+    tests/test_doctor.py tests/test_cli.py::TestDoctorCommand
+    tests/test_admin_docs.py -q` passed with 70 tests. Final focused S07b gate:
+    `uv run python -m pytest tests/test_admin_cli.py tests/test_admin_hygiene.py
+    tests/test_profiles.py tests/test_service_settings.py tests/test_image_plan.py
+    tests/test_image_workspace.py tests/test_image_verify.py
+    tests/test_image_sbom.py tests/test_manifest_generate.py
+    tests/test_manifest_check.py tests/test_manifest_crypto.py
+    tests/test_security_packs.py tests/test_admin_docs.py tests/test_doctor.py
+    tests/test_cli.py::TestDoctorCommand tests/capsem-bootstrap/test_dev_setup.py
+    -q` passed with 174 tests and 1 existing setup-sentinel skip; `uv run
+    python -m compileall src/capsem` and docs build `pnpm run build` passed.
+    S07b is closed.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

@@ -14,6 +14,7 @@ import click
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from capsem.builder.config import load_guest_config
+from capsem.builder.doctor import CheckResult
 from capsem.builder.image_plan import (
     ImageArch,
     derive_image_plan,
@@ -149,6 +150,29 @@ class SettingsDoctorReport(SettingsValidationReport):
     telemetry_enabled: bool | None = None
     remote_policy_enabled: bool | None = None
     credential_backend: str | None = None
+
+
+class AdminDoctorCheck(StrictModel):
+    name: str
+    passed: bool
+    detail: str
+    fix: str | None = None
+
+
+class AdminDoctorReport(StrictModel):
+    schema_: Literal["capsem.admin-doctor.v1"] = Field(
+        default="capsem.admin-doctor.v1",
+        alias="schema",
+    )
+    ok: bool
+    repo_root: str
+    checks: list[AdminDoctorCheck] = Field(default_factory=list)
+    diagnostics: list[AdminDiagnostic] = Field(default_factory=list)
+    profile_path: str | None = None
+    profile_id: str | None = None
+    profile_revision: str | None = None
+    selected_arch: str | None = None
+    package_contract_hash: str | None = None
 
 
 class ProfileValidationReport(StrictModel):
@@ -299,6 +323,92 @@ def _doctor_report(path: Path) -> SettingsDoctorReport:
     )
 
 
+def _admin_toolchain_checks(repo_root: Path) -> list[CheckResult]:
+    from capsem.builder.doctor import (
+        check_b3sum,
+        check_container_clock,
+        check_container_resources,
+        check_container_runtime,
+        check_cross_target,
+        check_rust_toolchain,
+        check_source_files,
+    )
+
+    checks = [
+        check_container_runtime(),
+        check_container_resources(),
+        check_container_clock(),
+        check_rust_toolchain(),
+        check_cross_target("aarch64-unknown-linux-musl"),
+        check_cross_target("x86_64-unknown-linux-musl"),
+        check_b3sum(),
+        check_source_files(repo_root),
+    ]
+    return [check for check in checks if check is not None]
+
+
+def _admin_doctor_report(
+    *,
+    repo_root: Path,
+    profile_path: Path | None,
+    arch: ImageArch,
+) -> AdminDoctorReport:
+    checks = [
+        AdminDoctorCheck(
+            name=check.name,
+            passed=check.passed,
+            detail=check.detail,
+            fix=check.fix,
+        )
+        for check in _admin_toolchain_checks(repo_root)
+    ]
+    diagnostics: list[AdminDiagnostic] = []
+    profile_id: str | None = None
+    profile_revision: str | None = None
+    package_contract_hash: str | None = None
+
+    if profile_path is not None:
+        try:
+            profile = _load_profile(profile_path)
+            plan = derive_image_plan(profile, arch=arch)
+        except Exception as error:
+            diagnostics.extend(_diagnostics_from_error(error))
+            checks.append(
+                AdminDoctorCheck(
+                    name="profile-image-plan",
+                    passed=False,
+                    detail=str(error),
+                    fix="pass a valid Profile V2 payload or narrow --arch",
+                )
+            )
+        else:
+            profile_id = profile.id
+            profile_revision = profile.revision
+            package_contract_hash = plan.package_contract_hash
+            checks.append(
+                AdminDoctorCheck(
+                    name="profile-image-plan",
+                    passed=True,
+                    detail=(
+                        f"{plan.profile_id}@{plan.profile_revision} "
+                        f"for {', '.join(item.arch for item in plan.arches)}"
+                    ),
+                )
+            )
+
+    return AdminDoctorReport(
+        ok=all(check.passed for check in checks) and not diagnostics,
+        repo_root=str(repo_root),
+        checks=checks,
+        diagnostics=diagnostics,
+        profile_path=str(profile_path) if profile_path is not None else None,
+        profile_id=profile_id,
+        profile_revision=profile_revision,
+        selected_arch=arch,
+        package_contract_hash=package_contract_hash,
+    )
+
+
 @click.group(invoke_without_command=True)
 @click.version_option(package_name="capsem", prog_name="capsem-admin")
 @click.pass_context
@@ -336,6 +446,65 @@ def policy() -> None:
 @cli.group()
 def detection() -> None:
     """Validate and inspect profile-owned detection packs."""
+
+
+@cli.command("doctor")
+@click.option(
+    "--profile",
+    "profile_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Profile V2 payload to validate and derive an image plan from.",
+)
+@click.option(
+    "--arch",
+    "arch",
+    default="all",
+    type=click.Choice(["all", "arm64", "x86_64"]),
+    show_default=True,
+)
+@click.option(
+    "--repo-root",
+    default=".",
+    type=click.Path(file_okay=False),
+    show_default=True,
+    help="Repository root for source-file checks.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def admin_doctor(
+    profile_path: str | None,
+    arch: ImageArch,
+    repo_root: str,
+    json_output: bool,
+) -> None:
+    """Check admin toolchain readiness without reading guest/config."""
+    report = _admin_doctor_report(
+        repo_root=Path(repo_root),
+        profile_path=Path(profile_path) if profile_path is not None else None,
+        arch=arch,
+    )
+    if json_output:
+        click.echo(report.model_dump_json(by_alias=True, exclude_none=True, indent=2))
+    else:
+        click.echo("capsem-admin doctor")
+        click.echo("====================")
+        for check in report.checks:
+            tag = "PASS" if check.passed else "FAIL"
+            click.echo(f"  [{tag}] {check.detail}")
+            if not check.passed and check.fix is not None:
+                click.echo(f"         fix: {check.fix}")
+        if report.profile_id is not None:
+            click.echo(f"\nprofile: {report.profile_id}@{report.profile_revision}")
+            click.echo(f"package contract: {report.package_contract_hash}")
+        elif profile_path is None:
+            click.echo("\nprofile: not checked (pass --profile)")
+        passed = sum(1 for check in report.checks if check.passed)
+        failed = len(report.checks) - passed
+        click.echo(f"\n{passed} passed, {failed} failed")
+        for diagnostic in report.diagnostics:
+            click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
+    if not report.ok:
+        raise SystemExit(1)
 
 
 @settings.command("schema")

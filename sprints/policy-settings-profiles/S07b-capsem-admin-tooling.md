@@ -455,6 +455,33 @@ Twenty-eighth slice landed on 2026-05-21:
   -q` passed with 10 tests and 1 existing setup-sentinel skip; docs build
   passed with `pnpm run build`.
 
+Twenty-ninth slice landed on 2026-05-21:
+
+- `capsem-admin doctor` now emits a typed `capsem.admin-doctor.v1` report for
+  admin toolchain readiness and optional profile image-plan derivation.
+- The admin doctor path does not read `guest/config` as operator input.
+  Profile checks go through Profile V2 validation plus `derive_image_plan`, and
+  `--arch all` remains the default with single-arch narrowing for local/CI
+  proof.
+- Shared doctor output and fix hints now point admins at `capsem-admin doctor`
+  and `capsem-admin profile init-builtins` instead of `capsem-builder doctor`
+  or `capsem-builder init`.
+- Hygiene coverage now guards S07b admin contract modules against raw
+  `json.loads` / `json.dumps` command-boundary regressions.
+- Verification: `uv run python -m pytest tests/test_admin_cli.py
+  tests/test_admin_hygiene.py tests/test_doctor.py
+  tests/test_cli.py::TestDoctorCommand tests/test_admin_docs.py -q` passed
+  with 70 tests. Final focused S07b gate passed with `uv run python -m pytest
+  tests/test_admin_cli.py tests/test_admin_hygiene.py tests/test_profiles.py
+  tests/test_service_settings.py tests/test_image_plan.py
+  tests/test_image_workspace.py tests/test_image_verify.py
+  tests/test_image_sbom.py tests/test_manifest_generate.py
+  tests/test_manifest_check.py tests/test_manifest_crypto.py
+  tests/test_security_packs.py tests/test_admin_docs.py tests/test_doctor.py
+  tests/test_cli.py::TestDoctorCommand tests/capsem-bootstrap/test_dev_setup.py
+  -q` (174 tests, 1 existing setup-sentinel skip), `uv run python -m
+  compileall src/capsem`, and docs build `pnpm run build`.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -743,15 +770,15 @@ The checker must fail closed for:
 
 ## Tasks
 
-- [~] Design `capsem-admin` command tree and JSON report schema. Profile
-      init, profile/settings validation/schema, and settings doctor report
+- [x] Design `capsem-admin` command tree and JSON report schema. Profile,
+      settings, image, manifest, policy, detection, and admin-doctor report
       shapes have landed.
-- [ ] Add `capsem.profile.v2` JSON Schema Draft 2020-12 export and golden
+- [x] Add `capsem.profile.v2` JSON Schema Draft 2020-12 export and golden
       fixtures.
-- [ ] Add standard schema tooling dependencies: Rust JSON Schema validation/
+- [x] Add standard schema tooling dependencies: Rust JSON Schema validation/
       generation tooling chosen in S07a, and no Python `jsonschema` dependency
       in admin workflows unless a later sprint explicitly reopens that choice.
-- [~] Add Pydantic v2 models for profile payloads, manifest records, package/
+- [x] Add Pydantic v2 models for profile payloads, manifest records, package/
       tool contracts, assets, build plans, doctor checks, verification reports,
       and command JSON output. Profile payloads, profile manifests, package/
       tool contracts, assets, settings doctor, validation reports, and profile
@@ -760,9 +787,9 @@ The checker must fail closed for:
       rows have landed; fast manifest-check reports have landed;
       manifest-generate, profile-manifest generation has landed;
       minisign-backed manifest signing, manifest signature verification, and
-      profile/asset signature verification have landed; guest SBOM/probe
-      image proof and richer doctor reports remain. Full manifest byte/hash
-      download checks have landed.
+      profile/asset signature verification have landed; full manifest
+      byte/hash download checks, guest SBOM/probe image proof, and admin doctor
+      reports have landed.
 - [x] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
@@ -774,16 +801,16 @@ The checker must fail closed for:
       `scripts/build-assets.sh`, and PR install CI now require/generated-pass a
       Profile V2 payload and route kernel/rootfs builds through
       `capsem-admin image build`.
-- [ ] Replace builder doctor with admin doctor checks and remove guest config as
+- [x] Replace builder doctor with admin doctor checks and remove guest config as
       input authority.
-- [~] Refactor manifest generation/check/sign scripts into importable Python
+- [x] Refactor manifest generation/check/sign scripts into importable Python
       library modules. Manifest generate plus fast/download check modules have
       landed; minisign-backed signing and verification have landed.
 - [x] Add profile TOML parser/adapter for admin tooling bound to
       `capsem.profile.v2.schema.json` through shared valid/invalid fixtures and
       Rust/Python conformance tests.
 - [x] Implement profile-to-image build-plan derivation.
-- [ ] Replace raw dict/list plumbing in admin workflows with Pydantic model
+- [x] Replace raw dict/list plumbing in admin workflows with Pydantic model
       parsing, validation, normalized accessors, `model_validate_json()` /
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
 - [x] Remove hand-edited image settings as release-build authority. Profile-
@@ -797,7 +824,7 @@ The checker must fail closed for:
 - [x] Implement full manifest download/verify checks. Full byte download,
       profile-payload and VM-asset hash/size verification, and minisign
       profile/asset signature verification have landed.
-- [~] Implement image verification against profile package/tool contract. Local
+- [x] Implement image verification against profile package/tool contract. Local
       profile-declared asset existence/size/hash verification and typed
       package/tool inventory extraction plus required per-architecture contract
       comparison have landed; release host SBOM attestation covers `.pkg` and
@@ -807,11 +834,11 @@ The checker must fail closed for:
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
-- [~] Update docs and release gates to use `capsem-admin`, including separate
+- [x] Update docs and release gates to use `capsem-admin`, including separate
       enterprise PyPI install/usage docs and developer editable-install/
-      internals docs. Corp admin CLI, enforcement, and detection-format docs
-      have landed; broader S19 site polish remains.
-- [~] Add `capsem-admin policy validate|schema` and
+      internals docs. Corp admin CLI, enforcement, detection-format, and admin
+      doctor docs have landed; broader S19 site polish remains.
+- [x] Add `capsem-admin policy validate|schema` and
       `capsem-admin detection validate|schema|compile|check` release/docs proof
       before S19 documents enforcement/detection formats as supported corp
       workflows. Validate/schema plus pySigma-backed detection compile/check

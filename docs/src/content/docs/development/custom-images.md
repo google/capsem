@@ -185,7 +185,7 @@ uv run capsem-builder validate guest/           # lint all configs
 uv run capsem-builder inspect guest/            # show resolved config summary
 uv run capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64
 uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
-uv run capsem-builder doctor guest/             # check prerequisites
+uv run capsem-admin doctor --profile config/profiles/base/coding.profile.toml
 ```
 
 ## Further reading

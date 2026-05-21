@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from click.testing import CliRunner
+from unittest.mock import patch
 
 from capsem.admin.cli import cli
+from capsem.builder.doctor import CheckResult
 from capsem.builder.profiles import (
     dump_profile_json,
     validate_profile_json,
@@ -106,6 +108,60 @@ def test_capsem_admin_settings_init_rejects_invalid_default_profile() -> None:
     assert result.exit_code == 1
     assert "default_profile" in result.output
     assert "pattern" in result.output
+
+
+def _passing_admin_doctor_checks() -> list[CheckResult]:
+    return [
+        CheckResult(name="container-runtime", passed=True, detail="docker 27"),
+        CheckResult(name="rust-toolchain", passed=True, detail="rustup 1.27"),
+        CheckResult(name="b3sum", passed=True, detail="b3sum 1.5"),
+        CheckResult(name="source-files", passed=True, detail="source files ok"),
+    ]
+
+
+def test_capsem_admin_doctor_json_uses_profile_not_guest_config() -> None:
+    with patch(
+        "capsem.admin.cli._admin_toolchain_checks",
+        return_value=_passing_admin_doctor_checks(),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "doctor",
+                "--profile",
+                "schemas/fixtures/profile-v2-valid.json",
+                "--arch",
+                "arm64",
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert '"schema": "capsem.admin-doctor.v1"' in result.output
+    assert '"profile_id": "everyday-work"' in result.output
+    assert '"package_contract_hash": "blake3:' in result.output
+    assert "guest-config" not in result.output
+    assert "capsem-builder" not in result.output
+
+
+def test_capsem_admin_doctor_fails_closed_on_profile_plan_error() -> None:
+    with patch(
+        "capsem.admin.cli._admin_toolchain_checks",
+        return_value=_passing_admin_doctor_checks(),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "doctor",
+                "--profile",
+                "schemas/fixtures/profile-v2-valid.json",
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert '"ok": false' in result.output
+    assert "missing VM assets for arch 'x86_64'" in result.output
 
 
 def test_capsem_admin_profile_schema_outputs_profile_schema() -> None:

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added typed `capsem-admin doctor` output that checks admin toolchain
+  readiness and optional Profile V2 image-plan derivation without using
+  `guest/config` as the operator-facing source of truth.
 - Added bootstrap-managed shared skill symlinks for Claude Code, Gemini CLI,
   Codex, and Cursor.
 - Added the first S08 Profile V2 HTTP gateway contract coverage for profile

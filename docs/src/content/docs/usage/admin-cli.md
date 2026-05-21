@@ -40,6 +40,16 @@ uses the same entrypoint shape as the packaged CLI.
 | `policy` | Validate and export schemas for profile-owned enforcement policy packs. |
 | `detection` | Validate Sigma-backed detection packs, compile Detection IR, and check event fixtures. |
 
+## Doctor
+
+```bash
+capsem-admin doctor --profile corp-dev.profile.toml --arch all --json
+```
+
+The admin doctor checks local toolchain readiness and, when `--profile` is
+provided, validates the Profile V2 payload by deriving its image plan. It does
+not use `guest/config` as an operator-facing source of truth.
+
 ## Settings And Profiles
 
 ```bash

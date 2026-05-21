@@ -17,8 +17,10 @@ def test_admin_cli_docs_cover_corp_and_developer_install_paths() -> None:
     assert "python -m pip install capsem" in doc
     assert "uv sync" in doc
     assert "uv run capsem-admin --version" in doc
+    assert "capsem-admin doctor --profile" in doc
     assert "capsem-admin detection compile" in doc
     assert "capsem-admin policy validate" in doc
+    assert "guest/config" in doc
 
 
 def test_detection_docs_require_pysigma_and_detection_ir() -> None:
