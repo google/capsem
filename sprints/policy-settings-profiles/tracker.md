@@ -617,6 +617,12 @@ a valid claim -- mark it `[ ]` instead.
     unknown-field rejection. Missing/deferred for this slice: engine wiring,
     runtime registries, session.db emitter, service routes, E2E/VM, telemetry,
     and performance remain explicit S08b/S08d work.
+    Second implementation slice wired the existing Rust Detection IR evaluator
+    to consume `capsem-security-engine::SecurityEvent` directly, preserving the
+    existing normalized JSON fixture path while proving a real HTTP event from
+    the new contract matches the Sigma-derived metadata-access rule.
+    Verification: `cargo test -p capsem-core --test security_packs` passed with
+    6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

@@ -1,3 +1,7 @@
+use capsem_security_engine::{
+    EventFamily as EngineEventFamily, RedactionState as EngineRedactionState, SecurityEvent,
+    SecurityEventSubject,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -211,6 +215,156 @@ pub fn evaluate_detection_ir(
         .iter()
         .filter_map(|rule| evaluate_rule(ir, rule, event, &event_value))
         .collect()
+}
+
+pub fn evaluate_detection_ir_security_event(
+    ir: &DetectionIRV1,
+    event: &SecurityEvent,
+) -> Vec<DetectionFindingV1> {
+    let event = SecurityEventV1::from(event);
+    evaluate_detection_ir(ir, &event)
+}
+
+impl From<&SecurityEvent> for SecurityEventV1 {
+    fn from(event: &SecurityEvent) -> Self {
+        Self {
+            event_id: event.common.event_id.clone(),
+            trace_id: event.common.trace_id.clone(),
+            span_id: event.common.span_id.clone(),
+            timestamp: Some(event.common.timestamp_unix_ms.to_string()),
+            vm_id: event.common.vm_id.clone(),
+            session_id: event.common.session_id.clone(),
+            profile_id: event.common.profile_id.clone(),
+            profile_revision: event.common.profile_revision.clone(),
+            profile_pack_ids: event.common.profile_pack_ids.clone(),
+            user_id: event.common.user_id.clone(),
+            process_id: event.common.process_id.clone(),
+            parent_process_id: event.common.parent_process_id.clone(),
+            exec_id: event.common.exec_id.clone(),
+            turn_id: event.common.turn_id.clone(),
+            message_id: event.common.message_id.clone(),
+            tool_call_id: event.common.tool_call_id.clone(),
+            mcp_call_id: event.common.mcp_call_id.clone(),
+            event_family: EventFamily::from(event.event_family()),
+            event_type: event.common.event_type.clone(),
+            subject: security_event_subject_value(&event.subject),
+            redaction_state: RedactionState::from(event.common.redaction_state),
+        }
+    }
+}
+
+impl From<EngineEventFamily> for EventFamily {
+    fn from(value: EngineEventFamily) -> Self {
+        match value {
+            EngineEventFamily::Dns => Self::Dns,
+            EngineEventFamily::Http => Self::Http,
+            EngineEventFamily::Mcp => Self::Mcp,
+            EngineEventFamily::Model => Self::Model,
+            EngineEventFamily::File | EngineEventFamily::Snapshot => Self::File,
+            EngineEventFamily::Process => Self::Process,
+            EngineEventFamily::Credential => Self::Credential,
+            EngineEventFamily::Vm => Self::Vm,
+            EngineEventFamily::Profile => Self::Profile,
+            EngineEventFamily::Conversation => Self::Conversation,
+        }
+    }
+}
+
+impl From<EngineRedactionState> for RedactionState {
+    fn from(value: EngineRedactionState) -> Self {
+        match value {
+            EngineRedactionState::Raw => Self::Raw,
+            EngineRedactionState::Redacted => Self::Redacted,
+            EngineRedactionState::SummaryOnly => Self::SummaryOnly,
+        }
+    }
+}
+
+fn security_event_subject_value(subject: &SecurityEventSubject) -> Map<String, Value> {
+    match subject {
+        SecurityEventSubject::Dns(subject) => map_from_value(serde_json::json!({
+            "request": {
+                "qname": subject.qname,
+                "domain_class": subject.domain_class,
+            }
+        })),
+        SecurityEventSubject::Http(subject) => map_from_value(serde_json::json!({
+            "request": {
+                "method": subject.method,
+                "host": subject.host,
+                "path_class": subject.path_class,
+                "request_bytes": subject.request_bytes,
+            },
+            "response": {
+                "response_bytes": subject.response_bytes,
+            }
+        })),
+        SecurityEventSubject::Mcp(subject) => map_from_value(serde_json::json!({
+            "request": {
+                "server_id": subject.server_id,
+                "tool_name": subject.tool_name,
+            }
+        })),
+        SecurityEventSubject::Model(subject) => map_from_value(serde_json::json!({
+            "request": {
+                "provider": subject.provider,
+                "model": subject.model,
+                "estimated_input_tokens": subject.estimated_input_tokens,
+                "estimated_output_tokens": subject.estimated_output_tokens,
+                "estimated_cost_micros": subject.estimated_cost_micros,
+            }
+        })),
+        SecurityEventSubject::File(subject) => map_from_value(serde_json::json!({
+            "activity": {
+                "operation": subject.operation,
+                "path_class": subject.path_class,
+                "byte_count": subject.byte_count,
+            }
+        })),
+        SecurityEventSubject::Process(subject) => map_from_value(serde_json::json!({
+            "activity": {
+                "operation": subject.operation,
+                "command_class": subject.command_class,
+            }
+        })),
+        SecurityEventSubject::Credential(subject) => map_from_value(serde_json::json!({
+            "activity": {
+                "operation": subject.operation,
+                "credential_id": subject.credential_id,
+            }
+        })),
+        SecurityEventSubject::VmLifecycle(subject) => map_from_value(serde_json::json!({
+            "activity": {
+                "operation": subject.operation,
+            }
+        })),
+        SecurityEventSubject::Profile(subject) => map_from_value(serde_json::json!({
+            "activity": {
+                "operation": subject.operation,
+                "profile_id": subject.profile_id,
+                "profile_revision": subject.profile_revision,
+            }
+        })),
+        SecurityEventSubject::Conversation(subject) => map_from_value(serde_json::json!({
+            "activity": {
+                "operation": subject.operation,
+                "conversation_id": subject.conversation_id,
+            }
+        })),
+        SecurityEventSubject::Snapshot(subject) => map_from_value(serde_json::json!({
+            "activity": {
+                "operation": subject.operation,
+                "snapshot_id": subject.snapshot_id,
+            }
+        })),
+    }
+}
+
+fn map_from_value(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
 }
 
 fn evaluate_rule(

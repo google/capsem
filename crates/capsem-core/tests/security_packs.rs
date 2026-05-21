@@ -1,8 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use capsem_core::security_packs::{
-    evaluate_detection_ir, parse_detection_ir_v1_json, validate_detection_ir_v1_json,
-    SecurityEventV1, SecurityPackSchemaError,
+    evaluate_detection_ir, evaluate_detection_ir_security_event, parse_detection_ir_v1_json,
+    validate_detection_ir_v1_json, SecurityEventV1, SecurityPackSchemaError,
+};
+use capsem_security_engine::{
+    HttpSecuritySubject, RedactionState, SecurityEvent, SecurityEventCommon,
 };
 use serde_json::Value;
 
@@ -70,6 +73,50 @@ fn detection_ir_evaluator_matches_normalized_event() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].event_id, "evt-1");
     assert_eq!(findings[0].rule_id, "metadata-access");
+    assert_eq!(
+        findings[0].matched_fields["subject.request.host"],
+        serde_json::json!("169.254.169.254")
+    );
+}
+
+#[test]
+fn detection_ir_evaluator_matches_security_engine_http_event() {
+    let ir = parse_detection_ir_v1_json(&fixture("detection-ir-v1-valid.json")).unwrap();
+    let event = SecurityEvent::http(
+        SecurityEventCommon {
+            event_id: "evt-s08b-http".into(),
+            trace_id: Some("trace-s08b".into()),
+            span_id: None,
+            timestamp_unix_ms: 1_789,
+            vm_id: Some("vm-1".into()),
+            session_id: Some("session-1".into()),
+            profile_id: Some("coding".into()),
+            profile_revision: Some("rev-a".into()),
+            profile_pack_ids: vec!["corp-default-detections".into()],
+            user_id: Some("user-1".into()),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        HttpSecuritySubject {
+            method: "GET".into(),
+            host: "169.254.169.254".into(),
+            path_class: "metadata".into(),
+            request_bytes: 128,
+            response_bytes: None,
+        },
+    );
+
+    let findings = evaluate_detection_ir_security_event(&ir, &event);
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].event_id, "evt-s08b-http");
     assert_eq!(
         findings[0].matched_fields["subject.request.host"],
         serde_json::json!("169.254.169.254")
