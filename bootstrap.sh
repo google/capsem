@@ -64,6 +64,26 @@ fi
 # script -- both installers drop binaries there but don't reload PATH.
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
+install_agent_skill_links() {
+    echo ""
+    echo "== Agent skills =="
+    for dir in .claude .agents .gemini .codex .cursor; do
+        mkdir -p "$SCRIPT_DIR/$dir"
+        skill_link="$SCRIPT_DIR/$dir/skills"
+        if [ -e "$skill_link" ] && [ ! -L "$skill_link" ]; then
+            printf "  [SKIP] %s/skills exists and is not a symlink\n" "$dir"
+            continue
+        fi
+        if [ -L "$skill_link" ]; then
+            rm "$skill_link"
+        fi
+        ln -s ../skills "$skill_link"
+        printf "  [ok]   %s/skills -> ../skills\n" "$dir"
+    done
+}
+
+install_agent_skill_links
+
 if command -v rustup >/dev/null 2>&1; then
     printf "  [ok]   rustup\n"
 elif confirm "rustup (Rust toolchain manager, via sh.rustup.rs)"; then

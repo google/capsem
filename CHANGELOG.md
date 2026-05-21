@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added admin agent skills for profile, settings, image, manifest, and security
+  workflows, plus bootstrap-managed shared skill symlinks for Claude Code,
+  Gemini CLI, Codex, and Cursor.
 - Added the first S08 Profile V2 HTTP gateway contract coverage for profile
   catalog/revision routes, profile CRUD/resolve, skills, standard MCP servers,
   rules/evaluate, confirm-pending reads, profile-selected VM create response

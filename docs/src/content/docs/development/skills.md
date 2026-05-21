@@ -1,11 +1,13 @@
 ---
 title: AI Agent Skills
-description: How Capsem organizes shared AI coding agent skills for Claude Code and Gemini CLI.
+description: How Capsem organizes shared AI coding agent skills for Claude Code, Gemini CLI, Codex, and Cursor.
 sidebar:
   order: 20
 ---
 
-Capsem uses a shared `skills/` directory that both Claude Code and Gemini CLI discover via symlinks. One set of files, two consumers, zero duplication.
+Capsem uses a shared `skills/` directory that Claude Code, Gemini CLI, Codex,
+and Cursor discover via symlinks. One set of files, every agent client, zero
+duplication.
 
 ## Directory structure
 
@@ -17,8 +19,15 @@ skills/
     scripts/                     Executable helpers (optional)
 
 .claude/skills -> ../skills      Claude Code symlink
-.agents/skills -> ../skills      Gemini CLI symlink
+.agents/skills -> ../skills      Gemini CLI compatibility symlink
+.gemini/skills -> ../skills      Gemini CLI project symlink
+.codex/skills -> ../skills       Codex project symlink
+.cursor/skills -> ../skills      Cursor project symlink
 ```
+
+`bootstrap.sh` creates or repairs those symlinks during developer setup. If a
+path already exists and is not a symlink, bootstrap leaves it alone and prints a
+skip message instead of deleting local agent state.
 
 Skills are flat (one level). Nested directories are **not** discovered. Use prefix-based naming for categories.
 
@@ -49,6 +58,7 @@ Prefix-based grouping:
 | `release-*` | Release process, CI, docs |
 | `site-*` | Architecture, documentation site |
 | `frontend-*` | Frontend design system |
+| `admin-*` | Corporate operator workflows for `capsem-admin` |
 
 ## Current skills
 
@@ -73,6 +83,13 @@ Prefix-based grouping:
 - `dev-mitm-proxy` -- MITM proxy pipeline, SSE parsing, provider wire formats
 - `dev-mcp` -- Guest MCP endpoint, JSON-RPC, tool routing
 - `dev-skills` -- how skills work (for building Capsem's own skills system)
+
+### Admin
+- `admin-profile` -- Profile V2 authoring, validation, section editability, built-in profiles, and profile-derived corp controls
+- `admin-settings` -- Service Settings V2 schema, TOML/JSON round trips, settings validation, and drift checks
+- `admin-image` -- profile-derived image plan/build/verify/SBOM workflows and package/tool inventory proof
+- `admin-manifest` -- signed profile catalog generation, fast/download checks, minisign verification, and profile status semantics
+- `admin-security` -- policy/detection pack validation, CEL enforcement, pySigma detection import, and Detection IR checks
 
 ### Build
 - `build-images` -- capsem-builder CLI, guest config
@@ -104,6 +121,12 @@ Keep SKILL.md lean. Put wire formats, API docs, and community references in `ref
 mkdir skills/<prefix-name>
 # Write skills/<prefix-name>/SKILL.md with frontmatter
 # Available immediately (live reload, no restart)
+```
+
+Run bootstrap after adding project-wide agent clients or from a fresh checkout:
+
+```bash
+sh bootstrap.sh --yes
 ```
 
 ## Community skills

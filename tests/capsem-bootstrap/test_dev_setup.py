@@ -62,6 +62,15 @@ class TestDevSetup:
             "uv run capsem-admin --version"
         )
 
+    def test_bootstrap_installs_shared_agent_skill_symlinks_non_destructively(self):
+        bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
+
+        assert "install_agent_skill_links" in bootstrap
+        assert '[ -e "$skill_link" ] && [ ! -L "$skill_link" ]' in bootstrap
+        assert 'ln -s ../skills "$skill_link"' in bootstrap
+        for agent_dir in [".claude", ".agents", ".gemini", ".codex", ".cursor"]:
+            assert agent_dir in bootstrap
+
     def test_capsem_admin_entrypoint_runs_from_uv_environment(self):
         result = subprocess.run(
             ["uv", "run", "capsem-admin", "--version"],

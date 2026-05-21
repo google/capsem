@@ -441,6 +441,21 @@ Twenty-seventh slice landed on 2026-05-21:
   tests/test_security_packs.py -q` passed with 20 tests; docs build passed
   with `pnpm run build`.
 
+Twenty-eighth slice landed on 2026-05-21:
+
+- Shared admin agent skills now cover the operator workflows agents need before
+  touching corp assets: `admin-profile`, `admin-settings`, `admin-image`,
+  `admin-manifest`, and `admin-security`.
+- `bootstrap.sh` now creates or repairs non-destructive shared `skills/`
+  symlinks for `.claude`, `.agents`, `.gemini`, `.codex`, and `.cursor` so
+  Claude Code, Gemini CLI, Codex, and Cursor all consume the same project skill
+  bundle.
+- Developer skills docs now list the admin bundle and the bootstrap-managed
+  symlink targets.
+- Verification: `uv run python -m pytest tests/test_admin_skills.py
+  tests/capsem-bootstrap/test_dev_setup.py -q` passed with 13 tests and 1
+  existing setup-sentinel skip; docs build passed with `pnpm run build`.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -828,6 +843,7 @@ The checker must fail closed for:
   `detection schema`; `detection compile`; `detection check`;
   Rust `capsem-core` Detection IR parse/evaluate;
   corp admin CLI docs; enforcement docs; detection-format docs;
+  admin agent skill bundle and bootstrap skill symlink setup;
   profile-required `scripts/build-assets.sh --profile`; Justfile
   `build-assets`/`build-kernel`/`build-rootfs` routing through
   `capsem-admin image build`; bootstrap-installed CLI smoke.
@@ -857,7 +873,9 @@ The checker must fail closed for:
   findings, diagnostics, and timing.
 - Docs/release proof: `tests/test_admin_docs.py` guards the corp/developer
   install split, `capsem-admin` policy/detection command references, pySigma
-  wording, and Detection IR docs; `pnpm run build` proves the Starlight docs.
+  wording, and Detection IR docs; `tests/test_admin_skills.py` guards shared
+  admin skills and agent-client symlink docs; `pnpm run build` proves the
+  Starlight docs.
 - Performance: fast manifest check uses bounded concurrency and never downloads
   full assets; full download check streams to disk and verifies incrementally.
 - Missing/deferred: full Docker image build may stay in release gates if too

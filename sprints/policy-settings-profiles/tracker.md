@@ -497,6 +497,14 @@ a valid claim -- mark it `[ ]` instead.
     passed with 4 tests; `uv run python -m pytest tests/test_admin_docs.py
     tests/test_security_packs.py -q` passed with 20 tests; docs build passed
     with `pnpm run build`.
+    Twenty-eighth slice added shared admin agent skills for profile, settings,
+    image, manifest, and security workflows. `bootstrap.sh` now creates
+    non-destructive shared `skills/` symlinks for Claude Code, Gemini CLI,
+    Codex, and Cursor, and the skills documentation now references those admin
+    skills plus bootstrap-managed links. Verification: `uv run python -m
+    pytest tests/test_admin_skills.py tests/capsem-bootstrap/test_dev_setup.py
+    -q` passed with 13 tests and 1 existing setup-sentinel skip; docs build
+    passed with `pnpm run build`.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile
