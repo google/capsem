@@ -10,6 +10,13 @@ use capsem_logger::{
     validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, McpCall, ModelCall,
     NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
+use capsem_security_engine::{
+    AiApiFamily, AiAttributionScope, AiContentBlock, AiContentKind, AiOriginKind, AiProvider,
+    AiUsageEvidence, ArgumentsStatus, Confidence, EvidenceStatus, LinkStatus,
+    McpToolExecutionEvidence, ModelInteractionEvidence, ModelRequestEvidence,
+    ModelResponseEvidence, ModelToolCallEvidence, ModelToolResultEvidence, ParseStatus,
+    SourceEngine, ToolCallStatus, ToolOrigin,
+};
 
 /// Open the shared test fixture at data/fixtures/test.db (read-only).
 fn fixture_reader() -> DbReader {
@@ -105,6 +112,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
         response_bytes: 4096,
         estimated_cost_usd: 0.001,
         trace_id: None,
+        ai_evidence: None,
         tool_calls: vec![ToolCallEntry {
             call_index: 0,
             call_id: "toolu_01".to_string(),
@@ -119,6 +127,108 @@ fn sample_model_call(provider: &str) -> ModelCall {
             is_error: false,
             trace_id: None,
         }],
+    }
+}
+
+fn sample_ai_evidence() -> ModelInteractionEvidence {
+    let mut usage_details = BTreeMap::new();
+    usage_details.insert("cache_read_tokens".to_string(), 7);
+    let usage = AiUsageEvidence {
+        input_tokens: Some(25),
+        output_tokens: Some(10),
+        estimated_cost_micros: Some(1000),
+        details: usage_details,
+    };
+
+    ModelInteractionEvidence {
+        interaction_id: "interaction_01".to_string(),
+        trace_id: "trace_ai_01".to_string(),
+        attribution_scope: AiAttributionScope::Vm,
+        source_engine: SourceEngine::Network,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: Some("vm:vm_01".to_string()),
+        profile_id: Some("profile-coding".to_string()),
+        vm_id: Some("vm_01".to_string()),
+        session_id: Some("session_01".to_string()),
+        user_id: Some("user_01".to_string()),
+        provider: AiProvider::Anthropic,
+        api_family: AiApiFamily::AnthropicMessages,
+        model: "claude-sonnet-4-20250514".to_string(),
+        request: ModelRequestEvidence {
+            request_id: "request_01".to_string(),
+            provider: AiProvider::Anthropic,
+            api_family: AiApiFamily::AnthropicMessages,
+            model: Some("claude-sonnet-4-20250514".to_string()),
+            stream: true,
+            system_prompt_preview: Some("You are helpful.".to_string()),
+            message_count: 3,
+            tools_declared_count: 2,
+            raw_shape_version: "anthropic.messages.v1".to_string(),
+            unknown_fields_present: false,
+        },
+        response: Some(ModelResponseEvidence {
+            response_id: "response_01".to_string(),
+            provider_response_id: Some("msg_01".to_string()),
+            stop_reason: Some("tool_use".to_string()),
+            text_preview: Some("I will check that.".to_string()),
+            thinking_preview: None,
+            content_blocks: vec![
+                AiContentBlock::Text {
+                    text_preview: "I will check that.".to_string(),
+                },
+                AiContentBlock::ToolUse {
+                    tool_call_id: "toolu_01".to_string(),
+                    name: "mcp__filesystem__read_file".to_string(),
+                },
+            ],
+            usage: usage.clone(),
+            raw_shape_version: "anthropic.messages.v1".to_string(),
+        }),
+        tool_calls: vec![ModelToolCallEvidence {
+            tool_call_id: "toolu_01".to_string(),
+            index: 0,
+            provider_call_id: Some("toolu_01".to_string()),
+            raw_name: "mcp__filesystem__read_file".to_string(),
+            normalized_name: "filesystem.read_file".to_string(),
+            arguments_raw: Some(r#"{"path":"/tmp/a"}"#.to_string()),
+            arguments_json: Some(r#"{"path":"/tmp/a"}"#.to_string()),
+            arguments_status: ArgumentsStatus::ValidJson,
+            origin: ToolOrigin::McpTool,
+            linked_mcp_call_id: Some("mcp_01".to_string()),
+            status: ToolCallStatus::Executed,
+            parse_confidence: Confidence::High,
+        }],
+        tool_results: vec![ModelToolResultEvidence {
+            tool_call_id: "toolu_01".to_string(),
+            linked_mcp_call_id: Some("mcp_01".to_string()),
+            content_kind: AiContentKind::Text,
+            content_preview: Some("file content".to_string()),
+            content_json: None,
+            is_error: false,
+            result_status: ToolCallStatus::ReturnedToModel,
+            returned_to_model: true,
+            parse_confidence: Confidence::High,
+        }],
+        mcp_executions: vec![McpToolExecutionEvidence {
+            mcp_call_id: "mcp_01".to_string(),
+            server_id: "filesystem".to_string(),
+            tool_name: "read_file".to_string(),
+            namespaced_tool_name: "filesystem.read_file".to_string(),
+            transport: "stdio".to_string(),
+            request_arguments_raw: Some(r#"{"path":"/tmp/a"}"#.to_string()),
+            request_arguments_json: Some(r#"{"path":"/tmp/a"}"#.to_string()),
+            result_kind: AiContentKind::Text,
+            result_preview: Some("file content".to_string()),
+            result_json: None,
+            is_error: false,
+            latency_ms: 12,
+            linked_model_interaction_id: Some("interaction_01".to_string()),
+            linked_model_tool_call_id: Some("toolu_01".to_string()),
+            link_status: LinkStatus::Linked,
+        }],
+        usage,
+        parse_status: ParseStatus::Complete,
+        evidence_status: EvidenceStatus::Complete,
     }
 }
 
@@ -197,6 +307,68 @@ async fn model_call_roundtrip() {
     assert_eq!(trs[0].call_id, "toolu_prev");
     assert_eq!(trs[0].content_preview.as_deref(), Some("72F and sunny"));
     assert!(!trs[0].is_error);
+}
+
+#[tokio::test]
+async fn ai_evidence_is_stored_in_queryable_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+    let mut call = sample_model_call("anthropic");
+    call.trace_id = Some("trace_ai_01".to_string());
+    call.ai_evidence = Some(sample_ai_evidence());
+
+    writer.write(WriteOp::ModelCall(call)).await;
+    drop(writer);
+
+    let reader = capsem_logger::DbReader::open(&path).unwrap();
+    let interaction_rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw(
+                "SELECT ami.provider, ami.api_family, ami.model, ami.vm_id,
+                        ami.attribution_scope, ami.source_engine, ami.origin_kind,
+                        ami.usage_estimated_cost_micros
+                 FROM ai_model_interactions ami
+                 JOIN model_calls mc ON mc.id = ami.model_call_id
+                 WHERE mc.trace_id = 'trace_ai_01'",
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(interaction_rows["rows"][0][0], "anthropic");
+    assert_eq!(interaction_rows["rows"][0][1], "anthropic_messages");
+    assert_eq!(interaction_rows["rows"][0][3], "vm_01");
+    assert_eq!(interaction_rows["rows"][0][4], "vm");
+    assert_eq!(interaction_rows["rows"][0][7], 1000);
+
+    let tool_rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw(
+                "SELECT normalized_name, arguments_status, origin, linked_mcp_call_id, status
+                 FROM ai_model_tool_calls",
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(tool_rows["rows"][0][0], "filesystem.read_file");
+    assert_eq!(tool_rows["rows"][0][1], "valid_json");
+    assert_eq!(tool_rows["rows"][0][2], "mcp_tool");
+    assert_eq!(tool_rows["rows"][0][3], "mcp_01");
+    assert_eq!(tool_rows["rows"][0][4], "executed");
+
+    let mcp_rows: serde_json::Value = serde_json::from_str(
+        &reader
+            .query_raw(
+                "SELECT server_id, tool_name, linked_model_tool_call_id, link_status
+                 FROM ai_mcp_execution_evidence",
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(mcp_rows["rows"][0][0], "filesystem");
+    assert_eq!(mcp_rows["rows"][0][1], "read_file");
+    assert_eq!(mcp_rows["rows"][0][2], "toolu_01");
+    assert_eq!(mcp_rows["rows"][0][3], "linked");
 }
 
 // ── Count queries ────────────────────────────────────────────────────
@@ -461,6 +633,7 @@ async fn unicode_strings() {
         response_bytes: 50,
         estimated_cost_usd: 0.0,
         trace_id: None,
+        ai_evidence: None,
         tool_calls: Vec::new(),
         tool_responses: Vec::new(),
     };

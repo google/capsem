@@ -712,6 +712,16 @@ a valid claim -- mark it `[ ]` instead.
     argument status, returned tool results, raw-shape version, and host-vs-VM
     attribution. Verification: `cargo test -p capsem-core
     ai_traffic::evidence` passed with 5 tests.
+    Fourteenth telemetry-storage slice rejected the opaque
+    `model_calls.ai_evidence` JSON-column approach and added normalized,
+    indexed session DB tables for canonical AI interaction evidence:
+    interactions, usage details, content blocks, model tool calls, model tool
+    results, and MCP execution evidence. MITM model-call telemetry now attaches
+    canonical evidence before write, and tests prove both the production hook
+    evidence and queryable relational storage. Verification:
+    `cargo test -p capsem-logger` passed with 227 tests, `cargo test -p
+    capsem-core ai_traffic::evidence` passed with 5 tests, and `cargo test -p
+    capsem-core telemetry_hook` passed with 8 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

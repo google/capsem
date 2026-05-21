@@ -446,6 +446,7 @@ async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
                 response_bytes: 5,
                 estimated_cost_usd: 0.0,
                 trace_id: Some("trace_t6".into()),
+                ai_evidence: None,
                 tool_calls: Vec::new(),
                 tool_responses: Vec::new(),
             },

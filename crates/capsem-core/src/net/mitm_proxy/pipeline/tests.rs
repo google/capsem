@@ -354,6 +354,7 @@ async fn cycle_attempt_rejected_when_l3_emits_l1() {
         response_bytes: 0,
         estimated_cost_usd: 0.0,
         trace_id: None,
+        ai_evidence: None,
         tool_calls: Vec::new(),
         tool_responses: Vec::new(),
     });

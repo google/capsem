@@ -105,6 +105,7 @@ mod tests {
             response_bytes: 2048,
             estimated_cost_usd: 0.003,
             trace_id: Some("trace_abc".into()),
+            ai_evidence: None,
             tool_calls: vec![ToolCallEntry {
                 call_index: 0,
                 call_id: "call_001".into(),

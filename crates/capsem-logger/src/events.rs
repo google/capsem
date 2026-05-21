@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
+use capsem_security_engine::ModelInteractionEvidence;
 use serde::{Deserialize, Serialize};
 
 /// The outcome of a domain policy evaluation.
@@ -286,6 +287,9 @@ pub struct ModelCall {
     pub estimated_cost_usd: f64,
     // Trace grouping
     pub trace_id: Option<String>,
+    // Canonical S08 AI evidence for this request/response cycle.
+    #[serde(default)]
+    pub ai_evidence: Option<ModelInteractionEvidence>,
     // Nested tool data (inserted into separate tables)
     pub tool_calls: Vec<ToolCallEntry>,
     pub tool_responses: Vec<ToolResponseEntry>,

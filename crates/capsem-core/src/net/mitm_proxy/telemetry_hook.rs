@@ -19,6 +19,7 @@ use bytes::Bytes;
 use capsem_logger::{
     DbWriter, Decision, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
+use capsem_security_engine::{AiAttributionScope, AiOriginKind, SourceEngine};
 use tracing::{info, warn};
 
 use super::body::BodyStats;
@@ -26,6 +27,7 @@ use super::hooks::{ChunkCtx, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::util::is_llm_api_path;
 use crate::net::ai_traffic::events::{collect_summary, parse_non_streaming_usage, StopReason};
+use crate::net::ai_traffic::evidence::{build_model_interaction_evidence, ModelEvidenceInput};
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
 use crate::net::ai_traffic::{request_parser, TraceState};
@@ -67,6 +69,14 @@ pub struct TelemetryRequestContext {
     pub policy_action: Option<String>,
     pub policy_rule: Option<String>,
     pub policy_reason: Option<String>,
+}
+
+fn cost_micros(estimated_cost_usd: f64) -> Option<u64> {
+    if estimated_cost_usd.is_finite() && estimated_cost_usd > 0.0 {
+        Some((estimated_cost_usd * 1_000_000.0).round() as u64)
+    } else {
+        None
+    }
 }
 
 /// Per-request response-side counters owned by the hook. Updated on
@@ -382,6 +392,27 @@ pub fn maybe_build_model_call(
     } else {
         Some(String::from_utf8_lossy(&req_body_bytes).into_owned())
     };
+    let interaction_id = format!("model:{trace_id}:{}", uuid::Uuid::new_v4());
+    let request_id = format!("request:{trace_id}:{}", uuid::Uuid::new_v4());
+    let ai_evidence = Some(build_model_interaction_evidence(ModelEvidenceInput {
+        interaction_id: &interaction_id,
+        trace_id: &trace_id,
+        request_id: &request_id,
+        response_id: summary.as_ref().and_then(|s| s.message_id.as_deref()),
+        provider,
+        path: &req_ctx.path,
+        request: &req_meta,
+        response: summary.as_ref(),
+        estimated_cost_micros: cost_micros(estimated_cost_usd),
+        attribution_scope: AiAttributionScope::Vm,
+        source_engine: SourceEngine::Network,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: None,
+        profile_id: None,
+        vm_id: None,
+        session_id: None,
+        user_id: None,
+    }));
 
     let model_call = ModelCall {
         timestamp: SystemTime::now(),
@@ -415,6 +446,7 @@ pub fn maybe_build_model_call(
         response_bytes: resp_stats.bytes,
         estimated_cost_usd,
         trace_id: Some(trace_id),
+        ai_evidence,
         tool_calls,
         tool_responses,
     };

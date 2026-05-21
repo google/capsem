@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
+use capsem_security_engine::{AiContentBlock, AiUsageEvidence, ModelInteractionEvidence};
 use rusqlite::{params, Connection};
+use serde::Serialize;
 use tracing::warn;
 
 use crate::events::{
@@ -28,6 +30,13 @@ fn cap_field(s: &Option<String>) -> Option<String> {
             v[..end].to_string()
         }
     })
+}
+
+fn enum_as_text<T: Serialize>(value: T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Typed write operations sent to the writer thread.
@@ -352,6 +361,10 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
     )?;
     let model_call_id = conn.last_insert_rowid();
 
+    if let Some(evidence) = &call.ai_evidence {
+        insert_ai_model_evidence(conn, model_call_id, evidence)?;
+    }
+
     for tc in &call.tool_calls {
         // W6: tool_calls.trace_id falls back to the parent model_call's
         // trace_id (they belong to the same agent turn).
@@ -386,6 +399,384 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
         )?;
     }
 
+    Ok(())
+}
+
+fn insert_ai_model_evidence(
+    conn: &Connection,
+    model_call_id: i64,
+    evidence: &ModelInteractionEvidence,
+) -> rusqlite::Result<()> {
+    let response = evidence.response.as_ref();
+    conn.execute(
+        "INSERT INTO ai_model_interactions (
+            model_call_id, interaction_id, trace_id,
+            attribution_scope, source_engine, origin_kind, accounting_owner,
+            profile_id, vm_id, session_id, user_id,
+            provider, api_family, model, parse_status, evidence_status,
+            request_id, request_model, request_stream,
+            request_system_prompt_preview, request_message_count,
+            request_tools_declared_count, request_raw_shape_version,
+            request_unknown_fields_present,
+            response_id, response_provider_response_id, response_stop_reason,
+            response_text_preview, response_thinking_preview,
+            response_raw_shape_version,
+            usage_input_tokens, usage_output_tokens, usage_estimated_cost_micros
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
+        params![
+            model_call_id,
+            evidence.interaction_id,
+            evidence.trace_id,
+            enum_as_text(evidence.attribution_scope),
+            enum_as_text(evidence.source_engine),
+            enum_as_text(evidence.origin_kind),
+            evidence.accounting_owner,
+            evidence.profile_id,
+            evidence.vm_id,
+            evidence.session_id,
+            evidence.user_id,
+            enum_as_text(evidence.provider),
+            enum_as_text(evidence.api_family),
+            evidence.model,
+            enum_as_text(evidence.parse_status),
+            enum_as_text(evidence.evidence_status),
+            evidence.request.request_id,
+            evidence.request.model,
+            evidence.request.stream as i64,
+            cap_field(&evidence.request.system_prompt_preview),
+            evidence.request.message_count as i64,
+            evidence.request.tools_declared_count as i64,
+            evidence.request.raw_shape_version,
+            evidence.request.unknown_fields_present as i64,
+            response.map(|r| r.response_id.as_str()),
+            response.and_then(|r| r.provider_response_id.as_deref()),
+            response.and_then(|r| r.stop_reason.as_deref()),
+            response.and_then(|r| cap_field(&r.text_preview)),
+            response.and_then(|r| cap_field(&r.thinking_preview)),
+            response.map(|r| r.raw_shape_version.as_str()),
+            evidence.usage.input_tokens.map(|t| t as i64),
+            evidence.usage.output_tokens.map(|t| t as i64),
+            evidence.usage.estimated_cost_micros.map(|c| c as i64),
+        ],
+    )?;
+    let interaction_row_id = conn.last_insert_rowid();
+
+    insert_ai_usage_details(conn, interaction_row_id, "interaction", &evidence.usage)?;
+    if let Some(response) = response {
+        insert_ai_usage_details(conn, interaction_row_id, "response", &response.usage)?;
+        for (index, block) in response.content_blocks.iter().enumerate() {
+            insert_ai_content_block(conn, interaction_row_id, index as i64, block)?;
+        }
+    }
+
+    for tool_call in &evidence.tool_calls {
+        conn.execute(
+            "INSERT INTO ai_model_tool_calls (
+                interaction_id, tool_call_id, call_index, provider_call_id,
+                raw_name, normalized_name, arguments_raw, arguments_json,
+                arguments_status, origin, linked_mcp_call_id, status,
+                parse_confidence
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                interaction_row_id,
+                tool_call.tool_call_id,
+                tool_call.index as i64,
+                tool_call.provider_call_id,
+                tool_call.raw_name,
+                tool_call.normalized_name,
+                tool_call.arguments_raw,
+                tool_call.arguments_json,
+                enum_as_text(tool_call.arguments_status),
+                enum_as_text(tool_call.origin),
+                tool_call.linked_mcp_call_id,
+                enum_as_text(tool_call.status),
+                enum_as_text(tool_call.parse_confidence),
+            ],
+        )?;
+    }
+
+    for tool_result in &evidence.tool_results {
+        conn.execute(
+            "INSERT INTO ai_model_tool_results (
+                interaction_id, tool_call_id, linked_mcp_call_id,
+                content_kind, content_preview, content_json, is_error,
+                result_status, returned_to_model, parse_confidence
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                interaction_row_id,
+                tool_result.tool_call_id,
+                tool_result.linked_mcp_call_id,
+                enum_as_text(tool_result.content_kind),
+                cap_field(&tool_result.content_preview),
+                tool_result.content_json,
+                tool_result.is_error as i64,
+                enum_as_text(tool_result.result_status),
+                tool_result.returned_to_model as i64,
+                enum_as_text(tool_result.parse_confidence),
+            ],
+        )?;
+    }
+
+    for execution in &evidence.mcp_executions {
+        conn.execute(
+            "INSERT INTO ai_mcp_execution_evidence (
+                interaction_id, mcp_call_id, server_id, tool_name,
+                namespaced_tool_name, transport, request_arguments_raw,
+                request_arguments_json, result_kind, result_preview,
+                result_json, is_error, latency_ms, linked_model_interaction_id,
+                linked_model_tool_call_id, link_status
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            params![
+                interaction_row_id,
+                execution.mcp_call_id,
+                execution.server_id,
+                execution.tool_name,
+                execution.namespaced_tool_name,
+                execution.transport,
+                execution.request_arguments_raw,
+                execution.request_arguments_json,
+                enum_as_text(execution.result_kind),
+                cap_field(&execution.result_preview),
+                execution.result_json,
+                execution.is_error as i64,
+                execution.latency_ms as i64,
+                execution.linked_model_interaction_id,
+                execution.linked_model_tool_call_id,
+                enum_as_text(execution.link_status),
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn insert_ai_usage_details(
+    conn: &Connection,
+    interaction_id: i64,
+    scope: &str,
+    usage: &AiUsageEvidence,
+) -> rusqlite::Result<()> {
+    for (name, value) in &usage.details {
+        conn.execute(
+            "INSERT INTO ai_usage_details (interaction_id, scope, name, value)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![interaction_id, scope, name, *value as i64],
+        )?;
+    }
+    Ok(())
+}
+
+fn insert_ai_content_block(
+    conn: &Connection,
+    interaction_id: i64,
+    block_index: i64,
+    block: &AiContentBlock,
+) -> rusqlite::Result<()> {
+    let (
+        kind,
+        text_preview,
+        json_preview,
+        mime_type,
+        redacted,
+        file_name,
+        path_class,
+        tool_call_id,
+        name,
+        is_error,
+        marker,
+        reason,
+        raw_type,
+    ) = match block {
+        AiContentBlock::Text { text_preview } => (
+            "text",
+            Some(text_preview.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        AiContentBlock::Json { json_preview } => (
+            "json",
+            None,
+            Some(json_preview.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        AiContentBlock::Image {
+            mime_type,
+            redacted,
+        } => (
+            "image",
+            None,
+            None,
+            Some(mime_type.clone()),
+            Some(*redacted as i64),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        AiContentBlock::File {
+            file_name,
+            path_class,
+        } => (
+            "file",
+            None,
+            None,
+            None,
+            None,
+            Some(file_name.clone()),
+            Some(path_class.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        AiContentBlock::ToolUse { tool_call_id, name } => (
+            "tool_use",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(tool_call_id.clone()),
+            Some(name.clone()),
+            None,
+            None,
+            None,
+            None,
+        ),
+        AiContentBlock::ToolResult {
+            tool_call_id,
+            is_error,
+        } => (
+            "tool_result",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(tool_call_id.clone()),
+            None,
+            Some(*is_error as i64),
+            None,
+            None,
+            None,
+        ),
+        AiContentBlock::Reasoning { text_preview } => (
+            "reasoning",
+            Some(text_preview.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        AiContentBlock::CacheMarker { marker } => (
+            "cache_marker",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(marker.clone()),
+            None,
+            None,
+        ),
+        AiContentBlock::Redacted { reason } => (
+            "redacted",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(reason.clone()),
+            None,
+        ),
+        AiContentBlock::Unknown { raw_type } => (
+            "unknown",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            raw_type.clone(),
+        ),
+    };
+
+    conn.execute(
+        "INSERT INTO ai_content_blocks (
+            interaction_id, block_index, kind, text_preview, json_preview,
+            mime_type, redacted, file_name, path_class, tool_call_id, name,
+            is_error, marker, reason, raw_type
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            interaction_id,
+            block_index,
+            kind,
+            cap_field(&text_preview),
+            cap_field(&json_preview),
+            mime_type,
+            redacted,
+            file_name,
+            path_class,
+            tool_call_id,
+            name,
+            is_error,
+            marker,
+            reason,
+            raw_type,
+        ],
+    )?;
     Ok(())
 }
 

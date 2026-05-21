@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Anthropic, and Gemini request/stream parser summaries project into canonical
   `ModelInteractionEvidence` with tool-call, tool-result, usage, argument
   status, and host-vs-VM attribution tests.
+- Added normalized session database tables for canonical AI interaction
+  evidence so provider/API/model/tool/linkage fields are queryable directly
+  instead of being hidden in an opaque JSON blob.
 - Added the first S08b `capsem-security-engine` contract crate with normalized
   security events, resolved-event actions, detection findings, quota dimensions,
   and throttle-ready serialization tests.

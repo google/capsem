@@ -15,6 +15,12 @@ into canonical `ModelInteractionEvidence` for OpenAI, Anthropic, and Gemini.
 It pins tool-call origin, argument status, tool-result return, usage, raw shape,
 and host-vs-VM attribution behavior with focused Rust tests.
 
+The third slice wired canonical AI evidence into the MITM model-call path and
+the session database without using an opaque JSON evidence column. The logger
+now stores interaction, request/response, usage detail, content block,
+model-tool-call, model-tool-result, and MCP execution evidence in queryable
+tables with indexes for trace, provider/model, tool name, and MCP linkage.
+
 This is intentionally a side document rather than another numbered board item:
 S08b remains the active engine implementation sprint, but S08b must not harden
 model/MCP enforcement, detection, telemetry, quotas, timeline, or plugin
@@ -323,23 +329,25 @@ Required behavior:
 2. Existing AI parsing populates canonical evidence for OpenAI Chat
    Completions, OpenAI Responses, Anthropic Messages, and Google/Gemini content
    parts/function traffic.
-3. MCP aggregator execution records can link to model tool calls when known.
-4. Unknown, pending, ambiguous, and orphan linkage is represented explicitly.
-5. Tool arguments preserve raw and parsed forms plus argument status.
-6. Tool result content preserves kind, preview, parsed JSON when applicable,
+3. Session DB storage for canonical evidence is normalized and queryable; a
+   single `ai_evidence` JSON blob column is explicitly rejected.
+4. MCP aggregator execution records can link to model tool calls when known.
+5. Unknown, pending, ambiguous, and orphan linkage is represented explicitly.
+6. Tool arguments preserve raw and parsed forms plus argument status.
+7. Tool result content preserves kind, preview, parsed JSON when applicable,
    error status, returned-to-model status, and parse confidence.
-7. Security events project canonical evidence into CEL/Sigma-addressable
+8. Security events project canonical evidence into CEL/Sigma-addressable
    model/MCP fields.
-8. Host-originated model calls are represented by the same evidence model but
+9. Host-originated model calls are represented by the same evidence model but
    attribute counters, telemetry, costs, and future quota dimensions to host/
    service ownership rather than VM health.
-9. Golden fixtures cover streaming tool-call deltas, completed tool calls,
+10. Golden fixtures cover streaming tool-call deltas, completed tool calls,
    malformed/partial arguments, tool results returned to the model, linked MCP
    execution, orphan model tool calls, orphan MCP executions, host-attributed
    model prompts linked to VM/session context, and provider unknown-field drift.
-10. Existing model/MCP behavior continues to work while the new evidence becomes
+11. Existing model/MCP behavior continues to work while the new evidence becomes
    the policy-facing substrate.
-11. S08b/S08c/S08d can consume the canonical evidence without depending on
+12. S08b/S08c/S08d can consume the canonical evidence without depending on
    provider-specific request/response JSON paths.
 
 ## Testing Matrix

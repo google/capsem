@@ -147,6 +147,23 @@ fn llm_events_flow_into_model_call() {
     assert_eq!(mc.text_content.as_deref(), Some("hello"));
     assert_eq!(mc.stop_reason.as_deref(), Some("end_turn"));
     assert_eq!(mc.message_id.as_deref(), Some("msg_1"));
+    let evidence = mc.ai_evidence.as_ref().expect("canonical AI evidence");
+    assert_eq!(evidence.trace_id, mc.trace_id.as_deref().unwrap());
+    assert_eq!(evidence.provider.as_str(), "anthropic");
+    assert!(evidence
+        .request
+        .request_id
+        .starts_with(&format!("request:{}:", evidence.trace_id)));
+    assert_eq!(evidence.source_engine, SourceEngine::Network);
+    assert_eq!(evidence.attribution_scope, AiAttributionScope::Vm);
+    assert_eq!(evidence.origin_kind, AiOriginKind::GuestNetwork);
+    assert_eq!(
+        evidence
+            .response
+            .as_ref()
+            .and_then(|r| r.text_preview.as_deref()),
+        Some("hello")
+    );
 }
 
 /// Tool-use stop reason registers tool_call IDs in the trace state so

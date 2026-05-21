@@ -244,6 +244,7 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
             response_bytes: row.get::<_, i64>(22)? as u64,
             estimated_cost_usd: row.get::<_, f64>(23).unwrap_or(0.0),
             trace_id: row.get(24)?,
+            ai_evidence: None,
             tool_calls: Vec::new(),
             tool_responses: Vec::new(),
         },

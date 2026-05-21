@@ -58,6 +58,127 @@ pub const CREATE_SCHEMA: &str = "
         usage_details TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS ai_model_interactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        model_call_id INTEGER NOT NULL,
+        interaction_id TEXT NOT NULL,
+        trace_id TEXT NOT NULL,
+        attribution_scope TEXT NOT NULL,
+        source_engine TEXT NOT NULL,
+        origin_kind TEXT NOT NULL,
+        accounting_owner TEXT,
+        profile_id TEXT,
+        vm_id TEXT,
+        session_id TEXT,
+        user_id TEXT,
+        provider TEXT NOT NULL,
+        api_family TEXT NOT NULL,
+        model TEXT NOT NULL,
+        parse_status TEXT NOT NULL,
+        evidence_status TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        request_model TEXT,
+        request_stream INTEGER NOT NULL DEFAULT 0,
+        request_system_prompt_preview TEXT,
+        request_message_count INTEGER NOT NULL DEFAULT 0,
+        request_tools_declared_count INTEGER NOT NULL DEFAULT 0,
+        request_raw_shape_version TEXT NOT NULL,
+        request_unknown_fields_present INTEGER NOT NULL DEFAULT 0,
+        response_id TEXT,
+        response_provider_response_id TEXT,
+        response_stop_reason TEXT,
+        response_text_preview TEXT,
+        response_thinking_preview TEXT,
+        response_raw_shape_version TEXT,
+        usage_input_tokens INTEGER,
+        usage_output_tokens INTEGER,
+        usage_estimated_cost_micros INTEGER,
+        FOREIGN KEY(model_call_id) REFERENCES model_calls(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_usage_details (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        interaction_id INTEGER NOT NULL,
+        scope TEXT NOT NULL,
+        name TEXT NOT NULL,
+        value INTEGER NOT NULL,
+        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_content_blocks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        interaction_id INTEGER NOT NULL,
+        block_index INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        text_preview TEXT,
+        json_preview TEXT,
+        mime_type TEXT,
+        redacted INTEGER,
+        file_name TEXT,
+        path_class TEXT,
+        tool_call_id TEXT,
+        name TEXT,
+        is_error INTEGER,
+        marker TEXT,
+        reason TEXT,
+        raw_type TEXT,
+        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_model_tool_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        interaction_id INTEGER NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        call_index INTEGER NOT NULL,
+        provider_call_id TEXT,
+        raw_name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        arguments_raw TEXT,
+        arguments_json TEXT,
+        arguments_status TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        linked_mcp_call_id TEXT,
+        status TEXT NOT NULL,
+        parse_confidence TEXT NOT NULL,
+        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_model_tool_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        interaction_id INTEGER NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        linked_mcp_call_id TEXT,
+        content_kind TEXT NOT NULL,
+        content_preview TEXT,
+        content_json TEXT,
+        is_error INTEGER NOT NULL DEFAULT 0,
+        result_status TEXT NOT NULL,
+        returned_to_model INTEGER NOT NULL DEFAULT 0,
+        parse_confidence TEXT NOT NULL,
+        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_mcp_execution_evidence (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        interaction_id INTEGER NOT NULL,
+        mcp_call_id TEXT NOT NULL,
+        server_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        namespaced_tool_name TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        request_arguments_raw TEXT,
+        request_arguments_json TEXT,
+        result_kind TEXT NOT NULL,
+        result_preview TEXT,
+        result_json TEXT,
+        is_error INTEGER NOT NULL DEFAULT 0,
+        latency_ms INTEGER NOT NULL DEFAULT 0,
+        linked_model_interaction_id TEXT,
+        linked_model_tool_call_id TEXT,
+        link_status TEXT NOT NULL,
+        FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+    );
+
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         model_call_id INTEGER NOT NULL,
@@ -91,6 +212,26 @@ pub const CREATE_SCHEMA: &str = "
         ON tool_responses(model_call_id);
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_model_call
+        ON ai_model_interactions(model_call_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_model_interactions_interaction_id
+        ON ai_model_interactions(interaction_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_trace_id
+        ON ai_model_interactions(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_provider_model
+        ON ai_model_interactions(provider, model);
+    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_interaction
+        ON ai_model_tool_calls(interaction_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_name
+        ON ai_model_tool_calls(normalized_name);
+    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_link
+        ON ai_model_tool_calls(linked_mcp_call_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_model_tool_results_interaction
+        ON ai_model_tool_results(interaction_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_interaction
+        ON ai_mcp_execution_evidence(interaction_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_link
+        ON ai_mcp_execution_evidence(linked_model_tool_call_id);
 
     CREATE TABLE IF NOT EXISTS mcp_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -324,6 +465,143 @@ pub fn migrate(conn: &Connection) {
     // Replace cache_read_tokens with usage_details TEXT column.
     // SQLite doesn't support DROP COLUMN before 3.35, so just add the new one.
     let _ = conn.execute("ALTER TABLE model_calls ADD COLUMN usage_details TEXT", []);
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS ai_model_interactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_call_id INTEGER NOT NULL,
+            interaction_id TEXT NOT NULL,
+            trace_id TEXT NOT NULL,
+            attribution_scope TEXT NOT NULL,
+            source_engine TEXT NOT NULL,
+            origin_kind TEXT NOT NULL,
+            accounting_owner TEXT,
+            profile_id TEXT,
+            vm_id TEXT,
+            session_id TEXT,
+            user_id TEXT,
+            provider TEXT NOT NULL,
+            api_family TEXT NOT NULL,
+            model TEXT NOT NULL,
+            parse_status TEXT NOT NULL,
+            evidence_status TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            request_model TEXT,
+            request_stream INTEGER NOT NULL DEFAULT 0,
+            request_system_prompt_preview TEXT,
+            request_message_count INTEGER NOT NULL DEFAULT 0,
+            request_tools_declared_count INTEGER NOT NULL DEFAULT 0,
+            request_raw_shape_version TEXT NOT NULL,
+            request_unknown_fields_present INTEGER NOT NULL DEFAULT 0,
+            response_id TEXT,
+            response_provider_response_id TEXT,
+            response_stop_reason TEXT,
+            response_text_preview TEXT,
+            response_thinking_preview TEXT,
+            response_raw_shape_version TEXT,
+            usage_input_tokens INTEGER,
+            usage_output_tokens INTEGER,
+            usage_estimated_cost_micros INTEGER,
+            FOREIGN KEY(model_call_id) REFERENCES model_calls(id)
+        );
+        CREATE TABLE IF NOT EXISTS ai_usage_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interaction_id INTEGER NOT NULL,
+            scope TEXT NOT NULL,
+            name TEXT NOT NULL,
+            value INTEGER NOT NULL,
+            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+        );
+        CREATE TABLE IF NOT EXISTS ai_content_blocks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interaction_id INTEGER NOT NULL,
+            block_index INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            text_preview TEXT,
+            json_preview TEXT,
+            mime_type TEXT,
+            redacted INTEGER,
+            file_name TEXT,
+            path_class TEXT,
+            tool_call_id TEXT,
+            name TEXT,
+            is_error INTEGER,
+            marker TEXT,
+            reason TEXT,
+            raw_type TEXT,
+            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+        );
+        CREATE TABLE IF NOT EXISTS ai_model_tool_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interaction_id INTEGER NOT NULL,
+            tool_call_id TEXT NOT NULL,
+            call_index INTEGER NOT NULL,
+            provider_call_id TEXT,
+            raw_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            arguments_raw TEXT,
+            arguments_json TEXT,
+            arguments_status TEXT NOT NULL,
+            origin TEXT NOT NULL,
+            linked_mcp_call_id TEXT,
+            status TEXT NOT NULL,
+            parse_confidence TEXT NOT NULL,
+            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+        );
+        CREATE TABLE IF NOT EXISTS ai_model_tool_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interaction_id INTEGER NOT NULL,
+            tool_call_id TEXT NOT NULL,
+            linked_mcp_call_id TEXT,
+            content_kind TEXT NOT NULL,
+            content_preview TEXT,
+            content_json TEXT,
+            is_error INTEGER NOT NULL DEFAULT 0,
+            result_status TEXT NOT NULL,
+            returned_to_model INTEGER NOT NULL DEFAULT 0,
+            parse_confidence TEXT NOT NULL,
+            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+        );
+        CREATE TABLE IF NOT EXISTS ai_mcp_execution_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            interaction_id INTEGER NOT NULL,
+            mcp_call_id TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            namespaced_tool_name TEXT NOT NULL,
+            transport TEXT NOT NULL,
+            request_arguments_raw TEXT,
+            request_arguments_json TEXT,
+            result_kind TEXT NOT NULL,
+            result_preview TEXT,
+            result_json TEXT,
+            is_error INTEGER NOT NULL DEFAULT 0,
+            latency_ms INTEGER NOT NULL DEFAULT 0,
+            linked_model_interaction_id TEXT,
+            linked_model_tool_call_id TEXT,
+            link_status TEXT NOT NULL,
+            FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_model_call
+            ON ai_model_interactions(model_call_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_model_interactions_interaction_id
+            ON ai_model_interactions(interaction_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_trace_id
+            ON ai_model_interactions(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_provider_model
+            ON ai_model_interactions(provider, model);
+        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_interaction
+            ON ai_model_tool_calls(interaction_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_name
+            ON ai_model_tool_calls(normalized_name);
+        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_calls_link
+            ON ai_model_tool_calls(linked_mcp_call_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_model_tool_results_interaction
+            ON ai_model_tool_results(interaction_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_interaction
+            ON ai_mcp_execution_evidence(interaction_id);
+        CREATE INDEX IF NOT EXISTS idx_ai_mcp_execution_evidence_link
+            ON ai_mcp_execution_evidence(linked_model_tool_call_id);",
+    );
     // Add origin + mcp_call_id columns to tool_calls (for DBs created before this feature).
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN origin TEXT NOT NULL DEFAULT 'native'",
