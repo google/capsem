@@ -99,6 +99,8 @@ fn detection_ir_evaluator_matches_security_engine_http_event() {
             profile_id: Some("coding".into()),
             profile_revision: Some("rev-a".into()),
             profile_pack_ids: vec!["corp-default-detections".into()],
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
             user_id: Some("user-1".into()),
             process_id: None,
             parent_process_id: None,

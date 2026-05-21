@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "event": {
+    "schema_version": 1,
+    "common": {
+      "event_id": "evt-http",
+      "source_engine": "network",
+      "enforceability": "inline_blockable",
+      "timestamp_unix_ms": 1789002,
+      "vm_id": "vm-1",
+      "session_id": "session-1",
+      "profile_id": "coding",
+      "profile_revision": "rev-a",
+      "event_type": "http.request"
+    },
+    "subject": {
+      "family": "http",
+      "method": "GET",
+      "host": "169.254.169.254",
+      "path_class": "metadata",
+      "request_bytes": 128
+    }
+  },
+  "steps": [
+    {
+      "kind": "detection_match",
+      "status": "matched",
+      "rule_id": "metadata-access",
+      "pack_id": "corp-detection"
+    }
+  ],
+  "detection_findings": [
+    {
+      "finding_id": "finding-1",
+      "event_id": "evt-http",
+      "rule_id": "metadata-access",
+      "pack_id": "corp-detection",
+      "title": "Metadata endpoint access",
+      "severity": "high",
+      "confidence": "medium"
+    }
+  ],
+  "final_action": {
+    "action": "continue"
+  },
+  "emitter_results": [
+    {
+      "sink": "session_db",
+      "status": "applied"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 #[test]
 fn http_event_exposes_identity_and_quota_dimensions() {
@@ -19,6 +20,8 @@ fn http_event_exposes_identity_and_quota_dimensions() {
             profile_id: Some("coding".into()),
             profile_revision: Some("rev-a".into()),
             profile_pack_ids: vec!["policy-pack".into(), "detection-pack".into()],
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
             user_id: Some("user-1".into()),
             process_id: Some("pid-1".into()),
             parent_process_id: Some("pid-0".into()),
@@ -82,6 +85,8 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
             profile_id: Some("coding".into()),
             profile_revision: Some("rev-a".into()),
             profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
             user_id: Some("user-1".into()),
             process_id: None,
             parent_process_id: None,
@@ -103,6 +108,7 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
     );
 
     let resolved = ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
         event: event.clone(),
         steps: vec![ResolvedEventStep {
             kind: ResolvedEventStepKind::RateLimitCheck,
@@ -167,4 +173,55 @@ fn security_event_rejects_unknown_fields() {
     .unwrap_err();
 
     assert!(err.to_string().contains("unknown field"));
+}
+
+#[test]
+fn security_event_fixture_covers_every_family_and_pack_identity() {
+    let events: Vec<SecurityEvent> =
+        serde_json::from_str(include_str!("../fixtures/security-events-v1.json")).unwrap();
+
+    let families = events
+        .iter()
+        .map(SecurityEvent::event_family)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        families,
+        BTreeSet::from([
+            EventFamily::Dns,
+            EventFamily::Http,
+            EventFamily::Mcp,
+            EventFamily::Model,
+            EventFamily::File,
+            EventFamily::Process,
+            EventFamily::Credential,
+            EventFamily::Vm,
+            EventFamily::Profile,
+            EventFamily::Conversation,
+            EventFamily::Snapshot,
+        ])
+    );
+
+    assert!(events
+        .iter()
+        .all(|event| event.schema_version == SECURITY_EVENT_SCHEMA_VERSION));
+
+    let http = events
+        .iter()
+        .find(|event| event.common.event_id == "evt-http")
+        .unwrap();
+    assert_eq!(http.common.enforcement_packs[0].id, "corp-enforcement");
+    assert_eq!(http.common.detection_packs[0].id, "corp-detection");
+}
+
+#[test]
+fn resolved_event_fixture_pins_schema_version_and_findings() {
+    let resolved: ResolvedSecurityEvent =
+        serde_json::from_str(include_str!("../fixtures/resolved-event-v1.json")).unwrap();
+
+    assert_eq!(resolved.schema_version, RESOLVED_EVENT_SCHEMA_VERSION);
+    assert_eq!(resolved.event.schema_version, SECURITY_EVENT_SCHEMA_VERSION);
+    assert_eq!(resolved.detection_findings[0].finding_id, "finding-1");
+    assert_eq!(resolved.detection_findings[0].event_id, "evt-http");
+    assert!(matches!(resolved.final_action, SecurityAction::Continue));
 }

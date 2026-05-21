@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub const SECURITY_EVENT_SCHEMA_VERSION: u32 = 1;
+pub const RESOLVED_EVENT_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EventFamily {
@@ -45,6 +48,24 @@ pub enum Enforceability {
     RemediationOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackStatus {
+    Active,
+    Deprecated,
+    Revoked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityPackIdentity {
+    pub id: String,
+    pub revision: String,
+    pub hash: String,
+    pub signature: String,
+    pub status: PackStatus,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecurityEventCommon {
@@ -75,6 +96,10 @@ pub struct SecurityEventCommon {
     #[serde(default)]
     pub profile_pack_ids: Vec<String>,
     #[serde(default)]
+    pub enforcement_packs: Vec<SecurityPackIdentity>,
+    #[serde(default)]
+    pub detection_packs: Vec<SecurityPackIdentity>,
+    #[serde(default)]
     pub user_id: Option<String>,
     #[serde(default)]
     pub process_id: Option<String>,
@@ -98,6 +123,7 @@ pub struct SecurityEventCommon {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecurityEvent {
+    pub schema_version: u32,
     pub common: SecurityEventCommon,
     pub subject: SecurityEventSubject,
 }
@@ -105,6 +131,7 @@ pub struct SecurityEvent {
 impl SecurityEvent {
     pub fn dns(common: SecurityEventCommon, subject: DnsSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Dns(subject),
         }
@@ -112,6 +139,7 @@ impl SecurityEvent {
 
     pub fn http(common: SecurityEventCommon, subject: HttpSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Http(subject),
         }
@@ -119,6 +147,7 @@ impl SecurityEvent {
 
     pub fn mcp(common: SecurityEventCommon, subject: McpSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Mcp(subject),
         }
@@ -126,6 +155,7 @@ impl SecurityEvent {
 
     pub fn model(common: SecurityEventCommon, subject: ModelSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Model(subject),
         }
@@ -133,6 +163,7 @@ impl SecurityEvent {
 
     pub fn file(common: SecurityEventCommon, subject: FileSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::File(subject),
         }
@@ -140,6 +171,7 @@ impl SecurityEvent {
 
     pub fn process(common: SecurityEventCommon, subject: ProcessSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Process(subject),
         }
@@ -147,6 +179,7 @@ impl SecurityEvent {
 
     pub fn conversation(common: SecurityEventCommon, subject: ConversationSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Conversation(subject),
         }
@@ -154,6 +187,7 @@ impl SecurityEvent {
 
     pub fn snapshot(common: SecurityEventCommon, subject: SnapshotSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Snapshot(subject),
         }
@@ -161,6 +195,7 @@ impl SecurityEvent {
 
     pub fn vm_lifecycle(common: SecurityEventCommon, subject: VmLifecycleSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::VmLifecycle(subject),
         }
@@ -168,6 +203,7 @@ impl SecurityEvent {
 
     pub fn profile(common: SecurityEventCommon, subject: ProfileSecuritySubject) -> Self {
         Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Profile(subject),
         }
@@ -477,6 +513,7 @@ pub struct SecurityResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedSecurityEvent {
+    pub schema_version: u32,
     pub event: SecurityEvent,
     #[serde(default)]
     pub steps: Vec<ResolvedEventStep>,

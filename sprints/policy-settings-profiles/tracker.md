@@ -628,6 +628,12 @@ a valid claim -- mark it `[ ]` instead.
     `SecurityEventCommon` contract and pinned those values in quota/correlation
     extraction tests. Verification: `cargo test -p capsem-security-engine` and
     `cargo test -p capsem-core --test security_packs` passed.
+    Fourth contract slice added `schema_version` fields, enforcement/detection
+    `SecurityPackIdentity` pins, and committed JSON fixtures for DNS, HTTP, MCP,
+    model, file, process, credential, VM lifecycle, profile, conversation, and
+    snapshot events plus a resolved-event finding fixture. Verification:
+    `cargo test -p capsem-security-engine` passed with 5 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

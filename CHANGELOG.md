@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added S08b event identity fields for parent event, stream, activity, sequence,
   source engine, and enforceability so later engine wiring has the correlation
   data needed for timeline, telemetry, and quota work.
+- Added S08b security-event schema versions, enforcement/detection pack identity
+  fields, and JSON fixtures covering every normalized event family plus resolved
+  event findings.
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.
