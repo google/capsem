@@ -7,16 +7,24 @@ Add a service-scoped remote policy plugin.
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-must define the boundary between event streaming/detection and synchronous
-policy decisions before this plugin ships. A remote plugin may receive
-normalized events for detection or return decisions for live policy callbacks,
-but those are different contracts and must not be conflated.
+defines the boundary between event streaming/detection and synchronous policy
+decisions. A remote plugin can have two explicit modes:
+
+- **Decision mode:** consumes a redacted `SecurityEvent` plus policy context and
+  returns a bounded `SecurityDecision` for synchronous enforcement.
+- **Observer mode:** consumes `ResolvedSecurityEvent` records after local
+  policy/confirm/detection/postprocessing and may export or enrich findings,
+  but cannot block or rewrite the already-resolved event.
+
+The plugin contract must never let a detection finding silently become a
+blocking decision.
 
 ## Tasks
 
 - Add service settings for endpoint, auth, timeout, and failure behavior.
 - Define forwarded events/context.
 - Define fail-open/fail-closed behavior by decision surface.
+- Define separate decision-mode and observer-mode payloads.
 - Wire remote decisions into policy paths without profile TOML depending on the
   endpoint.
 - Test allow/block/ask, endpoint failure, timeout, auth failure, redaction, and

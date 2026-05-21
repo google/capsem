@@ -27,6 +27,15 @@ First decision slice landed on 2026-05-21:
   -> postprocessor plugins -> resolved-event emitter -> telemetry/audit/logging
   sinks.
 
+Second decision slice landed on 2026-05-21:
+
+- Defined the first concrete policy-pack, detection-pack, compiled detection
+  IR, finding, and normalized event contracts.
+- Defined `capsem-admin policy validate|schema|check` and
+  `capsem-admin detection validate|schema|compile|check` requirements.
+- Fixed the initial Sigma logsource mapping for Capsem event families.
+- Marked downstream sprint deltas for S07b, S12, S13, S14, S15, S16a, and S19.
+
 Reference implementations checked during this slice:
 
 - CEL: <https://docs.rs/cel/latest/cel/>
@@ -138,6 +147,171 @@ Prompt text, full URLs with secrets, raw headers, command output, and stack
 traces are not OTel labels. They live in the session/timeline/audit payload
 with redaction and access controls.
 
+## Contract V1
+
+This contract is intentionally small enough to implement and test in S08b/S07b,
+while leaving room for richer detection content later.
+
+### Policy Pack V1
+
+Schema id: `capsem.policy-pack.v1`.
+
+Required top-level fields:
+
+- `id`: stable pack id, globally unique inside the profile/catalog namespace.
+- `version`: semantic or calendar version string.
+- `status`: `active`, `deprecated`, or `revoked`.
+- `owner`: `corp`, `vendor`, or `user`.
+- `profile_scope`: allowed profile ids, profile types, or package/tool
+  assumptions required before the pack can run.
+- `locks`: section editability and override rules consumed by corp governance.
+- `rules`: ordered policy rules.
+
+Policy rule fields:
+
+- `id`, `name`, `description`, `enabled`.
+- `event_family`: `dns`, `http`, `mcp`, `model`, `file`, `process`,
+  `credential`, `vm`, `profile`, or `conversation`.
+- `event_type`: family-specific type such as `http.request`,
+  `file.write`, or `process.exec`.
+- `priority`: integer; lower values evaluate first.
+- `condition`: real CEL expression over the normalized event subject.
+- `decision`: `allow`, `block`, `ask`, or `rewrite`.
+- `rewrite`: typed rewrite payload, present only for `decision = "rewrite"`.
+- `reason`, `tags`, `references`.
+- `provenance`: generated-by, source pack, source profile revision, and
+  optional confirm/detection suggestion id.
+
+Validation requirements:
+
+- Unknown fields fail closed.
+- `decision = "rewrite"` requires a rewrite payload matching the event family.
+- `decision != "rewrite"` rejects rewrite payloads.
+- CEL must parse and type-check against the event-family schema before the pack
+  can be installed or launched.
+- A policy rule may not reference fields outside its `event_family` schema.
+- A locked corp rule cannot be edited by user profile overlays.
+
+### Detection Pack V1
+
+Schema id: `capsem.detection-pack.v1`.
+
+Required top-level fields:
+
+- `id`, `version`, `status`, `owner`, `description`.
+- `profile_scope`: allowed profile ids/types and required package/tool
+  assumptions.
+- `sources`: embedded Sigma YAML documents, external signed references, or
+  compiled Capsem detection IR.
+- `field_mapping`: explicit mapping from Sigma fields to Capsem normalized
+  event fields.
+- `findings`: severity/confidence defaults, tags, and SOAR/export routing
+  hints.
+- `locks`: corp governance over enablement, severity changes, and suppression.
+
+Detection rules produce findings only. They may carry a
+`policy_suggestion_template`, but that template is inert until an explicit
+operator/profile workflow converts it into a policy rule.
+
+Validation requirements:
+
+- Unknown fields fail closed.
+- Sigma YAML must validate through pySigma and the S08a-supported subset.
+- The same sample fixtures must validate through the Rust Sigma runtime path
+  where runtime evaluation applies.
+- Unsupported Sigma selection modifiers, aggregation, correlation, or backend
+  query output fail at import/compile time with typed diagnostics.
+- Every Sigma field must map to a known Capsem normalized event field.
+- Detection rules cannot declare `allow`, `block`, `ask`, or `rewrite`.
+
+### Detection IR V1
+
+Schema id: `capsem.detection.ir.v1`.
+
+This is the runtime-stable compiled form, not the corp authoring surface. It
+contains:
+
+- pack id/version/hash/signature provenance;
+- rule id and optional Sigma id;
+- event-family/type filters;
+- normalized field matchers;
+- condition expression/selection tree accepted by the chosen Rust evaluator;
+- finding metadata defaults;
+- source-location mapping back to the original detection pack.
+
+S08b may initially store this in memory beside the VM-effective profile. S12
+and S16a consume findings, not the raw IR.
+
+### Normalized Event Taxonomy V1
+
+Every engine emits a `SecurityEvent` with common fields:
+
+- `event_id`, `trace_id`, `span_id`, `timestamp`;
+- `vm_id`, `session_id`, `profile_id`, `profile_revision`;
+- `profile_pack_ids`: effective policy/detection pack identities;
+- `user_id` when available, otherwise a typed absent value;
+- `process_id`, `parent_process_id`, `exec_id`, `turn_id`, `message_id`,
+  `tool_call_id`, and `mcp_call_id` when known;
+- `event_family`, `event_type`;
+- `subject`: family-specific typed payload;
+- `redaction_state`: raw, redacted, or summary-only.
+
+Initial event families and Sigma logsource mapping:
+
+| Event family | Capsem event types | Sigma product/category |
+| --- | --- | --- |
+| DNS | `dns.request`, `dns.response` | `capsem` / `dns` |
+| HTTP | `http.request`, `http.response`, `http.stream_chunk` | `capsem` / `http` |
+| MCP | `mcp.request`, `mcp.response`, `mcp.tool_call` | `capsem` / `mcp` |
+| Model | `model.request`, `model.response`, `model.tool_call` | `capsem` / `model` |
+| File | `file.read`, `file.write`, `file.delete`, `file.rename`, `file.quarantine`, `snapshot.create`, `snapshot.restore` | `capsem` / `file` |
+| Process | `process.exec`, `process.exit`, `process.audit` | `capsem` / `process` |
+| Credential | `credential.request`, `credential.inject`, `credential.denied` | `capsem` / `credential` |
+| VM/Profile | `vm.create`, `vm.fork`, `vm.resume`, `profile.update`, `profile.revoked` | `capsem` / `vm` or `profile` |
+| Conversation | `conversation.turn`, `conversation.message`, `conversation.artifact` | `capsem` / `conversation` |
+
+The Sigma `logsource.product` for first-party rules is `capsem`. Importers may
+accept external Sigma rules for other products only through an explicit mapping
+profile. No implicit Windows/Linux/cloud mappings are allowed in S08b.
+
+### Resolved Event V1
+
+`ResolvedSecurityEvent` contains the original normalized event plus:
+
+- `preprocessor_results`;
+- `policy_results`;
+- `confirm_result`;
+- `detection_findings`;
+- `postprocessor_results`;
+- `final_action`;
+- `emitter_results`.
+
+The Resolved Event Emitter writes the same resolved event identity to all
+sinks. Domain tables can remain projections, but the resolved event is the
+canonical audit/timeline/security record.
+
+### Admin Commands
+
+S07b must add, after S08a format closeout:
+
+```text
+capsem-admin policy validate policy-pack.toml|json [--profile profile.toml] [--json]
+capsem-admin policy schema [--out schemas/capsem.policy-pack.v1.schema.json]
+capsem-admin policy check policy-pack.toml|json --events fixtures/events.jsonl --json
+
+capsem-admin detection validate detection-pack.toml|json|yml [--profile profile.toml] [--json]
+capsem-admin detection schema [--out schemas/capsem.detection-pack.v1.schema.json]
+capsem-admin detection compile detection-pack.yml --out detection.ir.json --json
+capsem-admin detection check detection-pack.yml --events fixtures/events.jsonl --json
+```
+
+`validate` proves shape and static semantics. `compile` proves the supported
+Sigma subset maps into Capsem detection IR. `check` evaluates fixture events
+and emits a typed report with matched findings, nonmatches, errors, and timing
+summary. All JSON I/O follows the Pydantic-only boundary used elsewhere:
+`model_validate_json()` / `TypeAdapter.validate_json()` on input and
+`model_dump_json()` / `TypeAdapter.dump_json()` on output.
+
 ## Goal
 
 Decide the long-term abstraction boundary between Capsem runtime policy rules
@@ -177,7 +351,8 @@ If we merge those two concepts too early, we risk breaking all of these:
 
 ## Working Hypothesis
 
-Capsem should likely have two related but separate rule families:
+Superseded by Decision V1 above, kept here as the original framing that the
+decision validated: Capsem should have two related but separate rule families.
 
 - **Policy rules**: Profile-owned, signed, synchronous, runtime-enforced rules.
   Conditions use a real CEL implementation, not a homegrown CEL-like subset.
@@ -194,36 +369,29 @@ Promotion is explicit:
 - an ask/confirm event may propose a policy rule;
 - nothing silently becomes enforcement.
 
-This is a hypothesis, not yet the final design. S08a exists to validate or
-replace it.
+Decision V1 keeps that split and turns it into concrete pack/event/finding
+contracts.
 
 ## Questions To Answer
 
-- Which Rust CEL implementation do we standardize on, and what exact CEL
-  profile/function set is allowed for policy rules?
-- How do we reject or migrate today's Capsem CEL-like subset so there is no
-  second rule language?
-- What is the normalized Capsem event schema that detection rules evaluate?
-- Which event families need detection support first: DNS, HTTP, MCP, model,
-  filesystem, process, credentials, VM lifecycle, profile changes?
-- Which fields must be stable enough for Sigma-style content?
-- Which Sigma implementation/path do we use: native Sigma YAML validation +
-  compilation, an embedded engine, or a curated Sigma-compatible Capsem
-  detection schema with strict import/export semantics?
-- Which Sigma logsource/product/category vocabulary maps to Capsem event
-  families?
-- How do detection findings appear in telemetry, debug reports, UI, CLI, and
-  corp export?
-- Can detections trigger `ask`, or do they only suggest/promote policy rules?
-- How does a remote policy plugin consume events versus return runtime
-  decisions?
-- What is the schema for a policy-rule suggestion generated from a detection or
-  confirm event?
-- How do package/profile assumptions affect rule availability?
-- What gets signed in profiles: policy rules, detection rules, rule packs,
-  Sigma imports, findings configuration, or all of them?
-- How do profile inheritance, corp locks, and package/tool contracts affect
-  detection rule enablement?
+- Answered: standardize on the Rust `cel` crate family for policy CEL and
+  replace the Capsem-only shortcut.
+- Answered: normalized events are `SecurityEvent` values with family-specific
+  typed subjects and common ids/provenance.
+- Answered: initial detection families are DNS, HTTP, MCP, model, file,
+  process, credential, VM/profile, and conversation.
+- Answered: Sigma enters as detection authoring/import and compiles to
+  `capsem.detection.ir.v1`; runtime findings attach to
+  `ResolvedSecurityEvent`.
+- Answered: first-party Sigma `logsource.product` is `capsem`; categories map
+  to Capsem event families.
+- Answered: detections do not trigger `ask`; they may provide explicit policy
+  suggestions.
+- Answered: remote policy plugin has separate decision and observer modes.
+- Answered: profiles sign policy packs, detection packs, compiled IR or signed
+  references, plus pack hashes/status/locks.
+- Remaining: exact Rust/Python model field types, schema artifacts, fixture
+  files, and implementation ordering for S07b/S08b.
 
 ## Profile Ownership Requirement
 

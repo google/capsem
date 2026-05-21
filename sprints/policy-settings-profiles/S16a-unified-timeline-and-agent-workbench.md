@@ -10,8 +10,8 @@ telemetry tables.
 
 Runs after:
 
-- S08a decides real CEL, real Sigma-compatible detection, and profile-owned
-  rule/detection packs.
+- S08a decides real CEL, Sigma-compatible detection packs, detection IR,
+  finding shape, and profile-owned policy/detection pack pins.
 - S08b defines the Security Engine, Conversation Engine, canonical
   resolved-event store, and structured `/timeline/{id}` API.
 - S15 lands production ask/confirm semantics.
@@ -78,6 +78,8 @@ elements backed by:
 - `security_event_steps`;
 - `security_event_links`;
 - `detection_findings`;
+- `policy_results`;
+- `confirm_results`;
 - `timeline_threads`;
 - `timeline_elements`;
 - `timeline_artifacts`;

@@ -466,11 +466,12 @@ Required semantics:
   `model_validate_json()` or `TypeAdapter.validate_json()`; JSON output must use
   `model_dump_json()`. TOML input may create one temporary parsed value only to
   construct the Pydantic model immediately.
-- Policy/detection commands are gated on S08a's final CEL/Sigma-compatible
-  detection decision. If S07b lands before S08a, it must leave the typed command
-  and model extension point explicit; release cannot claim detection admin
-  support until S08a's selected format is represented by Pydantic models,
-  schema export, validation, and JSON reports.
+- Policy/detection commands consume S08a's V1 contract: policy packs are
+  `capsem.policy-pack.v1` with real-CEL validation, detection packs are
+  `capsem.detection-pack.v1`, and compiled detection output is
+  `capsem.detection.ir.v1`. Release cannot claim detection admin support until
+  those formats are represented by Pydantic models, schema export, validation,
+  fixture evaluation, and JSON reports.
 
 ## Source-Of-Truth Flow
 
@@ -538,9 +539,11 @@ this sprint.
   exercise `model_validate_json()` / `TypeAdapter.validate_json()` and
   `model_dump_json()`, not `json.loads` / `json.dumps`.
 - Add policy/detection admin model layer after S08a:
-  policy packs, detection packs, Sigma-compatible imports, finding schemas,
-  validation reports, and schema artifacts must be typed Pydantic models with
-  stable error paths and no raw JSON/dict plumbing.
+  policy packs (`capsem.policy-pack.v1`), detection packs
+  (`capsem.detection-pack.v1`), compiled detection IR
+  (`capsem.detection.ir.v1`), Sigma-compatible imports, finding schemas,
+  validation/check reports, and schema artifacts must be typed Pydantic models
+  with stable error paths and no raw JSON/dict plumbing.
 - Remove hand-edited image settings as accepted input for release builds. Tests
   must fail if a release build reads package/tool/image settings from
   `guest/config` instead of the selected profile.

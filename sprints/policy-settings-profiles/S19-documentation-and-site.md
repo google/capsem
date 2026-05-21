@@ -172,8 +172,9 @@ Final paths should follow the actual docs tree present when this sprint starts.
       set, allow/block/ask/rewrite semantics, ask/confirm logging, policy pack
       profile ownership, resolved-event evidence, and remote-policy boundary.
 - [ ] Write detection format security page:
-      S08a-selected Sigma-compatible format/import/compile path, normalized
-      event-field mapping, finding schema, detection pack profile ownership,
+      S08a-selected `capsem.detection-pack.v1` format, Sigma-compatible
+      import/compile path, `capsem.detection.ir.v1`, normalized event-field
+      mapping, finding schema, detection pack profile ownership,
       schema/versioning rules, examples, validation errors, telemetry/OTel
       mapping, and why detections do not silently become enforcement.
 - [ ] Write service settings reference with TOML examples.

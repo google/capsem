@@ -491,6 +491,13 @@ a valid claim -- mark it `[ ]` instead.
     blocking language; detection compiles into Capsem normalized detection IR
     and attaches typed findings to resolved security events before
     telemetry/audit/logging/timeline sinks.
+    Second slice drafted the concrete contract names and shapes:
+    `capsem.policy-pack.v1`, `capsem.detection-pack.v1`,
+    `capsem.detection.ir.v1`, `DetectionFinding`, `SecurityEvent`,
+    `ResolvedSecurityEvent`, Sigma logsource mapping, and
+    `capsem-admin policy|detection validate/schema/compile/check` command
+    requirements. S07b, S12, S13, S14, S15, S16a, and S19 now reference those
+    contracts instead of generic "real CEL/Sigma later" placeholders.
 21. [ ] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
     -- inserted during the 2026-05-19 engine-boundary regroup. Split runtime
     activity handling into Network Engine, File Engine, Process Engine, Security

@@ -10,6 +10,11 @@ enforcement uses real CEL via the Rust `cel` crate family; Sigma is a detection
 authoring/import format; detection compiles to Capsem normalized detection IR
 and emits typed findings on `ResolvedSecurityEvent` before sink fan-out.
 
+S08a second decision slice names the concrete contracts S08b must implement:
+`SecurityEvent`, `ResolvedSecurityEvent`, `DetectionFinding`,
+`capsem.policy-pack.v1`, `capsem.detection-pack.v1`, and
+`capsem.detection.ir.v1`.
+
 ## Placement
 
 Runs after [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
@@ -355,6 +360,19 @@ Sigma, as decided by S08a, is a detection input/adapter inside this engine. It
 is not the Security Engine itself, not an enforcement language, and not a
 transport concern. The current Capsem CEL-like shortcut is not a final rule
 language; S08b consumes S08a's real CEL decision.
+
+S08b implementation starts with typed contracts before engine rewiring:
+
+1. Add shared Rust model types for `SecurityEvent`, `ResolvedSecurityEvent`,
+   `PolicyResult`, `ConfirmResult`, `DetectionFinding`, and pack identity.
+2. Add event-family subject structs for DNS, HTTP, MCP, model, file, process,
+   credential, VM/profile, and conversation events.
+3. Add real CEL compile/evaluate adapter behind a trait, with legacy evaluator
+   retained only behind migration tests until removal.
+4. Add detection IR loader/evaluator behind a trait that can consume S08a's
+   Sigma-compatible compiled form.
+5. Add emitter tests proving all sinks receive the same resolved event id and
+   finding ids.
 
 ## Crate And Module Separation
 

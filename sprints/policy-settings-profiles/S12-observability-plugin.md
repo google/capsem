@@ -49,10 +49,11 @@ reopening SQLite on status fan-out paths.
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-must settle the policy-rule versus detection-rule/finding model before this
-sprint freezes metric names, event schemas, or OTel labels for rule outcomes.
-S12 can still keep the no-SQL runtime accumulator contract, but detection and
-finding metrics must wait for S08a's normalized event taxonomy.
+settled the first contract slice: policy and detection are separate
+profile-owned rule families, detections emit typed findings on
+`ResolvedSecurityEvent`, and OTel labels must stay bounded. S12 can freeze the
+no-SQL runtime accumulator contract, but metric implementation must consume the
+S08a/S08b finding schema rather than inventing a parallel detection model.
 
 ## Single Source Of Truth
 
@@ -299,8 +300,9 @@ request bodies, and error strings are never labels.
 
 ### Detection / Findings
 
-S08a chooses the detection format and S08b owns resolved-event emission, but
-S12 must reserve typed metrics for the result:
+S08a chooses `DetectionFinding` as the metric input and S08b owns
+resolved-event emission. S12 consumes those findings through the live
+accumulator:
 
 - `detection_events_evaluated_total`
 - `detection_findings_total`
@@ -308,9 +310,12 @@ S12 must reserve typed metrics for the result:
 - `detection_errors_total`
 
 Exported labels stay low-cardinality: profile id/revision, VM id, detection
-pack id, severity, and event family where bounded. Rule names, free-form
-finding text, paths, URLs, prompts, and commands stay in bounded JSON summaries
-or the resolved-event store.
+pack id, severity, status, and event family where bounded. Rule names,
+free-form finding text, paths, URLs, prompts, commands, and raw model errors
+stay in bounded JSON summaries or the resolved-event store. Provider/model/cost
+metrics follow the same rule: provider and normalized model family may be
+labels only after capping/normalization; raw model strings and prompts are not
+labels.
 
 ### Resources
 

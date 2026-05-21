@@ -8,10 +8,10 @@ that powers per-type rule blocks.
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-must decide whether this sprint edits only synchronous Capsem policy rules or
-also introduces detection-rule/finding views. Until then, S14's stable
-commitment is the shared policy-rule editor consumed by S15; detection UX is
-explicitly unresolved.
+decides that this sprint edits synchronous Capsem policy rules. Detection packs
+and findings are separate: S14 may render detection references/finding badges
+when available, but the primary editor writes `capsem.policy-pack.v1` policy
+rules and never edits Sigma YAML as if it were enforcement policy.
 
 ## Tasks
 
@@ -37,6 +37,8 @@ explicitly unresolved.
 - Cover full decision/action support (`allow|ask|block|rewrite`) and rewrite
   config validation/error rendering.
 - Keep raw CEL as advanced escape hatch only.
+- Show detection-originated policy suggestions as suggestions that open the
+  policy editor prefilled; saving them creates policy rules, not detections.
 
 ## Coverage Ledger
 
