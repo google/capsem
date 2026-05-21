@@ -31,6 +31,11 @@ Sigma-compatible detection.
   <https://blog.howardjohn.info/posts/cel-fast/>: context/materialization cost,
   fast field access, slow/body/regex access, header lookup, and native Rust
   comparator implementations.
+- The reproduction should start from the concrete Agentgateway benchmark shape
+  in `crates/agentgateway/src/cel/benches.rs` at commit
+  `2f9ffa89c25a45f3eca34ba39bb6241a1e6d8a4b`, covering the same high-level
+  benchmark families: compile, execute over request references, execute over
+  request snapshots, and low-level lookup comparisons.
 - Benchmarks must include VM-originated events that cross the real transport/
   service/process boundary. Microbenchmarks are useful, but they are not enough
   for marketing or release claims.
@@ -87,6 +92,10 @@ Add Criterion or equivalent Rust microbenchmarks for the pieces that should be
 extremely fast:
 
 - Reproduced CEL baseline rig inspired by the Howard John post:
+  - mirror the Agentgateway benchmark cases: `simple_access`, `header`,
+    `bbr`/body JSON extraction, `jwt`, `cidr`, and `regex`;
+  - mirror the Agentgateway benchmark phases: expression compile,
+    execute-ref, execute-snapshot, and lookup;
   - build/materialize CEL context repeatedly;
   - evaluate a fast field expression repeatedly;
   - evaluate a slower expression repeatedly;
@@ -94,6 +103,10 @@ extremely fast:
   - compare regex/matches with compile-time/precompiled regex versus runtime
     work;
   - report allocations where the harness can measure them.
+- Low-level lookup comparators should include the same categories as the
+  upstream rig: direct native access, nested `match`, nested map lookup, and CEL
+  lookup. Capsem may add additional borrowed-view/native-resolver variants after
+  the canonical correctness path lands.
 - Capsem canonical-root variants of that rig:
   - `http.request.host.contains("google")`;
   - `http.request.url.contains("google")`;
@@ -158,8 +171,8 @@ clearly not numerical and matches the sprint tracker.
 - Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
   evidence dedup, and registry plan swaps.
 - Reproduce the Howard John-style CEL benchmark suite, keep it as a local
-  baseline artifact, and adapt it to Capsem canonical roots before drawing
-  optimization conclusions.
+  baseline artifact, mirror the Agentgateway `benches.rs` families/cases, and
+  adapt it to Capsem canonical roots before drawing optimization conclusions.
 - Add correctness assertions for every benchmark scenario: expected final
   action, expected detection finding, and persisted resolved-event evidence.
 - Add rule-pack and event fixtures for low/medium/high rule-count cases.

@@ -884,7 +884,11 @@ a valid claim -- mark it `[ ]` instead.
     coverage includes CEL context/materialization cost, fast field access,
     slower body/regex access, header lookup versus optimized native Rust, and
     canonical expressions such as `http.request.host.contains("google")` and
-    `http.request.header("authorization").exists()`.
+    `http.request.header("authorization").exists()`. The concrete reproduction
+    target is Agentgateway's `crates/agentgateway/src/cel/benches.rs` at commit
+    `2f9ffa89c25a45f3eca34ba39bb6241a1e6d8a4b`: compile, execute-ref,
+    execute-snapshot, lookup, and the `simple_access`, `header`, `bbr`, `jwt`,
+    `cidr`, and `regex` cases.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
