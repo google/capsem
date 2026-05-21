@@ -6,8 +6,8 @@ use capsem_core::security_packs::{
     validate_detection_ir_v1_json, SecurityEventV1, SecurityPackSchemaError,
 };
 use capsem_security_engine::{
-    CelDetectionEvaluator, DetectionEvaluator, HttpSecuritySubject, RedactionState, SecurityEvent,
-    SecurityEventCommon,
+    CelDetectionEvaluator, DetectionEvaluator, HttpBodySecuritySubject, HttpSecuritySubject,
+    RedactionState, SecurityEvent, SecurityEventCommon,
 };
 use serde_json::Value;
 
@@ -123,6 +123,7 @@ fn detection_ir_evaluator_matches_security_engine_http_event() {
             path_class: "metadata".into(),
             request_bytes: 128,
             response_bytes: None,
+            ..Default::default()
         },
     );
 
@@ -193,6 +194,7 @@ fn detection_ir_lowers_to_real_cel_detection_rules() {
             path_class: "metadata".into(),
             request_bytes: 128,
             response_bytes: None,
+            ..Default::default()
         },
     );
 
@@ -202,6 +204,91 @@ fn detection_ir_lowers_to_real_cel_detection_rules() {
     assert_eq!(findings[0].event_id, "evt-cel-ir-http");
     assert_eq!(findings[0].rule_id, "metadata-access");
     assert_eq!(findings[0].pack_id, "corp-default-detections");
+}
+
+#[test]
+fn detection_ir_lowers_http_url_path_and_body_to_policy_context_roots() {
+    let mut value: Value = serde_json::from_str(&fixture("detection-ir-v1-valid.json")).unwrap();
+    value["rules"][0]["matchers"] = serde_json::json!([
+        {
+            "field_path": "subject.request.url",
+            "operator": "equals_any",
+            "values": ["https://google.example.test/admin/settings"],
+            "sigma_field": "url"
+        },
+        {
+            "field_path": "subject.request.path",
+            "operator": "equals_any",
+            "values": ["/admin/settings"],
+            "sigma_field": "path"
+        },
+        {
+            "field_path": "subject.request.body.text",
+            "operator": "equals_any",
+            "values": ["secret"],
+            "sigma_field": "body"
+        }
+    ]);
+    let ir = parse_detection_ir_v1_json(&serde_json::to_string(&value).unwrap()).unwrap();
+    let rules = compile_detection_ir_to_cel_detection_rules(&ir).unwrap();
+    assert!(rules[0]
+        .condition
+        .contains("http.request.url == \"https://google.example.test/admin/settings\""));
+    assert!(rules[0]
+        .condition
+        .contains("http.request.path == \"/admin/settings\""));
+    assert!(rules[0]
+        .condition
+        .contains("http.request.body.text == \"secret\""));
+
+    let event = SecurityEvent::http(
+        SecurityEventCommon {
+            event_id: "evt-http-full-surface".into(),
+            parent_event_id: None,
+            stream_id: Some("http-stream-1".into()),
+            activity_id: Some("http-request-1".into()),
+            sequence_no: Some(1),
+            source_engine: capsem_security_engine::SourceEngine::Network,
+            attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+            origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:vm-1".into()),
+            enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+            trace_id: Some("trace-s08b".into()),
+            span_id: None,
+            timestamp_unix_ms: 1_789,
+            vm_id: Some("vm-1".into()),
+            session_id: Some("session-1".into()),
+            profile_id: Some("coding".into()),
+            profile_revision: Some("rev-a".into()),
+            profile_pack_ids: vec!["corp-default-detections".into()],
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: Some("user-1".into()),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        HttpSecuritySubject {
+            method: "POST".into(),
+            host: "google.example.test".into(),
+            path: Some("/admin/settings".into()),
+            url: Some("https://google.example.test/admin/settings".into()),
+            path_class: "admin".into(),
+            request_bytes: 128,
+            request_body: Some(HttpBodySecuritySubject::text("secret")),
+            response_bytes: None,
+            ..Default::default()
+        },
+    );
+    let mut evaluator = CelDetectionEvaluator::compile(rules).unwrap();
+    let findings = evaluator.evaluate(&event).unwrap();
+    assert_eq!(findings.len(), 1);
 }
 
 #[test]

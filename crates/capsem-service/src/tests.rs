@@ -6505,6 +6505,7 @@ fn runtime_http_event(
             path_class: "/metadata".into(),
             request_bytes: 64,
             response_bytes: None,
+            ..Default::default()
         },
     )
 }

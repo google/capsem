@@ -363,8 +363,13 @@ fn event_family_cel_guard(event_family: EventFamily) -> Result<String> {
 fn is_supported_runtime_field(event_family: EventFamily, scope: &str, suffix: &str) -> bool {
     match (event_family, scope, suffix) {
         (EventFamily::Dns, "request", "qname" | "domain_class") => true,
-        (EventFamily::Http, "request", "method" | "host" | "path_class" | "request_bytes") => true,
-        (EventFamily::Http, "response", "response_bytes") => true,
+        (
+            EventFamily::Http,
+            "request",
+            "method" | "scheme" | "host" | "port" | "path" | "query" | "url" | "path_class"
+            | "request_bytes" | "body.text",
+        ) => true,
+        (EventFamily::Http, "response", "status" | "response_bytes" | "body.text") => true,
         (EventFamily::Mcp, "request", "server_id" | "tool_name") => true,
         (
             EventFamily::Model,

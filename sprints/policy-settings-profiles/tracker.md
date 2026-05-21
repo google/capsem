@@ -877,7 +877,23 @@ a valid claim -- mark it `[ ]` instead.
     test permissions for the asset-supervisor loopback fixtures. Still missing:
     historical/session-journal hunt, gateway/CLI/UI route exposure,
     persistence/profile-pack seeding, deeper HTTP header/body projection from
-    Network Engine, and VM/runtime integration.
+    Network Engine, and VM/runtime integration. Twenty-ninth S08b.2 slice
+    started closing that HTTP projection gap: `HttpSecuritySubject` now carries
+    typed request scheme/host/port/path/query/URL, deterministic headers, and
+    typed body state/text; the policy-context projection exposes those fields
+    through the authored CEL roots; and Detection IR lowering now supports
+    HTTP request URL/path/body text. Verification:
+    `cargo test -p capsem-security-engine
+    real_cel_policy_context_exposes_http_request_surface` passed and
+    `cargo test -p capsem-core --test security_packs
+    detection_ir_lowers_http_url_path_and_body_to_policy_context_roots` passed;
+    full serialized `cargo test -p capsem-service -- --test-threads=1` passed
+    with localhost permissions for the asset-supervisor loopback fixtures.
+    Still missing after this slice: actual Network Engine population of the new
+    HTTP fields from parsed/decompressed traffic, signed/unsigned numeric
+    CEL ergonomics for response status, historical/session-journal hunt,
+    gateway/CLI/UI route exposure, persistence/profile-pack seeding, and
+    VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

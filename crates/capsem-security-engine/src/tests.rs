@@ -42,6 +42,7 @@ fn http_event_exposes_identity_and_quota_dimensions() {
             path_class: "api-v1".into(),
             request_bytes: 512,
             response_bytes: None,
+            ..Default::default()
         },
     );
 
@@ -139,6 +140,7 @@ fn plugin_mutation_allowlist_rejects_illegal_targets() {
             path_class: "api".into(),
             request_bytes: 10,
             response_bytes: None,
+            ..Default::default()
         },
     );
     event.mutations.push(EventMutation::StripHeader {
@@ -170,6 +172,7 @@ fn plugin_transform_preserves_core_event_and_records_hashes() {
             path_class: "api".into(),
             request_bytes: 10,
             response_bytes: None,
+            ..Default::default()
         },
     );
     input.labels.push("network".into());
@@ -230,6 +233,7 @@ fn plugin_transform_rejects_hidden_subject_mutation() {
             path_class: "api".into(),
             request_bytes: 10,
             response_bytes: None,
+            ..Default::default()
         },
     );
     let mut output = input.clone();
@@ -239,6 +243,7 @@ fn plugin_transform_rejects_hidden_subject_mutation() {
         path_class: "api".into(),
         request_bytes: 10,
         response_bytes: None,
+        ..Default::default()
     });
 
     let error = validate_plugin_transform(&plugin_identity(), &input, &output).unwrap_err();
@@ -258,6 +263,7 @@ fn plugin_transform_rejects_dropping_prior_findings_labels_or_mutations() {
             path_class: "api".into(),
             request_bytes: 10,
             response_bytes: None,
+            ..Default::default()
         },
     );
     input.labels.push("pii_access".into());
@@ -312,6 +318,7 @@ fn security_decision_projects_to_internal_transport_projection() {
             path_class: "external".into(),
             request_bytes: 10,
             response_bytes: None,
+            ..Default::default()
         },
     );
     assert_eq!(
@@ -841,6 +848,67 @@ fn policy_cel_context_supports_header_exists_helper() {
     .unwrap();
 
     assert!(evaluate_policy_cel_bool("header-helper", &program, &policy_context).unwrap());
+}
+
+#[test]
+fn real_cel_policy_context_exposes_http_request_surface() {
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_owned(), vec!["Bearer test".to_owned()]);
+    let event = SecurityEvent::http(
+        common(
+            "evt-http-policy-surface",
+            "http.request",
+            SourceEngine::Network,
+        ),
+        HttpSecuritySubject {
+            method: "POST".into(),
+            scheme: Some("https".into()),
+            host: "google.example.test".into(),
+            port: Some(443),
+            path: Some("/admin/settings".into()),
+            query: Some("debug=true".into()),
+            url: Some("https://google.example.test/admin/settings?debug=true".into()),
+            path_class: "admin".into(),
+            request_bytes: 128,
+            request_headers: headers,
+            request_body: Some(HttpBodySecuritySubject::text("contains secret")),
+            response_status: Some(403),
+            response_bytes: Some(32),
+            ..Default::default()
+        },
+    );
+    let policy_context = policy_context_from_event(&event);
+    for condition in [
+        "http.request.host.contains('google')",
+        "http.request.url.contains('google')",
+        "http.request.path.startsWith('/admin')",
+        "http.request.header('authorization').exists()",
+        "http.request.body.text.contains('secret')",
+    ] {
+        let program = cel::Program::compile(condition).unwrap();
+        assert!(
+            evaluate_policy_cel_bool(condition, &program, &policy_context).unwrap(),
+            "{condition}"
+        );
+    }
+
+    let mut evaluator = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "http-policy-surface".into(),
+        pack_id: Some("corp-enforcement".into()),
+        condition: "http.request.host.contains('google') \
+            && http.request.url.contains('google') \
+            && http.request.path.startsWith('/admin') \
+            && http.request.header('authorization').exists() \
+            && http.request.body.text.contains('secret')"
+            .into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("admin secret egress".into()),
+    }])
+    .unwrap();
+
+    let result = evaluator.evaluate(&event).unwrap().unwrap();
+    assert_eq!(result.action, SecurityDecisionAction::Block);
+    assert_eq!(result.rule.as_deref(), Some("http-policy-surface"));
 }
 
 #[test]
@@ -1490,6 +1558,7 @@ fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecu
             path_class: "external".into(),
             request_bytes: 64,
             response_bytes: None,
+            ..Default::default()
         },
     );
 
@@ -1580,6 +1649,7 @@ fn http_request_event(event_id: &str) -> SecurityEvent {
             path_class: "metadata".into(),
             request_bytes: 42,
             response_bytes: None,
+            ..Default::default()
         },
     )
 }

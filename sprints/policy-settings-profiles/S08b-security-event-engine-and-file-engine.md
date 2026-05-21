@@ -457,6 +457,13 @@ Implementation status as of the current service-route slices:
   `http.request.header(name).exists()`, and rejects authored `event.*` at
   compile time. `capsem-core` Detection IR lowering now emits canonical roots
   instead of `event.subject.*`.
+- Landed: normalized HTTP events now carry the first request-side policy
+  surface needed by the DSL: scheme, host, port, path, query, URL,
+  deterministic headers, and typed body state/text. Runtime CEL tests cover
+  `http.request.host.contains(...)`, `http.request.url.contains(...)`,
+  `http.request.path.startsWith(...)`, `http.request.header(...).exists()`,
+  and `http.request.body.text.contains(...)`; Detection IR lowering covers
+  URL/path/body text onto the same canonical roots.
 - Guardrail: malformed CEL fails before registry mutation; list/stats expose
   rule id, pack id, origin/scope, enabled state, compile status, generation,
   compiled plan id, match count, and last matched event/timestamp.

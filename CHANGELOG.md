@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added canonical policy-context CEL evaluation in `capsem-security-engine`, so
   runtime enforcement/detection rules now use roots such as
   `http.request.host` and reject internal `event.*` paths.
+- Added typed HTTP request policy projection for canonical CEL rules, including
+  request URL/path, case-insensitive headers, and body text predicates such as
+  `http.request.body.text.contains("secret")`.
 - Added Rust Detection IR evaluation against the new S08b normalized
   `SecurityEvent` contract so Sigma-derived findings can run on the shared
   event model instead of a parallel fixture-only shape.

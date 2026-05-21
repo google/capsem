@@ -1,5 +1,5 @@
 use capsem_proto::{
-    BodyPolicyContext, CommonPolicyContext, DnsPolicyContext, DnsRequestPolicyContext,
+    BodyPolicyContext, BodyState, CommonPolicyContext, DnsPolicyContext, DnsRequestPolicyContext,
     FileActivityPolicyContext, FilePolicyContext, HttpPolicyContext, HttpRequestPolicyContext,
     HttpResponsePolicyContext, McpPolicyContext, McpRequestPolicyContext, ModelPolicyContext,
     ModelRequestPolicyContext, PolicyContext, ProcessActivityPolicyContext,
@@ -533,15 +533,85 @@ pub struct DnsSecuritySubject {
     pub domain_class: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpSecuritySubject {
     pub method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
     pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     pub path_class: String,
     pub request_bytes: u64,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub request_headers: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<HttpBodySecuritySubject>,
+    #[serde(default)]
+    pub response_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub response_headers: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub response_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_body: Option<HttpBodySecuritySubject>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpBodySecuritySubject {
+    pub state: HttpBodySecurityState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redaction_reason: Option<String>,
+}
+
+impl HttpBodySecuritySubject {
+    pub fn text(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            state: HttpBodySecurityState::Text,
+            size: Some(text.len() as u64),
+            text: Some(text),
+            content_type: None,
+            truncated: false,
+            redaction_reason: None,
+        }
+    }
+
+    pub fn redacted(reason: impl Into<String>) -> Self {
+        Self {
+            state: HttpBodySecurityState::Redacted,
+            text: None,
+            content_type: None,
+            size: None,
+            truncated: false,
+            redaction_reason: Some(reason.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HttpBodySecurityState {
+    Missing,
+    Text,
+    Binary,
+    Redacted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1789,25 +1859,22 @@ fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
             context.http = HttpPolicyContext {
                 request: Some(HttpRequestPolicyContext {
                     method: Some(subject.method.clone()),
-                    scheme: None,
+                    scheme: subject.scheme.clone(),
                     host: Some(subject.host.clone()),
-                    port: None,
-                    path: None,
-                    query: None,
-                    url: None,
+                    port: subject.port,
+                    path: subject.path.clone(),
+                    query: subject.query.clone(),
+                    url: subject.url.clone(),
                     path_class: Some(subject.path_class.clone()),
                     bytes: Some(subject.request_bytes),
-                    headers: BTreeMap::new(),
-                    body: BodyPolicyContext::missing(),
+                    headers: subject.request_headers.clone(),
+                    body: subject
+                        .request_body
+                        .as_ref()
+                        .map(http_body_policy_context)
+                        .unwrap_or_else(BodyPolicyContext::missing),
                 }),
-                response: subject
-                    .response_bytes
-                    .map(|bytes| HttpResponsePolicyContext {
-                        status: None,
-                        bytes: Some(bytes),
-                        headers: BTreeMap::new(),
-                        body: BodyPolicyContext::missing(),
-                    }),
+                response: http_response_policy_context(subject),
             };
         }
         SecurityEventSubject::Mcp(subject) => {
@@ -1919,6 +1986,45 @@ fn serialized_enum_string<T: Serialize>(value: T) -> Option<String> {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
+}
+
+fn http_body_policy_context(body: &HttpBodySecuritySubject) -> BodyPolicyContext {
+    BodyPolicyContext {
+        state: match body.state {
+            HttpBodySecurityState::Missing => BodyState::Missing,
+            HttpBodySecurityState::Text => BodyState::Text,
+            HttpBodySecurityState::Binary => BodyState::Binary,
+            HttpBodySecurityState::Redacted => BodyState::Redacted,
+        },
+        text: body.text.clone(),
+        content_type: body.content_type.clone(),
+        size: body.size,
+        truncated: body.truncated,
+        redaction_reason: body.redaction_reason.clone(),
+    }
+}
+
+fn http_response_policy_context(
+    subject: &HttpSecuritySubject,
+) -> Option<HttpResponsePolicyContext> {
+    if subject.response_status.is_none()
+        && subject.response_bytes.is_none()
+        && subject.response_headers.is_empty()
+        && subject.response_body.is_none()
+    {
+        return None;
+    }
+
+    Some(HttpResponsePolicyContext {
+        status: subject.response_status,
+        bytes: subject.response_bytes,
+        headers: subject.response_headers.clone(),
+        body: subject
+            .response_body
+            .as_ref()
+            .map(http_body_policy_context)
+            .unwrap_or_else(BodyPolicyContext::missing),
+    })
 }
 
 #[derive(Default)]
