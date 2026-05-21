@@ -602,7 +602,7 @@ a valid claim -- mark it `[ ]` instead.
     families, kept detection hunt forensic/detection-only, and clarified that
     `capsem-admin` must work offline while S08b service routes own runtime
     validation/compile/live registry/stats/backtest/hunt.
-21. [ ] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
+21. [~] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
     -- inserted during the 2026-05-19 engine-boundary regroup. Split runtime
     activity handling into Network Engine, File Engine, Process Engine, Security
     Engine, and Resolved Event Emitter contracts/crates. File writes, deletes,
@@ -750,6 +750,19 @@ a valid claim -- mark it `[ ]` instead.
     --test security_packs` passed with 6 tests, `cargo test -p capsem-logger
     ai_evidence_is_stored_in_queryable_tables` passed, and `cargo test -p
     capsem-core ai_traffic::evidence` passed with 5 tests.
+    Eighteenth side-sprint closeout slice audited the canonical AI evidence
+    acceptance criteria and filled the remaining fixture/proof gaps: OpenAI
+    Responses has a parser-adapter test, the committed evidence fixture now
+    covers orphan model tool calls, orphan MCP executions, and provider
+    unknown-field drift, and the side sprint is closed at the contract,
+    adapter, session-ledger, and policy-projection layer. Verification:
+    `cargo test -p capsem-security-engine
+    canonical_ai_evidence_fixture_covers_first_slice_providers_and_host_accounting`
+    passed, `cargo test -p capsem-core
+    openai_responses_path_projects_responses_api_family` passed, and the
+    closeout gate re-ran the focused side-sprint suites before commit. Full
+    VM-originated E2E, live resolved-event journal, timeline, runtime
+    enforcement/detection routes, and performance remain S08b/S08d work.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

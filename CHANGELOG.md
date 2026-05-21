@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added security-engine quota/status projection for canonical AI evidence,
   including API family, parse/evidence status, model tool/result/execution
   counts, linked MCP tool-call counts, and MCP execution link identifiers.
+- Closed the canonical AI evidence side sprint with additional fixtures and
+  tests for OpenAI Responses, orphan model tool calls, orphan MCP executions,
+  and provider unknown-field drift.
 - Added the first S08b `capsem-security-engine` contract crate with normalized
   security events, resolved-event actions, detection findings, quota dimensions,
   and throttle-ready serialization tests.

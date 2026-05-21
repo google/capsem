@@ -366,11 +366,45 @@ fn canonical_ai_evidence_fixture_covers_first_slice_providers_and_host_accountin
     assert!(openai.charges_vm_accounting());
     assert!(!openai.charges_host_accounting());
 
+    let openai_responses_orphan_tool = interactions
+        .iter()
+        .find(|interaction| interaction.interaction_id == "model-openai-responses-orphan-tool-call")
+        .unwrap();
+    assert_eq!(
+        openai_responses_orphan_tool.api_family,
+        AiApiFamily::OpenaiResponses
+    );
+    assert_eq!(
+        openai_responses_orphan_tool.tool_calls[0].status,
+        ToolCallStatus::Proposed
+    );
+    assert!(openai_responses_orphan_tool.tool_calls[0]
+        .linked_mcp_call_id
+        .is_none());
+    assert_eq!(
+        openai_responses_orphan_tool.evidence_status,
+        EvidenceStatus::Ambiguous
+    );
+
+    let orphan_mcp = interactions
+        .iter()
+        .find(|interaction| interaction.interaction_id == "model-openai-orphan-mcp-execution")
+        .unwrap();
+    assert_eq!(orphan_mcp.evidence_status, EvidenceStatus::Orphaned);
+    assert_eq!(
+        orphan_mcp.mcp_executions[0].link_status,
+        LinkStatus::OrphanMcpExecution
+    );
+    assert!(orphan_mcp.mcp_executions[0]
+        .linked_model_tool_call_id
+        .is_none());
+
     let anthropic = interactions
         .iter()
         .find(|interaction| interaction.interaction_id == "model-anthropic-malformed-tool")
         .unwrap();
     assert_eq!(anthropic.api_family, AiApiFamily::AnthropicMessages);
+    assert!(anthropic.request.unknown_fields_present);
     assert_eq!(
         anthropic.tool_calls[0].arguments_status,
         ArgumentsStatus::PartialJson

@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress as a pre-S08b foundation side sprint. The first contract slice
+Closed as a pre-S08b foundation side sprint. The first contract slice
 landed in `capsem-security-engine`: canonical AI evidence structs/enums,
 host-vs-VM attribution fields on security events and quota dimensions, optional
 model/MCP evidence on policy-facing subjects, OpenAI/Anthropic/Gemini/host
@@ -40,6 +40,12 @@ status, model tool-call/result/MCP-execution counts, and linked MCP tool-call
 counts. MCP events now expose link status plus linked model interaction/tool
 ids. This makes the evidence consumable by S08b/S12/S22 without each caller
 re-parsing provider-specific payloads.
+
+The closeout slice audited the acceptance criteria and filled the fixture gaps:
+OpenAI Responses is now explicitly proven in the `capsem-core` adapter,
+committed canonical evidence fixtures cover orphan model tool calls, orphan MCP
+executions, and provider unknown-field drift, and the focused tests prove those
+cases deserialize into typed enums/statuses instead of escaping into loose JSON.
 
 This is intentionally a side document rather than another numbered board item:
 S08b remains the active engine implementation sprint, but S08b must not harden
@@ -389,6 +395,27 @@ Required behavior:
    the policy-facing substrate.
 12. S08b/S08c/S08d can consume the canonical evidence without depending on
    provider-specific request/response JSON paths.
+
+## Closeout Audit
+
+All side-sprint acceptance criteria are satisfied at the contract, adapter, and
+session-ledger layer:
+
+| Criteria | Proof |
+| :--- | :--- |
+| Canonical structs/enums, typed content, usage, link status | `cargo test -p capsem-security-engine` |
+| OpenAI Chat, OpenAI Responses, Anthropic, Gemini adapters | `cargo test -p capsem-core ai_traffic::evidence`; `openai_responses_path_projects_responses_api_family` |
+| Normalized session DB, no opaque evidence blob | `cargo test -p capsem-logger ai_evidence_is_stored_in_queryable_tables` |
+| MCP execution linkage and explicit ambiguous/orphan statuses | `cargo test -p capsem-logger`; canonical evidence fixture tests |
+| Raw/parsed tool arguments and result evidence | `cargo test -p capsem-core ai_traffic::evidence`; fixture roundtrip |
+| Security Engine projection into policy dimensions | `cargo test -p capsem-security-engine` |
+| Host AI attribution separate from VM accounting | `canonical_ai_evidence_fixture_covers_first_slice_providers_and_host_accounting` |
+| Golden coverage for streaming, malformed/partial args, linked/orphan cases, host prompts, unknown drift | `crates/capsem-security-engine/fixtures/ai-interaction-evidence-v1.json` plus fixture test |
+| Existing model/MCP behavior preserved | `cargo test -p capsem-core telemetry_hook`; `cargo test -p capsem-core --test security_packs` |
+
+This closeout does not claim the downstream VM-originated E2E, live timeline,
+runtime rule registry, or performance gates. Those remain owned by S08b/S08d
+after the resolved-event and engine wiring moves from contract to runtime.
 
 ## Testing Matrix
 

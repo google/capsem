@@ -391,6 +391,47 @@ mod tests {
     }
 
     #[test]
+    fn openai_responses_path_projects_responses_api_family() {
+        let request = RequestMeta {
+            model: Some("gpt-5.5".into()),
+            stream: false,
+            system_prompt_preview: None,
+            messages_count: 1,
+            tools_count: 0,
+            tool_results: Vec::new(),
+        };
+        let summary = StreamSummary {
+            message_id: Some("resp-1".into()),
+            model: Some("gpt-5.5".into()),
+            text: "done".into(),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            input_tokens: Some(10),
+            output_tokens: Some(2),
+            usage_details: BTreeMap::new(),
+            stop_reason: Some(StopReason::EndTurn),
+        };
+
+        let evidence = build_model_interaction_evidence(input(
+            ProviderKind::OpenAi,
+            "/v1/responses",
+            &request,
+            Some(&summary),
+        ));
+
+        assert_eq!(evidence.provider, AiProvider::Openai);
+        assert_eq!(evidence.api_family, AiApiFamily::OpenaiResponses);
+        assert_eq!(
+            evidence.request.raw_shape_version,
+            "openai.responses.current"
+        );
+        assert_eq!(
+            evidence.response.as_ref().unwrap().raw_shape_version,
+            "openai.responses.current"
+        );
+    }
+
+    #[test]
     fn anthropic_partial_arguments_are_marked_partial() {
         let request = RequestMeta {
             model: Some("claude-sonnet-4-20250514".into()),

@@ -295,5 +295,123 @@
     },
     "parse_status": "complete",
     "evidence_status": "complete"
+  },
+  {
+    "interaction_id": "model-openai-responses-orphan-tool-call",
+    "trace_id": "trace-openai-responses-orphan-tool",
+    "attribution_scope": "vm",
+    "source_engine": "network",
+    "origin_kind": "guest_network",
+    "accounting_owner": "vm:vm-4",
+    "profile_id": "coding",
+    "vm_id": "vm-4",
+    "session_id": "session-4",
+    "user_id": "user-1",
+    "provider": "openai",
+    "api_family": "openai_responses",
+    "model": "gpt-5.5",
+    "request": {
+      "request_id": "req-openai-responses-orphan-tool",
+      "provider": "openai",
+      "api_family": "openai_responses",
+      "model": "gpt-5.5",
+      "stream": true,
+      "message_count": 2,
+      "tools_declared_count": 1,
+      "raw_shape_version": "openai.responses.2026-05",
+      "unknown_fields_present": false
+    },
+    "response": {
+      "response_id": "resp-openai-responses-orphan-tool",
+      "provider_response_id": "resp_orphan_tool",
+      "stop_reason": "tool_call",
+      "text_preview": "Checking repository state.",
+      "content_blocks": [
+        {
+          "kind": "text",
+          "text_preview": "Checking repository state."
+        },
+        {
+          "kind": "tool_use",
+          "tool_call_id": "call-orphan-model-1",
+          "name": "github__search"
+        }
+      ],
+      "usage": {
+        "input_tokens": 60,
+        "output_tokens": 10,
+        "estimated_cost_micros": 30
+      },
+      "raw_shape_version": "openai.responses.2026-05"
+    },
+    "tool_calls": [
+      {
+        "tool_call_id": "call-orphan-model-1",
+        "index": 0,
+        "provider_call_id": "call-orphan-model-1",
+        "raw_name": "github__search",
+        "normalized_name": "github.search",
+        "arguments_raw": "{\"query\":\"capsem\"}",
+        "arguments_json": "{\"query\":\"capsem\"}",
+        "arguments_status": "valid_json",
+        "origin": "mcp_tool",
+        "status": "proposed",
+        "parse_confidence": "medium"
+      }
+    ],
+    "usage": {
+      "input_tokens": 60,
+      "output_tokens": 10,
+      "estimated_cost_micros": 30
+    },
+    "parse_status": "complete",
+    "evidence_status": "ambiguous"
+  },
+  {
+    "interaction_id": "model-openai-orphan-mcp-execution",
+    "trace_id": "trace-openai-orphan-mcp",
+    "attribution_scope": "vm",
+    "source_engine": "network",
+    "origin_kind": "guest_network",
+    "accounting_owner": "vm:vm-5",
+    "profile_id": "coding",
+    "vm_id": "vm-5",
+    "session_id": "session-5",
+    "user_id": "user-1",
+    "provider": "openai",
+    "api_family": "openai_chat_completions",
+    "model": "gpt-5.5",
+    "request": {
+      "request_id": "req-openai-orphan-mcp",
+      "provider": "openai",
+      "api_family": "openai_chat_completions",
+      "model": "gpt-5.5",
+      "stream": false,
+      "message_count": 1,
+      "tools_declared_count": 0,
+      "raw_shape_version": "openai.chat_completions.2026-05",
+      "unknown_fields_present": true
+    },
+    "mcp_executions": [
+      {
+        "mcp_call_id": "mcp-orphan-1",
+        "server_id": "filesystem",
+        "tool_name": "read_file",
+        "namespaced_tool_name": "filesystem__read_file",
+        "transport": "mcp-framed",
+        "request_arguments_raw": "{\"path\":\"/tmp/a\"}",
+        "request_arguments_json": "{\"path\":\"/tmp/a\"}",
+        "result_kind": "text",
+        "result_preview": "orphaned result",
+        "is_error": false,
+        "latency_ms": 8,
+        "link_status": "orphan_mcp_execution"
+      }
+    ],
+    "usage": {
+      "estimated_cost_micros": 0
+    },
+    "parse_status": "complete",
+    "evidence_status": "orphaned"
   }
 ]
