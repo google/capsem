@@ -63,19 +63,19 @@ pub const CREATE_SCHEMA: &str = "
         model_call_id INTEGER NOT NULL,
         interaction_id TEXT NOT NULL,
         trace_id TEXT NOT NULL,
-        attribution_scope TEXT NOT NULL,
-        source_engine TEXT NOT NULL,
-        origin_kind TEXT NOT NULL,
+        attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
+        source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
+        origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
         accounting_owner TEXT,
         profile_id TEXT,
         vm_id TEXT,
         session_id TEXT,
         user_id TEXT,
-        provider TEXT NOT NULL,
-        api_family TEXT NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google_gemini', 'unknown')),
+        api_family TEXT NOT NULL CHECK (api_family IN ('openai_chat_completions', 'openai_responses', 'anthropic_messages', 'google_gemini_content', 'mcp', 'unknown')),
         model TEXT NOT NULL,
-        parse_status TEXT NOT NULL,
-        evidence_status TEXT NOT NULL,
+        parse_status TEXT NOT NULL CHECK (parse_status IN ('complete', 'partial', 'malformed', 'unsupported', 'redacted')),
+        evidence_status TEXT NOT NULL CHECK (evidence_status IN ('complete', 'partial', 'ambiguous', 'orphaned', 'untrusted')),
         request_id TEXT NOT NULL,
         request_model TEXT,
         request_stream INTEGER NOT NULL DEFAULT 0,
@@ -99,7 +99,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS ai_usage_details (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         interaction_id INTEGER NOT NULL,
-        scope TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK (scope IN ('interaction', 'response')),
         name TEXT NOT NULL,
         value INTEGER NOT NULL,
         FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
@@ -109,7 +109,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         interaction_id INTEGER NOT NULL,
         block_index INTEGER NOT NULL,
-        kind TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
         text_preview TEXT,
         json_preview TEXT,
         mime_type TEXT,
@@ -135,11 +135,11 @@ pub const CREATE_SCHEMA: &str = "
         normalized_name TEXT NOT NULL,
         arguments_raw TEXT,
         arguments_json TEXT,
-        arguments_status TEXT NOT NULL,
-        origin TEXT NOT NULL,
+        arguments_status TEXT NOT NULL CHECK (arguments_status IN ('valid_json', 'partial_json', 'malformed_json', 'not_json', 'redacted', 'absent')),
+        origin TEXT NOT NULL CHECK (origin IN ('native_provider_tool', 'mcp_tool', 'local_builtin_tool', 'unknown')),
         linked_mcp_call_id TEXT,
-        status TEXT NOT NULL,
-        parse_confidence TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
+        parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
         FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
     );
 
@@ -148,13 +148,13 @@ pub const CREATE_SCHEMA: &str = "
         interaction_id INTEGER NOT NULL,
         tool_call_id TEXT NOT NULL,
         linked_mcp_call_id TEXT,
-        content_kind TEXT NOT NULL,
+        content_kind TEXT NOT NULL CHECK (content_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
         content_preview TEXT,
         content_json TEXT,
         is_error INTEGER NOT NULL DEFAULT 0,
-        result_status TEXT NOT NULL,
+        result_status TEXT NOT NULL CHECK (result_status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
         returned_to_model INTEGER NOT NULL DEFAULT 0,
-        parse_confidence TEXT NOT NULL,
+        parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
         FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
     );
 
@@ -168,14 +168,14 @@ pub const CREATE_SCHEMA: &str = "
         transport TEXT NOT NULL,
         request_arguments_raw TEXT,
         request_arguments_json TEXT,
-        result_kind TEXT NOT NULL,
+        result_kind TEXT NOT NULL CHECK (result_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
         result_preview TEXT,
         result_json TEXT,
         is_error INTEGER NOT NULL DEFAULT 0,
         latency_ms INTEGER NOT NULL DEFAULT 0,
         linked_model_interaction_id TEXT,
         linked_model_tool_call_id TEXT,
-        link_status TEXT NOT NULL,
+        link_status TEXT NOT NULL CHECK (link_status IN ('linked', 'unlinked_pending', 'orphan_model_tool_call', 'orphan_mcp_execution', 'ambiguous', 'not_applicable')),
         FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
     );
 
@@ -471,19 +471,19 @@ pub fn migrate(conn: &Connection) {
             model_call_id INTEGER NOT NULL,
             interaction_id TEXT NOT NULL,
             trace_id TEXT NOT NULL,
-            attribution_scope TEXT NOT NULL,
-            source_engine TEXT NOT NULL,
-            origin_kind TEXT NOT NULL,
+            attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
+            source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
+            origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
             accounting_owner TEXT,
             profile_id TEXT,
             vm_id TEXT,
             session_id TEXT,
             user_id TEXT,
-            provider TEXT NOT NULL,
-            api_family TEXT NOT NULL,
+            provider TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google_gemini', 'unknown')),
+            api_family TEXT NOT NULL CHECK (api_family IN ('openai_chat_completions', 'openai_responses', 'anthropic_messages', 'google_gemini_content', 'mcp', 'unknown')),
             model TEXT NOT NULL,
-            parse_status TEXT NOT NULL,
-            evidence_status TEXT NOT NULL,
+            parse_status TEXT NOT NULL CHECK (parse_status IN ('complete', 'partial', 'malformed', 'unsupported', 'redacted')),
+            evidence_status TEXT NOT NULL CHECK (evidence_status IN ('complete', 'partial', 'ambiguous', 'orphaned', 'untrusted')),
             request_id TEXT NOT NULL,
             request_model TEXT,
             request_stream INTEGER NOT NULL DEFAULT 0,
@@ -506,7 +506,7 @@ pub fn migrate(conn: &Connection) {
         CREATE TABLE IF NOT EXISTS ai_usage_details (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             interaction_id INTEGER NOT NULL,
-            scope TEXT NOT NULL,
+            scope TEXT NOT NULL CHECK (scope IN ('interaction', 'response')),
             name TEXT NOT NULL,
             value INTEGER NOT NULL,
             FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
@@ -515,7 +515,7 @@ pub fn migrate(conn: &Connection) {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             interaction_id INTEGER NOT NULL,
             block_index INTEGER NOT NULL,
-            kind TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
             text_preview TEXT,
             json_preview TEXT,
             mime_type TEXT,
@@ -540,11 +540,11 @@ pub fn migrate(conn: &Connection) {
             normalized_name TEXT NOT NULL,
             arguments_raw TEXT,
             arguments_json TEXT,
-            arguments_status TEXT NOT NULL,
-            origin TEXT NOT NULL,
+            arguments_status TEXT NOT NULL CHECK (arguments_status IN ('valid_json', 'partial_json', 'malformed_json', 'not_json', 'redacted', 'absent')),
+            origin TEXT NOT NULL CHECK (origin IN ('native_provider_tool', 'mcp_tool', 'local_builtin_tool', 'unknown')),
             linked_mcp_call_id TEXT,
-            status TEXT NOT NULL,
-            parse_confidence TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
+            parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
             FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
         );
         CREATE TABLE IF NOT EXISTS ai_model_tool_results (
@@ -552,13 +552,13 @@ pub fn migrate(conn: &Connection) {
             interaction_id INTEGER NOT NULL,
             tool_call_id TEXT NOT NULL,
             linked_mcp_call_id TEXT,
-            content_kind TEXT NOT NULL,
+            content_kind TEXT NOT NULL CHECK (content_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
             content_preview TEXT,
             content_json TEXT,
             is_error INTEGER NOT NULL DEFAULT 0,
-            result_status TEXT NOT NULL,
+            result_status TEXT NOT NULL CHECK (result_status IN ('proposed', 'executed', 'blocked', 'returned_to_model', 'error', 'unknown')),
             returned_to_model INTEGER NOT NULL DEFAULT 0,
-            parse_confidence TEXT NOT NULL,
+            parse_confidence TEXT NOT NULL CHECK (parse_confidence IN ('low', 'medium', 'high')),
             FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
         );
         CREATE TABLE IF NOT EXISTS ai_mcp_execution_evidence (
@@ -571,14 +571,14 @@ pub fn migrate(conn: &Connection) {
             transport TEXT NOT NULL,
             request_arguments_raw TEXT,
             request_arguments_json TEXT,
-            result_kind TEXT NOT NULL,
+            result_kind TEXT NOT NULL CHECK (result_kind IN ('text', 'json', 'image', 'file', 'tool_use', 'tool_result', 'reasoning', 'cache_marker', 'redacted', 'unknown')),
             result_preview TEXT,
             result_json TEXT,
             is_error INTEGER NOT NULL DEFAULT 0,
             latency_ms INTEGER NOT NULL DEFAULT 0,
             linked_model_interaction_id TEXT,
             linked_model_tool_call_id TEXT,
-            link_status TEXT NOT NULL,
+            link_status TEXT NOT NULL CHECK (link_status IN ('linked', 'unlinked_pending', 'orphan_model_tool_call', 'orphan_mcp_execution', 'ambiguous', 'not_applicable')),
             FOREIGN KEY(interaction_id) REFERENCES ai_model_interactions(id)
         );
         CREATE INDEX IF NOT EXISTS idx_ai_model_interactions_model_call
@@ -843,6 +843,92 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         create_tables(&conn).unwrap();
+    }
+
+    #[test]
+    fn ai_evidence_enum_columns_have_check_constraints() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO model_calls (id, timestamp, provider, method, path)
+             VALUES (1, '2026-01-01T00:00:00Z', 'anthropic', 'POST', '/v1/messages')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ai_model_interactions (
+                model_call_id, interaction_id, trace_id, attribution_scope,
+                source_engine, origin_kind, provider, api_family, model,
+                parse_status, evidence_status, request_id,
+                request_raw_shape_version
+             )
+             VALUES (
+                1, 'interaction-ok', 'trace-ok', 'vm',
+                'network', 'guest_network', 'anthropic', 'anthropic_messages',
+                'claude-test', 'complete', 'complete', 'request-ok',
+                'anthropic.messages.v1'
+             )",
+            [],
+        )
+        .unwrap();
+        let bad_provider = conn.execute(
+            "INSERT INTO ai_model_interactions (
+                model_call_id, interaction_id, trace_id, attribution_scope,
+                source_engine, origin_kind, provider, api_family, model,
+                parse_status, evidence_status, request_id,
+                request_raw_shape_version
+             )
+             VALUES (
+                1, 'interaction-bad', 'trace-bad', 'vm',
+                'network', 'guest_network', 'bogus_provider',
+                'anthropic_messages', 'claude-test', 'complete', 'complete',
+                'request-bad', 'anthropic.messages.v1'
+             )",
+            [],
+        );
+        assert!(bad_provider.is_err());
+
+        let bad_scope = conn.execute(
+            "INSERT INTO ai_usage_details (interaction_id, scope, name, value)
+             VALUES (1, 'bad_scope', 'input_tokens', 1)",
+            [],
+        );
+        assert!(bad_scope.is_err());
+        let bad_tool_origin = conn.execute(
+            "INSERT INTO ai_model_tool_calls (
+                interaction_id, tool_call_id, call_index, raw_name,
+                normalized_name, arguments_status, origin, status,
+                parse_confidence
+             )
+             VALUES (
+                1, 'tool-1', 0, 'read_file', 'read_file',
+                'valid_json', 'bad_origin', 'proposed', 'high'
+             )",
+            [],
+        );
+        assert!(bad_tool_origin.is_err());
+        let bad_content_kind = conn.execute(
+            "INSERT INTO ai_model_tool_results (
+                interaction_id, tool_call_id, content_kind, is_error,
+                result_status, returned_to_model, parse_confidence
+             )
+             VALUES (1, 'tool-1', 'bad_kind', 0, 'returned_to_model', 1, 'high')",
+            [],
+        );
+        assert!(bad_content_kind.is_err());
+        let bad_link_status = conn.execute(
+            "INSERT INTO ai_mcp_execution_evidence (
+                interaction_id, mcp_call_id, server_id, tool_name,
+                namespaced_tool_name, transport, result_kind, is_error,
+                latency_ms, link_status
+             )
+             VALUES (
+                1, 'mcp-1', 'filesystem', 'read_file',
+                'filesystem.read_file', 'stdio', 'text', 0, 1, 'bad_link'
+             )",
+            [],
+        );
+        assert!(bad_link_status.is_err());
     }
 
     #[test]

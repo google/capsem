@@ -727,6 +727,12 @@ a valid claim -- mark it `[ ]` instead.
     `cargo test -p capsem-logger` passed with 227 tests, `cargo test -p
     capsem-core ai_traffic::evidence` passed with 5 tests, and `cargo test -p
     capsem-core telemetry_hook` passed with 8 tests.
+    Fifteenth Lannister-grade hardening slice replaced generic enum serde
+    persistence with an explicit SQL enum text trait for canonical AI evidence
+    enums and added SQLite `CHECK` constraints to the evidence ledger tables.
+    Verification: `cargo test -p capsem-logger` passed with 229 tests,
+    including enum spelling parity and invalid enum DB constraint tests;
+    `cargo test -p capsem-core telemetry_hook` passed with 8 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

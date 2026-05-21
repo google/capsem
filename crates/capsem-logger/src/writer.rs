@@ -1,8 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use capsem_security_engine::{AiContentBlock, AiUsageEvidence, ModelInteractionEvidence};
+use capsem_security_engine::{
+    AiApiFamily, AiAttributionScope, AiContentBlock, AiContentKind, AiOriginKind, AiProvider,
+    AiUsageEvidence, ArgumentsStatus, Confidence, EvidenceStatus, LinkStatus,
+    ModelInteractionEvidence, ParseStatus, SourceEngine, ToolCallStatus, ToolOrigin,
+};
 use rusqlite::{params, Connection};
-use serde::Serialize;
 use tracing::warn;
 
 use crate::events::{
@@ -32,11 +35,168 @@ fn cap_field(s: &Option<String>) -> Option<String> {
     })
 }
 
-fn enum_as_text<T: Serialize>(value: T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|v| v.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "unknown".to_string())
+trait SqlEnumText {
+    fn sql_text(self) -> &'static str;
+}
+
+impl SqlEnumText for AiProvider {
+    fn sql_text(self) -> &'static str {
+        self.as_str()
+    }
+}
+
+impl SqlEnumText for AiApiFamily {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::OpenaiChatCompletions => "openai_chat_completions",
+            Self::OpenaiResponses => "openai_responses",
+            Self::AnthropicMessages => "anthropic_messages",
+            Self::GoogleGeminiContent => "google_gemini_content",
+            Self::Mcp => "mcp",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl SqlEnumText for ArgumentsStatus {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::ValidJson => "valid_json",
+            Self::PartialJson => "partial_json",
+            Self::MalformedJson => "malformed_json",
+            Self::NotJson => "not_json",
+            Self::Redacted => "redacted",
+            Self::Absent => "absent",
+        }
+    }
+}
+
+impl SqlEnumText for ParseStatus {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Partial => "partial",
+            Self::Malformed => "malformed",
+            Self::Unsupported => "unsupported",
+            Self::Redacted => "redacted",
+        }
+    }
+}
+
+impl SqlEnumText for EvidenceStatus {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Partial => "partial",
+            Self::Ambiguous => "ambiguous",
+            Self::Orphaned => "orphaned",
+            Self::Untrusted => "untrusted",
+        }
+    }
+}
+
+impl SqlEnumText for ToolOrigin {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::NativeProviderTool => "native_provider_tool",
+            Self::McpTool => "mcp_tool",
+            Self::LocalBuiltinTool => "local_builtin_tool",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl SqlEnumText for LinkStatus {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Linked => "linked",
+            Self::UnlinkedPending => "unlinked_pending",
+            Self::OrphanModelToolCall => "orphan_model_tool_call",
+            Self::OrphanMcpExecution => "orphan_mcp_execution",
+            Self::Ambiguous => "ambiguous",
+            Self::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+impl SqlEnumText for ToolCallStatus {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Proposed => "proposed",
+            Self::Executed => "executed",
+            Self::Blocked => "blocked",
+            Self::ReturnedToModel => "returned_to_model",
+            Self::Error => "error",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl SqlEnumText for AiContentKind {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Json => "json",
+            Self::Image => "image",
+            Self::File => "file",
+            Self::ToolUse => "tool_use",
+            Self::ToolResult => "tool_result",
+            Self::Reasoning => "reasoning",
+            Self::CacheMarker => "cache_marker",
+            Self::Redacted => "redacted",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl SqlEnumText for Confidence {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl SqlEnumText for AiAttributionScope {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Host => "host",
+            Self::Vm => "vm",
+            Self::Profile => "profile",
+            Self::Session => "session",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl SqlEnumText for AiOriginKind {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::GuestNetwork => "guest_network",
+            Self::HostService => "host_service",
+            Self::HostAdmin => "host_admin",
+            Self::HostWorkbench => "host_workbench",
+            Self::TestFixture => "test_fixture",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl SqlEnumText for SourceEngine {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Network => "network",
+            Self::File => "file",
+            Self::Process => "process",
+            Self::Conversation => "conversation",
+            Self::Security => "security",
+            Self::Vm => "vm",
+            Self::Profile => "profile",
+            Self::HostAi => "host_ai",
+        }
+    }
 }
 
 /// Typed write operations sent to the writer thread.
@@ -428,19 +588,19 @@ fn insert_ai_model_evidence(
             model_call_id,
             evidence.interaction_id,
             evidence.trace_id,
-            enum_as_text(evidence.attribution_scope),
-            enum_as_text(evidence.source_engine),
-            enum_as_text(evidence.origin_kind),
+            evidence.attribution_scope.sql_text(),
+            evidence.source_engine.sql_text(),
+            evidence.origin_kind.sql_text(),
             evidence.accounting_owner,
             evidence.profile_id,
             evidence.vm_id,
             evidence.session_id,
             evidence.user_id,
-            enum_as_text(evidence.provider),
-            enum_as_text(evidence.api_family),
+            evidence.provider.sql_text(),
+            evidence.api_family.sql_text(),
             evidence.model,
-            enum_as_text(evidence.parse_status),
-            enum_as_text(evidence.evidence_status),
+            evidence.parse_status.sql_text(),
+            evidence.evidence_status.sql_text(),
             evidence.request.request_id,
             evidence.request.model,
             evidence.request.stream as i64,
@@ -488,11 +648,11 @@ fn insert_ai_model_evidence(
                 tool_call.normalized_name,
                 tool_call.arguments_raw,
                 tool_call.arguments_json,
-                enum_as_text(tool_call.arguments_status),
-                enum_as_text(tool_call.origin),
+                tool_call.arguments_status.sql_text(),
+                tool_call.origin.sql_text(),
                 tool_call.linked_mcp_call_id,
-                enum_as_text(tool_call.status),
-                enum_as_text(tool_call.parse_confidence),
+                tool_call.status.sql_text(),
+                tool_call.parse_confidence.sql_text(),
             ],
         )?;
     }
@@ -509,13 +669,13 @@ fn insert_ai_model_evidence(
                 interaction_row_id,
                 tool_result.tool_call_id,
                 tool_result.linked_mcp_call_id,
-                enum_as_text(tool_result.content_kind),
+                tool_result.content_kind.sql_text(),
                 cap_field(&tool_result.content_preview),
                 tool_result.content_json,
                 tool_result.is_error as i64,
-                enum_as_text(tool_result.result_status),
+                tool_result.result_status.sql_text(),
                 tool_result.returned_to_model as i64,
-                enum_as_text(tool_result.parse_confidence),
+                tool_result.parse_confidence.sql_text(),
             ],
         )?;
     }
@@ -539,14 +699,14 @@ fn insert_ai_model_evidence(
                 execution.transport,
                 execution.request_arguments_raw,
                 execution.request_arguments_json,
-                enum_as_text(execution.result_kind),
+                execution.result_kind.sql_text(),
                 cap_field(&execution.result_preview),
                 execution.result_json,
                 execution.is_error as i64,
                 execution.latency_ms as i64,
                 execution.linked_model_interaction_id,
                 execution.linked_model_tool_call_id,
-                enum_as_text(execution.link_status),
+                execution.link_status.sql_text(),
             ],
         )?;
     }

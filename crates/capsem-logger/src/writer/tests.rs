@@ -1,6 +1,145 @@
 //! Tests for `writer` (extracted from inline `mod tests`).
 
 use super::*;
+use serde::Serialize;
+
+fn assert_sql_enum<T>(value: T)
+where
+    T: SqlEnumText + Serialize + Copy,
+{
+    let serialized = serde_json::to_value(value)
+        .unwrap()
+        .as_str()
+        .expect("canonical enum serialization must be a string")
+        .to_string();
+    assert_eq!(value.sql_text(), serialized);
+}
+
+#[test]
+fn ai_evidence_sql_enum_text_matches_canonical_serde_names() {
+    for value in [
+        AiProvider::Openai,
+        AiProvider::Anthropic,
+        AiProvider::GoogleGemini,
+        AiProvider::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiApiFamily::OpenaiChatCompletions,
+        AiApiFamily::OpenaiResponses,
+        AiApiFamily::AnthropicMessages,
+        AiApiFamily::GoogleGeminiContent,
+        AiApiFamily::Mcp,
+        AiApiFamily::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiAttributionScope::Host,
+        AiAttributionScope::Vm,
+        AiAttributionScope::Profile,
+        AiAttributionScope::Session,
+        AiAttributionScope::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiOriginKind::GuestNetwork,
+        AiOriginKind::HostService,
+        AiOriginKind::HostAdmin,
+        AiOriginKind::HostWorkbench,
+        AiOriginKind::TestFixture,
+        AiOriginKind::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ArgumentsStatus::ValidJson,
+        ArgumentsStatus::PartialJson,
+        ArgumentsStatus::MalformedJson,
+        ArgumentsStatus::NotJson,
+        ArgumentsStatus::Redacted,
+        ArgumentsStatus::Absent,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ParseStatus::Complete,
+        ParseStatus::Partial,
+        ParseStatus::Malformed,
+        ParseStatus::Unsupported,
+        ParseStatus::Redacted,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        EvidenceStatus::Complete,
+        EvidenceStatus::Partial,
+        EvidenceStatus::Ambiguous,
+        EvidenceStatus::Orphaned,
+        EvidenceStatus::Untrusted,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ToolOrigin::NativeProviderTool,
+        ToolOrigin::McpTool,
+        ToolOrigin::LocalBuiltinTool,
+        ToolOrigin::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        LinkStatus::Linked,
+        LinkStatus::UnlinkedPending,
+        LinkStatus::OrphanModelToolCall,
+        LinkStatus::OrphanMcpExecution,
+        LinkStatus::Ambiguous,
+        LinkStatus::NotApplicable,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ToolCallStatus::Proposed,
+        ToolCallStatus::Executed,
+        ToolCallStatus::Blocked,
+        ToolCallStatus::ReturnedToModel,
+        ToolCallStatus::Error,
+        ToolCallStatus::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiContentKind::Text,
+        AiContentKind::Json,
+        AiContentKind::Image,
+        AiContentKind::File,
+        AiContentKind::ToolUse,
+        AiContentKind::ToolResult,
+        AiContentKind::Reasoning,
+        AiContentKind::CacheMarker,
+        AiContentKind::Redacted,
+        AiContentKind::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [Confidence::Low, Confidence::Medium, Confidence::High] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        SourceEngine::Network,
+        SourceEngine::File,
+        SourceEngine::Process,
+        SourceEngine::Conversation,
+        SourceEngine::Security,
+        SourceEngine::Vm,
+        SourceEngine::Profile,
+        SourceEngine::HostAi,
+    ] {
+        assert_sql_enum(value);
+    }
+}
 
 #[test]
 fn cap_field_none_returns_none() {

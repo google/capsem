@@ -21,6 +21,11 @@ now stores interaction, request/response, usage detail, content block,
 model-tool-call, model-tool-result, and MCP execution evidence in queryable
 tables with indexes for trace, provider/model, tool name, and MCP linkage.
 
+The fourth slice hardened that ledger to explicit enum persistence. The writer
+now uses a dedicated SQL enum text trait instead of generic serde conversion,
+and the new evidence tables enforce allowed enum domains with SQLite `CHECK`
+constraints.
+
 This is intentionally a side document rather than another numbered board item:
 S08b remains the active engine implementation sprint, but S08b must not harden
 model/MCP enforcement, detection, telemetry, quotas, timeline, or plugin
@@ -220,9 +225,8 @@ content kind, model name, tool name, MCP ids, VM/profile/user ids, tokens, and
 cost belong in typed Rust values and normalized session DB columns.
 
 Persisted enum strings must stay tied to the canonical Rust enum spellings.
-The next hardening slice should add explicit enum persistence traits and
-roundtrip tests for every enum column before S08b treats the storage projection
-as release-complete.
+That is enforced by explicit enum persistence traits, serde-name parity tests,
+and SQLite `CHECK` constraints on the evidence tables.
 
 ## Linking Rules
 
