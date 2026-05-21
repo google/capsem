@@ -25,6 +25,12 @@ Sigma-compatible detection.
   or Sigma.
 - Speed claims must use canonical policy roots such as
   `http.request.host.contains("google")`, not internal envelope paths.
+- Capsem must reproduce a Howard John-style CEL microbenchmark rig before
+  adapting it. The benchmark suite should include a small, faithful baseline
+  comparable to the public methodology in
+  <https://blog.howardjohn.info/posts/cel-fast/>: context/materialization cost,
+  fast field access, slow/body/regex access, header lookup, and native Rust
+  comparator implementations.
 - Benchmarks must include VM-originated events that cross the real transport/
   service/process boundary. Microbenchmarks are useful, but they are not enough
   for marketing or release claims.
@@ -80,8 +86,25 @@ For each scenario, capture:
 Add Criterion or equivalent Rust microbenchmarks for the pieces that should be
 extremely fast:
 
+- Reproduced CEL baseline rig inspired by the Howard John post:
+  - build/materialize CEL context repeatedly;
+  - evaluate a fast field expression repeatedly;
+  - evaluate a slower expression repeatedly;
+  - compare header lookup through CEL versus optimized native Rust lookup;
+  - compare regex/matches with compile-time/precompiled regex versus runtime
+    work;
+  - report allocations where the harness can measure them.
+- Capsem canonical-root variants of that rig:
+  - `http.request.host.contains("google")`;
+  - `http.request.url.contains("google")`;
+  - `http.request.path.startsWith("/admin")`;
+  - `http.request.header("authorization").exists()`;
+  - `http.request.body.text.contains("secret")`;
+  - equivalent native Rust lookups over `PolicyContext` or borrowed views.
 - CEL parse/compile once per rule pack.
 - CEL warm evaluation over normalized events.
+- CEL warm evaluation over the canonical `PolicyContext` map/materialized path
+  versus any native/borrowed resolver path we add after correctness lands.
 - Sigma-compatible detection lowering into the runtime predicate/CEL plan.
 - Detection warm evaluation over normalized events.
 - Evidence-signature dedup for default 100-row backtest responses.
@@ -134,6 +157,9 @@ clearly not numerical and matches the sprint tracker.
   JSON under `benchmarks/security-engine/`.
 - Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
   evidence dedup, and registry plan swaps.
+- Reproduce the Howard John-style CEL benchmark suite, keep it as a local
+  baseline artifact, and adapt it to Capsem canonical roots before drawing
+  optimization conclusions.
 - Add correctness assertions for every benchmark scenario: expected final
   action, expected detection finding, and persisted resolved-event evidence.
 - Add rule-pack and event fixtures for low/medium/high rule-count cases.
@@ -161,8 +187,10 @@ clearly not numerical and matches the sprint tracker.
 - Telemetry: benchmark runs confirm VM status/OTel counters increment for
   enforcement evaluations, detection evaluations, matches, findings, errors,
   and forward-plugin metrics when enabled.
-- Performance: p50/p95/p99, throughput, rule-count scaling, cold/warm compiled
-  plan behavior, concurrency scaling, backtest/hunt scan rates.
+- Performance: reproduced CEL rig numbers, Capsem canonical-root microbench
+  numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
+  behavior, context/materialization cost, allocations where measurable,
+  concurrency scaling, backtest/hunt scan rates.
 - Missing/deferred: exact threshold gates are chosen after the first stable
   S08d baseline; until then, marketing uses artifact-backed qualitative claims
   or explicit measured numbers with context.
