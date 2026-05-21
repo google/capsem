@@ -477,7 +477,7 @@ a valid claim -- mark it `[ ]` instead.
     mutations, invalid rule evaluation, asset cleanup while updating, and
     revoked revision install. Remaining: S15 confirm resolution/stream once S15
     makes that production route real.
-20. [ ] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
+20. [~] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
     -- inserted during the 2026-05-19 regroup. Decide real CEL enforcement,
     real Sigma-compatible detection, profile-owned policy/detection packs, and
     whether Capsem policy rules and Sigma-style detection rules are separate
@@ -485,6 +485,12 @@ a valid claim -- mark it `[ ]` instead.
     before those surfaces freeze around the wrong abstraction. This sprint also
     defines `capsem-admin` validation/schema requirements and VM health/OTel
     attribution for detection findings plus model provider/model/cost usage.
+    First decision slice landed on 2026-05-21: policy and detection are
+    separate profile-owned rule families; policy uses real CEL through the Rust
+    `cel` crate family; Sigma is a detection authoring/import format, not a
+    blocking language; detection compiles into Capsem normalized detection IR
+    and attaches typed findings to resolved security events before
+    telemetry/audit/logging/timeline sinks.
 21. [ ] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
     -- inserted during the 2026-05-19 engine-boundary regroup. Split runtime
     activity handling into Network Engine, File Engine, Process Engine, Security

@@ -4,6 +4,12 @@
 
 Not started. Inserted during the 2026-05-19 architecture regroup after S08a.
 
+S08a first decision slice now fixes the input contract for this sprint:
+policy and detection are separate profile-owned rule families; policy
+enforcement uses real CEL via the Rust `cel` crate family; Sigma is a detection
+authoring/import format; detection compiles to Capsem normalized detection IR
+and emits typed findings on `ResolvedSecurityEvent` before sink fan-out.
+
 ## Placement
 
 Runs after [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
@@ -37,9 +43,9 @@ contracts:
   transcript correlation, conversation turns, artifacts, and conversation
   timeline normalization.
 - **Security Engine** owns security meaning: normalized activity events,
-  preprocessors, real-CEL enforcement rules, ask/confirm, real
-  Sigma-compatible detection rules, postprocessors, final security actions, and
-  the resolved-event journal.
+  preprocessors, real-CEL enforcement rules, ask/confirm, Sigma-compatible
+  detection IR, postprocessors, final security actions, and the resolved-event
+  journal.
 - **Resolved Event Emitter** owns fan-out to telemetry, audit/logging, detection
   export, and any future enterprise sink.
 

@@ -2,9 +2,141 @@
 
 ## Status
 
-Not started. Inserted during the 2026-05-19 regroup as an architecture
+In progress. Inserted during the 2026-05-19 regroup as an architecture
 discussion gate before more CLI, telemetry, plugin, rules UI, or Confirm UX
 implementation.
+
+First decision slice landed on 2026-05-21:
+
+- Policy and detection are separate profile-owned rule families.
+- Policy rules are synchronous enforcement rules and use real CEL through the
+  Rust `cel` crate family (`cel` 0.13.x / cel-rust), replacing the current
+  Capsem-only CEL-like shortcut.
+- Detection rules are event/finding rules. Sigma enters as a detection
+  authoring/import format, not as an enforcement language. Runtime detection
+  evaluates normalized Capsem security events and attaches findings to the
+  resolved event before audit/logging, telemetry, export, UI, and timeline
+  sinks receive it.
+- Capsem adopts a Sigma-compatible detection-pack path: Pydantic validates the
+  signed profile/detection-pack envelope in `capsem-admin`; Sigma YAML syntax
+  is validated with pySigma for corp authoring; Rust runtime evaluation uses
+  `rsigma-parser`/`rsigma-eval` over the normalized event JSON shape. Parity
+  fixtures are mandatory wherever pySigma and Rust evaluation both apply.
+- S08b owns the engine split and must implement the single normalized Security
+  Engine path: preprocessor plugins -> policy/CEL -> ask/confirm -> detection
+  -> postprocessor plugins -> resolved-event emitter -> telemetry/audit/logging
+  sinks.
+
+Reference implementations checked during this slice:
+
+- CEL: <https://docs.rs/cel/latest/cel/>
+- CEL project: <https://github.com/cel-rust/cel-rust>
+- rsigma parser/evaluator: <https://docs.rs/rsigma-parser/latest/rsigma_parser/>,
+  <https://docs.rs/rsigma-eval/latest/rsigma_eval/>
+- pySigma: <https://sigmahq-pysigma.readthedocs.io/en/latest/>
+
+## Decision V1
+
+### Rule Families
+
+Capsem has two rule families with different authority:
+
+- **Policy packs** are synchronous, blocking-capable enforcement. They evaluate
+  before a transport/file/process/model action commits. A policy decision is a
+  `SecurityDecision`: `allow`, `block`, `ask`, or `rewrite`.
+- **Detection packs** are asynchronous-from-the-transport-point-of-view but
+  still run inside the Security Engine before the event is emitted. They produce
+  `DetectionFinding` records attached to the resolved event. Detections do not
+  directly allow/block/rewrite/ask. They may propose policy through explicit
+  suggestion/promote flows.
+
+The split is not optional. Sigma-style content never becomes runtime blocking
+without a generated or hand-authored policy rule that passes the policy-pack
+schema, CEL validation, profile signing, and governance locks.
+
+### Policy CEL
+
+Policy rules use real CEL, compiled and type-checked at profile/install time,
+then cached with the VM-effective profile revision. The allowed CEL surface is
+deliberately small at first:
+
+- scalar comparisons, boolean operators, list membership, string helpers, and
+  `matches()` with bounded regex;
+- no custom user functions in profile content for S08b;
+- no wall-clock/network/file-system side effects;
+- event fields are accessed through the normalized typed event subject, not raw
+  ad hoc maps.
+
+The old Capsem CEL-like evaluator becomes a migration target only. New tests
+must assert the real CEL behavior and must reject expressions that only worked
+because of the shortcut parser.
+
+### Sigma-Compatible Detection
+
+Detection packs are signed profile content. A pack contains metadata,
+governance, event-family bindings, and one or more Sigma-compatible YAML rules
+or compiled Capsem detection rules.
+
+The authoring path accepts Sigma because enterprise detection teams already
+know it. The runtime path is Capsem-normalized:
+
+1. `capsem-admin detection validate` validates the pack envelope with Pydantic.
+2. pySigma validates and normalizes Sigma YAML for corp authoring feedback.
+3. Capsem compiles supported Sigma selections/conditions into
+   `capsem.detection.ir.v1`.
+4. Rust loads the signed pack or compiled IR and evaluates with
+   `rsigma-parser`/`rsigma-eval` parity fixtures against normalized events.
+5. Unsupported Sigma constructs fail closed at validation/import time with
+   typed diagnostics; they are not silently ignored.
+
+### Security Engine Ordering
+
+The Security Engine owns the single decision path for every event family:
+
+```text
+engine event
+  -> normalize to SecurityEvent
+  -> preprocessor plugins
+  -> policy CEL evaluation
+  -> ask/confirm if needed
+  -> detection evaluation
+  -> postprocessor plugins
+  -> ResolvedSecurityEvent
+  -> emitter sinks: audit/logging, telemetry/OTel, timeline/session DB, export
+```
+
+Detection runs after policy and confirm because it needs the final enforcement
+decision. It still runs before sinks so audit logs, telemetry, timeline rows,
+and exports all receive the same resolved event with `policy_results`,
+`confirm_result`, `detection_findings`, and `postprocessor_results` attached.
+
+### Profile Ownership And Pins
+
+Profiles own both policy and detection packs:
+
+- profile revisions declare pack ids, versions, hashes, signatures, status, and
+  governance locks;
+- VM creation pins the effective profile revision plus policy/detection pack
+  identities;
+- running VMs do not silently change policy/detection behavior on profile
+  update;
+- forks inherit the same effective policy/detection pack pins unless an
+  explicit profile update flow creates a new VM-effective configuration.
+
+### Finding Shape
+
+Every detection emits a typed finding, not an unstructured log string:
+
+- `finding_id`, `event_id`, `vm_id`, `profile_id`, `profile_revision`;
+- `pack_id`, `pack_version`, `rule_id`, optional `sigma_id`;
+- `severity`, `confidence`, `status`, `tags`;
+- `event_family`, `event_type`, `field_refs`;
+- bounded `labels` suitable for OTel;
+- optional `policy_suggestion_id` when a finding proposes enforcement.
+
+Prompt text, full URLs with secrets, raw headers, command output, and stack
+traces are not OTel labels. They live in the session/timeline/audit payload
+with redaction and access controls.
 
 ## Goal
 
