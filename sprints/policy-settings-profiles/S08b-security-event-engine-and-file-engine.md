@@ -20,6 +20,11 @@ The next slice put runtime detection on the same CEL substrate:
 `CelDetectionRule` compiles through the same `cel` crate, emits typed
 `DetectionFinding` records with Sigma metadata when matched, and attaches those
 findings to the event/resolved event before any emitter sink can run.
+The following slice bridged S08a's `capsem.detection.ir.v1` artifact to that
+runtime path. Detection IR rules now lower into `CelDetectionRule`s with
+explicit event-family and field-path allowlists, so supported Sigma-derived
+matchers run through real CEL while unsupported field shapes fail closed before
+runtime install.
 
 S08a fixes the input contract for this sprint: enforcement and detection are
 separate profile-owned rule families with separate public route groups.

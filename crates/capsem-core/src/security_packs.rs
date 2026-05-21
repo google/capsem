@@ -1,6 +1,6 @@
 use capsem_security_engine::{
-    EventFamily as EngineEventFamily, RedactionState as EngineRedactionState, SecurityEvent,
-    SecurityEventSubject,
+    CelDetectionRule, EventFamily as EngineEventFamily, RedactionState as EngineRedactionState,
+    SecurityEvent, SecurityEventSubject,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -18,6 +18,8 @@ pub enum SecurityPackSchemaError {
     Compile(String),
     #[error("security pack failed schema validation: {0}")]
     Validation(String),
+    #[error("unsupported Detection IR: {0}")]
+    UnsupportedDetectionIr(String),
 }
 
 pub type Result<T> = std::result::Result<T, SecurityPackSchemaError>;
@@ -223,6 +225,166 @@ pub fn evaluate_detection_ir_security_event(
 ) -> Vec<DetectionFindingV1> {
     let event = SecurityEventV1::from(event);
     evaluate_detection_ir(ir, &event)
+}
+
+pub fn compile_detection_ir_to_cel_detection_rules(
+    ir: &DetectionIRV1,
+) -> Result<Vec<CelDetectionRule>> {
+    ir.rules
+        .iter()
+        .map(|rule| {
+            let mut terms = vec![format!(
+                "event.subject.family == {}",
+                cel_string_literal(rule.event_family.as_cel_family())
+            )];
+            for matcher in &rule.matchers {
+                match matcher.operator {
+                    DetectionOperator::EqualsAny => {
+                        let path = runtime_cel_path(rule.event_family, &matcher.field_path)?;
+                        let values = matcher
+                            .values
+                            .iter()
+                            .map(cel_literal)
+                            .collect::<Result<Vec<_>>>()?;
+                        if values.is_empty() {
+                            return Err(SecurityPackSchemaError::UnsupportedDetectionIr(format!(
+                                "rule {} matcher {} must contain at least one value",
+                                rule.id, matcher.field_path
+                            )));
+                        }
+                        let disjunction = values
+                            .into_iter()
+                            .map(|value| format!("{path} == {value}"))
+                            .collect::<Vec<_>>()
+                            .join(" || ");
+                        terms.push(format!("({disjunction})"));
+                    }
+                }
+            }
+
+            Ok(CelDetectionRule {
+                id: rule.id.clone(),
+                pack_id: ir.pack_id.clone(),
+                sigma_id: rule.sigma_id.clone(),
+                title: rule.title.clone(),
+                condition: terms.join(" && "),
+                severity: rule.severity.into(),
+                confidence: rule.confidence.into(),
+                tags: rule.tags.clone(),
+            })
+        })
+        .collect()
+}
+
+impl EventFamily {
+    fn as_cel_family(self) -> &'static str {
+        match self {
+            Self::Dns => "dns",
+            Self::Http => "http",
+            Self::Mcp => "mcp",
+            Self::Model => "model",
+            Self::File => "file",
+            Self::Process => "process",
+            Self::Credential => "credential",
+            Self::Vm => "vm",
+            Self::Profile => "profile",
+            Self::Conversation => "conversation",
+        }
+    }
+}
+
+impl From<Severity> for capsem_security_engine::Severity {
+    fn from(value: Severity) -> Self {
+        match value {
+            Severity::Info => Self::Info,
+            Severity::Low => Self::Low,
+            Severity::Medium => Self::Medium,
+            Severity::High => Self::High,
+            Severity::Critical => Self::Critical,
+        }
+    }
+}
+
+impl From<Confidence> for capsem_security_engine::Confidence {
+    fn from(value: Confidence) -> Self {
+        match value {
+            Confidence::Low => Self::Low,
+            Confidence::Medium => Self::Medium,
+            Confidence::High => Self::High,
+        }
+    }
+}
+
+fn runtime_cel_path(event_family: EventFamily, field_path: &str) -> Result<String> {
+    let Some((scope, suffix)) = field_path
+        .strip_prefix("subject.request.")
+        .map(|suffix| ("request", suffix))
+        .or_else(|| {
+            field_path
+                .strip_prefix("subject.response.")
+                .map(|suffix| ("response", suffix))
+        })
+        .or_else(|| {
+            field_path
+                .strip_prefix("subject.activity.")
+                .map(|suffix| ("activity", suffix))
+        })
+    else {
+        return Err(unsupported_field_path(field_path));
+    };
+
+    if !is_supported_runtime_field(event_family, scope, suffix) {
+        return Err(unsupported_field_path(field_path));
+    }
+
+    Ok(format!("event.subject.{suffix}"))
+}
+
+fn is_supported_runtime_field(event_family: EventFamily, scope: &str, suffix: &str) -> bool {
+    match (event_family, scope, suffix) {
+        (EventFamily::Dns, "request", "qname" | "domain_class") => true,
+        (EventFamily::Http, "request", "method" | "host" | "path_class" | "request_bytes") => true,
+        (EventFamily::Http, "response", "response_bytes") => true,
+        (EventFamily::Mcp, "request", "server_id" | "tool_name") => true,
+        (
+            EventFamily::Model,
+            "request",
+            "provider"
+            | "model"
+            | "estimated_input_tokens"
+            | "estimated_output_tokens"
+            | "estimated_cost_micros",
+        ) => true,
+        (EventFamily::File, "activity", "operation" | "path_class" | "byte_count") => true,
+        (EventFamily::Process, "activity", "operation" | "command_class") => true,
+        (EventFamily::Credential, "activity", "operation" | "credential_id") => true,
+        (EventFamily::Vm, "activity", "operation") => true,
+        (EventFamily::Profile, "activity", "operation" | "profile_id" | "profile_revision") => true,
+        (EventFamily::Conversation, "activity", "operation" | "conversation_id") => true,
+        _ => false,
+    }
+}
+
+fn unsupported_field_path(field_path: &str) -> SecurityPackSchemaError {
+    SecurityPackSchemaError::UnsupportedDetectionIr(format!(
+        "unsupported Detection IR field path {field_path:?}"
+    ))
+}
+
+fn cel_literal(value: &Value) -> Result<String> {
+    match value {
+        Value::String(value) => Ok(cel_string_literal(value)),
+        Value::Bool(value) => Ok(value.to_string()),
+        Value::Number(value) => Ok(value.to_string()),
+        Value::Null => Ok("null".into()),
+        Value::Array(_) | Value::Object(_) => Err(SecurityPackSchemaError::UnsupportedDetectionIr(
+            "Detection IR CEL lowering only supports scalar equals_any values".into(),
+        )),
+    }
+}
+
+fn cel_string_literal(value: &str) -> String {
+    serde_json::to_string(value).expect("serializing a string literal should not fail")
 }
 
 impl From<&SecurityEvent> for SecurityEventV1 {
