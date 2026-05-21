@@ -148,7 +148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   host-arch image inventory is missing.
 - Documented the S08a policy/detection contract: `capsem.policy-pack.v1`,
   `capsem.detection-pack.v1`, `capsem.detection.ir.v1`, normalized security
-  event taxonomy, typed findings, and admin validation/check commands.
+  event taxonomy, typed findings, admin validation/check commands,
+  implementation ordering, and test matrix.
 - Added `capsem-admin manifest check <manifest> --fast` with typed
   `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`

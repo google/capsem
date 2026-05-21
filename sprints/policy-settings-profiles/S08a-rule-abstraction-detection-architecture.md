@@ -2,8 +2,8 @@
 
 ## Status
 
-In progress. Inserted during the 2026-05-19 regroup as an architecture
-discussion gate before more CLI, telemetry, plugin, rules UI, or Confirm UX
+Done. Inserted during the 2026-05-19 regroup as an architecture discussion
+gate before more CLI, telemetry, plugin, rules UI, or Confirm UX
 implementation.
 
 First decision slice landed on 2026-05-21:
@@ -35,6 +35,15 @@ Second decision slice landed on 2026-05-21:
   `capsem-admin detection validate|schema|compile|check` requirements.
 - Fixed the initial Sigma logsource mapping for Capsem event families.
 - Marked downstream sprint deltas for S07b, S12, S13, S14, S15, S16a, and S19.
+
+Third decision slice landed on 2026-05-21:
+
+- Closed the ADR: Capsem keeps separate profile-owned policy and detection
+  packs; S07b implements admin schemas/validation first; S08b implements the
+  Rust runtime contracts next; S12/S13/S14/S15/S16a/S19 consume those contracts.
+- Added implementation ordering and a testing/proof matrix for policy,
+  detection, normalized events, plugin separation, telemetry, and UI/Confirm
+  behavior.
 
 Reference implementations checked during this slice:
 
@@ -146,6 +155,115 @@ Every detection emits a typed finding, not an unstructured log string:
 Prompt text, full URLs with secrets, raw headers, command output, and stack
 traces are not OTel labels. They live in the session/timeline/audit payload
 with redaction and access controls.
+
+## ADR Summary
+
+Decision: adopt a split policy/detection architecture.
+
+Rationale:
+
+- Runtime enforcement must answer before an action proceeds. That requires a
+  synchronous policy language, typed event subjects, deterministic evaluation,
+  and fail-closed behavior.
+- Detection content is retrospective/analytic over normalized events. Sigma is
+  strong as an authoring/import format for findings, but treating it as a
+  direct blocking language would obscure the confirmation, rewrite, and
+  governance semantics Capsem needs.
+- Profile ownership and VM-effective pins keep policy/detection behavior
+  reproducible for forensics, forks, updates, and enterprise rollout.
+- A single `ResolvedSecurityEvent` gives audit, telemetry, timeline, export,
+  and UI one evidence object instead of divergent domain-specific stories.
+
+Consequences:
+
+- The existing Capsem CEL-like parser is not a release contract and must be
+  replaced by real CEL tests before new rule UI/Confirm work claims support.
+- S07b is unblocked to implement Pydantic/schema/admin tooling for policy and
+  detection packs.
+- S08b is unblocked to implement runtime Rust contracts and engine boundaries.
+- S12/S13/S14/S15/S16a/S19 must consume this contract instead of inventing
+  parallel models.
+
+Rejected alternatives:
+
+- **Use Sigma for blocking:** rejected because Sigma is detection-oriented and
+  does not model Capsem's synchronous `ask`, `rewrite`, and transport response
+  semantics.
+- **Keep the homegrown CEL subset:** rejected because it creates a second rule
+  language, weakens corp-admin tooling, and makes external validation harder.
+- **Let detections auto-promote to enforcement:** rejected because it creates
+  silent behavior changes. Promotion must be explicit and profile-governed.
+
+## Implementation Ordering
+
+The next work should land in this order:
+
+1. **S07b admin schema slice:** add Pydantic models and JSON Schema artifacts
+   for `capsem.policy-pack.v1`, `capsem.detection-pack.v1`,
+   `capsem.detection.ir.v1`, `SecurityEvent` fixtures, `DetectionFinding`, and
+   validation/check reports.
+2. **S07b admin command slice:** add `capsem-admin policy validate|schema|check`
+   and `capsem-admin detection validate|schema|compile|check` with Pydantic-only
+   JSON I/O and pySigma validation for detection YAML.
+3. **S08b Rust contract slice:** add shared Rust types for `SecurityEvent`,
+   `ResolvedSecurityEvent`, `PolicyResult`, `ConfirmResult`,
+   `DetectionFinding`, pack identity, and family-specific subjects.
+4. **S08b real CEL slice:** integrate the Rust `cel` crate family behind a
+   policy evaluator trait, port existing policy tests, and add adversarial
+   tests proving old shortcut-only expressions fail.
+5. **S08b detection runtime slice:** load compiled detection IR, evaluate
+   normalized event fixtures with the Rust Sigma-compatible path, and emit
+   typed findings.
+6. **S08b engine path slice:** wire Network/File/Process/Conversation engine
+   outputs into Security Engine -> Resolved Event Emitter, preserving one event
+   id through audit/logging, telemetry, timeline/session DB, and export sinks.
+7. **S12/S13/S14/S15/S16a/S19 consumption slices:** implement metrics/plugin/UI/
+   Confirm/timeline/docs behavior only after the runtime contracts are present.
+
+S07b can run in parallel with early S08b type work if write scopes stay
+separate: Python admin models in `src/capsem/builder|admin`, Rust runtime
+contracts in crates.
+
+## Testing Matrix
+
+S07b admin proof:
+
+- Unit/contract: Pydantic JSON/TOML/YAML validation, schema golden tests, and
+  unknown-field fail-closed tests for policy packs, detection packs, detection
+  IR, findings, and reports.
+- Functional: CLI validate/schema/compile/check commands over committed
+  fixture packs and JSONL event fixtures.
+- Adversarial: unsupported Sigma constructs, missing field mappings, policy
+  rules referencing wrong event families, rewrite payload mismatch, detection
+  rules declaring enforcement decisions, malformed CEL, and locked corp rule
+  edits.
+
+S08b runtime proof:
+
+- Unit/contract: Rust serialization/roundtrip tests for `SecurityEvent`,
+  `ResolvedSecurityEvent`, findings, pack identity, and subject variants.
+- Policy: real CEL parser/type/evaluator tests for allow/block/ask/rewrite and
+  explicit rejection of the old CEL-like shortcuts.
+- Detection: Sigma-compatible fixture rules evaluated against normalized event
+  fixtures, including nonmatch and malformed-event cases.
+- Engine: every event family goes through preprocessor -> policy -> confirm ->
+  detection -> postprocessor -> emitter with one resolved event id.
+- Emitter: audit/logging, telemetry, timeline/session DB, and export sinks
+  receive the same resolved event id and finding ids.
+
+S12/S13/S14/S15/S16a/S19 consumption proof:
+
+- Telemetry: OTel/status labels stay bounded; findings and model usage
+  counters avoid prompts, paths, raw URLs, commands, and free-form errors as
+  labels.
+- Plugin: decision mode can allow/block/ask/rewrite; observer mode cannot
+  change final action.
+- UI: policy editor edits policy packs only; detection findings render as
+  findings/suggestions.
+- Confirm: promote flows create policy rules only after explicit operator
+  action; detection suggestions never auto-enforce.
+- Timeline: `/timeline/{id}` can group resolved events, findings, asks,
+  conversations, tools, files, processes, snapshots, and profile provenance.
 
 ## Contract V1
 

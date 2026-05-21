@@ -477,7 +477,7 @@ a valid claim -- mark it `[ ]` instead.
     mutations, invalid rule evaluation, asset cleanup while updating, and
     revoked revision install. Remaining: S15 confirm resolution/stream once S15
     makes that production route real.
-20. [~] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
+20. [x] [S08a - Rule abstraction and detection architecture](S08a-rule-abstraction-detection-architecture.md)
     -- inserted during the 2026-05-19 regroup. Decide real CEL enforcement,
     real Sigma-compatible detection, profile-owned policy/detection packs, and
     whether Capsem policy rules and Sigma-style detection rules are separate
@@ -498,6 +498,10 @@ a valid claim -- mark it `[ ]` instead.
     `capsem-admin policy|detection validate/schema/compile/check` command
     requirements. S07b, S12, S13, S14, S15, S16a, and S19 now reference those
     contracts instead of generic "real CEL/Sigma later" placeholders.
+    Third slice closed the ADR with rejected alternatives, implementation
+    ordering, and a testing matrix. S08a is now done; next implementation work
+    is S07b admin schemas/commands followed by S08b Rust event/security-engine
+    contracts.
 21. [ ] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
     -- inserted during the 2026-05-19 engine-boundary regroup. Split runtime
     activity handling into Network Engine, File Engine, Process Engine, Security
