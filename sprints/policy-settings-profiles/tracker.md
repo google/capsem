@@ -95,6 +95,11 @@ proceeds in this order:
 
 Winter readiness rules:
 
+- Engineering quality vocabulary is defined in
+  [The Ledger of the Realm](ENGINEERING-REALM-LEDGER.md). When this board says
+  Lannister-grade, Winterfell-grade, Baratheon-grade, Tyrell-grade,
+  Greyjoy-grade, or Iron-Bank clean, that reference is binding sprint language,
+  not decoration.
 - The old stack is dead and stays dead.
 - Profiles are the banner under which VM assets, package assumptions, and
   runtime policy march.

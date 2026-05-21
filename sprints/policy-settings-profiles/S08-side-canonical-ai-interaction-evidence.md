@@ -26,6 +26,12 @@ S08b remains the active engine implementation sprint, but S08b must not harden
 model/MCP enforcement, detection, telemetry, quotas, timeline, or plugin
 contracts against thin provider-specific parser summaries.
 
+Quality bar: this side sprint must be
+[Lannister-grade](ENGINEERING-REALM-LEDGER.md). Canonical evidence persistence
+is a ledger, so enum-backed fields need explicit typed contracts, queryable
+relational storage, invariants around attribution/accounting, and tests proving
+we did not hide policy-relevant state inside opaque JSON.
+
 ## Purpose
 
 Before S08 policy, CEL, Sigma, backtest, telemetry, and future quota behavior
@@ -202,6 +208,21 @@ enums:
   `orphan_mcp_execution`, `ambiguous`, `not_applicable`.
 - `ToolCallStatus`: `proposed`, `executed`, `blocked`, `returned_to_model`,
   `error`, `unknown`.
+
+## Persistence Rules
+
+Canonical AI evidence may keep raw provider snippets only as bounded payload
+fields such as `arguments_raw`, `arguments_json`, `content_json`, or previews.
+It must not be persisted as one opaque evidence blob. Queryable facts such as
+provider, API family, attribution scope, source engine, origin, parse status,
+evidence status, argument status, tool origin, link status, tool-call status,
+content kind, model name, tool name, MCP ids, VM/profile/user ids, tokens, and
+cost belong in typed Rust values and normalized session DB columns.
+
+Persisted enum strings must stay tied to the canonical Rust enum spellings.
+The next hardening slice should add explicit enum persistence traits and
+roundtrip tests for every enum column before S08b treats the storage projection
+as release-complete.
 
 ## Linking Rules
 

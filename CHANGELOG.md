@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the internal "Ledger of the Realm" engineering-quality reference and
+  linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
+  Winterfell, Baratheon, and Iron-Bank standards.
 - Added the S08 canonical AI interaction evidence side-sprint so model/MCP
   policy, detection, telemetry, timeline, quotas, and plugin work have a
   provider-neutral substrate for OpenAI, Anthropic, and Google/Gemini traffic.

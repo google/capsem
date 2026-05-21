@@ -34,6 +34,14 @@ be projected from its canonical AI evidence layer instead of from thin
 provider-specific parser summaries. OpenAI, Anthropic, and Google/Gemini are
 first-slice providers; Bedrock is not a first-slice requirement.
 
+S08b uses [The Ledger of the Realm](ENGINEERING-REALM-LEDGER.md) as its quality
+vocabulary. Security-event contracts are Winterfell-grade when they are strict,
+typed, deterministic, and replayable. Stateful accounting and persistence are
+Lannister-grade when ledgers are queryable, enum-backed, invariant-tested, and
+not hidden behind opaque JSON blobs. Public endpoints are Baratheon-grade when
+malformed input, injection, locked mutation, and unsupported-shape cases fail
+closed with typed diagnostics.
+
 ## Placement
 
 Runs after [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
