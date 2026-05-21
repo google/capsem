@@ -367,6 +367,16 @@ is not the Security Engine itself, not an enforcement language, and not a
 transport concern. The current Capsem CEL-like shortcut is not a final rule
 language; S08b consumes S08a's real CEL decision.
 
+Open S08b design question before implementation: decide whether policy CEL and
+Detection IR must remain separate runtime evaluation passes, or whether S08b
+should compile both into one typed internal matching/evaluation plan over the
+same normalized `SecurityEvent` subject. The single-plan option may reduce
+duplicate field extraction and make "one event, one pass, all findings/actions"
+easier to reason about, but it must preserve the semantic boundary that CEL
+policy produces enforcement decisions while Detection IR produces findings. Do
+not wire the runtime until this compilation question has an ADR answer and
+performance/test implications are explicit.
+
 S08b implementation starts with typed contracts before engine rewiring:
 
 1. Add shared Rust model types for `SecurityEvent`, `ResolvedSecurityEvent`,

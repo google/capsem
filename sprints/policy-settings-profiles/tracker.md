@@ -559,6 +559,10 @@ a valid claim -- mark it `[ ]` instead.
     canonical resolved-event journal with existing domain tables treated as
     emitter-written projections. Conversation Engine capture and the structured
     `/timeline/{id}` read API become part of the canonical session DB story.
+    Before implementation, S08b must explicitly decide whether policy CEL and
+    Detection IR remain separate runtime passes or compile into one typed
+    internal matching/evaluation plan over the same normalized `SecurityEvent`
+    subject while preserving enforcement-vs-finding semantics.
 22. [ ] [S09 - CLI integration](S09-cli-integration.md)
 23. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 24. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
