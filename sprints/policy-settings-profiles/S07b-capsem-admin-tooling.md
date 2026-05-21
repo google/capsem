@@ -363,6 +363,25 @@ Twenty-third slice landed on 2026-05-21:
   tests/test_image_verify.py tests/test_image_sbom.py tests/test_leak_detection.py
   -q` passed.
 
+Twenty-fourth slice landed on 2026-05-21:
+
+- `capsem-admin policy validate|schema` now validates strict
+  `capsem.policy-pack.v1` envelopes with typed Pydantic models and exports the
+  committed Draft 2020-12 JSON Schema artifact.
+- `capsem-admin detection validate|schema` now validates strict
+  `capsem.detection-pack.v1` JSON/TOML/YAML envelopes with typed Pydantic
+  models and exports the committed Draft 2020-12 JSON Schema artifact.
+- The policy model enforces `rewrite` payload semantics, event-family scoped
+  rules, pack status/owner enums, duplicate rule-id rejection, and closed
+  fields. The detection model rejects enforcement decisions through closed
+  fields, requires payload-backed sources, and requires field mappings for Sigma
+  sources.
+- This slice intentionally leaves `detection compile|check` and pySigma/Rust
+  parity fixtures for the next policy/detection admin slice.
+- Verification: `uv run python -m pytest tests/test_security_packs.py
+  tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
+  -q` passed with 65 tests.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -671,7 +690,7 @@ The checker must fail closed for:
       profile/asset signature verification have landed; guest SBOM/probe
       image proof and richer doctor reports remain. Full manifest byte/hash
       download checks have landed.
-- [ ] Add Pydantic v2 models and schema/export commands for policy packs and
+- [x] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
 - [x] Add `capsem-admin` package/distribution entry point and bootstrap install
@@ -718,9 +737,11 @@ The checker must fail closed for:
 - [ ] Update docs and release gates to use `capsem-admin`, including separate
       enterprise PyPI install/usage docs and developer editable-install/
       internals docs.
-- [ ] Add `capsem-admin policy validate|schema` and
+- [~] Add `capsem-admin policy validate|schema` and
       `capsem-admin detection validate|schema` release/docs proof before S19
       documents enforcement/detection formats as supported corp workflows.
+      Validate/schema commands have landed; release/docs proof and
+      `detection compile|check` remain.
 
 ## Coverage Ledger
 
@@ -734,12 +755,15 @@ The checker must fail closed for:
   generate/check/sign tests; profile-to-image build plan tests;
   guest-config-to-profile generation tests; image inventory package/tool
   extraction, per-architecture auto-discovery, contract comparison tests, and
-  doctor-bundle probe parser tests; SPDX guest SBOM model/CLI tests; admin
-  doctor checks; no-hand-edited-settings guard tests.
+  doctor-bundle probe parser tests; SPDX guest SBOM model/CLI tests;
+  policy/detection pack Pydantic/schema tests; admin doctor checks;
+  no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`;
   `image sbom`; `manifest generate`; `manifest check --fast`;
   `manifest check --download`;
+  `policy validate`; `policy schema`; `detection validate`;
+  `detection schema`;
   profile-required `scripts/build-assets.sh --profile`; Justfile
   `build-assets`/`build-kernel`/`build-rootfs` routing through
   `capsem-admin image build`; bootstrap-installed CLI smoke.
@@ -753,7 +777,8 @@ The checker must fail closed for:
   ambiguous all-arch single-file inventory input, duplicate profile revision,
   revoked current profile, path traversal, stale manifest rollback, and
   untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin module
-  tests.
+  tests, policy rewrite without payload, detection pack enforcement-decision
+  attempts, duplicate policy/detection ids, and missing Sigma field mappings.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default; the profile-backed host-arch E2E gate
   reconciles selected assets, boots through Capsem, captures

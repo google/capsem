@@ -460,6 +460,14 @@ a valid claim -- mark it `[ ]` instead.
     boot test and one asset-dependent skip; `uv run python -m pytest
     tests/test_image_verify.py tests/test_image_sbom.py tests/test_leak_detection.py
     -q` passed.
+    Twenty-fourth slice added typed `capsem-admin policy validate|schema` and
+    `capsem-admin detection validate|schema` commands backed by strict
+    Pydantic `capsem.policy-pack.v1` and `capsem.detection-pack.v1` models plus
+    committed schema artifacts; detection envelopes support YAML. Verification: `uv run python -m pytest
+    tests/test_security_packs.py tests/test_admin_cli.py tests/test_profiles.py
+    tests/test_service_settings.py -q` passed with 65 tests. Remaining
+    policy/detection admin work: `detection compile|check`, pySigma/Rust parity
+    fixtures, and docs/release proof.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

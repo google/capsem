@@ -63,6 +63,17 @@ from capsem.builder.profiles import (
     validate_profile_json,
     validate_profile_toml,
 )
+from capsem.builder.security_packs import (
+    DetectionPackV1,
+    PolicyPackV1,
+    dump_detection_pack_schema_json,
+    dump_policy_pack_schema_json,
+    validate_detection_pack_json,
+    validate_detection_pack_toml,
+    validate_detection_pack_yaml,
+    validate_policy_pack_json,
+    validate_policy_pack_toml,
+)
 from capsem.builder.service_settings import (
     ServiceSettingsV2,
     create_service_settings_draft,
@@ -146,6 +157,18 @@ class ProfileValidationReport(StrictModel):
     revision: str | None = None
 
 
+class SecurityPackValidationReport(StrictModel):
+    schema_: Literal["capsem.security-pack-validation.v1"] = Field(
+        default="capsem.security-pack-validation.v1",
+        alias="schema",
+    )
+    ok: bool
+    path: str
+    diagnostics: list[AdminDiagnostic] = Field(default_factory=list)
+    pack_id: str | None = None
+    version: str | None = None
+
+
 def _diagnostics_from_error(error: Exception) -> list[AdminDiagnostic]:
     if isinstance(error, ValidationError):
         return [
@@ -168,6 +191,23 @@ def _load_profile(path: Path) -> ProfilePayloadV2:
     if path.suffix.lower() == ".json":
         return validate_profile_json(path.read_text(encoding="utf-8"))
     return validate_profile_toml(path)
+
+
+def _load_policy_pack(path: Path) -> PolicyPackV1:
+    if path.suffix.lower() == ".json":
+        return validate_policy_pack_json(path.read_text(encoding="utf-8"))
+    return validate_policy_pack_toml(path)
+
+
+def _load_detection_pack(path: Path) -> DetectionPackV1:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return validate_detection_pack_json(path.read_text(encoding="utf-8"))
+    if suffix in {".toml", ""}:
+        return validate_detection_pack_toml(path)
+    if suffix in {".yaml", ".yml"}:
+        return validate_detection_pack_yaml(path)
+    raise ValueError("detection pack must be JSON, TOML, YAML, or YML")
 
 
 def _validation_report(path: Path) -> SettingsValidationReport:
@@ -196,6 +236,40 @@ def _profile_validation_report(path: Path) -> ProfileValidationReport:
         path=str(path),
         profile_id=profile.id,
         revision=profile.revision,
+    )
+
+
+def _policy_pack_validation_report(path: Path) -> SecurityPackValidationReport:
+    try:
+        pack = _load_policy_pack(path)
+    except Exception as error:
+        return SecurityPackValidationReport(
+            ok=False,
+            path=str(path),
+            diagnostics=_diagnostics_from_error(error),
+        )
+    return SecurityPackValidationReport(
+        ok=True,
+        path=str(path),
+        pack_id=pack.id,
+        version=pack.version,
+    )
+
+
+def _detection_pack_validation_report(path: Path) -> SecurityPackValidationReport:
+    try:
+        pack = _load_detection_pack(path)
+    except Exception as error:
+        return SecurityPackValidationReport(
+            ok=False,
+            path=str(path),
+            diagnostics=_diagnostics_from_error(error),
+        )
+    return SecurityPackValidationReport(
+        ok=True,
+        path=str(path),
+        pack_id=pack.id,
+        version=pack.version,
     )
 
 
@@ -246,6 +320,16 @@ def image() -> None:
 @cli.group()
 def manifest() -> None:
     """Check and manage signed profile catalog manifests."""
+
+
+@cli.group()
+def policy() -> None:
+    """Validate and inspect profile-owned policy packs."""
+
+
+@cli.group()
+def detection() -> None:
+    """Validate and inspect profile-owned detection packs."""
 
 
 @settings.command("schema")
@@ -500,6 +584,54 @@ def profile_validate(profile_path: str, json_output: bool) -> None:
         click.echo(report.model_dump_json(by_alias=True, exclude_none=True, indent=2))
     elif report.ok:
         click.echo("valid: profile")
+    else:
+        for diagnostic in report.diagnostics:
+            click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
+    if not report.ok:
+        raise SystemExit(1)
+
+
+@policy.command("schema")
+def policy_schema() -> None:
+    """Print the Policy Pack V1 JSON Schema."""
+    click.echo(dump_policy_pack_schema_json())
+
+
+@policy.command("validate")
+@click.argument("policy_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def policy_validate(policy_path: str, json_output: bool) -> None:
+    """Validate a policy pack JSON or TOML file."""
+    path = Path(policy_path)
+    report = _policy_pack_validation_report(path)
+    if json_output:
+        click.echo(report.model_dump_json(by_alias=True, indent=2))
+    elif report.ok:
+        click.echo(f"valid: policy pack {report.pack_id}@{report.version}")
+    else:
+        for diagnostic in report.diagnostics:
+            click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
+    if not report.ok:
+        raise SystemExit(1)
+
+
+@detection.command("schema")
+def detection_schema() -> None:
+    """Print the Detection Pack V1 JSON Schema."""
+    click.echo(dump_detection_pack_schema_json())
+
+
+@detection.command("validate")
+@click.argument("detection_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def detection_validate(detection_path: str, json_output: bool) -> None:
+    """Validate a detection pack JSON, TOML, or YAML envelope."""
+    path = Path(detection_path)
+    report = _detection_pack_validation_report(path)
+    if json_output:
+        click.echo(report.model_dump_json(by_alias=True, indent=2))
+    elif report.ok:
+        click.echo(f"valid: detection pack {report.pack_id}@{report.version}")
     else:
         for diagnostic in report.diagnostics:
             click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)

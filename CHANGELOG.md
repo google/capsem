@@ -150,6 +150,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem.detection-pack.v1`, `capsem.detection.ir.v1`, normalized security
   event taxonomy, typed findings, admin validation/check commands,
   implementation ordering, and test matrix.
+- Added typed `capsem-admin policy validate|schema` and
+  `capsem-admin detection validate|schema` support for strict Pydantic policy
+  and detection pack envelopes, including YAML detection envelopes, with
+  committed JSON Schema artifacts.
 - Added `capsem-admin manifest check <manifest> --fast` with typed
   `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`
