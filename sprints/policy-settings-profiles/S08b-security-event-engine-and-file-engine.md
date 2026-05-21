@@ -502,19 +502,22 @@ The canonical tables should represent normalized security truth:
 - `security_events`: one row per resolved event, keyed by stable `event_id`.
   Carries timestamp, event family/kind, source engine, VM/profile/user identity,
   trace/stream/parent ids, sequence number, final action, enforceability,
-  profile revision, enforcement-pack identity, detection-pack identity, and compact
-  resolved JSON.
+  profile revision, redaction state, label/mutation/finding counts, attribution
+  scope, origin kind, and accounting owner. It intentionally avoids opaque JSON
+  payload storage for the hot journal path.
 - `security_event_steps`: ordered journal entries for preprocessors,
   enforcement matches, ask/confirm, detection matches, postprocessors, and
   emitter delivery results.
 - `detection_findings`: finding rows keyed by finding id and linked to
-  `event_id`, with rule id, rule pack, severity, confidence, tags, mapped Sigma
-  metadata, and export status.
+  `event_id`, with rule id, rule pack, severity, confidence, and mapped Sigma
+  metadata.
+- `detection_finding_tags`: one row per finding tag so hunting and timeline
+  filters do not need to parse a JSON array.
 - `security_event_links`: correlation edges between events, such as DNS ->
   network, model -> tool call -> MCP, process -> file, process -> network, and
   snapshot -> fs events.
-- `security_event_attribution`: or equivalent compact columns on
-  `security_events` recording attribution scope/owner (`host`, `vm`,
+- Attribution is compact columns on `security_events` recording attribution
+  scope/owner (`host`, `vm`,
   `profile`, `session`, `unknown`), source engine, origin kind, and the
   accounting owner used for counters/quotas. This is distinct from correlation
   ids so host-owned AI events can link to VM/session context without charging

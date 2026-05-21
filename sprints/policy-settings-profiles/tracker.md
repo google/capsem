@@ -905,7 +905,36 @@ a valid claim -- mark it `[ ]` instead.
     enforcement dispatch into the Security Engine, signed/unsigned numeric CEL
     ergonomics for response status, historical/session-journal hunt,
     gateway/CLI/UI route exposure, persistence/profile-pack seeding, and
-    VM/runtime integration.
+    VM/runtime integration. Thirty-first cleanup slice removed the remaining
+    named policy runtime (`PolicyConfig`/`PolicyRule`), confirm shim,
+    Policy Hook Spec0 API/artifact, old policy benchmark, policy-only
+    DNS/MCP/MITM tests, and `policy_hook_events` session-table write path so
+    future HTTP/MCP/DNS enforcement can only return through the canonical
+    Security Engine. Verification: `cargo fmt --all -- --check`, focused
+    `cargo check`/`cargo test --no-run` gates for logger/core/process/service,
+    `uv run pytest` for session-schema compatibility, and `git diff --check`
+    passed before commit `ff4c1783`. Thirty-second journal slice added the
+    first structured resolved-event session ledger: `security_events`,
+    `security_event_steps`, `detection_findings`, `detection_finding_tags`,
+    and `security_event_links`, plus `WriteOp::ResolvedSecurityEvent` storage,
+    enum spelling parity tests, a writer roundtrip proving steps/findings/tags/
+    links persist without an opaque JSON column, `check_session.py` coverage,
+    session lifecycle schema coverage, and a `/timeline/{id}` `security` layer.
+    Verification: `cargo fmt --all -- --check`, `cargo check -p
+    capsem-logger`, `cargo check -p capsem-service`, `cargo check -p
+    capsem-mcp`, `cargo test -p capsem-logger --lib`, `cargo test -p
+    capsem-service timeline_handler_returns_policy_layers_and_null_trace_rows`,
+    `cargo test -p capsem-mcp inspect_schema_has_all_tables`, `cargo test -p
+    capsem-mcp timeline_tool_schema_exposes_policy_layers`, `cargo test -p
+    capsem-logger --lib --no-run`, `cargo test -p capsem-service --no-run`,
+    `cargo test -p capsem-mcp --no-run`, `uv run pytest
+    tests/capsem-session/test_check_session_compat.py
+    tests/capsem-session-lifecycle/test_db_schema.py
+    tests/capsem-session-lifecycle/test_db_exists.py`, and `git diff
+    --check` passed. Still missing after this
+    journal slice: production Network/File/Process Engine emitters, historical
+    session-journal backtest/hunt source selection, gateway/CLI/UI route
+    exposure, persistence/profile-pack seeding, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

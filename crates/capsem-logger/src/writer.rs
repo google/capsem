@@ -1,9 +1,13 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, UNIX_EPOCH};
 
 use capsem_security_engine::{
     AiApiFamily, AiAttributionScope, AiContentBlock, AiContentKind, AiOriginKind, AiProvider,
-    AiUsageEvidence, ArgumentsStatus, Confidence, EvidenceStatus, LinkStatus,
-    ModelInteractionEvidence, ParseStatus, SourceEngine, ToolCallStatus, ToolOrigin,
+    AiUsageEvidence, ArgumentsStatus, Confidence, Enforceability, EventFamily, EvidenceStatus,
+    LinkStatus, ModelInteractionEvidence, ParseStatus, RedactionState, ResolvedEventStepKind,
+    ResolvedSecurityEvent, SecurityAction, Severity, SourceEngine, StepStatus, ToolCallStatus,
+    ToolOrigin,
 };
 use rusqlite::{params, Connection};
 use tracing::warn;
@@ -199,9 +203,101 @@ impl SqlEnumText for SourceEngine {
     }
 }
 
+impl SqlEnumText for EventFamily {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Dns => "dns",
+            Self::Http => "http",
+            Self::Mcp => "mcp",
+            Self::Model => "model",
+            Self::File => "file",
+            Self::Process => "process",
+            Self::Credential => "credential",
+            Self::Vm => "vm",
+            Self::Profile => "profile",
+            Self::Conversation => "conversation",
+            Self::Snapshot => "snapshot",
+        }
+    }
+}
+
+impl SqlEnumText for Enforceability {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::InlineBlockable => "inline_blockable",
+            Self::ObserveOnly => "observe_only",
+            Self::RemediationOnly => "remediation_only",
+        }
+    }
+}
+
+impl SqlEnumText for RedactionState {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Redacted => "redacted",
+            Self::SummaryOnly => "summary-only",
+        }
+    }
+}
+
+impl SqlEnumText for ResolvedEventStepKind {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Preprocessor => "preprocessor",
+            Self::PluginCallback => "plugin_callback",
+            Self::EnforcementMatch => "enforcement_match",
+            Self::Confirm => "confirm",
+            Self::RateLimitCheck => "rate_limit_check",
+            Self::DetectionMatch => "detection_match",
+            Self::Postprocessor => "postprocessor",
+            Self::EmitterDelivery => "emitter_delivery",
+        }
+    }
+}
+
+impl SqlEnumText for StepStatus {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Matched => "matched",
+            Self::Skipped => "skipped",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl SqlEnumText for Severity {
+    fn sql_text(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+fn security_action_sql_text(action: &SecurityAction) -> &'static str {
+    match action {
+        SecurityAction::Continue => "continue",
+        SecurityAction::Ask(_) => "ask",
+        SecurityAction::Rewrite(_) => "rewrite",
+        SecurityAction::Block(_) => "block",
+        SecurityAction::Throttle(_) => "throttle",
+        SecurityAction::Quarantine(_) => "quarantine",
+        SecurityAction::Restore(_) => "restore",
+        SecurityAction::DropConnection(_) => "drop_connection",
+        SecurityAction::ObserveOnly => "observe_only",
+        SecurityAction::Error(_) => "error",
+    }
+}
+
 /// Typed write operations sent to the writer thread.
 #[derive(Debug)]
 pub enum WriteOp {
+    ResolvedSecurityEvent(ResolvedSecurityEvent),
     NetEvent(NetEvent),
     ModelCall(ModelCall),
     McpCall(McpCall),
@@ -386,6 +482,7 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
     for op in batch {
         match op {
+            WriteOp::ResolvedSecurityEvent(e) => insert_resolved_security_event(&tx, e)?,
             WriteOp::NetEvent(e) => insert_net_event(&tx, e)?,
             WriteOp::ModelCall(m) => insert_model_call(&tx, m)?,
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
@@ -399,6 +496,201 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
         }
     }
     tx.commit()
+}
+
+fn timestamp_from_unix_ms(timestamp_unix_ms: u64) -> String {
+    humantime::format_rfc3339(UNIX_EPOCH + Duration::from_millis(timestamp_unix_ms)).to_string()
+}
+
+fn insert_resolved_security_event(
+    conn: &Connection,
+    event: &ResolvedSecurityEvent,
+) -> rusqlite::Result<()> {
+    let common = &event.event.common;
+    let event_id = &common.event_id;
+
+    conn.execute(
+        "DELETE FROM detection_finding_tags
+         WHERE finding_id IN (SELECT finding_id FROM detection_findings WHERE event_id = ?1)",
+        params![event_id],
+    )?;
+    conn.execute(
+        "DELETE FROM detection_findings WHERE event_id = ?1",
+        params![event_id],
+    )?;
+    conn.execute(
+        "DELETE FROM security_event_steps WHERE event_id = ?1",
+        params![event_id],
+    )?;
+    conn.execute(
+        "DELETE FROM security_event_links WHERE event_id = ?1",
+        params![event_id],
+    )?;
+
+    let timestamp = timestamp_from_unix_ms(common.timestamp_unix_ms);
+    conn.execute(
+        "INSERT INTO security_events (
+            event_id, timestamp, timestamp_unix_ms, event_family, event_type,
+            source_engine, final_action, enforceability, attribution_scope,
+            origin_kind, accounting_owner, trace_id, span_id, parent_event_id,
+            stream_id, activity_id, sequence_no, vm_id, session_id, profile_id,
+            profile_revision, user_id, process_id, parent_process_id, exec_id,
+            turn_id, message_id, tool_call_id, mcp_call_id, redaction_state,
+            label_count, mutation_count, finding_count
+         )
+         VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+            ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
+            ?29, ?30, ?31, ?32, ?33
+         )
+         ON CONFLICT(event_id) DO UPDATE SET
+            timestamp = excluded.timestamp,
+            timestamp_unix_ms = excluded.timestamp_unix_ms,
+            event_family = excluded.event_family,
+            event_type = excluded.event_type,
+            source_engine = excluded.source_engine,
+            final_action = excluded.final_action,
+            enforceability = excluded.enforceability,
+            attribution_scope = excluded.attribution_scope,
+            origin_kind = excluded.origin_kind,
+            accounting_owner = excluded.accounting_owner,
+            trace_id = excluded.trace_id,
+            span_id = excluded.span_id,
+            parent_event_id = excluded.parent_event_id,
+            stream_id = excluded.stream_id,
+            activity_id = excluded.activity_id,
+            sequence_no = excluded.sequence_no,
+            vm_id = excluded.vm_id,
+            session_id = excluded.session_id,
+            profile_id = excluded.profile_id,
+            profile_revision = excluded.profile_revision,
+            user_id = excluded.user_id,
+            process_id = excluded.process_id,
+            parent_process_id = excluded.parent_process_id,
+            exec_id = excluded.exec_id,
+            turn_id = excluded.turn_id,
+            message_id = excluded.message_id,
+            tool_call_id = excluded.tool_call_id,
+            mcp_call_id = excluded.mcp_call_id,
+            redaction_state = excluded.redaction_state,
+            label_count = excluded.label_count,
+            mutation_count = excluded.mutation_count,
+            finding_count = excluded.finding_count",
+        params![
+            event_id,
+            timestamp,
+            common.timestamp_unix_ms as i64,
+            event.event.subject.event_family().sql_text(),
+            &common.event_type,
+            common.source_engine.sql_text(),
+            security_action_sql_text(&event.final_action),
+            common.enforceability.sql_text(),
+            common.attribution_scope.sql_text(),
+            common.origin_kind.sql_text(),
+            common.accounting_owner.as_deref(),
+            common.trace_id.as_deref(),
+            common.span_id.as_deref(),
+            common.parent_event_id.as_deref(),
+            common.stream_id.as_deref(),
+            common.activity_id.as_deref(),
+            common.sequence_no.map(|value| value as i64),
+            common.vm_id.as_deref(),
+            common.session_id.as_deref(),
+            common.profile_id.as_deref(),
+            common.profile_revision.as_deref(),
+            common.user_id.as_deref(),
+            common.process_id.as_deref(),
+            common.parent_process_id.as_deref(),
+            common.exec_id.as_deref(),
+            common.turn_id.as_deref(),
+            common.message_id.as_deref(),
+            common.tool_call_id.as_deref(),
+            common.mcp_call_id.as_deref(),
+            common.redaction_state.sql_text(),
+            event.event.labels.len() as i64,
+            event.event.mutations.len() as i64,
+            (event.event.findings.len() + event.detection_findings.len()) as i64,
+        ],
+    )?;
+
+    for (index, step) in event.steps.iter().enumerate() {
+        let message = cap_field(&step.message);
+        conn.execute(
+            "INSERT INTO security_event_steps (
+                event_id, step_index, kind, status, rule_id, pack_id, message
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                event_id,
+                index as i64,
+                step.kind.sql_text(),
+                step.status.sql_text(),
+                step.rule_id.as_deref(),
+                step.pack_id.as_deref(),
+                message,
+            ],
+        )?;
+    }
+
+    let mut seen_findings = HashSet::new();
+    for finding in event
+        .event
+        .findings
+        .iter()
+        .chain(event.detection_findings.iter())
+    {
+        if !seen_findings.insert(finding.finding_id.as_str()) {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO detection_findings (
+                finding_id, event_id, rule_id, pack_id, sigma_id, title,
+                severity, confidence
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                &finding.finding_id,
+                &finding.event_id,
+                &finding.rule_id,
+                &finding.pack_id,
+                finding.sigma_id.as_deref(),
+                &finding.title,
+                finding.severity.sql_text(),
+                finding.confidence.sql_text(),
+            ],
+        )?;
+        for (tag_index, tag) in finding.tags.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO detection_finding_tags (finding_id, tag_index, tag)
+                 VALUES (?1, ?2, ?3)",
+                params![&finding.finding_id, tag_index as i64, tag],
+            )?;
+        }
+    }
+
+    if let Some(parent) = &common.parent_event_id {
+        conn.execute(
+            "INSERT INTO security_event_links (event_id, linked_event_id, link_type, evidence)
+             VALUES (?1, ?2, 'parent', ?3)",
+            params![event_id, parent, &common.event_type],
+        )?;
+    }
+    for history in &event.event.trace.history {
+        conn.execute(
+            "INSERT INTO security_event_links (event_id, linked_event_id, link_type, evidence)
+             VALUES (?1, ?2, 'trace_history', ?3)",
+            params![event_id, &history.event_id, &history.event_type],
+        )?;
+    }
+    for history in &event.event.context.history {
+        conn.execute(
+            "INSERT INTO security_event_links (event_id, linked_event_id, link_type, evidence)
+             VALUES (?1, ?2, 'context_history', ?3)",
+            params![event_id, &history.event_id, &history.event_type],
+        )?;
+    }
+
+    Ok(())
 }
 
 fn insert_telemetry_identity(

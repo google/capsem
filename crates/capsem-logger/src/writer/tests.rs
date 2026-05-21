@@ -1,6 +1,13 @@
 //! Tests for `writer` (extracted from inline `mod tests`).
 
 use super::*;
+use std::collections::BTreeMap;
+
+use capsem_security_engine::{
+    BlockResponse, DetectionFinding, HttpBodySecuritySubject, HttpSecuritySubject,
+    ResolvedEventStep, SecurityEvent, SecurityEventCommon, TraceHistoryEntry,
+    RESOLVED_EVENT_SCHEMA_VERSION,
+};
 use serde::Serialize;
 
 fn assert_sql_enum<T>(value: T)
@@ -139,6 +146,332 @@ fn ai_evidence_sql_enum_text_matches_canonical_serde_names() {
     ] {
         assert_sql_enum(value);
     }
+}
+
+#[test]
+fn security_event_sql_enum_text_matches_canonical_serde_names() {
+    for value in [
+        EventFamily::Dns,
+        EventFamily::Http,
+        EventFamily::Mcp,
+        EventFamily::Model,
+        EventFamily::File,
+        EventFamily::Process,
+        EventFamily::Credential,
+        EventFamily::Vm,
+        EventFamily::Profile,
+        EventFamily::Conversation,
+        EventFamily::Snapshot,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        Enforceability::InlineBlockable,
+        Enforceability::ObserveOnly,
+        Enforceability::RemediationOnly,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        RedactionState::Raw,
+        RedactionState::Redacted,
+        RedactionState::SummaryOnly,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ResolvedEventStepKind::Preprocessor,
+        ResolvedEventStepKind::PluginCallback,
+        ResolvedEventStepKind::EnforcementMatch,
+        ResolvedEventStepKind::Confirm,
+        ResolvedEventStepKind::RateLimitCheck,
+        ResolvedEventStepKind::DetectionMatch,
+        ResolvedEventStepKind::Postprocessor,
+        ResolvedEventStepKind::EmitterDelivery,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        StepStatus::Applied,
+        StepStatus::Matched,
+        StepStatus::Skipped,
+        StepStatus::Error,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        Severity::Info,
+        Severity::Low,
+        Severity::Medium,
+        Severity::High,
+        Severity::Critical,
+    ] {
+        assert_sql_enum(value);
+    }
+}
+
+fn security_common(event_id: &str) -> SecurityEventCommon {
+    SecurityEventCommon {
+        event_id: event_id.to_string(),
+        parent_event_id: Some("evt-parent".to_string()),
+        stream_id: Some("stream-1".to_string()),
+        activity_id: Some("activity-1".to_string()),
+        sequence_no: Some(7),
+        source_engine: SourceEngine::Network,
+        attribution_scope: AiAttributionScope::Vm,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: Some("vm:vm-1".to_string()),
+        enforceability: Enforceability::InlineBlockable,
+        trace_id: Some("trace-1".to_string()),
+        span_id: Some("span-1".to_string()),
+        timestamp_unix_ms: 1_700_000_123_456,
+        vm_id: Some("vm-1".to_string()),
+        session_id: Some("session-1".to_string()),
+        profile_id: Some("coding".to_string()),
+        profile_revision: Some("rev-a".to_string()),
+        profile_pack_ids: Vec::new(),
+        enforcement_packs: Vec::new(),
+        detection_packs: Vec::new(),
+        user_id: Some("user-1".to_string()),
+        process_id: Some("pid-42".to_string()),
+        parent_process_id: Some("pid-1".to_string()),
+        exec_id: Some("exec-1".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        message_id: Some("message-1".to_string()),
+        tool_call_id: Some("tool-call-1".to_string()),
+        mcp_call_id: Some("mcp-call-1".to_string()),
+        event_type: "http.request".to_string(),
+        redaction_state: RedactionState::Raw,
+    }
+}
+
+#[test]
+fn resolved_security_event_writes_structured_event_steps_findings_and_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("security-events.db");
+
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "authorization".to_string(),
+        vec!["Bearer secret-token".to_string()],
+    );
+    let mut event = SecurityEvent::http(
+        security_common("evt-sec-1"),
+        HttpSecuritySubject {
+            method: "POST".to_string(),
+            scheme: Some("https".to_string()),
+            host: "api.example.com".to_string(),
+            port: Some(443),
+            path: Some("/admin".to_string()),
+            query: None,
+            url: Some("https://api.example.com/admin".to_string()),
+            path_class: "admin".to_string(),
+            request_bytes: 42,
+            request_headers: headers,
+            request_body: Some(HttpBodySecuritySubject::text("secret payload")),
+            response_status: None,
+            response_headers: BTreeMap::new(),
+            response_bytes: None,
+            response_body: None,
+        },
+    );
+    event.labels.push("http".to_string());
+    event.trace.history.push(TraceHistoryEntry {
+        event_id: "evt-dns-1".to_string(),
+        event_type: "dns.request".to_string(),
+        labels: vec!["dns".to_string()],
+    });
+    event.context.history.push(TraceHistoryEntry {
+        event_id: "evt-model-1".to_string(),
+        event_type: "model.request".to_string(),
+        labels: vec!["model".to_string()],
+    });
+
+    let finding = DetectionFinding {
+        finding_id: "finding-1".to_string(),
+        event_id: "evt-sec-1".to_string(),
+        rule_id: "detect.admin_path".to_string(),
+        pack_id: "pack-detect".to_string(),
+        sigma_id: Some("sigma-admin".to_string()),
+        title: "Admin path access".to_string(),
+        severity: Severity::High,
+        confidence: Confidence::High,
+        tags: vec![
+            "attack.initial_access".to_string(),
+            "capsem.http".to_string(),
+        ],
+    };
+
+    let resolved = ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event,
+        steps: vec![
+            ResolvedEventStep {
+                kind: ResolvedEventStepKind::Preprocessor,
+                status: StepStatus::Applied,
+                rule_id: None,
+                pack_id: Some("pack-runtime".to_string()),
+                message: Some("credential redaction ran".to_string()),
+            },
+            ResolvedEventStep {
+                kind: ResolvedEventStepKind::DetectionMatch,
+                status: StepStatus::Matched,
+                rule_id: Some("detect.admin_path".to_string()),
+                pack_id: Some("pack-detect".to_string()),
+                message: Some("sigma matched admin path".to_string()),
+            },
+            ResolvedEventStep {
+                kind: ResolvedEventStepKind::EnforcementMatch,
+                status: StepStatus::Matched,
+                rule_id: Some("enforce.block_admin".to_string()),
+                pack_id: Some("pack-runtime".to_string()),
+                message: Some("blocked admin".to_string()),
+            },
+        ],
+        plugin_transforms: Vec::new(),
+        detection_findings: vec![finding],
+        final_action: SecurityAction::Block(BlockResponse {
+            reason_code: "blocked_admin".to_string(),
+            rule_id: Some("enforce.block_admin".to_string()),
+        }),
+        emitter_results: Vec::new(),
+    };
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer.write(WriteOp::ResolvedSecurityEvent(resolved)).await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let event_row: (String, String, String, String, String, String, i64, i64) = conn
+        .query_row(
+            "SELECT event_family, event_type, source_engine, final_action,
+                    attribution_scope, profile_id, label_count, finding_count
+             FROM security_events WHERE event_id = 'evt-sec-1'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        event_row,
+        (
+            "http".to_string(),
+            "http.request".to_string(),
+            "network".to_string(),
+            "block".to_string(),
+            "vm".to_string(),
+            "coding".to_string(),
+            1,
+            1,
+        )
+    );
+
+    let steps: Vec<(String, String, Option<String>)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT kind, status, rule_id FROM security_event_steps
+                 WHERE event_id = 'evt-sec-1' ORDER BY step_index ASC",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        steps,
+        vec![
+            ("preprocessor".to_string(), "applied".to_string(), None),
+            (
+                "detection_match".to_string(),
+                "matched".to_string(),
+                Some("detect.admin_path".to_string()),
+            ),
+            (
+                "enforcement_match".to_string(),
+                "matched".to_string(),
+                Some("enforce.block_admin".to_string()),
+            ),
+        ]
+    );
+
+    let finding_row: (String, String, String, String, String) = conn
+        .query_row(
+            "SELECT finding_id, rule_id, sigma_id, severity, confidence
+             FROM detection_findings WHERE event_id = 'evt-sec-1'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        finding_row,
+        (
+            "finding-1".to_string(),
+            "detect.admin_path".to_string(),
+            "sigma-admin".to_string(),
+            "high".to_string(),
+            "high".to_string(),
+        )
+    );
+
+    let tags: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT tag FROM detection_finding_tags
+                 WHERE finding_id = 'finding-1' ORDER BY tag_index ASC",
+            )
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(tags, vec!["attack.initial_access", "capsem.http"]);
+
+    let links: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT linked_event_id, link_type FROM security_event_links
+                 WHERE event_id = 'evt-sec-1' ORDER BY id ASC",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        links,
+        vec![
+            ("evt-parent".to_string(), "parent".to_string()),
+            ("evt-dns-1".to_string(), "trace_history".to_string()),
+            ("evt-model-1".to_string(), "context_history".to_string()),
+        ]
+    );
 }
 
 #[test]

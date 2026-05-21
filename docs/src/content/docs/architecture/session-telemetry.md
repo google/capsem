@@ -5,7 +5,7 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
+Every Capsem VM gets its own SQLite database (`session.db`) that records canonical security events, network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
 
 Each database also carries one `session_identity` row. That row is the durable
 identity envelope for the event stream: the VM id, the resolved profile id, and
@@ -33,6 +33,46 @@ erDiagram
         text vm_id
         text profile_id
         text user_id
+    }
+    security_events {
+        int id PK
+        text event_id
+        text event_family
+        text event_type
+        text source_engine
+        text final_action
+        text trace_id
+        text vm_id
+        text profile_id
+        text user_id
+    }
+    security_event_steps {
+        int id PK
+        text event_id FK
+        int step_index
+        text kind
+        text status
+        text rule_id
+    }
+    detection_findings {
+        int id PK
+        text finding_id
+        text event_id FK
+        text rule_id
+        text pack_id
+        text severity
+        text confidence
+    }
+    detection_finding_tags {
+        text finding_id FK
+        int tag_index
+        text tag
+    }
+    security_event_links {
+        int id PK
+        text event_id FK
+        text linked_event_id
+        text link_type
     }
     model_calls {
         int id PK
@@ -104,6 +144,10 @@ erDiagram
 
     model_calls ||--o{ tool_calls : "has"
     model_calls ||--o{ tool_responses : "has"
+    security_events ||--o{ security_event_steps : "has"
+    security_events ||--o{ detection_findings : "has"
+    detection_findings ||--o{ detection_finding_tags : "has"
+    security_events ||--o{ security_event_links : "links"
     snapshot_events }o--o{ fs_events : "references range"
 ```
 
@@ -120,6 +164,73 @@ One durable identity row for the VM/session that owns this database.
 | `vm_id` | TEXT | Capsem VM/session id |
 | `profile_id` | TEXT | Resolved Profile V2 id pinned to the session |
 | `user_id` | TEXT | Local host user id recorded by the service/process boundary |
+
+### security_events
+
+The canonical journal row for a resolved Security Engine event. Domain tables
+remain useful projections, but this table is the normalized place to read final
+decisions, attribution, and cross-engine identity.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `event_id` | TEXT UNIQUE | Stable event id |
+| `timestamp` | TEXT | ISO 8601 timestamp derived from the event |
+| `timestamp_unix_ms` | INTEGER | Millisecond timestamp used by replay/tests |
+| `event_family` | TEXT | `dns`, `http`, `mcp`, `model`, `file`, `process`, `credential`, `vm`, `profile`, `conversation`, or `snapshot` |
+| `event_type` | TEXT | Typed event name such as `http.request` |
+| `source_engine` | TEXT | Engine that emitted the event |
+| `final_action` | TEXT | `continue`, `ask`, `rewrite`, `block`, `throttle`, `quarantine`, `restore`, `drop_connection`, `observe_only`, or `error` |
+| `enforceability` | TEXT | `inline_blockable`, `observe_only`, or `remediation_only` |
+| `attribution_scope` | TEXT | `host`, `vm`, `profile`, `session`, or `unknown` |
+| `origin_kind` | TEXT | Where the activity originated, for example `guest_network` or `host_service` |
+| `accounting_owner` | TEXT | Counter/quota owner, such as `vm:<id>` or `host:<id>` |
+| `trace_id` | TEXT | Cross-table correlation id |
+| `vm_id`, `session_id`, `profile_id`, `user_id` | TEXT | Durable ownership fields |
+| `process_id`, `turn_id`, `message_id`, `tool_call_id`, `mcp_call_id` | TEXT | Optional correlation ids |
+| `redaction_state` | TEXT | `raw`, `redacted`, or `summary-only` |
+| `label_count`, `mutation_count`, `finding_count` | INTEGER | Compact summary counters |
+
+### security_event_steps
+
+Ordered processing steps for a security event: preprocessors, plugin callbacks,
+enforcement matches, confirmation, rate-limit checks, detection matches,
+postprocessors, and emitter delivery.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `event_id` | TEXT FK | Linked `security_events.event_id` |
+| `step_index` | INTEGER | Stable order within the resolved event |
+| `kind` | TEXT | Processing step kind |
+| `status` | TEXT | `applied`, `matched`, `skipped`, or `error` |
+| `rule_id` | TEXT | Matching rule, when present |
+| `pack_id` | TEXT | Rule/plugin pack, when present |
+| `message` | TEXT | Short diagnostic |
+
+### detection_findings
+
+Detection findings produced by the Security Engine before telemetry/logging
+sinks run.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `finding_id` | TEXT UNIQUE | Stable finding id |
+| `event_id` | TEXT FK | Linked `security_events.event_id` |
+| `rule_id` | TEXT | Detection rule id |
+| `pack_id` | TEXT | Detection pack id |
+| `sigma_id` | TEXT | Optional Sigma rule id |
+| `title` | TEXT | Finding title |
+| `severity` | TEXT | `info`, `low`, `medium`, `high`, or `critical` |
+| `confidence` | TEXT | `low`, `medium`, or `high` |
+
+Finding tags live in `detection_finding_tags` as one row per tag so hunting and
+timeline filters can index them without parsing JSON.
+
+### security_event_links
+
+Correlation edges between events. Examples include parent event links,
+trace-history links, context-history links, model-to-tool links, process-to-file
+links, and future snapshot/file relationships.
 
 ### net_events
 

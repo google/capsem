@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first S08b resolved-event emitter contract with required versus
   best-effort sink semantics, delivery bookkeeping, and shared event/finding id
   tests.
+- Added the first structured resolved-event session ledger:
+  `security_events`, `security_event_steps`, `detection_findings`,
+  `detection_finding_tags`, and `security_event_links`, with
+  `WriteOp::ResolvedSecurityEvent` persistence, canonical enum spelling checks,
+  session-schema tooling coverage, and a `/timeline/{id}` `security` layer.
 - Added S08b backtest result shaping with full event refs, mismatch outcomes,
   default 100-row match limits, and evidence-signature deduplication.
 - Added the first S08b runtime rule registry contract with compile-first

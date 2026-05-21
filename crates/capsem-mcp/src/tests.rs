@@ -631,6 +631,12 @@ fn inspect_schema_has_all_tables() {
         "snapshot_events",
         "dns_events",
         "audit_events",
+        "session_identity",
+        "security_events",
+        "security_event_steps",
+        "detection_findings",
+        "detection_finding_tags",
+        "security_event_links",
     ] {
         assert!(schema.contains(table), "Missing table in schema: {table}");
     }
@@ -640,7 +646,10 @@ fn inspect_schema_has_all_tables() {
 fn timeline_tool_schema_exposes_policy_layers() {
     let schema = schemars::schema_for!(TimelineMcpParams);
     let text = serde_json::to_string(&schema).unwrap();
-    for expected in ["traceId", "exec,mcp,net,dns,hook,audit,snapshot,fs,model"] {
+    for expected in [
+        "traceId",
+        "exec,mcp,net,dns,security,audit,snapshot,fs,model",
+    ] {
         assert!(
             text.contains(expected),
             "timeline schema should mention {expected}: {text}"

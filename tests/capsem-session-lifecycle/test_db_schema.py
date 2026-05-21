@@ -26,6 +26,28 @@ EXPECTED_SCHEMAS = {
     "fs_events": ["action", "path", "trace_id"],
     "snapshot_events": ["origin", "slot", "trace_id"],
     "audit_events": ["pid", "exe", "argv", "audit_id", "exec_event_id", "trace_id"],
+    "session_identity": ["updated_at", "vm_id", "profile_id", "user_id"],
+    "security_events": [
+        "event_id", "timestamp_unix_ms", "event_family", "event_type",
+        "source_engine", "final_action", "enforceability",
+        "attribution_scope", "origin_kind", "accounting_owner",
+        "trace_id", "vm_id", "session_id", "profile_id", "user_id",
+        "process_id", "turn_id", "message_id", "tool_call_id",
+        "mcp_call_id", "redaction_state", "label_count",
+        "mutation_count", "finding_count",
+    ],
+    "security_event_steps": [
+        "event_id", "step_index", "kind", "status", "rule_id",
+        "pack_id", "message",
+    ],
+    "detection_findings": [
+        "finding_id", "event_id", "rule_id", "pack_id", "sigma_id",
+        "title", "severity", "confidence",
+    ],
+    "detection_finding_tags": ["finding_id", "tag_index", "tag"],
+    "security_event_links": [
+        "event_id", "linked_event_id", "link_type", "evidence",
+    ],
 }
 
 

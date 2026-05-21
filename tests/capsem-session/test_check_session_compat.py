@@ -184,6 +184,74 @@ def create_current_policy_db(path: Path):
             exec_event_id INTEGER,
             trace_id TEXT
         );
+        CREATE TABLE session_identity (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            updated_at TEXT NOT NULL,
+            vm_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            user_id TEXT NOT NULL
+        );
+        CREATE TABLE security_events (
+            id INTEGER PRIMARY KEY,
+            event_id TEXT NOT NULL UNIQUE,
+            timestamp TEXT NOT NULL,
+            timestamp_unix_ms INTEGER NOT NULL,
+            event_family TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            source_engine TEXT NOT NULL,
+            final_action TEXT NOT NULL,
+            enforceability TEXT NOT NULL,
+            attribution_scope TEXT NOT NULL,
+            origin_kind TEXT NOT NULL,
+            accounting_owner TEXT,
+            trace_id TEXT,
+            vm_id TEXT,
+            session_id TEXT,
+            profile_id TEXT,
+            user_id TEXT,
+            process_id TEXT,
+            turn_id TEXT,
+            message_id TEXT,
+            tool_call_id TEXT,
+            mcp_call_id TEXT,
+            redaction_state TEXT NOT NULL,
+            label_count INTEGER NOT NULL DEFAULT 0,
+            mutation_count INTEGER NOT NULL DEFAULT 0,
+            finding_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE security_event_steps (
+            id INTEGER PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            step_index INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            rule_id TEXT,
+            pack_id TEXT,
+            message TEXT
+        );
+        CREATE TABLE detection_findings (
+            id INTEGER PRIMARY KEY,
+            finding_id TEXT NOT NULL UNIQUE,
+            event_id TEXT NOT NULL,
+            rule_id TEXT NOT NULL,
+            pack_id TEXT NOT NULL,
+            sigma_id TEXT,
+            title TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            confidence TEXT NOT NULL
+        );
+        CREATE TABLE detection_finding_tags (
+            finding_id TEXT NOT NULL,
+            tag_index INTEGER NOT NULL,
+            tag TEXT NOT NULL
+        );
+        CREATE TABLE security_event_links (
+            id INTEGER PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            linked_event_id TEXT NOT NULL,
+            link_type TEXT NOT NULL,
+            evidence TEXT
+        );
         INSERT INTO model_calls (
             id, timestamp, provider, model, input_tokens, output_tokens,
             request_body_preview, trace_id

@@ -313,7 +313,7 @@ async fn triage_session_db_surfaces_policy_signals() {
 
 #[test]
 fn timeline_allowed_layers_include_policy_tables() {
-    for expected in ["dns", "hook", "audit", "snapshot"] {
+    for expected in ["dns", "security", "audit", "snapshot"] {
         assert!(
             ALLOWED_TIMELINE_LAYERS.contains(&expected),
             "timeline layer allowlist missing {expected}"
@@ -331,7 +331,14 @@ fn timeline_existing_tables_lists_policy_tables() {
 
     let tables = timeline_existing_tables(&reader).unwrap();
 
-    for expected in ["dns_events", "audit_events", "snapshot_events"] {
+    for expected in [
+        "dns_events",
+        "audit_events",
+        "snapshot_events",
+        "security_events",
+        "security_event_steps",
+        "detection_findings",
+    ] {
         assert!(
             tables.contains(expected),
             "timeline schema discovery missing {expected}: {tables:?}"
@@ -577,6 +584,79 @@ async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
             },
         ))
         .await;
+    let security_event = capsem_security_engine::SecurityEvent::http(
+        capsem_security_engine::SecurityEventCommon {
+            event_id: "evt_timeline_security".into(),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: capsem_security_engine::SourceEngine::Network,
+            attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+            origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:timeline-vm".into()),
+            enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+            trace_id: Some("trace_t6".into()),
+            span_id: None,
+            timestamp_unix_ms: now
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            vm_id: Some(vm_id.into()),
+            session_id: Some("timeline-session".into()),
+            profile_id: Some("coding".into()),
+            profile_revision: Some("rev-a".into()),
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: Some("user-1".into()),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: capsem_security_engine::RedactionState::Raw,
+        },
+        capsem_security_engine::HttpSecuritySubject {
+            method: "GET".into(),
+            scheme: Some("https".into()),
+            host: "example.com".into(),
+            port: Some(443),
+            path: Some("/".into()),
+            query: None,
+            url: Some("https://example.com/".into()),
+            path_class: "root".into(),
+            request_bytes: 0,
+            request_headers: std::collections::BTreeMap::new(),
+            request_body: None,
+            response_status: Some(200),
+            response_headers: std::collections::BTreeMap::new(),
+            response_bytes: Some(20),
+            response_body: None,
+        },
+    );
+    writer
+        .write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+            capsem_security_engine::ResolvedSecurityEvent {
+                schema_version: capsem_security_engine::RESOLVED_EVENT_SCHEMA_VERSION,
+                event: security_event,
+                steps: vec![capsem_security_engine::ResolvedEventStep {
+                    kind: capsem_security_engine::ResolvedEventStepKind::DetectionMatch,
+                    status: capsem_security_engine::StepStatus::Skipped,
+                    rule_id: None,
+                    pack_id: None,
+                    message: Some("no detection".into()),
+                }],
+                plugin_transforms: Vec::new(),
+                detection_findings: Vec::new(),
+                final_action: capsem_security_engine::SecurityAction::Continue,
+                emitter_results: Vec::new(),
+            },
+        ))
+        .await;
     drop(writer);
 
     state.instances.lock().unwrap().insert(
@@ -622,7 +702,7 @@ async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
         .collect();
 
     for expected in [
-        "exec", "mcp", "net", "dns", "hook", "audit", "snapshot", "fs", "model",
+        "exec", "mcp", "net", "dns", "security", "audit", "snapshot", "fs", "model",
     ] {
         assert!(
             layers.contains(expected),
@@ -5927,21 +6007,6 @@ async fn s07_route_surface_chains_profiles_skills_mcp_rules_and_confirm_listing(
         serde_json::json!("security.rules.http.ask_probe")
     );
 
-    let Json(evaluated) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: Some("s07-chain".to_string()),
-        callback: "http.request".to_string(),
-        subject: serde_json::json!({
-            "request": {
-                "host": "probe.example.com",
-                "method": "GET"
-            }
-        }),
-    }))
-    .await
-    .unwrap();
-    assert_eq!(evaluated["decision"], serde_json::json!("ask"));
-    assert_eq!(evaluated["would_ask"], serde_json::json!(true));
-
     let Json(pending) = handle_list_pending_confirms().await;
     assert_eq!(pending["pending_count"], serde_json::json!(0));
 
@@ -6020,48 +6085,6 @@ async fn handle_get_rule_returns_single_rule_with_provenance() {
 }
 
 #[tokio::test]
-async fn handle_evaluate_rule_dry_runs_v2_policy_without_enforcement() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
-
-    let mut profile = custom_profile("custom", "Custom");
-    profile.security.rules.http.insert(
-        "ask_openai".to_string(),
-        test_profile_rule(
-            "http.request",
-            "request.host == 'api.openai.com'",
-            capsem_core::settings_profiles::RuleDecision::Ask,
-            25,
-            "needs review",
-        ),
-    );
-    let _ = handle_create_profile(Json(profile)).await.unwrap();
-
-    let Json(val) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: Some("custom".to_string()),
-        callback: "http.request".to_string(),
-        subject: serde_json::json!({
-            "request": {
-                "host": "api.openai.com",
-                "method": "POST"
-            }
-        }),
-    }))
-    .await
-    .unwrap();
-
-    assert_eq!(
-        val["matched_rule_id"],
-        serde_json::json!("security.rules.http.ask_openai")
-    );
-    assert_eq!(val["decision"], serde_json::json!("ask"));
-    assert_eq!(val["would_ask"], serde_json::json!(true));
-    assert_eq!(val["reason"], serde_json::json!("needs review"));
-    assert_eq!(val["enforced"], serde_json::json!(false));
-}
-
-#[tokio::test]
 async fn rules_api_functional_chain_reloads_profile_changes_across_calls() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -6119,25 +6142,6 @@ async fn rules_api_functional_chain_reloads_profile_changes_across_calls() {
     assert_eq!(rule["source_profile"], serde_json::json!("chain"));
     assert_eq!(rule["rule"]["decision"], serde_json::json!("ask"));
 
-    let subject = serde_json::json!({
-        "request": {
-            "host": "api.openai.com",
-            "method": "GET"
-        }
-    });
-    let Json(before_update) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: Some("chain".to_string()),
-        callback: "http.request".to_string(),
-        subject: subject.clone(),
-    }))
-    .await
-    .unwrap();
-    assert_eq!(
-        before_update["matched_rule_id"],
-        serde_json::json!("security.rules.http.ask_openai")
-    );
-    assert_eq!(before_update["would_ask"], serde_json::json!(true));
-
     let mut updated = custom_profile("chain", "Chain");
     updated.security.rules.http.insert(
         "block_openai".to_string(),
@@ -6153,19 +6157,14 @@ async fn rules_api_functional_chain_reloads_profile_changes_across_calls() {
         .await
         .unwrap();
 
-    let Json(after_update) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: Some("chain".to_string()),
-        callback: "http.request".to_string(),
-        subject,
-    }))
-    .await
-    .unwrap();
+    let Json(after_update) = handle_get_rule(Path("security.rules.http.block_openai".to_string()))
+        .await
+        .unwrap();
     assert_eq!(
-        after_update["matched_rule_id"],
+        after_update["id"],
         serde_json::json!("security.rules.http.block_openai")
     );
-    assert_eq!(after_update["decision"], serde_json::json!("block"));
-    assert_eq!(after_update["would_ask"], serde_json::json!(false));
+    assert_eq!(after_update["rule"]["decision"], serde_json::json!("block"));
 }
 
 #[tokio::test]
@@ -6203,24 +6202,6 @@ async fn rules_api_create_delete_roundtrip_updates_user_profile() {
     assert_eq!(created["source_profile"], serde_json::json!("rules-user"));
     assert_eq!(created["rule"]["decision"], serde_json::json!("ask"));
 
-    let subject = serde_json::json!({
-        "request": {
-            "host": "api.openai.com",
-            "method": "GET"
-        }
-    });
-    let Json(evaluated) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: Some("rules-user".to_string()),
-        callback: "http.request".to_string(),
-        subject: subject.clone(),
-    }))
-    .await
-    .unwrap();
-    assert_eq!(
-        evaluated["matched_rule_id"],
-        serde_json::json!("security.rules.http.ask_openai")
-    );
-
     let Json(deleted) = handle_delete_rule(
         Path("security.rules.http.ask_openai".to_string()),
         Query(RulesMutationQuery {
@@ -6234,15 +6215,6 @@ async fn rules_api_create_delete_roundtrip_updates_user_profile() {
         serde_json::json!("security.rules.http.ask_openai")
     );
     assert_eq!(deleted["removed"], serde_json::json!(true));
-
-    let Json(after_delete) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: Some("rules-user".to_string()),
-        callback: "http.request".to_string(),
-        subject,
-    }))
-    .await
-    .unwrap();
-    assert!(after_delete["matched_rule_id"].is_null());
 }
 
 #[tokio::test]
@@ -6335,67 +6307,6 @@ async fn handle_create_rule_rejects_duplicate_user_rule() {
 
     assert_eq!(err.0, StatusCode::CONFLICT);
     assert!(err.1.contains("rule_exists"));
-}
-
-#[tokio::test]
-async fn handle_evaluate_rule_supports_generated_http_read_write_callbacks() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
-
-    let subject = serde_json::json!({
-        "request": {
-            "host": "example.com",
-            "method": "GET"
-        }
-    });
-    let Json(read) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: None,
-        callback: "http.read".to_string(),
-        subject: subject.clone(),
-    }))
-    .await
-    .unwrap();
-    assert_eq!(
-        read["matched_rule_id"],
-        serde_json::json!("security.rules.http.default_read")
-    );
-    assert!(read["decision"].is_string());
-
-    let Json(write) = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: None,
-        callback: "http.write".to_string(),
-        subject,
-    }))
-    .await
-    .unwrap();
-    assert_eq!(
-        write["matched_rule_id"],
-        serde_json::json!("security.rules.http.default_write")
-    );
-    assert!(write["decision"].is_string());
-}
-
-#[tokio::test]
-async fn handle_evaluate_rule_rejects_unknown_callback() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
-
-    let err = handle_evaluate_rule(Json(RuleEvaluateRequest {
-        profile: None,
-        callback: "http.connect".to_string(),
-        subject: serde_json::json!({
-            "request": {
-                "host": "api.openai.com"
-            }
-        }),
-    }))
-    .await
-    .expect_err("unsupported evaluator callback should fail closed");
-
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
-    assert!(err.1.contains("unsupported policy callback"));
 }
 
 fn runtime_http_event(
@@ -6815,70 +6726,6 @@ async fn handle_detection_hunt_runs_multiple_detection_rules_over_inline_events(
     assert_eq!(rule_ids.len(), 2);
     assert!(rule_ids.contains("detect-metadata"));
     assert!(rule_ids.contains("detect-api"));
-}
-
-#[tokio::test]
-async fn rules_api_evaluate_stays_bounded_for_large_profiles() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, _, _) = install_settings_profiles_env(&dir);
-
-    let mut profile = custom_profile("large", "Large");
-    for index in 0..160 {
-        profile.security.rules.http.insert(
-            format!("miss_{index:03}"),
-            test_profile_rule(
-                "http.request",
-                &format!("request.host == 'miss-{index}.example.com'"),
-                capsem_core::settings_profiles::RuleDecision::Block,
-                index + 1,
-                "bulk miss",
-            ),
-        );
-    }
-    profile.security.rules.http.insert(
-        "target".to_string(),
-        test_profile_rule(
-            "http.request",
-            "request.host == 'target.example.com'",
-            capsem_core::settings_profiles::RuleDecision::Block,
-            900,
-            "bulk target",
-        ),
-    );
-    let _ = handle_create_profile(Json(profile)).await.unwrap();
-
-    let request = RuleEvaluateRequest {
-        profile: Some("large".to_string()),
-        callback: "http.request".to_string(),
-        subject: serde_json::json!({
-            "request": {
-                "host": "target.example.com",
-                "method": "GET"
-            }
-        }),
-    };
-    let Json(warmup) = handle_evaluate_rule(Json(request.clone())).await.unwrap();
-    assert_eq!(
-        warmup["matched_rule_id"],
-        serde_json::json!("security.rules.http.target")
-    );
-
-    let iterations = 32;
-    let start = std::time::Instant::now();
-    for _ in 0..iterations {
-        let Json(result) = handle_evaluate_rule(Json(request.clone())).await.unwrap();
-        assert_eq!(
-            result["matched_rule_id"],
-            serde_json::json!("security.rules.http.target")
-        );
-    }
-    let elapsed = start.elapsed();
-    let budget = std::time::Duration::from_millis(1500);
-    assert!(
-        elapsed < budget,
-        "{iterations} large-profile rule evaluations took {elapsed:?}, budget {budget:?}"
-    );
 }
 
 #[tokio::test]

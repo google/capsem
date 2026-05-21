@@ -15,6 +15,7 @@ EXPECTED_TABLES = [
     "fs_events",
     "snapshot_events",
     "audit_events",
+    "session_identity",
 ]
 
 

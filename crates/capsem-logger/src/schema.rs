@@ -304,6 +304,112 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_session_identity_user
         ON session_identity(user_id);
 
+    CREATE TABLE IF NOT EXISTS security_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL UNIQUE,
+        timestamp TEXT NOT NULL,
+        timestamp_unix_ms INTEGER NOT NULL,
+        event_family TEXT NOT NULL CHECK (event_family IN ('dns', 'http', 'mcp', 'model', 'file', 'process', 'credential', 'vm', 'profile', 'conversation', 'snapshot')),
+        event_type TEXT NOT NULL,
+        source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
+        final_action TEXT NOT NULL CHECK (final_action IN ('continue', 'ask', 'rewrite', 'block', 'throttle', 'quarantine', 'restore', 'drop_connection', 'observe_only', 'error')),
+        enforceability TEXT NOT NULL CHECK (enforceability IN ('inline_blockable', 'observe_only', 'remediation_only')),
+        attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
+        origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
+        accounting_owner TEXT,
+        trace_id TEXT,
+        span_id TEXT,
+        parent_event_id TEXT,
+        stream_id TEXT,
+        activity_id TEXT,
+        sequence_no INTEGER,
+        vm_id TEXT,
+        session_id TEXT,
+        profile_id TEXT,
+        profile_revision TEXT,
+        user_id TEXT,
+        process_id TEXT,
+        parent_process_id TEXT,
+        exec_id TEXT,
+        turn_id TEXT,
+        message_id TEXT,
+        tool_call_id TEXT,
+        mcp_call_id TEXT,
+        redaction_state TEXT NOT NULL CHECK (redaction_state IN ('raw', 'redacted', 'summary-only')),
+        label_count INTEGER NOT NULL DEFAULT 0,
+        mutation_count INTEGER NOT NULL DEFAULT 0,
+        finding_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_events_timestamp
+        ON security_events(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_security_events_trace_id
+        ON security_events(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_security_events_profile
+        ON security_events(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_security_events_vm
+        ON security_events(vm_id);
+    CREATE INDEX IF NOT EXISTS idx_security_events_family_action
+        ON security_events(event_family, final_action);
+
+    CREATE TABLE IF NOT EXISTS security_event_steps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
+        step_index INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('preprocessor', 'plugin_callback', 'enforcement_match', 'confirm', 'rate_limit_check', 'detection_match', 'postprocessor', 'emitter_delivery')),
+        status TEXT NOT NULL CHECK (status IN ('applied', 'matched', 'skipped', 'error')),
+        rule_id TEXT,
+        pack_id TEXT,
+        message TEXT,
+        FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE,
+        UNIQUE(event_id, step_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_event_steps_event
+        ON security_event_steps(event_id);
+    CREATE INDEX IF NOT EXISTS idx_security_event_steps_rule
+        ON security_event_steps(rule_id);
+
+    CREATE TABLE IF NOT EXISTS detection_findings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        finding_id TEXT NOT NULL UNIQUE,
+        event_id TEXT NOT NULL,
+        rule_id TEXT NOT NULL,
+        pack_id TEXT NOT NULL,
+        sigma_id TEXT,
+        title TEXT NOT NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high', 'critical')),
+        confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
+        FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_detection_findings_event
+        ON detection_findings(event_id);
+    CREATE INDEX IF NOT EXISTS idx_detection_findings_rule
+        ON detection_findings(rule_id);
+    CREATE INDEX IF NOT EXISTS idx_detection_findings_pack
+        ON detection_findings(pack_id);
+
+    CREATE TABLE IF NOT EXISTS detection_finding_tags (
+        finding_id TEXT NOT NULL,
+        tag_index INTEGER NOT NULL,
+        tag TEXT NOT NULL,
+        FOREIGN KEY(finding_id) REFERENCES detection_findings(finding_id) ON DELETE CASCADE,
+        UNIQUE(finding_id, tag_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_detection_finding_tags_tag
+        ON detection_finding_tags(tag);
+
+    CREATE TABLE IF NOT EXISTS security_event_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
+        linked_event_id TEXT NOT NULL,
+        link_type TEXT NOT NULL,
+        evidence TEXT,
+        FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_event_links_event
+        ON security_event_links(event_id);
+    CREATE INDEX IF NOT EXISTS idx_security_event_links_linked
+        ON security_event_links(linked_event_id);
+
     CREATE TABLE IF NOT EXISTS exec_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TEXT NOT NULL,
@@ -673,6 +779,103 @@ pub fn migrate(conn: &Connection) {
             ON session_identity(profile_id);
         CREATE INDEX IF NOT EXISTS idx_session_identity_user
             ON session_identity(user_id);",
+    );
+    // S08b: canonical resolved security-event journal. Domain-specific tables
+    // remain query projections; these tables are the structured security
+    // ledger the Security Engine emitter writes.
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS security_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            timestamp TEXT NOT NULL,
+            timestamp_unix_ms INTEGER NOT NULL,
+            event_family TEXT NOT NULL CHECK (event_family IN ('dns', 'http', 'mcp', 'model', 'file', 'process', 'credential', 'vm', 'profile', 'conversation', 'snapshot')),
+            event_type TEXT NOT NULL,
+            source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
+            final_action TEXT NOT NULL CHECK (final_action IN ('continue', 'ask', 'rewrite', 'block', 'throttle', 'quarantine', 'restore', 'drop_connection', 'observe_only', 'error')),
+            enforceability TEXT NOT NULL CHECK (enforceability IN ('inline_blockable', 'observe_only', 'remediation_only')),
+            attribution_scope TEXT NOT NULL CHECK (attribution_scope IN ('host', 'vm', 'profile', 'session', 'unknown')),
+            origin_kind TEXT NOT NULL CHECK (origin_kind IN ('guest_network', 'host_service', 'host_admin', 'host_workbench', 'test_fixture', 'unknown')),
+            accounting_owner TEXT,
+            trace_id TEXT,
+            span_id TEXT,
+            parent_event_id TEXT,
+            stream_id TEXT,
+            activity_id TEXT,
+            sequence_no INTEGER,
+            vm_id TEXT,
+            session_id TEXT,
+            profile_id TEXT,
+            profile_revision TEXT,
+            user_id TEXT,
+            process_id TEXT,
+            parent_process_id TEXT,
+            exec_id TEXT,
+            turn_id TEXT,
+            message_id TEXT,
+            tool_call_id TEXT,
+            mcp_call_id TEXT,
+            redaction_state TEXT NOT NULL CHECK (redaction_state IN ('raw', 'redacted', 'summary-only')),
+            label_count INTEGER NOT NULL DEFAULT 0,
+            mutation_count INTEGER NOT NULL DEFAULT 0,
+            finding_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_security_events_timestamp ON security_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_security_events_trace_id ON security_events(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_security_events_profile ON security_events(profile_id);
+        CREATE INDEX IF NOT EXISTS idx_security_events_vm ON security_events(vm_id);
+        CREATE INDEX IF NOT EXISTS idx_security_events_family_action ON security_events(event_family, final_action);
+
+        CREATE TABLE IF NOT EXISTS security_event_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL,
+            step_index INTEGER NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('preprocessor', 'plugin_callback', 'enforcement_match', 'confirm', 'rate_limit_check', 'detection_match', 'postprocessor', 'emitter_delivery')),
+            status TEXT NOT NULL CHECK (status IN ('applied', 'matched', 'skipped', 'error')),
+            rule_id TEXT,
+            pack_id TEXT,
+            message TEXT,
+            FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE,
+            UNIQUE(event_id, step_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_security_event_steps_event ON security_event_steps(event_id);
+        CREATE INDEX IF NOT EXISTS idx_security_event_steps_rule ON security_event_steps(rule_id);
+
+        CREATE TABLE IF NOT EXISTS detection_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            finding_id TEXT NOT NULL UNIQUE,
+            event_id TEXT NOT NULL,
+            rule_id TEXT NOT NULL,
+            pack_id TEXT NOT NULL,
+            sigma_id TEXT,
+            title TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high', 'critical')),
+            confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
+            FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_detection_findings_event ON detection_findings(event_id);
+        CREATE INDEX IF NOT EXISTS idx_detection_findings_rule ON detection_findings(rule_id);
+        CREATE INDEX IF NOT EXISTS idx_detection_findings_pack ON detection_findings(pack_id);
+
+        CREATE TABLE IF NOT EXISTS detection_finding_tags (
+            finding_id TEXT NOT NULL,
+            tag_index INTEGER NOT NULL,
+            tag TEXT NOT NULL,
+            FOREIGN KEY(finding_id) REFERENCES detection_findings(finding_id) ON DELETE CASCADE,
+            UNIQUE(finding_id, tag_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_detection_finding_tags_tag ON detection_finding_tags(tag);
+
+        CREATE TABLE IF NOT EXISTS security_event_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL,
+            linked_event_id TEXT NOT NULL,
+            link_type TEXT NOT NULL,
+            evidence TEXT,
+            FOREIGN KEY(event_id) REFERENCES security_events(event_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_security_event_links_event ON security_event_links(event_id);
+        CREATE INDEX IF NOT EXISTS idx_security_event_links_linked ON security_event_links(linked_event_id);",
     );
     // T3.3: Add dns_events table if not present (for DBs created before
     // T3 landed). The host-side DNS proxy writes one row per resolved

@@ -7141,15 +7141,15 @@ async fn handle_inspect(
 
 /// `GET /timeline/{id}?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
 /// -- unified time-ordered event stream for one session, joining
-/// `exec_events`, `mcp_calls`, `net_events`, `dns_events`, `audit_events`,
-/// `snapshot_events`, `fs_events`, and `model_calls` via UNION ALL. Used by
-/// the `capsem_timeline` MCP tool.
+/// `exec_events`, `mcp_calls`, `net_events`, `dns_events`, `security_events`,
+/// `audit_events`, `snapshot_events`, `fs_events`, and `model_calls` via
+/// UNION ALL. Used by the `capsem_timeline` MCP tool.
 ///
 /// W6 added `trace_id` to every layer; this handler filters with
 /// `WHERE trace_id = ? OR trace_id IS NULL` so rows that pre-date W4's
 /// trace propagation still surface for the user.
 const ALLOWED_TIMELINE_LAYERS: &[&str] = &[
-    "exec", "mcp", "net", "dns", "audit", "snapshot", "fs", "model",
+    "exec", "mcp", "net", "dns", "security", "audit", "snapshot", "fs", "model",
 ];
 
 fn timeline_existing_tables(reader: &capsem_logger::DbReader) -> Result<HashSet<String>, AppError> {
@@ -7225,6 +7225,7 @@ fn timeline_existing_columns(
         "mcp_calls",
         "net_events",
         "dns_events",
+        "security_events",
         "audit_events",
         "snapshot_events",
         "fs_events",
@@ -7399,6 +7400,33 @@ async fn handle_timeline(
             "SELECT timestamp, 'dns' AS layer, id AS ref, \
              qname || ' rcode=' || rcode || {policy_suffix} AS summary, \
              decision AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM dns_events"
+        ));
+    }
+    if layers.contains(&"security") && existing_tables.contains("security_events") {
+        let trace_id = timeline_col(&existing_columns, "security_events", "trace_id", "NULL");
+        let event_ref = timeline_col(&existing_columns, "security_events", "event_id", "id");
+        let event_type = timeline_col(
+            &existing_columns,
+            "security_events",
+            "event_type",
+            "'security.event'",
+        );
+        let event_family = timeline_col(
+            &existing_columns,
+            "security_events",
+            "event_family",
+            "'security'",
+        );
+        let final_action = timeline_col(
+            &existing_columns,
+            "security_events",
+            "final_action",
+            "'continue'",
+        );
+        parts.push(format!(
+            "SELECT timestamp, 'security' AS layer, {event_ref} AS ref, \
+             {event_family} || '/' || {event_type} || ' action=' || {final_action} AS summary, \
+             {final_action} AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM security_events"
         ));
     }
     if layers.contains(&"audit") && existing_tables.contains("audit_events") {
