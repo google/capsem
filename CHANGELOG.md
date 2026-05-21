@@ -135,6 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed profile image verification to fail closed when any selected
   architecture is missing its `image-inventory.json`, so package/tool contract
   proof is required rather than silently falling back to asset-only checks.
+- Added `capsem-admin image verify --doctor-bundle` support for
+  `capsem-doctor --bundle` tar files, parsing the JUnit probe result without
+  extracting the archive and failing image verification on in-VM test failures.
 - Added `capsem-admin manifest check <manifest> --fast` with typed
   `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`

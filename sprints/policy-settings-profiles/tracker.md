@@ -434,6 +434,13 @@ a valid claim -- mark it `[ ]` instead.
     asset-only proof. Verification: `uv run python -m pytest
     tests/test_image_verify.py -q` passed with 13 tests, and docs now list
     `image-inventory.json` in every arch asset directory.
+    Twenty-first slice added typed in-VM probe ingestion:
+    `capsem-admin image verify --doctor-bundle <tar>` reads the
+    `capsem-doctor --bundle` JUnit result without extracting archive contents,
+    emits typed `capsem_doctor_bundle` probe rows, and fails verification on
+    in-VM diagnostic failures or missing JUnit evidence. Verification:
+    `uv run python -m pytest tests/test_image_verify.py -q` passed with 17
+    tests; docs now describe doctor bundles as image probe evidence.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

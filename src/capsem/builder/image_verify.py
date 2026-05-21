@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tarfile
 from typing import Literal, Mapping
+import xml.etree.ElementTree as ET
 
 import blake3
 from pydantic import BaseModel, ConfigDict, Field
@@ -65,6 +67,16 @@ class ImageInventoryVerification(StrictModel):
     tool_contract: list[ImageContractVerification] = Field(default_factory=list)
 
 
+class ImageProbeVerification(StrictModel):
+    kind: Literal["capsem_doctor_bundle"]
+    path: str
+    ok: bool
+    tests: int
+    failures: int
+    errors: int
+    skipped: int
+
+
 class ImageVerificationReport(StrictModel):
     schema_: Literal["capsem.image-verification.v1"] = Field(
         default="capsem.image-verification.v1",
@@ -76,6 +88,7 @@ class ImageVerificationReport(StrictModel):
     assets_dir: str
     assets: list[ImageAssetVerification]
     inventories: list[ImageInventoryVerification] = Field(default_factory=list)
+    probes: list[ImageProbeVerification] = Field(default_factory=list)
 
 
 def _blake3_hash(path: Path) -> str:
@@ -249,11 +262,44 @@ def dump_image_inventory_json(inventory: ImageInventory) -> str:
     return inventory.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
+def load_doctor_bundle_probe(path: Path) -> ImageProbeVerification:
+    with tarfile.open(path, "r:*") as bundle:
+        member = next(
+            (
+                item
+                for item in bundle.getmembers()
+                if Path(item.name).name == "pytest-junit.xml" and item.isfile()
+            ),
+            None,
+        )
+        if member is None:
+            raise ValueError(f"doctor bundle missing pytest-junit.xml: {path}")
+        handle = bundle.extractfile(member)
+        if handle is None:
+            raise ValueError(f"doctor bundle cannot read pytest-junit.xml: {path}")
+        root = ET.fromstring(handle.read())
+
+    tests = int(root.attrib.get("tests", "0"))
+    failures = int(root.attrib.get("failures", "0"))
+    errors = int(root.attrib.get("errors", "0"))
+    skipped = int(root.attrib.get("skipped", "0"))
+    return ImageProbeVerification(
+        kind="capsem_doctor_bundle",
+        path=str(path),
+        ok=tests > 0 and failures == 0 and errors == 0,
+        tests=tests,
+        failures=failures,
+        errors=errors,
+        skipped=skipped,
+    )
+
+
 def verify_image_assets(
     plan: ImagePlan,
     assets_dir: Path,
     *,
     inventories: ImageInventoryMap | None = None,
+    probes: list[ImageProbeVerification] | None = None,
 ) -> ImageVerificationReport:
     assets: list[ImageAssetVerification] = []
     for arch in plan.arches:
@@ -309,12 +355,14 @@ def verify_image_assets(
 
     return ImageVerificationReport(
         ok=all(asset.ok for asset in assets)
-        and all(inventory.ok for inventory in inventory_reports),
+        and all(inventory.ok for inventory in inventory_reports)
+        and all(probe.ok for probe in (probes or [])),
         profile_id=plan.profile_id,
         profile_revision=plan.profile_revision,
         assets_dir=str(assets_dir),
         assets=assets,
         inventories=inventory_reports,
+        probes=probes or [],
     )
 
 

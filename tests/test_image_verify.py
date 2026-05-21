@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tarfile
 
 import blake3
 import pytest
@@ -13,6 +14,7 @@ from capsem.builder.image_verify import (
     ImageVerificationReport,
     dump_image_inventory_json,
     dump_image_verification_report_json,
+    load_doctor_bundle_probe,
     verify_image_assets,
 )
 from capsem.builder.profiles import (
@@ -94,6 +96,27 @@ def _write_inventory(
     )
 
 
+def _write_doctor_bundle(
+    path: Path,
+    *,
+    tests: int = 12,
+    failures: int = 0,
+    errors: int = 0,
+    skipped: int = 1,
+) -> None:
+    xml_path = path.parent / "pytest-junit.xml"
+    xml_path.write_text(
+        (
+            f'<testsuite tests="{tests}" failures="{failures}" '
+            f'errors="{errors}" skipped="{skipped}"></testsuite>'
+        ),
+        encoding="utf-8",
+    )
+    with tarfile.open(path, "w") as bundle:
+        bundle.add(xml_path, arcname="./pytest-junit.xml")
+    xml_path.unlink()
+
+
 def _profile_with_package_tool_contract() -> tuple[
     ProfilePayloadV2,
     ImagePlan,
@@ -164,6 +187,28 @@ def test_verify_image_assets_fails_closed_without_selected_arch_inventory(
     assert report.ok is False
     assert {inventory.arch for inventory in report.inventories} == {"arm64", "x86_64"}
     assert {inventory.failure for inventory in report.inventories} == {"missing"}
+
+
+def test_load_doctor_bundle_probe_accepts_passing_junit(tmp_path: Path) -> None:
+    bundle_path = tmp_path / "doctor-bundle.tar"
+    _write_doctor_bundle(bundle_path, tests=8, failures=0, errors=0, skipped=2)
+
+    probe = load_doctor_bundle_probe(bundle_path)
+
+    assert probe.ok is True
+    assert probe.tests == 8
+    assert probe.skipped == 2
+
+
+def test_load_doctor_bundle_probe_rejects_missing_junit(tmp_path: Path) -> None:
+    bundle_path = tmp_path / "doctor-bundle.tar"
+    extra_path = tmp_path / "not-junit.txt"
+    extra_path.write_text("nope", encoding="utf-8")
+    with tarfile.open(bundle_path, "w") as bundle:
+        bundle.add(extra_path, arcname="./not-junit.txt")
+
+    with pytest.raises(ValueError, match="missing pytest-junit.xml"):
+        load_doctor_bundle_probe(bundle_path)
 
 
 def test_verify_image_inventory_accepts_matching_package_and_tool_contract(
@@ -414,6 +459,68 @@ def test_capsem_admin_image_verify_returns_nonzero_on_inventory_mismatch(
     assert result.exit_code == 1
     assert '"arch": "x86_64"' in result.output
     assert '"failure": "version_mismatch"' in result.output
+
+
+def test_capsem_admin_image_verify_accepts_doctor_bundle_probe(tmp_path: Path) -> None:
+    profile, _, payloads = _profile_with_package_tool_contract()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    _write_assets(assets_dir, payloads)
+    _write_inventory(assets_dir / "arm64" / "image-inventory.json")
+    _write_inventory(assets_dir / "x86_64" / "image-inventory.json")
+    bundle_path = tmp_path / "doctor-bundle.tar"
+    _write_doctor_bundle(bundle_path, tests=9)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "verify",
+            str(profile_path),
+            "--assets-dir",
+            str(assets_dir),
+            "--doctor-bundle",
+            str(bundle_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"kind": "capsem_doctor_bundle"' in result.output
+    assert '"tests": 9' in result.output
+
+
+def test_capsem_admin_image_verify_returns_nonzero_on_failing_doctor_bundle(
+    tmp_path: Path,
+) -> None:
+    profile, _, payloads = _profile_with_package_tool_contract()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    _write_assets(assets_dir, payloads)
+    _write_inventory(assets_dir / "arm64" / "image-inventory.json")
+    _write_inventory(assets_dir / "x86_64" / "image-inventory.json")
+    bundle_path = tmp_path / "doctor-bundle.tar"
+    _write_doctor_bundle(bundle_path, tests=9, failures=1)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "verify",
+            str(profile_path),
+            "--assets-dir",
+            str(assets_dir),
+            "--doctor-bundle",
+            str(bundle_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert '"ok": false' in result.output
+    assert '"failures": 1' in result.output
 
 
 def test_capsem_admin_image_verify_rejects_all_arch_single_inventory_file(

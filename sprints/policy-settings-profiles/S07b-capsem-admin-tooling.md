@@ -321,6 +321,17 @@ Twentieth slice landed on 2026-05-21:
   with 13 tests. Docs now show `image-inventory.json` beside
   `tool-versions.txt` in every arch asset directory.
 
+Twenty-first slice landed on 2026-05-21:
+
+- `capsem-admin image verify` now accepts one or more `--doctor-bundle <tar>`
+  arguments produced by `capsem-doctor --bundle` after a real VM boot.
+- The verifier reads the bundled `pytest-junit.xml` through `tarfile` without
+  extracting archive contents, emits typed `capsem_doctor_bundle` probe rows,
+  and fails image verification when the in-VM diagnostics report failures or
+  errors.
+- Verification: `uv run python -m pytest tests/test_image_verify.py -q` passed
+  with 17 tests. Docs now describe doctor bundles as in-VM image probe evidence.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -664,7 +675,8 @@ The checker must fail closed for:
       profile-declared asset existence/size/hash verification and typed
       package/tool inventory extraction plus required per-architecture contract
       comparison have landed; release host SBOM attestation covers `.pkg` and
-      `.deb`; guest SBOM linkage and in-guest image proof remain.
+      `.deb`; typed `capsem-doctor --bundle` probe ingestion has landed; guest
+      SBOM linkage and a live release-image boot gate remain.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
@@ -686,8 +698,9 @@ The checker must fail closed for:
   `TypeAdapter.validate_json()` and `model_dump_json()`; profile manifest
   generate/check/sign tests; profile-to-image build plan tests;
   guest-config-to-profile generation tests; image inventory package/tool
-  extraction, per-architecture auto-discovery, and contract comparison tests;
-  admin doctor checks; no-hand-edited-settings guard tests.
+  extraction, per-architecture auto-discovery, contract comparison tests, and
+  doctor-bundle probe parser tests; admin doctor checks; no-hand-edited-settings
+  guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
   generate`; `manifest check --fast`; `manifest check --download`;
@@ -700,10 +713,11 @@ The checker must fail closed for:
   scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch, missing
   signature URL, hash mismatch after download, image inventory missing package
   or required tool, missing selected-arch image inventory, image inventory
-  version mismatch, ambiguous all-arch single-file inventory input, duplicate
-  profile revision, revoked current profile, path traversal, stale manifest
-  rollback, and untyped/raw dict or `json.loads`/`json.dumps` bypass attempts
-  in admin module tests.
+  version mismatch, failing doctor bundle, missing doctor-bundle JUnit result,
+  ambiguous all-arch single-file inventory input, duplicate profile revision,
+  revoked current profile, path traversal, stale manifest rollback, and
+  untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin module
+  tests.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default, boot at least the host-arch image through
   Capsem, and run an in-guest verification probe that proves declared

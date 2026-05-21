@@ -24,6 +24,7 @@ from capsem.builder.image_verify import (
     ImageInventoryMap,
     ImageVerificationArch,
     dump_image_verification_report_json,
+    load_doctor_bundle_probe,
     load_image_inventory_json,
     verify_image_assets,
 )
@@ -563,12 +564,20 @@ def image_plan(profile_path: str, arch: ImageArch, json_output: bool) -> None:
     is_flag=True,
     help="Emit a typed verification report.",
 )
+@click.option(
+    "--doctor-bundle",
+    "doctor_bundles",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="capsem-doctor --bundle tar from an in-VM boot probe.",
+)
 def image_verify(
     profile_path: str,
     assets_dir: str,
     arch: ImageArch,
     inventory_path: str | None,
     json_output: bool,
+    doctor_bundles: tuple[str, ...],
 ) -> None:
     """Verify profile-declared image assets and optional image inventory."""
     try:
@@ -584,6 +593,10 @@ def image_verify(
             plan,
             assets_root,
             inventories=inventories,
+            probes=[
+                load_doctor_bundle_probe(Path(bundle_path))
+                for bundle_path in doctor_bundles
+            ],
         )
     except (OSError, ValidationError, ValueError) as error:
         raise click.ClickException(str(error)) from error
@@ -613,6 +626,9 @@ def image_verify(
                 f"{ok_packages}/{len(package_rows)} ok"
             )
             click.echo(f"tool contract: {ok_tools}/{len(tool_rows)} ok")
+        if report.probes:
+            ok_probes = sum(1 for probe in report.probes if probe.ok)
+            click.echo(f"probes: {ok_probes}/{len(report.probes)} ok")
         for asset in report.assets:
             if not asset.ok:
                 click.echo(
@@ -627,6 +643,13 @@ def image_verify(
                         f"expected={row.expected_version} actual={row.actual_version}",
                         err=True,
                     )
+        for probe in report.probes:
+            if not probe.ok:
+                click.echo(
+                    f"{probe.kind}: failures={probe.failures} errors={probe.errors} "
+                    f"tests={probe.tests} {probe.path}",
+                    err=True,
+                )
 
     if not report.ok:
         raise SystemExit(1)

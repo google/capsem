@@ -92,6 +92,7 @@ capsem-admin image build-workspace corp-dev.profile.toml --out build/corp-dev-im
 capsem-admin image build corp-dev.profile.toml --out assets/ --arch all --template rootfs --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --arch arm64 --inventory assets/arm64/image-inventory.json --json
+capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --doctor-bundle doctor-bundle.tar --json
 capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
 capsem-admin manifest check manifest.json --fast --json
 capsem-admin manifest check manifest.json --download --download-dir downloaded/ --pubkey profile-sign.pub --json
@@ -115,6 +116,9 @@ also checks the profile's apt, Python, node, and required-tool contract through
 `<assets-dir>/<arch>/image-inventory.json`; missing inventory for any selected
 architecture fails verification. Passing `--inventory` is only needed for a
 non-standard single-arch inventory file or alternate inventory directory.
+Passing `--doctor-bundle` attaches the result of an in-VM
+`capsem-doctor --bundle` probe so release checks can prove the image boots and
+keeps Capsem's runtime invariants, not only that the built files hash correctly.
 
 `manifest check --fast` validates the signed profile-catalog manifest shape and
 performs cheap reachability checks. Local `file://` profile payloads are hashed

@@ -83,6 +83,11 @@ guest package/tool SBOMs are tracked separately in the profile-admin image
 verification sprint and must be produced from the signed Profile V2 package
 contract before they are treated as release evidence.
 
+Profile-derived image verification also accepts `capsem-doctor --bundle`
+archives as in-VM probe evidence. The admin verifier reads the bundled JUnit
+result without extracting the tar archive and fails the image verification
+report when the booted VM diagnostics have failures or errors.
+
 ## SLSA attestation
 
 Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation via `actions/attest-build-provenance@v4`:
