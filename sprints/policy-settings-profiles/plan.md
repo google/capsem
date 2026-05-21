@@ -141,10 +141,10 @@ migrated.
 - Detection rules are profile-owned and use the S08a-approved real
   Sigma-compatible path; detection is not just ad hoc telemetry querying.
 - VM status health is live and typed: running VMs report model call count,
-  provider/model usage, token counts, estimated cost, and detection finding
-  health from the S12 accumulator. Persistent VMs recompute/seed from
-  `session.db` once at process load; status/list/metrics fan-out never reads
-  SQLite.
+  provider/model usage, token counts, estimated cost, enforcement/detection
+  counters, latest detection, and latest block/deny from the S12 accumulator.
+  Persistent VMs recompute/seed from `session.db` once at process load;
+  status/list/metrics fan-out never reads SQLite.
 - Future quota/rate-limit/budget work can consume the same normalized security
   event dimensions and live S12 counters without changing the Network, File,
   Process, or Security Engine contracts; release docs must not claim budget
@@ -197,7 +197,8 @@ migrated.
   debug/status provenance, profile catalog status, package contract, asset
   readiness, VM pin drift/revocation warnings, resolved-event emitter delivery,
   detection findings attached before sink fan-out, and live VM health counters
-  for model provider/model/cost usage.
+  plus latest detection/latest block summaries for model provider/model/cost
+  usage and enforcement/detection health.
 - Performance: profile discovery/assembly cost, remote policy timeout behavior,
   observability batching overhead, security-event engine overhead, network
   streaming chunk overhead, file-engine snapshot/hash cost, and emitter

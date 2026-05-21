@@ -622,13 +622,14 @@ a valid claim -- mark it `[ ]` instead.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
     -- includes live VM health rendering from S12 snapshots: model call count,
-    providers, models, token totals, estimated cost, detection findings, and
-    stale/partial metrics state.
+    providers, models, token totals, estimated cost, detection findings, latest
+    detection/latest block, and stale/partial metrics state.
 27. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
     cost usage, enforcement/detection match stats, detection finding health,
-    and future S22 quota/budget inputs. Running status reads memory only;
-    persistent VMs seed/recompute from `session.db` exactly once at load.
+    latest detection/latest block summaries, and future S22 quota/budget inputs.
+    Running status reads memory only; persistent VMs seed/recompute from
+    `session.db` exactly once at load.
 28. [ ] [S13 - Remote enforcement plugin](S13-remote-policy-plugin.md)
     -- decision mode participates only in `/enforcement/*`; observer mode can
     receive resolved events and detection findings but cannot convert detection

@@ -157,7 +157,13 @@ pub struct VmMetricsSnapshot {
     pub detection: VmDetectionMetrics,
     pub mcp: VmMcpMetrics,
     pub filesystem: VmFilesystemMetrics,
+    pub security_latest: VmSecurityLatest,
     pub captured_at_unix_ms: u64,
+}
+
+pub struct VmSecurityLatest {
+    pub latest_detection: Option<VmLatestDetectionSummary>,
+    pub latest_block: Option<VmLatestBlockSummary>,
 }
 ```
 
@@ -170,6 +176,10 @@ Principles:
 - High-cardinality details stay in JSON summaries, bounded by top-N.
 - Pass rates / ratios are derived from counters in renderers, not
   stored separately.
+- The live VM status snapshot is authoritative for running VMs: it carries
+  enforcement counters, detection counters, latest detection summary, and latest
+  block/deny summary from memory. The resolved-event journal remains the
+  forensic source for full evidence.
 
 ## Metric Taxonomy
 
@@ -228,6 +238,12 @@ recent typed failure reasons, and last-match timestamps. Rule ids are allowed in
 bounded JSON summaries and service status payloads; exported metrics should keep
 labels to profile id/revision, VM id, event family, decision, and coarse rule
 origin/scope unless S08b defines a bounded registry label set.
+
+VM status also carries the latest block/deny summary with bounded fields:
+event id, timestamp, event family/type, decision, rule id/pack id when bounded,
+profile id/revision, and a typed reason code. Raw URLs, prompts, file paths,
+commands, request bodies, and arbitrary error strings stay in the resolved-event
+journal or redacted debug artifacts, not in status labels.
 
 ### HTTP / HTTPS
 
@@ -352,6 +368,12 @@ but OTel only exports aggregate counters and bounded summaries. The live
 accumulator records runtime match totals; S08b/S08c own historical backtest
 correctness and evidence diversity.
 
+VM status also carries the latest detection summary with bounded fields:
+finding id, event id, timestamp, detection pack id, severity, status, event
+family/type, and profile id/revision. Full evidence, matched fields, and raw
+event data remain available through the local detection/backtest/hunt APIs and
+the resolved-event journal.
+
 ### Resources
 
 Available now (host-side, deterministic):
@@ -440,6 +462,9 @@ starts.
 - Render ask pass rate from counters in the UI, not server-side.
 - Render enforcement and detection match stats from typed live metrics, while
   linking into S08b/S08c backtest/hunt surfaces for event-level evidence.
+- Render latest detection and latest block/deny summaries from the same typed
+  live status snapshot; clicking through may navigate to timeline/backtest/hunt
+  evidence, but list/status must not query SQLite.
 - Render model call count, provider/model usage, token counts, and estimated
   cost from typed live metrics. The UI may format cost, but it must not invent
   cost values absent from the accumulator.
@@ -467,12 +492,16 @@ starts.
 
 - Unit tests for ask counters and pass-rate inputs.
 - Unit tests for enforcement decision and match counters.
+- Unit tests for latest block/deny summary replacement, redaction, and bounded
+  field shape.
 - Unit tests for HTTP/DNS/model/MCP/filesystem/resource accumulator
   updates without `DbWriter`/SQLite.
 - Unit tests for model health counters and bounded provider/model summaries,
   including unknown provider/model collapse and integer-micros cost handling.
 - Unit tests for detection metric counters once S08a/S08b provide the finding
   schema.
+- Unit tests for latest detection summary replacement, severity/status handling,
+  and evidence redaction.
 - Unit tests proving request/model/MCP counters retain the bounded dimensions
   S22 will need for future quota/budget work.
 - `seed_accumulator_from_session_db` test: persistent VM with an
@@ -503,12 +532,15 @@ starts.
   total.
 - Test that model provider/model/cost summaries and detection finding counters
   survive gateway translation without label/cardinality leaks.
+- Test that latest detection and latest block/deny summaries survive gateway
+  translation without raw evidence or high-cardinality labels.
 
 ### Client / UI
 
 - VM list/card renders live counters from typed JSON.
 - VM status health renders model call count, provider/model summaries, token
-  counts, estimated cost, and detection finding health from the live snapshot.
+  counts, estimated cost, detection finding health, latest detection, and latest
+  block/deny from the live snapshot.
 - Ask pass rate derives from `total_asks` and `asks_allowed` only.
 - Enforcement/detection match stats render separately and do not collapse into
   a generic policy/rules total.
@@ -524,6 +556,9 @@ starts.
 - Boot an ephemeral VM; verify the accumulator starts at zero.
 - Generate HTTP/DNS/MCP/file/model activity; verify live metrics
   update before shutdown.
+- Trigger one detection and one blocking enforcement decision; verify running VM
+  status reports the counters plus latest detection/latest block from memory,
+  and `/metrics/json` plus `/metrics` derive from the same accumulator.
 - Stop the VM; verify the durable session DB still contains forensic
   truth and `/info/{stopped_id}` returns the one-shot rollup.
 - Verify final list/status checks stay responsive under concurrent VM

@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.
+- Added explicit S12 planning for authoritative in-memory running-VM status with
+  enforcement/detection counters, latest detection, latest block, and shared
+  `/metrics/json` plus Prometheus scrape sources.
 - Added typed `capsem-admin doctor` output that checks admin toolchain
   readiness and optional Profile V2 image-plan derivation without using
   `guest/config` as the operator-facing source of truth.
