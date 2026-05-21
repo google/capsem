@@ -649,6 +649,14 @@ a valid claim -- mark it `[ ]` instead.
     preservation when an update fails compilation. Verification:
     `cargo test -p capsem-security-engine` passed with 11 tests and
     `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Eighth contract-correction slice amended `SecurityEvent` as future
+    deterministic plugin ABI groundwork: event-in/event-out callbacks carry
+    labels, bounded context/trace history, findings, first-class decisions
+    (`allow`, `ask`, `block`, `rewrite`, `throttle`), and declarative mutations.
+    Rust validates mutation targets and projects the final event to internal
+    transport behavior; plugins do not return `HookOutcome`. Verification:
+    `cargo test -p capsem-security-engine` passed with 15 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

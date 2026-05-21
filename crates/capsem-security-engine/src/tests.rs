@@ -67,6 +67,132 @@ fn http_event_exposes_identity_and_quota_dimensions() {
 }
 
 #[test]
+fn plugin_event_output_carries_ask_throttle_labels_findings_and_mutations() {
+    let mut event = SecurityEvent::model(
+        common("evt-plugin", "model.response", SourceEngine::Network),
+        ModelSecuritySubject {
+            provider: "openai".into(),
+            model: "gpt-5.5".into(),
+            estimated_input_tokens: None,
+            estimated_output_tokens: Some(200),
+            estimated_cost_micros: Some(1000),
+        },
+    );
+    event.trace.labels.push("pii_access".into());
+    event.context.history.push(TraceHistoryEntry {
+        event_id: "evt-prev".into(),
+        event_type: "file.read".into(),
+        labels: vec!["pii_access".into()],
+    });
+    event.decision = Some(SecurityDecision {
+        action: SecurityDecisionAction::Ask,
+        rule: Some("plugin.pii-egress.ask".into()),
+        reason: Some("open-world request after PII access".into()),
+        terminal: false,
+    });
+    event.findings.push(DetectionFinding {
+        finding_id: "finding-pii".into(),
+        event_id: "evt-plugin".into(),
+        rule_id: "pii-egress".into(),
+        pack_id: "plugin-pack".into(),
+        sigma_id: None,
+        title: "PII egress risk".into(),
+        severity: Severity::High,
+        confidence: Confidence::High,
+        tags: vec!["pii".into()],
+    });
+    event.mutations.push(EventMutation::ReplaceRegex {
+        path: "subject.output_text".into(),
+        pattern: "[0-9]{3}-[0-9]{2}-[0-9]{4}".into(),
+        replacement: "[REDACTED]".into(),
+        reason: Some("SSN-like value found".into()),
+    });
+
+    validate_plugin_output(&event).unwrap();
+
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("\"ask\""));
+    assert!(json.contains("\"replace_regex\""));
+
+    event.decision = Some(SecurityDecision {
+        action: SecurityDecisionAction::Throttle,
+        rule: Some("quota.future".into()),
+        reason: Some("future quota check".into()),
+        terminal: true,
+    });
+    validate_plugin_output(&event).unwrap();
+}
+
+#[test]
+fn plugin_mutation_allowlist_rejects_illegal_targets() {
+    let mut event = SecurityEvent::http(
+        common("evt-http-mutate", "http.request", SourceEngine::Network),
+        HttpSecuritySubject {
+            method: "POST".into(),
+            host: "api.example.test".into(),
+            path_class: "api".into(),
+            request_bytes: 10,
+            response_bytes: None,
+        },
+    );
+    event.mutations.push(EventMutation::StripHeader {
+        path: "subject.headers.authorization".into(),
+        reason: None,
+    });
+    validate_plugin_output(&event).unwrap();
+
+    event.mutations.push(EventMutation::ReplaceRegex {
+        path: "subject.output_text".into(),
+        pattern: "secret".into(),
+        replacement: "[REDACTED]".into(),
+        reason: None,
+    });
+
+    let error = validate_plugin_output(&event).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("mutation target is not allowed for http.request"));
+}
+
+#[test]
+fn security_decision_projects_to_internal_transport_projection() {
+    let mut event = SecurityEvent::http(
+        common("evt-project", "http.request", SourceEngine::Network),
+        HttpSecuritySubject {
+            method: "GET".into(),
+            host: "example.test".into(),
+            path_class: "external".into(),
+            request_bytes: 10,
+            response_bytes: None,
+        },
+    );
+    assert_eq!(
+        project_transport_outcome(&event).unwrap(),
+        TransportProjection::Continue
+    );
+
+    event.mutations.push(EventMutation::StripHeader {
+        path: "subject.headers.authorization".into(),
+        reason: None,
+    });
+    assert_eq!(
+        project_transport_outcome(&event).unwrap(),
+        TransportProjection::Rewrote
+    );
+
+    event.decision = Some(SecurityDecision {
+        action: SecurityDecisionAction::Block,
+        rule: Some("rule.block".into()),
+        reason: Some("blocked".into()),
+        terminal: true,
+    });
+    assert_eq!(
+        project_transport_outcome(&event).unwrap(),
+        TransportProjection::Stop
+    );
+}
+
+#[test]
 fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
     let event = SecurityEvent::model(
         SecurityEventCommon {
@@ -150,6 +276,56 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
         parsed.event.quota_dimensions().estimated_cost_micros,
         Some(2500)
     );
+}
+
+#[test]
+fn security_action_roundtrips_ask() {
+    let action = SecurityAction::Ask(AskPlan {
+        prompt_id: "ask-1".into(),
+        reason_code: "plugin_requested_confirmation".into(),
+        default_action: Box::new(SecurityAction::Block(BlockResponse {
+            reason_code: "ask_timeout".into(),
+            rule_id: Some("plugin.pii-egress.ask".into()),
+        })),
+    });
+
+    let json = serde_json::to_string(&action).unwrap();
+    assert!(json.contains("\"ask\""));
+
+    let parsed: SecurityAction = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, action);
+}
+
+fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> SecurityEventCommon {
+    SecurityEventCommon {
+        event_id: event_id.into(),
+        parent_event_id: None,
+        stream_id: None,
+        activity_id: None,
+        sequence_no: None,
+        source_engine,
+        enforceability: Enforceability::InlineBlockable,
+        trace_id: Some("trace-plugin".into()),
+        span_id: None,
+        timestamp_unix_ms: 1_789,
+        vm_id: Some("vm-1".into()),
+        session_id: Some("session-1".into()),
+        profile_id: Some("coding".into()),
+        profile_revision: Some("rev-a".into()),
+        profile_pack_ids: Vec::new(),
+        enforcement_packs: Vec::new(),
+        detection_packs: Vec::new(),
+        user_id: Some("user-1".into()),
+        process_id: None,
+        parent_process_id: None,
+        exec_id: None,
+        turn_id: None,
+        message_id: None,
+        tool_call_id: None,
+        mcp_call_id: None,
+        event_type: event_type.into(),
+        redaction_state: RedactionState::Raw,
+    }
 }
 
 #[test]

@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first S08b runtime rule registry contract with compile-first
   add/update, previous-plan preservation on compile failure, delete, and live
   match stats.
+- Added S08b plugin-groundwork event semantics: first-class ask/block/rewrite/
+  throttle decisions, labels/context/history snapshots, findings, declarative
+  mutations, mutation target validation, and internal transport projection.
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.

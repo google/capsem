@@ -128,6 +128,18 @@ pub struct SecurityEvent {
     pub schema_version: u32,
     pub common: SecurityEventCommon,
     pub subject: SecurityEventSubject,
+    #[serde(default)]
+    pub context: EventContext,
+    #[serde(default)]
+    pub trace: TraceSnapshot,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<DetectionFinding>,
+    #[serde(default)]
+    pub decision: Option<SecurityDecision>,
+    #[serde(default)]
+    pub mutations: Vec<EventMutation>,
 }
 
 impl SecurityEvent {
@@ -136,6 +148,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Dns(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -144,6 +162,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Http(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -152,6 +176,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Mcp(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -160,6 +190,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Model(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -168,6 +204,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::File(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -176,6 +218,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Process(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -184,6 +232,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Conversation(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -192,6 +246,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Snapshot(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -200,6 +260,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::VmLifecycle(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -208,6 +274,12 @@ impl SecurityEvent {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
             subject: SecurityEventSubject::Profile(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
         }
     }
 
@@ -242,6 +314,78 @@ impl SecurityEvent {
         };
         self.subject.apply_quota_dimensions(&mut dimensions);
         dimensions
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventContext {
+    #[serde(default)]
+    pub history: Vec<TraceHistoryEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceSnapshot {
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub history: Vec<TraceHistoryEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceHistoryEntry {
+    pub event_id: String,
+    pub event_type: String,
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityDecision {
+    pub action: SecurityDecisionAction,
+    #[serde(default)]
+    pub rule: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub terminal: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityDecisionAction {
+    Allow,
+    Ask,
+    Block,
+    Rewrite,
+    Throttle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum EventMutation {
+    ReplaceRegex {
+        path: String,
+        pattern: String,
+        replacement: String,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    StripHeader {
+        path: String,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+}
+
+impl EventMutation {
+    pub fn path(&self) -> &str {
+        match self {
+            Self::ReplaceRegex { path, .. } | Self::StripHeader { path, .. } => path,
+        }
     }
 }
 
@@ -564,6 +708,7 @@ pub enum StepStatus {
 #[serde(tag = "action", content = "detail", rename_all = "snake_case")]
 pub enum SecurityAction {
     Continue,
+    Ask(AskPlan),
     Rewrite(RewritePatch),
     Block(BlockResponse),
     Throttle(ThrottlePlan),
@@ -572,6 +717,14 @@ pub enum SecurityAction {
     DropConnection(DropReason),
     ObserveOnly,
     Error(SecurityError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AskPlan {
+    pub prompt_id: String,
+    pub reason_code: String,
+    pub default_action: Box<SecurityAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -764,6 +917,68 @@ impl ResolvedEventEmitter {
 pub struct EmitOutcome {
     pub resolved_event: ResolvedSecurityEvent,
     pub required_sink_failed: bool,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum PluginValidationError {
+    #[error("mutation target is not allowed for {event_type}: {path}")]
+    MutationTargetNotAllowed { event_type: String, path: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportProjection {
+    Continue,
+    Rewrote,
+    Stop,
+}
+
+pub fn validate_plugin_output(event: &SecurityEvent) -> Result<(), PluginValidationError> {
+    for mutation in &event.mutations {
+        let path = mutation.path();
+        if !mutation_target_allowed(&event.common.event_type, path) {
+            return Err(PluginValidationError::MutationTargetNotAllowed {
+                event_type: event.common.event_type.clone(),
+                path: path.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub fn project_transport_outcome(
+    event: &SecurityEvent,
+) -> Result<TransportProjection, PluginValidationError> {
+    validate_plugin_output(event)?;
+    match event.decision.as_ref().map(|decision| decision.action) {
+        Some(SecurityDecisionAction::Block)
+        | Some(SecurityDecisionAction::Ask)
+        | Some(SecurityDecisionAction::Throttle) => Ok(TransportProjection::Stop),
+        Some(SecurityDecisionAction::Rewrite) => Ok(TransportProjection::Rewrote),
+        Some(SecurityDecisionAction::Allow) | None if !event.mutations.is_empty() => {
+            Ok(TransportProjection::Rewrote)
+        }
+        Some(SecurityDecisionAction::Allow) | None => Ok(TransportProjection::Continue),
+    }
+}
+
+fn mutation_target_allowed(event_type: &str, path: &str) -> bool {
+    match event_type {
+        "http.request" => {
+            path.starts_with("subject.headers.")
+                || path == "subject.url"
+                || path == "subject.body.text"
+        }
+        "http.response" => path.starts_with("subject.headers.") || path == "subject.body.text",
+        "model.request" => {
+            path == "subject.messages[*].content" || path == "subject.tool_results[*].content"
+        }
+        "model.response" => {
+            path == "subject.output_text" || path == "subject.tool_calls[*].arguments"
+        }
+        "mcp.request" => path == "subject.params.arguments",
+        "mcp.response" => path == "subject.result.content",
+        _ => false,
+    }
 }
 
 pub const DEFAULT_BACKTEST_MATCH_LIMIT: usize = 100;

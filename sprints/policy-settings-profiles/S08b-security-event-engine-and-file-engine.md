@@ -148,6 +148,7 @@ struct SecurityResult {
 
 enum SecurityAction {
     Continue,
+    Ask(AskPlan),
     Rewrite(RewritePatch),
     Block(BlockResponse),
     Throttle(ThrottlePlan),
@@ -159,10 +160,11 @@ enum SecurityAction {
 }
 ```
 
-`Ask` is not a transport action. The Security Engine owns ask/confirm so the
-resolved event can include the challenge, answer, timeout/default, and final
-action in one journal. The UI/CLI prompt implementation is behind a
-`ConfirmService` trait, but the lifecycle belongs to the Security Engine.
+`Ask` is not a transport action. It is a Security Engine decision/action. The
+Security Engine owns ask/confirm so the resolved event can include the
+challenge, answer, timeout/default, and final action in one journal. The UI/CLI
+prompt implementation is behind a `ConfirmService` trait, but the lifecycle
+belongs to the Security Engine.
 
 `Throttle` is a forward-compatibility action for [S22](S22-rate-limits-budgets-and-quotas.md).
 S08b does not implement rate limiting, budgets, or centralized quota providers.
@@ -175,6 +177,102 @@ VM-effective enforcement and detection packs resolved from a signed profile revi
 runtime additions/updates/deletes are service-owned overlays with provenance,
 scope, stats, and audit. It does not discover loose rules from telemetry or
 transport internals.
+
+## Plugin ABI Groundwork
+
+S08b must shape `SecurityEvent` as the future deterministic plugin ABI:
+
+```text
+SecurityEvent -> SecurityEvent
+```
+
+Future WASM-authored plugins receive one fully described event, inspect only
+that event and its embedded trace/history snapshot, and return a modified event.
+Plugins must not depend on ambient filesystem, network, clock, process access,
+or hidden runtime state. If a plugin needs history, Capsem embeds the relevant
+bounded trace/history snapshot in the event before invoking the plugin.
+
+The event envelope carries:
+
+- identity: event id, trace id, parent event, stream/activity id, sequence,
+  VM/session/profile/user/process/turn/message/tool correlation;
+- `event_family`, `event_type`, and typed `subject`;
+- bounded `context` / `trace` snapshots and labels;
+- findings attached so far;
+- optional first-class `decision`;
+- declarative `mutations`;
+- redaction state.
+
+`decision.action` is first-class and includes at least:
+
+```text
+allow | ask | block | rewrite | throttle
+```
+
+`ask` remains owned by the Security Engine confirm lifecycle. `throttle` is
+reserved for S22. Neither one is exposed as a transport hook return value.
+
+Mutations are explicit patches, not hidden side effects. A TypeScript authoring
+API may feel fluent/mutable, but the compiled ABI returns event data with
+declarative mutations such as:
+
+```json
+{
+  "op": "replace_regex",
+  "path": "subject.output_text",
+  "pattern": "[0-9]{3}-[0-9]{2}-[0-9]{4}",
+  "replacement": "[REDACTED]"
+}
+```
+
+Critical rewrite rule:
+
+```text
+Plugin decides what rewrite should happen.
+Rust validates and applies the rewrite to the actual request/response/body.
+```
+
+`HookOutcome` remains an internal Rust dispatch/transport projection. The plugin
+ABI must not return `HookOutcome`; it returns a modified `SecurityEvent`. Rust
+then validates the final event decision plus mutations and maps them to the
+internal dispatch projection (`Continue`, `Rewrote`, or `Stop`) for the current
+transport/file/process engine.
+
+Legal mutation targets are allowlisted per event type. Initial targets:
+
+```text
+http.request
+  subject.headers.*
+  subject.url
+  subject.body.text
+
+http.response
+  subject.headers.*
+  subject.body.text
+
+model.request
+  subject.messages[*].content
+  subject.tool_results[*].content
+
+model.response
+  subject.output_text
+  subject.tool_calls[*].arguments
+
+mcp.request
+  subject.params.arguments
+
+mcp.response
+  subject.result.content
+```
+
+Target invariant:
+
+```text
+same plugin hash + same input event hash = same output event hash
+```
+
+This supports replay, auditability, deterministic tests, signed plugin bundles,
+and a clean path to TypeScript-authored callbacks compiled into WASM components.
 
 ## Runtime Rule Registry And Backtest
 
