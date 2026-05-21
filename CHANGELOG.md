@@ -138,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem-admin image verify --doctor-bundle` support for
   `capsem-doctor --bundle` tar files, parsing the JUnit probe result without
   extracting the archive and failing image verification on in-VM test failures.
+- Added `capsem-admin image sbom` to generate per-architecture SPDX 2.3 guest
+  image SBOM JSON from typed `image-inventory.json` artifacts, including
+  profile/revision/package-contract identity and package-manager purl refs.
 - Added `capsem-admin manifest check <manifest> --fast` with typed
   `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`

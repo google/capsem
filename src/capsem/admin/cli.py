@@ -19,6 +19,10 @@ from capsem.builder.image_plan import (
     derive_image_plan,
     dump_image_plan_json,
 )
+from capsem.builder.image_sbom import (
+    dump_spdx_document_json,
+    generate_image_spdx_document,
+)
 from capsem.builder.image_verify import (
     ImageInventory,
     ImageInventoryMap,
@@ -653,6 +657,95 @@ def image_verify(
 
     if not report.ok:
         raise SystemExit(1)
+
+
+@image.command("sbom")
+@click.argument("profile_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--assets-dir",
+    required=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Local asset directory containing <assets-dir>/<arch>/image-inventory.json.",
+)
+@click.option(
+    "--arch",
+    "arch",
+    default="all",
+    type=click.Choice(["all", "arm64", "x86_64"]),
+    show_default=True,
+)
+@click.option(
+    "--inventory",
+    "inventory_path",
+    default=None,
+    type=click.Path(exists=True, file_okay=True, dir_okay=True),
+    help=(
+        "Optional inventory file for one arch, or directory containing "
+        "<arch>/image-inventory.json. Defaults to auto-discover under --assets-dir."
+    ),
+)
+@click.option(
+    "--out-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Directory that receives <arch>/guest-sbom.spdx.json outputs.",
+)
+def image_sbom(
+    profile_path: str,
+    assets_dir: str,
+    arch: ImageArch,
+    inventory_path: str | None,
+    out_dir: str | None,
+) -> None:
+    """Generate SPDX 2.3 guest-image SBOMs from typed image inventories."""
+    try:
+        profile = _load_profile(Path(profile_path))
+        plan = derive_image_plan(profile, arch=arch)
+        assets_root = Path(assets_dir)
+        inventories = _load_image_inventories(
+            [plan_arch.arch for plan_arch in plan.arches],
+            assets_root,
+            inventory_path,
+        )
+        missing = [
+            plan_arch.arch
+            for plan_arch in plan.arches
+            if plan_arch.arch not in inventories
+        ]
+        if missing:
+            raise ValueError(
+                "missing image inventory for arch(es): " + ", ".join(missing)
+            )
+        documents = [
+            (
+                plan_arch.arch,
+                generate_image_spdx_document(
+                    plan,
+                    plan_arch.arch,
+                    inventories[plan_arch.arch][1],
+                ),
+            )
+            for plan_arch in plan.arches
+        ]
+    except (OSError, ValidationError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+
+    if out_dir is None:
+        if len(documents) != 1:
+            raise click.ClickException(
+                "all-arch SBOM output requires --out-dir or a single --arch"
+            )
+        click.echo(dump_spdx_document_json(documents[0][1]))
+        return
+
+    output_dir = Path(out_dir)
+    written: list[Path] = []
+    for arch_name, document in documents:
+        target = output_dir / arch_name / "guest-sbom.spdx.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(dump_spdx_document_json(document) + "\n", encoding="utf-8")
+        written.append(target)
+    click.echo(f"wrote {len(written)} SBOMs to {output_dir}")
 
 
 @image.command("build-workspace")

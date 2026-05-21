@@ -441,6 +441,13 @@ a valid claim -- mark it `[ ]` instead.
     in-VM diagnostic failures or missing JUnit evidence. Verification:
     `uv run python -m pytest tests/test_image_verify.py -q` passed with 17
     tests; docs now describe doctor bundles as image probe evidence.
+    Twenty-second slice added `capsem-admin image sbom`, generating SPDX 2.3
+    guest-image SBOM JSON from typed per-arch image inventories. Single-arch
+    output streams one SPDX document; all-arch output writes
+    `<out-dir>/<arch>/guest-sbom.spdx.json`. SPDX names/namespaces include
+    profile id, revision, arch, and package-contract hash, and apt/Python/node
+    rows carry package-manager purl references. Verification:
+    `uv run python -m pytest tests/test_image_sbom.py -q` passed with 5 tests.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

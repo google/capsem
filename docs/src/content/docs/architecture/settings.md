@@ -91,6 +91,7 @@ capsem-admin image plan corp-dev.profile.toml --json
 capsem-admin image build-workspace corp-dev.profile.toml --out build/corp-dev-image --arch all --json
 capsem-admin image build corp-dev.profile.toml --out assets/ --arch all --template rootfs --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
+capsem-admin image sbom corp-dev.profile.toml --assets-dir assets/ --out-dir sboms/
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --arch arm64 --inventory assets/arm64/image-inventory.json --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --doctor-bundle doctor-bundle.tar --json
 capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
@@ -119,6 +120,8 @@ non-standard single-arch inventory file or alternate inventory directory.
 Passing `--doctor-bundle` attaches the result of an in-VM
 `capsem-doctor --bundle` probe so release checks can prove the image boots and
 keeps Capsem's runtime invariants, not only that the built files hash correctly.
+`image sbom` turns the same typed inventories into per-architecture SPDX 2.3
+guest-image SBOMs tied to the profile id, revision, and package-contract hash.
 
 `manifest check --fast` validates the signed profile-catalog manifest shape and
 performs cheap reachability checks. Local `file://` profile payloads are hashed

@@ -332,6 +332,19 @@ Twenty-first slice landed on 2026-05-21:
 - Verification: `uv run python -m pytest tests/test_image_verify.py -q` passed
   with 17 tests. Docs now describe doctor bundles as in-VM image probe evidence.
 
+Twenty-second slice landed on 2026-05-21:
+
+- `capsem-admin image sbom <profile> --assets-dir <dir>` now generates SPDX 2.3
+  guest-image SBOM JSON from typed `image-inventory.json` artifacts.
+- Single-arch mode writes the SPDX document to stdout; all-arch mode requires
+  `--out-dir` and writes `<out-dir>/<arch>/guest-sbom.spdx.json`.
+- SPDX document names and namespaces include the profile id, profile revision,
+  architecture, and package-contract hash. apt, Python, and node package rows
+  carry package-manager purl external references; tool rows remain SPDX package
+  rows with Capsem inventory comments.
+- Verification: `uv run python -m pytest tests/test_image_sbom.py -q` passed
+  with 5 tests.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -675,8 +688,8 @@ The checker must fail closed for:
       profile-declared asset existence/size/hash verification and typed
       package/tool inventory extraction plus required per-architecture contract
       comparison have landed; release host SBOM attestation covers `.pkg` and
-      `.deb`; typed `capsem-doctor --bundle` probe ingestion has landed; guest
-      SBOM linkage and a live release-image boot gate remain.
+      `.deb`; typed guest SPDX SBOM generation and `capsem-doctor --bundle`
+      probe ingestion have landed; a live release-image boot gate remains.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
@@ -699,11 +712,12 @@ The checker must fail closed for:
   generate/check/sign tests; profile-to-image build plan tests;
   guest-config-to-profile generation tests; image inventory package/tool
   extraction, per-architecture auto-discovery, contract comparison tests, and
-  doctor-bundle probe parser tests; admin doctor checks; no-hand-edited-settings
-  guard tests.
+  doctor-bundle probe parser tests; SPDX guest SBOM model/CLI tests; admin
+  doctor checks; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
-  schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
-  generate`; `manifest check --fast`; `manifest check --download`;
+  schema`; `profile init-builtins`; `image plan`; `image verify`;
+  `image sbom`; `manifest generate`; `manifest check --fast`;
+  `manifest check --download`;
   profile-required `scripts/build-assets.sh --profile`; Justfile
   `build-assets`/`build-kernel`/`build-rootfs` routing through
   `capsem-admin image build`; bootstrap-installed CLI smoke.
