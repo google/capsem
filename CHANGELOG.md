@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the S08 canonical AI interaction evidence side-sprint so model/MCP
   policy, detection, telemetry, timeline, quotas, and plugin work have a
   provider-neutral substrate for OpenAI, Anthropic, and Google/Gemini traffic.
+- Added explicit host-versus-VM AI attribution requirements so future
+  service-owned model prompts charge host telemetry/counters instead of VM
+  health totals.
 - Added the first S08b `capsem-security-engine` contract crate with normalized
   security events, resolved-event actions, detection findings, quota dimensions,
   and throttle-ready serialization tests.

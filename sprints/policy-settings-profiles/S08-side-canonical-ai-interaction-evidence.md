@@ -51,6 +51,9 @@ Initial internal structs:
 ModelInteractionEvidence
   interaction_id
   trace_id
+  attribution_scope
+  source_engine
+  origin_kind
   profile_id
   vm_id
   session_id
@@ -174,6 +177,9 @@ enums:
   `untrusted`.
 - `ToolOrigin`: `native_provider_tool`, `mcp_tool`, `local_builtin_tool`,
   `unknown`.
+- `AiAttributionScope`: `host`, `vm`, `profile`, `session`, `unknown`.
+- `AiOriginKind`: `guest_network`, `host_service`, `host_admin`,
+  `host_workbench`, `test_fixture`, `unknown`.
 - `LinkStatus`: `linked`, `unlinked_pending`, `orphan_model_tool_call`,
   `orphan_mcp_execution`, `ambiguous`, `not_applicable`.
 - `ToolCallStatus`: `proposed`, `executed`, `blocked`, `returned_to_model`,
@@ -261,6 +267,12 @@ The right split is:
   `source_engine = host_ai` or equivalent plus optional `vm_id`, `profile_id`,
   `session_id`, `conversation_id`, and `purpose` when the call is tied to a VM
   or timeline.
+- **Attribute counters to the owner of the call.** Host/service-originated
+  calls use `attribution_scope = host` and must increment host/service AI
+  counters, host telemetry, and host quota dimensions. They may link to a VM,
+  session, profile, or timeline as context, but they must not increment
+  running-VM model counters, VM MCP counters, VM cost totals, or VM health
+  unless the call was actually initiated from that VM's runtime path.
 - **Run through the same Security Engine boundary when governance matters.**
   The host client can submit model events for enforcement/detection/telemetry so
   profile or service policy can govern provider/model/cost/tool behavior. The
@@ -268,6 +280,29 @@ The right split is:
 
 This keeps one audit/provenance vocabulary for all AI activity while avoiding a
 fake coupling between host summarization and guest network proxy mechanics.
+
+## Attribution And Telemetry
+
+AI evidence must always carry both correlation and attribution. Correlation
+answers "what was this related to?" Attribution answers "whose counters,
+budgets, health, and telemetry does this charge?"
+
+Required behavior:
+
+- VM-originated model/MCP traffic uses `attribution_scope = vm` and increments
+  VM health counters, VM status model/tool/cost summaries, VM-scoped OTel
+  attributes, and VM quota dimensions.
+- Host-originated service calls use `attribution_scope = host` and increment
+  host/service counters, service OTel attributes, and host/admin quota
+  dimensions.
+- A host call may carry `vm_id` or `session_id` as context, for example
+  summarizing one session or naming one VM, but that context is not accounting
+  ownership.
+- Timeline and resolved-event rows include both the attribution owner and all
+  correlation ids so UI can group the event with a VM/session while status and
+  quota math remain correct.
+- Exporters must preserve attribution fields. Redaction/export policy may hide
+  prompts/results, but not the host-vs-VM accounting owner.
 
 ## Acceptance Criteria
 
@@ -283,13 +318,16 @@ fake coupling between host summarization and guest network proxy mechanics.
    error status, returned-to-model status, and parse confidence.
 7. Security events project canonical evidence into CEL/Sigma-addressable
    model/MCP fields.
-8. Golden fixtures cover streaming tool-call deltas, completed tool calls,
+8. Host-originated model calls are represented by the same evidence model but
+   attribute counters, telemetry, costs, and future quota dimensions to host/
+   service ownership rather than VM health.
+9. Golden fixtures cover streaming tool-call deltas, completed tool calls,
    malformed/partial arguments, tool results returned to the model, linked MCP
-   execution, orphan model tool calls, orphan MCP executions, and provider
-   unknown-field drift.
-9. Existing model/MCP behavior continues to work while the new evidence becomes
+   execution, orphan model tool calls, orphan MCP executions, host-attributed
+   model prompts linked to VM/session context, and provider unknown-field drift.
+10. Existing model/MCP behavior continues to work while the new evidence becomes
    the policy-facing substrate.
-10. S08b/S08c/S08d can consume the canonical evidence without depending on
+11. S08b/S08c/S08d can consume the canonical evidence without depending on
    provider-specific request/response JSON paths.
 
 ## Testing Matrix
@@ -299,14 +337,17 @@ fake coupling between host summarization and guest network proxy mechanics.
   adapters.
 - Functional: OpenAI Chat, OpenAI Responses, Anthropic, Google/Gemini, and MCP
   aggregator fixtures project into expected security-event fields.
+- Functional: host-originated summarization/naming fixtures project into
+  host-attributed events while preserving VM/session/profile correlation ids.
 - Adversarial: malformed JSON, partial streaming arguments, duplicated call ids,
   missing provider ids, ambiguous MCP linkage, orphan model/MCP events,
-  redacted arguments, unknown provider fields.
+  redacted arguments, unknown provider fields, and host calls incorrectly
+  carrying VM ids that must not charge VM counters.
 - E2E/VM: VM-originated model tool call linked to an MCP execution and returned
   tool result after S08b engine wiring.
 - Telemetry/session DB: resolved event records contain evidence, linkage,
-  usage, cost, provider/model, and full local evidence unless an export path
-  explicitly redacts.
+  usage, cost, provider/model, attribution owner, correlation ids, and full
+  local evidence unless an export path explicitly redacts.
 - Performance: baseline parser/projection overhead captured in S08d; this side
   sprint only defines the data path and focused unit/fixture proof.
 
