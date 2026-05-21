@@ -382,6 +382,26 @@ Twenty-fourth slice landed on 2026-05-21:
   tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
   -q` passed with 65 tests.
 
+Twenty-fifth slice landed on 2026-05-21:
+
+- `capsem-admin detection compile <pack> --out detection.ir.json --json` now
+  parses Sigma YAML through pySigma and emits a typed
+  `capsem.detection.ir.v1` artifact with committed Draft 2020-12 schema.
+- The supported authoring subset is intentionally narrow: first-party
+  `capsem` logsource categories, one named Sigma selection, AND-linked fields,
+  OR-linked exact values, explicit normalized field mappings, and typed
+  severity/confidence/finding metadata. Unsupported Sigma conditions,
+  modifiers, wildcard values, keyword detections, external-only sources, and
+  unmapped fields fail closed.
+- `capsem-admin detection check <pack> --events events.jsonl --json` evaluates
+  normalized `SecurityEvent` JSONL fixtures through the compiled IR and emits a
+  typed `capsem.detection-check.v1` report with findings, diagnostics, counts,
+  and timing.
+- Verification: `uv run python -m pytest tests/test_security_packs.py -q`
+  passed with 15 tests; `uv run python -m pytest tests/test_security_packs.py
+  tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
+  -q` passed with 71 tests.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -738,10 +758,10 @@ The checker must fail closed for:
       enterprise PyPI install/usage docs and developer editable-install/
       internals docs.
 - [~] Add `capsem-admin policy validate|schema` and
-      `capsem-admin detection validate|schema` release/docs proof before S19
-      documents enforcement/detection formats as supported corp workflows.
-      Validate/schema commands have landed; release/docs proof and
-      `detection compile|check` remain.
+      `capsem-admin detection validate|schema|compile|check` release/docs proof
+      before S19 documents enforcement/detection formats as supported corp
+      workflows. Validate/schema plus pySigma-backed detection compile/check
+      have landed; release/docs proof and Rust parity fixtures remain.
 
 ## Coverage Ledger
 
@@ -756,14 +776,15 @@ The checker must fail closed for:
   guest-config-to-profile generation tests; image inventory package/tool
   extraction, per-architecture auto-discovery, contract comparison tests, and
   doctor-bundle probe parser tests; SPDX guest SBOM model/CLI tests;
-  policy/detection pack Pydantic/schema tests; admin doctor checks;
-  no-hand-edited-settings guard tests.
+  policy/detection pack Pydantic/schema tests; Detection IR schema tests;
+  pySigma-backed Sigma import/compile tests; detection check report tests;
+  admin doctor checks; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`;
   `image sbom`; `manifest generate`; `manifest check --fast`;
   `manifest check --download`;
   `policy validate`; `policy schema`; `detection validate`;
-  `detection schema`;
+  `detection schema`; `detection compile`; `detection check`;
   profile-required `scripts/build-assets.sh --profile`; Justfile
   `build-assets`/`build-kernel`/`build-rootfs` routing through
   `capsem-admin image build`; bootstrap-installed CLI smoke.
@@ -778,7 +799,9 @@ The checker must fail closed for:
   revoked current profile, path traversal, stale manifest rollback, and
   untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin module
   tests, policy rewrite without payload, detection pack enforcement-decision
-  attempts, duplicate policy/detection ids, and missing Sigma field mappings.
+  attempts, duplicate policy/detection ids, missing Sigma field mappings,
+  unsupported Sigma conditions, unsupported Sigma modifiers, and unsupported
+  Sigma wildcard/string placeholder values.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default; the profile-backed host-arch E2E gate
   reconciles selected assets, boots through Capsem, captures
@@ -786,8 +809,11 @@ The checker must fail closed for:
   through `capsem-admin image verify`.
 - Telemetry/observability: command JSON reports include profile id/revision,
   manifest identity, asset hashes, package contract hash, check mode, timings,
-  and failure category.
+  and failure category; detection check reports include event/rule/match counts,
+  findings, diagnostics, and timing.
 - Performance: fast manifest check uses bounded concurrency and never downloads
   full assets; full download check streams to disk and verifies incrementally.
 - Missing/deferred: full Docker image build may stay in release gates if too
   expensive for every PR; keep a lightweight fixture-build test in PR gates.
+  Detection Rust parity fixtures remain deferred to S08b's runtime engine
+  implementation.

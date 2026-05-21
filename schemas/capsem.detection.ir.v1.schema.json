@@ -1,0 +1,224 @@
+{
+  "$defs": {
+    "Confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "DetectionIRMatcherV1": {
+      "additionalProperties": false,
+      "properties": {
+        "field_path": {
+          "minLength": 1,
+          "title": "Field Path",
+          "type": "string"
+        },
+        "operator": {
+          "const": "equals_any",
+          "default": "equals_any",
+          "title": "Operator",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Values",
+          "type": "array"
+        },
+        "sigma_field": {
+          "minLength": 1,
+          "title": "Sigma Field",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field_path",
+        "values",
+        "sigma_field"
+      ],
+      "title": "DetectionIRMatcherV1",
+      "type": "object"
+    },
+    "DetectionIRRuleV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "source_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "sigma_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sigma Id"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "event_family": {
+          "$ref": "#/$defs/EventFamily"
+        },
+        "condition": {
+          "minLength": 1,
+          "title": "Condition",
+          "type": "string"
+        },
+        "matchers": {
+          "items": {
+            "$ref": "#/$defs/DetectionIRMatcherV1"
+          },
+          "minItems": 1,
+          "title": "Matchers",
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence"
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "source_id",
+        "title",
+        "event_family",
+        "condition",
+        "matchers",
+        "severity",
+        "confidence"
+      ],
+      "title": "DetectionIRRuleV1",
+      "type": "object"
+    },
+    "EventFamily": {
+      "enum": [
+        "dns",
+        "http",
+        "mcp",
+        "model",
+        "file",
+        "process",
+        "credential",
+        "vm",
+        "profile",
+        "conversation"
+      ],
+      "title": "EventFamily",
+      "type": "string"
+    },
+    "PackOwner": {
+      "enum": [
+        "corp",
+        "vendor",
+        "user"
+      ],
+      "title": "PackOwner",
+      "type": "string"
+    },
+    "PackStatus": {
+      "enum": [
+        "active",
+        "deprecated",
+        "revoked"
+      ],
+      "title": "PackStatus",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "capsem.detection.ir.v1",
+      "default": "capsem.detection.ir.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "pack_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.-]{2,95}$",
+      "title": "Pack Id",
+      "type": "string"
+    },
+    "pack_version": {
+      "minLength": 1,
+      "title": "Pack Version",
+      "type": "string"
+    },
+    "pack_status": {
+      "$ref": "#/$defs/PackStatus"
+    },
+    "owner": {
+      "$ref": "#/$defs/PackOwner"
+    },
+    "rules": {
+      "items": {
+        "$ref": "#/$defs/DetectionIRRuleV1"
+      },
+      "minItems": 1,
+      "title": "Rules",
+      "type": "array"
+    }
+  },
+  "required": [
+    "pack_id",
+    "pack_version",
+    "pack_status",
+    "owner",
+    "rules"
+  ],
+  "title": "DetectionIRV1",
+  "type": "object"
+}

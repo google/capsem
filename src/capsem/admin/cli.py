@@ -64,10 +64,16 @@ from capsem.builder.profiles import (
     validate_profile_toml,
 )
 from capsem.builder.security_packs import (
+    DetectionCompileReportV1,
     DetectionPackV1,
     PolicyPackV1,
+    compile_detection_pack,
+    dump_detection_check_report_json,
+    dump_detection_compile_report_json,
+    dump_detection_ir_json,
     dump_detection_pack_schema_json,
     dump_policy_pack_schema_json,
+    run_detection_check,
     validate_detection_pack_json,
     validate_detection_pack_toml,
     validate_detection_pack_yaml,
@@ -635,6 +641,94 @@ def detection_validate(detection_path: str, json_output: bool) -> None:
     else:
         for diagnostic in report.diagnostics:
             click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
+    if not report.ok:
+        raise SystemExit(1)
+
+
+@detection.command("compile")
+@click.argument("detection_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--out",
+    "output_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Write the compiled capsem.detection.ir.v1 artifact.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def detection_compile(
+    detection_path: str,
+    output_path: str | None,
+    json_output: bool,
+) -> None:
+    """Compile a detection pack into Capsem Detection IR V1."""
+    path = Path(detection_path)
+    try:
+        pack = _load_detection_pack(path)
+        ir = compile_detection_pack(pack, base_dir=path.parent)
+    except Exception as error:
+        report = DetectionCompileReportV1(
+            ok=False,
+            rule_count=0,
+            output_path=output_path,
+            diagnostics=[str(error)],
+        )
+        if json_output:
+            click.echo(dump_detection_compile_report_json(report))
+            raise SystemExit(1)
+        raise click.ClickException(str(error)) from error
+
+    payload = dump_detection_ir_json(ir)
+    if output_path is not None:
+        out = Path(output_path)
+        out.write_text(payload + "\n", encoding="utf-8")
+    elif not json_output:
+        click.echo(payload)
+
+    report = DetectionCompileReportV1(
+        ok=True,
+        pack_id=pack.id,
+        pack_version=pack.version,
+        rule_count=len(ir.rules),
+        output_path=output_path,
+    )
+    if json_output:
+        click.echo(dump_detection_compile_report_json(report))
+    elif output_path is not None:
+        click.echo(f"compiled {len(ir.rules)} detection rule(s) to {output_path}")
+
+
+@detection.command("check")
+@click.argument("detection_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--events",
+    "events_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSONL normalized SecurityEvent fixture file.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def detection_check(detection_path: str, events_path: str, json_output: bool) -> None:
+    """Evaluate a detection pack against normalized SecurityEvent JSONL fixtures."""
+    path = Path(detection_path)
+    try:
+        pack = _load_detection_pack(path)
+        report = run_detection_check(
+            pack,
+            events_path=Path(events_path),
+            base_dir=path.parent,
+        )
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_detection_check_report_json(report))
+    else:
+        click.echo(
+            f"checked {report.event_count} event(s), "
+            f"{report.match_count} finding(s)"
+        )
+        for diagnostic in report.diagnostics:
+            click.echo(diagnostic, err=True)
     if not report.ok:
         raise SystemExit(1)
 

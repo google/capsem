@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added regroup sprint specs for service-settings schema/admin parity and the
   policy-rule versus detection/Sigma architecture decision before CLI,
   telemetry, plugins, rule UI, and Confirm UX continue.
+- Added `capsem-admin detection compile|check` with pySigma-backed Sigma
+  parsing, typed `capsem.detection.ir.v1` output, JSONL normalized-event
+  fixture checks, and fail-closed unsupported Sigma subset coverage.
 - Added Profile V2 settings/profile provenance to the redacted service debug
   report, including selected profile, profile roots, effective VM summary,
   resolver trace summary, and credential-id-only reporting.

@@ -10,6 +10,7 @@ dependencies = [
     "zstandard>=0.25.0",
     "tomli-w>=1.0",
     "pyyaml>=6.0",
+    "pysigma>=1.3.3",
 ]
 
 [project.scripts]

@@ -468,6 +468,15 @@ a valid claim -- mark it `[ ]` instead.
     tests/test_service_settings.py -q` passed with 65 tests. Remaining
     policy/detection admin work: `detection compile|check`, pySigma/Rust parity
     fixtures, and docs/release proof.
+    Twenty-fifth slice added pySigma-backed `capsem-admin detection compile`
+    into typed `capsem.detection.ir.v1` plus `capsem-admin detection check`
+    over normalized SecurityEvent JSONL fixtures; unsupported Sigma conditions
+    and unsupported subset features fail closed. Verification:
+    `uv run python -m pytest tests/test_security_packs.py -q` passed with 15
+    tests; `uv run python -m pytest tests/test_security_packs.py
+    tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
+    -q` passed with 71 tests. Remaining policy/detection admin work: Rust
+    parity fixtures and docs/release proof.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile
