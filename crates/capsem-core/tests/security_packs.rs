@@ -85,6 +85,12 @@ fn detection_ir_evaluator_matches_security_engine_http_event() {
     let event = SecurityEvent::http(
         SecurityEventCommon {
             event_id: "evt-s08b-http".into(),
+            parent_event_id: None,
+            stream_id: Some("http-stream-1".into()),
+            activity_id: Some("http-request-1".into()),
+            sequence_no: Some(1),
+            source_engine: capsem_security_engine::SourceEngine::Network,
+            enforceability: capsem_security_engine::Enforceability::InlineBlockable,
             trace_id: Some("trace-s08b".into()),
             span_id: None,
             timestamp_unix_ms: 1_789,

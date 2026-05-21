@@ -25,10 +25,40 @@ pub enum RedactionState {
     SummaryOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceEngine {
+    Network,
+    File,
+    Process,
+    Conversation,
+    Security,
+    Vm,
+    Profile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Enforceability {
+    InlineBlockable,
+    ObserveOnly,
+    RemediationOnly,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecurityEventCommon {
     pub event_id: String,
+    #[serde(default)]
+    pub parent_event_id: Option<String>,
+    #[serde(default)]
+    pub stream_id: Option<String>,
+    #[serde(default)]
+    pub activity_id: Option<String>,
+    #[serde(default)]
+    pub sequence_no: Option<u64>,
+    pub source_engine: SourceEngine,
+    pub enforceability: Enforceability,
     #[serde(default)]
     pub trace_id: Option<String>,
     #[serde(default)]
@@ -159,6 +189,10 @@ impl SecurityEvent {
             correlation_ids: CorrelationIds {
                 trace_id: self.common.trace_id.clone(),
                 span_id: self.common.span_id.clone(),
+                parent_event_id: self.common.parent_event_id.clone(),
+                stream_id: self.common.stream_id.clone(),
+                activity_id: self.common.activity_id.clone(),
+                sequence_no: self.common.sequence_no,
                 process_id: self.common.process_id.clone(),
                 exec_id: self.common.exec_id.clone(),
                 turn_id: self.common.turn_id.clone(),
@@ -338,6 +372,14 @@ pub struct CorrelationIds {
     pub trace_id: Option<String>,
     #[serde(default)]
     pub span_id: Option<String>,
+    #[serde(default)]
+    pub parent_event_id: Option<String>,
+    #[serde(default)]
+    pub stream_id: Option<String>,
+    #[serde(default)]
+    pub activity_id: Option<String>,
+    #[serde(default)]
+    pub sequence_no: Option<u64>,
     #[serde(default)]
     pub process_id: Option<String>,
     #[serde(default)]

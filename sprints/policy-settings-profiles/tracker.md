@@ -623,6 +623,11 @@ a valid claim -- mark it `[ ]` instead.
     the new contract matches the Sigma-derived metadata-access rule.
     Verification: `cargo test -p capsem-core --test security_packs` passed with
     6 tests.
+    Third contract-hardening slice added parent event, stream, activity,
+    sequence, source-engine, and enforceability fields to the shared
+    `SecurityEventCommon` contract and pinned those values in quota/correlation
+    extraction tests. Verification: `cargo test -p capsem-security-engine` and
+    `cargo test -p capsem-core --test security_packs` passed.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

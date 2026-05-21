@@ -5,6 +5,12 @@ fn http_event_exposes_identity_and_quota_dimensions() {
     let event = SecurityEvent::http(
         SecurityEventCommon {
             event_id: "evt-1".into(),
+            parent_event_id: Some("evt-parent".into()),
+            stream_id: Some("stream-1".into()),
+            activity_id: Some("activity-1".into()),
+            sequence_no: Some(7),
+            source_engine: SourceEngine::Network,
+            enforceability: Enforceability::InlineBlockable,
             trace_id: Some("trace-1".into()),
             span_id: Some("span-1".into()),
             timestamp_unix_ms: 1_789,
@@ -41,6 +47,16 @@ fn http_event_exposes_identity_and_quota_dimensions() {
     assert_eq!(dims.user_id.as_deref(), Some("user-1"));
     assert_eq!(dims.event_family, EventFamily::Http);
     assert_eq!(dims.event_type, "http.request");
+    assert_eq!(
+        dims.correlation_ids.parent_event_id.as_deref(),
+        Some("evt-parent")
+    );
+    assert_eq!(dims.correlation_ids.stream_id.as_deref(), Some("stream-1"));
+    assert_eq!(
+        dims.correlation_ids.activity_id.as_deref(),
+        Some("activity-1")
+    );
+    assert_eq!(dims.correlation_ids.sequence_no, Some(7));
     assert_eq!(dims.http_host.as_deref(), Some("api.example.test"));
     assert_eq!(dims.http_method.as_deref(), Some("POST"));
     assert_eq!(dims.http_path_class.as_deref(), Some("api-v1"));
@@ -52,6 +68,12 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
     let event = SecurityEvent::model(
         SecurityEventCommon {
             event_id: "evt-model-1".into(),
+            parent_event_id: None,
+            stream_id: Some("model-stream-1".into()),
+            activity_id: Some("model-activity-1".into()),
+            sequence_no: Some(1),
+            source_engine: SourceEngine::Network,
+            enforceability: Enforceability::InlineBlockable,
             trace_id: None,
             span_id: None,
             timestamp_unix_ms: 1_790,
@@ -129,6 +151,8 @@ fn security_event_rejects_unknown_fields() {
     let err = serde_json::from_value::<SecurityEvent>(serde_json::json!({
         "common": {
             "event_id": "evt-unknown",
+            "source_engine": "network",
+            "enforceability": "inline_blockable",
             "timestamp_unix_ms": 1,
             "event_type": "dns.request",
             "redaction_state": "raw"
