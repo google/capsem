@@ -134,8 +134,20 @@ deliberately small at first:
   `matches()` with bounded regex;
 - no custom user functions in profile content for S08b;
 - no wall-clock/network/file-system side effects;
-- event fields are accessed through the normalized typed event subject, not raw
-  ad hoc maps.
+- fields are accessed through canonical typed policy roots such as
+  `http.request.host`, `mcp.request.tool_name`, and `model.request.provider`;
+- `event.*` and raw normalized-envelope paths are internal-only and must be
+  rejected by admin/runtime validators.
+
+The authoring surface mirrors the typed policy context object model, for
+example:
+
+```cel
+http.request.host.contains("google")
+http.request.header("authorization").exists()
+mcp.request.tool_name == "filesystem.read_file"
+model.request.provider == "gemini"
+```
 
 The old Capsem CEL-like evaluator becomes a migration target only. New tests
 must assert the real CEL behavior and must reject expressions that only worked
@@ -156,8 +168,8 @@ know it. The runtime path is Capsem-normalized:
 2. The Capsem service validates and compiles the same detection pack at runtime
    through `/detection/validate` and `/detection/compile`.
 3. Capsem compiles supported Sigma selections/conditions into the S08b-selected
-   runtime predicate plan. The likely direction is Sigma-to-CEL over normalized
-   events so enforcement and detection can share one matching engine while
+   runtime predicate plan over the same canonical policy roots used by
+   enforcement, so enforcement and detection can share one matching engine while
    keeping separate semantics.
 4. Rust service tests and Python admin tests consume the same S08c fixtures and
    expected outputs.
@@ -377,7 +389,7 @@ Enforcement rule fields:
 - `event_type`: family-specific type such as `http.request`,
   `file.write`, or `process.exec`.
 - `priority`: integer; lower values evaluate first.
-- `condition`: real CEL expression over the normalized event subject.
+- `condition`: real CEL expression over the canonical policy context roots.
 - `decision`: `allow`, `block`, `ask`, or `rewrite`.
 - `rewrite`: typed rewrite payload, present only for `decision = "rewrite"`.
 - `reason`, `tags`, `references`.
@@ -389,9 +401,11 @@ Validation requirements:
 - Unknown fields fail closed.
 - `decision = "rewrite"` requires a rewrite payload matching the event family.
 - `decision != "rewrite"` rejects rewrite payloads.
-- CEL must parse and type-check against the event-family schema before the pack
-  can be installed or launched.
+- CEL must parse and type-check against the policy-context/event-family schema
+  before the pack can be installed or launched.
 - An enforcement rule may not reference fields outside its `event_family` schema.
+- An enforcement rule may not reference `event.*` or other internal envelope
+  fields.
 - A locked corp rule cannot be edited by user profile overlays.
 
 ### Detection Pack V1

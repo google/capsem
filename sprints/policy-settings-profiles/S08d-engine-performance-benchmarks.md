@@ -9,6 +9,11 @@ Not started. Inserted on 2026-05-21 as the S08 exit benchmark sprint.
 Prove the runtime speed of Capsem's normalized Security Engine before public
 CLI/UI/docs/marketing surfaces make speed claims.
 
+S08d starts only after S08b stabilizes the canonical policy context ABI and
+S08c supplies real shared event/rule corpora. Benchmarks must measure the
+contract we intend to ship, not transitional `event.*` rules or synthetic-only
+paths.
+
 This sprint measures real VM-originated events flowing through Network/File/
 Process/MCP/model paths into the Security Engine, then records how quickly
 Capsem can allow, block, ask, and detect using CEL enforcement and
@@ -18,6 +23,8 @@ Sigma-compatible detection.
 
 - Performance claims must be backed by measured data, not intuition about CEL
   or Sigma.
+- Speed claims must use canonical policy roots such as
+  `http.request.host.contains("google")`, not internal envelope paths.
 - Benchmarks must include VM-originated events that cross the real transport/
   service/process boundary. Microbenchmarks are useful, but they are not enough
   for marketing or release claims.

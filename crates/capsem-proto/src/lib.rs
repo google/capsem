@@ -13,9 +13,11 @@
 pub mod handshake;
 pub mod ipc;
 pub mod metrics;
+pub mod policy_context;
 pub mod poll;
 
 pub use handshake::{HandshakeError, Hello};
+pub use policy_context::*;
 
 use std::path::Path;
 

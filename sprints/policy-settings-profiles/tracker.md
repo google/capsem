@@ -854,6 +854,20 @@ a valid claim -- mark it `[ ]` instead.
     passed. Still missing for S08b.2: historical resolved-event/session-journal
     source selection, `/sessions/{id}/detection/hunt`, gateway/CLI/UI route
     exposure, persistence/profile-pack seeding, and VM/runtime integration.
+    Twenty-seventh S08b.2 planning slice accepted the swarm finding that
+    authored rules must never use `event.*`. The next blocking S08b runtime
+    slice is the canonical policy context ABI: `capsem-proto` owns the typed
+    schema with current names and an explicit schema version,
+    `capsem-security-engine` injects direct CEL roots such as
+    `http.request.host` and `http.request.header(name)`, and `capsem-core`
+    lowers Detection IR/Sigma onto those roots. The delegated `capsem-proto`
+    schema slice landed `PolicyContext`, `POLICY_CONTEXT_SCHEMA_VERSION`,
+    common/HTTP/DNS/MCP/model/file/process/profile roots, deterministic header
+    maps, explicit body states, and schema tests. Verification:
+    `cargo test -p capsem-proto policy_context` passed and
+    `cargo test -p capsem-proto` passed. Still missing: CEL context injection,
+    `event.*` rejection in runtime/admin validation, Detection IR lowering onto
+    canonical roots, and service backtest/hunt tests using the public rule ABI.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

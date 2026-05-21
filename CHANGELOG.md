@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and return the shared deduplicated `BacktestResult` shape.
 - Added the first service-owned detection hunt handler for running multiple
   candidate detection rules over a supplied normalized event corpus.
+- Added the shared `capsem-proto` policy context schema that future CEL and
+  high-level DSL rules mirror, with versioned typed roots for common, HTTP,
+  DNS, MCP, model, file, process, and profile activity.
 - Added Rust Detection IR evaluation against the new S08b normalized
   `SecurityEvent` contract so Sigma-derived findings can run on the shared
   event model instead of a parallel fixture-only shape.

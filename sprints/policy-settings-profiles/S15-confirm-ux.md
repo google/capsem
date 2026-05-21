@@ -118,20 +118,22 @@ in isolation.
 
 | Callback | Derived condition | Rule type |
 | --- | --- | --- |
-| `dns.request` | `qname == "<exact qname>"` (or `qname.endsWith(".<parent>")` if user-selected scope=parent) | dns |
-| `http.request` | `request.host == "<host>" && request.path.startsWith("<path-prefix>")` | http |
-| `http.response` | `request.host == "<host>" && response.status == "<status>"` | http |
-| `mcp.request` | `method == "<method>" && server.name == "<server>" && tool.name == "<tool>"` (subset of fields present in snapshot) | mcp |
-| `mcp.response` | same scope as the matched request, plus `response.is_error` if relevant | mcp |
-| `model.request` | `provider == "<provider>" && model == "<model>"` | model |
+| `dns.request` | `dns.request.qname == "<exact qname>"` (or `dns.request.qname.endsWith(".<parent>")` if user-selected scope=parent) | dns |
+| `http.request` | `http.request.host == "<host>" && http.request.path.startsWith("<path-prefix>")` | http |
+| `http.response` | `http.request.host == "<host>" && http.response.status == "<status>"` | http |
+| `mcp.request` | `mcp.request.method == "<method>" && mcp.request.server_name == "<server>" && mcp.request.tool_name == "<tool>"` (subset of fields present in snapshot) | mcp |
+| `mcp.response` | same scope as the matched request, plus `mcp.response.is_error` if relevant | mcp |
+| `model.request` | `model.request.provider == "<provider>" && model.request.model == "<model>"` | model |
 | `model.response` | same scope as request, plus the relevant response signal | model |
-| `model.tool_call` | `provider == "<provider>" && tool.name == "<name>"` | model |
-| `model.tool_response` | `provider == "<provider>" && tool.call_id == "<id>"` (often the user will broaden this) | model |
+| `model.tool_call` | `model.request.provider == "<provider>" && model.tool_call.name == "<name>"` | model |
+| `model.tool_response` | `model.request.provider == "<provider>" && model.tool_result.call_id == "<id>"` (often the user will broaden this) | model |
 | `hook.<name>` | best-effort from hook args; user always reviews | hook |
 
 The derivation never widens beyond the ask's actual subject. The user
 broadens it in the editor if they want. Narrowing (down to a single
 request id) is always available.
+Derived rules must use canonical policy roots from S08b and must never emit
+`event.*`.
 
 `DerivedRuleSuggestion` carries the derived rule TOML plus a list of
 "scope knobs" the UI exposes (e.g. "exact qname" / "parent domain"

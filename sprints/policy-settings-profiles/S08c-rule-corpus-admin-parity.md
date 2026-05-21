@@ -24,6 +24,10 @@ workflows needed to make those contracts production-trustworthy.
   `/enforcement/*` and `/detection/*` state, match stats, backtest over
   normalized events, detection hunt over session journals, and atomic compiled
   rule-plan swaps.
+- Enforcement CEL and Sigma-derived detection fixtures must use the canonical
+  policy context roots from S08b, not internal `event.*` paths. The corpus must
+  include negative fixtures proving `event`, `event.subject`, and raw envelope
+  paths are rejected before install/backtest/hunt.
 - Python/admin and Rust/runtime behavior must be pinned by a shared corpus,
   not by duplicate prose. The same committed data fixtures must be accepted by
   `capsem-admin` and by the Rust service/security-engine tests.
@@ -43,12 +47,17 @@ data/enforcement/backtest-expected/
 data/detection/sigma/
 data/detection/backtest-expected/
 data/detection/hunt-expected/
+data/policy-context/
 ```
 
 Every event fixture must include stable `session_id`, `event_id`, `sequence`,
 event family/type, VM/profile/user identity where applicable, and enough full
 payload evidence to debug a wrong match locally. Backtest and hunt fixtures are
 not redacted by default; redaction is an export/support-bundle concern.
+Every policy-context fixture must pin the typed object model that CEL and the
+future high-level DSL mirror: `http.request.host`, `http.request.header(name)`,
+`mcp.request.tool_name`, `model.request.provider`, `file.activity.path_class`,
+and missing/redacted-value semantics.
 
 ## Backtest Contract
 
@@ -77,6 +86,8 @@ session-scoped enforcement replay, it should be named and designed separately.
 ## Tasks
 
 - Create shared event, enforcement, detection, expected-result fixture corpus.
+- Create shared policy-context fixtures and negative fixtures for rejected
+  `event.*` authoring.
 - Add `capsem-admin enforcement validate|compile|backtest` over the shared
   corpus without requiring a Capsem service.
 - Add `capsem-admin detection validate|compile|backtest` over the shared corpus
@@ -86,7 +97,8 @@ session-scoped enforcement replay, it should be named and designed separately.
 - Add Rust runtime parity tests that consume the same corpus and expected
   outputs through the S08b service/security-engine evaluator.
 - Add cross-language drift tests proving Python-generated enforcement/detection
-  artifacts are accepted by Rust and produce identical backtest outcomes.
+  artifacts use canonical policy roots, are accepted by Rust, and produce
+  identical backtest outcomes.
 - Generate initial real-session normalized event fixtures from S08b's
   resolved-event journal and add them to the corpus once stable.
 - Document the corpus update workflow so future rule-language changes must

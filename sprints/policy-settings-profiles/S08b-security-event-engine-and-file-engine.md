@@ -31,6 +31,16 @@ enforcement or detection rules match, the engine can notify a
 `/enforcement/stats` and `/detection/stats` routes read counters populated by
 the same runtime path that made the decision/finding.
 
+The next required runtime slice is canonical policy context injection. The
+shared `capsem-proto` policy context schema now defines the typed object model,
+and the real CEL engine exists, but authored rules must not see or rely on
+`event.*`. S08b must inject direct, typed policy roots such as `http`, `dns`,
+`mcp`, `model`, `file`, `process`, `profile`, and `common`, with paths like
+`http.request.host.contains("google")` and
+`http.request.header("authorization").exists()`. The internal
+`SecurityEvent` envelope remains the audit/journal/sink contract; it is not the
+rule-authoring ABI.
+
 S08a fixes the input contract for this sprint: enforcement and detection are
 separate profile-owned rule families with separate public route groups.
 Enforcement uses real CEL via the Rust `cel` crate family. Sigma is a detection
@@ -65,6 +75,12 @@ Lannister-grade when ledgers are queryable, enum-backed, invariant-tested, and
 not hidden behind opaque JSON blobs. Public endpoints are Baratheon-grade when
 malformed input, injection, locked mutation, and unsupported-shape cases fail
 closed with typed diagnostics.
+
+[Policy Settings Profiles Swarm](swarm.md) captured the canonical CEL authoring
+namespace finding. The P0 accepted requirement is: reject `event.*` everywhere,
+define the policy context object model as a typed shared contract, and make the
+high-level DSL mirror that same object model instead of a separate stringly
+language.
 
 ## Placement
 
@@ -206,6 +222,30 @@ but the Security Engine consumes the canonical `ModelInteractionEvidence`
 projection described in the side sprint. CEL, Sigma-derived detection,
 backtest, status, OTel, and timeline code must not depend on provider-specific
 raw JSON paths for normal policy fields.
+
+Policy rule authoring is also evidence-backed, but it is not authored against
+the raw event envelope. The Security Engine builds a typed policy context from
+normalized evidence and injects direct CEL roots:
+
+```cel
+http.request.host.contains("google")
+http.request.url.contains("google")
+http.request.path.startsWith("/admin")
+http.request.header("authorization").exists()
+http.request.body.text.contains("secret")
+mcp.request.tool_name == "filesystem.read_file"
+model.request.provider == "gemini"
+file.activity.path_class == "workspace"
+```
+
+`capsem-proto` owns the shared object typing for that policy context. The first
+schema slice has landed with current Rust names such as `PolicyContext`, an
+explicit `POLICY_CONTEXT_SCHEMA_VERSION`, and a root `schema_version` field. It
+does not carry CEL/evaluator logic. `capsem-security-engine` owns CEL context
+injection, method helpers, compile-time reference validation, and rule
+evaluation. `capsem-core` owns projection from runtime/security events and
+Detection IR lowering onto the same canonical roots. Current code must reject
+authored `event.*` rules so `SecurityEvent` does not become a public policy ABI.
 
 Accounting ownership is separate from correlation. A host/service AI call can
 carry `vm_id`, `session_id`, `profile_id`, `conversation_id`, or `purpose` so
@@ -405,6 +445,16 @@ Implementation status as of the current service-route slices:
   compile, local inline backtest, local inline detection hunt,
   live add/update/delete/list, and stats, backed by the
   `capsem-security-engine` runtime registry and real CEL compile checks.
+- Landed: shared typed `capsem-proto::policy_context` schema with
+  `POLICY_CONTEXT_SCHEMA_VERSION`, root `schema_version`, common/HTTP/DNS/MCP/
+  model/file/process/profile roots, deterministic headers, explicit body state,
+  and tests for JSON/MessagePack roundtrip, unknown-field rejection,
+  case-insensitive header lookup, redacted/missing body semantics, and no
+  current `V1` type suffixes.
+- Correction required before route/corpus stability: the currently landed CEL
+  path evaluates internal `SecurityEvent` data. S08b must move rule authoring
+  to the canonical policy context roots and reject `event.*` before S08c
+  fixtures or S14/S15 UI surfaces harden the wrong contract.
 - Guardrail: malformed CEL fails before registry mutation; list/stats expose
   rule id, pack id, origin/scope, enabled state, compile status, generation,
   compiled plan id, match count, and last matched event/timestamp.

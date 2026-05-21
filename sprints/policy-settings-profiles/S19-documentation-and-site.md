@@ -47,6 +47,11 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
   - canonical enforcement rule grammar:
     `security.rules.<type>.<rule_name>`, callback matrix, condition grammar,
     rewrite constraints, and default priority behavior.
+  - canonical policy context object model: public CEL/high-level DSL roots such
+    as `http.request.host`, `http.request.header(name)`,
+    `mcp.request.tool_name`, `model.request.provider`, and
+    `file.activity.path_class`; explain that `event.*` is internal-only and is
+    rejected in authored rules.
   - enforcement architecture: what is evaluated inline, what decisions exist,
     what can block/rewrite/ask, how `/enforcement/*` validate/compile/backtest/
     live registry/stats routes work, how ask/confirm is logged, and how the
@@ -193,7 +198,9 @@ Final paths should follow the actual docs tree present when this sprint starts.
       overview, using the same vocabulary in every page.
 - [ ] Write engine overview with resolution/provenance diagrams.
 - [ ] Write rule-engine grammar reference:
-      callbacks, fields, decisions, rewrite rules, priority defaults.
+      callbacks, canonical policy context roots/fields/functions, decisions,
+      rewrite rules, priority defaults, and the explicit `event.*` rejection
+      rule.
 - [ ] Write enforcement security page:
       Security Engine pipeline, inline enforcement evaluation, real CEL function
       set, allow/block/ask/rewrite semantics, ask/confirm logging, enforcement pack
@@ -203,8 +210,8 @@ Final paths should follow the actual docs tree present when this sprint starts.
       boundary.
 - [ ] Write detection format security page:
       S08a-selected `capsem.detection-pack.v1` format, Sigma-compatible
-      import/compile path, `capsem.detection.ir.v1`, normalized event-field
-      mapping, finding schema, detection pack profile ownership,
+      import/compile path, `capsem.detection.ir.v1`, canonical policy-context
+      field mapping, finding schema, detection pack profile ownership,
       schema/versioning rules, examples, validation errors, telemetry/OTel
       mapping, `/detection/*` validate/compile/backtest/list/add/update/delete/
       stats/hunt API behavior, default 100-row evidence-dedup result behavior,
@@ -246,7 +253,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       validation/errors/reports through `model_validate_json()` /
       `TypeAdapter.validate_json()` and `model_dump_json()`.
 - [ ] Write "add detection" admin guide:
-      choose the target normalized event families, author Sigma-compatible
+      choose the target canonical event families, author Sigma-compatible
       rules, validate with pySigma-backed `capsem-admin`, compile/check against
       fixtures, backtest against a shared corpus or selected session timeline,
       review the default 100 diverse evidence rows, publish through a signed
@@ -254,7 +261,8 @@ Final paths should follow the actual docs tree present when this sprint starts.
       detection stats. Include forensic use of Sigma against one timeline or
       session journal without installing the detection pack live.
 - [ ] Write "add enforcement" admin guide:
-      choose the synchronous enforcement point, author CEL rules, validate and
+      choose the synchronous enforcement point, author CEL rules over canonical
+      policy roots rather than `event.*`, validate and
       backtest offline with `capsem-admin`, publish through signed profiles,
       hot-load or update through `/enforcement/*`, explain realtime
       allow/block/ask/rewrite behavior, and verify enforcement match counters,

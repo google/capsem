@@ -15,6 +15,12 @@ badges, detection backtest results, and detection suggestions, but the primary
 enforcement editor writes enforcement CEL rules and never edits Sigma YAML as
 if it were enforcement policy.
 
+S08b adds the canonical policy context ABI that this UI must mirror. The editor
+suggests typed roots such as `http.request.host`, `http.request.header(name)`,
+`mcp.request.tool_name`, `model.request.provider`, `file.activity.path_class`,
+and `process.activity.command_class`. It must not suggest or accept `event.*`
+as a public field path.
+
 ## Tasks
 
 - Build a **single shared enforcement rule editor** component (not one editor
@@ -37,12 +43,14 @@ if it were enforcement policy.
   - managed/owned rule state with explicit "managed by <setting>" label
     (for example `AI Providers > OpenAI`, `Registry Access > npm`)
 - Wire type-specific field/function suggestions into the shared editor via
-  configuration (callback/type adapter), not duplicated components.
+  configuration from the shared policy-context schema, not duplicated
+  components or hand-authored UI-only lists.
 - Add autocomplete for fields, operators, functions, constants, connectors, MCP
   tools, providers, domains, and profile-scoped objects.
 - Cover full decision/action support (`allow|ask|block|rewrite`) and rewrite
   config validation/error rendering.
-- Keep raw CEL as advanced escape hatch only.
+- Keep raw CEL as advanced escape hatch only, still validated against
+  canonical roots and still rejecting `event.*`.
 - Show detection-originated policy suggestions as suggestions that open the
   policy editor prefilled; saving them creates policy rules, not detections.
 - Add detection pack/rule list and backtest views that call `/detection/*`.
@@ -61,8 +69,9 @@ if it were enforcement policy.
   through the shared editor; generated/owned rules show managed-by labels and
   cannot be edited. Detection blocks list findings/rules and can backtest
   candidate detection content without turning it into enforcement.
-- Adversarial: invalid expressions, callback/type mismatches, and locked rule
-  edits; unsupported Sigma constructs show typed detection diagnostics.
+- Adversarial: invalid expressions, `event.*` paths, callback/type mismatches,
+  and locked rule edits; unsupported Sigma constructs show typed detection
+  diagnostics.
 - E2E/VM: not primary.
 - Telemetry: finding/rule stats display consumes S08b counters without inventing
   UI-only counters.
