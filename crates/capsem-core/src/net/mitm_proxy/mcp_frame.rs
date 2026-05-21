@@ -16,18 +16,13 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
+use super::fd_stream::{AsyncFdStream, ReplayReader};
+use super::metrics;
+use super::McpEndpointState;
 use crate::mcp::policy::{
     McpDecisionRule, McpDecisionRuleAction, McpDecisionRuleMatch, McpPolicy, ToolDecision,
 };
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
-use crate::net::policy::{
-    PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig, PolicySubject,
-    PolicySubjectValue,
-};
-
-use super::fd_stream::{AsyncFdStream, ReplayReader};
-use super::metrics;
-use super::McpEndpointState;
 
 const MCP_JSON_RPC_MAX_BYTES: usize =
     capsem_proto::MCP_FRAME_MAX_SIZE - capsem_proto::MCP_FRAME_HEADER_LEN as usize;
@@ -141,14 +136,8 @@ where
             let decision_request =
                 McpDecisionRequest::from_request(&process_name, &request, &summary);
             let policy = endpoint.policy.read().await.clone();
-            let rules_policy = endpoint.rules_policy.read().await.clone();
-            let decision_provider =
-                LocalMcpDecisionProvider::audit_only_arcs(Arc::clone(&policy), rules_policy)
-                    .with_confirmer(Arc::clone(&endpoint.confirmer))
-                    .with_confirm_opts(endpoint.confirm_opts.clone());
-            let request_decision = decision_provider
-                .resolve_ask_request(decision_provider.decide(&decision_request), &decision_request)
-                .await;
+            let decision_provider = LocalMcpDecisionProvider::audit_only_arc(Arc::clone(&policy));
+            let request_decision = decision_provider.decide(&decision_request);
 
             ::metrics::counter!(
                 metrics::PARSER_EVENTS_TOTAL,
@@ -269,9 +258,6 @@ where
                     &response,
                     request_decision,
                 );
-                let final_decision = decision_provider
-                    .resolve_ask_response(final_decision, &response_decision_request, &response)
-                    .await;
                 let response = match final_decision.action {
                     McpPolicyAction::Ask | McpPolicyAction::Block => {
                         policy_blocked_response(
@@ -464,106 +450,6 @@ struct McpDecisionRequest {
     request_hash: String,
 }
 
-impl PolicySubject for McpDecisionRequest {
-    fn get_policy_field(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
-        match field {
-            "method" => Some(PolicySubjectValue::String(Cow::Borrowed(
-                self.method.as_str(),
-            ))),
-            "server.name" => self
-                .server_name
-                .as_deref()
-                .map(|value| PolicySubjectValue::String(Cow::Borrowed(value))),
-            "tool.name" => self
-                .tool_name
-                .as_deref()
-                .map(|value| PolicySubjectValue::String(Cow::Borrowed(value))),
-            "resource.uri" => self
-                .resource_uri
-                .as_deref()
-                .map(|value| PolicySubjectValue::String(Cow::Borrowed(value))),
-            "arguments" => self.arguments.as_ref().map(|_| PolicySubjectValue::Present),
-            _ => field
-                .strip_prefix("arguments.")
-                .and_then(|path| self.arguments.as_ref()?.get_policy_field(path)),
-        }
-    }
-}
-
-struct McpResponsePolicySubject<'a> {
-    request: &'a McpDecisionRequest,
-    response: &'a JsonRpcResponse,
-}
-
-impl PolicySubject for McpResponsePolicySubject<'_> {
-    fn get_policy_field(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
-        match field {
-            "response" => {
-                if self.response.result.is_some() || self.response.error.is_some() {
-                    Some(PolicySubjectValue::Present)
-                } else {
-                    None
-                }
-            }
-            "response.is_error" => Some(PolicySubjectValue::Bool(self.response.error.is_some())),
-            "response.content" => response_content(self.response)
-                .map(|value| PolicySubjectValue::String(Cow::Owned(value))),
-            "response.text" => response_text(self.response)
-                .map(|value| PolicySubjectValue::String(Cow::Owned(value))),
-            _ => field
-                .strip_prefix("response.")
-                .and_then(|path| self.response.result.as_ref()?.get_policy_field(path))
-                .or_else(|| self.request.get_policy_field(field)),
-        }
-    }
-}
-
-fn response_content(response: &JsonRpcResponse) -> Option<String> {
-    if let Some(error) = &response.error {
-        return Some(error.message.clone());
-    }
-    response
-        .result
-        .as_ref()
-        .and_then(|result| serde_json::to_string(result).ok())
-}
-
-fn response_text(response: &JsonRpcResponse) -> Option<String> {
-    if let Some(error) = &response.error {
-        return Some(error.message.clone());
-    }
-    let mut values = Vec::new();
-    if let Some(result) = &response.result {
-        collect_text_fields(result, &mut values);
-    }
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.join("\n"))
-    }
-}
-
-fn collect_text_fields(value: &serde_json::Value, values: &mut Vec<String>) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (key, value) in map {
-                if key == "text" {
-                    if let Some(text) = value.as_str() {
-                        values.push(text.to_string());
-                    }
-                }
-                collect_text_fields(value, values);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                collect_text_fields(item, values);
-            }
-        }
-        _ => {}
-    }
-}
-
 impl McpDecisionRequest {
     fn from_summary(process_name: &str, summary: &McpMethodSummary) -> Self {
         Self {
@@ -744,10 +630,7 @@ async fn log_mcp_call_with_policy(
 #[derive(Clone)]
 struct LocalMcpDecisionProvider {
     policy: Arc<McpPolicy>,
-    rules_policy: Arc<PolicyConfig>,
     mode: McpPolicyMode,
-    confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
-    confirm_opts: capsem_proto::poll::RetryOpts,
 }
 
 impl LocalMcpDecisionProvider {
@@ -756,61 +639,23 @@ impl LocalMcpDecisionProvider {
         Self::audit_only_arc(Arc::new(policy))
     }
 
-    #[cfg(test)]
-    fn audit_only_with_policy(policy: McpPolicy, rules_policy: Arc<PolicyConfig>) -> Self {
-        Self::audit_only_arcs(Arc::new(policy), rules_policy)
-    }
-
-    #[cfg(test)]
-    fn audit_only_with_policy_and_confirmer(
-        policy: McpPolicy,
-        rules_policy: Arc<PolicyConfig>,
-        confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
-    ) -> Self {
-        Self::audit_only_arcs(Arc::new(policy), rules_policy).with_confirmer(confirmer)
-    }
-
     fn audit_only_arc(policy: Arc<McpPolicy>) -> Self {
-        Self::audit_only_arcs(policy, Arc::new(PolicyConfig::default()))
-    }
-
-    fn audit_only_arcs(policy: Arc<McpPolicy>, rules_policy: Arc<PolicyConfig>) -> Self {
         Self {
             policy,
-            rules_policy,
             mode: McpPolicyMode::AuditOnly,
-            confirmer: Arc::new(crate::net::policy_confirm::PlaceholderConfirmer),
-            confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-mcp"),
         }
-    }
-
-    fn with_confirmer(mut self, confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>) -> Self {
-        self.confirmer = confirmer;
-        self
-    }
-
-    fn with_confirm_opts(mut self, opts: capsem_proto::poll::RetryOpts) -> Self {
-        self.confirm_opts = opts;
-        self
     }
 
     fn decide(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
-        let policy_decision = self.matching_policy_request_rule(request);
-        if let Some(decision) = &policy_decision {
-            if decision.action.blocks_dispatch() {
-                return decision.clone();
-            }
-        }
-
         if let Some(rule) = self.matching_request_rule(request) {
             let decision = self.decision_from_audit_rule(rule);
             if decision.action.blocks_dispatch() {
                 return decision;
             }
-            return policy_decision.unwrap_or(decision);
+            return decision;
         }
 
-        let base = match request.method_kind.as_str() {
+        match request.method_kind.as_str() {
             "tools/call" => self.decide_tool_call(request),
             "resources/read" => self.decide_server_method(request, "resource"),
             "prompts/get" => self.decide_server_method(request, "prompt"),
@@ -821,11 +666,6 @@ impl LocalMcpDecisionProvider {
                     request.method
                 ),
             ),
-        };
-        if base.action.blocks_dispatch() {
-            base
-        } else {
-            policy_decision.unwrap_or(base)
         }
     }
 
@@ -838,84 +678,13 @@ impl LocalMcpDecisionProvider {
         if matches!(base.action, McpPolicyAction::Ask | McpPolicyAction::Block) {
             return base;
         }
-        let policy_decision = self.matching_policy_response_rule(request, response);
-        if let Some(decision) = &policy_decision {
-            if decision.action.blocks_dispatch() {
-                return decision.clone();
-            }
-        }
         if let Some(rule) = self.matching_response_rule(request, response) {
             let decision = self.decision_from_audit_rule(rule);
             if decision.action.blocks_dispatch() {
                 return decision;
             }
         }
-        policy_decision.unwrap_or(base)
-    }
-
-    async fn resolve_ask_request(
-        &self,
-        decision: McpPolicyDecision,
-        request: &McpDecisionRequest,
-    ) -> McpPolicyDecision {
-        if !matches!(decision.action, McpPolicyAction::Ask) {
-            return decision;
-        }
-        let Some(rule_name) = decision.policy_rule_name.as_deref() else {
-            return decision;
-        };
-        let args = crate::net::policy_confirm::ConfirmArgs {
-            callback: PolicyCallback::McpRequest,
-            rule_id: mcp_policy_rule_id(rule_name),
-            args_snapshot: subject_snapshot_mcp_request(request),
-            trace_id: None,
-            session_id: None,
-            reason: Some(decision.reason.clone()),
-        };
-        let action = match crate::net::policy_confirm::confirm_with_backoff(
-            &self.confirmer,
-            args,
-            &self.confirm_opts,
-        )
-        .await
-        {
-            crate::net::policy_confirm::Decision::Accept => McpPolicyAction::Allow,
-            crate::net::policy_confirm::Decision::Deny => McpPolicyAction::Block,
-        };
-        McpPolicyDecision { action, ..decision }
-    }
-
-    async fn resolve_ask_response(
-        &self,
-        decision: McpPolicyDecision,
-        request: &McpDecisionRequest,
-        response: &JsonRpcResponse,
-    ) -> McpPolicyDecision {
-        if !matches!(decision.action, McpPolicyAction::Ask) {
-            return decision;
-        }
-        let Some(rule_name) = decision.policy_rule_name.as_deref() else {
-            return decision;
-        };
-        let args = crate::net::policy_confirm::ConfirmArgs {
-            callback: PolicyCallback::McpResponse,
-            rule_id: mcp_policy_rule_id(rule_name),
-            args_snapshot: subject_snapshot_mcp_response(request, response),
-            trace_id: None,
-            session_id: None,
-            reason: Some(decision.reason.clone()),
-        };
-        let action = match crate::net::policy_confirm::confirm_with_backoff(
-            &self.confirmer,
-            args,
-            &self.confirm_opts,
-        )
-        .await
-        {
-            crate::net::policy_confirm::Decision::Accept => McpPolicyAction::Allow,
-            crate::net::policy_confirm::Decision::Deny => McpPolicyAction::Block,
-        };
-        McpPolicyDecision { action, ..decision }
+        base
     }
 
     fn decide_tool_call(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
@@ -998,46 +767,6 @@ impl LocalMcpDecisionProvider {
         )
     }
 
-    fn matching_policy_request_rule(
-        &self,
-        request: &McpDecisionRequest,
-    ) -> Option<McpPolicyDecision> {
-        let matched = match self
-            .rules_policy
-            .find_matching_rule(PolicyCallback::McpRequest, request)
-        {
-            Ok(matched) => matched,
-            Err(error) => {
-                return Some(self.block(
-                    "policy.mcp.invalid_condition".to_string(),
-                    format!("Policy condition evaluation failed closed: {error}"),
-                ));
-            }
-        }?;
-        Some(self.decision_from_policy_rule(matched.name, matched.rule))
-    }
-
-    fn matching_policy_response_rule(
-        &self,
-        request: &McpDecisionRequest,
-        response: &JsonRpcResponse,
-    ) -> Option<McpPolicyDecision> {
-        let subject = McpResponsePolicySubject { request, response };
-        let matched = match self
-            .rules_policy
-            .find_matching_rule(PolicyCallback::McpResponse, &subject)
-        {
-            Ok(matched) => matched,
-            Err(error) => {
-                return Some(self.block(
-                    "policy.mcp.invalid_response_condition".to_string(),
-                    format!("Policy response condition evaluation failed closed: {error}"),
-                ));
-            }
-        }?;
-        Some(self.decision_from_policy_rule(matched.name, matched.rule))
-    }
-
     fn matching_response_rule(
         &self,
         request: &McpDecisionRequest,
@@ -1056,28 +785,6 @@ impl LocalMcpDecisionProvider {
             McpDecisionRuleAction::Allow => self.allow(rule_name(rule), rule_reason(rule)),
             McpDecisionRuleAction::Deny => self.block(rule_name(rule), rule_reason(rule)),
         }
-    }
-
-    fn decision_from_policy_rule(&self, name: &str, rule: &PolicyRuleConfig) -> McpPolicyDecision {
-        let rule_name = format!("policy.mcp.{name}");
-        let reason = rule
-            .reason
-            .clone()
-            .unwrap_or_else(|| format!("Policy {:?} rule {rule_name} matched", rule.decision));
-        let mut decision = match rule.decision {
-            PolicyDecisionKind::Allow => self.allow(rule_name, reason),
-            PolicyDecisionKind::Ask => self.ask(rule_name, reason),
-            PolicyDecisionKind::Block => self.block(rule_name, reason),
-            PolicyDecisionKind::Rewrite => self.rewrite(
-                rule_name,
-                reason,
-                rule.rewrite_target.clone(),
-                rule.rewrite_value.clone(),
-            ),
-        };
-        decision.mode = McpPolicyMode::Enforce;
-        decision.policy_rule_name = Some(name.to_string());
-        decision
     }
 
     fn allow(&self, rule: String, reason: String) -> McpPolicyDecision {
@@ -1652,90 +1359,6 @@ async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, out: &OutboundFrame)
     let bytes = capsem_proto::encode_mcp_frame(out.stream_id, 0, &out.process_name, &out.payload)?;
     writer.write_all(&bytes).await.context("write MCP frame")?;
     writer.flush().await.context("flush MCP frame")
-}
-
-const MCP_SNAPSHOT_FIELD_MAX_BYTES: usize = 256;
-
-fn mcp_policy_rule_id(rule_name: &str) -> String {
-    format!("security.rules.mcp.{rule_name}")
-}
-
-fn mcp_truncate_for_snapshot(value: &str) -> String {
-    if value.len() <= MCP_SNAPSHOT_FIELD_MAX_BYTES {
-        return value.to_string();
-    }
-    let mut cut = MCP_SNAPSHOT_FIELD_MAX_BYTES;
-    while cut > 0 && !value.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    let mut out = String::with_capacity(cut + 16);
-    out.push_str(&value[..cut]);
-    out.push_str("...[truncated]");
-    out
-}
-
-fn subject_snapshot_mcp_request(request: &McpDecisionRequest) -> serde_json::Value {
-    let mut payload = serde_json::Map::new();
-    payload.insert(
-        "method".into(),
-        mcp_truncate_for_snapshot(&request.method).into(),
-    );
-    payload.insert(
-        "method_kind".into(),
-        mcp_truncate_for_snapshot(&request.method_kind).into(),
-    );
-    if let Some(server) = request.server_name.as_deref() {
-        payload.insert(
-            "server_name".into(),
-            mcp_truncate_for_snapshot(server).into(),
-        );
-    }
-    if let Some(tool) = request.tool_name.as_deref() {
-        payload.insert("tool_name".into(), mcp_truncate_for_snapshot(tool).into());
-    }
-    if let Some(resource) = request.resource_uri.as_deref() {
-        payload.insert(
-            "resource_uri".into(),
-            mcp_truncate_for_snapshot(resource).into(),
-        );
-    }
-    if let Some(prompt) = request.prompt_name.as_deref() {
-        payload.insert(
-            "prompt_name".into(),
-            mcp_truncate_for_snapshot(prompt).into(),
-        );
-    }
-    payload.insert(
-        "arguments_present".into(),
-        serde_json::Value::Bool(request.arguments.is_some()),
-    );
-    serde_json::json!({ "request": payload })
-}
-
-fn subject_snapshot_mcp_response(
-    request: &McpDecisionRequest,
-    response: &JsonRpcResponse,
-) -> serde_json::Value {
-    let mut request_payload = serde_json::Map::new();
-    request_payload.insert(
-        "method".into(),
-        mcp_truncate_for_snapshot(&request.method).into(),
-    );
-    if let Some(server) = request.server_name.as_deref() {
-        request_payload.insert(
-            "server_name".into(),
-            mcp_truncate_for_snapshot(server).into(),
-        );
-    }
-    if let Some(tool) = request.tool_name.as_deref() {
-        request_payload.insert("tool_name".into(), mcp_truncate_for_snapshot(tool).into());
-    }
-    serde_json::json!({
-        "request": request_payload,
-        "response": {
-            "is_error": response.error.is_some(),
-        },
-    })
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ async fn upstream_unreachable_returns_servfail_with_decision_error() {
     let resolver = Arc::new(
         DnsResolver::with_upstreams(vec![upstream]).with_timeout(Duration::from_millis(150)),
     );
-    let handler = DnsHandler::new(shared(allow_all_policy()), resolver);
+    let handler = DnsHandler::new(resolver);
 
     let q = build_query_bytes("anthropic.com.", RecordType::A, 7);
     let res = handler.handle(&q).await;
@@ -22,7 +22,7 @@ async fn upstream_unreachable_returns_servfail_with_decision_error() {
 #[tokio::test]
 async fn malformed_query_returns_error_with_empty_answer() {
     let resolver = Arc::new(DnsResolver::with_upstreams(vec![]));
-    let handler = DnsHandler::new(shared(allow_all_policy()), resolver);
+    let handler = DnsHandler::new(resolver);
 
     let res = handler.handle(b"not a dns message").await;
 
@@ -39,7 +39,7 @@ async fn resolver_falls_over_to_second_upstream() {
     let resolver = Arc::new(
         DnsResolver::with_upstreams(vec![dead, live]).with_timeout(Duration::from_millis(150)),
     );
-    let handler = DnsHandler::new(shared(allow_all_policy()), resolver);
+    let handler = DnsHandler::new(resolver);
 
     let q = build_query_bytes("anthropic.com.", RecordType::A, 9);
     let res = handler.handle(&q).await;
@@ -54,7 +54,7 @@ async fn resolver_falls_over_to_second_upstream() {
 #[tokio::test]
 async fn empty_upstream_list_is_an_error() {
     let resolver = Arc::new(DnsResolver::with_upstreams(vec![]));
-    let handler = DnsHandler::new(shared(allow_all_policy()), resolver);
+    let handler = DnsHandler::new(resolver);
 
     let q = build_query_bytes("anthropic.com.", RecordType::A, 1);
     let res = handler.handle(&q).await;
@@ -69,7 +69,7 @@ async fn telemetry_fields_populated_for_allowed_query() {
     let resolver = Arc::new(
         DnsResolver::with_upstreams(vec![upstream]).with_timeout(Duration::from_millis(500)),
     );
-    let handler = DnsHandler::new(shared(allow_all_policy()), resolver);
+    let handler = DnsHandler::new(resolver);
 
     let q = build_query_bytes("example.com.", RecordType::A, 0xBEEF);
     let res = handler.handle(&q).await;

@@ -33,9 +33,8 @@
 //! tightly coupled to its own `Request` / `Response` types built around
 //! owned UDP/TCP server-side state. We accept raw bytes from a vsock
 //! envelope, so the cleanest path is `hickory-proto` (wire codec) +
-//! a thin async handler wrapping Policy. Half
-//! the dep weight, none of the impedance mismatch. The guest agent
-//! depends on neither -- it only forwards bytes.
+//! a thin async handler wrapping resolver/cache state. The guest agent depends
+//! on neither -- it only forwards bytes.
 
 pub mod cache;
 pub mod resolver;
@@ -47,5 +46,5 @@ mod tests;
 
 pub use cache::{DnsAnswerCache, DEFAULT_CAPACITY, DEFAULT_MAX_TTL_SECS, MIN_TTL_SECS};
 pub use resolver::{DnsResolver, DEFAULT_UPSTREAMS};
-pub use server::{DnsHandler, DnsHandlerResult, SharedPolicy};
+pub use server::{DnsHandler, DnsHandlerResult};
 pub use telemetry::build_dns_event;

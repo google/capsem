@@ -386,39 +386,6 @@ pub struct DnsEvent {
     pub policy_reason: Option<String>,
 }
 
-/// A Policy Hook decision attempt recorded by the host runtime.
-/// One row is written for every external hook call, including validation
-/// failures and fail-closed fallbacks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyHookEvent {
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
-    pub timestamp: SystemTime,
-    pub endpoint_id: String,
-    pub spec_version: String,
-    pub spec_hash: String,
-    pub decision_id: Option<String>,
-    pub callback: String,
-    /// "allow", "ask", "block", or "rewrite" when a valid hook response
-    /// was received. None for transport/schema failures.
-    pub decision: Option<String>,
-    pub rule_id: Option<String>,
-    pub reason: Option<String>,
-    pub latency_ms: u64,
-    /// "allowed", "denied", or "error".
-    pub status: String,
-    pub error: Option<String>,
-    /// Fail-closed/fail-open policy used after an error, when applicable.
-    pub fallback: Option<String>,
-    pub audit_tags: Vec<String>,
-    #[serde(default)]
-    pub trace_id: Option<String>,
-    #[serde(default)]
-    pub session_id: Option<String>,
-}
-
 /// A kernel audit event (Layer 3: execve syscalls captured by auditd).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {

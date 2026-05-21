@@ -184,26 +184,6 @@ def create_current_policy_db(path: Path):
             exec_event_id INTEGER,
             trace_id TEXT
         );
-        CREATE TABLE policy_hook_events (
-            id INTEGER PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            endpoint_id TEXT NOT NULL,
-            spec_version TEXT NOT NULL,
-            spec_hash TEXT NOT NULL,
-            decision_id TEXT,
-            callback TEXT NOT NULL,
-            decision TEXT,
-            rule_id TEXT,
-            reason TEXT,
-            latency_ms INTEGER,
-            status TEXT NOT NULL,
-            error TEXT,
-            fallback TEXT,
-            audit_tags TEXT,
-            trace_id TEXT,
-            session_id TEXT
-        );
-
         INSERT INTO model_calls (
             id, timestamp, provider, model, input_tokens, output_tokens,
             request_body_preview, trace_id
@@ -246,7 +226,6 @@ def test_check_session_accepts_old_core_schema(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Missing required tables" not in out
     assert "Core tables present; optional/current tables absent" in out
-    assert "policy_hook_events" in out
 
 
 def test_check_session_uses_exact_mcp_correlation(tmp_path, capsys):

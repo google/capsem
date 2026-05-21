@@ -192,27 +192,15 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 | `env` | dict | `{}` | Environment variables for the server process |
 | `headers` | dict | `{}` | HTTP headers (sse transport) |
 
-## Policy Schema
+## Security Rules
 
-Policy rules are returned alongside the settings tree in
-`SettingsResponse.policy`. They are not leaf settings and do not use
-`SettingMetadata`; they are named objects grouped by type:
-
-```ts
-type PolicyConfig = {
-  mcp: Record<string, PolicyRuleConfig>
-  http: Record<string, PolicyRuleConfig>
-  dns: Record<string, PolicyRuleConfig>
-  model: Record<string, PolicyRuleConfig>
-  hook: Record<string, PolicyRuleConfig>
-}
-```
-
-Settings saves use fully qualified keys such as
-`policy.http.block_openai_github`. The Rust loader validates key shape, policy
-type, callback compatibility, condition fields, decisions, rewrites, and HTTP
-header names. The TypeScript model preserves these objects during export/import
-and stages them without flattening them into setting leaves.
+Settings/profile rule storage is now structural input to the Security Engine.
+Runtime HTTP, DNS, MCP, model, file, and process decisions no longer flow
+through the removed named `PolicyConfig` evaluator. Author rules through the
+typed `enforcement` and `detection` APIs and schemas; settings saves only carry
+profile-owned configuration that those APIs can validate and compile. The
+TypeScript model preserves profile rule objects during export/import and stages
+them without flattening them into setting leaves.
 
 See [Policy](/security/policy/) for the rule body schema and examples.
 

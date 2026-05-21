@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
-use capsem_core::net::policy::PolicyConfig;
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -78,23 +77,14 @@ fn make_proxy_config_full(
             capsem_core::net::ai_traffic::TraceState::new(),
         )),
     });
-    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(PolicyConfig::default())));
-    let pipeline = mitm_proxy::make_production_pipeline_with_policy(
-        Arc::clone(&policy),
-        Arc::clone(&telemetry),
-    );
+    let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
     let config = Arc::new(MitmProxyConfig {
         ca,
-        policy,
         db: db.clone(),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
         telemetry,
         pipeline,
         mcp_endpoint: None,
-        confirmer: Arc::new(capsem_core::net::policy_confirm::PlaceholderConfirmer),
-        confirm_opts: capsem_core::net::policy_confirm::default_confirm_backoff(
-            "confirm-model-test",
-        ),
     });
     (config, db)
 }

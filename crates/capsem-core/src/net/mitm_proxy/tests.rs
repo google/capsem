@@ -7,7 +7,6 @@ use std::os::unix::net::UnixStream;
 use http_body_util::BodyExt;
 
 use crate::net::cert_authority::CertAuthority;
-use crate::net::policy::PolicyConfig;
 
 const CA_KEY: &str = include_str!("../../../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../../../config/capsem-ca.crt");
@@ -20,19 +19,7 @@ const DB_FLUSH_MS: u64 = 100;
 /// path instead of reaching a real server.
 const TEST_DOMAIN: &str = "thisdomaindoesnotexistforsur3.ai";
 
-fn make_config_with_policy(_runtime_policy: PolicyConfig) -> Arc<MitmProxyConfig> {
-    make_config_with_rules_policy(
-        PolicyConfig::default(),
-        Arc::new(tokio::sync::RwLock::new(Arc::new(
-            crate::net::policy::PolicyConfig::default(),
-        ))),
-    )
-}
-
-fn make_config_with_rules_policy(
-    _runtime_policy: PolicyConfig,
-    policy: Arc<tokio::sync::RwLock<Arc<crate::net::policy::PolicyConfig>>>,
-) -> Arc<MitmProxyConfig> {
+fn make_config_dev() -> Arc<MitmProxyConfig> {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
@@ -45,38 +32,15 @@ fn make_config_with_rules_policy(
             crate::net::ai_traffic::TraceState::new(),
         )),
     });
-    let pipeline =
-        super::make_production_pipeline_with_policy(Arc::clone(&policy), Arc::clone(&telemetry));
+    let pipeline = super::make_production_pipeline(Arc::clone(&telemetry));
     Arc::new(MitmProxyConfig {
         ca,
-        policy,
         db,
         upstream_tls: make_upstream_tls_config(),
         telemetry,
         pipeline,
         mcp_endpoint: None,
-        confirmer: Arc::new(crate::net::policy_confirm::PlaceholderConfirmer),
-        confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-model-test"),
     })
-}
-
-fn make_config_dev() -> Arc<MitmProxyConfig> {
-    make_config_with_policy(PolicyConfig::default())
-}
-
-fn allow_test_domain_policy() -> PolicyConfig {
-    PolicyConfig::default()
-}
-
-fn allow_local_http_policy(_port: u16) -> PolicyConfig {
-    PolicyConfig::default()
-}
-
-fn policy_from_toml(
-    toml_text: &str,
-) -> Arc<tokio::sync::RwLock<Arc<crate::net::policy::PolicyConfig>>> {
-    let policy = PolicyConfig::from_policy_toml_str(toml_text).unwrap();
-    Arc::new(tokio::sync::RwLock::new(Arc::new(policy)))
 }
 
 fn make_client_hello(hostname: &str) -> Vec<u8> {
@@ -821,8 +785,6 @@ data: {{\"id\":\"chatcmpl-policy\",\"model\":\"{model}\",\"choices\":[{{\"index\
 data: [DONE]\n\n"
     )
 }
-
-mod model_policy;
 
 mod connection_behavior;
 

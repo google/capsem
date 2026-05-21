@@ -137,56 +137,26 @@ can be inserted without renumbering.
 
 The frontend and service exchange named rules with the same keys:
 
-```json
-{
-  "policy.http.block_openai_github": {
-    "on": "http.request",
-    "if": "request.host == \"github.com\"",
-    "decision": "block",
-    "priority": 10
-  }
-}
-```
-
-Sending `null` for a policy key deletes that user rule. The service validates
-the whole batch before writing `user.toml`, so a malformed policy rule rejects
-the entire settings save. New `policy.hook.*` writes are rejected in this
-release because configured external hook dispatch is not a shipped runtime
-surface.
+Use the `enforcement` and `detection` APIs for new runtime rules. The old
+`policy.http`, `policy.mcp`, and external hook contracts have been removed from
+the transport path; Network/File/Process engines emit typed security events and
+the Security Engine owns rule validation, CEL compilation, decisions, findings,
+and ask/block/rewrite outcomes.
 
 ## Telemetry
 
-Policy decisions are proved in `session.db`. MCP writes
-`mcp_calls.policy_action`, `policy_rule`, and `policy_reason`. HTTP and DNS
-write `matched_rule` plus `policy_action`, `policy_rule`, and `policy_reason`
-on `net_events` and `dns_events` where the runtime path supports typed policy
-metadata. Model request, response, tool-call, and tool-response policy write
-the same fields on `net_events` for the enforced boundary. Policy Hook Spec0
-infrastructure writes `policy_hook_events` rows with endpoint id, Spec0
-version/hash, callback, decision id, latency, error/fallback state, and
-trace/session ids when the hook client path is exercised.
+Security decisions are proved in `session.db`. MCP, HTTP, DNS, model, file, and
+process telemetry keep typed event rows and Security Engine findings/decisions
+are attached through the canonical event/journal path as S08b lands. The
+removed Policy Hook Spec0 table and `/policy-hook/spec` endpoint are no longer
+part of the schema or service API.
 
 See [Session Telemetry](/architecture/session-telemetry/#policy-decision-audit)
 for SQL queries.
 
-## Policy Hook Spec0
+## External Plugins
 
-The hook contract is exported as OpenAPI 3.1 from the Rust wire types and is
-checked in at `config/policy-hook-openapi.json`. A running service also exposes
-it at:
-
-```bash
-curl --unix-socket "$CAPSEM_RUN_DIR/service.sock" \
-  http://localhost/policy-hook/spec
-```
-
-Hook endpoint config validation is strict in the infrastructure path: unknown
-fields are rejected, HTTPS is required outside exact localhost/loopback
-addresses, non-local endpoints require bearer auth, request/response body size
-is capped while reading, and transport/schema errors fail closed to a `block`
-or `ask` fallback decision.
-
-Configured external hook dispatch is infrastructure-only in this release. The
-shipped UI/runtime rejects new hook policy rules and does not expose user or
-corporate hook configuration wiring unless a later integration gate explicitly
-enables and verifies that path.
+Future plugin support must use the normalized Security Engine event contract:
+plugins return explicit decisions and mutations over a typed event, and Rust
+validates/applies those mutations to the real transport body. Do not integrate
+new policy code through the removed Policy Hook Spec0 path.

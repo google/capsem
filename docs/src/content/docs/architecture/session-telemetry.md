@@ -74,15 +74,6 @@ erDiagram
         text decision
         text matched_rule
     }
-    policy_hook_events {
-        int id PK
-        text endpoint_id
-        text callback
-        text decision
-        text status
-        text fallback
-        text trace_id
-    }
     exec_events {
         int id PK
         int exec_id
@@ -273,32 +264,7 @@ DNS queries handled by the host DNS proxy.
 | `policy_rule` | TEXT | Matching policy rule key |
 | `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
 
-### policy_hook_events
-
-Policy Hook Spec0 client attempts and fail-closed fallbacks. These rows are
-written when the hook client path is exercised; configured external hook
-dispatch is not a shipped user-facing runtime path in this release.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Auto-increment |
-| `timestamp` | TEXT | ISO 8601 |
 | `endpoint_id` | TEXT | Hook endpoint identifier |
-| `spec_version` | TEXT | Hook wire-spec version |
-| `spec_hash` | TEXT | Hash of the OpenAPI/Spec0 contract |
-| `decision_id` | TEXT | Hook response decision ID, when a valid response is received |
-| `callback` | TEXT | Callback subject, such as `http.request` |
-| `decision` | TEXT | `allow`, `ask`, `block`, or `rewrite` for valid hook responses; NULL for transport/schema failures |
-| `rule_id` | TEXT | Hook-provided rule ID, when present |
-| `reason` | TEXT | Hook-provided reason, when present |
-| `latency_ms` | INTEGER | Hook round-trip latency |
-| `status` | TEXT | `allowed`, `denied`, or `error` |
-| `error` | TEXT | Transport, status, schema, timeout, or body-cap error text |
-| `fallback` | TEXT | Fail-closed fallback decision (`block` or `ask`), when used |
-| `audit_tags` | TEXT | JSON array of hook audit tags |
-| `trace_id` | TEXT | Cross-table correlation ID |
-| `session_id` | TEXT | Session identifier, when known |
-
 ### exec_events
 
 Commands executed through Capsem service APIs and MCP tools.
@@ -397,7 +363,6 @@ graph LR
     MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| CH
     MCP -->|"WriteOp::McpCall"| CH
     DNS -->|"WriteOp::DnsEvent"| CH
-    HOOK -->|"WriteOp::PolicyHookEvent"| CH
     EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| CH
     AUDIT -->|"WriteOp::AuditEvent"| CH
     FS -->|"WriteOp::FileEvent"| CH
@@ -418,7 +383,6 @@ graph LR
 | `WriteOp::FileEvent` | VirtioFS watcher | `fs_events` |
 | `WriteOp::SnapshotEvent` | Snapshot scheduler | `snapshot_events` |
 | `WriteOp::DnsEvent` | DNS proxy | `dns_events` |
-| `WriteOp::PolicyHookEvent` | Policy Hook client | `policy_hook_events` |
 
 ## Policy Decision Audit
 
@@ -526,20 +490,6 @@ For model-extracted tool calls, `tool_calls.origin` uses `native`, `local`, or
 `mcp_proxy`. The `tool_calls.mcp_call_id` column exists for future direct
 correlation, but the current model telemetry path does not populate it.
 
-### Policy Hooks
-
-Policy Hook Spec0 client attempts write one row per decision attempt:
-
-```bash
-just query-session "
-SELECT endpoint_id, callback, decision, status, rule_id, latency_ms,
-       fallback, error, trace_id
-FROM policy_hook_events
-ORDER BY id DESC
-LIMIT 20;"
-```
-
-Rows include the endpoint id, Spec0 version/hash, decision id, callback,
 decision, rule id, reason, latency, timeout/schema/transport error text,
 fail-closed fallback decision, audit tags, `trace_id`, and `session_id`.
 Hook tests should also query the downstream boundary row (`mcp_calls`,

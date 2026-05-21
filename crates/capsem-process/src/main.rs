@@ -482,9 +482,6 @@ async fn run_async_main_loop(
     let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(
         runtime_policy.mcp_policy.clone(),
     )));
-    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        runtime_policy.policy.clone(),
-    )));
     let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(
         runtime_policy.domain_policy.clone(),
     )));
@@ -492,14 +489,12 @@ async fn run_async_main_loop(
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
         Arc::clone(&mcp_policy),
-        Arc::clone(&policy),
         Arc::clone(&mcp_inflight),
         capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
     ));
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
         policy: Arc::clone(&mcp_policy),
-        rules_policy: Arc::clone(&policy),
         domain_policy: Arc::clone(&mcp_domain_policy),
         session_dir: session_dir.clone(),
         builtin_binary: builtin_bin,
@@ -514,27 +509,18 @@ async fn run_async_main_loop(
             )),
         },
     );
-    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline_with_policy(
-        Arc::clone(&policy),
-        Arc::clone(&telemetry_deps),
-    );
+    let mitm_pipeline =
+        capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry_deps));
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
-        policy: Arc::clone(&policy),
         db: Arc::clone(&db),
         upstream_tls: Arc::clone(&net_state.upstream_tls),
         telemetry: telemetry_deps,
         pipeline: mitm_pipeline,
         mcp_endpoint: Some(mcp_endpoint),
-        confirmer: Arc::new(capsem_core::net::policy_confirm::PlaceholderConfirmer),
-        confirm_opts: capsem_core::net::policy_confirm::default_confirm_backoff("confirm-model"),
     });
 
-    // DNS and MITM share the same Policy handle so settings reload updates
-    // every inspected network boundary together.
-    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_default_resolver(
-        Arc::clone(&policy),
-    ));
+    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_default_resolver());
 
     let db_clone = Arc::clone(&db);
     let sched_clone = Arc::clone(&scheduler);

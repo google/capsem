@@ -431,6 +431,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the legacy MITM HTTP policy hook runtime path. Request/response-head
   HTTP enforcement must now move through the S08b canonical Security Engine
   path instead of the old pipeline hook.
+- Removed the remaining legacy named-policy runtime: `net::policy`,
+  `policy_confirm`, model-policy helpers, Policy Hook Spec0 API/artifact,
+  policy-only DNS/MCP/MITM tests, the old policy benchmark, and the
+  `policy_hook_events` session table/write path. HTTP, MCP, DNS, model, file,
+  and process policy work now has one forward path: canonical Security Engine
+  events.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,
   manifest-driven downloader, and manifest-driven cleanup path. CLI status and
   service debug reports now rely on Profile V2 asset health instead of legacy

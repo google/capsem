@@ -23,13 +23,6 @@ class TestProxyForwarding:
         assert "sandboxes" in resp
         assert len(resp["sandboxes"]) == 2
 
-    def test_get_policy_hook_spec_through_gateway(self, gw_client):
-        """GET /policy-hook/spec proxies the OpenAPI JSON contract."""
-        resp = gw_client.get("/policy-hook/spec")
-        assert resp is not None
-        assert resp["openapi"].startswith("3.")
-        assert "/decision" in resp["paths"]
-
     def test_post_provision_with_body(self, gw_client):
         """POST /provision with JSON body returns an id."""
         resp = gw_client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})

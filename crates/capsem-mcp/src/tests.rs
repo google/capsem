@@ -630,7 +630,6 @@ fn inspect_schema_has_all_tables() {
         "fs_events",
         "snapshot_events",
         "dns_events",
-        "policy_hook_events",
         "audit_events",
     ] {
         assert!(schema.contains(table), "Missing table in schema: {table}");

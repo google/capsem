@@ -7,8 +7,6 @@ use tokio::sync::RwLock;
 use crate::mcp::aggregator::AggregatorClient;
 use crate::mcp::policy::McpPolicy;
 use crate::mcp::types::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
-use crate::net::policy::PolicyConfig;
-use crate::net::policy_confirm::{Confirmer, PlaceholderConfirmer};
 
 const DEFAULT_MCP_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS: u64 = 300;
@@ -65,11 +63,8 @@ fn env_duration_secs(key: &str, default_secs: u64) -> Duration {
 pub struct McpEndpointState {
     pub aggregator: AggregatorClient,
     pub policy: Arc<RwLock<Arc<McpPolicy>>>,
-    pub rules_policy: Arc<RwLock<Arc<PolicyConfig>>>,
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub timeouts: McpTimeouts,
-    pub confirmer: Arc<dyn Confirmer>,
-    pub confirm_opts: capsem_proto::poll::RetryOpts,
     tool_timeout_overrides: RwLock<HashMap<String, Duration>>,
 }
 
@@ -77,30 +72,16 @@ impl McpEndpointState {
     pub fn new(
         aggregator: AggregatorClient,
         policy: Arc<RwLock<Arc<McpPolicy>>>,
-        rules_policy: Arc<RwLock<Arc<PolicyConfig>>>,
         inflight: Arc<tokio::sync::Semaphore>,
         timeouts: McpTimeouts,
     ) -> Self {
         Self {
             aggregator,
             policy,
-            rules_policy,
             inflight,
             timeouts,
-            confirmer: Arc::new(PlaceholderConfirmer),
-            confirm_opts: crate::net::policy_confirm::default_confirm_backoff("confirm-mcp"),
             tool_timeout_overrides: RwLock::new(HashMap::new()),
         }
-    }
-
-    pub fn with_confirmer(mut self, confirmer: Arc<dyn Confirmer>) -> Self {
-        self.confirmer = confirmer;
-        self
-    }
-
-    pub fn with_confirm_opts(mut self, opts: capsem_proto::poll::RetryOpts) -> Self {
-        self.confirm_opts = opts;
-        self
     }
 
     pub async fn record_tool_catalog_timeouts(&self, tools: &[McpToolDef]) {

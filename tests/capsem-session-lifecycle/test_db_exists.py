@@ -15,7 +15,6 @@ EXPECTED_TABLES = [
     "fs_events",
     "snapshot_events",
     "audit_events",
-    "policy_hook_events",
 ]
 
 

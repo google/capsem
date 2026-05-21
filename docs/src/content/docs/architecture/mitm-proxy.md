@@ -50,12 +50,11 @@ graph LR
 | Field | Type | Purpose |
 |-------|------|---------|
 | `ca` | `Arc<CertAuthority>` | Static Capsem CA for leaf cert minting |
-| `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable domain policy; settings changes take effect on next request |
 | `db` | `Arc<DbWriter>` | Async telemetry writer to session.db |
 | `upstream_tls` | `Arc<rustls::ClientConfig>` | Shared TLS config with webpki root CAs |
-| `pricing` | `PricingTable` | Embedded model pricing for cost estimation |
-| `trace_state` | `Mutex<TraceState>` | Links multi-turn tool-use conversations by trace_id |
-| named policy rules | `Arc<RwLock<Arc<PolicyConfig>>>` | Hot-swappable HTTP, model, MCP, DNS, and hook policy rules |
+| `telemetry` | `TelemetryDeps` | Pricing, trace state, and canonical evidence writers |
+| `pipeline` | `Arc<Pipeline>` | Transport chunk processing and telemetry hooks |
+| `mcp_endpoint` | `Option<Arc<McpEndpointState>>` | Framed MCP endpoint for guest traffic |
 
 ## Certificate authority
 

@@ -62,10 +62,6 @@ SESSION_TABLES = {
         "id", "timestamp", "pid", "ppid", "uid", "exe", "comm",
         "exit_code", "audit_id", "exec_event_id", "trace_id",
     ],
-    "policy_hook_events": [
-        "id", "timestamp", "endpoint_id", "callback", "decision", "rule_id",
-        "status", "fallback", "error", "latency_ms", "trace_id",
-    ],
 }
 
 CORE_REQUIRED_TABLES = {
@@ -83,10 +79,6 @@ POLICY_V2_COLUMNS = {
     "net_events": ["policy_mode", "policy_action", "policy_rule", "policy_reason", "trace_id"],
     "dns_events": ["policy_mode", "policy_action", "policy_rule", "policy_reason", "trace_id"],
     "mcp_calls": ["policy_mode", "policy_action", "policy_rule", "policy_reason", "trace_id"],
-    "policy_hook_events": [
-        "spec_version", "spec_hash", "decision_id", "rule_id", "fallback",
-        "audit_tags", "trace_id", "session_id",
-    ],
 }
 
 BOLD = "\033[1m"

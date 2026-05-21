@@ -327,23 +327,6 @@ def test_install_e2e_downloads_built_assets_before_running_recipe():
     assert "minisign" in body
 
 
-def test_policy_hook_openapi_artifact_is_tracked_and_valid():
-    """Clean checkouts must include the checked-in Policy Hook OpenAPI spec."""
-    artifact = REPO_ROOT / "config" / "policy-hook-openapi.json"
-    result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "config/policy-hook-openapi.json"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "config/policy-hook-openapi.json"
-    with artifact.open() as f:
-        parsed = json.load(f)
-    assert parsed["openapi"].startswith("3.")
-    assert "/v1/policy/decision" in parsed["paths"]
-
-
 def test_preflight_compares_guest_bins_to_canonical_rootfs_list():
     """Local release preflight must compare Cargo bins with GUEST_BINARIES."""
     preflight = (REPO_ROOT / "scripts" / "preflight.sh").read_text()

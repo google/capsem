@@ -272,28 +272,6 @@ async fn triage_session_db_surfaces_policy_signals() {
         ))
         .await;
     writer
-        .write(capsem_logger::WriteOp::PolicyHookEvent(
-            capsem_logger::events::PolicyHookEvent {
-                timestamp: now,
-                endpoint_id: "corp-hook".into(),
-                spec_version: "0.1.0".into(),
-                spec_hash: "sha256:test".into(),
-                decision_id: None,
-                callback: "mcp".into(),
-                decision: None,
-                rule_id: None,
-                reason: None,
-                latency_ms: 12,
-                status: "error".into(),
-                error: Some("schema violation".into()),
-                fallback: Some("fail_closed".into()),
-                audit_tags: vec!["test".into()],
-                trace_id: Some("trace_t6".into()),
-                session_id: Some("vm-t6".into()),
-            },
-        ))
-        .await;
-    writer
         .write(capsem_logger::WriteOp::AuditEvent(
             capsem_logger::AuditEvent {
                 timestamp: now,
@@ -353,12 +331,7 @@ fn timeline_existing_tables_lists_policy_tables() {
 
     let tables = timeline_existing_tables(&reader).unwrap();
 
-    for expected in [
-        "dns_events",
-        "policy_hook_events",
-        "audit_events",
-        "snapshot_events",
-    ] {
+    for expected in ["dns_events", "audit_events", "snapshot_events"] {
         assert!(
             tables.contains(expected),
             "timeline schema discovery missing {expected}: {tables:?}"
@@ -581,28 +554,6 @@ async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
                 start_fs_event_id: 0,
                 stop_fs_event_id: 2,
                 trace_id: Some("trace_t6".into()),
-            },
-        ))
-        .await;
-    writer
-        .write(capsem_logger::WriteOp::PolicyHookEvent(
-            capsem_logger::events::PolicyHookEvent {
-                timestamp: now,
-                endpoint_id: "hook".into(),
-                spec_version: "policy-hook/v0".into(),
-                spec_hash: "sha256:timeline".into(),
-                decision_id: Some("decision_t6".into()),
-                callback: "http.request".into(),
-                decision: Some("allow".into()),
-                rule_id: Some("policy.hook.allow_example".into()),
-                reason: Some("fixture".into()),
-                latency_ms: 4,
-                status: "allowed".into(),
-                error: None,
-                fallback: None,
-                audit_tags: vec!["timeline".into()],
-                trace_id: Some("trace_t6".into()),
-                session_id: Some(vm_id.into()),
             },
         ))
         .await;
@@ -4348,20 +4299,6 @@ async fn handle_get_settings_returns_typed_payload() {
     assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
     assert!(val["profile_presets"].is_array());
     assert!(val["effective_rules"].is_object());
-}
-
-#[tokio::test]
-async fn handle_policy_hook_spec_exports_spec0_contract() {
-    let Json(val) = handle_policy_hook_spec().await;
-    assert_eq!(val["openapi"], "3.1.0");
-    assert_eq!(
-        val["info"]["version"],
-        capsem_core::net::policy_hook_spec::POLICY_HOOK_SPEC_VERSION
-    );
-    assert!(val["paths"].get("/v1/policy/decision").is_some());
-    assert!(val["components"]["schemas"]
-        .get("HookDecisionRequest")
-        .is_some());
 }
 
 #[tokio::test]

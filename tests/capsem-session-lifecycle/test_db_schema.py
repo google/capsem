@@ -26,11 +26,6 @@ EXPECTED_SCHEMAS = {
     "fs_events": ["action", "path", "trace_id"],
     "snapshot_events": ["origin", "slot", "trace_id"],
     "audit_events": ["pid", "exe", "argv", "audit_id", "exec_event_id", "trace_id"],
-    "policy_hook_events": [
-        "endpoint_id", "spec_version", "spec_hash", "decision_id",
-        "callback", "decision", "rule_id", "status", "fallback",
-        "audit_tags", "trace_id", "session_id",
-    ],
 }
 
 

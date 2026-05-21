@@ -155,11 +155,11 @@ Sinks should persist/export, not decide.
 
 The database shape has the same problem. `session.db` currently has many
 domain-specific event tables (`net_events`, `dns_events`, `mcp_calls`,
-`model_calls`, `fs_events`, `snapshot_events`, `exec_events`, `audit_events`,
-`policy_hook_events`) that were added as each subsystem grew. Those tables are
-useful query surfaces, but they are not a coherent security-event journal. S08b
-must decide which tables become canonical authority, which become projections,
-and how old direct writes are routed through the emitter.
+`model_calls`, `fs_events`, `snapshot_events`, `exec_events`, `audit_events`)
+that were added as each subsystem grew. Those tables are useful query surfaces,
+but they are not a coherent security-event journal. S08b must decide which
+tables become canonical authority, which become projections, and how old direct
+writes are routed through the emitter.
 
 ## Target Architecture
 
@@ -464,11 +464,12 @@ Implementation status as of the current service-route slices:
   `http.request.path.startsWith(...)`, `http.request.header(...).exists()`,
   and `http.request.body.text.contains(...)`; Detection IR lowering covers
   URL/path/body text onto the same canonical roots.
-- Landed: the legacy MITM HTTP policy hook runtime path has been removed from
-  the production pipeline. HTTP request/response-head enforcement must be wired
-  back only through the canonical Network Engine -> Security Engine event path,
-  and MITM integration fixtures no longer synthesize `policy.http.default_block`
-  rules for the deleted hook.
+- Landed: the remaining legacy named-policy runtime has been removed. Deleted
+  the `net::policy` evaluator, `policy_confirm` shim, model policy helper,
+  Policy Hook Spec0 API/artifact, policy benchmark, policy-only DNS/MCP/MITM
+  tests, and `policy_hook_events` session table/write path. HTTP, MCP, DNS,
+  model, file, and process enforcement must be wired back only through the
+  canonical engine path.
 - Guardrail: malformed CEL fails before registry mutation; list/stats expose
   rule id, pack id, origin/scope, enabled state, compile status, generation,
   compiled plan id, match count, and last matched event/timestamp.
@@ -537,8 +538,7 @@ retire one explicitly:
 
 - `net_events`, `dns_events`, `mcp_calls`, `model_calls`;
 - `fs_events`, `snapshot_events`;
-- `exec_events`, `audit_events`;
-- `policy_hook_events` until enforcement/confirm journals fully replace it.
+- `exec_events`, `audit_events`.
 
 Projection rule: after cutover, these tables are written by the emitter from a
 `ResolvedSecurityEvent`, not directly by network/file/process internals. They

@@ -1,16 +1,14 @@
 #![allow(dead_code)]
 /// MITM transparent proxy: terminates TLS from the guest, inspects HTTP traffic,
-/// applies per-domain read/write policy, and bridges to the real upstream server.
+/// bridges to the real upstream server.
 ///
 /// Connection flow:
 /// 1. Read initial bytes from vsock fd (TLS ClientHello)
 /// 2. TLS handshake (MitmCertResolver captures domain from SNI)
 /// 3. Read HTTP request via hyper
-/// 4. Policy check (domain + method -> read/write)
-/// 5. If denied: return 403
-/// 6. Upstream TLS to real server
-/// 7. Forward request, stream response back
-/// 8. Emit per-request telemetry (one NetEvent per HTTP request, not per connection)
+/// 4. Upstream TLS to real server
+/// 5. Forward request, stream response back
+/// 6. Emit per-request telemetry (one NetEvent per HTTP request, not per connection)
 pub mod body;
 pub mod decompression_hook;
 pub mod events;
@@ -22,7 +20,6 @@ mod mcp_frame;
 pub mod metrics;
 pub mod pipeline;
 mod pipeline_factory;
-pub mod policy_model;
 pub mod protocol;
 mod response;
 pub mod sse_parser_hook;
@@ -49,12 +46,10 @@ use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
-use util::{format_headers, is_llm_api_path, parse_http_host_target, split_path_query};
+use util::{format_headers, parse_http_host_target, split_path_query};
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts};
-pub use pipeline_factory::{
-    make_default_pipeline, make_production_pipeline, make_production_pipeline_with_policy,
-};
+pub use pipeline_factory::{make_default_pipeline, make_production_pipeline};
 use response::response_uses_gzip_content_encoding;
 use upstream::upstream_connect_target;
 #[cfg(test)]
@@ -69,10 +64,6 @@ const LOG_BODY_PREVIEWS: bool = true;
 /// Configuration for the MITM proxy.
 pub struct MitmProxyConfig {
     pub ca: Arc<CertAuthority>,
-    /// Live Policy config shared with HTTP, DNS, MCP, model, and
-    /// hook enforcement. Held here for model request rules, which need
-    /// the request body before upstream dispatch.
-    pub policy: Arc<tokio::sync::RwLock<Arc<crate::net::policy::PolicyConfig>>>,
     pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,
@@ -94,8 +85,6 @@ pub struct MitmProxyConfig {
     /// here so the low-privilege aggregator remains DB-free while MITM
     /// owns policy, timeouts, and `mcp_calls` telemetry.
     pub mcp_endpoint: Option<Arc<McpEndpointState>>,
-    pub confirmer: Arc<dyn crate::net::policy_confirm::Confirmer>,
-    pub confirm_opts: capsem_proto::poll::RetryOpts,
 }
 
 /// RAII helper: decrements the `mitm.active_connections` gauge when
@@ -637,9 +626,8 @@ async fn handle_request(
     }
 
     // Save original request headers.
-    let mut original_headers = parts.headers.clone();
+    let original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
-    let mut request_policy_decision = policy_model::LastModelPolicyDecision::default();
 
     // Helper: build a 502 Bad Gateway response with telemetry so upstream
     // errors don't kill keep-alive connections (returns Ok, not Err).
@@ -648,8 +636,7 @@ async fn handle_request(
                     path: &str,
                     query: &Option<String>,
                     req_hdrs: &str,
-                    start: Instant,
-                    policy: &policy_model::LastModelPolicyDecision|
+                    start: Instant|
      -> hyper::Response<ProxyBoxBody> {
         warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
         let body_text = format!("Capsem: upstream error ({error})\n");
@@ -670,10 +657,10 @@ async fn handle_request(
             max_response_preview: 0,
             port: upstream_port,
             conn_type,
-            policy_mode: policy.policy_mode.clone(),
-            policy_action: policy.policy_action.clone(),
-            policy_rule: policy.policy_rule.clone(),
-            policy_reason: policy.policy_reason.clone(),
+            policy_mode: None,
+            policy_action: None,
+            policy_rule: None,
+            policy_reason: None,
         };
         let deny_body = Full::new(Bytes::from(body_text))
             .map_err(|never| match never {})
@@ -701,124 +688,8 @@ async fn handle_request(
         max_preview: req_max_preview,
     }));
 
-    let policy_snapshot = config.policy.read().await.clone();
-    let should_evaluate_model_request = ai_provider.is_some_and(|provider| {
-        is_llm_api_path(provider, &path) && policy_model::has_model_request_rules(&policy_snapshot)
-    });
-    let upstream_req_body: ProxyBoxBody = if should_evaluate_model_request {
-        let collected = match http_body_util::Limited::new(req_body, 100 * 1024 * 1024)
-            .collect()
-            .await
-        {
-            Ok(collected) => collected,
-            Err(error) => {
-                return Ok(make_502(
-                    &error,
-                    &method,
-                    &path,
-                    &query,
-                    &req_hdrs,
-                    start_time,
-                    &request_policy_decision,
-                ));
-            }
-        };
-        let body_bytes = collected.to_bytes();
-        let mut body_for_upstream = body_bytes.clone();
-        {
-            let mut st = req_stats.lock().expect("req body stats lock");
-            st.bytes = body_bytes.len() as u64;
-            let to_copy = st.max_preview.min(body_bytes.len());
-            st.preview.extend_from_slice(&body_bytes[..to_copy]);
-        }
-
-        if let Some(provider) = ai_provider {
-            if let Some(outcome) = policy_model::evaluate_model_request_policy(
-                &policy_snapshot,
-                provider,
-                &original_headers,
-                &body_bytes,
-                &config.confirmer,
-                &config.confirm_opts,
-            )
-            .await
-            {
-                match outcome {
-                    policy_model::ModelRequestPolicyOutcome::Continue(decision) => {
-                        request_policy_decision.policy_mode = decision.policy_mode;
-                        request_policy_decision.policy_action = decision.policy_action;
-                        request_policy_decision.policy_rule = decision.policy_rule;
-                        request_policy_decision.policy_reason = decision.policy_reason;
-                    }
-                    policy_model::ModelRequestPolicyOutcome::Deny(decision) => {
-                        let body_text = format!(
-                            "capsem: model request blocked by policy: {}\n",
-                            decision
-                                .policy_rule
-                                .as_deref()
-                                .unwrap_or("policy.model.unknown")
-                        );
-                        let mut scrubbed_stats = BodyStats::new(0);
-                        scrubbed_stats.bytes = body_bytes.len() as u64;
-                        let req_ctx = TelemetryRequestContext {
-                            domain: domain.to_string(),
-                            process_name: process_name.clone(),
-                            ai_provider,
-                            method: method.clone(),
-                            path: path.clone(),
-                            query: query.clone(),
-                            status_code: Some(403),
-                            decision: Decision::Denied,
-                            matched_rule: decision.policy_rule.clone(),
-                            request_headers: Some(req_hdrs.clone()),
-                            response_headers: None,
-                            start_time,
-                            request_body_stats: Arc::new(Mutex::new(scrubbed_stats)),
-                            max_response_preview: 0,
-                            port: upstream_port,
-                            conn_type,
-                            policy_mode: decision.policy_mode,
-                            policy_action: decision.policy_action,
-                            policy_rule: decision.policy_rule,
-                            policy_reason: decision.policy_reason,
-                        };
-                        let deny_body = Full::new(Bytes::from(body_text))
-                            .map_err(|never| match never {})
-                            .boxed();
-                        return Ok(hyper::Response::builder()
-                            .status(403)
-                            .body(seal_with_telemetry(deny_body, req_ctx))
-                            .unwrap());
-                    }
-                    policy_model::ModelRequestPolicyOutcome::RewriteBody { decision, body } => {
-                        request_policy_decision.policy_mode = decision.policy_mode;
-                        request_policy_decision.policy_action = decision.policy_action;
-                        request_policy_decision.policy_rule = decision.policy_rule;
-                        request_policy_decision.policy_reason = decision.policy_reason;
-
-                        {
-                            let mut st = req_stats.lock().expect("req body stats lock");
-                            st.bytes = body.len() as u64;
-                            st.preview.clear();
-                            let to_copy = st.max_preview.min(body.len());
-                            st.preview.extend_from_slice(&body[..to_copy]);
-                        }
-                        original_headers.remove(http::header::CONTENT_LENGTH);
-                        if let Ok(value) = http::HeaderValue::from_str(&body.len().to_string()) {
-                            original_headers.insert(http::header::CONTENT_LENGTH, value);
-                        }
-                        body_for_upstream = Bytes::from(body);
-                    }
-                }
-            }
-        }
-
-        Full::new(body_for_upstream)
-            .map_err(|never| -> anyhow::Error { match never {} })
-            .boxed()
-    } else {
-        TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed()
-    };
+    let upstream_req_body: ProxyBoxBody =
+        TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed();
 
     // Try to reuse a cached upstream sender, or create a new
     // connection. Each MITM connection serves one upstream via
@@ -872,15 +743,7 @@ async fn handle_request(
                     ::metrics::counter!(metrics::REQUESTS_TOTAL,
                     "protocol" => protocol.label(), "decision" => "upstream_error")
                     .increment(1);
-                    return Ok(make_502(
-                        &e,
-                        &method,
-                        &path,
-                        &query,
-                        &req_hdrs,
-                        start_time,
-                        &request_policy_decision,
-                    ));
+                    return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
                 }
             };
         tcp_us = tcp_start.elapsed().as_micros() as u64;
@@ -900,15 +763,7 @@ async fn handle_request(
                         ::metrics::counter!(metrics::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
-                        return Ok(make_502(
-                            &e,
-                            &method,
-                            &path,
-                            &query,
-                            &req_hdrs,
-                            start_time,
-                            &request_policy_decision,
-                        ));
+                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
                     }
                 };
                 let hs = handshake_start.elapsed().as_micros() as u64;
@@ -923,15 +778,7 @@ async fn handle_request(
                 {
                     Ok(sn) => sn,
                     Err(e) => {
-                        return Ok(make_502(
-                            &e,
-                            &method,
-                            &path,
-                            &query,
-                            &req_hdrs,
-                            start_time,
-                            &request_policy_decision,
-                        ));
+                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
                     }
                 };
                 let tls_start = Instant::now();
@@ -947,15 +794,7 @@ async fn handle_request(
                         ::metrics::counter!(metrics::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
-                        return Ok(make_502(
-                            &e,
-                            &method,
-                            &path,
-                            &query,
-                            &req_hdrs,
-                            start_time,
-                            &request_policy_decision,
-                        ));
+                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
                     }
                 };
                 tls_us = tls_start.elapsed().as_micros() as u64;
@@ -965,15 +804,7 @@ async fn handle_request(
                 {
                     Ok(pair) => pair,
                     Err(e) => {
-                        return Ok(make_502(
-                            &e,
-                            &method,
-                            &path,
-                            &query,
-                            &req_hdrs,
-                            start_time,
-                            &request_policy_decision,
-                        ));
+                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
                     }
                 };
                 let hs = handshake_start.elapsed().as_micros() as u64;
@@ -994,15 +825,7 @@ async fn handle_request(
                         ::metrics::counter!(metrics::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
-                        return Ok(make_502(
-                            &e,
-                            &method,
-                            &path,
-                            &query,
-                            &req_hdrs,
-                            start_time,
-                            &request_policy_decision,
-                        ));
+                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
                     }
                 };
                 let hs = handshake_start.elapsed().as_micros() as u64;
@@ -1056,15 +879,7 @@ async fn handle_request(
     let resp = match sender.send_request(upstream_req).await {
         Ok(r) => r,
         Err(e) => {
-            return Ok(make_502(
-                &e,
-                &method,
-                &path,
-                &query,
-                &req_hdrs,
-                start_time,
-                &request_policy_decision,
-            ));
+            return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
         }
     };
 
@@ -1073,8 +888,6 @@ async fn handle_request(
     // body completes (hyper 1.x keep-alive semantics).
     cached_upstream.lock().await.replace(sender);
     let (mut resp_parts, resp_body) = resp.into_parts();
-
-    let mut effective_policy_decision = request_policy_decision.clone();
 
     let resp_status = resp_parts.status.as_u16();
     tracing::Span::current().record("status", resp_status);
@@ -1108,115 +921,7 @@ async fn handle_request(
         0
     };
 
-    let should_evaluate_model_response = ai_provider.is_some_and(|provider| {
-        is_llm_api_path(provider, &path) && policy_model::has_model_response_rules(&policy_snapshot)
-    });
-
-    let resp_body: ProxyBoxBody = if should_evaluate_model_response {
-        let collected = match http_body_util::Limited::new(resp_body, 100 * 1024 * 1024)
-            .collect()
-            .await
-        {
-            Ok(collected) => collected,
-            Err(error) => {
-                return Ok(make_502(
-                    &error,
-                    &method,
-                    &path,
-                    &query,
-                    &req_hdrs,
-                    start_time,
-                    &effective_policy_decision,
-                ));
-            }
-        };
-        let mut response_body = collected.to_bytes();
-
-        if let Some(provider) = ai_provider {
-            let request_preview = {
-                let st = req_stats.lock().expect("req body stats lock");
-                st.preview.clone()
-            };
-            let request_meta =
-                crate::net::ai_traffic::request_parser::parse_request(provider, &request_preview);
-            if let Some(outcome) = policy_model::evaluate_model_response_policy(
-                &policy_snapshot,
-                provider,
-                &request_meta,
-                &response_body,
-                &config.confirmer,
-                &config.confirm_opts,
-            )
-            .await
-            {
-                match outcome {
-                    policy_model::ModelResponsePolicyOutcome::Continue(decision) => {
-                        effective_policy_decision.policy_mode = decision.policy_mode;
-                        effective_policy_decision.policy_action = decision.policy_action;
-                        effective_policy_decision.policy_rule = decision.policy_rule;
-                        effective_policy_decision.policy_reason = decision.policy_reason;
-                    }
-                    policy_model::ModelResponsePolicyOutcome::Deny(decision) => {
-                        let body_text = format!(
-                            "capsem: model response blocked by policy: {}\n",
-                            decision
-                                .policy_rule
-                                .as_deref()
-                                .unwrap_or("policy.model.unknown")
-                        );
-                        let req_ctx = TelemetryRequestContext {
-                            domain: domain.to_string(),
-                            process_name: process_name.clone(),
-                            ai_provider,
-                            method,
-                            path,
-                            query,
-                            status_code: Some(403),
-                            decision: Decision::Denied,
-                            matched_rule: decision.policy_rule.clone(),
-                            request_headers: Some(req_hdrs),
-                            response_headers: None,
-                            start_time,
-                            request_body_stats: Arc::clone(&req_stats),
-                            max_response_preview: 0,
-                            port: upstream_port,
-                            conn_type,
-                            policy_mode: decision.policy_mode,
-                            policy_action: decision.policy_action,
-                            policy_rule: decision.policy_rule,
-                            policy_reason: decision.policy_reason,
-                        };
-                        let deny_body = Full::new(Bytes::from(body_text))
-                            .map_err(|never| match never {})
-                            .boxed();
-                        return Ok(hyper::Response::builder()
-                            .status(403)
-                            .body(seal_with_telemetry(deny_body, req_ctx))
-                            .unwrap());
-                    }
-                    policy_model::ModelResponsePolicyOutcome::RewriteBody { decision, body } => {
-                        effective_policy_decision.policy_mode = decision.policy_mode;
-                        effective_policy_decision.policy_action = decision.policy_action;
-                        effective_policy_decision.policy_rule = decision.policy_rule;
-                        effective_policy_decision.policy_reason = decision.policy_reason;
-                        resp_parts.headers.remove(http::header::CONTENT_LENGTH);
-                        if let Ok(value) = http::HeaderValue::from_str(&body.len().to_string()) {
-                            resp_parts
-                                .headers
-                                .insert(http::header::CONTENT_LENGTH, value);
-                        }
-                        response_body = Bytes::from(body);
-                    }
-                }
-            }
-        }
-
-        Full::new(response_body)
-            .map_err(|never| -> anyhow::Error { match never {} })
-            .boxed()
-    } else {
-        resp_body.map_err(|e| -> anyhow::Error { e.into() }).boxed()
-    };
+    let resp_body: ProxyBoxBody = resp_body.map_err(|e| -> anyhow::Error { e.into() }).boxed();
 
     let req_ctx = TelemetryRequestContext {
         domain: domain.to_string(),
@@ -1227,7 +932,7 @@ async fn handle_request(
         query,
         status_code: Some(resp_status),
         decision: Decision::Allowed,
-        matched_rule: effective_policy_decision.policy_rule.clone(),
+        matched_rule: None,
         request_headers: Some(req_hdrs),
         response_headers: Some(resp_hdrs),
         start_time,
@@ -1235,10 +940,10 @@ async fn handle_request(
         max_response_preview: resp_max_preview,
         port: upstream_port,
         conn_type,
-        policy_mode: effective_policy_decision.policy_mode.clone(),
-        policy_action: effective_policy_decision.policy_action.clone(),
-        policy_rule: effective_policy_decision.policy_rule.clone(),
-        policy_reason: effective_policy_decision.policy_reason.clone(),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
     };
 
     // Drive the sync ChunkHook chain on every response chunk:

@@ -3307,13 +3307,6 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
          FROM dns_events WHERE decision != 'allowed' OR rcode != 0 \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
-    let policy_hook_issues_sql = format!(
-        "SELECT timestamp, endpoint_id, callback, decision, rule_id, status, error, \
-                fallback, latency_ms, trace_id \
-         FROM policy_hook_events \
-         WHERE status != 'ok' OR error IS NOT NULL OR fallback IS NOT NULL \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
     let audit_failures_sql = format!(
         "SELECT a.timestamp, a.pid, a.ppid, a.uid, a.exe, a.comm, a.argv, \
                 COALESCE(a.exit_code, e.exit_code) AS exit_code, a.audit_id, \
@@ -3337,9 +3330,6 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     let dns_issues = reader
         .query_raw(&dns_issues_sql)
         .unwrap_or_else(|_| "[]".into());
-    let policy_hook_issues = reader
-        .query_raw(&policy_hook_issues_sql)
-        .unwrap_or_else(|_| "[]".into());
     let audit_failures = reader
         .query_raw(&audit_failures_sql)
         .unwrap_or_else(|_| "[]".into());
@@ -3349,8 +3339,6 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     let exec_failures_v: serde_json::Value =
         serde_json::from_str(&exec_failures).unwrap_or_default();
     let dns_issues_v: serde_json::Value = serde_json::from_str(&dns_issues).unwrap_or_default();
-    let policy_hook_issues_v: serde_json::Value =
-        serde_json::from_str(&policy_hook_issues).unwrap_or_default();
     let audit_failures_v: serde_json::Value =
         serde_json::from_str(&audit_failures).unwrap_or_default();
 
@@ -3359,7 +3347,6 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
         "dns_issues": dns_issues_v,
         "mcp_errors": mcp_errors_v,
         "exec_failures": exec_failures_v,
-        "policy_hook_issues": policy_hook_issues_v,
         "audit_failures": audit_failures_v,
     }))
 }
@@ -3892,86 +3879,24 @@ fn normalize_header_names(headers: Vec<String>) -> Vec<String> {
     normalized
 }
 
-fn map_policy_callback(callback: &str) -> Result<capsem_core::net::policy::PolicyCallback, String> {
-    use capsem_core::net::policy::PolicyCallback;
-    match callback {
-        "mcp.request" => Ok(PolicyCallback::McpRequest),
-        "mcp.response" => Ok(PolicyCallback::McpResponse),
-        "http.request" => Ok(PolicyCallback::HttpRequest),
-        "http.read" => Ok(PolicyCallback::HttpRead),
-        "http.write" => Ok(PolicyCallback::HttpWrite),
-        "http.response" => Ok(PolicyCallback::HttpResponse),
-        "dns.request" => Ok(PolicyCallback::DnsQuery),
-        "dns.response" => Ok(PolicyCallback::DnsResponse),
-        "model.request" => Ok(PolicyCallback::ModelRequest),
-        "model.response" => Ok(PolicyCallback::ModelResponse),
-        "model.tool_call" => Ok(PolicyCallback::ModelToolCall),
-        "model.tool_response" => Ok(PolicyCallback::ModelToolResponse),
-        "hook.decision" => Ok(PolicyCallback::HookDecision),
-        _ => Err(format!("unsupported policy callback '{callback}'")),
-    }
-}
-
-fn map_policy_decision(
-    decision: capsem_core::settings_profiles::RuleDecision,
-) -> capsem_core::net::policy::PolicyDecisionKind {
-    use capsem_core::net::policy::PolicyDecisionKind;
-    match decision {
-        capsem_core::settings_profiles::RuleDecision::Allow => PolicyDecisionKind::Allow,
-        capsem_core::settings_profiles::RuleDecision::Ask => PolicyDecisionKind::Ask,
-        capsem_core::settings_profiles::RuleDecision::Block => PolicyDecisionKind::Block,
-        capsem_core::settings_profiles::RuleDecision::Rewrite => PolicyDecisionKind::Rewrite,
-    }
-}
-
 fn validate_policy_rule_update(
     rule_type: &str,
     rule_name: &str,
     update: &PolicyRuleUpdate,
 ) -> Result<(), String> {
-    let callback = map_policy_callback(&update.callback)?;
-    let callback_type = match callback {
-        capsem_core::net::policy::PolicyCallback::McpRequest
-        | capsem_core::net::policy::PolicyCallback::McpResponse => "mcp",
-        capsem_core::net::policy::PolicyCallback::HttpRequest
-        | capsem_core::net::policy::PolicyCallback::HttpRead
-        | capsem_core::net::policy::PolicyCallback::HttpWrite
-        | capsem_core::net::policy::PolicyCallback::HttpResponse => "http",
-        capsem_core::net::policy::PolicyCallback::DnsQuery
-        | capsem_core::net::policy::PolicyCallback::DnsResponse => "dns",
-        capsem_core::net::policy::PolicyCallback::ModelRequest
-        | capsem_core::net::policy::PolicyCallback::ModelResponse
-        | capsem_core::net::policy::PolicyCallback::ModelToolCall
-        | capsem_core::net::policy::PolicyCallback::ModelToolResponse => "model",
-        capsem_core::net::policy::PolicyCallback::HookDecision => "hook",
+    let Some(callback_type) = rule_type_from_callback(&update.callback) else {
+        return Err(format!("unsupported policy callback '{}'", update.callback));
     };
     if callback_type != rule_type {
         return Err(format!(
             "policy rule 'policy.{rule_type}.{rule_name}' uses callback for a different policy type"
         ));
     }
-    // The old runtime validator still catches malformed CEL for callbacks
-    // already supported on main. S06a moves model requests to `request.data`;
-    // until that runtime slice lands, skip this compatibility validator for
-    // that one new vocabulary path and let the profile model own structure.
-    if update.callback == "model.request" && update.condition.contains("request.data") {
-        return Ok(());
+    if update.condition.trim().is_empty() {
+        return Err(format!(
+            "invalid policy rule policy.{rule_type}.{rule_name}: condition cannot be empty"
+        ));
     }
-
-    let policy_rule = capsem_core::net::policy::PolicyRuleConfig {
-        on: callback,
-        condition: update.condition.clone(),
-        decision: map_policy_decision(update.decision),
-        priority: update.priority,
-        reason: update.reason.clone(),
-        rewrite_target: update.rewrite_target.clone(),
-        rewrite_value: update.rewrite_value.clone(),
-        strip_request_headers: update.strip_request_headers.clone(),
-        strip_response_headers: update.strip_response_headers.clone(),
-    };
-    policy_rule
-        .validate()
-        .map_err(|e| format!("invalid policy rule policy.{rule_type}.{rule_name}: {e}"))?;
     Ok(())
 }
 
@@ -4144,14 +4069,6 @@ struct RuleCreateRequest {
     id: String,
     #[serde(flatten)]
     update: PolicyRuleUpdate,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RuleEvaluateRequest {
-    #[serde(default)]
-    profile: Option<String>,
-    callback: String,
-    subject: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -5395,73 +5312,6 @@ fn ensure_locked_profile_sections_unchanged(
     Ok(())
 }
 
-fn effective_policy_rule_config(
-    rule: &capsem_core::settings_profiles::EffectiveRule,
-) -> Result<capsem_core::net::policy::PolicyRuleConfig, String> {
-    let callback = map_policy_callback(&rule.callback)?;
-    let policy_rule = capsem_core::net::policy::PolicyRuleConfig {
-        on: callback,
-        condition: rule.condition.clone(),
-        decision: map_policy_decision(rule.decision),
-        priority: rule.priority,
-        reason: rule.reason.clone(),
-        rewrite_target: rule.rewrite_target.clone(),
-        rewrite_value: rule.rewrite_value.clone(),
-        strip_request_headers: rule.strip_request_headers.clone(),
-        strip_response_headers: rule.strip_response_headers.clone(),
-    };
-    policy_rule.validate()?;
-    Ok(policy_rule)
-}
-
-fn build_effective_policy_for_callback(
-    effective: &capsem_core::settings_profiles::EffectiveVmSettings,
-    requested_callback: &str,
-) -> Result<
-    (
-        capsem_core::net::policy::PolicyConfig,
-        HashMap<String, String>,
-    ),
-    AppError,
-> {
-    let mut config = capsem_core::net::policy::PolicyConfig::default();
-    let mut ids_by_name = HashMap::new();
-    for rule in &effective.rules {
-        if rule.callback != requested_callback {
-            continue;
-        }
-        let Some((rule_type, name)) = rule_type_and_name_from_effective_id(&rule.id) else {
-            continue;
-        };
-        let policy_rule = effective_policy_rule_config(rule).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("invalid effective rule '{}': {e}", canonical_rule_id(rule)),
-            )
-        })?;
-        match rule_type {
-            "mcp" => {
-                config.mcp.insert(name.to_string(), policy_rule);
-            }
-            "http" => {
-                config.http.insert(name.to_string(), policy_rule);
-            }
-            "dns" => {
-                config.dns.insert(name.to_string(), policy_rule);
-            }
-            "model" => {
-                config.model.insert(name.to_string(), policy_rule);
-            }
-            "hook" => {
-                config.hook.insert(name.to_string(), policy_rule);
-            }
-            _ => {}
-        }
-        ids_by_name.insert(name.to_string(), canonical_rule_id(rule));
-    }
-    Ok((config, ids_by_name))
-}
-
 /// GET /rules -- list resolved Profile V2 rules for a profile.
 async fn handle_list_rules(
     Query(query): Query<RulesQuery>,
@@ -5659,46 +5509,6 @@ async fn handle_delete_rule(
         "rule_id": format!("security.rules.{rule_type}.{rule_name}"),
         "removed": true,
     })))
-}
-
-/// POST /rules/evaluate -- dry-run the V2 evaluator against a synthetic subject.
-async fn handle_evaluate_rule(
-    Json(request): Json<RuleEvaluateRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let callback =
-        map_policy_callback(&request.callback).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let effective = resolve_effective_for_rules(request.profile)?;
-    let (config, ids_by_name) = build_effective_policy_for_callback(&effective, &request.callback)?;
-    let matched = config
-        .find_matching_rule(callback, &request.subject)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("evaluate rule: {e}")))?;
-
-    if let Some(matched) = matched {
-        let matched_rule_id = ids_by_name
-            .get(matched.name)
-            .cloned()
-            .unwrap_or_else(|| matched.name.to_string());
-        let decision = matched.rule.decision;
-        Ok(Json(json!({
-            "mode": "settings_profiles_v2",
-            "profile_id": effective.profile_id,
-            "matched_rule_id": matched_rule_id,
-            "decision": decision,
-            "would_ask": decision == capsem_core::net::policy::PolicyDecisionKind::Ask,
-            "reason": matched.rule.reason,
-            "enforced": false,
-        })))
-    } else {
-        Ok(Json(json!({
-            "mode": "settings_profiles_v2",
-            "profile_id": effective.profile_id,
-            "matched_rule_id": serde_json::Value::Null,
-            "decision": serde_json::Value::Null,
-            "would_ask": false,
-            "reason": serde_json::Value::Null,
-            "enforced": false,
-        })))
-    }
 }
 
 fn validate_runtime_rule_id(id: &str) -> Result<(), AppError> {
@@ -7273,11 +7083,6 @@ async fn handle_delete_mcp_connector(
     })))
 }
 
-/// GET /policy-hook/spec -- export the Policy Hook Spec0 OpenAPI contract.
-async fn handle_policy_hook_spec() -> Json<serde_json::Value> {
-    Json(capsem_core::net::policy_hook_spec::policy_hook_openapi_document())
-}
-
 async fn handle_inspect(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -7336,15 +7141,15 @@ async fn handle_inspect(
 
 /// `GET /timeline/{id}?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
 /// -- unified time-ordered event stream for one session, joining
-/// `exec_events`, `mcp_calls`, `net_events`, `dns_events`,
-/// `policy_hook_events`, `audit_events`, `snapshot_events`, `fs_events`,
-/// and `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
+/// `exec_events`, `mcp_calls`, `net_events`, `dns_events`, `audit_events`,
+/// `snapshot_events`, `fs_events`, and `model_calls` via UNION ALL. Used by
+/// the `capsem_timeline` MCP tool.
 ///
 /// W6 added `trace_id` to every layer; this handler filters with
 /// `WHERE trace_id = ? OR trace_id IS NULL` so rows that pre-date W4's
 /// trace propagation still surface for the user.
 const ALLOWED_TIMELINE_LAYERS: &[&str] = &[
-    "exec", "mcp", "net", "dns", "hook", "audit", "snapshot", "fs", "model",
+    "exec", "mcp", "net", "dns", "audit", "snapshot", "fs", "model",
 ];
 
 fn timeline_existing_tables(reader: &capsem_logger::DbReader) -> Result<HashSet<String>, AppError> {
@@ -7420,7 +7225,6 @@ fn timeline_existing_columns(
         "mcp_calls",
         "net_events",
         "dns_events",
-        "policy_hook_events",
         "audit_events",
         "snapshot_events",
         "fs_events",
@@ -7595,45 +7399,6 @@ async fn handle_timeline(
             "SELECT timestamp, 'dns' AS layer, id AS ref, \
              qname || ' rcode=' || rcode || {policy_suffix} AS summary, \
              decision AS status, {duration} AS duration_ms, {trace_id} AS trace_id FROM dns_events"
-        ));
-    }
-    if layers.contains(&"hook") && existing_tables.contains("policy_hook_events") {
-        let decision_suffix =
-            if timeline_has_column(&existing_columns, "policy_hook_events", "decision") {
-                "COALESCE(' decision=' || decision, '')"
-            } else {
-                "''"
-            };
-        let fallback_suffix =
-            if timeline_has_column(&existing_columns, "policy_hook_events", "fallback") {
-                "COALESCE(' fallback=' || fallback, '')"
-            } else {
-                "''"
-            };
-        let error_suffix = if timeline_has_column(&existing_columns, "policy_hook_events", "error")
-        {
-            "COALESCE(' error=' || error, '')"
-        } else {
-            "''"
-        };
-        let status = if timeline_has_column(&existing_columns, "policy_hook_events", "decision") {
-            "COALESCE(decision, status)"
-        } else {
-            "status"
-        };
-        let duration = timeline_col(
-            &existing_columns,
-            "policy_hook_events",
-            "latency_ms",
-            "NULL",
-        );
-        let trace_id = timeline_col(&existing_columns, "policy_hook_events", "trace_id", "NULL");
-        parts.push(format!(
-            "SELECT timestamp, 'hook' AS layer, id AS ref, \
-             endpoint_id || '/' || callback || ' status=' || status || \
-                {decision_suffix} || {fallback_suffix} || {error_suffix} AS summary, \
-             {status} AS status, {duration} AS duration_ms, {trace_id} AS trace_id \
-             FROM policy_hook_events"
         ));
     }
     if layers.contains(&"audit") && existing_tables.contains("audit_events") {
@@ -9095,7 +8860,6 @@ async fn main() -> Result<()> {
         .route("/profiles/{id}/fork", post(handle_fork_profile))
         .route("/profiles/{id}/effective", get(handle_resolve_profile))
         .route("/rules", get(handle_list_rules).post(handle_create_rule))
-        .route("/rules/evaluate", post(handle_evaluate_rule))
         .route(
             "/rules/{rule_id}",
             get(handle_get_rule).delete(handle_delete_rule),
@@ -9142,7 +8906,6 @@ async fn main() -> Result<()> {
         .route("/setup/assets/reconcile", post(handle_asset_reconcile))
         .route("/setup/assets/cleanup", post(handle_asset_cleanup))
         .route("/setup/corp-config", post(handle_corp_config))
-        .route("/policy-hook/spec", get(handle_policy_hook_spec))
         .route(
             "/mcp/connectors",
             get(handle_mcp_connectors).post(handle_create_mcp_connector),

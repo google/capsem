@@ -5,9 +5,6 @@ use capsem_core::mcp::aggregator::AggregatorClient;
 use capsem_core::mcp::policy::{McpManualServer, McpPolicy, McpUserConfig, ToolDecision};
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy::{
-    PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
-};
 use capsem_core::settings_profiles::{
     self, CapabilityMode, EffectiveRule, RuleDecision, VmNetworkMode,
 };
@@ -27,7 +24,6 @@ const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 300;
 pub(crate) struct McpRuntime {
     pub(crate) aggregator: AggregatorClient,
     pub(crate) policy: Arc<tokio::sync::RwLock<Arc<McpPolicy>>>,
-    pub(crate) rules_policy: Arc<tokio::sync::RwLock<Arc<PolicyConfig>>>,
     pub(crate) domain_policy: Arc<std::sync::RwLock<Arc<DomainPolicy>>>,
     pub(crate) session_dir: PathBuf,
     pub(crate) builtin_binary: Option<PathBuf>,
@@ -39,7 +35,6 @@ pub(crate) struct RuntimePolicyState {
     pub(crate) guest_config: GuestConfig,
     pub(crate) domain_policy: DomainPolicy,
     pub(crate) mcp_policy: McpPolicy,
-    pub(crate) policy: PolicyConfig,
     pub(crate) mcp_user: McpUserConfig,
     pub(crate) mcp_corp: McpUserConfig,
     pub(crate) snapshot_auto_max: usize,
@@ -80,10 +75,6 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
         .unwrap_or_default();
     let mcp_corp = McpUserConfig::default();
     let mcp_policy = mcp_user.to_policy(&mcp_corp);
-    let policy = effective
-        .as_ref()
-        .map(policy_from_effective_rules)
-        .unwrap_or_default();
     let guest_config = guest_config_from_effective(effective.as_ref());
     let profile_id = effective
         .as_ref()
@@ -95,7 +86,6 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
         guest_config,
         domain_policy,
         mcp_policy,
-        policy,
         mcp_user,
         mcp_corp,
         snapshot_auto_max: DEFAULT_SNAPSHOT_AUTO_MAX,
@@ -375,101 +365,6 @@ fn mcp_user_config_from_effective(
         servers,
         server_enabled,
         tool_permissions,
-    }
-}
-
-fn policy_from_effective_rules(effective: &settings_profiles::EffectiveVmSettings) -> PolicyConfig {
-    let mut config = PolicyConfig::default();
-    for (index, rule) in effective.rules.iter().enumerate() {
-        if rule.derived {
-            continue;
-        }
-        let Some(callback) = map_effective_callback(&rule.callback) else {
-            warn!(
-                rule_id = %rule.id,
-                callback = %rule.callback,
-                "skipping unsupported effective rule callback for current runtime policy engine"
-            );
-            continue;
-        };
-        let rule_name = effective_rule_name(rule, index);
-        let policy_rule = PolicyRuleConfig {
-            on: callback,
-            condition: rule.condition.clone(),
-            decision: map_rule_decision(rule.decision),
-            priority: rule.priority,
-            reason: rule.reason.clone(),
-            rewrite_target: rule.rewrite_target.clone(),
-            rewrite_value: rule.rewrite_value.clone(),
-            strip_request_headers: rule.strip_request_headers.clone(),
-            strip_response_headers: rule.strip_response_headers.clone(),
-        };
-        if let Err(error) = policy_rule.validate() {
-            warn!(
-                rule_id = %rule.id,
-                callback = %rule.callback,
-                error = %error,
-                "skipping invalid effective rule during process policy conversion"
-            );
-            continue;
-        }
-        policy_rules_mut(&mut config, callback).insert(rule_name, policy_rule);
-    }
-    config
-}
-
-fn effective_rule_name(rule: &EffectiveRule, index: usize) -> String {
-    rule.id
-        .split_once('.')
-        .map(|(_, name)| name.to_string())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| format!("rule-{index}"))
-}
-
-fn map_effective_callback(callback: &str) -> Option<PolicyCallback> {
-    match callback {
-        "mcp.request" => Some(PolicyCallback::McpRequest),
-        "mcp.response" => Some(PolicyCallback::McpResponse),
-        "http.request" => Some(PolicyCallback::HttpRequest),
-        "http.read" => Some(PolicyCallback::HttpRead),
-        "http.write" => Some(PolicyCallback::HttpWrite),
-        "http.response" => Some(PolicyCallback::HttpResponse),
-        "dns.request" => Some(PolicyCallback::DnsQuery),
-        "dns.response" => Some(PolicyCallback::DnsResponse),
-        "model.request" => Some(PolicyCallback::ModelRequest),
-        "model.response" => Some(PolicyCallback::ModelResponse),
-        "model.tool_call" => Some(PolicyCallback::ModelToolCall),
-        "model.tool_response" => Some(PolicyCallback::ModelToolResponse),
-        "hook.decision" => Some(PolicyCallback::HookDecision),
-        _ => None,
-    }
-}
-
-fn map_rule_decision(decision: RuleDecision) -> PolicyDecisionKind {
-    match decision {
-        RuleDecision::Allow => PolicyDecisionKind::Allow,
-        RuleDecision::Ask => PolicyDecisionKind::Ask,
-        RuleDecision::Block => PolicyDecisionKind::Block,
-        RuleDecision::Rewrite => PolicyDecisionKind::Rewrite,
-    }
-}
-
-fn policy_rules_mut(
-    config: &mut PolicyConfig,
-    callback: PolicyCallback,
-) -> &mut HashMap<String, PolicyRuleConfig> {
-    match callback {
-        PolicyCallback::McpRequest | PolicyCallback::McpResponse => &mut config.mcp,
-        PolicyCallback::HttpRequest
-        | PolicyCallback::HttpRead
-        | PolicyCallback::HttpWrite
-        | PolicyCallback::HttpResponse => &mut config.http,
-        PolicyCallback::DnsQuery | PolicyCallback::DnsResponse => &mut config.dns,
-        PolicyCallback::ModelRequest
-        | PolicyCallback::ModelResponse
-        | PolicyCallback::ModelToolCall
-        | PolicyCallback::ModelToolResponse => &mut config.model,
-        PolicyCallback::HookDecision => &mut config.hook,
     }
 }
 

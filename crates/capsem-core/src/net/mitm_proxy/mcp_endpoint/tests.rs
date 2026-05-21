@@ -8,7 +8,6 @@ use crate::mcp::aggregator::{
 };
 use crate::mcp::policy::McpPolicy;
 use crate::mcp::types::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
-use crate::net::policy::PolicyConfig;
 
 use super::*;
 
@@ -57,7 +56,6 @@ where
         Arc::new(McpEndpointState::new(
             aggregator,
             Arc::new(RwLock::new(Arc::new(McpPolicy::new()))),
-            Arc::new(RwLock::new(Arc::new(PolicyConfig::default()))),
             Arc::new(tokio::sync::Semaphore::new(
                 crate::mcp::default_inflight_cap(),
             )),

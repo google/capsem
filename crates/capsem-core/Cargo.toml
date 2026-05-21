@@ -106,7 +106,3 @@ harness = false
 [[bench]]
 name = "interp_anthropic"
 harness = false
-
-[[bench]]
-name = "policy"
-harness = false

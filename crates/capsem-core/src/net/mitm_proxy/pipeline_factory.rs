@@ -22,16 +22,6 @@ pub fn make_default_pipeline() -> Arc<pipeline::Pipeline> {
 pub fn make_production_pipeline(
     telemetry: Arc<telemetry_hook::TelemetryDeps>,
 ) -> Arc<pipeline::Pipeline> {
-    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        crate::net::policy::PolicyConfig::default(),
-    )));
-    make_production_pipeline_with_policy(policy, telemetry)
-}
-
-pub fn make_production_pipeline_with_policy(
-    _policy: Arc<tokio::sync::RwLock<Arc<crate::net::policy::PolicyConfig>>>,
-    telemetry: Arc<telemetry_hook::TelemetryDeps>,
-) -> Arc<pipeline::Pipeline> {
     let p = pipeline::Pipeline::builder()
         // Chunk-hook order is load-bearing:
         //   1. DecompressionHook -- gzip detection on first chunk's

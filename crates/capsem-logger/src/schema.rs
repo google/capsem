@@ -359,34 +359,6 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_dns_events_policy_rule
         ON dns_events(policy_rule);
 
-    CREATE TABLE IF NOT EXISTS policy_hook_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
-        endpoint_id TEXT NOT NULL,
-        spec_version TEXT NOT NULL,
-        spec_hash TEXT NOT NULL,
-        decision_id TEXT,
-        callback TEXT NOT NULL,
-        decision TEXT,
-        rule_id TEXT,
-        reason TEXT,
-        latency_ms INTEGER DEFAULT 0,
-        status TEXT NOT NULL,
-        error TEXT,
-        fallback TEXT,
-        audit_tags TEXT,
-        trace_id TEXT,
-        session_id TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_policy_hook_events_timestamp
-        ON policy_hook_events(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_policy_hook_events_endpoint
-        ON policy_hook_events(endpoint_id);
-    CREATE INDEX IF NOT EXISTS idx_policy_hook_events_trace_id
-        ON policy_hook_events(trace_id);
-    CREATE INDEX IF NOT EXISTS idx_policy_hook_events_decision_id
-        ON policy_hook_events(decision_id);
-
     CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TEXT NOT NULL,
@@ -740,39 +712,6 @@ pub fn migrate(conn: &Connection) {
         [],
     );
 
-    // Add policy_hook_events table if not present (for DBs created before
-    // external Policy Hook runtime support). These rows record every hook
-    // decision attempt, including fail-closed schema/transport errors.
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS policy_hook_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            endpoint_id TEXT NOT NULL,
-            spec_version TEXT NOT NULL,
-            spec_hash TEXT NOT NULL,
-            decision_id TEXT,
-            callback TEXT NOT NULL,
-            decision TEXT,
-            rule_id TEXT,
-            reason TEXT,
-            latency_ms INTEGER DEFAULT 0,
-            status TEXT NOT NULL,
-            error TEXT,
-            fallback TEXT,
-            audit_tags TEXT,
-            trace_id TEXT,
-            session_id TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_policy_hook_events_timestamp
-            ON policy_hook_events(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_policy_hook_events_endpoint
-            ON policy_hook_events(endpoint_id);
-        CREATE INDEX IF NOT EXISTS idx_policy_hook_events_trace_id
-            ON policy_hook_events(trace_id);
-        CREATE INDEX IF NOT EXISTS idx_policy_hook_events_decision_id
-            ON policy_hook_events(decision_id);",
-    );
-
     // Add audit_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS audit_events (
@@ -985,33 +924,6 @@ mod tests {
     }
 
     #[test]
-    fn migrate_policy_hook_events_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        conn.execute(
-            "INSERT INTO policy_hook_events (
-                timestamp, endpoint_id, spec_version, spec_hash, callback, status
-             )
-             VALUES (
-                '2026-01-01T00:00:00Z', 'fixture', 'policy-hook/v0', 'hash',
-                'http.request', 'allowed'
-             )",
-            [],
-        )
-        .unwrap();
-        let endpoint: String = conn
-            .query_row(
-                "SELECT endpoint_id FROM policy_hook_events WHERE callback = 'http.request'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(endpoint, "fixture");
-    }
-
-    #[test]
     fn create_tables_includes_fs_events() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
@@ -1213,7 +1125,6 @@ mod tests {
             "exec_events",
             "snapshot_events",
             "audit_events",
-            "policy_hook_events",
         ] {
             let count: i64 = conn
                 .query_row(
@@ -1235,7 +1146,6 @@ mod tests {
             ("snapshot_events", "trace_id"),
             ("audit_events", "exit_code"),
             ("audit_events", "trace_id"),
-            ("policy_hook_events", "fallback"),
         ] {
             let count: i64 = conn
                 .query_row(
@@ -1255,19 +1165,6 @@ mod tests {
              VALUES (
                 '2026-05-10T00:00:00Z', 'blocked.example', 1, 1, 5, 'denied',
                 'v2', 'block', 'policy.dns.block_example', 'fixture', 'trace_legacy'
-             )",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO policy_hook_events (
-                timestamp, endpoint_id, spec_version, spec_hash, callback,
-                status, fallback, error, trace_id
-             )
-             VALUES (
-                '2026-05-10T00:00:01Z', 'legacy-hook', 'policy-hook/v0',
-                'sha256:legacy', 'dns.request', 'error', 'fail_closed',
-                'schema violation', 'trace_legacy'
              )",
             [],
         )

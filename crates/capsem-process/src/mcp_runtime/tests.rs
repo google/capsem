@@ -4,7 +4,6 @@ use std::sync::{Mutex, OnceLock};
 
 use capsem_core::mcp::policy::ToolDecision;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy::PolicyCallback;
 use capsem_core::settings_profiles::{
     CapabilityMode, EffectiveRule, McpConnectorCapsemMetadata, McpConnectorConfig, RuleDecision,
 };
@@ -371,40 +370,13 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         "path-scoped HTTP blocks must not become full-domain DNS blocks"
     );
 
-    let mcp_rules = runtime
-        .policy
-        .rules_for_callback(PolicyCallback::McpRequest);
-    assert_eq!(mcp_rules.len(), 2);
-    assert!(mcp_rules
-        .iter()
-        .any(|(name, _)| *name == "block-prod-delete"));
-    assert_eq!(
-        mcp_rules
-            .iter()
-            .find(|(name, _)| *name == "block-prod-delete")
-            .unwrap()
-            .1
-            .decision,
-        capsem_core::net::policy::PolicyDecisionKind::Block
+    assert!(
+        runtime
+            .mcp_policy
+            .tool_decisions
+            .contains_key("mcp-server__delete_repository"),
+        "Profile MCP rules still feed the local MCP transport policy until S08b replaces it"
     );
-
-    let http_rules = runtime
-        .policy
-        .rules_for_callback(PolicyCallback::HttpResponse);
-    assert_eq!(http_rules.len(), 1);
-    assert!(http_rules[0]
-        .1
-        .condition
-        .contains("response.text.contains(\"secret\")"));
-
-    let http_read_rules = runtime.policy.rules_for_callback(PolicyCallback::HttpRead);
-    assert!(http_read_rules
-        .iter()
-        .any(|(name, rule)| *name == "user-read" && rule.condition == "true"));
-    let http_write_rules = runtime.policy.rules_for_callback(PolicyCallback::HttpWrite);
-    assert!(http_write_rules
-        .iter()
-        .any(|(name, rule)| *name == "user-write" && rule.condition == "true"));
 }
 
 #[test]
@@ -643,62 +615,4 @@ fn load_runtime_policy_state_falls_back_when_vm_effective_attachment_missing() {
         .allowed_patterns()
         .contains(&"*.elie.net".to_string()));
     assert_eq!(runtime.mcp_policy.default_tool_decision, ToolDecision::Warn);
-}
-
-#[test]
-fn load_runtime_policy_state_drops_legacy_dns_query_callback() {
-    let dir = tempfile::tempdir().unwrap();
-    let session_dir = dir.path().join("session");
-    std::fs::create_dir_all(&session_dir).unwrap();
-
-    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
-    let mut effective =
-        capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None).unwrap();
-    let provenance = effective.profile.provenance.clone();
-
-    effective.rules.push(EffectiveRule {
-        id: "dns.legacy".to_string(),
-        callback: "dns.query".to_string(),
-        condition: "qname == \"example.com\"".to_string(),
-        decision: RuleDecision::Block,
-        priority: 1,
-        rewrite_target: None,
-        rewrite_value: None,
-        strip_request_headers: Vec::new(),
-        strip_response_headers: Vec::new(),
-        reason: Some("legacy callback must not enter runtime".to_string()),
-        derived: false,
-        provenance: provenance.clone(),
-        owner_setting_path: None,
-        owner_setting_label: None,
-        editable: true,
-    });
-    effective.rules.push(EffectiveRule {
-        id: "dns.modern".to_string(),
-        callback: "dns.request".to_string(),
-        condition: "qname == \"example.com\"".to_string(),
-        decision: RuleDecision::Block,
-        priority: 1,
-        rewrite_target: None,
-        rewrite_value: None,
-        strip_request_headers: Vec::new(),
-        strip_response_headers: Vec::new(),
-        reason: Some("modern callback survives runtime conversion".to_string()),
-        derived: false,
-        provenance,
-        owner_setting_path: None,
-        owner_setting_label: None,
-        editable: true,
-    });
-
-    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
-
-    let runtime = load_runtime_policy_state_from_effective(&session_dir);
-
-    let dns_rules = runtime.policy.rules_for_callback(PolicyCallback::DnsQuery);
-    assert!(
-        !dns_rules.iter().any(|(name, _)| *name == "legacy"),
-        "legacy dns.query must be dropped while dns.request survives"
-    );
-    assert!(dns_rules.iter().any(|(name, _)| *name == "modern"));
 }

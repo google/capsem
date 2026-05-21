@@ -199,11 +199,10 @@ See [Session Telemetry](/architecture/session-telemetry/) for the full `mcp_call
 |-------|------|---------|
 | `aggregator` | `AggregatorClient` | Client handle for the isolated MCP aggregator subprocess |
 | `db` | `Arc<DbWriter>` | Async telemetry writer |
-| `policy` | `RwLock<Arc<McpPolicy>>` | Hot-reloadable MCP fallback policy |
-| named policy rules | `RwLock<Arc<PolicyConfig>>` | Hot-reloadable policy rules |
+| `policy` | `RwLock<Arc<McpPolicy>>` | Local MCP transport policy until Security Engine enforcement is wired |
 | `domain_policy` | `RwLock<Arc<DomainPolicy>>` | Domain policy for builtin HTTP tools |
 
-The `AggregatorClient` is cloneable (`Arc`-wrapped mpsc channel) and shared across endpoint sessions for a given VM. The policy uses double-Arc for atomic swap: the outer `RwLock` protects an inner `Arc<McpPolicy>`. New frames read the current policy, so reloads affect already-open guest MCP connections.
+The `AggregatorClient` is cloneable (`Arc`-wrapped mpsc channel) and shared across endpoint sessions for a given VM. New frames read the current MCP transport policy, so reloads affect already-open guest MCP connections. Profile-owned enforcement/detection moves through the Security Engine, not the removed named `PolicyConfig` runtime.
 
 ## Configuration files
 

@@ -1,13 +1,9 @@
 //! End-to-end tests for the DNS handler + resolver, using a fake
 //! UDP upstream bound on `127.0.0.1:0`. No system DNS, no internet.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
-
-fn shared(p: PolicyConfig) -> super::server::SharedPolicy {
-    Arc::new(tokio::sync::RwLock::new(Arc::new(p)))
-}
 
 use capsem_logger::events::Decision;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
@@ -16,7 +12,6 @@ use tokio::net::UdpSocket;
 
 use super::resolver::DnsResolver;
 use super::server::DnsHandler;
-use crate::net::policy::PolicyConfig;
 
 fn build_query_bytes(name: &str, qtype: RecordType, id: u16) -> Vec<u8> {
     let mut msg = Message::new(id, MessageType::Query, OpCode::Query);
@@ -80,75 +75,7 @@ async fn spawn_blackhole_upstream() -> SocketAddr {
     addr
 }
 
-fn allow_all_policy() -> PolicyConfig {
-    PolicyConfig::default()
-}
-
-fn policy_from_toml(toml: &str) -> Arc<tokio::sync::RwLock<Arc<PolicyConfig>>> {
-    let policy = PolicyConfig::from_policy_toml_str(toml).expect("policy v2 TOML should parse");
-    Arc::new(tokio::sync::RwLock::new(Arc::new(policy)))
-}
-
-fn block_specific_policy(domain: &str) -> PolicyConfig {
-    let condition = if let Some(suffix) = domain.strip_prefix("*.") {
-        format!(r#"qname.matches("^[^.]+\.{}$")"#, regex::escape(suffix))
-    } else {
-        format!(r#"qname == "{}""#, domain)
-    };
-    PolicyConfig::from_policy_toml_str(&format!(
-        r#"
-        [policy.dns.block_domain]
-        on = "dns.query"
-        if = '{condition}'
-        decision = "block"
-        priority = 1
-        "#
-    ))
-    .unwrap()
-}
-
-fn policy_with_redirect(pattern: &str, qtype: Option<u16>, ips: Vec<IpAddr>) -> PolicyConfig {
-    let mut clauses = vec![if let Some(suffix) = pattern.strip_prefix("*.") {
-        format!(r#"qname.matches("^[^.]+\.{}$")"#, regex::escape(suffix))
-    } else {
-        format!(r#"qname == "{}""#, pattern)
-    }];
-    if let Some(qtype) = qtype {
-        clauses.push(format!(r#"qtype == "{}""#, dns_qtype_name(qtype)));
-    }
-    let rewrite_value = ips
-        .into_iter()
-        .map(|ip| ip.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    PolicyConfig::from_policy_toml_str(&format!(
-        r#"
-        [policy.dns.rewrite_domain]
-        on = "dns.query"
-        if = '{}'
-        decision = "rewrite"
-        priority = 1
-        rewrite_target = 'answer.ip =~ ".*"'
-        rewrite_value = "{rewrite_value}"
-        "#,
-        clauses.join(" && ")
-    ))
-    .unwrap()
-}
-
-fn dns_qtype_name(qtype: u16) -> &'static str {
-    match qtype {
-        1 => "A",
-        28 => "AAAA",
-        _ => panic!("unexpected qtype in test: {qtype}"),
-    }
-}
-
-mod policy_decisions;
-
 mod resolver_behavior;
-
-mod rewrite_behavior;
 
 mod metrics_behavior;
 

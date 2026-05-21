@@ -10,7 +10,7 @@ use tracing::warn;
 
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent,
-    PolicyHookEvent, SnapshotEvent, TelemetryIdentity,
+    SnapshotEvent, TelemetryIdentity,
 };
 use crate::schema;
 
@@ -211,7 +211,6 @@ pub enum WriteOp {
     ExecEventComplete(ExecEventComplete),
     AuditEvent(AuditEvent),
     DnsEvent(DnsEvent),
-    PolicyHookEvent(PolicyHookEvent),
     TelemetryIdentity(TelemetryIdentity),
 }
 
@@ -396,7 +395,6 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c)?,
             WriteOp::AuditEvent(a) => insert_audit_event(&tx, a)?,
             WriteOp::DnsEvent(d) => insert_dns_event(&tx, d)?,
-            WriteOp::PolicyHookEvent(h) => insert_policy_hook_event(&tx, h)?,
             WriteOp::TelemetryIdentity(i) => insert_telemetry_identity(&tx, i)?,
         }
     }
@@ -1237,44 +1235,6 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
             event.policy_action,
             event.policy_rule,
             event.policy_reason,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_policy_hook_event(conn: &Connection, event: &PolicyHookEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
-    let reason = cap_field(&event.reason);
-    let error = cap_field(&event.error);
-    let audit_tags = if event.audit_tags.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_string(&event.audit_tags).unwrap_or_default())
-    };
-    conn.execute(
-        "INSERT INTO policy_hook_events (
-            timestamp, endpoint_id, spec_version, spec_hash, decision_id,
-            callback, decision, rule_id, reason, latency_ms, status, error,
-            fallback, audit_tags, trace_id, session_id
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-        params![
-            timestamp,
-            event.endpoint_id,
-            event.spec_version,
-            event.spec_hash,
-            event.decision_id,
-            event.callback,
-            event.decision,
-            event.rule_id,
-            reason,
-            event.latency_ms as i64,
-            event.status,
-            error,
-            event.fallback,
-            audit_tags,
-            event.trace_id,
-            event.session_id,
         ],
     )?;
     Ok(())
