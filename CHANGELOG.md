@@ -149,6 +149,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build workspace from the Profile V2 package/tool contract, emitting
   `capsem.image-workspace.v1` reports and generated `guest/config`-compatible
   TOML without reading repo hand-authored image settings.
+- Added `capsem-admin image build` as the public profile-derived image build
+  entrypoint, routing generated workspaces into the existing kernel/rootfs
+  Docker builder with typed `capsem.image-build.v1` JSON reports and dry-run
+  support.
 - Fixed release SBOM attestation to cover Linux `.deb` packages as well as the
   macOS `.pkg`, and documented that the current `cargo-sbom` artifact is the
   Rust host SBOM while profile-derived guest package/tool SBOMs remain S07b

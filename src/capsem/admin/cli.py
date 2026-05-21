@@ -7,6 +7,7 @@ It does not manipulate raw settings dictionaries at command boundaries.
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 from typing import Literal
 
 import click
@@ -22,6 +23,8 @@ from capsem.builder.image_verify import (
     verify_image_assets,
 )
 from capsem.builder.image_workspace import (
+    ImageBuildReport,
+    dump_image_build_report_json,
     dump_image_workspace_report_json,
     materialize_profile_image_workspace,
 )
@@ -517,6 +520,121 @@ def image_build_workspace(
     click.echo(f"package contract: {report.package_contract_hash}")
     click.echo("arches: " + ", ".join(report.arches))
     click.echo(f"files: {len(report.files)}")
+
+
+@image.command("build")
+@click.argument("profile_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--out",
+    "output_dir",
+    default="assets",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Directory where built assets will be written.",
+)
+@click.option(
+    "--workspace-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Optional directory for the generated profile-derived build workspace.",
+)
+@click.option(
+    "--arch",
+    "arch",
+    default="all",
+    type=click.Choice(["all", "arm64", "x86_64"]),
+    show_default=True,
+)
+@click.option(
+    "--template",
+    default="rootfs",
+    type=click.Choice(["rootfs", "kernel"]),
+    show_default=True,
+    help="Build one image template.",
+)
+@click.option(
+    "--kernel-version",
+    default=None,
+    help="Explicit kernel version for kernel builds.",
+)
+@click.option("--dry-run", is_flag=True, help="Only materialize the profile-derived workspace.")
+@click.option("--force", is_flag=True, help="Write into a non-empty workspace directory.")
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed build report.")
+def image_build(
+    profile_path: str,
+    output_dir: str,
+    workspace_dir: str | None,
+    arch: ImageArch,
+    template: Literal["rootfs", "kernel"],
+    kernel_version: str | None,
+    dry_run: bool,
+    force: bool,
+    json_output: bool,
+) -> None:
+    """Build profile-derived VM image assets."""
+    from capsem.builder.config import load_guest_config
+    from capsem.builder.docker import build_all_architectures, build_image
+
+    temp_workspace: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        profile = _load_profile(Path(profile_path))
+        if workspace_dir is None:
+            temp_workspace = tempfile.TemporaryDirectory(prefix="capsem-profile-image-")
+            workspace_path = Path(temp_workspace.name)
+            workspace_force = True
+        else:
+            workspace_path = Path(workspace_dir)
+            workspace_force = force
+        workspace_report = materialize_profile_image_workspace(
+            profile,
+            workspace_path,
+            arch=arch,
+            force=workspace_force,
+        )
+        config = load_guest_config(workspace_path)
+
+        if not dry_run:
+            out = Path(output_dir)
+            if arch == "all":
+                build_all_architectures(
+                    config,
+                    template=template,
+                    output_dir=out,
+                    kernel_version=kernel_version,
+                    repo_root=Path.cwd(),
+                )
+            else:
+                build_image(
+                    config,
+                    arch,
+                    template=template,
+                    output_dir=out,
+                    kernel_version=kernel_version,
+                    repo_root=Path.cwd(),
+                )
+        report = ImageBuildReport(
+            ok=True,
+            dry_run=dry_run,
+            profile_id=workspace_report.profile_id,
+            profile_revision=workspace_report.profile_revision,
+            output_dir=str(Path(output_dir)),
+            workspace=workspace_report,
+            template=template,
+        )
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+    finally:
+        if temp_workspace is not None:
+            temp_workspace.cleanup()
+
+    if json_output:
+        click.echo(dump_image_build_report_json(report))
+        return
+
+    action = "planned" if dry_run else "built"
+    click.echo(f"profile: {report.profile_id}@{report.profile_revision}")
+    click.echo(f"{action}: {', '.join(report.workspace.arches)} {report.template}")
+    click.echo(f"assets: {report.output_dir}")
 
 
 @manifest.command("check")

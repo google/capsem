@@ -36,6 +36,20 @@ class ImageWorkspaceReport(StrictModel):
     files: list[ImageWorkspaceFile]
 
 
+class ImageBuildReport(StrictModel):
+    schema_: Literal["capsem.image-build.v1"] = Field(
+        default="capsem.image-build.v1",
+        alias="schema",
+    )
+    ok: bool
+    dry_run: bool
+    profile_id: str
+    profile_revision: str
+    output_dir: str
+    workspace: ImageWorkspaceReport
+    template: Literal["kernel", "rootfs"]
+
+
 def _write_text(root: Path, relative: str, payload: str, files: list[ImageWorkspaceFile]) -> None:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,4 +237,8 @@ def materialize_profile_image_workspace(
 
 
 def dump_image_workspace_report_json(report: ImageWorkspaceReport) -> str:
+    return report.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+
+
+def dump_image_build_report_json(report: ImageBuildReport) -> str:
     return report.model_dump_json(by_alias=True, exclude_none=True, indent=2)

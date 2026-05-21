@@ -351,6 +351,14 @@ a valid claim -- mark it `[ ]` instead.
     SBOM remains S07b image-verification work. Verification: `uv run python -m
     pytest tests/test_release_workflow_policy.py -q` passed with 26 tests;
     docs build passed with `pnpm run build`.
+    Fourteenth slice added `capsem-admin image build <profile>` as the public
+    profile-derived image build entrypoint. It materializes the generated
+    workspace, parses it through `load_guest_config`, routes selected
+    arches/templates into the existing Docker builder, supports `--dry-run`,
+    and emits typed `capsem.image-build.v1` JSON embedding the workspace report.
+    Verification: `uv run python -m pytest tests/test_image_workspace.py
+    tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 33 tests;
+    installed CLI smoke proved `capsem-admin image build --dry-run --json`.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

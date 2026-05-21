@@ -137,3 +137,123 @@ def test_capsem_admin_image_build_workspace_outputs_typed_report(tmp_path: Path)
     assert '"x86_64"' in result.output
     assert (workspace / "config" / "build.toml").exists()
     assert list(load_guest_config(workspace).build.architectures) == ["x86_64"]
+
+
+def test_capsem_admin_image_build_dry_run_materializes_profile_workspace(
+    tmp_path: Path,
+) -> None:
+    profile = _profile_with_packages()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    workspace = tmp_path / "workspace"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "build",
+            str(profile_path),
+            "--out",
+            str(tmp_path / "assets"),
+            "--workspace-dir",
+            str(workspace),
+            "--arch",
+            "arm64",
+            "--template",
+            "kernel",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"schema": "capsem.image-build.v1"' in result.output
+    assert '"dry_run": true' in result.output
+    assert '"template": "kernel"' in result.output
+    assert list(load_guest_config(workspace).build.architectures) == ["arm64"]
+
+
+def test_capsem_admin_image_build_routes_single_arch_to_existing_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, Path]] = []
+
+    def fake_build_image(config, arch_name, *, template, output_dir, kernel_version, repo_root):
+        calls.append((arch_name, template, output_dir))
+        assert kernel_version == "6.6.127"
+        assert repo_root == Path.cwd()
+        assert list(config.build.architectures) == ["x86_64"]
+
+    monkeypatch.setattr("capsem.builder.docker.build_image", fake_build_image)
+    profile = _profile_with_packages()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    assets = tmp_path / "assets"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "build",
+            str(profile_path),
+            "--out",
+            str(assets),
+            "--workspace-dir",
+            str(workspace),
+            "--arch",
+            "x86_64",
+            "--kernel-version",
+            "6.6.127",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("x86_64", "rootfs", assets)]
+    assert '"dry_run": false' in result.output
+
+
+def test_capsem_admin_image_build_routes_all_arches_to_existing_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Path]] = []
+
+    def fake_build_all_architectures(config, *, template, output_dir, kernel_version, repo_root):
+        calls.append((template, output_dir))
+        assert kernel_version is None
+        assert repo_root == Path.cwd()
+        assert list(config.build.architectures) == ["arm64", "x86_64"]
+
+    monkeypatch.setattr(
+        "capsem.builder.docker.build_all_architectures",
+        fake_build_all_architectures,
+    )
+    profile = _profile_with_packages()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    assets = tmp_path / "assets"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "build",
+            str(profile_path),
+            "--out",
+            str(assets),
+            "--workspace-dir",
+            str(workspace),
+            "--arch",
+            "all",
+            "--template",
+            "kernel",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("kernel", assets)]

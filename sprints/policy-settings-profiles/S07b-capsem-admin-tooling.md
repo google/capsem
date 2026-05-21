@@ -234,6 +234,25 @@ Thirteenth slice landed on 2026-05-20:
 - Verification: `uv run python -m pytest tests/test_release_workflow_policy.py
   -q` passed with 26 tests; docs build passed with `pnpm run build`.
 
+Fourteenth slice landed on 2026-05-20:
+
+- `capsem-admin image build <profile>` now exists as the public profile-derived
+  image build entrypoint.
+- The command materializes the generated Profile V2 build workspace, parses it
+  back through `load_guest_config`, and routes selected arches/templates into
+  the existing `build_image` / `build_all_architectures` Docker builder.
+- `--arch all` remains the default; `--arch arm64` and `--arch x86_64` narrow
+  CI/local shards. `--template rootfs|kernel`, `--kernel-version`,
+  `--workspace-dir`, `--out`, `--dry-run`, `--force`, and `--json` are
+  supported.
+- Output is a typed `capsem.image-build.v1` report embedding the
+  `capsem.image-workspace.v1` report, so CI can prove which profile revision,
+  package-contract hash, generated files, and arches drove the build.
+- Verification: `uv run python -m pytest tests/test_image_workspace.py
+  tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 33 tests;
+  installed CLI smoke proved `capsem-admin image build --dry-run --json` from a
+  generated TOML profile.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -543,8 +562,10 @@ The checker must fail closed for:
       detection format.
 - [x] Add `capsem-admin` package/distribution entry point and bootstrap install
       wiring.
-- [ ] Update Justfile recipes and shell scripts to use `capsem-admin`, with
+- [~] Update Justfile recipes and shell scripts to use `capsem-admin`, with
       `--arch all` as the default and single-arch overrides for CI shards.
+      Public `capsem-admin image build` exists; Justfile/release recipes still
+      need to call it before this closes.
 - [ ] Replace builder doctor with admin doctor checks and remove guest config as
       input authority.
 - [~] Refactor manifest generation/check/sign scripts into importable Python
@@ -558,8 +579,9 @@ The checker must fail closed for:
       parsing, validation, normalized accessors, `model_validate_json()` /
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
 - [~] Remove hand-edited image settings as release-build authority. Profile-
-      derived build workspace materialization has landed; release build recipes
-      still need to consume it before this closes.
+      derived build workspace materialization and public `image build` routing
+      have landed; release build recipes still need to consume it before this
+      closes.
 - [x] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
 - [x] Implement full manifest download/verify checks. Full byte download,

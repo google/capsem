@@ -89,6 +89,7 @@ capsem-admin profile validate corp-dev.profile.json
 capsem-admin profile validate corp-dev.profile.json --json
 capsem-admin image plan corp-dev.profile.toml --json
 capsem-admin image build-workspace corp-dev.profile.toml --out build/corp-dev-image --arch all --json
+capsem-admin image build corp-dev.profile.toml --out assets/ --arch all --template rootfs --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
 capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
 capsem-admin manifest check manifest.json --fast --json
