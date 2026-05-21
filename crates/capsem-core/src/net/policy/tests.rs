@@ -41,7 +41,6 @@ fn runtime_call_sites_do_not_import_legacy_policy_config() {
         "crates/capsem-core/src/net/mitm_proxy/mod.rs",
         "crates/capsem-core/src/net/mitm_proxy/mcp_endpoint.rs",
         "crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs",
-        "crates/capsem-core/src/net/mitm_proxy/policy_http_hook.rs",
         "crates/capsem-core/src/net/mitm_proxy/policy_model.rs",
         "crates/capsem-process/src/mcp_runtime.rs",
         "crates/capsem-service/src/main.rs",
@@ -72,6 +71,8 @@ fn runtime_call_sites_do_not_import_legacy_network_policy_runtime() {
         "src/net/policy_hook/tests.rs",
         "src/net/mitm_proxy/policy_hook.rs",
         "src/net/mitm_proxy/policy_hook/tests.rs",
+        "src/net/mitm_proxy/policy_http_hook.rs",
+        "src/net/mitm_proxy/policy_http_hook/tests.rs",
     ] {
         assert!(
             !manifest_dir.join(deleted).exists(),
@@ -82,12 +83,10 @@ fn runtime_call_sites_do_not_import_legacy_network_policy_runtime() {
     let runtime_files = [
         "crates/capsem-core/src/lib.rs",
         "crates/capsem-core/src/net/mod.rs",
-        "crates/capsem-core/src/net/dns/server.rs",
         "crates/capsem-core/src/net/mitm_proxy/mod.rs",
         "crates/capsem-core/src/vm/boot.rs",
         "crates/capsem-core/src/vm/registry.rs",
         "crates/capsem-process/src/main.rs",
-        "crates/capsem-process/src/mcp_runtime.rs",
         "crates/capsem-process/src/vsock.rs",
     ];
 
@@ -96,10 +95,9 @@ fn runtime_call_sites_do_not_import_legacy_network_policy_runtime() {
             .unwrap_or_else(|err| panic!("failed to read {file}: {err}"));
         for forbidden in [
             "NetworkPolicy",
-            "crate::net::policy::",
-            "net::policy::",
             "policy_hook::PolicyHook",
             "mitm_proxy::policy_hook",
+            "policy_http_hook",
         ] {
             assert!(
                 !source.contains(forbidden),

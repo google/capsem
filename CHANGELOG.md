@@ -426,9 +426,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `capsem update --assets` to honor the selected service UDS socket
   instead of assuming the default runtime socket.
 - Changed the runtime network policy module names from transitional
-  `policy_v2`/`policy_v2_*` paths to the forward `policy`, `policy_model`,
-  and `policy_http_hook` surfaces, with DNS/MITM tests split into focused
-  behavior modules.
+  `policy_v2`/`policy_v2_*` paths to the forward `policy` and `policy_model`
+  surfaces, with DNS/MITM tests split into focused behavior modules.
+- Removed the legacy MITM HTTP policy hook runtime path. Request/response-head
+  HTTP enforcement must now move through the S08b canonical Security Engine
+  path instead of the old pipeline hook.
 - Removed the old Rust VM asset `ManifestV2` model, verified-manifest loaders,
   manifest-driven downloader, and manifest-driven cleanup path. CLI status and
   service debug reports now rely on Profile V2 asset health instead of legacy

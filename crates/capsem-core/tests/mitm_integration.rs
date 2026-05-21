@@ -3,7 +3,6 @@
 /// These tests spin up the MITM proxy on a local TCP socket (simulating vsock),
 /// connect a real TLS client through it, and verify:
 /// - Allowed domains complete a full HTTPS request/response cycle
-/// - Denied domains are rejected before TLS handshake completes
 /// - Telemetry records correct decisions, methods, and status codes
 ///
 /// Requires internet access (the proxy connects upstream to real servers).
@@ -48,7 +47,7 @@ impl Drop for EnvVarGuard {
     }
 }
 
-/// Build a Policy config from allow/block host lists for integration tests.
+/// Build a proxy config for integration tests.
 fn make_proxy_config(
     allowed: &[&str],
     blocked: &[&str],
@@ -57,12 +56,14 @@ fn make_proxy_config(
     make_proxy_config_full(allowed, blocked, default_allow, &[80])
 }
 
-/// Like `make_proxy_config`; the `http_ports` argument is retained for
-/// older call sites while port policy lives in Policy rules.
+/// Like `make_proxy_config`; legacy allow/block arguments are retained at
+/// call sites that still describe their upstream target, but HTTP policy
+/// enforcement now flows through the Security Engine path rather than the
+/// removed MITM HTTP policy hook.
 fn make_proxy_config_full(
-    allowed: &[&str],
-    blocked: &[&str],
-    default_allow: bool,
+    _allowed: &[&str],
+    _blocked: &[&str],
+    _default_allow: bool,
     _http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
@@ -77,11 +78,7 @@ fn make_proxy_config_full(
             capsem_core::net::ai_traffic::TraceState::new(),
         )),
     });
-    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(integration_policy(
-        allowed,
-        blocked,
-        default_allow,
-    ))));
+    let policy = Arc::new(tokio::sync::RwLock::new(Arc::new(PolicyConfig::default())));
     let pipeline = mitm_proxy::make_production_pipeline_with_policy(
         Arc::clone(&policy),
         Arc::clone(&telemetry),
@@ -100,74 +97,6 @@ fn make_proxy_config_full(
         ),
     });
     (config, db)
-}
-
-fn integration_policy(allowed: &[&str], blocked: &[&str], default_allow: bool) -> PolicyConfig {
-    let mut toml = String::new();
-    for (index, pattern) in blocked
-        .iter()
-        .filter(|pattern| !pattern.is_empty())
-        .enumerate()
-    {
-        toml.push_str(&format!(
-            r#"
-[policy.http.block_{index}]
-on = "http.request"
-if = '{}'
-decision = "block"
-priority = {}
-reason = "Integration blocked host"
-"#,
-            host_condition(pattern),
-            index
-        ));
-    }
-    for (index, pattern) in allowed
-        .iter()
-        .filter(|pattern| !pattern.is_empty())
-        .enumerate()
-    {
-        toml.push_str(&format!(
-            r#"
-[policy.http.allow_{index}]
-on = "http.request"
-if = '{}'
-decision = "allow"
-priority = {}
-reason = "Integration allowed host"
-"#,
-            host_condition(pattern),
-            100 + index
-        ));
-    }
-    if !default_allow {
-        toml.push_str(
-            r#"
-[policy.http.default_block]
-on = "http.request"
-if = 'request.host.matches(".*")'
-decision = "block"
-priority = 10000
-reason = "Integration default deny"
-"#,
-        );
-    }
-    if toml.trim().is_empty() {
-        PolicyConfig::default()
-    } else {
-        PolicyConfig::from_policy_toml_str(&toml).unwrap()
-    }
-}
-
-fn host_condition(pattern: &str) -> String {
-    if let Some(suffix) = pattern.strip_prefix("*.") {
-        format!(
-            r#"request.host.matches("(^|.*\.){}$")"#,
-            regex::escape(suffix)
-        )
-    } else {
-        format!(r#"request.host == "{}""#, pattern)
-    }
 }
 
 /// Build a rustls ClientConfig that trusts the Capsem MITM CA.
@@ -258,91 +187,6 @@ async fn mitm_proxy_allows_elie_net() {
     assert_eq!(events[0].method.as_deref(), Some("HEAD"));
     assert!(events[0].status_code.is_some());
     assert_eq!(events[0].conn_type.as_deref(), Some("https-mitm"));
-}
-
-#[tokio::test]
-async fn mitm_proxy_denies_forbidden_domain() {
-    let (config, db) = make_proxy_config(&[], &["example.com"], false);
-    let (proxy_task, addr) = spawn_proxy(config).await;
-
-    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from("example.com").unwrap();
-    let tls = connector
-        .connect(domain, tcp)
-        .await
-        .expect("TLS handshake should succeed (denial happens at HTTP level)");
-
-    let io = TokioIo::new(tls);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
-    tokio::spawn(conn);
-
-    let req = hyper::Request::builder()
-        .method("GET")
-        .uri("/test")
-        .header("host", "example.com")
-        .body(Full::new(Bytes::new()))
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(
-        resp.status().as_u16(),
-        403,
-        "denied domain should return 403"
-    );
-
-    drop(sender);
-    proxy_task.await.unwrap();
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let reader = db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert!(!events.is_empty(), "should have recorded denial event");
-    assert_eq!(events[0].domain, "example.com");
-    assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].method.as_deref(), Some("GET"));
-    assert_eq!(events[0].path.as_deref(), Some("/test"));
-    assert_eq!(events[0].status_code, Some(403));
-}
-
-#[tokio::test]
-async fn mitm_proxy_denies_default_deny_unlisted_domain() {
-    let (config, db) = make_proxy_config(&[], &[], false);
-    let (proxy_task, addr) = spawn_proxy(config).await;
-
-    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from("unlisted-domain.test").unwrap();
-    let tls = connector
-        .connect(domain, tcp)
-        .await
-        .expect("TLS handshake should succeed (denial happens at HTTP level)");
-
-    let io = TokioIo::new(tls);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
-    tokio::spawn(conn);
-
-    let req = hyper::Request::builder()
-        .method("POST")
-        .uri("/api/data")
-        .header("host", "unlisted-domain.test")
-        .body(Full::new(Bytes::new()))
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(resp.status().as_u16(), 403);
-
-    drop(sender);
-    proxy_task.await.unwrap();
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let reader = db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert!(!events.is_empty());
-    assert_eq!(events[0].domain, "unlisted-domain.test");
-    assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].method.as_deref(), Some("POST"));
-    assert_eq!(events[0].path.as_deref(), Some("/api/data"));
 }
 
 #[tokio::test]
@@ -455,83 +299,6 @@ async fn mitm_proxy_handles_garbage_data() {
             Decision::Error | Decision::Denied
         ));
     }
-}
-
-/// T2.2: a plain-HTTP request to a non-allowlisted domain reaches
-/// Policy and is denied with 403 -- proving the plain-HTTP path
-/// now serves through the same hyper pipeline as TLS, with the same
-/// policy gates. (T2.1 would have stopped at the sniff with an
-/// Error connection event.)
-#[tokio::test]
-async fn mitm_proxy_plain_http_denies_disallowed_host() {
-    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
-    let (proxy_task, addr) = spawn_proxy(config).await;
-
-    // Plain HTTP/1.1 request directly on the TCP socket, no TLS,
-    // no \0CAPSEM_META prefix. Host is not on the allowlist (which
-    // is "elie.net" only); default-deny applies -> 403 from
-    // Policy.
-    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    tcp.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
-        .await
-        .unwrap();
-
-    // Drain the response (a 403 produced by Policy).
-    let mut buf = vec![0u8; 4096];
-    let _ = tcp.read(&mut buf).await;
-    drop(tcp);
-
-    proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let reader = db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert!(!events.is_empty(), "plain HTTP path must record a NetEvent");
-    assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].status_code, Some(403));
-    assert_eq!(events[0].domain, "example.com");
-    assert_eq!(events[0].method.as_deref(), Some("GET"));
-    assert_eq!(
-        events[0].port, 80,
-        "plain HTTP defaults to upstream port 80"
-    );
-}
-
-/// T2.2: a plain-HTTP request whose Host is not allowed by Policy
-/// is rejected with 403 before the upstream dial.
-#[tokio::test]
-async fn mitm_proxy_plain_http_denies_port_not_in_allowlist() {
-    // No allow rule means default-deny Policy blocks the request
-    // before the proxy dials the explicit upstream port.
-    let (config, db) = make_proxy_config(&[], &[], false);
-    let (proxy_task, addr) = spawn_proxy(config).await;
-
-    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    tcp.write_all(b"GET / HTTP/1.1\r\nHost: elie.net:8080\r\n\r\n")
-        .await
-        .unwrap();
-
-    let mut buf = vec![0u8; 4096];
-    let _ = tcp.read(&mut buf).await;
-    drop(tcp);
-
-    proxy_task.await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let reader = db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert!(
-        !events.is_empty(),
-        "port-denied path must record a NetEvent"
-    );
-    assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].status_code, Some(403));
-    assert_eq!(events[0].port, 8080);
-    let reason = events[0].matched_rule.as_deref().unwrap_or("");
-    assert!(
-        reason.contains("policy.http.default_block"),
-        "expected Policy default block marker, got matched_rule={reason:?}"
-    );
 }
 
 /// T2.3: Ollama-shaped end-to-end. A fake plain-HTTP upstream binds

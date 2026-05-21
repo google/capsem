@@ -22,7 +22,6 @@ mod mcp_frame;
 pub mod metrics;
 pub mod pipeline;
 mod pipeline_factory;
-pub mod policy_http_hook;
 pub mod policy_model;
 pub mod protocol;
 mod response;
@@ -85,8 +84,8 @@ pub struct MitmProxyConfig {
     /// hook only points at this `TelemetryDeps`, not the surrounding
     /// `MitmProxyConfig`.
     pub telemetry: Arc<telemetry_hook::TelemetryDeps>,
-    /// Hook pipeline. `make_production_pipeline` registers the Policy
-    /// HTTP hook plus the sync ChunkHook chain (decompression → SSE parse →
+    /// Hook pipeline. `make_production_pipeline` registers the sync ChunkHook
+    /// chain (decompression → SSE parse →
     /// provider interpreters → telemetry). `handle_request` dispatches L1
     /// events through this pipeline and seeds per-request context into the
     /// `ChunkDispatchBody`'s `HookState` before serving.
@@ -540,7 +539,7 @@ async fn handle_request(
     };
 
     let start_time = Instant::now();
-    let (mut parts, req_body) = req.into_parts();
+    let (parts, req_body) = req.into_parts();
     let initial_method = parts.method.to_string();
     let (initial_path, _) = split_path_query(&parts.uri);
 
@@ -561,54 +560,13 @@ async fn handle_request(
         .map(|v| v.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false);
 
-    // Hook-driven policy. The pipeline runs Policy HTTP hooks.
-    // On deny it returns Stop(Reject(403)); the 403 body is wrapped in
-    // ChunkDispatchBody seeded with a
-    // TelemetryRequestContext so TelemetryHook still emits a
-    // NetEvent for the deny path.
-    let dispatch_outcome;
-    let policy_decision;
-    {
-        let conn = hooks::ConnMeta {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            port: upstream_port,
-            protocol,
-            ai_provider,
-        };
-        let mut state = hooks::HookState::default();
-        let trace_id = crate::telemetry::ambient_capsem_trace_id();
-        dispatch_outcome = config
-            .pipeline
-            .dispatch(
-                events::Event::RawRequestHead(&mut parts),
-                &mut state,
-                trace_id,
-                &conn,
-            )
-            .await;
-        policy_decision = state
-            .peek::<policy_http_hook::LastHttpPolicyDecision>()
-            .cloned()
-            .unwrap_or_default();
-    }
-
     let method = parts.method.to_string();
     let (path, query) = split_path_query(&parts.uri);
     let req_hdrs = format_headers(&parts.headers);
-    let response_policy_context =
-        policy_http_hook::HttpResponsePolicyContext::from_request_parts(protocol, domain, &parts);
-    let matched_rule = policy_decision
-        .policy_rule
-        .clone()
-        .unwrap_or_else(|| "policy.http.default".to_string());
 
     // T1 slice 4: per-request counter, partitioned by decision.
     // upstream_error increments are handled at the dial site below.
-    let req_decision_label = match &dispatch_outcome {
-        pipeline::DispatchOutcome::Completed => "allow",
-        pipeline::DispatchOutcome::Stopped(_) => "deny",
-    };
+    let req_decision_label = "allow";
     tracing::Span::current().record("decision", req_decision_label);
     ::metrics::counter!(metrics::REQUESTS_TOTAL,
         "protocol" => protocol.label(), "decision" => req_decision_label)
@@ -638,57 +596,6 @@ async fn handle_request(
             dispatched.boxed()
         };
 
-    if let pipeline::DispatchOutcome::Stopped(stop_action) = dispatch_outcome {
-        // Today only the Reject variant ships; Drop / DnsReject land
-        // in T2 / T3. Future Stop variants get matched here.
-        let hook_resp = match stop_action {
-            hooks::StopAction::Reject(r) => r,
-            other => {
-                // Drop / DnsReject: synthesize a 502 fallback so we
-                // emit telemetry consistently. Real handling lands in
-                // T2 (plain HTTP) and T3 (DNS).
-                let _ = other;
-                let body = Full::new(Bytes::from_static(b"capsem: request stopped"))
-                    .map_err(|never| match never {})
-                    .boxed();
-                http::Response::builder()
-                    .status(http::StatusCode::BAD_GATEWAY)
-                    .body(body)
-                    .expect("static response build")
-            }
-        };
-
-        let (resp_parts, resp_body) = hook_resp.into_parts();
-
-        let req_ctx = TelemetryRequestContext {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            ai_provider,
-            method: method.clone(),
-            path: path.clone(),
-            query: query.clone(),
-            status_code: Some(resp_parts.status.as_u16()),
-            decision: Decision::Denied,
-            matched_rule: Some(matched_rule.clone()),
-            request_headers: Some(req_hdrs),
-            response_headers: None,
-            start_time,
-            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_preview: 0,
-            port: upstream_port,
-            conn_type,
-            policy_mode: policy_decision.policy_mode.clone(),
-            policy_action: policy_decision.policy_action.clone(),
-            policy_rule: policy_decision.policy_rule.clone(),
-            policy_reason: policy_decision.policy_reason.clone(),
-        };
-
-        return Ok(hyper::Response::from_parts(
-            resp_parts,
-            seal_with_telemetry(resp_body, req_ctx),
-        ));
-    }
-
     // Reject WebSocket upgrades (not supported through MITM proxy).
     if is_upgrade {
         let body_text = format!(
@@ -713,10 +620,10 @@ async fn handle_request(
             max_response_preview: 0,
             port: upstream_port,
             conn_type,
-            policy_mode: policy_decision.policy_mode.clone(),
-            policy_action: policy_decision.policy_action.clone(),
-            policy_rule: policy_decision.policy_rule.clone(),
-            policy_reason: policy_decision.policy_reason.clone(),
+            policy_mode: None,
+            policy_action: None,
+            policy_rule: None,
+            policy_reason: None,
         };
 
         let deny_body = Full::new(Bytes::from(body_text))
@@ -732,7 +639,7 @@ async fn handle_request(
     // Save original request headers.
     let mut original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
-    let mut request_policy_decision = policy_decision.clone();
+    let mut request_policy_decision = policy_model::LastModelPolicyDecision::default();
 
     // Helper: build a 502 Bad Gateway response with telemetry so upstream
     // errors don't kill keep-alive connections (returns Ok, not Err).
@@ -742,7 +649,7 @@ async fn handle_request(
                     query: &Option<String>,
                     req_hdrs: &str,
                     start: Instant,
-                    policy: &policy_http_hook::LastHttpPolicyDecision|
+                    policy: &policy_model::LastModelPolicyDecision|
      -> hyper::Response<ProxyBoxBody> {
         warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
         let body_text = format!("Capsem: upstream error ({error})\n");
@@ -1167,92 +1074,7 @@ async fn handle_request(
     cached_upstream.lock().await.replace(sender);
     let (mut resp_parts, resp_body) = resp.into_parts();
 
-    // Dispatch RawResponseHead before any telemetry capture or guest
-    // delivery. Policy response rules can strip/rewrite the head in
-    // place or fail closed with a synthetic response.
-    let response_dispatch_outcome;
-    let response_policy_decision;
-    {
-        let conn = hooks::ConnMeta {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            port: upstream_port,
-            protocol,
-            ai_provider,
-        };
-        let mut state = hooks::HookState::default();
-        state.set(response_policy_context);
-        let trace_id = crate::telemetry::ambient_capsem_trace_id();
-        response_dispatch_outcome = config
-            .pipeline
-            .dispatch(
-                events::Event::RawResponseHead(&mut resp_parts),
-                &mut state,
-                trace_id,
-                &conn,
-            )
-            .await;
-        response_policy_decision = state
-            .peek::<policy_http_hook::LastHttpPolicyDecision>()
-            .cloned()
-            .unwrap_or_default();
-    }
-
-    let mut effective_policy_decision = if response_policy_decision.policy_action.is_some() {
-        response_policy_decision
-    } else {
-        request_policy_decision.clone()
-    };
-    let effective_matched_rule = effective_policy_decision
-        .policy_rule
-        .clone()
-        .unwrap_or_else(|| matched_rule.clone());
-
-    if let pipeline::DispatchOutcome::Stopped(stop_action) = response_dispatch_outcome {
-        let hook_resp = match stop_action {
-            hooks::StopAction::Reject(r) => r,
-            other => {
-                let _ = other;
-                let body = Full::new(Bytes::from_static(b"capsem: response stopped"))
-                    .map_err(|never| match never {})
-                    .boxed();
-                http::Response::builder()
-                    .status(http::StatusCode::BAD_GATEWAY)
-                    .body(body)
-                    .expect("static response build")
-            }
-        };
-        let (deny_parts, deny_body) = hook_resp.into_parts();
-        let deny_status = deny_parts.status.as_u16();
-        tracing::Span::current().record("status", deny_status);
-        let req_ctx = TelemetryRequestContext {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            ai_provider,
-            method,
-            path,
-            query,
-            status_code: Some(deny_status),
-            decision: Decision::Denied,
-            matched_rule: Some(effective_matched_rule),
-            request_headers: Some(req_hdrs),
-            response_headers: None,
-            start_time,
-            request_body_stats: Arc::clone(&req_stats),
-            max_response_preview: 0,
-            port: upstream_port,
-            conn_type,
-            policy_mode: effective_policy_decision.policy_mode.clone(),
-            policy_action: effective_policy_decision.policy_action.clone(),
-            policy_rule: effective_policy_decision.policy_rule.clone(),
-            policy_reason: effective_policy_decision.policy_reason.clone(),
-        };
-
-        return Ok(hyper::Response::from_parts(
-            deny_parts,
-            seal_with_telemetry(deny_body, req_ctx),
-        ));
-    }
+    let mut effective_policy_decision = request_policy_decision.clone();
 
     let resp_status = resp_parts.status.as_u16();
     tracing::Span::current().record("status", resp_status);
@@ -1405,12 +1227,7 @@ async fn handle_request(
         query,
         status_code: Some(resp_status),
         decision: Decision::Allowed,
-        matched_rule: Some(
-            effective_policy_decision
-                .policy_rule
-                .clone()
-                .unwrap_or(effective_matched_rule),
-        ),
+        matched_rule: effective_policy_decision.policy_rule.clone(),
         request_headers: Some(req_hdrs),
         response_headers: Some(resp_hdrs),
         start_time,

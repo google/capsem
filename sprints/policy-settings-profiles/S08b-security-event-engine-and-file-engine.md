@@ -464,6 +464,11 @@ Implementation status as of the current service-route slices:
   `http.request.path.startsWith(...)`, `http.request.header(...).exists()`,
   and `http.request.body.text.contains(...)`; Detection IR lowering covers
   URL/path/body text onto the same canonical roots.
+- Landed: the legacy MITM HTTP policy hook runtime path has been removed from
+  the production pipeline. HTTP request/response-head enforcement must be wired
+  back only through the canonical Network Engine -> Security Engine event path,
+  and MITM integration fixtures no longer synthesize `policy.http.default_block`
+  rules for the deleted hook.
 - Guardrail: malformed CEL fails before registry mutation; list/stats expose
   rule id, pack id, origin/scope, enabled state, compile status, generation,
   compiled plan id, match count, and last matched event/timestamp.

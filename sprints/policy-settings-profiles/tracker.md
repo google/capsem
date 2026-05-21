@@ -893,6 +893,18 @@ a valid claim -- mark it `[ ]` instead.
     HTTP fields from parsed/decompressed traffic, signed/unsigned numeric
     CEL ergonomics for response status, historical/session-journal hunt,
     gateway/CLI/UI route exposure, persistence/profile-pack seeding, and
+    VM/runtime integration. Thirtieth S08b.2 cleanup slice removed the legacy
+    MITM HTTP policy hook runtime path from the production pipeline and deleted
+    its request/response-head tests, so HTTP enforcement can only be reintroduced
+    through the canonical Security Engine path. Integration tests no longer
+    generate fake `policy.http.default_block` rules for the removed hook.
+    Verification: `cargo check -p capsem-core` passed;
+    `cargo test -p capsem-core net::policy` passed; `cargo test -p
+    capsem-core net::mitm_proxy` passed with localhost test permissions.
+    Still missing after this cleanup: actual Network Engine population and
+    enforcement dispatch into the Security Engine, signed/unsigned numeric CEL
+    ergonomics for response status, historical/session-journal hunt,
+    gateway/CLI/UI route exposure, persistence/profile-pack seeding, and
     VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared

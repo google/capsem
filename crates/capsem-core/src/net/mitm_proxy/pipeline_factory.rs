@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use super::{
-    decompression_hook, interpreter_hook, pipeline, policy_http_hook, sse_parser_hook,
-    telemetry_hook,
-};
+use super::{decompression_hook, interpreter_hook, pipeline, sse_parser_hook, telemetry_hook};
 
 /// Build the default (empty) hook pipeline. T1 slices 2 + 3 will
 /// extend this to register the production hook set; until then the
@@ -13,8 +10,7 @@ pub fn make_default_pipeline() -> Arc<pipeline::Pipeline> {
     Arc::new(pipeline::Pipeline::builder().build())
 }
 
-/// Build the production hook pipeline. Registers Policy HTTP hooks
-/// for `RawRequestHead` plus the full sync ChunkHook chain
+/// Build the production hook pipeline. Registers the full sync ChunkHook chain
 /// (decompression -> SSE parse -> provider interpreters -> telemetry).
 ///
 /// All four ChunkHook stages are pure-sync: per-chunk work runs
@@ -33,11 +29,10 @@ pub fn make_production_pipeline(
 }
 
 pub fn make_production_pipeline_with_policy(
-    policy: Arc<tokio::sync::RwLock<Arc<crate::net::policy::PolicyConfig>>>,
+    _policy: Arc<tokio::sync::RwLock<Arc<crate::net::policy::PolicyConfig>>>,
     telemetry: Arc<telemetry_hook::TelemetryDeps>,
 ) -> Arc<pipeline::Pipeline> {
     let p = pipeline::Pipeline::builder()
-        .register(Arc::new(policy_http_hook::PolicyHttpHook::new(policy)))
         // Chunk-hook order is load-bearing:
         //   1. DecompressionHook -- gzip detection on first chunk's
         //      magic; subsequent chunks fed through flate2::Decompress.

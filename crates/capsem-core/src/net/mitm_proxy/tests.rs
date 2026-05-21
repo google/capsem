@@ -64,13 +64,6 @@ fn make_config_dev() -> Arc<MitmProxyConfig> {
     make_config_with_policy(PolicyConfig::default())
 }
 
-fn make_config_deny_all() -> Arc<MitmProxyConfig> {
-    make_config_with_rules_policy(
-        PolicyConfig::default(),
-        Arc::new(tokio::sync::RwLock::new(http_block_test_domain_config())),
-    )
-}
-
 fn allow_test_domain_policy() -> PolicyConfig {
     PolicyConfig::default()
 }
@@ -84,22 +77,6 @@ fn policy_from_toml(
 ) -> Arc<tokio::sync::RwLock<Arc<crate::net::policy::PolicyConfig>>> {
     let policy = PolicyConfig::from_policy_toml_str(toml_text).unwrap();
     Arc::new(tokio::sync::RwLock::new(Arc::new(policy)))
-}
-
-fn http_block_test_domain_config() -> Arc<PolicyConfig> {
-    Arc::new(
-        PolicyConfig::from_policy_toml_str(&format!(
-            r#"
-[policy.http.block_test_domain]
-on = "http.request"
-if = 'request.host == "{TEST_DOMAIN}"'
-decision = "block"
-priority = 1
-reason = "Test domain blocked"
-"#
-        ))
-        .unwrap(),
-    )
 }
 
 fn make_client_hello(hostname: &str) -> Vec<u8> {
@@ -329,116 +306,6 @@ fn make_mitm_client_config() -> Arc<rustls::ClientConfig> {
             .with_root_certificates(root_store)
             .with_no_client_auth(),
     )
-}
-
-#[tokio::test]
-async fn denied_request_emits_event() {
-    let config = make_config_deny_all();
-    let (s1, s2) = UnixStream::pair().unwrap();
-
-    let proxy_fd = s2.into_raw_fd();
-    let proxy_config = Arc::clone(&config);
-    let proxy_task = tokio::spawn(async move {
-        handle_connection(proxy_fd, proxy_config).await;
-    });
-
-    let client_config = make_mitm_client_config();
-    let connector = tokio_rustls::TlsConnector::from(client_config);
-    s1.set_nonblocking(true).unwrap();
-    let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-    let sni = rustls::pki_types::ServerName::try_from(TEST_DOMAIN.to_owned()).unwrap();
-    let tls_stream = connector.connect(sni, stream).await.unwrap();
-
-    let io = TokioIo::new(tls_stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-
-    let req = hyper::Request::builder()
-        .method("GET")
-        .uri("/secret")
-        .header("host", TEST_DOMAIN)
-        .body(
-            Full::new(Bytes::new())
-                .map_err(|never| -> anyhow::Error { match never {} })
-                .boxed(),
-        )
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(resp.status().as_u16(), 403);
-    // Consume the body to trigger telemetry emission.
-    let _ = resp.into_body().collect().await;
-
-    drop(sender);
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].status_code, Some(403));
-    assert_eq!(events[0].method, Some("GET".to_string()));
-    assert_eq!(events[0].path, Some("/secret".to_string()));
-}
-
-/// Multiple denied requests on the same keep-alive connection produce
-/// one event per request (the core bug this fix addresses).
-#[tokio::test]
-async fn multiple_denied_requests_emit_separate_events() {
-    let config = make_config_deny_all();
-    let (s1, s2) = UnixStream::pair().unwrap();
-
-    let proxy_fd = s2.into_raw_fd();
-    let proxy_config = Arc::clone(&config);
-    let proxy_task = tokio::spawn(async move {
-        handle_connection(proxy_fd, proxy_config).await;
-    });
-
-    let client_config = make_mitm_client_config();
-    let connector = tokio_rustls::TlsConnector::from(client_config);
-    s1.set_nonblocking(true).unwrap();
-    let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-    let sni = rustls::pki_types::ServerName::try_from(TEST_DOMAIN.to_owned()).unwrap();
-    let tls_stream = connector.connect(sni, stream).await.unwrap();
-
-    let io = TokioIo::new(tls_stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-
-    // Send 3 requests on the same keep-alive connection.
-    for path in ["/a", "/b", "/c"] {
-        let req = hyper::Request::builder()
-            .method("GET")
-            .uri(path)
-            .header("host", TEST_DOMAIN)
-            .body(
-                Full::new(Bytes::new())
-                    .map_err(|never| -> anyhow::Error { match never {} })
-                    .boxed(),
-            )
-            .unwrap();
-        let resp = sender.send_request(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 403);
-        let _ = resp.into_body().collect().await;
-    }
-
-    drop(sender);
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let mut events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 3, "3 requests should produce 3 events, not 1");
-    events.reverse(); // chronological order
-    assert_eq!(events[0].path, Some("/a".to_string()));
-    assert_eq!(events[1].path, Some("/b".to_string()));
-    assert_eq!(events[2].path, Some("/c".to_string()));
 }
 
 #[tokio::test]
@@ -956,8 +823,6 @@ data: [DONE]\n\n"
 }
 
 mod model_policy;
-
-mod http_policy;
 
 mod connection_behavior;
 
