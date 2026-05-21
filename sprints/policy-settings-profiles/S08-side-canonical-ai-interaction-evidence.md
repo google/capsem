@@ -34,6 +34,13 @@ model interaction/tool-call ids, updates the canonical model tool-call
 projection. Missing or ambiguous matches remain explicit link statuses rather
 than being invented from name heuristics.
 
+The sixth slice projected linked canonical AI/MCP evidence into Security Engine
+quota/status dimensions. Model events now expose API family, parse/evidence
+status, model tool-call/result/MCP-execution counts, and linked MCP tool-call
+counts. MCP events now expose link status plus linked model interaction/tool
+ids. This makes the evidence consumable by S08b/S12/S22 without each caller
+re-parsing provider-specific payloads.
+
 This is intentionally a side document rather than another numbered board item:
 S08b remains the active engine implementation sprint, but S08b must not harden
 model/MCP enforcement, detection, telemetry, quotas, timeline, or plugin

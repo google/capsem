@@ -742,6 +742,14 @@ a valid claim -- mark it `[ ]` instead.
     `cargo test -p capsem-logger` passed with 230 tests, `cargo test -p
     capsem-core telemetry_hook` passed with 8 tests, and `cargo test -p
     capsem-core ai_traffic::evidence` passed with 5 tests.
+    Seventeenth projection slice added Security Engine quota/status dimensions
+    for linked canonical AI evidence: model API family, parse/evidence status,
+    tool-call/result/MCP-execution counts, linked MCP tool-call counts, MCP
+    link status, and linked model ids. Verification: `cargo test -p
+    capsem-security-engine` passed with 22 tests, `cargo test -p capsem-core
+    --test security_packs` passed with 6 tests, `cargo test -p capsem-logger
+    ai_evidence_is_stored_in_queryable_tables` passed, and `cargo test -p
+    capsem-core ai_traffic::evidence` passed with 5 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

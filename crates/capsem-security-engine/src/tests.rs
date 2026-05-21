@@ -435,6 +435,95 @@ fn model_security_subject_projects_canonical_evidence_to_quota_dimensions() {
 }
 
 #[test]
+fn linked_model_and_mcp_evidence_project_to_policy_dimensions() {
+    let mut evidence = model_interaction_evidence(
+        "vm-model-linked",
+        AiAttributionScope::Vm,
+        SourceEngine::Network,
+        AiOriginKind::GuestNetwork,
+        "vm:vm-1",
+    );
+    evidence.tool_calls = vec![ModelToolCallEvidence {
+        tool_call_id: "toolu-1".into(),
+        index: 0,
+        provider_call_id: Some("toolu-1".into()),
+        raw_name: "filesystem__read_file".into(),
+        normalized_name: "filesystem.read_file".into(),
+        arguments_raw: Some(r#"{"path":"/tmp/a"}"#.into()),
+        arguments_json: Some(r#"{"path":"/tmp/a"}"#.into()),
+        arguments_status: ArgumentsStatus::ValidJson,
+        origin: ToolOrigin::McpTool,
+        linked_mcp_call_id: Some("mcp-1".into()),
+        status: ToolCallStatus::Executed,
+        parse_confidence: Confidence::High,
+    }];
+    evidence.tool_results = vec![ModelToolResultEvidence {
+        tool_call_id: "toolu-1".into(),
+        linked_mcp_call_id: Some("mcp-1".into()),
+        content_kind: AiContentKind::Text,
+        content_preview: Some("ok".into()),
+        content_json: None,
+        is_error: false,
+        result_status: ToolCallStatus::ReturnedToModel,
+        returned_to_model: true,
+        parse_confidence: Confidence::High,
+    }];
+    evidence.mcp_executions = vec![McpToolExecutionEvidence {
+        mcp_call_id: "mcp-1".into(),
+        server_id: "filesystem".into(),
+        tool_name: "read_file".into(),
+        namespaced_tool_name: "filesystem.read_file".into(),
+        transport: "mcp-framed".into(),
+        request_arguments_raw: Some(r#"{"path":"/tmp/a"}"#.into()),
+        request_arguments_json: Some(r#"{"path":"/tmp/a"}"#.into()),
+        result_kind: AiContentKind::Text,
+        result_preview: Some("ok".into()),
+        result_json: None,
+        is_error: false,
+        latency_ms: 12,
+        linked_model_interaction_id: Some("vm-model-linked".into()),
+        linked_model_tool_call_id: Some("toolu-1".into()),
+        link_status: LinkStatus::Linked,
+    }];
+
+    let model_event = SecurityEvent::model(
+        common("evt-linked-model", "model.response", SourceEngine::Network),
+        ModelSecuritySubject::from_interaction_evidence(evidence.clone()),
+    );
+    let model_dims = model_event.quota_dimensions();
+    assert_eq!(
+        model_dims.ai_api_family,
+        Some(AiApiFamily::GoogleGeminiContent)
+    );
+    assert_eq!(
+        model_dims.evidence_parse_status,
+        Some(ParseStatus::Complete)
+    );
+    assert_eq!(model_dims.evidence_status, Some(EvidenceStatus::Complete));
+    assert_eq!(model_dims.model_tool_call_count, Some(1));
+    assert_eq!(model_dims.model_tool_result_count, Some(1));
+    assert_eq!(model_dims.model_mcp_execution_count, Some(1));
+    assert_eq!(model_dims.model_linked_mcp_tool_call_count, Some(1));
+
+    let mcp_event = SecurityEvent::mcp(
+        common("evt-linked-mcp", "mcp.request", SourceEngine::Network),
+        McpSecuritySubject::from_execution_evidence(evidence.mcp_executions[0].clone()),
+    );
+    let mcp_dims = mcp_event.quota_dimensions();
+    assert_eq!(mcp_dims.mcp_server.as_deref(), Some("filesystem"));
+    assert_eq!(mcp_dims.mcp_tool.as_deref(), Some("read_file"));
+    assert_eq!(mcp_dims.mcp_link_status, Some(LinkStatus::Linked));
+    assert_eq!(
+        mcp_dims.linked_model_interaction_id.as_deref(),
+        Some("vm-model-linked")
+    );
+    assert_eq!(
+        mcp_dims.linked_model_tool_call_id.as_deref(),
+        Some("toolu-1")
+    );
+}
+
+#[test]
 fn host_ai_event_can_correlate_to_vm_without_charging_vm_accounting() {
     let evidence = model_interaction_evidence(
         "host-model",

@@ -471,6 +471,13 @@ impl SecurityEventSubject {
             Self::Mcp(subject) => {
                 dimensions.mcp_server = Some(subject.server_id.clone());
                 dimensions.mcp_tool = Some(subject.tool_name.clone());
+                if let Some(evidence) = subject.evidence.as_deref() {
+                    dimensions.mcp_link_status = Some(evidence.link_status);
+                    dimensions.linked_model_interaction_id =
+                        evidence.linked_model_interaction_id.clone();
+                    dimensions.linked_model_tool_call_id =
+                        evidence.linked_model_tool_call_id.clone();
+                }
             }
             Self::Model(subject) => {
                 dimensions.provider = Some(subject.provider.clone());
@@ -478,6 +485,22 @@ impl SecurityEventSubject {
                 dimensions.estimated_input_tokens = subject.estimated_input_tokens;
                 dimensions.estimated_output_tokens = subject.estimated_output_tokens;
                 dimensions.estimated_cost_micros = subject.estimated_cost_micros;
+                if let Some(evidence) = subject.evidence.as_deref() {
+                    dimensions.ai_api_family = Some(evidence.api_family);
+                    dimensions.evidence_parse_status = Some(evidence.parse_status);
+                    dimensions.evidence_status = Some(evidence.evidence_status);
+                    dimensions.model_tool_call_count = Some(evidence.tool_calls.len() as u64);
+                    dimensions.model_tool_result_count = Some(evidence.tool_results.len() as u64);
+                    dimensions.model_mcp_execution_count =
+                        Some(evidence.mcp_executions.len() as u64);
+                    dimensions.model_linked_mcp_tool_call_count = Some(
+                        evidence
+                            .tool_calls
+                            .iter()
+                            .filter(|tool_call| tool_call.linked_mcp_call_id.is_some())
+                            .count() as u64,
+                    );
+                }
             }
             Self::File(_)
             | Self::Process(_)
@@ -970,9 +993,29 @@ pub struct QuotaDimensions {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
+    pub ai_api_family: Option<AiApiFamily>,
+    #[serde(default)]
+    pub evidence_parse_status: Option<ParseStatus>,
+    #[serde(default)]
+    pub evidence_status: Option<EvidenceStatus>,
+    #[serde(default)]
+    pub model_tool_call_count: Option<u64>,
+    #[serde(default)]
+    pub model_tool_result_count: Option<u64>,
+    #[serde(default)]
+    pub model_mcp_execution_count: Option<u64>,
+    #[serde(default)]
+    pub model_linked_mcp_tool_call_count: Option<u64>,
+    #[serde(default)]
     pub mcp_server: Option<String>,
     #[serde(default)]
     pub mcp_tool: Option<String>,
+    #[serde(default)]
+    pub mcp_link_status: Option<LinkStatus>,
+    #[serde(default)]
+    pub linked_model_interaction_id: Option<String>,
+    #[serde(default)]
+    pub linked_model_tool_call_id: Option<String>,
     #[serde(default)]
     pub http_host: Option<String>,
     #[serde(default)]
@@ -1010,8 +1053,18 @@ impl QuotaDimensions {
             event_type,
             provider: None,
             model: None,
+            ai_api_family: None,
+            evidence_parse_status: None,
+            evidence_status: None,
+            model_tool_call_count: None,
+            model_tool_result_count: None,
+            model_mcp_execution_count: None,
+            model_linked_mcp_tool_call_count: None,
             mcp_server: None,
             mcp_tool: None,
+            mcp_link_status: None,
+            linked_model_interaction_id: None,
+            linked_model_tool_call_id: None,
             http_host: None,
             http_method: None,
             http_path_class: None,
