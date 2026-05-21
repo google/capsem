@@ -76,6 +76,11 @@ proceeds in this order:
 1. S08b cuts the Network Engine, File Engine, Process Engine, Security Engine,
    Conversation Engine, and Resolved Event Emitter boundaries before public
    surfaces consume the event model.
+   The model/MCP portion of that boundary consumes the side-sprint
+   [S08 Side Sprint - Canonical AI Interaction Evidence](S08-side-canonical-ai-interaction-evidence.md):
+   OpenAI, Anthropic, and Google/Gemini provider parsing must project into a
+   canonical evidence layer before CEL, Sigma, telemetry, quotas, timeline, or
+   plugin contracts rely on model/tool/MCP fields.
 2. S08d records VM-originated security-engine performance before speed claims;
    S09/S11/S12/S13/S14/S15/S16/S16a/S17 then lift CLI, status/debug,
    telemetry, plugins, rule UI, Confirm UX, profile UI, timeline/workbench, and
@@ -600,6 +605,12 @@ a valid claim -- mark it `[ ]` instead.
     canonical resolved-event journal with existing domain tables treated as
     emitter-written projections. Conversation Engine capture and the structured
     `/timeline/{id}` read API become part of the canonical session DB story.
+    Model/MCP events must use the sidecar
+    [Canonical AI Interaction Evidence](S08-side-canonical-ai-interaction-evidence.md)
+    substrate so provider-specific parsers feed stable evidence for model
+    requests, responses, tool calls, tool results, MCP executions, usage, parse
+    status, and linkage. OpenAI, Anthropic, and Google/Gemini are first-slice
+    providers; Bedrock is explicitly later adapter coverage.
     S08b must add service-owned runtime `/enforcement/*` and `/detection/*`
     routes for validate, compile, backtest, live add/update/delete/list, stats,
     plus detection hunt. Supported Sigma detection constructs should lower into

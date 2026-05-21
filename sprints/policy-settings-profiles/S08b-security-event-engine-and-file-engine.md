@@ -27,6 +27,13 @@ parses, and evaluates the same Detection IR fixture. S08b must not treat
 validation, compilation, hot reload, listing, stats, enforcement backtest,
 detection backtest, and detection hunt when Capsem is installed.
 
+[S08 Side Sprint - Canonical AI Interaction Evidence](S08-side-canonical-ai-interaction-evidence.md)
+is a pre-S08b substrate dependency for model/MCP policy quality. It does not
+add another numbered tracker item, but S08b's model and MCP event subjects must
+be projected from its canonical AI evidence layer instead of from thin
+provider-specific parser summaries. OpenAI, Anthropic, and Google/Gemini are
+first-slice providers; Bedrock is not a first-slice requirement.
+
 ## Placement
 
 Runs after [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
@@ -45,8 +52,9 @@ Split Capsem's runtime activity handling into encapsulated engines with crisp
 contracts:
 
 - **Network Engine** owns network transport mechanics: vsock, TLS/HTTP, DNS,
-  MCP framing, model stream parsing, upstream transmission, and protocol-specific
-  response application.
+  MCP framing, model stream parsing, canonical AI interaction evidence
+  projection for guest-originated model/MCP traffic, upstream transmission, and
+  protocol-specific response application.
 - **File Engine** owns file/snapshot mechanics: host file IPC, MCP file tools,
   workspace/fs monitoring, auto-snapshots, manual snapshots, snapshot diff,
   revert/restore, quarantine, path normalization, file identity, and file event
@@ -159,6 +167,13 @@ enum SecurityAction {
     Error(SecurityError),
 }
 ```
+
+Model/MCP subjects are evidence-backed. The Network Engine may keep
+provider-specific wire parsing close to OpenAI/Anthropic/Google/Gemini code,
+but the Security Engine consumes the canonical `ModelInteractionEvidence`
+projection described in the side sprint. CEL, Sigma-derived detection,
+backtest, status, OTel, and timeline code must not depend on provider-specific
+raw JSON paths for normal policy fields.
 
 `Ask` is not a transport action. It is a Security Engine decision/action. The
 Security Engine owns ask/confirm so the resolved event can include the
@@ -518,6 +533,10 @@ The Network Engine owns:
 - DNS request decode, upstream resolution, synthetic answers, NXDOMAIN/refused
   responses, and caching rules;
 - MCP frame decoding/encoding and JSON-RPC response shaping;
+- provider-specific model request/response stream parsing for OpenAI,
+  Anthropic, and Google/Gemini;
+- canonical AI interaction evidence projection for guest-originated model
+  requests/responses, model tool calls/results, and MCP execution linkage;
 - model stream parsing as transport semantics, not security meaning;
 - per-stream ordering and backpressure.
 

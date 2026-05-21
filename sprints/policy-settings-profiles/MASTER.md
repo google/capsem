@@ -77,6 +77,12 @@ and the docs build after fixing asset supervisor finish-event logging.
   useful read models, but S08b must add a canonical resolved-event journal and
   route migrated event-family writes through the emitter instead of direct
   subsystem SQLite writes.
+- **AI/model/MCP evidence is canonical before policy.** Guest-originated model
+  requests, model responses, model tool calls, tool results returned to models,
+  and MCP executions must project into a provider-neutral evidence model before
+  CEL, Sigma, backtest, telemetry, quotas, timeline, plugins, or UI rely on
+  them. OpenAI, Anthropic, and Google/Gemini are first-class first-slice
+  providers; Bedrock is later adapter coverage, not a release blocker.
 - **Everyday work needs a unified structured timeline.** SDK-backed
   Codex/Claude work and terminal fallback workflows must feed a first-class
   Conversation Engine and the single `/timeline/{id}` read model so sessions
@@ -131,7 +137,7 @@ the next starts. The `#` column is the execution index;
 | 18 | [S07b - Capsem Admin Tooling And Profile-Derived Images](S07b-capsem-admin-tooling.md) | Done | Profile-admin validation/schema, required Profile V2 `ui`, `profile init`, guest-config-derived `profile init-builtins` generated `everyday-work`/`coding` base profiles, `settings init`, typed section editability gates, `capsem-admin image plan`, profile-derived `image build-workspace`, public `image build` routing, profile-required local/release asset build recipes, rootfs-generated package/tool inventory, local asset plus per-arch inventory-backed `image verify`, typed guest SPDX SBOM generation, typed doctor-bundle probe ingestion, profile-backed release-image boot gate, `manifest generate`, fast/download `manifest check`, minisign manifest signing/verification, profile/asset signature verification, developer bootstrap proof, OS package layout proof for the `capsem-admin` wrapper/Python payload, typed enforcement/detection pack validate/schema commands, pySigma-backed `detection compile|check` with Detection IR output, Rust Detection IR parity fixtures, corp admin/detection/enforcement docs proof, `capsem-admin doctor`, raw JSON boundary hygiene guards, and bootstrap symlinks for Claude/Gemini/Codex/Cursor have landed. |
 | 19 | [S08 - HTTP Gateway API](S08-http-gateway-api.md) | In Progress | Profile V2 gateway contract slices landed: catalog/revision, profile CRUD/resolve, skills, standard MCP servers, rules/evaluate, confirm-pending read, profile-selected VM create response payloads, `/status` and `/setup/assets` profile asset provenance/progress, `/debug/report` profile provenance, exact typed-error passthrough, debug-report gateway runtime mismatch diagnostics, live selected-profile HTTP create/download/boot/exec with `/info` pin echo, and adversarial typed-error passthrough for malformed, locked, invalid, updating, and revoked Profile V2 cases. Remaining: S15 confirm resolution/stream. |
 | 20 | [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md) | Done | Enforcement and detection are separate profile-owned rule families; enforcement uses real CEL via the Rust `cel` crate family; Sigma is a detection authoring/import format, not a blocking language; `capsem.policy-pack.v1`, `capsem.detection-pack.v1`, `capsem.detection.ir.v1`, normalized event taxonomy, typed finding shape, admin validate/schema/compile/check commands, implementation ordering, testing matrix, and downstream S07b/S08b/S12/S13/S14/S15/S16a/S19 deltas are locked. |
-| 21 | [S08b - Security Event Engine, Network Engine, File Engine, And Process Engine](S08b-security-event-engine-and-file-engine.md) | In Progress | First slice added the `capsem-security-engine` contract crate with normalized security events, resolved-event actions, detection findings, quota dimensions, reserved throttle action, and serialization/strictness tests. Remaining: split/wire Network/File/Process/Security engines, runtime enforcement/detection registries, emitter, and canonical `session.db` journal. |
+| 21 | [S08b - Security Event Engine, Network Engine, File Engine, And Process Engine](S08b-security-event-engine-and-file-engine.md) | In Progress | First slice added the `capsem-security-engine` contract crate with normalized security events, resolved-event actions, detection findings, quota dimensions, reserved throttle action, and serialization/strictness tests. Uses [S08 Side Sprint - Canonical AI Interaction Evidence](S08-side-canonical-ai-interaction-evidence.md) as the model/MCP evidence substrate. Remaining: split/wire Network/File/Process/Security engines, runtime enforcement/detection registries, emitter, and canonical `session.db` journal. |
 | 22 | [S08c - Rule Corpus, Backtest, And Admin Parity](S08c-rule-corpus-admin-parity.md) | Not Started | Build the shared enforcement/detection/event corpus, offline `capsem-admin` backtest parity, Rust runtime parity, and real-session fixture generation after S08b's journal stabilizes. |
 | 23 | [S08d - Security Engine Performance Benchmarks](S08d-engine-performance-benchmarks.md) | Not Started | Extend benchmarking to prove VM-originated enforcement allow/block/ask latency, detection matching speed, rule-count scaling, backtest/hunt scan rates, and artifact-backed marketing performance claims at the exit of S08. |
 | 24 | [S09 - CLI Integration](S09-cli-integration.md) | Not Started | Add `profile`, `mcp`, `skills`, `enforcement`, `detection`, `confirm`, settings validation, and profile-backed VM create CLI flows. |
@@ -181,6 +187,10 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
   HTTP/DNS/MCP/file telemetry paths. S08b must split the Network Engine, File
   Engine, Process Engine, Security Engine, and Resolved Event Emitter first,
   with file/snapshot/process activity represented as normalized security events.
+- Do not write CEL/Sigma/model/MCP rules, telemetry, timeline blocks, or quota
+  dimensions directly against provider-specific model JSON. S08b must consume
+  the canonical AI interaction evidence side sprint for OpenAI, Anthropic, and
+  Google/Gemini before policy surfaces freeze.
 - Do not add more independent `session.db` tables as security authority. S08b
   must define the canonical resolved-event journal and decide which existing
   domain tables remain projections/read models.
