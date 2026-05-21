@@ -2,7 +2,10 @@
 
 ## Status
 
-Not started. Inserted during the 2026-05-19 architecture regroup after S08a.
+In progress. Inserted during the 2026-05-19 architecture regroup after S08a.
+First implementation slice added `crates/capsem-security-engine` with the
+shared normalized event/result/action contract, detection finding shape,
+resolved-event steps, quota dimensions, and reserved throttle action.
 
 S08a fixes the input contract for this sprint: enforcement and detection are
 separate profile-owned rule families with separate public route groups.

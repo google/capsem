@@ -6,6 +6,7 @@ members = [
     "crates/capsem-app",
     "crates/capsem-agent",
     "crates/capsem-logger",
+    "crates/capsem-security-engine",
     "crates/capsem-process",
     "crates/capsem-service",
     "crates/capsem",
