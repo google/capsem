@@ -225,3 +225,186 @@ fn resolved_event_fixture_pins_schema_version_and_findings() {
     assert_eq!(resolved.detection_findings[0].event_id, "evt-http");
     assert!(matches!(resolved.final_action, SecurityAction::Continue));
 }
+
+#[test]
+fn resolved_event_emitter_records_sink_delivery_and_shared_ids() {
+    let mut emitter = ResolvedEventEmitter::default();
+    emitter.add_sink(Box::new(RecordingSink::new(
+        "session_db",
+        SinkRequirement::Required,
+    )));
+    emitter.add_sink(Box::new(RecordingSink::new(
+        "telemetry",
+        SinkRequirement::BestEffort,
+    )));
+
+    let outcome = emitter.emit(resolved_event_with_finding("evt-emit", "finding-emit"));
+
+    assert!(!outcome.required_sink_failed);
+    assert_eq!(outcome.resolved_event.emitter_results.len(), 2);
+    assert!(outcome
+        .resolved_event
+        .emitter_results
+        .iter()
+        .all(|result| result.status == StepStatus::Applied));
+    assert_eq!(
+        emitter.deliveries(),
+        &[
+            SinkDelivery {
+                sink: "session_db".into(),
+                event_id: "evt-emit".into(),
+                finding_ids: vec!["finding-emit".into()],
+            },
+            SinkDelivery {
+                sink: "telemetry".into(),
+                event_id: "evt-emit".into(),
+                finding_ids: vec!["finding-emit".into()],
+            },
+        ]
+    );
+}
+
+#[test]
+fn resolved_event_emitter_marks_required_sink_failure() {
+    let mut emitter = ResolvedEventEmitter::default();
+    emitter.add_sink(Box::new(FailingSink::new(
+        "session_db",
+        SinkRequirement::Required,
+    )));
+    emitter.add_sink(Box::new(RecordingSink::new(
+        "telemetry",
+        SinkRequirement::BestEffort,
+    )));
+
+    let outcome = emitter.emit(resolved_event_with_finding("evt-fail", "finding-fail"));
+
+    assert!(outcome.required_sink_failed);
+    assert_eq!(outcome.resolved_event.emitter_results.len(), 2);
+    assert_eq!(outcome.resolved_event.emitter_results[0].sink, "session_db");
+    assert_eq!(
+        outcome.resolved_event.emitter_results[0].status,
+        StepStatus::Error
+    );
+    assert_eq!(outcome.resolved_event.emitter_results[1].sink, "telemetry");
+    assert_eq!(
+        outcome.resolved_event.emitter_results[1].status,
+        StepStatus::Applied
+    );
+}
+
+fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecurityEvent {
+    let event = SecurityEvent::http(
+        SecurityEventCommon {
+            event_id: event_id.into(),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Network,
+            enforceability: Enforceability::InlineBlockable,
+            trace_id: None,
+            span_id: None,
+            timestamp_unix_ms: 1_789,
+            vm_id: Some("vm-1".into()),
+            session_id: Some("session-1".into()),
+            profile_id: Some("coding".into()),
+            profile_revision: Some("rev-a".into()),
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: Some("user-1".into()),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        HttpSecuritySubject {
+            method: "GET".into(),
+            host: "example.test".into(),
+            path_class: "external".into(),
+            request_bytes: 64,
+            response_bytes: None,
+        },
+    );
+
+    ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event,
+        steps: Vec::new(),
+        detection_findings: vec![DetectionFinding {
+            finding_id: finding_id.into(),
+            event_id: event_id.into(),
+            rule_id: "rule-1".into(),
+            pack_id: "pack-1".into(),
+            sigma_id: None,
+            title: "finding".into(),
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            tags: Vec::new(),
+        }],
+        final_action: SecurityAction::Continue,
+        emitter_results: Vec::new(),
+    }
+}
+
+struct RecordingSink {
+    name: String,
+    requirement: SinkRequirement,
+}
+
+impl RecordingSink {
+    fn new(name: &str, requirement: SinkRequirement) -> Self {
+        Self {
+            name: name.into(),
+            requirement,
+        }
+    }
+}
+
+impl ResolvedEventSink for RecordingSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn requirement(&self) -> SinkRequirement {
+        self.requirement
+    }
+
+    fn emit(&mut self, event: &ResolvedSecurityEvent) -> Result<(), EmitterError> {
+        assert_eq!(event.schema_version, RESOLVED_EVENT_SCHEMA_VERSION);
+        Ok(())
+    }
+}
+
+struct FailingSink {
+    name: String,
+    requirement: SinkRequirement,
+}
+
+impl FailingSink {
+    fn new(name: &str, requirement: SinkRequirement) -> Self {
+        Self {
+            name: name.into(),
+            requirement,
+        }
+    }
+}
+
+impl ResolvedEventSink for FailingSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn requirement(&self) -> SinkRequirement {
+        self.requirement
+    }
+
+    fn emit(&mut self, _event: &ResolvedSecurityEvent) -> Result<(), EmitterError> {
+        Err(EmitterError::new("sink unavailable"))
+    }
+}

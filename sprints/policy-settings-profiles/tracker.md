@@ -634,6 +634,11 @@ a valid claim -- mark it `[ ]` instead.
     snapshot events plus a resolved-event finding fixture. Verification:
     `cargo test -p capsem-security-engine` passed with 5 tests and
     `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Fifth contract slice added the first resolved-event emitter abstraction:
+    required/best-effort sink requirements, delivery bookkeeping, sink failure
+    recording on `ResolvedSecurityEvent`, and required-sink failure reporting.
+    Verification: `cargo test -p capsem-security-engine` passed with 7 tests
+    and `cargo test -p capsem-core --test security_packs` passed with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

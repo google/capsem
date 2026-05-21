@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub const SECURITY_EVENT_SCHEMA_VERSION: u32 = 1;
 pub const RESOLVED_EVENT_SCHEMA_VERSION: u32 = 1;
@@ -666,6 +667,102 @@ pub struct EmitterResult {
     pub status: StepStatus,
     #[serde(default)]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SinkRequirement {
+    Required,
+    BestEffort,
+}
+
+#[derive(Debug, Error)]
+#[error("{message}")]
+pub struct EmitterError {
+    message: String,
+}
+
+impl EmitterError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+pub trait ResolvedEventSink {
+    fn name(&self) -> &str;
+    fn requirement(&self) -> SinkRequirement;
+    fn emit(&mut self, event: &ResolvedSecurityEvent) -> Result<(), EmitterError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SinkDelivery {
+    pub sink: String,
+    pub event_id: String,
+    pub finding_ids: Vec<String>,
+}
+
+#[derive(Default)]
+pub struct ResolvedEventEmitter {
+    sinks: Vec<Box<dyn ResolvedEventSink>>,
+    deliveries: Vec<SinkDelivery>,
+}
+
+impl ResolvedEventEmitter {
+    pub fn add_sink(&mut self, sink: Box<dyn ResolvedEventSink>) {
+        self.sinks.push(sink);
+    }
+
+    pub fn emit(&mut self, mut event: ResolvedSecurityEvent) -> EmitOutcome {
+        event.emitter_results.clear();
+        let mut required_sink_failed = false;
+        for sink in &mut self.sinks {
+            let sink_name = sink.name().to_owned();
+            match sink.emit(&event) {
+                Ok(()) => {
+                    self.deliveries.push(SinkDelivery {
+                        sink: sink_name.clone(),
+                        event_id: event.event.common.event_id.clone(),
+                        finding_ids: event
+                            .detection_findings
+                            .iter()
+                            .map(|finding| finding.finding_id.clone())
+                            .collect(),
+                    });
+                    event.emitter_results.push(EmitterResult {
+                        sink: sink_name,
+                        status: StepStatus::Applied,
+                        error: None,
+                    });
+                }
+                Err(error) => {
+                    if sink.requirement() == SinkRequirement::Required {
+                        required_sink_failed = true;
+                    }
+                    event.emitter_results.push(EmitterResult {
+                        sink: sink_name,
+                        status: StepStatus::Error,
+                        error: Some(error.to_string()),
+                    });
+                }
+            }
+        }
+        EmitOutcome {
+            resolved_event: event,
+            required_sink_failed,
+        }
+    }
+
+    pub fn deliveries(&self) -> &[SinkDelivery] {
+        &self.deliveries
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitOutcome {
+    pub resolved_event: ResolvedSecurityEvent,
+    pub required_sink_failed: bool,
 }
 
 #[cfg(test)]
