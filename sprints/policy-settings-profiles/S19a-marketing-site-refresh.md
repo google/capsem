@@ -44,12 +44,17 @@ The landing page should be organized around four product pillars:
    - VM isolation;
    - release SBOMs, SLSA provenance, signed manifests, and package
      attestations as supply-chain security proof points;
-   - profile-owned policy packs;
-   - real CEL enforcement after S08a;
-   - Security Engine pipeline: preprocessors, policy, ask/confirm, detection,
+   - profile-owned enforcement packs and detection packs;
+   - realtime CEL enforcement with allow/block/ask/rewrite decisions;
+   - Sigma-compatible detection over normalized Capsem events, with backtest and
+     fast matching over HTTP, DNS, MCP, model, file, process, and timeline
+     activity;
+   - Security Engine pipeline: preprocessors, enforcement, ask/confirm, detection,
      postprocessors, emitter;
    - file, process, network, DNS, MCP, and model activity lifted into normalized
      events;
+   - Sigma forensic analysis of a specific timeline/session using the same
+     unified event model as live detection;
    - ask/confirm, quarantine, restore/revert, and auditable decisions.
 3. **Scale Your Productivity Without Drag**
    - low boot time and fast execution;
@@ -61,13 +66,14 @@ The landing page should be organized around four product pillars:
 4. **Enterprise Ready**
    - signed profile catalogs and profile lifecycle states;
    - corp profiles, package/tool contracts, profile-owned assets, and VM pins;
-   - `capsem-admin` for profile/settings/policy/detection/image/manifest
+   - `capsem-admin` for profile/settings/enforcement/detection/image/manifest
      workflows;
    - OpenTelemetry and VM health: model calls, provider/model summaries, token
-     counts, estimated cost, findings, policy counters, activity counters;
-   - forensic `session.db`, structured timeline, support bundles, and audit
-     trails;
-   - SOAR/remote policy/plugin integration direction.
+     counts, estimated cost, detection findings, enforcement counters,
+     forward-plugin health, and activity counters;
+   - forensic `session.db`, structured timeline, Sigma hunt over a specific
+     timeline/session, support bundles, and audit trails;
+   - SOAR/centralized forward-plugin integration direction.
 
 ## Content Requirements
 
@@ -81,6 +87,16 @@ The landing page should be organized around four product pillars:
   the wording aligned with S07b: host Rust workspace SBOM is shipped/attested;
   profile-derived guest package/tool SBOM remains image-verification work until
   that sprint lands it.
+- Add security copy for realtime enforcement and detection as first-class
+  features: CEL-backed enforcement for live decisions, Sigma-compatible
+  detection with backtest, default diverse evidence samples, fast matching over
+  normalized events, and forensic Sigma analysis against a chosen timeline or
+  session.
+- Explain the unified event/timeline story as the reason enforcement, Sigma
+  findings, telemetry, audit, and support bundles line up. Use strong language
+  around a "bulletproof forensic trail" only when paired with concrete proof
+  points: stable event ids, VM/profile/user attribution, resolved-event
+  journals, backtest evidence rows, and timeline/session replay.
 - Distinguish shipped/near-term capabilities from roadmap items without making
   the page timid. The page can say where Capsem is going, but release claims
   must match the sprint tracker.
@@ -109,9 +125,9 @@ The landing page should be organized around four product pillars:
   four-pillar story cannot be represented cleanly with the current sections.
 - The performance/scaling pillar should feel operational and concrete, not like
   benchmark theater. Use numbers only when measured or documented by a sprint.
-- The enterprise pillar should mention observability, forensic trails, SOAR/
-  remote policy, OpenTelemetry, and corp profile governance as one coherent
-  operating story.
+- The enterprise pillar should mention observability, forensic trails, Sigma
+  timeline analysis, SOAR/centralized forward plugin, OpenTelemetry, and corp
+  profile governance as one coherent operating story.
 
 ## Testing Matrix
 
@@ -135,6 +151,7 @@ The landing page should be organized around four product pillars:
   Scale Your Productivity Without Drag, and Enterprise Ready.
 - All feature claims align with the sprint tracker and release state.
 - Security, detection, observability, corp profile, forensic, SOAR/remote
-  policy, and OpenTelemetry capabilities are represented without overclaiming.
+  enforcement/forward-plugin, and OpenTelemetry capabilities are represented
+  without overclaiming.
 - Site build and responsive visual verification pass, including the hero
   screenshot plus one screenshot for each of the four pillar sections.

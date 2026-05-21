@@ -150,6 +150,7 @@ pub struct VmMetricsSnapshot {
     pub dns: VmDnsMetrics,
     pub model: VmModelMetrics,
     pub detection: VmDetectionMetrics,
+    pub forward_plugin: VmForwardPluginMetrics,
     pub mcp: VmMcpMetrics,
     pub filesystem: VmFilesystemMetrics,
     pub captured_at_unix_ms: u64,
@@ -347,6 +348,29 @@ but OTel only exports aggregate counters and bounded summaries. The live
 accumulator records runtime match totals; S08b/S08c own historical backtest
 correctness and evidence diversity.
 
+### Centralized Forward Plugin
+
+S13's forward plugin is reflected in VM health and OTel without becoming a
+separate security truth source. It reports health and attribution for decisions
+or observer exports that already flow through the resolved-event pipeline.
+
+Counters:
+
+- `forward_plugin_decision_requests_total`
+- `forward_plugin_decision_allows_total`
+- `forward_plugin_decision_denies_total`
+- `forward_plugin_decision_asks_total`
+- `forward_plugin_observed_events_total`
+- `forward_plugin_observed_findings_total`
+- `forward_plugin_errors_total`
+- `forward_plugin_timeouts_total`
+
+JSON-only summaries include endpoint health, last successful exchange time,
+last typed error, and bounded outcome summaries. Exported labels stay bounded:
+profile id/revision, VM id, plugin mode (`decision | observer`), outcome, and
+coarse error class. Raw endpoint URLs, auth details, event evidence, and
+unbounded error strings are never labels.
+
 ### Resources
 
 Available now (host-side, deterministic):
@@ -468,6 +492,7 @@ starts.
   including unknown provider/model collapse and integer-micros cost handling.
 - Unit tests for detection metric counters once S08a/S08b provide the finding
   schema.
+- Unit tests for forward-plugin health counters and bounded summaries.
 - `seed_accumulator_from_session_db` test: persistent VM with an
   existing session.db starts with the durable totals; ephemeral VM or
   missing DB starts at zero.
@@ -496,6 +521,8 @@ starts.
   total.
 - Test that model provider/model/cost summaries and detection finding counters
   survive gateway translation without label/cardinality leaks.
+- Test that forward-plugin health and counters survive gateway translation
+  without endpoint/auth/error-string label leaks.
 
 ### Client / UI
 
@@ -505,6 +532,8 @@ starts.
 - Ask pass rate derives from `total_asks` and `asks_allowed` only.
 - Enforcement/detection match stats render separately and do not collapse into
   a generic policy/rules total.
+- Forward-plugin decision/observer health renders as a live VM status point,
+  linked to local timeline/backtest/hunt evidence rather than duplicating it.
 - Resource labels show configured / host-side / guest-side distinctly.
 
 ### Integration

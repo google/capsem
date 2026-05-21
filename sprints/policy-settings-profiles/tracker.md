@@ -619,12 +619,15 @@ a valid claim -- mark it `[ ]` instead.
     stale/partial metrics state.
 26. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
-    cost usage plus detection finding health. Running status reads memory only;
+    cost usage, enforcement/detection match stats, detection finding health,
+    and centralized forward-plugin health. Running status reads memory only;
     persistent VMs seed/recompute from `session.db` exactly once at load.
 27. [ ] [S13 - Remote enforcement plugin](S13-remote-policy-plugin.md)
     -- decision mode participates only in `/enforcement/*`; observer mode can
     receive resolved events and detection findings but cannot convert detection
-    into blocking decisions.
+    into blocking decisions. This is also the centralized forward-plugin sprint:
+    forwarded decisions/findings keep the same resolved-event ids and expose
+    VM-status/OTel health without bypassing local runtime APIs.
 28. [ ] [S14 - Rules UI components](S14-rules-ui-components.md)
     -- enforcement-rule editor component is consumed by S15; detection
     rule/finding/backtest UX consumes S08b/S08c.
@@ -642,15 +645,21 @@ a valid claim -- mark it `[ ]` instead.
 32. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
 33. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
     -- adds first-class enforcement and detection-format pages, corporate admin
-    security links, `capsem-admin` enforcement/detection validation docs, and VM
-    health/OTel docs for model/provider/token/cost and detection metrics.
+    security links, `capsem-admin` enforcement/detection validation/backtest
+    docs, add-detection/add-enforcement admin guides, centralized forward-plugin
+    guide, telemetry extension guide, and VM health/OTel docs for model/provider/
+    token/cost, enforcement counters, detection metrics, and unified event
+    evidence.
 34. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
     -- refresh the landing page around four pillars: Ship Fast With AI, Ship
     Safely, Scale Your Productivity Without Drag, and Enterprise Ready. Include
-    shipped and planned profile/security/performance/enterprise features without
-    overclaiming beyond the sprint tracker. Current-site baseline screenshots
-    were captured in `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`;
-    refreshed pillar screenshots remain part of S19a's final gate.
+    realtime CEL enforcement, Sigma-compatible detection with backtest and
+    forensic timeline/session analysis, fast matching over unified events,
+    forward-plugin observability, and shipped/planned profile/security/
+    performance/enterprise features without overclaiming beyond the sprint
+    tracker. Current-site baseline screenshots were captured in
+    `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`; refreshed
+    pillar screenshots remain part of S19a's final gate.
 35. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- core Profile V2 release replay and verification gate.
 36. [ ] [S20 - OpenAPI to MCP](S20-openapi-to-mcp.md)

@@ -4,6 +4,12 @@
 
 Add a service-scoped remote enforcement plugin and observer integration.
 
+This is also the centralized forward-plugin sprint. A central controller can
+receive realtime enforcement requests in decision mode and receive resolved
+events/detection findings in observer mode, but the local Capsem service remains
+the API owner for `/enforcement/*`, `/detection/*`, match stats, backtest, hunt,
+and resolved-event journaling.
+
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
@@ -32,11 +38,20 @@ backtest, and detection hunt remain owned by the Capsem service APIs.
 - Define forwarded events/context.
 - Define fail-open/fail-closed behavior by decision surface.
 - Define separate decision-mode and observer-mode payloads.
+- Define centralized forward-plugin payloads for:
+  - realtime enforcement decision requests and replies;
+  - observer-mode resolved events with attached detection findings;
+  - registry/stat deltas needed by centralized dashboards without bypassing
+    local `/enforcement/*` and `/detection/*` APIs.
 - Wire remote decisions into enforcement paths without profile TOML depending
   on the endpoint.
 - Ensure remote-origin decisions, confirms, timeouts, denials, and observer
   exports are attached to the resolved event before telemetry/audit/logging
   fan-out.
+- Add docs requirements for centralized operation: how admins configure the
+  forward plugin, how realtime enforcement differs from detection, how
+  centralized review sees the same event ids as local timeline/backtest/hunt,
+  and how VM status/OTel expose remote decision and observer health.
 - Test allow/block/ask, endpoint failure, timeout, auth failure, redaction, and
   audit output.
 
@@ -66,8 +81,11 @@ authorities for the same `decision = "ask"` resolution path:
 
 - Unit/contract: request/decision shape tests.
 - Functional: remote decision tests.
+- Functional: centralized forward-plugin decision and observer payload tests.
 - Adversarial: endpoint failure, timeout, invalid decision, auth failure.
 - E2E/VM: remote block/allow proof.
 - Telemetry: audit output proves remote decisions, observer exports, and
-  detection findings remain separate from enforcement decisions.
+  detection findings remain separate from enforcement decisions; VM status
+  exposes forward-plugin health and last-error summaries without high-cardinality
+  labels.
 - Performance: timeout budget tested.

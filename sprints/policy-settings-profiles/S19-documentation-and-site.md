@@ -132,6 +132,16 @@ Under `docs/src/content/docs/`, likely pages:
   generate/check/sign, offline enforcement/detection pack validation/backtest,
   PyPI install for enterprise admins, bootstrap editable install for
   development, and release package verification.
+- `configuration/capsem-admin-detection.md` - how corp admins add detection:
+  author Sigma-compatible detection packs, validate/compile/check with
+  `capsem-admin`, run backtests over corpora or session exports, interpret the
+  default 100 diverse matched events, publish packs through signed profiles,
+  and use Sigma for forensic analysis of a specific timeline/session.
+- `configuration/capsem-admin-enforcement.md` - how corp admins add realtime
+  enforcement: author CEL-backed enforcement packs, validate/compile/backtest
+  with `capsem-admin`, publish through signed profiles, hot-load through the
+  service `/enforcement/*` registry, and understand allow/block/ask/rewrite
+  behavior at runtime.
 - `configuration/corporate-deployment.md` - corp roots, governance, locks,
   custom images, rollout patterns.
 - `configuration/corporate-profiles.md` - enterprise profile format guide:
@@ -140,6 +150,11 @@ Under `docs/src/content/docs/`, likely pages:
 - `configuration/corporate-security.md` - corp admin entry page linking profile
   governance, enforcement packs, detection packs, remote enforcement,
   telemetry, and audit/export operations.
+- `configuration/centralized-forward-plugin.md` - planned centralized forward
+  plugin guide: service settings, authentication, decision-mode forwarding,
+  observer-mode event/finding forwarding, failure semantics, match-count
+  reporting, and the contract that a centralized controller can observe detections
+  without silently turning findings into enforcement.
 - `development/capsem-admin.md` - developer reference for the admin package:
   module layout, Pydantic models, JSON I/O boundaries, schema generation,
   builder integration, doctor integration, test fixtures, bootstrap editable
@@ -160,6 +175,10 @@ Under `docs/src/content/docs/`, likely pages:
   ask/enforcement,
   HTTP/DNS/MCP/file/process counters, OTel export rules, and the no-hot-SQL
   accumulator/boot-recompute contract.
+- `observability/extending-telemetry.md` - how new engines/rule packs/plugins
+  add unified telemetry: emit normalized resolved events first, update typed
+  VM accumulators, preserve low-cardinality OTel labels, expose live VM status
+  fields, and keep full evidence in timeline/backtest/hunt rather than metrics.
 - Updates to existing `architecture/settings.md`,
   `architecture/custom-images.md`, `security/overview.md`,
   `security/network-isolation.md`, and `debugging/troubleshooting.md` as needed.
@@ -227,6 +246,20 @@ Final paths should follow the actual docs tree present when this sprint starts.
       and the Pydantic model layer that backs
       validation/errors/reports through `model_validate_json()` /
       `TypeAdapter.validate_json()` and `model_dump_json()`.
+- [ ] Write "add detection" admin guide:
+      choose the target normalized event families, author Sigma-compatible
+      rules, validate with pySigma-backed `capsem-admin`, compile/check against
+      fixtures, backtest against a shared corpus or selected session timeline,
+      review the default 100 diverse evidence rows, publish through a signed
+      profile, and verify findings in timeline, VM status, OTel summaries, and
+      detection stats. Include forensic use of Sigma against one timeline or
+      session journal without installing the detection pack live.
+- [ ] Write "add enforcement" admin guide:
+      choose the synchronous enforcement point, author CEL rules, validate and
+      backtest offline with `capsem-admin`, publish through signed profiles,
+      hot-load or update through `/enforcement/*`, explain realtime
+      allow/block/ask/rewrite behavior, and verify enforcement match counters,
+      resolved-event evidence, audit logs, and VM health.
 - [ ] Write developer `capsem-admin` internals page:
       package/module layout, Pydantic model boundaries, JSON Schema artifact,
       profile/image/manifest/doctor modules, how Justfile/bootstrap integrate,
@@ -237,6 +270,12 @@ Final paths should follow the actual docs tree present when this sprint starts.
       persistent VM pins, and no implicit migration on profile update.
 - [ ] Write corporate deployment guide.
 - [ ] Write telemetry and remote enforcement configuration guide.
+- [ ] Write centralized forward-plugin guide for the not-yet-implemented S13
+      plugin: decision-mode forwarding for realtime enforcement, observer-mode
+      forwarding for resolved events and detection findings, auth/timeout/
+      fail-open/fail-closed semantics, centralized rule/update flow, and how
+      forwarded decisions/findings are represented in the same resolved event,
+      telemetry, audit, timeline, and VM status model.
 - [ ] Write VM health/metrics guide covering live status values, boot-time
       recompute/seed from `session.db`, no hot-path SQL reads, OTel labels,
       redaction/cardinality rules, model call count, provider/model summaries,
@@ -244,6 +283,11 @@ Final paths should follow the actual docs tree present when this sprint starts.
       those values appear in status, `/info`, `/metrics/json`, `/metrics`,
       gateway status, and UI panels. Make clear that full local evidence appears
       in backtest/hunt/timeline APIs, not as OTel labels.
+- [ ] Write "extend telemetry" guide:
+      how engine authors, detection/enforcement pack authors, and plugins add
+      new fields safely: normalized event field first, resolved-event evidence
+      second, VM accumulator summary third, OTel labels only when bounded, and
+      UI/status rendering through the typed metrics contract.
 - [ ] Write custom manifest/profile payload/assets/images/rootfs dependency
   guide or update the existing page.
 - [ ] Remove docs that tell admins to edit `guest/config` image settings by hand
@@ -321,8 +365,9 @@ listed revision that must not be installed or launched is `revoked`.
   S07b lands.
 - Telemetry: docs cover OpenTelemetry endpoint behavior, redaction, retry, and
   failure semantics after S12, including live VM health model metrics
-  (provider, model, call count, token counts, estimated cost) and detection
-  finding attribution.
+  (provider, model, call count, token counts, estimated cost), enforcement
+  match counters, detection finding attribution, centralized forward-plugin
+  attribution, and the unified event/timeline evidence model.
 - Performance: docs mention profile discovery/remote enforcement timeout behavior
   only once measured or specified.
 - Missing/deferred: concrete page paths and examples must be finalized after
