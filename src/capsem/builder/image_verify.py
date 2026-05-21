@@ -60,6 +60,7 @@ class ImageInventoryVerification(StrictModel):
     arch: ImageVerificationArch
     path: str | None = None
     ok: bool
+    failure: Literal["missing"] | None = None
     package_contract: list[ImageContractVerification] = Field(default_factory=list)
     tool_contract: list[ImageContractVerification] = Field(default_factory=list)
 
@@ -283,6 +284,14 @@ def verify_image_assets(
     for arch in plan.arches:
         inventory_tuple = inventory_by_arch.get(arch.arch)
         if inventory_tuple is None:
+            inventory_reports.append(
+                ImageInventoryVerification(
+                    arch=arch.arch,
+                    path=str(assets_dir / arch.arch / "image-inventory.json"),
+                    ok=False,
+                    failure="missing",
+                )
+            )
             continue
         inventory_path, inventory = inventory_tuple
         package_contract = _verify_package_contract(plan, inventory)

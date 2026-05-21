@@ -429,10 +429,11 @@ a valid claim -- mark it `[ ]` instead.
     `capsem-admin image verify` now auto-discovers
     `<assets-dir>/<arch>/image-inventory.json`, emits `inventories[]` contract
     rows by arch, supports `--inventory FILE` only with a single `--arch`, and
-    supports inventory directories for all-arch alternate layouts. Verification:
-    `uv run python -m pytest tests/test_image_verify.py -q` passed with 12
-    tests, and docs now list `image-inventory.json` in every arch asset
-    directory.
+    supports inventory directories for all-arch alternate layouts. Missing
+    inventory for any selected arch fails closed instead of downgrading to
+    asset-only proof. Verification: `uv run python -m pytest
+    tests/test_image_verify.py -q` passed with 13 tests, and docs now list
+    `image-inventory.json` in every arch asset directory.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

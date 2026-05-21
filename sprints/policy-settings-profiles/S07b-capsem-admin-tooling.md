@@ -314,8 +314,11 @@ Twentieth slice landed on 2026-05-21:
   must either use the standard auto-discovered asset layout or pass an
   inventory directory containing `<arch>/image-inventory.json`. This avoids
   accidentally proving an arm64 build with x86_64 inventory data.
+- Missing inventory for any selected architecture now fails closed with a
+  per-arch `inventories[]` row carrying `failure = "missing"`; image
+  verification no longer silently downgrades to asset-only proof.
 - Verification: `uv run python -m pytest tests/test_image_verify.py -q` passed
-  with 12 tests. Docs now show `image-inventory.json` beside
+  with 13 tests. Docs now show `image-inventory.json` beside
   `tool-versions.txt` in every arch asset directory.
 
 ## Why This Sprint Exists
@@ -659,7 +662,7 @@ The checker must fail closed for:
       profile/asset signature verification have landed.
 - [~] Implement image verification against profile package/tool contract. Local
       profile-declared asset existence/size/hash verification and typed
-      package/tool inventory extraction plus per-architecture contract
+      package/tool inventory extraction plus required per-architecture contract
       comparison have landed; release host SBOM attestation covers `.pkg` and
       `.deb`; guest SBOM linkage and in-guest image proof remain.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
@@ -696,10 +699,11 @@ The checker must fail closed for:
   manifest/payload id or revision mismatch, missing per-arch asset table, URL
   scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch, missing
   signature URL, hash mismatch after download, image inventory missing package
-  or required tool, image inventory version mismatch, ambiguous all-arch
-  single-file inventory input, duplicate profile revision, revoked current
-  profile, path traversal, stale manifest rollback, and untyped/raw dict or
-  `json.loads`/`json.dumps` bypass attempts in admin module tests.
+  or required tool, missing selected-arch image inventory, image inventory
+  version mismatch, ambiguous all-arch single-file inventory input, duplicate
+  profile revision, revoked current profile, path traversal, stale manifest
+  rollback, and untyped/raw dict or `json.loads`/`json.dumps` bypass attempts
+  in admin module tests.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default, boot at least the host-arch image through
   Capsem, and run an in-guest verification probe that proves declared

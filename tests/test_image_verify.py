@@ -126,11 +126,22 @@ def _profile_with_package_tool_contract() -> tuple[
     return profile, derive_image_plan(profile), payloads
 
 
+def _matching_inventory_map(tmp_path: Path) -> dict[str, tuple[Path, ImageInventory]]:
+    return {
+        "arm64": (tmp_path / "arm64" / "image-inventory.json", _matching_inventory()),
+        "x86_64": (tmp_path / "x86_64" / "image-inventory.json", _matching_inventory()),
+    }
+
+
 def test_verify_image_assets_accepts_matching_local_assets(tmp_path: Path) -> None:
-    _, plan, payloads = _profile_with_local_asset_contract()
+    _, plan, payloads = _profile_with_package_tool_contract()
     _write_assets(tmp_path, payloads)
 
-    report = verify_image_assets(plan, tmp_path)
+    report = verify_image_assets(
+        plan,
+        tmp_path,
+        inventories=_matching_inventory_map(tmp_path),
+    )
     dumped = dump_image_verification_report_json(report)
     reparsed = ImageVerificationReport.model_validate_json(dumped)
 
@@ -139,12 +150,27 @@ def test_verify_image_assets_accepts_matching_local_assets(tmp_path: Path) -> No
     assert report.profile_id == "corp-dev"
     assert len(report.assets) == 6
     assert {asset.kind for asset in report.assets} == {"kernel", "initrd", "rootfs"}
+    assert {inventory.arch for inventory in report.inventories} == {"arm64", "x86_64"}
+
+
+def test_verify_image_assets_fails_closed_without_selected_arch_inventory(
+    tmp_path: Path,
+) -> None:
+    _, plan, payloads = _profile_with_package_tool_contract()
+    _write_assets(tmp_path, payloads)
+
+    report = verify_image_assets(plan, tmp_path)
+
+    assert report.ok is False
+    assert {inventory.arch for inventory in report.inventories} == {"arm64", "x86_64"}
+    assert {inventory.failure for inventory in report.inventories} == {"missing"}
 
 
 def test_verify_image_inventory_accepts_matching_package_and_tool_contract(
     tmp_path: Path,
 ) -> None:
-    _, plan, payloads = _profile_with_package_tool_contract()
+    profile, _, payloads = _profile_with_package_tool_contract()
+    plan = derive_image_plan(profile, arch="arm64")
     _write_assets(tmp_path, payloads)
     inventory = _matching_inventory()
     inventory_path = tmp_path / "arm64-inventory.json"
@@ -177,7 +203,8 @@ def test_verify_image_inventory_accepts_matching_package_and_tool_contract(
 def test_verify_image_inventory_reports_missing_and_mismatched_contract(
     tmp_path: Path,
 ) -> None:
-    _, plan, payloads = _profile_with_package_tool_contract()
+    profile, _, payloads = _profile_with_package_tool_contract()
+    plan = derive_image_plan(profile, arch="x86_64")
     _write_assets(tmp_path, payloads)
     inventory = ImageInventory(
         apt={"curl": "7.0.0"},
@@ -208,11 +235,15 @@ def test_verify_image_inventory_reports_missing_and_mismatched_contract(
 
 
 def test_verify_image_assets_reports_missing_asset(tmp_path: Path) -> None:
-    _, plan, payloads = _profile_with_local_asset_contract()
+    _, plan, payloads = _profile_with_package_tool_contract()
     payloads.pop(("arm64", "rootfs.squashfs"))
     _write_assets(tmp_path, payloads)
 
-    report = verify_image_assets(plan, tmp_path)
+    report = verify_image_assets(
+        plan,
+        tmp_path,
+        inventories=_matching_inventory_map(tmp_path),
+    )
 
     assert report.ok is False
     missing = [asset for asset in report.assets if not asset.exists]
@@ -223,11 +254,15 @@ def test_verify_image_assets_reports_missing_asset(tmp_path: Path) -> None:
 
 
 def test_verify_image_assets_reports_hash_mismatch(tmp_path: Path) -> None:
-    _, plan, payloads = _profile_with_local_asset_contract()
+    _, plan, payloads = _profile_with_package_tool_contract()
     payloads[("x86_64", "vmlinuz")] = b"x" * len(payloads[("x86_64", "vmlinuz")])
     _write_assets(tmp_path, payloads)
 
-    report = verify_image_assets(plan, tmp_path)
+    report = verify_image_assets(
+        plan,
+        tmp_path,
+        inventories=_matching_inventory_map(tmp_path),
+    )
 
     assert report.ok is False
     mismatch = [asset for asset in report.assets if asset.failure == "hash_mismatch"]
@@ -265,11 +300,13 @@ def test_verify_image_assets_rejects_url_without_filename(tmp_path: Path) -> Non
 
 
 def test_capsem_admin_image_verify_accepts_matching_assets(tmp_path: Path) -> None:
-    profile, _, payloads = _profile_with_local_asset_contract()
+    profile, _, payloads = _profile_with_package_tool_contract()
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
     assets_dir = tmp_path / "assets"
     _write_assets(assets_dir, payloads)
+    _write_inventory(assets_dir / "arm64" / "image-inventory.json")
+    _write_inventory(assets_dir / "x86_64" / "image-inventory.json")
 
     result = CliRunner().invoke(
         cli,
@@ -409,12 +446,14 @@ def test_capsem_admin_image_verify_rejects_all_arch_single_inventory_file(
 
 
 def test_capsem_admin_image_verify_returns_nonzero_on_mismatch(tmp_path: Path) -> None:
-    profile, _, payloads = _profile_with_local_asset_contract()
+    profile, _, payloads = _profile_with_package_tool_contract()
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
     assets_dir = tmp_path / "assets"
     payloads[("arm64", "initrd.img")] = b"x" * len(payloads[("arm64", "initrd.img")])
     _write_assets(assets_dir, payloads)
+    _write_inventory(assets_dir / "arm64" / "image-inventory.json")
+    _write_inventory(assets_dir / "x86_64" / "image-inventory.json")
 
     result = CliRunner().invoke(
         cli,

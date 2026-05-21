@@ -132,6 +132,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `image-inventory.json` files under the asset directory and report inventory
   contract checks by architecture, rejecting ambiguous all-arch single-file
   inventory input.
+- Changed profile image verification to fail closed when any selected
+  architecture is missing its `image-inventory.json`, so package/tool contract
+  proof is required rather than silently falling back to asset-only checks.
 - Added `capsem-admin manifest check <manifest> --fast` with typed
   `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`

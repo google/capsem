@@ -110,11 +110,11 @@ profile is the source of truth and generated `guest/config` TOML is only an
 intermediate for the current Docker templates. `image verify` consumes
 the derived plan and checks local assets under
 `<assets-dir>/<arch>/<asset filename>` for existence, declared byte size, and
-BLAKE3 hash before a manifest or release workflow trusts them. When
-`<assets-dir>/<arch>/image-inventory.json` exists, verification also checks the
-profile's apt, Python, node, and required-tool contract for that architecture.
-Passing `--inventory` is only needed for a non-standard single-arch inventory
-file or alternate inventory directory.
+BLAKE3 hash before a manifest or release workflow trusts them. Verification
+also checks the profile's apt, Python, node, and required-tool contract through
+`<assets-dir>/<arch>/image-inventory.json`; missing inventory for any selected
+architecture fails verification. Passing `--inventory` is only needed for a
+non-standard single-arch inventory file or alternate inventory directory.
 
 `manifest check --fast` validates the signed profile-catalog manifest shape and
 performs cheap reachability checks. Local `file://` profile payloads are hashed
