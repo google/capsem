@@ -43,6 +43,8 @@ from capsem.builder.manifest_generate import generate_profile_manifest
 from capsem.builder.profiles import (
     ProfilePayloadV2,
     ProfileType,
+    ProfileUi,
+    create_builtin_profile_drafts,
     create_profile_draft,
     dump_manifest_json,
     dump_profile_json,
@@ -313,6 +315,13 @@ def profile_schema() -> None:
 @click.option("--description", default=None, help="Human-readable profile description.")
 @click.option("--best-for", default=None, help="Short operator-facing profile fit summary.")
 @click.option(
+    "--ui",
+    "profile_ui",
+    default=None,
+    type=click.Choice([item.value for item in ProfileUi]),
+    help="Frontend/workbench surface for this profile. Defaults from --profile-type.",
+)
+@click.option(
     "--profile-type",
     default=ProfileType.CODING.value,
     type=click.Choice([item.value for item in ProfileType]),
@@ -333,6 +342,7 @@ def profile_init(
     name: str | None,
     description: str | None,
     best_for: str | None,
+    profile_ui: str | None,
     profile_type: str,
     output_format: str | None,
     output_path: str | None,
@@ -347,6 +357,7 @@ def profile_init(
             description=description,
             best_for=best_for,
             profile_type=ProfileType(profile_type),
+            ui=ProfileUi(profile_ui) if profile_ui is not None else None,
         )
     except ValidationError as error:
         raise click.ClickException(str(error)) from error
@@ -371,6 +382,56 @@ def profile_init(
         raise click.ClickException(f"{path} already exists; pass --force to overwrite")
     path.write_text(payload + ("" if payload.endswith("\n") else "\n"), encoding="utf-8")
     click.echo(f"created {path}")
+
+
+@profile.command("init-builtins")
+@click.option("--revision", default=None, help="Profile revision for both generated profiles.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json", "toml"]),
+    default="toml",
+    show_default=True,
+)
+@click.option(
+    "--out-dir",
+    required=True,
+    type=click.Path(file_okay=False),
+    help="Directory that will receive everyday-work and coding profile files.",
+)
+@click.option("--force", is_flag=True, help="Overwrite generated files if they already exist.")
+def profile_init_builtins(
+    revision: str | None,
+    output_format: str,
+    out_dir: str,
+    force: bool,
+) -> None:
+    """Generate the built-in Everyday and Coding Profile V2 payloads."""
+    try:
+        drafts = create_builtin_profile_drafts(revision=revision)
+    except ValidationError as error:
+        raise click.ClickException(str(error)) from error
+
+    output_dir = Path(out_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "toml" if output_format == "toml" else "json"
+    created: list[Path] = []
+    for draft in drafts:
+        path = output_dir / f"{draft.id}.profile.{suffix}"
+        if path.exists() and not force:
+            raise click.ClickException(f"{path} already exists; pass --force to overwrite")
+        payload = (
+            dump_profile_toml(draft)
+            if output_format == "toml"
+            else dump_profile_json(draft)
+        )
+        path.write_text(
+            payload + ("" if payload.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        created.append(path)
+
+    click.echo(f"created {len(created)} profiles in {output_dir}")
 
 
 @profile.command("validate")

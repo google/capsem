@@ -51,6 +51,14 @@ fn profile_v2_schema_is_closed_draft_2020_12_contract() {
         schema["properties"]["mcpServers"],
         serde_json::json!({ "$ref": "#/$defs/mcp_servers" })
     );
+    assert!(schema["required"]
+        .as_array()
+        .expect("schema required must be an array")
+        .contains(&serde_json::json!("ui")));
+    assert_eq!(
+        schema["properties"]["ui"],
+        serde_json::json!({ "enum": ["everyday", "coding"] })
+    );
 }
 
 #[test]
@@ -95,6 +103,7 @@ fn profile_v2_json_validation_helper_accepts_valid_fixture() {
     let value = validate_profile_payload_v2_json(&input).unwrap();
 
     assert_eq!(value["schema"], "capsem.profile.v2");
+    assert_eq!(value["ui"], "everyday");
     assert_eq!(
         value["mcpServers"]["github"]["command"],
         serde_json::json!("npx")
@@ -123,6 +132,7 @@ name = "Everyday Work"
 description = "Balanced defaults for day-to-day work."
 best_for = "Balanced defaults for day-to-day work."
 profile_type = "everyday-work"
+ui = "everyday"
 
 [compatibility]
 min_binary = "1.0.0"

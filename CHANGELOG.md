@@ -153,6 +153,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entrypoint, routing generated workspaces into the existing kernel/rootfs
   Docker builder with typed `capsem.image-build.v1` JSON reports and dry-run
   support.
+- Added the required Profile V2 `ui` contract (`everyday` or `coding`) across
+  Pydantic, JSON Schema, Rust profile parsing/effective settings, fixtures, and
+  generated built-in profile drafts.
+- Added `capsem-admin profile init-builtins` to generate typed
+  `everyday-work` and `coding` base profiles, plus committed generated base
+  profile TOML drafts under `config/profiles/base/`.
+- Added profile-aware `scripts/build-assets.sh --profile` and Justfile
+  `build-assets` / `build-kernel` / `build-rootfs` profile arguments so local
+  asset builds can route through `capsem-admin image build`.
 - Fixed release SBOM attestation to cover Linux `.deb` packages as well as the
   macOS `.pkg`, and documented that the current `cargo-sbom` artifact is the
   Rust host SBOM while profile-derived guest package/tool SBOMs remain S07b

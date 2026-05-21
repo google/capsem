@@ -13,7 +13,7 @@
 #   ui               -> _ensure-setup + _pnpm-install + run-service (service + Tauri dev hot-reload)
 #   run-service      -> _check-assets + _pack-initrd + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
-#   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-builder)
+#   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs, profile-aware)
 #   build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app, in lockstep)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
 #   smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
@@ -32,7 +32,7 @@
 #
 # First-time setup:
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
-#   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker via Colima on macOS)
+#   just build-assets (builds kernel + rootfs -- needs docker via Colima on macOS)
 #
 # Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
@@ -301,23 +301,39 @@ exec +CMD: run-service
     {{cli_binary}} run "{{CMD}}"
 
 
-# Build kernel only for one arch (CI-facing primitive).
-build-kernel arch: _install-tools
-    uv run capsem-builder build guest/ --arch {{arch}} --template kernel --output {{assets_dir}}/
+# Build kernel only for one arch (CI-facing primitive). Pass profile for Profile V2-derived builds.
+build-kernel arch profile="": _install-tools
+    #!/bin/bash
+    set -euo pipefail
+    if [[ -n "{{profile}}" ]]; then
+        uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template kernel --out {{assets_dir}}/ --json
+    else
+        uv run capsem-builder build guest/ --arch {{arch}} --template kernel --output {{assets_dir}}/
+    fi
 
-# Build rootfs only for one arch (CI-facing primitive).
-build-rootfs arch: _install-tools
-    uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
+# Build rootfs only for one arch (CI-facing primitive). Pass profile for Profile V2-derived builds.
+build-rootfs arch profile="": _install-tools
+    #!/bin/bash
+    set -euo pipefail
+    if [[ -n "{{profile}}" ]]; then
+        uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template rootfs --out {{assets_dir}}/ --json
+    else
+        uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
+    fi
 
-# VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch to build one.
-build-assets arch="": _install-tools _clean-stale
+# VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch and profile to build one.
+build-assets arch="" profile="": _install-tools _clean-stale
     #!/bin/bash
     set -euo pipefail
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    profile_args=()
+    if [[ -n "{{profile}}" ]]; then
+        profile_args=(--profile "{{profile}}")
+    fi
     if [[ -n "{{arch}}" ]]; then
-        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}" --arch "{{arch}}"
+        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}" --arch "{{arch}}" "${profile_args[@]}"
     else
-        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}"
+        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}" "${profile_args[@]}"
     fi
     just _docker-gc
 

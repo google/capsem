@@ -127,6 +127,8 @@ def test_capsem_admin_profile_init_outputs_valid_json_profile() -> None:
             "2026.0520.7",
             "--name",
             "Corp Dev",
+            "--ui",
+            "coding",
         ],
     )
 
@@ -135,9 +137,61 @@ def test_capsem_admin_profile_init_outputs_valid_json_profile() -> None:
     assert profile.id == "corp-dev"
     assert profile.revision == "2026.0520.7"
     assert profile.name == "Corp Dev"
+    assert profile.ui.value == "coding"
     assert profile.editable.mcp_servers is True
     assert profile.editable.security_rules is True
     assert set(profile.vm.assets) == {"arm64", "x86_64"}
+
+
+def test_capsem_admin_profile_init_everyday_type_defaults_everyday_ui() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "profile",
+            "init",
+            "everyday-work",
+            "--revision",
+            "2026.0520.7",
+            "--profile-type",
+            "everyday-work",
+        ],
+    )
+
+    assert result.exit_code == 0
+    profile = validate_profile_json(result.output)
+    assert profile.profile_type.value == "everyday-work"
+    assert profile.ui.value == "everyday"
+
+
+def test_capsem_admin_profile_init_builtins_generates_typed_profiles(tmp_path) -> None:
+    out_dir = tmp_path / "profiles"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "profile",
+            "init-builtins",
+            "--revision",
+            "2026.0520.10",
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    everyday = validate_profile_toml(out_dir / "everyday-work.profile.toml")
+    coding = validate_profile_toml(out_dir / "coding.profile.toml")
+    assert everyday.id == "everyday-work"
+    assert everyday.ui.value == "everyday"
+    assert coding.id == "coding"
+    assert coding.ui.value == "coding"
+
+    result = CliRunner().invoke(
+        cli,
+        ["profile", "init-builtins", "--out-dir", str(out_dir)],
+    )
+
+    assert result.exit_code == 1
+    assert "already exists" in result.output
 
 
 def test_capsem_admin_profile_init_writes_file_and_refuses_overwrite(tmp_path) -> None:
@@ -438,6 +492,7 @@ name = "Everyday Work"
 description = "Balanced defaults for day-to-day work."
 best_for = "Balanced defaults for day-to-day work."
 profile_type = "everyday-work"
+ui = "everyday"
 
 [compatibility]
 min_binary = "1.0.0"

@@ -1,0 +1,122 @@
+schema = "capsem.profile.v2"
+version = 2
+id = "everyday-work"
+revision = "2026.0520.1"
+name = "Everyday Work"
+description = "Balanced defaults for daily work sessions."
+best_for = "Daily work with useful tools and measured security prompts."
+profile_type = "everyday-work"
+ui = "everyday"
+
+[compatibility]
+min_binary = "1.0.0"
+max_binary = ""
+guest_abi = "capsem-guest-v2"
+
+[general]
+
+[appearance]
+
+[editable]
+general = true
+appearance = true
+ai = true
+mcpServers = true
+skills = true
+packages = true
+tools = true
+vm = true
+security_capabilities = true
+security_rules = true
+
+[ai.providers]
+
+[mcpServers]
+
+[skills]
+groups = []
+enabled = []
+disabled = []
+
+[vm]
+memory_mib = 8192
+cpus = 4
+disk_mib = 32768
+network = "proxied"
+track_rootfs_dependencies = true
+
+[vm.assets.arm64.kernel]
+url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/arm64/kernel"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature_url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/arm64/kernel.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.initrd]
+url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/arm64/initrd"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature_url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/arm64/initrd.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.arm64.rootfs]
+url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/arm64/rootfs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature_url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/arm64/rootfs.minisig"
+size = 1
+content_type = "application/vnd.squashfs"
+
+[vm.assets.x86_64.kernel]
+url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/x86_64/kernel"
+hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+signature_url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/x86_64/kernel.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.x86_64.initrd]
+url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/x86_64/initrd"
+hash = "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+signature_url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/x86_64/initrd.minisig"
+size = 1
+content_type = "application/octet-stream"
+
+[vm.assets.x86_64.rootfs]
+url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/x86_64/rootfs"
+hash = "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+signature_url = "https://assets.example.invalid/capsem/profiles/everyday-work/2026.0520.1/x86_64/rootfs.minisig"
+size = 1
+content_type = "application/vnd.squashfs"
+
+[packages.runtimes]
+python = "3.12"
+
+[packages.python_modules]
+
+[packages.node_packages]
+
+[packages.system]
+distro = "debian"
+release = "bookworm"
+
+[packages.system.apt]
+
+[tools.capsem_doctor]
+version = "2026.05.20"
+required = true
+source = "guest"
+
+[security.capabilities]
+credential_brokerage = "ask"
+network_egress = "ask"
+file_boundaries = "audit"
+audit = "allow"
+
+[security.rules.mcp]
+
+[security.rules.http]
+
+[security.rules.dns]
+
+[security.rules.model]
+
+[security.rules.hook]

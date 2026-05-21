@@ -2,18 +2,19 @@
 # build-assets.sh -- Build guest VM assets and regenerate checksums/manifest.
 #
 # Usage:
-#   scripts/build-assets.sh [--assets-dir assets] [--arch arm64|x86_64]
+#   scripts/build-assets.sh [--assets-dir assets] [--arch arm64|x86_64] [--profile profile.toml]
 #
 # If --arch is omitted, both arm64 and x86_64 are rebuilt.
 set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: scripts/build-assets.sh [--assets-dir <dir>] [--arch <arch>]
+Usage: scripts/build-assets.sh [--assets-dir <dir>] [--arch <arch>] [--profile <profile>]
 
 Options:
   --assets-dir <dir>   Assets output directory (default: assets)
   --arch <arch>        One arch to rebuild (arm64|aarch64|x86_64|amd64)
+  --profile <profile>  Profile V2 JSON/TOML payload to drive image builds
   -h, --help           Show this help
 EOF
 }
@@ -31,6 +32,7 @@ normalize_arch() {
 
 ASSETS_DIR="assets"
 ARCH=""
+PROFILE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -40,6 +42,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --arch)
             ARCH="${2:?missing value for --arch}"
+            shift 2
+            ;;
+        --profile)
+            PROFILE="${2:?missing value for --profile}"
             shift 2
             ;;
         -h|--help)
@@ -54,6 +60,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -n "$PROFILE" && ! -f "$PROFILE" ]]; then
+    echo "ERROR: profile '$PROFILE' does not exist" >&2
+    exit 1
+fi
+
 if [[ -n "$ARCH" ]]; then
     ARCH="$(normalize_arch "$ARCH")"
     arches=("$ARCH")
@@ -66,12 +77,30 @@ else
     rm -f "$ASSETS_DIR/manifest.json" "$ASSETS_DIR/B3SUMS"
 fi
 
+build_template() {
+    local arch_name="$1"
+    local template="$2"
+
+    if [[ -n "$PROFILE" ]]; then
+        uv run capsem-admin image build "$PROFILE" \
+            --arch "$arch_name" \
+            --template "$template" \
+            --out "$ASSETS_DIR/" \
+            --json
+    else
+        uv run capsem-builder build guest/ \
+            --arch "$arch_name" \
+            --template "$template" \
+            --output "$ASSETS_DIR/"
+    fi
+}
+
 for arch_name in "${arches[@]}"; do
     echo "=== Building kernel for $arch_name ==="
-    uv run capsem-builder build guest/ --arch "$arch_name" --template kernel --output "$ASSETS_DIR/"
+    build_template "$arch_name" kernel
     echo
     echo "=== Building rootfs for $arch_name ==="
-    uv run capsem-builder build guest/ --arch "$arch_name" --template rootfs --output "$ASSETS_DIR/"
+    build_template "$arch_name" rootfs
     echo
 done
 

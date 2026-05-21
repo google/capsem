@@ -564,8 +564,11 @@ The checker must fail closed for:
       wiring.
 - [~] Update Justfile recipes and shell scripts to use `capsem-admin`, with
       `--arch all` as the default and single-arch overrides for CI shards.
-      Public `capsem-admin image build` exists; Justfile/release recipes still
-      need to call it before this closes.
+      Public `capsem-admin image build` exists; Justfile and
+      `scripts/build-assets.sh` now accept profile inputs and route those builds
+      through `capsem-admin image build`. Remaining cutover is making release
+      builds require a generated release profile instead of the existing
+      unprofiled guest-config fallback.
 - [ ] Replace builder doctor with admin doctor checks and remove guest config as
       input authority.
 - [~] Refactor manifest generation/check/sign scripts into importable Python
@@ -579,9 +582,10 @@ The checker must fail closed for:
       parsing, validation, normalized accessors, `model_validate_json()` /
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
 - [~] Remove hand-edited image settings as release-build authority. Profile-
-      derived build workspace materialization and public `image build` routing
-      have landed; release build recipes still need to consume it before this
-      closes.
+      derived build workspace materialization, public `image build` routing,
+      built-in `everyday-work`/`coding` profile generation, and profile-aware
+      local asset build recipes have landed; release builds still need to
+      require generated release profiles before this closes.
 - [x] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
 - [x] Implement full manifest download/verify checks. Full byte download,
@@ -613,8 +617,10 @@ The checker must fail closed for:
   generate/check/sign tests; profile-to-image build plan tests; admin doctor
   checks; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
-  schema`; `image plan`; `image verify`; `manifest generate`; `manifest check
-  --fast`; `manifest check --download`; bootstrap-installed CLI smoke.
+  schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
+  generate`; `manifest check --fast`; `manifest check --download`;
+  profile-aware `scripts/build-assets.sh --profile`; bootstrap-installed CLI
+  smoke.
 - Adversarial: malformed profile, missing package version, unsupported package
   manager, unknown profile field/table, wrong schema id/version,
   manifest/payload id or revision mismatch, missing per-arch asset table, URL
@@ -632,6 +638,8 @@ The checker must fail closed for:
   and failure category.
 - Performance: fast manifest check uses bounded concurrency and never downloads
   full assets; full download check streams to disk and verifies incrementally.
-- Missing/deferred: none for admin release. If full Docker image build is too
-  expensive for every PR, keep a lightweight fixture-build test in PR gates and
-  require full build/image-verify in release gates.
+- Missing/deferred: release profile cutover still needs a generated release
+  profile that preserves today's rich guest package/tool contract, then release
+  recipes can fail closed when no profile is supplied. Full Docker image build
+  may stay in release gates if too expensive for every PR; keep a lightweight
+  fixture-build test in PR gates.

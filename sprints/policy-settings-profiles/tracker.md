@@ -359,6 +359,26 @@ a valid claim -- mark it `[ ]` instead.
     Verification: `uv run python -m pytest tests/test_image_workspace.py
     tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 33 tests;
     installed CLI smoke proved `capsem-admin image build --dry-run --json`.
+    Fifteenth slice added the required Profile V2 `ui` contract with
+    `everyday` and `coding` enum values across Python/Pydantic, JSON Schema,
+    Rust profile/effective-settings parsing, fixtures, and signed fixture
+    verification. It added `capsem-admin profile init-builtins` and committed
+    generated `everyday-work` and `coding` base profile TOML drafts under
+    `config/profiles/base/`. It also made `scripts/build-assets.sh`,
+    `just build-assets`, `just build-kernel`, and `just build-rootfs`
+    profile-aware so selected asset builds can route through
+    `capsem-admin image build`; the unprofiled guest-config fallback remains
+    only until the release profile preserves the full existing guest package
+    set. Verification: `uv run python -m pytest tests/test_profiles.py
+    tests/test_admin_cli.py tests/test_image_workspace.py
+    tests/test_build_assets_script.py -q` passed with 53 tests;
+    `cargo test -p capsem-core --test profile_schema` passed with 6 tests;
+    `cargo test -p capsem-core settings_profiles:: --lib` passed with 143
+    tests; `cargo test -p capsem-service --no-run` compiled the service test
+    targets; `uv run capsem-admin profile validate config/profiles/base/*.toml`
+    and `uv run capsem-admin image build config/profiles/base/coding.profile.toml
+    --arch arm64 --template rootfs --dry-run --json` proved the generated
+    profiles validate and feed the image build entrypoint.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

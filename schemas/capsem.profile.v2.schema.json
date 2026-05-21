@@ -13,6 +13,7 @@
     "description",
     "best_for",
     "profile_type",
+    "ui",
     "compatibility",
     "vm",
     "packages",
@@ -28,6 +29,7 @@
     "description": { "$ref": "#/$defs/non_empty_string" },
     "best_for": { "$ref": "#/$defs/non_empty_string" },
     "profile_type": { "enum": ["everyday-work", "coding"] },
+    "ui": { "enum": ["everyday", "coding"] },
     "icon_svg": {
       "type": "string",
       "pattern": "^\\s*<svg[\\s>]"

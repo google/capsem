@@ -12,6 +12,8 @@ from capsem.builder.profiles import (
     ProfileManifest,
     ProfilePayloadV2,
     ProfileRevisionStatus,
+    ProfileUi,
+    create_builtin_profile_drafts,
     create_profile_draft,
     dump_manifest_json,
     dump_profile_json,
@@ -82,6 +84,7 @@ def test_profile_payload_json_enters_and_leaves_through_pydantic() -> None:
     assert str(profile.mcp_servers["corp-http"].url) == (
         "https://mcp.internal.example.com/mcp"
     )
+    assert profile.ui is ProfileUi.EVERYDAY
     assert '"@modelcontextprotocol/sdk"' in dumped
 
 
@@ -124,9 +127,24 @@ def test_create_profile_draft_round_trips_through_pydantic_json() -> None:
     assert reparsed.revision == "2026.0520.9"
     assert reparsed.name == "Corp Dev"
     assert reparsed.profile_type.value == "coding"
+    assert reparsed.ui.value == "coding"
     assert reparsed.editable.ai is True
     assert set(reparsed.vm.assets) == {"arm64", "x86_64"}
     assert reparsed.packages.system.release == "bookworm"
+
+
+def test_builtin_profile_drafts_generate_everyday_and_coding_ui_contracts() -> None:
+    drafts = create_builtin_profile_drafts(revision="2026.0520.9")
+
+    by_id = {profile.id: validate_profile_json(dump_profile_json(profile)) for profile in drafts}
+
+    assert set(by_id) == {"everyday-work", "coding"}
+    assert by_id["everyday-work"].ui.value == "everyday"
+    assert by_id["everyday-work"].profile_type.value == "everyday-work"
+    assert by_id["coding"].ui.value == "coding"
+    assert by_id["coding"].profile_type.value == "coding"
+    assert by_id["everyday-work"].packages == by_id["coding"].packages
+    assert by_id["everyday-work"].vm.memory_mib == by_id["coding"].vm.memory_mib
 
 
 def test_profile_toml_json_toml_round_trip_is_canonical(tmp_path: Path) -> None:
@@ -175,6 +193,7 @@ def test_profile_toml_immediately_validates_through_pydantic_json(tmp_path: Path
             description = "Balanced defaults for day-to-day work."
             best_for = "Balanced defaults for day-to-day work."
             profile_type = "everyday-work"
+            ui = "everyday"
 
             [compatibility]
             min_binary = "1.0.0"

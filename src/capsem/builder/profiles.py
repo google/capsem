@@ -71,6 +71,11 @@ class ProfileType(str, Enum):
     CODING = "coding"
 
 
+class ProfileUi(str, Enum):
+    EVERYDAY = "everyday"
+    CODING = "coding"
+
+
 class VmNetworkMode(str, Enum):
     PROXIED = "proxied"
     DISABLED = "disabled"
@@ -262,6 +267,7 @@ class ProfilePayloadV2(StrictModel):
     description: NonEmptyStr
     best_for: NonEmptyStr
     profile_type: ProfileType
+    ui: ProfileUi
     icon_svg: str | None = None
     extends_profile_id: ProfileId | None = None
     extends_profile_revision: Revision | None = None
@@ -424,11 +430,17 @@ def create_profile_draft(
     description: str | None = None,
     best_for: str | None = None,
     profile_type: ProfileType = ProfileType.CODING,
+    ui: ProfileUi | None = None,
 ) -> ProfilePayloadV2:
     resolved_revision = revision or default_profile_revision()
     resolved_name = name or profile_id.replace("-", " ").title()
     resolved_description = description or f"{resolved_name} Profile V2 draft."
     resolved_best_for = best_for or "Profile-backed Capsem workspaces."
+    resolved_ui = ui or (
+        ProfileUi.EVERYDAY
+        if profile_type is ProfileType.EVERYDAY_WORK
+        else ProfileUi.CODING
+    )
 
     return ProfilePayloadV2(
         schema="capsem.profile.v2",
@@ -439,6 +451,7 @@ def create_profile_draft(
         description=resolved_description,
         best_for=resolved_best_for,
         profile_type=profile_type,
+        ui=resolved_ui,
         compatibility=Compatibility(
             min_binary="1.0.0",
             guest_abi="capsem-guest-v2",
@@ -530,6 +543,34 @@ def create_profile_draft(
             )
         ),
     )
+
+
+def create_builtin_profile_drafts(
+    *,
+    revision: str | None = None,
+) -> list[ProfilePayloadV2]:
+    """Generate the built-in base profiles from the same typed contract."""
+    resolved_revision = revision or default_profile_revision()
+    return [
+        create_profile_draft(
+            "everyday-work",
+            revision=resolved_revision,
+            name="Everyday Work",
+            description="Balanced defaults for daily work sessions.",
+            best_for="Daily work with useful tools and measured security prompts.",
+            profile_type=ProfileType.EVERYDAY_WORK,
+            ui=ProfileUi.EVERYDAY,
+        ),
+        create_profile_draft(
+            "coding",
+            revision=resolved_revision,
+            name="Coding",
+            description="Focused defaults for software development sessions.",
+            best_for="Coding agents, repository work, tests, and developer tooling.",
+            profile_type=ProfileType.CODING,
+            ui=ProfileUi.CODING,
+        ),
+    ]
 
 
 def validate_manifest_json(payload: str | bytes) -> ProfileManifest:

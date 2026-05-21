@@ -1192,6 +1192,8 @@ pub struct Profile {
     pub best_for: String,
     #[serde(default)]
     pub profile_type: ProfileType,
+    #[serde(default)]
+    pub ui: ProfileUi,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_svg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1266,6 +1268,7 @@ impl Profile {
             description: "Balanced defaults for daily work sessions.".to_string(),
             best_for: "Daily work with useful tools and measured security prompts.".to_string(),
             profile_type: ProfileType::EverydayWork,
+            ui: ProfileUi::Everyday,
             icon_svg: None,
             extends_profile_id: None,
             general: ProfileGeneralSettings::default(),
@@ -1367,6 +1370,14 @@ impl Default for ProfileSectionEditability {
 pub enum ProfileType {
     #[default]
     EverydayWork,
+    Coding,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileUi {
+    #[default]
+    Everyday,
     Coding,
 }
 
@@ -2530,6 +2541,7 @@ pub struct EffectiveVmSettings {
     pub profile_id: String,
     pub profile_name: String,
     pub profile_type: ProfileType,
+    pub profile_ui: ProfileUi,
     pub profile: ProvenancedProfileIdentity,
     pub ai: EffectiveSection<AiProvidersProfileSettings>,
     pub mcp: EffectiveSection<McpConnectorsProfileSettings>,
@@ -2547,6 +2559,7 @@ pub struct ProvenancedProfileIdentity {
     pub name: String,
     pub description: String,
     pub best_for: String,
+    pub ui: ProfileUi,
     pub icon_svg: String,
     pub provenance: Provenance,
 }
@@ -2746,6 +2759,7 @@ pub struct ProfileDebugSummary {
     pub id: String,
     pub name: String,
     pub profile_type: ProfileType,
+    pub ui: ProfileUi,
     pub best_for: String,
     pub source: ProfileSource,
     pub locked: bool,
@@ -2759,6 +2773,7 @@ impl ProfileDebugSummary {
             id: record.profile.id.clone(),
             name: record.profile.name.clone(),
             profile_type: record.profile.profile_type,
+            ui: record.profile.ui,
             best_for: record.profile.best_for.clone(),
             source: record.source,
             locked: record.locked,
@@ -2952,10 +2967,12 @@ fn effective_settings_from_merged(
         profile_id: leaf.profile.id.clone(),
         profile_name: leaf.profile.name.clone(),
         profile_type: leaf.profile.profile_type,
+        profile_ui: leaf.profile.ui,
         profile: ProvenancedProfileIdentity {
             name: leaf.profile.name.clone(),
             description: leaf.profile.description.clone(),
             best_for: leaf.profile.best_for.clone(),
+            ui: leaf.profile.ui,
             icon_svg: leaf.profile.icon_svg_or_default().to_string(),
             provenance: provenance(leaf, "profile", "selected profile identity"),
         },
@@ -3032,6 +3049,7 @@ fn merge_profile_chain(chain: &[&ProfileRecord]) -> Profile {
         acc.description = child.description.clone();
         acc.best_for = child.best_for.clone();
         acc.profile_type = child.profile_type;
+        acc.ui = child.ui;
         acc.icon_svg = child.icon_svg.clone();
         acc.extends_profile_id = child.extends_profile_id.clone();
 
