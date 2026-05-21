@@ -8,6 +8,7 @@ import blake3
 import pytest
 from pydantic import ValidationError
 
+from capsem.builder.config import load_guest_config
 from capsem.builder.profiles import (
     ProfileManifest,
     ProfilePayloadV2,
@@ -134,7 +135,10 @@ def test_create_profile_draft_round_trips_through_pydantic_json() -> None:
 
 
 def test_builtin_profile_drafts_generate_everyday_and_coding_ui_contracts() -> None:
-    drafts = create_builtin_profile_drafts(revision="2026.0520.9")
+    drafts = create_builtin_profile_drafts(
+        revision="2026.0520.9",
+        guest_config=load_guest_config(PROJECT_ROOT / "guest"),
+    )
 
     by_id = {profile.id: validate_profile_json(dump_profile_json(profile)) for profile in drafts}
 
@@ -145,6 +149,11 @@ def test_builtin_profile_drafts_generate_everyday_and_coding_ui_contracts() -> N
     assert by_id["coding"].profile_type.value == "coding"
     assert by_id["everyday-work"].packages == by_id["coding"].packages
     assert by_id["everyday-work"].vm.memory_mib == by_id["coding"].vm.memory_mib
+    assert by_id["coding"].packages.system.apt["coreutils"] == "*"
+    assert by_id["coding"].packages.python_modules["pytest"] == "*"
+    assert by_id["coding"].packages.node_packages["@openai/codex"] == "*"
+    assert by_id["coding"].tools["codex"].source.value == "guest"
+    assert by_id["coding"].mcp_servers["local"].command == "/run/capsem-mcp-server"
 
 
 def test_profile_toml_json_toml_round_trip_is_canonical(tmp_path: Path) -> None:

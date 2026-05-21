@@ -12,7 +12,14 @@ from capsem.builder.image_workspace import (
     dump_image_workspace_report_json,
     materialize_profile_image_workspace,
 )
-from capsem.builder.profiles import create_profile_draft, dump_profile_json
+from capsem.builder.profiles import (
+    create_profile_draft,
+    create_profile_from_guest_config,
+    dump_profile_json,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _profile_with_packages():
@@ -94,6 +101,26 @@ def test_materialize_profile_image_workspace_uses_profile_not_repo_guest_config(
     assert "corp-sdk==2.1.0" in python_toml
     assert "coreutils" not in apt_toml
     assert "pytest" not in python_toml
+
+
+def test_profile_from_guest_config_workspace_preserves_unpinned_release_packages(
+    tmp_path: Path,
+) -> None:
+    profile = create_profile_from_guest_config(
+        load_guest_config(PROJECT_ROOT / "guest"),
+        "coding",
+        revision="2026.0520.12",
+    )
+
+    materialize_profile_image_workspace(profile, tmp_path, arch="arm64")
+    config = load_guest_config(tmp_path)
+
+    assert "coreutils" in config.package_sets["apt"].packages
+    assert "coreutils=*" not in config.package_sets["apt"].packages
+    assert "pytest" in config.package_sets["python"].packages
+    assert "pytest==*" not in config.package_sets["python"].packages
+    assert "@openai/codex" in config.package_sets["node"].packages
+    assert "@openai/codex@*" not in config.package_sets["node"].packages
 
 
 def test_materialize_profile_image_workspace_rejects_non_empty_output_without_force(

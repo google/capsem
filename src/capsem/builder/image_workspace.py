@@ -146,7 +146,7 @@ def _vm_resources(plan: ImagePlan) -> dict:
 def _package_sets(plan: ImagePlan) -> dict[str, dict]:
     package_sets: dict[str, dict] = {}
     apt_packages = [
-        f"{name}={version}"
+        _format_package_spec(name, version, "=")
         for name, version in sorted(plan.packages.system.apt.items())
     ]
     if apt_packages:
@@ -165,7 +165,7 @@ def _package_sets(plan: ImagePlan) -> dict[str, dict]:
         }
 
     python_packages = [
-        f"{name}=={version}"
+        _format_package_spec(name, version, "==")
         for name, version in sorted(plan.packages.python_modules.items())
     ]
     if python_packages:
@@ -184,7 +184,7 @@ def _package_sets(plan: ImagePlan) -> dict[str, dict]:
         }
 
     node_packages = [
-        f"{name}@{version}"
+        _format_package_spec(name, version, "@")
         for name, version in sorted(plan.packages.node_packages.items())
     ]
     if node_packages:
@@ -202,6 +202,12 @@ def _package_sets(plan: ImagePlan) -> dict[str, dict]:
             }
         }
     return package_sets
+
+
+def _format_package_spec(name: str, version: str, separator: str) -> str:
+    if version in {"*", "latest", "build-time"}:
+        return name
+    return f"{name}{separator}{version}"
 
 
 def materialize_profile_image_workspace(

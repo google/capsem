@@ -13,6 +13,7 @@ from typing import Literal
 import click
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from capsem.builder.config import load_guest_config
 from capsem.builder.image_plan import (
     ImageArch,
     derive_image_plan,
@@ -387,6 +388,13 @@ def profile_init(
 @profile.command("init-builtins")
 @click.option("--revision", default=None, help="Profile revision for both generated profiles.")
 @click.option(
+    "--guest-dir",
+    default="guest",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Guest image config root to derive package/tool contracts from.",
+)
+@click.option(
     "--format",
     "output_format",
     type=click.Choice(["json", "toml"]),
@@ -402,14 +410,19 @@ def profile_init(
 @click.option("--force", is_flag=True, help="Overwrite generated files if they already exist.")
 def profile_init_builtins(
     revision: str | None,
+    guest_dir: str,
     output_format: str,
     out_dir: str,
     force: bool,
 ) -> None:
     """Generate the built-in Everyday and Coding Profile V2 payloads."""
     try:
-        drafts = create_builtin_profile_drafts(revision=revision)
-    except ValidationError as error:
+        guest_config = load_guest_config(Path(guest_dir))
+        drafts = create_builtin_profile_drafts(
+            revision=revision,
+            guest_config=guest_config,
+        )
+    except (FileNotFoundError, ValidationError) as error:
         raise click.ClickException(str(error)) from error
 
     output_dir = Path(out_dir)

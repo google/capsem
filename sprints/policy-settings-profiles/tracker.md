@@ -379,6 +379,21 @@ a valid claim -- mark it `[ ]` instead.
     and `uv run capsem-admin image build config/profiles/base/coding.profile.toml
     --arch arm64 --template rootfs --dry-run --json` proved the generated
     profiles validate and feed the image build entrypoint.
+    Sixteenth slice changed built-in profile generation from placeholder
+    drafts to a typed `GuestImageConfig` bridge. `capsem-admin profile
+    init-builtins --guest-dir guest` now derives `everyday-work` and `coding`
+    from the current rich `guest/config` package/tool/resource inputs, keeping
+    the two built-ins identical except for identity and `ui` while preserving
+    unpinned package intent as `*` in Profile V2 and rendering it back to
+    unpinned package specs for the existing image builder. Verification:
+    `uv run python -m pytest tests/test_profiles.py tests/test_admin_cli.py
+    tests/test_image_workspace.py tests/test_build_assets_script.py -q` passed
+    with 54 tests; `cargo test -p capsem-core --test profile_schema` passed
+    with 6 tests; `cargo test -p capsem-core settings_profiles:: --lib`
+    passed with 143 tests; `cargo test -p capsem-service --no-run`,
+    `cargo fmt --check`, `uv run python -m compileall src/capsem`,
+    profile validation for both generated base profiles, and a coding profile
+    `capsem-admin image build --dry-run --json` smoke passed.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

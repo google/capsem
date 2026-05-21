@@ -27,6 +27,8 @@ from pydantic import (
     model_validator,
 )
 
+from capsem.builder.models import GuestImageConfig, PackageManager
+
 
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 _REVISION_RE = re.compile(r"^[0-9]{4}\.[0-9]{4}\.[0-9]+$")
@@ -548,9 +550,33 @@ def create_profile_draft(
 def create_builtin_profile_drafts(
     *,
     revision: str | None = None,
+    guest_config: GuestImageConfig | None = None,
 ) -> list[ProfilePayloadV2]:
     """Generate the built-in base profiles from the same typed contract."""
     resolved_revision = revision or default_profile_revision()
+    if guest_config is not None:
+        return [
+            create_profile_from_guest_config(
+                guest_config,
+                "everyday-work",
+                revision=resolved_revision,
+                name="Everyday Work",
+                description="Balanced defaults for daily work sessions.",
+                best_for="Daily work with useful tools and measured security prompts.",
+                profile_type=ProfileType.EVERYDAY_WORK,
+                ui=ProfileUi.EVERYDAY,
+            ),
+            create_profile_from_guest_config(
+                guest_config,
+                "coding",
+                revision=resolved_revision,
+                name="Coding",
+                description="Focused defaults for software development sessions.",
+                best_for="Coding agents, repository work, tests, and developer tooling.",
+                profile_type=ProfileType.CODING,
+                ui=ProfileUi.CODING,
+            ),
+        ]
     return [
         create_profile_draft(
             "everyday-work",
@@ -571,6 +597,149 @@ def create_builtin_profile_drafts(
             ui=ProfileUi.CODING,
         ),
     ]
+
+
+_FLOATING_VERSION = "*"
+
+
+def _split_versioned_package(spec: str, separator: str) -> tuple[str, str]:
+    if separator in spec:
+        name, version = spec.split(separator, 1)
+        if name and version:
+            return name, version
+    return spec, _FLOATING_VERSION
+
+
+def _split_npm_package(spec: str) -> tuple[str, str]:
+    if spec.startswith("@"):
+        rest = spec[1:]
+        if "@" in rest:
+            package, version = spec.rsplit("@", 1)
+            if package and version:
+                return package, version
+        return spec, _FLOATING_VERSION
+    return _split_versioned_package(spec, "@")
+
+
+def create_profile_from_guest_config(
+    guest_config: GuestImageConfig,
+    profile_id: str,
+    *,
+    revision: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    best_for: str | None = None,
+    profile_type: ProfileType = ProfileType.CODING,
+    ui: ProfileUi | None = None,
+) -> ProfilePayloadV2:
+    """Create a Profile V2 payload from the existing guest image config.
+
+    Floating package versions use ``*`` and are rendered back to unpinned
+    package specs by the image workspace generator. The later SBOM/in-guest
+    verification slice records resolved versions after the image is built.
+    """
+    resolved_revision = revision or default_profile_revision()
+    draft = create_profile_draft(
+        profile_id,
+        revision=resolved_revision,
+        name=name,
+        description=description,
+        best_for=best_for,
+        profile_type=profile_type,
+        ui=ui,
+    )
+
+    apt_packages: dict[str, str] = {}
+    python_modules: dict[str, str] = {}
+    node_packages: dict[str, str] = {}
+    for package_set in guest_config.package_sets.values():
+        if package_set.manager is PackageManager.APT:
+            for spec in package_set.packages:
+                package, version = _split_versioned_package(spec, "=")
+                apt_packages[package] = version
+        elif package_set.manager in {PackageManager.UV, PackageManager.PIP}:
+            for spec in package_set.packages:
+                package, version = _split_versioned_package(spec, "==")
+                python_modules[package] = version
+        elif package_set.manager is PackageManager.NPM:
+            for spec in package_set.packages:
+                package, version = _split_npm_package(spec)
+                node_packages[package] = version
+
+    tools: dict[str, ToolContract] = {
+        "capsem_doctor": ToolContract(
+            version="2026.05.20",
+            required=True,
+            source=ToolSource.GUEST,
+        )
+    }
+    for provider in guest_config.ai_providers.values():
+        install = provider.install
+        if install is not None and install.manager is PackageManager.NPM:
+            for spec in install.packages:
+                package, version = _split_npm_package(spec)
+                node_packages[package] = version
+        if provider.cli is not None:
+            tools[provider.cli.key] = ToolContract(
+                version=_FLOATING_VERSION,
+                required=provider.enabled,
+                source=ToolSource.GUEST,
+            )
+
+    mcp_servers: dict[str, McpServer] = {}
+    for server_id, server in guest_config.mcp_servers.items():
+        mcp_servers[server_id] = McpServer(
+            enabled=server.enabled,
+            type=server.transport.value,
+            command=server.command,
+            args=server.args,
+            env=server.env,
+            url=server.url,
+            headers=server.headers,
+        )
+
+    node_major = next(iter(guest_config.build.architectures.values())).node_major
+    runtime_versions = {
+        "python": "3.12",
+        "node": str(node_major),
+        "npm": _FLOATING_VERSION,
+        "uv": _FLOATING_VERSION,
+    }
+    packages = PackageContract(
+        runtimes=runtime_versions,
+        python_modules=python_modules,
+        node_packages=node_packages,
+        system=SystemPackages(
+            distro="debian",
+            release="bookworm",
+            apt=apt_packages,
+        ),
+    )
+    vm = draft.vm.model_copy(
+        update={
+            "memory_mib": guest_config.vm_resources.ram_gb * 1024,
+            "cpus": guest_config.vm_resources.cpu_count,
+            "disk_mib": guest_config.vm_resources.scratch_disk_size_gb * 1024,
+        }
+    )
+
+    return draft.model_copy(
+        update={
+            "ai": AiSettings(
+                providers={
+                    provider_id: AiProvider(
+                        enabled=provider.enabled,
+                        credential_refs=provider.api_key.env_vars,
+                    )
+                    for provider_id, provider in guest_config.ai_providers.items()
+                }
+            ),
+            "mcp_servers": mcp_servers,
+            "vm": vm,
+            "packages": packages,
+            "tools": tools,
+        }
+    )
 
 
 def validate_manifest_json(payload: str | bytes) -> ProfileManifest:

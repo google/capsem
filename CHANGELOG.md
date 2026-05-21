@@ -159,6 +159,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem-admin profile init-builtins` to generate typed
   `everyday-work` and `coding` base profiles, plus committed generated base
   profile TOML drafts under `config/profiles/base/`.
+- Changed built-in profile generation to derive package, tool, AI provider,
+  MCP server, and VM resource contracts from `guest/config`, preserving the
+  current release image inputs while making the profiles the source of truth.
 - Added profile-aware `scripts/build-assets.sh --profile` and Justfile
   `build-assets` / `build-kernel` / `build-rootfs` profile arguments so local
   asset builds can route through `capsem-admin image build`.

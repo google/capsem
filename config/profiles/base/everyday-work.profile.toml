@@ -29,9 +29,78 @@ vm = true
 security_capabilities = true
 security_rules = true
 
-[ai.providers]
+[ai.providers.anthropic]
+enabled = true
+credential_refs = [
+    "ANTHROPIC_API_KEY",
+]
 
-[mcpServers]
+[ai.providers.anthropic.rules.mcp]
+
+[ai.providers.anthropic.rules.http]
+
+[ai.providers.anthropic.rules.dns]
+
+[ai.providers.anthropic.rules.model]
+
+[ai.providers.anthropic.rules.hook]
+
+[ai.providers.google]
+enabled = true
+credential_refs = [
+    "GEMINI_API_KEY",
+]
+
+[ai.providers.google.rules.mcp]
+
+[ai.providers.google.rules.http]
+
+[ai.providers.google.rules.dns]
+
+[ai.providers.google.rules.model]
+
+[ai.providers.google.rules.hook]
+
+[ai.providers.openai]
+enabled = true
+credential_refs = [
+    "OPENAI_API_KEY",
+]
+
+[ai.providers.openai.rules.mcp]
+
+[ai.providers.openai.rules.http]
+
+[ai.providers.openai.rules.dns]
+
+[ai.providers.openai.rules.model]
+
+[ai.providers.openai.rules.hook]
+
+[mcpServers.local]
+enabled = true
+type = "stdio"
+command = "/run/capsem-mcp-server"
+args = []
+pool_safe_tools = []
+
+[mcpServers.local.env]
+
+[mcpServers.local.headers]
+
+[mcpServers.local.capsem]
+credential_refs = []
+allowed_tools = []
+
+[mcpServers.local.capsem.rules.mcp]
+
+[mcpServers.local.capsem.rules.http]
+
+[mcpServers.local.capsem.rules.dns]
+
+[mcpServers.local.capsem.rules.model]
+
+[mcpServers.local.capsem.rules.hook]
 
 [skills]
 groups = []
@@ -39,9 +108,9 @@ enabled = []
 disabled = []
 
 [vm]
-memory_mib = 8192
+memory_mib = 4096
 cpus = 4
-disk_mib = 32768
+disk_mib = 16384
 network = "proxied"
 track_rootfs_dependencies = true
 
@@ -89,19 +158,85 @@ content_type = "application/vnd.squashfs"
 
 [packages.runtimes]
 python = "3.12"
+node = "24"
+npm = "*"
+uv = "*"
 
 [packages.python_modules]
+pytest = "*"
+numpy = "*"
+requests = "*"
+httpx = "*"
+pandas = "*"
+scipy = "*"
+scikit-learn = "*"
+matplotlib = "*"
+pillow = "*"
+pyyaml = "*"
+beautifulsoup4 = "*"
+lxml = "*"
+tqdm = "*"
+rich = "*"
+fastmcp = "*"
 
 [packages.node_packages]
+"@google/gemini-cli" = "*"
+"@openai/codex" = "*"
 
 [packages.system]
 distro = "debian"
 release = "bookworm"
 
 [packages.system.apt]
+coreutils = "*"
+util-linux = "*"
+procps = "*"
+psmisc = "*"
+findutils = "*"
+diffutils = "*"
+lsof = "*"
+strace = "*"
+file = "*"
+less = "*"
+man-db = "*"
+tmux = "*"
+grep = "*"
+sed = "*"
+gawk = "*"
+tar = "*"
+gzip = "*"
+bzip2 = "*"
+xz-utils = "*"
+vim-tiny = "*"
+git = "*"
+gh = "*"
+curl = "*"
+ca-certificates = "*"
+wrk = "*"
+iproute2 = "*"
+iptables = "*"
+auditd = "*"
+python3 = "*"
+python3-pip = "*"
+python3-venv = "*"
 
 [tools.capsem_doctor]
 version = "2026.05.20"
+required = true
+source = "guest"
+
+[tools.claude]
+version = "*"
+required = true
+source = "guest"
+
+[tools.gemini]
+version = "*"
+required = true
+source = "guest"
+
+[tools.codex]
+version = "*"
 required = true
 source = "guest"
 

@@ -184,6 +184,11 @@ def test_capsem_admin_profile_init_builtins_generates_typed_profiles(tmp_path) -
     assert everyday.ui.value == "everyday"
     assert coding.id == "coding"
     assert coding.ui.value == "coding"
+    assert everyday.packages == coding.packages
+    assert coding.packages.system.apt["coreutils"] == "*"
+    assert coding.packages.python_modules["pytest"] == "*"
+    assert coding.packages.node_packages["@openai/codex"] == "*"
+    assert coding.tools["codex"].required is True
 
     result = CliRunner().invoke(
         cli,

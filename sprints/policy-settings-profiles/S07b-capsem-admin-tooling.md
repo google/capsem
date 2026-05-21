@@ -583,9 +583,10 @@ The checker must fail closed for:
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
 - [~] Remove hand-edited image settings as release-build authority. Profile-
       derived build workspace materialization, public `image build` routing,
-      built-in `everyday-work`/`coding` profile generation, and profile-aware
-      local asset build recipes have landed; release builds still need to
-      require generated release profiles before this closes.
+      guest-config-derived built-in `everyday-work`/`coding` profile
+      generation, and profile-aware local asset build recipes have landed;
+      release builds still need to require generated release profiles before
+      this closes.
 - [x] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
 - [x] Implement full manifest download/verify checks. Full byte download,
@@ -614,8 +615,9 @@ The checker must fail closed for:
   for profiles, manifests, assets, package/tool contracts, build plans, doctor
   checks, and reports; explicit JSON I/O tests for `model_validate_json()` /
   `TypeAdapter.validate_json()` and `model_dump_json()`; profile manifest
-  generate/check/sign tests; profile-to-image build plan tests; admin doctor
-  checks; no-hand-edited-settings guard tests.
+  generate/check/sign tests; profile-to-image build plan tests;
+  guest-config-to-profile generation tests; admin doctor checks;
+  no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
   generate`; `manifest check --fast`; `manifest check --download`;
@@ -638,8 +640,7 @@ The checker must fail closed for:
   and failure category.
 - Performance: fast manifest check uses bounded concurrency and never downloads
   full assets; full download check streams to disk and verifies incrementally.
-- Missing/deferred: release profile cutover still needs a generated release
-  profile that preserves today's rich guest package/tool contract, then release
-  recipes can fail closed when no profile is supplied. Full Docker image build
-  may stay in release gates if too expensive for every PR; keep a lightweight
-  fixture-build test in PR gates.
+- Missing/deferred: release recipe cutover still needs to require the generated
+  profile path and remove the unprofiled guest-config fallback from release
+  lanes. Full Docker image build may stay in release gates if too expensive for
+  every PR; keep a lightweight fixture-build test in PR gates.
