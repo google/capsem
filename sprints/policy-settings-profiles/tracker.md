@@ -785,6 +785,16 @@ a valid claim -- mark it `[ ]` instead.
     Still missing for S08b.2: Sigma-to-runtime detection lowering, service
     `/enforcement/*` and `/detection/*` route wiring, historical hunt over the
     session journal, and VM/runtime integration.
+    Twenty-first S08b.2 slice put runtime detection on the same real CEL
+    substrate. `CelDetectionRule` now compiles through the `cel` crate,
+    `CelDetectionEvaluator` emits typed `DetectionFinding` records with Sigma
+    metadata when a normalized `SecurityEvent` matches, and findings attach to
+    both the event and resolved event before emitter delivery. Verification:
+    `cargo test -p capsem-security-engine` passed with 28 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Still missing for S08b.2: lowering the existing Sigma-derived Detection IR
+    into CEL runtime rules, service route wiring, historical hunt over the
+    session journal, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

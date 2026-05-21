@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a real CEL-backed S08b enforcement evaluator in `capsem-security-engine`
   so enforcement rules compile through the `cel` crate before install and
   evaluate against normalized `SecurityEvent` values at runtime.
+- Added a real CEL-backed S08b detection evaluator so runtime detection rules
+  produce typed findings on normalized `SecurityEvent` values before resolved
+  event emission.
 - Added Rust Detection IR evaluation against the new S08b normalized
   `SecurityEvent` contract so Sigma-derived findings can run on the shared
   event model instead of a parallel fixture-only shape.

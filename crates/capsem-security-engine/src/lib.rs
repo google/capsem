@@ -1499,31 +1499,108 @@ impl EnforcementEvaluator for CelEnforcementEvaluator {
 
 impl CompiledCelEnforcementRule {
     fn evaluate(&self, event: &SecurityEvent) -> Result<bool, SecurityEngineError> {
-        let mut context = cel::Context::default();
-        let event_value =
-            cel::to_value(event).map_err(|error| SecurityEngineError::CelEvaluationFailed {
-                rule_id: self.rule.id.clone(),
-                message: error.to_string(),
-            })?;
-        context
-            .add_variable("event", event_value)
-            .map_err(|error| SecurityEngineError::CelEvaluationFailed {
-                rule_id: self.rule.id.clone(),
-                message: error.to_string(),
-            })?;
+        evaluate_cel_bool(&self.rule.id, &self.program, event)
+    }
+}
 
-        match self.program.execute(&context).map_err(|error| {
-            SecurityEngineError::CelEvaluationFailed {
-                rule_id: self.rule.id.clone(),
-                message: error.to_string(),
-            }
-        })? {
-            cel::Value::Bool(value) => Ok(value),
-            value => Err(SecurityEngineError::CelNonBooleanResult {
-                rule_id: self.rule.id.clone(),
-                actual: format!("{value:?}"),
-            }),
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CelDetectionRule {
+    pub id: String,
+    pub pack_id: String,
+    #[serde(default)]
+    pub sigma_id: Option<String>,
+    pub title: String,
+    pub condition: String,
+    pub severity: Severity,
+    pub confidence: Confidence,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct CelDetectionEvaluator {
+    rules: Vec<CompiledCelDetectionRule>,
+}
+
+#[derive(Debug)]
+struct CompiledCelDetectionRule {
+    rule: CelDetectionRule,
+    program: cel::Program,
+}
+
+impl CelDetectionEvaluator {
+    pub fn compile(rules: Vec<CelDetectionRule>) -> Result<Self, SecurityEngineError> {
+        let mut compiled_rules = Vec::with_capacity(rules.len());
+        for rule in rules {
+            let program = cel::Program::compile(&rule.condition).map_err(|error| {
+                SecurityEngineError::CelCompileFailed {
+                    rule_id: rule.id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+            compiled_rules.push(CompiledCelDetectionRule { rule, program });
         }
+        Ok(Self {
+            rules: compiled_rules,
+        })
+    }
+}
+
+impl DetectionEvaluator for CelDetectionEvaluator {
+    fn evaluate(
+        &mut self,
+        event: &SecurityEvent,
+    ) -> Result<Vec<DetectionFinding>, SecurityEngineError> {
+        let mut findings = Vec::new();
+        for compiled in &self.rules {
+            if evaluate_cel_bool(&compiled.rule.id, &compiled.program, event)? {
+                findings.push(DetectionFinding {
+                    finding_id: format!("finding-{}-{}", event.common.event_id, compiled.rule.id),
+                    event_id: event.common.event_id.clone(),
+                    rule_id: compiled.rule.id.clone(),
+                    pack_id: compiled.rule.pack_id.clone(),
+                    sigma_id: compiled.rule.sigma_id.clone(),
+                    title: compiled.rule.title.clone(),
+                    severity: compiled.rule.severity,
+                    confidence: compiled.rule.confidence,
+                    tags: compiled.rule.tags.clone(),
+                });
+            }
+        }
+        Ok(findings)
+    }
+}
+
+fn evaluate_cel_bool(
+    rule_id: &str,
+    program: &cel::Program,
+    event: &SecurityEvent,
+) -> Result<bool, SecurityEngineError> {
+    let mut context = cel::Context::default();
+    let event_value =
+        cel::to_value(event).map_err(|error| SecurityEngineError::CelEvaluationFailed {
+            rule_id: rule_id.to_owned(),
+            message: error.to_string(),
+        })?;
+    context
+        .add_variable("event", event_value)
+        .map_err(|error| SecurityEngineError::CelEvaluationFailed {
+            rule_id: rule_id.to_owned(),
+            message: error.to_string(),
+        })?;
+
+    match program
+        .execute(&context)
+        .map_err(|error| SecurityEngineError::CelEvaluationFailed {
+            rule_id: rule_id.to_owned(),
+            message: error.to_string(),
+        })? {
+        cel::Value::Bool(value) => Ok(value),
+        value => Err(SecurityEngineError::CelNonBooleanResult {
+            rule_id: rule_id.to_owned(),
+            actual: format!("{value:?}"),
+        }),
     }
 }
 

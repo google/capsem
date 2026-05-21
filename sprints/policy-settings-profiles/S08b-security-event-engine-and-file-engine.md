@@ -16,6 +16,10 @@ The following slice added the first real CEL enforcement adapter using the
 normalized `SecurityEvent` envelope, preserve rule and pack identity on matched
 decisions/steps, and reject malformed CEL before it can poison the running
 engine.
+The next slice put runtime detection on the same CEL substrate:
+`CelDetectionRule` compiles through the same `cel` crate, emits typed
+`DetectionFinding` records with Sigma metadata when matched, and attaches those
+findings to the event/resolved event before any emitter sink can run.
 
 S08a fixes the input contract for this sprint: enforcement and detection are
 separate profile-owned rule families with separate public route groups.

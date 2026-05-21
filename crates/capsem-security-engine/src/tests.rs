@@ -822,6 +822,66 @@ fn real_cel_enforcement_compile_errors_fail_closed_before_install() {
     assert!(err.to_string().contains("CEL compile failed"));
 }
 
+#[test]
+fn real_cel_detection_emits_findings_before_resolved_event_emission() {
+    let rule = CelDetectionRule {
+        id: "detect-metadata".into(),
+        pack_id: "corp-detection".into(),
+        sigma_id: Some("sigma-metadata".into()),
+        title: "Metadata service access".into(),
+        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        severity: Severity::High,
+        confidence: Confidence::High,
+        tags: vec!["network".into(), "metadata".into()],
+    };
+    let mut engine = SecurityEngine::default();
+    engine.set_detection(Box::new(
+        CelDetectionEvaluator::compile(vec![rule]).unwrap(),
+    ));
+
+    let result = engine
+        .evaluate(http_request_event("evt-cel-detect"))
+        .unwrap();
+
+    assert!(matches!(result.action, SecurityAction::Continue));
+    assert_eq!(result.resolved_event.detection_findings.len(), 1);
+    assert_eq!(
+        result.resolved_event.detection_findings[0].event_id,
+        "evt-cel-detect"
+    );
+    assert_eq!(
+        result.resolved_event.detection_findings[0].pack_id,
+        "corp-detection"
+    );
+    assert_eq!(
+        result.resolved_event.event.findings,
+        result.resolved_event.detection_findings
+    );
+    assert_eq!(
+        result.resolved_event.steps[0].kind,
+        ResolvedEventStepKind::DetectionMatch
+    );
+    assert_eq!(result.resolved_event.steps[0].status, StepStatus::Matched);
+}
+
+#[test]
+fn real_cel_detection_compile_errors_fail_closed_before_install() {
+    let err = CelDetectionEvaluator::compile(vec![CelDetectionRule {
+        id: "bad-detection-cel".into(),
+        pack_id: "corp-detection".into(),
+        sigma_id: None,
+        title: "Bad detection".into(),
+        condition: "event.subject.host ==".into(),
+        severity: Severity::Medium,
+        confidence: Confidence::Medium,
+        tags: Vec::new(),
+    }])
+    .unwrap_err();
+
+    assert!(err.to_string().contains("bad-detection-cel"));
+    assert!(err.to_string().contains("CEL compile failed"));
+}
+
 fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> SecurityEventCommon {
     SecurityEventCommon {
         event_id: event_id.into(),
