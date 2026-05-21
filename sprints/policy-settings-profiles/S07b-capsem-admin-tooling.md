@@ -402,6 +402,27 @@ Twenty-fifth slice landed on 2026-05-21:
   tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
   -q` passed with 71 tests.
 
+Twenty-sixth slice landed on 2026-05-21:
+
+- `capsem-core::security_packs` now provides the Rust Detection IR V1 contract:
+  strict serde structs, Draft 2020-12 schema validation against the committed
+  `capsem.detection.ir.v1` schema, normalized `SecurityEvent` parsing, and a
+  first exact-match evaluator for `equals_any` matchers.
+- The Rust test fixture is pinned to the Python compiler output:
+  `schemas/fixtures/detection-ir-v1-valid.json` must equal
+  `capsem-admin detection compile` output for the default Sigma fixture before
+  the Rust parser/evaluator tests pass.
+- Adversarial parity coverage rejects invalid Detection IR schema payloads and
+  unknown matcher fields through strict serde, keeping the runtime contract
+  closed before S08b wires the engine.
+- Verification: `cargo test -p capsem-core --test security_packs` passed with
+  5 tests; `uv run python -m pytest tests/test_security_packs.py -q` passed
+  with 16 tests; `uv run python -m pytest tests/test_security_packs.py
+  tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
+  -q` passed with 72 tests; `cargo test -p capsem-core --test profile_schema`
+  passed with 6 tests; `cargo clippy -p capsem-core --test security_packs --
+  -D warnings` passed.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -761,7 +782,8 @@ The checker must fail closed for:
       `capsem-admin detection validate|schema|compile|check` release/docs proof
       before S19 documents enforcement/detection formats as supported corp
       workflows. Validate/schema plus pySigma-backed detection compile/check
-      have landed; release/docs proof and Rust parity fixtures remain.
+      and Rust Detection IR parity fixtures have landed; release/docs proof
+      remains.
 
 ## Coverage Ledger
 
@@ -778,13 +800,15 @@ The checker must fail closed for:
   doctor-bundle probe parser tests; SPDX guest SBOM model/CLI tests;
   policy/detection pack Pydantic/schema tests; Detection IR schema tests;
   pySigma-backed Sigma import/compile tests; detection check report tests;
-  admin doctor checks; no-hand-edited-settings guard tests.
+  Rust Detection IR serde/schema/evaluator parity tests; admin doctor checks;
+  no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`;
   `image sbom`; `manifest generate`; `manifest check --fast`;
   `manifest check --download`;
   `policy validate`; `policy schema`; `detection validate`;
   `detection schema`; `detection compile`; `detection check`;
+  Rust `capsem-core` Detection IR parse/evaluate;
   profile-required `scripts/build-assets.sh --profile`; Justfile
   `build-assets`/`build-kernel`/`build-rootfs` routing through
   `capsem-admin image build`; bootstrap-installed CLI smoke.
@@ -801,7 +825,8 @@ The checker must fail closed for:
   tests, policy rewrite without payload, detection pack enforcement-decision
   attempts, duplicate policy/detection ids, missing Sigma field mappings,
   unsupported Sigma conditions, unsupported Sigma modifiers, and unsupported
-  Sigma wildcard/string placeholder values.
+  Sigma wildcard/string placeholder values; invalid Detection IR schema
+  payloads and unknown Rust IR matcher fields.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default; the profile-backed host-arch E2E gate
   reconciles selected assets, boots through Capsem, captures
@@ -815,5 +840,5 @@ The checker must fail closed for:
   full assets; full download check streams to disk and verifies incrementally.
 - Missing/deferred: full Docker image build may stay in release gates if too
   expensive for every PR; keep a lightweight fixture-build test in PR gates.
-  Detection Rust parity fixtures remain deferred to S08b's runtime engine
-  implementation.
+  S08b still owns production runtime engine integration, threaded scheduling,
+  and telemetry/sink wiring.

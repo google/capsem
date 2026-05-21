@@ -477,6 +477,18 @@ a valid claim -- mark it `[ ]` instead.
     tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
     -q` passed with 71 tests. Remaining policy/detection admin work: Rust
     parity fixtures and docs/release proof.
+    Twenty-sixth slice added `capsem-core::security_packs` with strict Rust
+    Detection IR V1 schema validation, serde parsing, normalized SecurityEvent
+    parsing, exact-match evaluator support, and golden fixture parity with the
+    Python `capsem-admin detection compile` output. Verification:
+    `cargo test -p capsem-core --test security_packs` passed with 5 tests;
+    `uv run python -m pytest tests/test_security_packs.py -q` passed with 16
+    tests; `uv run python -m pytest tests/test_security_packs.py
+    tests/test_admin_cli.py tests/test_profiles.py tests/test_service_settings.py
+    -q` passed with 72 tests; `cargo test -p capsem-core --test profile_schema`
+    passed with 6 tests; `cargo clippy -p capsem-core --test security_packs --
+    -D warnings` passed. Remaining policy/detection admin work: docs/release
+    proof.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

@@ -37,6 +37,9 @@ DETECTION_SCHEMA_PATH = (
 DETECTION_IR_SCHEMA_PATH = (
     PROJECT_ROOT / "schemas" / "capsem.detection.ir.v1.schema.json"
 )
+DETECTION_IR_FIXTURE_PATH = (
+    PROJECT_ROOT / "schemas" / "fixtures" / "detection-ir-v1-valid.json"
+)
 
 
 def _policy_json() -> str:
@@ -207,6 +210,18 @@ def test_detection_pack_compiles_sigma_to_typed_ir(tmp_path: Path) -> None:
     assert ir.rules[0].matchers[0].field_path == "subject.request.host"
     assert ir.rules[0].matchers[0].values == ["169.254.169.254"]
     assert '"schema": "capsem.detection.ir.v1"' in dumped
+
+
+def test_detection_ir_golden_fixture_matches_compiler_output(tmp_path: Path) -> None:
+    path = tmp_path / "detection-pack.yml"
+    path.write_text(_detection_yaml(), encoding="utf-8")
+    pack = validate_detection_pack_yaml(path)
+
+    ir = compile_detection_pack(pack, base_dir=tmp_path)
+
+    assert DETECTION_IR_FIXTURE_PATH.read_text(
+        encoding="utf-8",
+    ) == dump_detection_ir_json(ir) + "\n"
 
 
 def test_detection_pack_rejects_unsupported_sigma_condition(tmp_path: Path) -> None:

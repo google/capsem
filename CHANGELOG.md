@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem-admin detection compile|check` with pySigma-backed Sigma
   parsing, typed `capsem.detection.ir.v1` output, JSONL normalized-event
   fixture checks, and fail-closed unsupported Sigma subset coverage.
+- Added Rust Detection IR V1 schema/serde/evaluator parity fixtures so
+  `capsem-core` consumes the same `capsem.detection.ir.v1` artifact emitted by
+  `capsem-admin detection compile`.
 - Added Profile V2 settings/profile provenance to the redacted service debug
   report, including selected profile, profile roots, effective VM summary,
   resolver trace summary, and credential-id-only reporting.

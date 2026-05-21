@@ -15,6 +15,12 @@ S08a second decision slice names the concrete contracts S08b must implement:
 `capsem.policy-pack.v1`, `capsem.detection-pack.v1`, and
 `capsem.detection.ir.v1`.
 
+S07b has now landed the first cross-runtime Detection IR contract proof:
+`capsem-admin detection compile` emits `capsem.detection.ir.v1`, Python golden
+tests pin the compiler output, and `capsem-core::security_packs` validates,
+parses, and evaluates the same Detection IR fixture. S08b should build the
+runtime Security Engine on that module instead of inventing a second IR parser.
+
 ## Placement
 
 Runs after [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
