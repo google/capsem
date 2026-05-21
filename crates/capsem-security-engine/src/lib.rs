@@ -383,6 +383,8 @@ pub struct SecurityDecision {
     #[serde(default)]
     pub rule: Option<String>,
     #[serde(default)]
+    pub pack_id: Option<String>,
+    #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
     pub terminal: bool,
@@ -1399,6 +1401,12 @@ pub enum SecurityEngineError {
         phase: SecurityEnginePhase,
         message: String,
     },
+    #[error("rule {rule_id} CEL compile failed: {message}")]
+    CelCompileFailed { rule_id: String, message: String },
+    #[error("rule {rule_id} CEL evaluation failed: {message}")]
+    CelEvaluationFailed { rule_id: String, message: String },
+    #[error("rule {rule_id} CEL result was not boolean: {actual}")]
+    CelNonBooleanResult { rule_id: String, actual: String },
 }
 
 pub trait SecurityEventProcessor {
@@ -1426,6 +1434,97 @@ pub trait DetectionEvaluator {
         &mut self,
         event: &SecurityEvent,
     ) -> Result<Vec<DetectionFinding>, SecurityEngineError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CelEnforcementRule {
+    pub id: String,
+    #[serde(default)]
+    pub pack_id: Option<String>,
+    pub condition: String,
+    pub decision: SecurityDecisionAction,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct CelEnforcementEvaluator {
+    rules: Vec<CompiledCelEnforcementRule>,
+}
+
+#[derive(Debug)]
+struct CompiledCelEnforcementRule {
+    rule: CelEnforcementRule,
+    program: cel::Program,
+}
+
+impl CelEnforcementEvaluator {
+    pub fn compile(rules: Vec<CelEnforcementRule>) -> Result<Self, SecurityEngineError> {
+        let mut compiled_rules = Vec::with_capacity(rules.len());
+        for rule in rules {
+            let program = cel::Program::compile(&rule.condition).map_err(|error| {
+                SecurityEngineError::CelCompileFailed {
+                    rule_id: rule.id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+            compiled_rules.push(CompiledCelEnforcementRule { rule, program });
+        }
+        Ok(Self {
+            rules: compiled_rules,
+        })
+    }
+}
+
+impl EnforcementEvaluator for CelEnforcementEvaluator {
+    fn evaluate(
+        &mut self,
+        event: &SecurityEvent,
+    ) -> Result<Option<SecurityDecision>, SecurityEngineError> {
+        for compiled in &self.rules {
+            if compiled.evaluate(event)? {
+                return Ok(Some(SecurityDecision {
+                    action: compiled.rule.decision,
+                    rule: Some(compiled.rule.id.clone()),
+                    pack_id: compiled.rule.pack_id.clone(),
+                    reason: compiled.rule.reason.clone(),
+                    terminal: compiled.rule.decision != SecurityDecisionAction::Allow,
+                }));
+            }
+        }
+        Ok(None)
+    }
+}
+
+impl CompiledCelEnforcementRule {
+    fn evaluate(&self, event: &SecurityEvent) -> Result<bool, SecurityEngineError> {
+        let mut context = cel::Context::default();
+        let event_value =
+            cel::to_value(event).map_err(|error| SecurityEngineError::CelEvaluationFailed {
+                rule_id: self.rule.id.clone(),
+                message: error.to_string(),
+            })?;
+        context
+            .add_variable("event", event_value)
+            .map_err(|error| SecurityEngineError::CelEvaluationFailed {
+                rule_id: self.rule.id.clone(),
+                message: error.to_string(),
+            })?;
+
+        match self.program.execute(&context).map_err(|error| {
+            SecurityEngineError::CelEvaluationFailed {
+                rule_id: self.rule.id.clone(),
+                message: error.to_string(),
+            }
+        })? {
+            cel::Value::Bool(value) => Ok(value),
+            value => Err(SecurityEngineError::CelNonBooleanResult {
+                rule_id: self.rule.id.clone(),
+                actual: format!("{value:?}"),
+            }),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1494,7 +1593,7 @@ impl SecurityEngine {
                         SecurityEnginePhase::Enforcement,
                         StepStatus::Matched,
                         decision.rule.clone(),
-                        None,
+                        decision.pack_id.clone(),
                         decision.reason.clone(),
                     ));
                     event.decision = Some(decision);
@@ -1532,7 +1631,7 @@ impl SecurityEngine {
                             SecurityEnginePhase::Confirm,
                             StepStatus::Applied,
                             resolved_decision.rule.clone(),
-                            None,
+                            resolved_decision.pack_id.clone(),
                             resolved_decision.reason.clone(),
                         ));
                         event.decision = Some(resolved_decision);
@@ -1554,7 +1653,10 @@ impl SecurityEngine {
                         .decision
                         .as_ref()
                         .and_then(|decision| decision.rule.clone()),
-                    None,
+                    event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.pack_id.clone()),
                     Some("no confirm resolver configured".into()),
                 ));
             }

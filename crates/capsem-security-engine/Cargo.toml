@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 blake3 = "1"
+cel = { version = "0.13", features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

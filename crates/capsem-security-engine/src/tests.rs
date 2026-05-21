@@ -91,6 +91,7 @@ fn plugin_event_output_carries_ask_throttle_labels_findings_and_mutations() {
     event.decision = Some(SecurityDecision {
         action: SecurityDecisionAction::Ask,
         rule: Some("plugin.pii-egress.ask".into()),
+        pack_id: Some("plugin-pack".into()),
         reason: Some("open-world request after PII access".into()),
         terminal: false,
     });
@@ -121,6 +122,7 @@ fn plugin_event_output_carries_ask_throttle_labels_findings_and_mutations() {
     event.decision = Some(SecurityDecision {
         action: SecurityDecisionAction::Throttle,
         rule: Some("quota.future".into()),
+        pack_id: None,
         reason: Some("future quota check".into()),
         terminal: true,
     });
@@ -329,6 +331,7 @@ fn security_decision_projects_to_internal_transport_projection() {
     event.decision = Some(SecurityDecision {
         action: SecurityDecisionAction::Block,
         rule: Some("rule.block".into()),
+        pack_id: Some("pack.block".into()),
         reason: Some("blocked".into()),
         terminal: true,
     });
@@ -770,6 +773,53 @@ fn security_engine_fails_closed_when_enforcement_errors() {
         .as_deref()
         .unwrap()
         .contains("enforcement exploded"));
+}
+
+#[test]
+fn real_cel_enforcement_blocks_matching_security_event() {
+    let rule = CelEnforcementRule {
+        id: "block-metadata".into(),
+        pack_id: Some("corp-enforcement".into()),
+        condition: "event.subject.host == 'metadata.google.internal' && event.common.event_type == 'http.request'".into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("metadata service access".into()),
+    };
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![rule]).unwrap(),
+    ));
+
+    let result = engine.evaluate(http_request_event("evt-cel")).unwrap();
+
+    assert!(matches!(result.action, SecurityAction::Block(_)));
+    assert_eq!(
+        result.resolved_event.event.decision.as_ref().unwrap().rule,
+        Some("block-metadata".into())
+    );
+    assert_eq!(
+        result.resolved_event.steps[0].kind,
+        ResolvedEventStepKind::EnforcementMatch
+    );
+    assert_eq!(result.resolved_event.steps[0].status, StepStatus::Matched);
+    assert_eq!(
+        result.resolved_event.steps[0].pack_id.as_deref(),
+        Some("corp-enforcement")
+    );
+}
+
+#[test]
+fn real_cel_enforcement_compile_errors_fail_closed_before_install() {
+    let err = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "bad-cel".into(),
+        pack_id: Some("corp-enforcement".into()),
+        condition: "event.subject.host ==".into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("bad".into()),
+    }])
+    .unwrap_err();
+
+    assert!(err.to_string().contains("bad-cel"));
+    assert!(err.to_string().contains("CEL compile failed"));
 }
 
 fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> SecurityEventCommon {
@@ -1376,6 +1426,7 @@ impl EnforcementEvaluator for AskEnforcement {
         Ok(Some(SecurityDecision {
             action: SecurityDecisionAction::Ask,
             rule: Some("enforcement.ask".into()),
+            pack_id: Some("pack-enforcement".into()),
             reason: Some("operator approval required".into()),
             terminal: false,
         }))
@@ -1394,6 +1445,7 @@ impl ConfirmResolver for AllowConfirm {
         Ok(SecurityDecision {
             action: SecurityDecisionAction::Allow,
             rule: decision.rule.clone(),
+            pack_id: decision.pack_id.clone(),
             reason: Some("operator allowed".into()),
             terminal: false,
         })

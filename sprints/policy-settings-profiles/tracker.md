@@ -774,6 +774,17 @@ a valid claim -- mark it `[ ]` instead.
     tests. Still missing for S08b.2: real CEL adapter replacement,
     Sigma-to-runtime detection lowering, runtime service routes, historical
     hunt over the session journal, and VM/runtime integration.
+    Twentieth S08b.2 slice replaced the next enforcement shortcut with a real
+    CEL adapter in `capsem-security-engine`. `CelEnforcementRule` now compiles
+    through the `cel` crate before install, `CelEnforcementEvaluator` evaluates
+    compiled programs against normalized `SecurityEvent` data, matched
+    decisions preserve rule and pack identity in the resolved-event step, and
+    malformed CEL fails closed before entering the running engine. Verification:
+    `cargo test -p capsem-security-engine` passed with 26 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Still missing for S08b.2: Sigma-to-runtime detection lowering, service
+    `/enforcement/*` and `/detection/*` route wiring, historical hunt over the
+    session journal, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
