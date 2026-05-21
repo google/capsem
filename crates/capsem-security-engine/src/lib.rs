@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use thiserror::Error;
 
 pub const SECURITY_EVENT_SCHEMA_VERSION: u32 = 1;
@@ -763,6 +764,80 @@ impl ResolvedEventEmitter {
 pub struct EmitOutcome {
     pub resolved_event: ResolvedSecurityEvent,
     pub required_sink_failed: bool,
+}
+
+pub const DEFAULT_BACKTEST_MATCH_LIMIT: usize = 100;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacktestEventRef {
+    pub corpus: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    pub event_id: String,
+    #[serde(default)]
+    pub sequence_no: Option<u64>,
+    pub timestamp_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MatchedField {
+    pub path: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum BacktestOutcome {
+    Matched,
+    NoMatch,
+    Mismatch { expected: String, actual: String },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacktestMatchRow {
+    pub event_ref: BacktestEventRef,
+    pub rule_id: String,
+    pub pack_id: String,
+    pub evidence_signature: String,
+    #[serde(default)]
+    pub matched_fields: Vec<MatchedField>,
+    pub outcome: BacktestOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacktestResult {
+    pub total_matches: usize,
+    pub unique_evidence_matches: usize,
+    pub truncated: bool,
+    pub rows: Vec<BacktestMatchRow>,
+}
+
+pub fn dedupe_backtest_matches(rows: Vec<BacktestMatchRow>, limit: usize) -> BacktestResult {
+    let total_matches = rows.len();
+    let mut seen = HashSet::new();
+    let mut unique_evidence_matches = 0;
+    let mut deduped = Vec::new();
+
+    for row in rows {
+        if seen.insert(row.evidence_signature.clone()) {
+            unique_evidence_matches += 1;
+            if deduped.len() < limit {
+                deduped.push(row);
+            }
+        }
+    }
+
+    BacktestResult {
+        total_matches,
+        unique_evidence_matches,
+        truncated: unique_evidence_matches > deduped.len(),
+        rows: deduped,
+    }
 }
 
 #[cfg(test)]

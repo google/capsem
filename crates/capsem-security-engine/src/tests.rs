@@ -292,6 +292,85 @@ fn resolved_event_emitter_marks_required_sink_failure() {
     );
 }
 
+#[test]
+fn backtest_rows_dedupe_by_evidence_signature_and_limit_to_default() {
+    let rows = (0..130)
+        .map(|index| BacktestMatchRow {
+            event_ref: BacktestEventRef {
+                corpus: "session".into(),
+                session_id: Some("session-1".into()),
+                event_id: format!("evt-{index}"),
+                sequence_no: Some(index),
+                timestamp_unix_ms: 1_789 + index,
+            },
+            rule_id: "rule-1".into(),
+            pack_id: "pack-1".into(),
+            evidence_signature: format!("signature-{}", index % 110),
+            matched_fields: Vec::new(),
+            outcome: BacktestOutcome::Matched,
+        })
+        .collect();
+
+    let result = dedupe_backtest_matches(rows, DEFAULT_BACKTEST_MATCH_LIMIT);
+
+    assert_eq!(result.total_matches, 130);
+    assert_eq!(result.unique_evidence_matches, 110);
+    assert_eq!(result.rows.len(), DEFAULT_BACKTEST_MATCH_LIMIT);
+    assert_eq!(result.rows[0].event_ref.event_id, "evt-0");
+    assert_eq!(result.rows[99].event_ref.event_id, "evt-99");
+    assert!(result.truncated);
+}
+
+#[test]
+fn backtest_rows_keep_mismatches_and_full_event_refs() {
+    let rows = vec![
+        BacktestMatchRow {
+            event_ref: BacktestEventRef {
+                corpus: "fixture".into(),
+                session_id: None,
+                event_id: "evt-a".into(),
+                sequence_no: Some(4),
+                timestamp_unix_ms: 44,
+            },
+            rule_id: "rule-a".into(),
+            pack_id: "pack-a".into(),
+            evidence_signature: "same".into(),
+            matched_fields: vec![MatchedField {
+                path: "subject.request.host".into(),
+                value: serde_json::json!("metadata"),
+            }],
+            outcome: BacktestOutcome::Mismatch {
+                expected: "no_match".into(),
+                actual: "matched".into(),
+            },
+        },
+        BacktestMatchRow {
+            event_ref: BacktestEventRef {
+                corpus: "fixture".into(),
+                session_id: None,
+                event_id: "evt-b".into(),
+                sequence_no: Some(5),
+                timestamp_unix_ms: 45,
+            },
+            rule_id: "rule-a".into(),
+            pack_id: "pack-a".into(),
+            evidence_signature: "same".into(),
+            matched_fields: Vec::new(),
+            outcome: BacktestOutcome::Matched,
+        },
+    ];
+
+    let result = dedupe_backtest_matches(rows, 100);
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0].event_ref.corpus, "fixture");
+    assert_eq!(result.rows[0].event_ref.sequence_no, Some(4));
+    assert!(matches!(
+        result.rows[0].outcome,
+        BacktestOutcome::Mismatch { .. }
+    ));
+}
+
 fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecurityEvent {
     let event = SecurityEvent::http(
         SecurityEventCommon {

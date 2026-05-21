@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first S08b resolved-event emitter contract with required versus
   best-effort sink semantics, delivery bookkeeping, and shared event/finding id
   tests.
+- Added S08b backtest result shaping with full event refs, mismatch outcomes,
+  default 100-row match limits, and evidence-signature deduplication.
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.

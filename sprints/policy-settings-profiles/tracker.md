@@ -639,6 +639,11 @@ a valid claim -- mark it `[ ]` instead.
     recording on `ResolvedSecurityEvent`, and required-sink failure reporting.
     Verification: `cargo test -p capsem-security-engine` passed with 7 tests
     and `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Sixth contract slice added shared backtest result types with full event
+    refs, matched fields, mismatch/error outcomes, default 100-row limit, and
+    evidence-signature deduplication for diverse local evidence. Verification:
+    `cargo test -p capsem-security-engine` passed with 9 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
