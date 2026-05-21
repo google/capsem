@@ -1436,6 +1436,15 @@ pub trait DetectionEvaluator {
     ) -> Result<Vec<DetectionFinding>, SecurityEngineError>;
 }
 
+pub trait RuleMatchRecorder {
+    fn record_rule_match(
+        &mut self,
+        rule_id: &str,
+        event_id: &str,
+        timestamp_unix_ms: u64,
+    ) -> Result<(), SecurityEngineError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CelEnforcementRule {
@@ -1610,6 +1619,7 @@ pub struct SecurityEngine {
     enforcement: Option<Box<dyn EnforcementEvaluator>>,
     confirm: Option<Box<dyn ConfirmResolver>>,
     detection: Option<Box<dyn DetectionEvaluator>>,
+    match_recorder: Option<Box<dyn RuleMatchRecorder>>,
     postprocessors: Vec<Box<dyn SecurityEventProcessor>>,
 }
 
@@ -1628,6 +1638,10 @@ impl SecurityEngine {
 
     pub fn set_detection(&mut self, detection: Box<dyn DetectionEvaluator>) {
         self.detection = Some(detection);
+    }
+
+    pub fn set_match_recorder(&mut self, recorder: Box<dyn RuleMatchRecorder>) {
+        self.match_recorder = Some(recorder);
     }
 
     pub fn add_postprocessor(&mut self, processor: Box<dyn SecurityEventProcessor>) {
@@ -1666,6 +1680,14 @@ impl SecurityEngine {
         if let Some(enforcement) = &mut self.enforcement {
             match enforcement.evaluate(&event) {
                 Ok(Some(decision)) => {
+                    if let Some(rule_id) = decision.rule.as_deref() {
+                        record_rule_match(
+                            &mut self.match_recorder,
+                            rule_id,
+                            &event.common.event_id,
+                            event.common.timestamp_unix_ms,
+                        )?;
+                    }
                     steps.push(phase_step(
                         SecurityEnginePhase::Enforcement,
                         StepStatus::Matched,
@@ -1743,6 +1765,14 @@ impl SecurityEngine {
         if let Some(detection) = &mut self.detection {
             match detection.evaluate(&event) {
                 Ok(findings) => {
+                    for finding in &findings {
+                        record_rule_match(
+                            &mut self.match_recorder,
+                            &finding.rule_id,
+                            &event.common.event_id,
+                            event.common.timestamp_unix_ms,
+                        )?;
+                    }
                     let status = if findings.is_empty() {
                         StepStatus::Skipped
                     } else {
@@ -1807,6 +1837,18 @@ impl SecurityEngine {
             },
         })
     }
+}
+
+fn record_rule_match(
+    recorder: &mut Option<Box<dyn RuleMatchRecorder>>,
+    rule_id: &str,
+    event_id: &str,
+    timestamp_unix_ms: u64,
+) -> Result<(), SecurityEngineError> {
+    if let Some(recorder) = recorder {
+        recorder.record_rule_match(rule_id, event_id, timestamp_unix_ms)?;
+    }
+    Ok(())
 }
 
 fn phase_step(
@@ -2276,6 +2318,38 @@ impl RuntimeRuleRegistry {
         entry.stats.last_matched_event = Some(event_id.to_owned());
         entry.stats.last_matched_unix_ms = Some(timestamp_unix_ms);
         Ok(())
+    }
+}
+
+impl RuleMatchRecorder for RuntimeRuleRegistry {
+    fn record_rule_match(
+        &mut self,
+        rule_id: &str,
+        event_id: &str,
+        timestamp_unix_ms: u64,
+    ) -> Result<(), SecurityEngineError> {
+        self.record_match(rule_id, event_id, timestamp_unix_ms)
+            .map_err(|error| SecurityEngineError::PhaseFailed {
+                phase: SecurityEnginePhase::Detection,
+                message: error.to_string(),
+            })
+    }
+}
+
+impl RuleMatchRecorder for std::sync::Arc<std::sync::Mutex<RuntimeRuleRegistry>> {
+    fn record_rule_match(
+        &mut self,
+        rule_id: &str,
+        event_id: &str,
+        timestamp_unix_ms: u64,
+    ) -> Result<(), SecurityEngineError> {
+        let mut registry = self
+            .lock()
+            .map_err(|error| SecurityEngineError::PhaseFailed {
+                phase: SecurityEnginePhase::Detection,
+                message: format!("runtime rule registry lock poisoned: {error}"),
+            })?;
+        registry.record_rule_match(rule_id, event_id, timestamp_unix_ms)
     }
 }
 

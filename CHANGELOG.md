@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added lowering from `capsem.detection.ir.v1` into real CEL runtime detection
   rules, with explicit family/field allowlists so unsupported Sigma-derived
   paths fail closed before runtime install.
+- Added Security Engine match-stat recording hooks so enforcement and detection
+  matches update the runtime rule registry counters that future service stats
+  routes will expose.
 - Added Rust Detection IR evaluation against the new S08b normalized
   `SecurityEvent` contract so Sigma-derived findings can run on the shared
   event model instead of a parallel fixture-only shape.

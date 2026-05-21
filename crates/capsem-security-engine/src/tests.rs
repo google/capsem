@@ -882,6 +882,77 @@ fn real_cel_detection_compile_errors_fail_closed_before_install() {
     assert!(err.to_string().contains("CEL compile failed"));
 }
 
+#[test]
+fn security_engine_records_enforcement_and_detection_match_stats() {
+    let registry = std::sync::Arc::new(std::sync::Mutex::new(RuntimeRuleRegistry::default()));
+    {
+        let mut registry = registry.lock().unwrap();
+        registry
+            .add_or_update(
+                RuntimeRuleRecord {
+                    metadata: rule_metadata("block-metadata"),
+                    source: "event.subject.host == 'metadata.google.internal'".into(),
+                    enabled: true,
+                },
+                compile_rule_source,
+            )
+            .unwrap();
+        registry
+            .add_or_update(
+                RuntimeRuleRecord {
+                    metadata: rule_metadata("detect-metadata"),
+                    source: "event.subject.host == 'metadata.google.internal'".into(),
+                    enabled: true,
+                },
+                compile_rule_source,
+            )
+            .unwrap();
+    }
+
+    let mut engine = SecurityEngine::default();
+    engine.set_match_recorder(Box::new(registry.clone()));
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-metadata".into(),
+            pack_id: Some("pack-1".into()),
+            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("metadata access".into()),
+        }])
+        .unwrap(),
+    ));
+    engine.set_detection(Box::new(
+        CelDetectionEvaluator::compile(vec![CelDetectionRule {
+            id: "detect-metadata".into(),
+            pack_id: "pack-1".into(),
+            sigma_id: None,
+            title: "Metadata access".into(),
+            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            severity: Severity::High,
+            confidence: Confidence::High,
+            tags: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+
+    let result = engine.evaluate(http_request_event("evt-stats")).unwrap();
+    assert!(matches!(result.action, SecurityAction::Block(_)));
+
+    let registry = registry.lock().unwrap();
+    let enforcement_stats = registry.stats("block-metadata").unwrap();
+    assert_eq!(enforcement_stats.match_count, 1);
+    assert_eq!(
+        enforcement_stats.last_matched_event.as_deref(),
+        Some("evt-stats")
+    );
+    let detection_stats = registry.stats("detect-metadata").unwrap();
+    assert_eq!(detection_stats.match_count, 1);
+    assert_eq!(
+        detection_stats.last_matched_event.as_deref(),
+        Some("evt-stats")
+    );
+}
+
 fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> SecurityEventCommon {
     SecurityEventCommon {
         event_id: event_id.into(),

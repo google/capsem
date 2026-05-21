@@ -25,6 +25,11 @@ runtime path. Detection IR rules now lower into `CelDetectionRule`s with
 explicit event-family and field-path allowlists, so supported Sigma-derived
 matchers run through real CEL while unsupported field shapes fail closed before
 runtime install.
+The next slice added match-stat recording hooks to the Security Engine. When
+enforcement or detection rules match, the engine can notify a
+`RuleMatchRecorder`; `RuntimeRuleRegistry` implements that contract so future
+`/enforcement/stats` and `/detection/stats` routes read counters populated by
+the same runtime path that made the decision/finding.
 
 S08a fixes the input contract for this sprint: enforcement and detection are
 separate profile-owned rule families with separate public route groups.

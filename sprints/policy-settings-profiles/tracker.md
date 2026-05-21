@@ -806,6 +806,16 @@ a valid claim -- mark it `[ ]` instead.
     Still missing for S08b.2: service route wiring, historical hunt over the
     session journal, match-stat integration with the runtime registry, and
     VM/runtime integration.
+    Twenty-third S08b.2 slice connected Security Engine rule matches to runtime
+    registry stats. The engine now accepts a `RuleMatchRecorder`, records
+    enforcement decisions and all detection findings with event id/timestamp,
+    and `RuntimeRuleRegistry` implements the recorder so future
+    `/enforcement/stats` and `/detection/stats` routes expose counters updated
+    by the same runtime path that produced the decision/finding. Verification:
+    `cargo test -p capsem-security-engine` passed with 29 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 8 tests.
+    Still missing for S08b.2: service route wiring, historical hunt over the
+    session journal, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
