@@ -6783,6 +6783,66 @@ async fn handle_detection_backtest_returns_finding_rows_with_event_refs() {
 }
 
 #[tokio::test]
+async fn handle_detection_hunt_runs_multiple_detection_rules_over_inline_events() {
+    let Json(result) = handle_detection_hunt(Json(RuntimeDetectionHuntRequest {
+        rules: vec![
+            RuntimeDetectionRuleRequest {
+                id: "detect-metadata".into(),
+                pack_id: "runtime-detection".into(),
+                sigma_id: Some("sigma-1".into()),
+                title: "Metadata access".into(),
+                condition: "event.subject.host == 'metadata.google.internal'".into(),
+                severity: capsem_security_engine::Severity::High,
+                confidence: capsem_security_engine::Confidence::High,
+                tags: vec!["metadata".into()],
+                enabled: true,
+            },
+            RuntimeDetectionRuleRequest {
+                id: "detect-api".into(),
+                pack_id: "runtime-detection".into(),
+                sigma_id: Some("sigma-2".into()),
+                title: "API access".into(),
+                condition: "event.subject.host == 'api.example.test'".into(),
+                severity: capsem_security_engine::Severity::Medium,
+                confidence: capsem_security_engine::Confidence::High,
+                tags: vec!["api".into()],
+                enabled: true,
+            },
+        ],
+        events: vec![
+            RuntimeBacktestEvent {
+                event_ref: None,
+                event: runtime_http_event("evt-6", 6, "metadata.google.internal"),
+                expected: None,
+            },
+            RuntimeBacktestEvent {
+                event_ref: None,
+                event: runtime_http_event("evt-7", 7, "api.example.test"),
+                expected: None,
+            },
+            RuntimeBacktestEvent {
+                event_ref: None,
+                event: runtime_http_event("evt-8", 8, "docs.example.test"),
+                expected: None,
+            },
+        ],
+        limit: Some(100),
+    }))
+    .await
+    .unwrap();
+
+    let rule_ids = result
+        .rows
+        .iter()
+        .map(|row| row.rule_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(result.total_matches, 2);
+    assert_eq!(rule_ids.len(), 2);
+    assert!(rule_ids.contains("detect-metadata"));
+    assert!(rule_ids.contains("detect-api"));
+}
+
+#[tokio::test]
 async fn rules_api_evaluate_stays_bounded_for_large_profiles() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();

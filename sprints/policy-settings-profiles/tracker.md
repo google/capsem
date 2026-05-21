@@ -844,6 +844,16 @@ a valid claim -- mark it `[ ]` instead.
     backtest source selection, `/detection/hunt` and
     `/sessions/{id}/detection/hunt`, gateway/CLI/UI route exposure,
     persistence/profile-pack seeding, and VM/runtime integration.
+    Twenty-sixth S08b.2 slice added local typed detection hunt for
+    `POST /detection/hunt`. The route accepts multiple candidate detection
+    rules plus supplied normalized `SecurityEvent` values, compiles all rules
+    through the real CEL detection evaluator, and returns the shared deduped
+    `BacktestResult` shape with full event refs and matched subject evidence.
+    Verification: `cargo test -p capsem-service
+    handle_detection_hunt_runs_multiple_detection_rules_over_inline_events`
+    passed. Still missing for S08b.2: historical resolved-event/session-journal
+    source selection, `/sessions/{id}/detection/hunt`, gateway/CLI/UI route
+    exposure, persistence/profile-pack seeding, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

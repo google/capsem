@@ -402,17 +402,20 @@ evidence with finding context.
 Implementation status as of the current service-route slices:
 
 - Landed: `capsem-service` handlers for enforcement/detection validate,
-  compile, local inline backtest, live add/update/delete/list, and stats,
-  backed by the `capsem-security-engine` runtime registry and real CEL compile
-  checks.
+  compile, local inline backtest, local inline detection hunt,
+  live add/update/delete/list, and stats, backed by the
+  `capsem-security-engine` runtime registry and real CEL compile checks.
 - Guardrail: malformed CEL fails before registry mutation; list/stats expose
   rule id, pack id, origin/scope, enabled state, compile status, generation,
   compiled plan id, match count, and last matched event/timestamp.
 - Backtest scope now landed: candidate CEL rules over supplied typed
   `SecurityEvent` corpora with shared `BacktestResult` rows, event refs,
   matched subject evidence, and evidence-signature dedupe.
+- Detection hunt scope now landed: multiple candidate detection rules over a
+  supplied typed `SecurityEvent` corpus, returning the same shared result row
+  shape as backtest.
 - Still open: historical resolved-event/session journal source selection,
-  `/detection/hunt`, `/sessions/{id}/detection/hunt`, gateway/CLI/UI exposure,
+  `/sessions/{id}/detection/hunt`, gateway/CLI/UI exposure,
   persisted/profile-seeded rule plans, and VM/runtime cutover.
 
 ## Session Database Architecture

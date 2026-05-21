@@ -4213,6 +4213,15 @@ struct RuntimeDetectionBacktestRequest {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeDetectionHuntRequest {
+    rules: Vec<RuntimeDetectionRuleRequest>,
+    events: Vec<RuntimeBacktestEvent>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -6186,6 +6195,66 @@ async fn handle_detection_backtest(
                 AppError(
                     StatusCode::BAD_REQUEST,
                     format!("backtest detection rule: {error}"),
+                )
+            },
+        )?;
+        for finding in findings {
+            rows.push(seceng::BacktestMatchRow {
+                event_ref: inline_backtest_event_ref(input),
+                rule_id: finding.rule_id,
+                pack_id: finding.pack_id,
+                evidence_signature: backtest_evidence_signature(&input.event)?,
+                matched_fields: backtest_matched_fields(&input.event)?,
+                outcome: backtest_outcome(input.expected.as_deref(), "finding"),
+            });
+        }
+    }
+
+    Ok(Json(seceng::dedupe_backtest_matches(
+        rows,
+        runtime_backtest_limit(request.limit),
+    )))
+}
+
+async fn handle_detection_hunt(
+    Json(request): Json<RuntimeDetectionHuntRequest>,
+) -> Result<Json<seceng::BacktestResult>, AppError> {
+    if request.rules.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "detection hunt requires at least one rule".into(),
+        ));
+    }
+
+    let mut rules = Vec::with_capacity(request.rules.len());
+    for rule in &request.rules {
+        validate_runtime_rule_id(&rule.id)?;
+        rules.push(seceng::CelDetectionRule {
+            id: rule.id.clone(),
+            pack_id: rule.pack_id.clone(),
+            sigma_id: rule.sigma_id.clone(),
+            title: rule.title.clone(),
+            condition: rule.condition.clone(),
+            severity: rule.severity,
+            confidence: rule.confidence,
+            tags: rule.tags.clone(),
+        });
+    }
+
+    let mut evaluator = seceng::CelDetectionEvaluator::compile(rules).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("compile detection hunt rules: {error}"),
+        )
+    })?;
+
+    let mut rows = Vec::new();
+    for input in &request.events {
+        let findings = seceng::DetectionEvaluator::evaluate(&mut evaluator, &input.event).map_err(
+            |error| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("hunt detection rules: {error}"),
                 )
             },
         )?;
@@ -9056,6 +9125,7 @@ async fn main() -> Result<()> {
         .route("/detection/validate", post(handle_validate_detection_rule))
         .route("/detection/compile", post(handle_compile_detection_rule))
         .route("/detection/backtest", post(handle_detection_backtest))
+        .route("/detection/hunt", post(handle_detection_hunt))
         .route("/detection/stats", get(handle_detection_stats))
         .route(
             "/detection/{id}",
