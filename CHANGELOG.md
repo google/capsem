@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preservation.
 - Updated S08b security-event JSON fixtures to include plugin-facing context,
   trace labels, decisions, findings, and declarative mutations.
+- Added plugin transform records to resolved security events so replay/audit can
+  tie plugin identity to input/output event hashes.
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.

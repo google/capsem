@@ -190,6 +190,28 @@ fn plugin_transform_preserves_core_event_and_records_hashes() {
         validate_plugin_transform(&record.plugin, &input, &output).unwrap(),
         record
     );
+
+    let resolved = ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event: output,
+        steps: vec![ResolvedEventStep {
+            kind: ResolvedEventStepKind::PluginCallback,
+            status: StepStatus::Applied,
+            rule_id: Some("pii-egress".into()),
+            pack_id: Some("plugin-pack".into()),
+            message: Some("plugin transform applied".into()),
+        }],
+        plugin_transforms: vec![record],
+        detection_findings: Vec::new(),
+        final_action: SecurityAction::Continue,
+        emitter_results: Vec::new(),
+    };
+
+    assert_eq!(resolved.plugin_transforms[0].plugin.id, "pii-egress");
+    assert_ne!(
+        resolved.plugin_transforms[0].input_event_hash,
+        resolved.plugin_transforms[0].output_event_hash
+    );
 }
 
 #[test]
@@ -363,6 +385,7 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
             pack_id: None,
             message: Some("future quota provider would delay".into()),
         }],
+        plugin_transforms: Vec::new(),
         detection_findings: Vec::new(),
         final_action: SecurityAction::Throttle(ThrottlePlan {
             delay_ms: 250,
@@ -816,6 +839,7 @@ fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecu
         schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
         event,
         steps: Vec::new(),
+        plugin_transforms: Vec::new(),
         detection_findings: vec![DetectionFinding {
             finding_id: finding_id.into(),
             event_id: event_id.into(),

@@ -668,6 +668,11 @@ a valid claim -- mark it `[ ]` instead.
     findings, and declarative mutations. Verification:
     `cargo test -p capsem-security-engine` passed with 18 tests and
     `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Eleventh audit-link slice added `plugin_transforms` to
+    `ResolvedSecurityEvent` plus a `PluginCallback` resolved-event step kind so
+    session DB/telemetry can tie plugin identity to input/output event hashes.
+    Verification: `cargo test -p capsem-security-engine` passed with 18 tests
+    and `cargo test -p capsem-core --test security_packs` passed with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

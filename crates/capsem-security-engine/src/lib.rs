@@ -664,6 +664,8 @@ pub struct ResolvedSecurityEvent {
     #[serde(default)]
     pub steps: Vec<ResolvedEventStep>,
     #[serde(default)]
+    pub plugin_transforms: Vec<PluginTransformRecord>,
+    #[serde(default)]
     pub detection_findings: Vec<DetectionFinding>,
     pub final_action: SecurityAction,
     #[serde(default)]
@@ -687,6 +689,7 @@ pub struct ResolvedEventStep {
 #[serde(rename_all = "snake_case")]
 pub enum ResolvedEventStepKind {
     Preprocessor,
+    PluginCallback,
     EnforcementMatch,
     Confirm,
     RateLimitCheck,

@@ -244,6 +244,9 @@ snapshot as authority. If a plugin wants to change real request/response/model/
 MCP content, it must return declarative mutations and let Rust validate and
 apply them. The runtime records input and output event hashes with plugin
 identity so replay can prove deterministic behavior.
+Those transform records are attached to `ResolvedSecurityEvent` alongside a
+`PluginCallback` step so audit, telemetry, timeline, backtest, and replay see
+the same plugin identity and input/output hashes.
 
 Legal mutation targets are allowlisted per event type. Initial targets:
 
