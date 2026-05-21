@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
 fn http_event_exposes_identity_and_quota_dimensions() {
@@ -11,6 +11,9 @@ fn http_event_exposes_identity_and_quota_dimensions() {
             activity_id: Some("activity-1".into()),
             sequence_no: Some(7),
             source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:vm-1".into()),
             enforceability: Enforceability::InlineBlockable,
             trace_id: Some("trace-1".into()),
             span_id: Some("span-1".into()),
@@ -76,6 +79,7 @@ fn plugin_event_output_carries_ask_throttle_labels_findings_and_mutations() {
             estimated_input_tokens: None,
             estimated_output_tokens: Some(200),
             estimated_cost_micros: Some(1000),
+            evidence: None,
         },
     );
     event.trace.labels.push("pii_access".into());
@@ -335,6 +339,127 @@ fn security_decision_projects_to_internal_transport_projection() {
 }
 
 #[test]
+fn canonical_ai_evidence_fixture_covers_first_slice_providers_and_host_accounting() {
+    let interactions: Vec<ModelInteractionEvidence> =
+        serde_json::from_str(include_str!("../fixtures/ai-interaction-evidence-v1.json")).unwrap();
+
+    let providers = interactions
+        .iter()
+        .map(|interaction| interaction.provider)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        providers,
+        BTreeSet::from([
+            AiProvider::Openai,
+            AiProvider::Anthropic,
+            AiProvider::GoogleGemini,
+        ])
+    );
+
+    let openai = interactions
+        .iter()
+        .find(|interaction| interaction.interaction_id == "model-openai-tool-stream")
+        .unwrap();
+    assert_eq!(openai.api_family, AiApiFamily::OpenaiChatCompletions);
+    assert_eq!(openai.tool_calls[0].origin, ToolOrigin::McpTool);
+    assert_eq!(openai.mcp_executions[0].link_status, LinkStatus::Linked);
+    assert!(openai.charges_vm_accounting());
+    assert!(!openai.charges_host_accounting());
+
+    let anthropic = interactions
+        .iter()
+        .find(|interaction| interaction.interaction_id == "model-anthropic-malformed-tool")
+        .unwrap();
+    assert_eq!(anthropic.api_family, AiApiFamily::AnthropicMessages);
+    assert_eq!(
+        anthropic.tool_calls[0].arguments_status,
+        ArgumentsStatus::PartialJson
+    );
+    assert_eq!(anthropic.parse_status, ParseStatus::Partial);
+
+    let gemini = interactions
+        .iter()
+        .find(|interaction| interaction.interaction_id == "model-gemini-function-response")
+        .unwrap();
+    assert_eq!(gemini.api_family, AiApiFamily::GoogleGeminiContent);
+    assert_eq!(
+        gemini.tool_results[0].result_status,
+        ToolCallStatus::ReturnedToModel
+    );
+    assert!(gemini.tool_results[0].returned_to_model);
+
+    let host_ai = interactions
+        .iter()
+        .find(|interaction| interaction.interaction_id == "host-ai-vm-name")
+        .unwrap();
+    assert_eq!(host_ai.source_engine, SourceEngine::HostAi);
+    assert_eq!(host_ai.attribution_scope, AiAttributionScope::Host);
+    assert_eq!(host_ai.origin_kind, AiOriginKind::HostService);
+    assert_eq!(host_ai.vm_id.as_deref(), Some("vm-1"));
+    assert!(host_ai.charges_host_accounting());
+    assert!(!host_ai.charges_vm_accounting());
+}
+
+#[test]
+fn model_security_subject_projects_canonical_evidence_to_quota_dimensions() {
+    let evidence = model_interaction_evidence(
+        "vm-model",
+        AiAttributionScope::Vm,
+        SourceEngine::Network,
+        AiOriginKind::GuestNetwork,
+        "vm:vm-1",
+    );
+    let mut common = common(
+        "evt-evidence-model",
+        "model.response",
+        SourceEngine::Network,
+    );
+    common.attribution_scope = AiAttributionScope::Vm;
+    common.origin_kind = AiOriginKind::GuestNetwork;
+    common.accounting_owner = Some("vm:vm-1".into());
+    let event = SecurityEvent::model(
+        common,
+        ModelSecuritySubject::from_interaction_evidence(evidence),
+    );
+
+    let dims = event.quota_dimensions();
+    assert_eq!(dims.provider.as_deref(), Some("google_gemini"));
+    assert_eq!(dims.model.as_deref(), Some("gemini-2.5-flash"));
+    assert_eq!(dims.estimated_input_tokens, Some(40));
+    assert_eq!(dims.estimated_output_tokens, Some(4));
+    assert_eq!(dims.estimated_cost_micros, Some(12));
+    assert_eq!(dims.attribution_scope, AiAttributionScope::Vm);
+    assert_eq!(dims.accounting_owner.as_deref(), Some("vm:vm-1"));
+    assert!(dims.charges_vm_accounting());
+    assert!(!dims.charges_host_accounting());
+}
+
+#[test]
+fn host_ai_event_can_correlate_to_vm_without_charging_vm_accounting() {
+    let evidence = model_interaction_evidence(
+        "host-model",
+        AiAttributionScope::Host,
+        SourceEngine::HostAi,
+        AiOriginKind::HostService,
+        "host:service",
+    );
+    let event = SecurityEvent::model(
+        common("evt-host-ai", "model.request", SourceEngine::HostAi),
+        ModelSecuritySubject::from_interaction_evidence(evidence),
+    );
+
+    let dims = event.quota_dimensions();
+    assert_eq!(dims.source_engine, SourceEngine::HostAi);
+    assert_eq!(dims.origin_kind, AiOriginKind::HostService);
+    assert_eq!(dims.attribution_scope, AiAttributionScope::Host);
+    assert_eq!(dims.accounting_owner.as_deref(), Some("host:service"));
+    assert_eq!(dims.vm_id.as_deref(), Some("vm-1"));
+    assert_eq!(dims.session_id.as_deref(), Some("session-1"));
+    assert!(dims.charges_host_accounting());
+    assert!(!dims.charges_vm_accounting());
+}
+
+#[test]
 fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
     let event = SecurityEvent::model(
         SecurityEventCommon {
@@ -344,6 +469,9 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
             activity_id: Some("model-activity-1".into()),
             sequence_no: Some(1),
             source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:vm-1".into()),
             enforceability: Enforceability::InlineBlockable,
             trace_id: None,
             span_id: None,
@@ -372,6 +500,7 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
             estimated_input_tokens: Some(1200),
             estimated_output_tokens: Some(400),
             estimated_cost_micros: Some(2500),
+            evidence: None,
         },
     );
 
@@ -447,6 +576,21 @@ fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> Secu
         activity_id: None,
         sequence_no: None,
         source_engine,
+        attribution_scope: if source_engine == SourceEngine::HostAi {
+            AiAttributionScope::Host
+        } else {
+            AiAttributionScope::Vm
+        },
+        origin_kind: if source_engine == SourceEngine::HostAi {
+            AiOriginKind::HostService
+        } else {
+            AiOriginKind::GuestNetwork
+        },
+        accounting_owner: Some(if source_engine == SourceEngine::HostAi {
+            "host:service".into()
+        } else {
+            "vm:vm-1".into()
+        }),
         enforceability: Enforceability::InlineBlockable,
         trace_id: Some("trace-plugin".into()),
         span_id: None,
@@ -795,6 +939,70 @@ fn plugin_identity() -> PluginIdentity {
     }
 }
 
+fn model_interaction_evidence(
+    interaction_id: &str,
+    attribution_scope: AiAttributionScope,
+    source_engine: SourceEngine,
+    origin_kind: AiOriginKind,
+    accounting_owner: &str,
+) -> ModelInteractionEvidence {
+    ModelInteractionEvidence {
+        interaction_id: interaction_id.into(),
+        trace_id: "trace-ai".into(),
+        attribution_scope,
+        source_engine,
+        origin_kind,
+        accounting_owner: Some(accounting_owner.into()),
+        profile_id: Some("coding".into()),
+        vm_id: Some("vm-1".into()),
+        session_id: Some("session-1".into()),
+        user_id: Some("user-1".into()),
+        provider: AiProvider::GoogleGemini,
+        api_family: AiApiFamily::GoogleGeminiContent,
+        model: "gemini-2.5-flash".into(),
+        request: ModelRequestEvidence {
+            request_id: format!("req-{interaction_id}"),
+            provider: AiProvider::GoogleGemini,
+            api_family: AiApiFamily::GoogleGeminiContent,
+            model: Some("gemini-2.5-flash".into()),
+            stream: false,
+            system_prompt_preview: Some("summarize session".into()),
+            message_count: 1,
+            tools_declared_count: 0,
+            raw_shape_version: "host_ai.prompt.v1".into(),
+            unknown_fields_present: false,
+        },
+        response: Some(ModelResponseEvidence {
+            response_id: format!("resp-{interaction_id}"),
+            provider_response_id: None,
+            stop_reason: Some("stop".into()),
+            text_preview: Some("Winter Build".into()),
+            thinking_preview: None,
+            content_blocks: vec![AiContentBlock::Text {
+                text_preview: "Winter Build".into(),
+            }],
+            usage: AiUsageEvidence {
+                input_tokens: Some(40),
+                output_tokens: Some(4),
+                estimated_cost_micros: Some(12),
+                details: BTreeMap::new(),
+            },
+            raw_shape_version: "host_ai.prompt.v1".into(),
+        }),
+        tool_calls: Vec::new(),
+        tool_results: Vec::new(),
+        mcp_executions: Vec::new(),
+        usage: AiUsageEvidence {
+            input_tokens: Some(40),
+            output_tokens: Some(4),
+            estimated_cost_micros: Some(12),
+            details: BTreeMap::new(),
+        },
+        parse_status: ParseStatus::Complete,
+        evidence_status: EvidenceStatus::Complete,
+    }
+}
+
 fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecurityEvent {
     let event = SecurityEvent::http(
         SecurityEventCommon {
@@ -804,6 +1012,9 @@ fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecu
             activity_id: None,
             sequence_no: None,
             source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:vm-1".into()),
             enforceability: Enforceability::InlineBlockable,
             trace_id: None,
             span_id: None,

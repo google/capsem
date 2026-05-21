@@ -2,11 +2,17 @@
 
 ## Status
 
-Proposed as a pre-S08b foundation side sprint. This is intentionally a side
-document rather than another numbered board item: S08b remains the active engine
-implementation sprint, but S08b must not harden model/MCP enforcement,
-detection, telemetry, quotas, timeline, or plugin contracts against thin
-provider-specific parser summaries.
+In progress as a pre-S08b foundation side sprint. The first contract slice
+landed in `capsem-security-engine`: canonical AI evidence structs/enums,
+host-vs-VM attribution fields on security events and quota dimensions, optional
+model/MCP evidence on policy-facing subjects, OpenAI/Anthropic/Gemini/host
+fixtures, and tests proving host AI can correlate to a VM/session without
+charging VM accounting.
+
+This is intentionally a side document rather than another numbered board item:
+S08b remains the active engine implementation sprint, but S08b must not harden
+model/MCP enforcement, detection, telemetry, quotas, timeline, or plugin
+contracts against thin provider-specific parser summaries.
 
 ## Purpose
 

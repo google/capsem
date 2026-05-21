@@ -1,0 +1,299 @@
+[
+  {
+    "interaction_id": "model-openai-tool-stream",
+    "trace_id": "trace-openai-1",
+    "attribution_scope": "vm",
+    "source_engine": "network",
+    "origin_kind": "guest_network",
+    "accounting_owner": "vm:vm-1",
+    "profile_id": "coding",
+    "vm_id": "vm-1",
+    "session_id": "session-1",
+    "user_id": "user-1",
+    "provider": "openai",
+    "api_family": "openai_chat_completions",
+    "model": "gpt-5.5",
+    "request": {
+      "request_id": "req-openai-1",
+      "provider": "openai",
+      "api_family": "openai_chat_completions",
+      "model": "gpt-5.5",
+      "stream": true,
+      "system_prompt_preview": "You are operating inside Capsem.",
+      "message_count": 2,
+      "tools_declared_count": 1,
+      "raw_shape_version": "openai.chat_completions.2026-05",
+      "unknown_fields_present": false
+    },
+    "response": {
+      "response_id": "resp-openai-1",
+      "provider_response_id": "chatcmpl-1",
+      "stop_reason": "tool_calls",
+      "text_preview": "I'll check that now.",
+      "content_blocks": [
+        {
+          "kind": "text",
+          "text_preview": "I'll check that now."
+        },
+        {
+          "kind": "tool_use",
+          "tool_call_id": "call-openai-1",
+          "name": "github__search"
+        }
+      ],
+      "usage": {
+        "input_tokens": 200,
+        "output_tokens": 50,
+        "estimated_cost_micros": 325
+      },
+      "raw_shape_version": "openai.chat_completions.2026-05"
+    },
+    "tool_calls": [
+      {
+        "tool_call_id": "call-openai-1",
+        "index": 0,
+        "provider_call_id": "call-openai-1",
+        "raw_name": "github__search",
+        "normalized_name": "github.search",
+        "arguments_raw": "{\"query\":\"capsem\"}",
+        "arguments_json": "{\"query\":\"capsem\"}",
+        "arguments_status": "valid_json",
+        "origin": "mcp_tool",
+        "linked_mcp_call_id": "mcp-openai-1",
+        "status": "executed",
+        "parse_confidence": "high"
+      }
+    ],
+    "mcp_executions": [
+      {
+        "mcp_call_id": "mcp-openai-1",
+        "server_id": "github",
+        "tool_name": "search",
+        "namespaced_tool_name": "github__search",
+        "transport": "aggregator",
+        "request_arguments_raw": "{\"query\":\"capsem\"}",
+        "request_arguments_json": "{\"query\":\"capsem\"}",
+        "result_kind": "json",
+        "result_preview": "{\"items\":[]}",
+        "result_json": "{\"items\":[]}",
+        "is_error": false,
+        "latency_ms": 42,
+        "linked_model_interaction_id": "model-openai-tool-stream",
+        "linked_model_tool_call_id": "call-openai-1",
+        "link_status": "linked"
+      }
+    ],
+    "usage": {
+      "input_tokens": 200,
+      "output_tokens": 50,
+      "estimated_cost_micros": 325
+    },
+    "parse_status": "complete",
+    "evidence_status": "complete"
+  },
+  {
+    "interaction_id": "model-anthropic-malformed-tool",
+    "trace_id": "trace-anthropic-1",
+    "attribution_scope": "vm",
+    "source_engine": "network",
+    "origin_kind": "guest_network",
+    "accounting_owner": "vm:vm-2",
+    "profile_id": "coding",
+    "vm_id": "vm-2",
+    "session_id": "session-2",
+    "user_id": "user-1",
+    "provider": "anthropic",
+    "api_family": "anthropic_messages",
+    "model": "claude-sonnet-4-20250514",
+    "request": {
+      "request_id": "req-anthropic-1",
+      "provider": "anthropic",
+      "api_family": "anthropic_messages",
+      "model": "claude-sonnet-4-20250514",
+      "stream": false,
+      "message_count": 2,
+      "tools_declared_count": 1,
+      "raw_shape_version": "anthropic.messages.2026-05",
+      "unknown_fields_present": true
+    },
+    "response": {
+      "response_id": "resp-anthropic-1",
+      "stop_reason": "tool_use",
+      "thinking_preview": "Need to call a tool.",
+      "content_blocks": [
+        {
+          "kind": "reasoning",
+          "text_preview": "Need to call a tool."
+        },
+        {
+          "kind": "tool_use",
+          "tool_call_id": "toolu-anthropic-1",
+          "name": "fetch_weather"
+        }
+      ],
+      "usage": {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "details": {
+          "cache_read": 10
+        }
+      },
+      "raw_shape_version": "anthropic.messages.2026-05"
+    },
+    "tool_calls": [
+      {
+        "tool_call_id": "toolu-anthropic-1",
+        "index": 0,
+        "provider_call_id": "toolu-anthropic-1",
+        "raw_name": "fetch_weather",
+        "normalized_name": "fetch_weather",
+        "arguments_raw": "{\"city\":\"Paris\"",
+        "arguments_status": "partial_json",
+        "origin": "native_provider_tool",
+        "status": "proposed",
+        "parse_confidence": "medium"
+      }
+    ],
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 20,
+      "details": {
+        "cache_read": 10
+      }
+    },
+    "parse_status": "partial",
+    "evidence_status": "partial"
+  },
+  {
+    "interaction_id": "model-gemini-function-response",
+    "trace_id": "trace-gemini-1",
+    "attribution_scope": "vm",
+    "source_engine": "network",
+    "origin_kind": "guest_network",
+    "accounting_owner": "vm:vm-3",
+    "profile_id": "everyday-work",
+    "vm_id": "vm-3",
+    "session_id": "session-3",
+    "user_id": "user-1",
+    "provider": "google_gemini",
+    "api_family": "google_gemini_content",
+    "model": "gemini-2.5-pro",
+    "request": {
+      "request_id": "req-gemini-1",
+      "provider": "google_gemini",
+      "api_family": "google_gemini_content",
+      "model": "gemini-2.5-pro",
+      "stream": true,
+      "message_count": 3,
+      "tools_declared_count": 1,
+      "raw_shape_version": "google.gemini.generate_content.2026-05",
+      "unknown_fields_present": false
+    },
+    "response": {
+      "response_id": "resp-gemini-1",
+      "stop_reason": "stop",
+      "text_preview": "The weather is 72F.",
+      "content_blocks": [
+        {
+          "kind": "tool_result",
+          "tool_call_id": "gemini-fn-1",
+          "is_error": false
+        },
+        {
+          "kind": "text",
+          "text_preview": "The weather is 72F."
+        }
+      ],
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 30,
+        "estimated_cost_micros": 120
+      },
+      "raw_shape_version": "google.gemini.generate_content.2026-05"
+    },
+    "tool_calls": [
+      {
+        "tool_call_id": "gemini-fn-1",
+        "index": 0,
+        "raw_name": "get_weather",
+        "normalized_name": "get_weather",
+        "arguments_raw": "{\"city\":\"NYC\"}",
+        "arguments_json": "{\"city\":\"NYC\"}",
+        "arguments_status": "valid_json",
+        "origin": "native_provider_tool",
+        "status": "returned_to_model",
+        "parse_confidence": "high"
+      }
+    ],
+    "tool_results": [
+      {
+        "tool_call_id": "gemini-fn-1",
+        "content_kind": "json",
+        "content_preview": "{\"temp\":\"72F\"}",
+        "content_json": "{\"temp\":\"72F\"}",
+        "is_error": false,
+        "result_status": "returned_to_model",
+        "returned_to_model": true,
+        "parse_confidence": "high"
+      }
+    ],
+    "usage": {
+      "input_tokens": 80,
+      "output_tokens": 30,
+      "estimated_cost_micros": 120
+    },
+    "parse_status": "complete",
+    "evidence_status": "complete"
+  },
+  {
+    "interaction_id": "host-ai-vm-name",
+    "trace_id": "trace-host-ai-1",
+    "attribution_scope": "host",
+    "source_engine": "host_ai",
+    "origin_kind": "host_service",
+    "accounting_owner": "host:service",
+    "profile_id": "coding",
+    "vm_id": "vm-1",
+    "session_id": "session-1",
+    "user_id": "user-1",
+    "provider": "google_gemini",
+    "api_family": "google_gemini_content",
+    "model": "gemini-2.5-flash",
+    "request": {
+      "request_id": "req-host-ai-1",
+      "provider": "google_gemini",
+      "api_family": "google_gemini_content",
+      "model": "gemini-2.5-flash",
+      "stream": false,
+      "system_prompt_preview": "Name this VM from the session summary.",
+      "message_count": 1,
+      "tools_declared_count": 0,
+      "raw_shape_version": "host_ai.prompt.v1",
+      "unknown_fields_present": false
+    },
+    "response": {
+      "response_id": "resp-host-ai-1",
+      "stop_reason": "stop",
+      "text_preview": "Winter Build",
+      "content_blocks": [
+        {
+          "kind": "text",
+          "text_preview": "Winter Build"
+        }
+      ],
+      "usage": {
+        "input_tokens": 40,
+        "output_tokens": 4,
+        "estimated_cost_micros": 12
+      },
+      "raw_shape_version": "host_ai.prompt.v1"
+    },
+    "usage": {
+      "input_tokens": 40,
+      "output_tokens": 4,
+      "estimated_cost_micros": 12
+    },
+    "parse_status": "complete",
+    "evidence_status": "complete"
+  }
+]

@@ -694,6 +694,16 @@ a valid claim -- mark it `[ ]` instead.
     session DB/telemetry can tie plugin identity to input/output event hashes.
     Verification: `cargo test -p capsem-security-engine` passed with 18 tests
     and `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Twelfth side-sprint contract slice executed
+    [Canonical AI Interaction Evidence](S08-side-canonical-ai-interaction-evidence.md):
+    added strict canonical AI evidence structs/enums, `SourceEngine::HostAi`,
+    attribution scope/origin/accounting-owner fields on security events and
+    quota dimensions, optional model/MCP evidence on security subjects,
+    OpenAI/Anthropic/Gemini/host AI evidence fixtures, and tests proving
+    host-attributed AI can correlate to a VM/session without charging VM-owned
+    accounting. Verification: `cargo test -p capsem-security-engine` passed
+    with 21 tests and `cargo test -p capsem-core --test security_packs` passed
+    with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

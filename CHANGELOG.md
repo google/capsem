@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added main sprint release holds for host/service AI counters, resolved-event
   attribution, logger accounting owner fields, and tests proving host prompts
   correlated with a VM do not charge VM metrics.
+- Added S08 canonical AI evidence contracts in `capsem-security-engine`,
+  including OpenAI/Anthropic/Gemini/host fixtures, host-vs-VM attribution fields
+  on security events and quota dimensions, optional model/MCP evidence subjects,
+  and tests proving host AI does not charge VM accounting.
 - Added the first S08b `capsem-security-engine` contract crate with normalized
   security events, resolved-event actions, detection findings, quota dimensions,
   and throttle-ready serialization tests.

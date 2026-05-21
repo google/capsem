@@ -40,6 +40,30 @@ pub enum SourceEngine {
     Security,
     Vm,
     Profile,
+    HostAi,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiAttributionScope {
+    Host,
+    Vm,
+    Profile,
+    Session,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiOriginKind {
+    GuestNetwork,
+    HostService,
+    HostAdmin,
+    HostWorkbench,
+    TestFixture,
+    #[default]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +105,12 @@ pub struct SecurityEventCommon {
     #[serde(default)]
     pub sequence_no: Option<u64>,
     pub source_engine: SourceEngine,
+    #[serde(default)]
+    pub attribution_scope: AiAttributionScope,
+    #[serde(default)]
+    pub origin_kind: AiOriginKind,
+    #[serde(default)]
+    pub accounting_owner: Option<String>,
     pub enforceability: Enforceability,
     #[serde(default)]
     pub trace_id: Option<String>,
@@ -294,6 +324,10 @@ impl SecurityEvent {
             vm_id: self.common.vm_id.clone(),
             session_id: self.common.session_id.clone(),
             user_id: self.common.user_id.clone(),
+            source_engine: self.common.source_engine,
+            attribution_scope: self.common.attribution_scope,
+            origin_kind: self.common.origin_kind,
+            accounting_owner: self.common.accounting_owner.clone(),
             event_family: self.event_family(),
             event_type: self.common.event_type.clone(),
             correlation_ids: CorrelationIds {
@@ -479,6 +513,8 @@ pub struct HttpSecuritySubject {
 pub struct McpSecuritySubject {
     pub server_id: String,
     pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Box<McpToolExecutionEvidence>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -492,6 +528,31 @@ pub struct ModelSecuritySubject {
     pub estimated_output_tokens: Option<u64>,
     #[serde(default)]
     pub estimated_cost_micros: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Box<ModelInteractionEvidence>>,
+}
+
+impl ModelSecuritySubject {
+    pub fn from_interaction_evidence(evidence: ModelInteractionEvidence) -> Self {
+        Self {
+            provider: evidence.provider.as_str().to_owned(),
+            model: evidence.model.clone(),
+            estimated_input_tokens: evidence.usage.input_tokens,
+            estimated_output_tokens: evidence.usage.output_tokens,
+            estimated_cost_micros: evidence.usage.estimated_cost_micros,
+            evidence: Some(Box::new(evidence)),
+        }
+    }
+}
+
+impl McpSecuritySubject {
+    pub fn from_execution_evidence(evidence: McpToolExecutionEvidence) -> Self {
+        Self {
+            server_id: evidence.server_id.clone(),
+            tool_name: evidence.tool_name.clone(),
+            evidence: Some(Box::new(evidence)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -547,6 +608,314 @@ pub struct SnapshotSecuritySubject {
     pub snapshot_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProvider {
+    Openai,
+    Anthropic,
+    GoogleGemini,
+    Unknown,
+}
+
+impl AiProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Openai => "openai",
+            Self::Anthropic => "anthropic",
+            Self::GoogleGemini => "google_gemini",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiApiFamily {
+    OpenaiChatCompletions,
+    OpenaiResponses,
+    AnthropicMessages,
+    GoogleGeminiContent,
+    Mcp,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArgumentsStatus {
+    ValidJson,
+    PartialJson,
+    MalformedJson,
+    NotJson,
+    Redacted,
+    Absent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseStatus {
+    Complete,
+    Partial,
+    Malformed,
+    Unsupported,
+    Redacted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceStatus {
+    Complete,
+    Partial,
+    Ambiguous,
+    Orphaned,
+    Untrusted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolOrigin {
+    NativeProviderTool,
+    McpTool,
+    LocalBuiltinTool,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkStatus {
+    Linked,
+    UnlinkedPending,
+    OrphanModelToolCall,
+    OrphanMcpExecution,
+    Ambiguous,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallStatus {
+    Proposed,
+    Executed,
+    Blocked,
+    ReturnedToModel,
+    Error,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelInteractionEvidence {
+    pub interaction_id: String,
+    pub trace_id: String,
+    pub attribution_scope: AiAttributionScope,
+    pub source_engine: SourceEngine,
+    pub origin_kind: AiOriginKind,
+    #[serde(default)]
+    pub accounting_owner: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub vm_id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    pub provider: AiProvider,
+    pub api_family: AiApiFamily,
+    pub model: String,
+    pub request: ModelRequestEvidence,
+    #[serde(default)]
+    pub response: Option<ModelResponseEvidence>,
+    #[serde(default)]
+    pub tool_calls: Vec<ModelToolCallEvidence>,
+    #[serde(default)]
+    pub tool_results: Vec<ModelToolResultEvidence>,
+    #[serde(default)]
+    pub mcp_executions: Vec<McpToolExecutionEvidence>,
+    #[serde(default)]
+    pub usage: AiUsageEvidence,
+    pub parse_status: ParseStatus,
+    pub evidence_status: EvidenceStatus,
+}
+
+impl ModelInteractionEvidence {
+    pub fn charges_vm_accounting(&self) -> bool {
+        self.attribution_scope == AiAttributionScope::Vm && self.vm_id.is_some()
+    }
+
+    pub fn charges_host_accounting(&self) -> bool {
+        self.attribution_scope == AiAttributionScope::Host
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelRequestEvidence {
+    pub request_id: String,
+    pub provider: AiProvider,
+    pub api_family: AiApiFamily,
+    #[serde(default)]
+    pub model: Option<String>,
+    pub stream: bool,
+    #[serde(default)]
+    pub system_prompt_preview: Option<String>,
+    pub message_count: u64,
+    pub tools_declared_count: u64,
+    pub raw_shape_version: String,
+    pub unknown_fields_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelResponseEvidence {
+    pub response_id: String,
+    #[serde(default)]
+    pub provider_response_id: Option<String>,
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+    #[serde(default)]
+    pub text_preview: Option<String>,
+    #[serde(default)]
+    pub thinking_preview: Option<String>,
+    #[serde(default)]
+    pub content_blocks: Vec<AiContentBlock>,
+    #[serde(default)]
+    pub usage: AiUsageEvidence,
+    pub raw_shape_version: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AiUsageEvidence {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub estimated_cost_micros: Option<u64>,
+    #[serde(default)]
+    pub details: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelToolCallEvidence {
+    pub tool_call_id: String,
+    pub index: u64,
+    #[serde(default)]
+    pub provider_call_id: Option<String>,
+    pub raw_name: String,
+    pub normalized_name: String,
+    #[serde(default)]
+    pub arguments_raw: Option<String>,
+    #[serde(default)]
+    pub arguments_json: Option<String>,
+    pub arguments_status: ArgumentsStatus,
+    pub origin: ToolOrigin,
+    #[serde(default)]
+    pub linked_mcp_call_id: Option<String>,
+    pub status: ToolCallStatus,
+    pub parse_confidence: Confidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelToolResultEvidence {
+    pub tool_call_id: String,
+    #[serde(default)]
+    pub linked_mcp_call_id: Option<String>,
+    pub content_kind: AiContentKind,
+    #[serde(default)]
+    pub content_preview: Option<String>,
+    #[serde(default)]
+    pub content_json: Option<String>,
+    pub is_error: bool,
+    pub result_status: ToolCallStatus,
+    pub returned_to_model: bool,
+    pub parse_confidence: Confidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpToolExecutionEvidence {
+    pub mcp_call_id: String,
+    pub server_id: String,
+    pub tool_name: String,
+    pub namespaced_tool_name: String,
+    pub transport: String,
+    #[serde(default)]
+    pub request_arguments_raw: Option<String>,
+    #[serde(default)]
+    pub request_arguments_json: Option<String>,
+    pub result_kind: AiContentKind,
+    #[serde(default)]
+    pub result_preview: Option<String>,
+    #[serde(default)]
+    pub result_json: Option<String>,
+    pub is_error: bool,
+    pub latency_ms: u64,
+    #[serde(default)]
+    pub linked_model_interaction_id: Option<String>,
+    #[serde(default)]
+    pub linked_model_tool_call_id: Option<String>,
+    pub link_status: LinkStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiContentKind {
+    Text,
+    Json,
+    Image,
+    File,
+    ToolUse,
+    ToolResult,
+    Reasoning,
+    CacheMarker,
+    Redacted,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AiContentBlock {
+    Text {
+        text_preview: String,
+    },
+    Json {
+        json_preview: String,
+    },
+    Image {
+        mime_type: String,
+        #[serde(default)]
+        redacted: bool,
+    },
+    File {
+        file_name: String,
+        path_class: String,
+    },
+    ToolUse {
+        tool_call_id: String,
+        name: String,
+    },
+    ToolResult {
+        tool_call_id: String,
+        is_error: bool,
+    },
+    Reasoning {
+        text_preview: String,
+    },
+    CacheMarker {
+        marker: String,
+    },
+    Redacted {
+        reason: String,
+    },
+    Unknown {
+        #[serde(default)]
+        raw_type: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CorrelationIds {
@@ -589,6 +958,11 @@ pub struct QuotaDimensions {
     pub session_id: Option<String>,
     #[serde(default)]
     pub user_id: Option<String>,
+    pub source_engine: SourceEngine,
+    pub attribution_scope: AiAttributionScope,
+    pub origin_kind: AiOriginKind,
+    #[serde(default)]
+    pub accounting_owner: Option<String>,
     pub event_family: EventFamily,
     pub event_type: String,
     #[serde(default)]
@@ -628,6 +1002,10 @@ impl QuotaDimensions {
             vm_id: None,
             session_id: None,
             user_id: None,
+            source_engine: SourceEngine::Security,
+            attribution_scope: AiAttributionScope::Unknown,
+            origin_kind: AiOriginKind::Unknown,
+            accounting_owner: None,
             event_family,
             event_type,
             provider: None,
@@ -645,6 +1023,14 @@ impl QuotaDimensions {
             response_bytes: None,
             correlation_ids: CorrelationIds::default(),
         }
+    }
+
+    pub fn charges_vm_accounting(&self) -> bool {
+        self.attribution_scope == AiAttributionScope::Vm && self.vm_id.is_some()
+    }
+
+    pub fn charges_host_accounting(&self) -> bool {
+        self.attribution_scope == AiAttributionScope::Host
     }
 }
 
