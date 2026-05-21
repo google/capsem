@@ -78,6 +78,11 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 | Published as | `capsem-sbom.spdx.json` in GitHub release |
 | Attestation | SBOM attested against `.pkg` and `.deb` artifacts |
 
+This release SBOM currently describes the Rust host workspace. Profile-derived
+guest package/tool SBOMs are tracked separately in the profile-admin image
+verification sprint and must be produced from the signed Profile V2 package
+contract before they are treated as release evidence.
+
 ## SLSA attestation
 
 Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation via `actions/attest-build-provenance@v4`:

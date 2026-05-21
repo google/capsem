@@ -152,6 +152,22 @@ def test_release_provenance_covers_boot_assets_and_signed_manifest():
         assert subject in text
 
 
+def test_release_sbom_attestation_covers_pkg_and_deb_artifacts():
+    """The release SBOM must be attested against every OS package family."""
+    text = _workflow_text()
+    step = re.search(
+        r"(?ms)- name: Attest SBOM\n(?P<body>.*?)(?=^      - name:|\Z)",
+        text,
+    )
+    assert step, "Attest SBOM step missing"
+    body = step.group("body")
+    assert "actions/attest@v4" in body
+    assert "predicate-type: https://spdx.dev/Document/v2.3" in body
+    assert "predicate-path: release-artifacts/capsem-sbom.spdx.json" in body
+    assert "release-artifacts/*.pkg" in body
+    assert "release-artifacts/*.deb" in body
+
+
 def test_rootfs_validation_is_hard_gated_and_canonical():
     """Release jobs must validate mounted rootfs contents from one source."""
     text = _workflow_text()

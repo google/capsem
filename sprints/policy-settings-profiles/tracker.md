@@ -343,6 +343,14 @@ a valid claim -- mark it `[ ]` instead.
     workspace with `load_guest_config`. Verification: `uv run python -m pytest
     tests/test_image_workspace.py tests/test_image_plan.py
     tests/test_admin_cli.py -q` passed with 30 tests.
+    Thirteenth slice fixed release SBOM attestation so the SPDX 2.3
+    `capsem-sbom.spdx.json` predicate is attached to both `release-artifacts/*.pkg`
+    and `release-artifacts/*.deb`. Release policy tests now pin the `Attest
+    SBOM` step, and build-verification docs clarify that the current cargo-sbom
+    artifact is the Rust host SBOM while profile-derived guest package/tool
+    SBOM remains S07b image-verification work. Verification: `uv run python -m
+    pytest tests/test_release_workflow_policy.py -q` passed with 26 tests;
+    docs build passed with `pnpm run build`.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

@@ -220,6 +220,20 @@ Twelfth slice landed on 2026-05-20:
 - Verification: `uv run python -m pytest tests/test_image_workspace.py
   tests/test_image_plan.py tests/test_admin_cli.py -q` passed with 30 tests.
 
+Thirteenth slice landed on 2026-05-20:
+
+- Release CI SBOM attestation now subjects both OS package families:
+  `release-artifacts/*.pkg` and `release-artifacts/*.deb`.
+- Release policy tests now inspect the `Attest SBOM` step and require SPDX 2.3,
+  the published `capsem-sbom.spdx.json` predicate, and both package subject
+  globs.
+- Build-verification docs now explicitly state the existing `cargo-sbom`
+  artifact is the Rust host workspace SBOM. Profile-derived guest package/tool
+  SBOMs remain part of the S07b image verification work and are not implied by
+  the host SBOM attestation.
+- Verification: `uv run python -m pytest tests/test_release_workflow_policy.py
+  -q` passed with 26 tests; docs build passed with `pnpm run build`.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -553,7 +567,8 @@ The checker must fail closed for:
       profile/asset signature verification have landed.
 - [~] Implement image verification against profile package/tool contract. Local
       profile-declared asset existence/size/hash verification has landed;
-      package/tool, SBOM, and in-guest image proof remain.
+      release host SBOM attestation covers `.pkg` and `.deb`; guest
+      profile-derived package/tool SBOM and in-guest image proof remain.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
