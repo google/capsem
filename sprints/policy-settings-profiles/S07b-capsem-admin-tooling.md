@@ -285,6 +285,23 @@ Eighteenth slice landed on 2026-05-21:
   with 10 tests. Remaining image proof is guest SBOM/probe generation and
   boot-time runtime truth, not the contract comparison surface.
 
+Nineteenth slice landed on 2026-05-21:
+
+- Rootfs builds now extract `image-inventory.json` from the freshly built
+  container before the temporary image is removed.
+- The extraction script records installed apt packages from `dpkg-query`,
+  Python modules from `pip list --format=json`, global node packages from
+  `npm ls -g --depth=0 --json`, and tool versions from the same configured
+  version commands used by `tool-versions.txt`.
+- The host validates the extracted bytes through
+  `ImageInventory.model_validate_json()` and writes the canonical Pydantic
+  `model_dump_json()` output. `capsem-doctor --version` now exits before
+  running pytest so required guest-tool inventory can prove its presence.
+- Verification: `uv run python -m pytest tests/test_docker.py
+  tests/test_image_verify.py tests/test_image_workspace.py tests/test_admin_cli.py
+  -q` passed with 171 tests; `uv run python -m compileall src/capsem` passed.
+  Remaining image proof is SBOM/signature linkage and in-guest boot probes.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -626,9 +643,9 @@ The checker must fail closed for:
       profile/asset signature verification have landed.
 - [~] Implement image verification against profile package/tool contract. Local
       profile-declared asset existence/size/hash verification and typed
-      package/tool inventory contract comparison have landed; release host SBOM
-      attestation covers `.pkg` and `.deb`; guest profile-derived package/tool
-      SBOM generation and in-guest image proof remain.
+      package/tool inventory extraction plus contract comparison have landed;
+      release host SBOM attestation covers `.pkg` and `.deb`; guest SBOM
+      linkage and in-guest image proof remain.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
@@ -650,8 +667,8 @@ The checker must fail closed for:
   `TypeAdapter.validate_json()` and `model_dump_json()`; profile manifest
   generate/check/sign tests; profile-to-image build plan tests;
   guest-config-to-profile generation tests; image inventory package/tool
-  contract comparison tests; admin doctor checks; no-hand-edited-settings
-  guard tests.
+  extraction and contract comparison tests; admin doctor checks;
+  no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
   generate`; `manifest check --fast`; `manifest check --download`;

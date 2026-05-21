@@ -414,6 +414,17 @@ a valid claim -- mark it `[ ]` instead.
     missing or exact-version mismatches, and reports per-contract rows in the
     existing `capsem.image-verification.v1` output. Verification: `uv run
     python -m pytest tests/test_image_verify.py -q` passed with 10 tests.
+    Nineteenth slice made rootfs builds generate the verifier input instead of
+    expecting hand-produced JSON: after Docker build, `extract_image_inventory`
+    runs inside the built container, collects apt/Python/node package versions
+    and tool versions, validates the bytes with
+    `ImageInventory.model_validate_json()`, and writes canonical
+    `image-inventory.json` beside `tool-versions.txt`. `capsem-doctor --version`
+    now exits before pytest so the required guest tool can be inventoried.
+    Verification: `uv run python -m pytest tests/test_docker.py
+    tests/test_image_verify.py tests/test_image_workspace.py
+    tests/test_admin_cli.py -q` passed with 171 tests; `uv run python -m
+    compileall src/capsem` passed.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

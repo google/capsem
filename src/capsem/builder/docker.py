@@ -20,6 +20,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
+from capsem.builder.image_verify import ImageInventory, dump_image_inventory_json
 from capsem.builder.manifest_version import next_asset_version
 from capsem.builder.models import GuestImageConfig, PackageManager
 
@@ -606,6 +607,131 @@ def build_version_script(config: GuestImageConfig) -> str:
     return "\n".join(lines)
 
 
+def _npm_prefix(config: GuestImageConfig) -> str:
+    npm_prefix = "/opt/ai-clis"
+    for provider in config.ai_providers.values():
+        install = provider.install
+        if (
+            provider.enabled
+            and install is not None
+            and install.manager == PackageManager.NPM
+            and install.prefix
+        ):
+            npm_prefix = install.prefix
+    return npm_prefix
+
+
+def _inventory_version_commands(config: GuestImageConfig) -> dict[str, str]:
+    commands: dict[str, str] = {
+        "capsem_doctor": "capsem-doctor --version",
+    }
+    commands.update(config.build.version_commands)
+    for package_set in config.package_sets.values():
+        commands.update(package_set.version_commands)
+    for provider in config.ai_providers.values():
+        if provider.enabled and provider.cli and provider.cli.version_command:
+            commands[provider.cli.key] = provider.cli.version_command
+    return dict(sorted(commands.items()))
+
+
+def build_image_inventory_script(config: GuestImageConfig) -> str:
+    """Build a guest-side script that emits capsem.image-inventory.v1 JSON."""
+    payload = json.dumps(
+        {
+            "npm_prefix": _npm_prefix(config),
+            "version_commands": _inventory_version_commands(config),
+        },
+        sort_keys=True,
+    )
+    return f"""python3 - <<'PY'
+import json
+import subprocess
+
+CONFIG = json.loads({payload!r})
+
+
+def run(args):
+    completed = subprocess.run(
+        args,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return completed.stdout
+
+
+def run_optional(args, fallback):
+    completed = subprocess.run(
+        args,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        return fallback
+    return completed.stdout
+
+
+def run_shell(command):
+    completed = subprocess.run(
+        command,
+        shell=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        return "N/A"
+    value = completed.stdout.strip()
+    return value.splitlines()[0].strip() if value else "N/A"
+
+
+apt = {{}}
+for line in run(["dpkg-query", "-W", "-f=${{Package}}\\t${{Version}}\\n"]).splitlines():
+    if "\\t" not in line:
+        continue
+    name, version = line.split("\\t", 1)
+    if name and version:
+        apt[name] = version
+
+python_modules = {{}}
+for item in json.loads(run(["python3", "-m", "pip", "list", "--format=json"])):
+    name = item.get("name")
+    version = item.get("version")
+    if name and version:
+        python_modules[name.lower()] = version
+
+node_packages = {{}}
+npm_data = json.loads(run_optional([
+    "npm",
+    "ls",
+    "-g",
+    "--depth=0",
+    "--json",
+    "--prefix",
+    CONFIG["npm_prefix"],
+], "{{}}"))
+for name, info in npm_data.get("dependencies", {{}}).items():
+    version = info.get("version") if isinstance(info, dict) else None
+    if name and version:
+        node_packages[name] = version
+
+tools = {{
+    key: run_shell(command)
+    for key, command in CONFIG["version_commands"].items()
+}}
+
+print(json.dumps({{
+    "schema": "capsem.image-inventory.v1",
+    "apt": apt,
+    "python_modules": python_modules,
+    "node_packages": node_packages,
+    "tools": tools,
+}}, sort_keys=True))
+PY"""
+
+
 def _validate_tool_versions(
     content: str, config: GuestImageConfig,
 ) -> None:
@@ -654,6 +780,34 @@ def extract_tool_versions(
     versions_path.write_text(result.stdout)
     if validate:
         _validate_tool_versions(result.stdout, config)
+
+
+def extract_image_inventory(
+    runtime: str,
+    image_tag: str,
+    platform: str,
+    output_dir: Path,
+    config: GuestImageConfig,
+) -> Path:
+    """Extract a typed package/tool inventory from the built rootfs image."""
+    result = run_cmd(
+        [
+            runtime,
+            "run",
+            "--rm",
+            "--platform",
+            platform,
+            image_tag,
+            "bash",
+            "-c",
+            build_image_inventory_script(config),
+        ],
+        capture=True,
+    )
+    inventory = ImageInventory.model_validate_json(result.stdout)
+    inventory_path = output_dir / "image-inventory.json"
+    inventory_path.write_text(dump_image_inventory_json(inventory), encoding="utf-8")
+    return inventory_path
 
 
 def _blake3_hex(path: Path) -> str:
@@ -936,7 +1090,13 @@ def build_image(
             tar_path.unlink(missing_ok=True)
 
             print("Extracting tool versions...")
-            extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
+            extract_tool_versions(
+                runtime, tag, arch.docker_platform, arch_output, config,
+            )
+            print("Extracting image inventory...")
+            extract_image_inventory(
+                runtime, tag, arch.docker_platform, arch_output, config,
+            )
             remove_image(runtime, tag)
 
             print(f"  rootfs.squashfs: {squashfs_path}")

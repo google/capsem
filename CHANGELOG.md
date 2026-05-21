@@ -125,6 +125,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem-admin image verify --inventory`, comparing apt, Python, node, and
   required guest tool versions against the Profile V2 image plan while
   preserving Pydantic-only JSON input/output.
+- Added rootfs build extraction of `image-inventory.json`, collecting installed
+  apt, Python, node, and tool versions from the built container and validating
+  the artifact through the same Pydantic model used by `image verify`.
 - Added `capsem-admin manifest check <manifest> --fast` with typed
   `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`

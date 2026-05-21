@@ -127,6 +127,8 @@ def _verify_one(
 
 
 def _version_satisfies(expected: str, actual: str) -> bool:
+    if actual in {"", "N/A"}:
+        return False
     return expected == "*" or actual == expected
 
 

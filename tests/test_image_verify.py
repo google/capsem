@@ -156,7 +156,7 @@ def test_verify_image_inventory_reports_missing_and_mismatched_contract(
     _write_assets(tmp_path, payloads)
     inventory = ImageInventory(
         apt={"curl": "7.0.0"},
-        python_modules={"pytest": "8.3.5", "requests": "2.32.0"},
+        python_modules={"pytest": "N/A", "requests": "2.32.0"},
         node_packages={"@openai/codex": "0.1.0"},
         tools={"capsem_doctor": "2026.05.20"},
     )
@@ -172,6 +172,7 @@ def test_verify_image_inventory_reports_missing_and_mismatched_contract(
     assert failures == {
         ("apt", "coreutils"): "missing",
         ("apt", "curl"): "version_mismatch",
+        ("python", "pytest"): "version_mismatch",
         ("python", "requests"): "version_mismatch",
         ("tool", "codex"): "missing",
     }

@@ -18,13 +18,16 @@ from capsem.builder.config import generate_defaults_json, load_guest_config
 from capsem.builder.docker import (
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
+    build_image_inventory_script,
     build_version_script,
     container_compile_agent,
     cross_compile_agent,
+    extract_image_inventory,
     extract_tool_versions,
     generate_build_context,
     render_dockerfile,
 )
+from capsem.builder.image_verify import ImageInventory, dump_image_inventory_json
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -894,6 +897,60 @@ class TestExtractToolVersionsValidation:
             "docker", "test-image", "linux/arm64",
             Path("/tmp"), real_config, validate=False,
         )
+
+
+class TestExtractImageInventory:
+    """extract_image_inventory() writes the typed verifier input artifact."""
+
+    def test_script_collects_package_and_tool_sources(self, real_config):
+        script = build_image_inventory_script(real_config)
+
+        assert "capsem.image-inventory.v1" in script
+        assert "dpkg-query" in script
+        assert "pip\", \"list\", \"--format=json" in script
+        assert '"npm",' in script
+        assert '"ls",' in script
+        assert "capsem-doctor --version" in script
+        assert "codex" in script
+
+    def test_capsem_doctor_version_is_available_without_pytest(self):
+        result = subprocess.run(
+            [str(PROJECT_ROOT / "guest" / "artifacts" / "capsem-doctor"), "--version"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        assert result.stdout.strip() == "2026.05.20"
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_writes_pydantic_inventory_json(self, mock_run, real_config, tmp_path):
+        mock_run.return_value = MagicMock(
+            stdout=dump_image_inventory_json(
+                ImageInventory(
+                    apt={"coreutils": "9.1-1", "curl": "7.88.1"},
+                    python_modules={"pytest": "8.3.5"},
+                    node_packages={"@openai/codex": "0.1.0"},
+                    tools={"capsem_doctor": "2026.05.20", "codex": "0.1.0"},
+                )
+            )
+        )
+
+        path = extract_image_inventory(
+            "docker",
+            "test-image",
+            "linux/arm64",
+            tmp_path,
+            real_config,
+        )
+
+        assert path == tmp_path / "image-inventory.json"
+        reparsed = ImageInventory.model_validate_json(path.read_text(encoding="utf-8"))
+        assert reparsed.apt["coreutils"] == "9.1-1"
+        assert reparsed.tools["capsem_doctor"] == "2026.05.20"
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:5] == ["docker", "run", "--rm", "--platform", "linux/arm64"]
 
 
 # ---------------------------------------------------------------------------
