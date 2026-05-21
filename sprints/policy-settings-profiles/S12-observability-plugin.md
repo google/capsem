@@ -46,6 +46,13 @@ the agreed model for cost, model call count, provider/model usage, enforcement,
 detection, and activity health: accurate enough for live operations without
 reopening SQLite on status fan-out paths.
 
+Host/service AI activity is a separate accounting lane. Service-owned model
+calls for VM naming, session summarization, support-bundle summaries,
+workbench/admin helpers, or future host inference flows can correlate with a
+VM/session/profile, but they do not belong in `VmMetricsSnapshot` and must not
+inflate VM health. S12 must add a host/service AI metrics accumulator and export
+path fed by the S08b attribution fields.
+
 ## Dependency On S08a
 
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
@@ -114,6 +121,7 @@ Consequences:
 | `GET /info/{id}` (stopped VM) | one-shot session.db read | cold path, never on a UI poll loop because the VM is gone |
 | `GET /metrics/json` | accumulator snapshots aggregated across running VMs | bounded, no SQL |
 | `GET /metrics` (Prometheus/OTel scrape) | same accumulators, low-cardinality labels | bounded, no SQL |
+| Host/service AI metrics | service-owned in-memory host accumulator | bounded, no VM SQL, separate from VM snapshots |
 | Forensic / support-bundle / `inspect-session` tools | session.db directly | unchanged |
 | Gateway `/status`, `/metrics/json`, `/metrics` | proxy of the service surfaces | unchanged plumbing |
 
@@ -180,6 +188,9 @@ Principles:
   enforcement counters, detection counters, latest detection summary, and latest
   block/deny summary from memory. The resolved-event journal remains the
   forensic source for full evidence.
+- Host/service AI counters live outside `VmMetricsSnapshot`. A host AI event may
+  include VM/session/profile correlation ids, but the accumulator key and export
+  dimensions use the host/service accounting owner.
 
 ## Metric Taxonomy
 
@@ -341,6 +352,24 @@ profile/provider registry and bounded to configured values. Unknown or
 unconfigured values collapse to `unknown` / JSON-only detail. Raw prompts,
 request bodies, and error strings are never labels.
 
+These VM model counters count only VM-originated traffic. Host/service AI calls
+use a separate host accumulator with equivalent provider/model/token/cost/error
+counters plus bounded summaries. Required host counters:
+
+- `host_ai_model_requests_total`
+- `host_ai_model_requests_allowed_total`
+- `host_ai_model_requests_denied_total`
+- `host_ai_model_requests_errored_total`
+- `host_ai_model_input_tokens_total`
+- `host_ai_model_output_tokens_total`
+- `host_ai_model_estimated_cost_micros_total`
+
+Host AI summaries may group by service purpose (`vm_naming`,
+`session_summary`, `support_bundle`, `workbench`, `admin`, `unknown`) and by
+bounded provider/model family. They may carry VM/session/profile correlation in
+JSON summaries and resolved-event links, but VM labels/counters are not the
+accounting owner.
+
 ### Detection / Findings
 
 S08a chooses `DetectionFinding` as the metric input and S08b owns
@@ -498,6 +527,9 @@ starts.
   updates without `DbWriter`/SQLite.
 - Unit tests for model health counters and bounded provider/model summaries,
   including unknown provider/model collapse and integer-micros cost handling.
+- Unit tests proving host/service AI counters are separate from VM model
+  counters even when the event carries `vm_id`, `session_id`, or `profile_id`
+  correlation ids.
 - Unit tests for detection metric counters once S08a/S08b provide the finding
   schema.
 - Unit tests for latest detection summary replacement, severity/status handling,
@@ -523,6 +555,9 @@ starts.
 - Timeout test: a slow snapshot cannot stall list/status indefinitely.
 - `/metrics/json` contract test.
 - `/metrics` low-cardinality text test.
+- Host AI metrics test: a service-owned VM naming/session summary event updates
+  host counters and resolved-event telemetry but does not change any
+  `VmMetricsSnapshot` model/MCP/token/cost field.
 
 ### Gateway
 
@@ -662,7 +697,8 @@ rather than being committed up front.
 - Telemetry: this sprint owns the telemetry redesign; no SQL on any
   hot fan-out path; VM status health exposes model/provider/cost,
   enforcement match, and detection finding counters from the live accumulator
-  with boot-time recompute only.
+  with boot-time recompute only. Host/service AI exposes separate host counters
+  and must not be blended into VM health.
 - Performance: snapshot RTT bounded; seed cost paid once per VM
   launch; batched export overhead measured.
 

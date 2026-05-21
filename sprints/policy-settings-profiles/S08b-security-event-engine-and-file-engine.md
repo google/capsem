@@ -175,6 +175,16 @@ projection described in the side sprint. CEL, Sigma-derived detection,
 backtest, status, OTel, and timeline code must not depend on provider-specific
 raw JSON paths for normal policy fields.
 
+Accounting ownership is separate from correlation. A host/service AI call can
+carry `vm_id`, `session_id`, `profile_id`, `conversation_id`, or `purpose` so
+timeline and forensics can explain why the call happened, but it must also carry
+an explicit attribution owner. Host-originated prompts such as VM naming,
+session summarization, support-bundle summaries, and workbench/admin helpers
+must resolve to host/service counters, host telemetry, and host quota
+dimensions. They must not increment VM model-call counts, VM MCP/tool counts,
+VM token/cost totals, VM health, or VM quota dimensions unless the originating
+event came from that VM runtime path.
+
 `Ask` is not a transport action. It is a Security Engine decision/action. The
 Security Engine owns ask/confirm so the resolved event can include the
 challenge, answer, timeout/default, and final action in one journal. The UI/CLI
@@ -387,6 +397,12 @@ The canonical tables should represent normalized security truth:
 - `security_event_links`: correlation edges between events, such as DNS ->
   network, model -> tool call -> MCP, process -> file, process -> network, and
   snapshot -> fs events.
+- `security_event_attribution`: or equivalent compact columns on
+  `security_events` recording attribution scope/owner (`host`, `vm`,
+  `profile`, `session`, `unknown`), source engine, origin kind, and the
+  accounting owner used for counters/quotas. This is distinct from correlation
+  ids so host-owned AI events can link to VM/session context without charging
+  VM health.
 - `timeline_threads`: logical conversation/session/activity records, including
   SDK/agent kind (`codex`, `claude`, terminal-only, MCP-driven), title, VM id,
   profile id, user id, created/updated times, and retention/redaction policy.
@@ -805,7 +821,9 @@ Each event carries at least:
   canonical events.
 - Telemetry/audit: session DB rows are produced only through the emitter path
   for migrated event families; no direct hot-path SQLite writes remain;
-  canonical events and domain projections agree.
+  canonical events and domain projections agree; host-attributed AI events with
+  VM/session correlation are present in the resolved-event journal but absent
+  from VM-owned model/MCP/token/cost counters.
 - Performance: event-engine overhead budget, streaming chunk overhead, security
   pool saturation, emitter backpressure, file snapshot/hash cost, timeline
   ingestion cost, and search/index query latency.
@@ -821,6 +839,9 @@ Each event carries at least:
   signed profile rule packs.
 - Telemetry/audit/logging/detection export receive resolved events from the
   emitter, not from transport/file internals.
+- Host AI attribution is explicit in security events, quota dimensions,
+  resolved-event logging, and metrics. Host-originated AI calls linked to a VM
+  or session charge host/service counters only.
 - `session.db` has a canonical resolved-event journal; existing domain tables
   are projections/read models or are explicitly retired.
 - File writes, deletes, snapshots, restores, observe-only file behavior, exec

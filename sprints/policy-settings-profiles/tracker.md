@@ -81,6 +81,10 @@ proceeds in this order:
    OpenAI, Anthropic, and Google/Gemini provider parsing must project into a
    canonical evidence layer before CEL, Sigma, telemetry, quotas, timeline, or
    plugin contracts rely on model/tool/MCP fields.
+   The same boundary must distinguish accounting ownership from correlation:
+   host/service AI calls can link to a VM/session/profile for explanation, but
+   they require host attribution and must not increment VM health/model/MCP/
+   token/cost counters.
 2. S08d records VM-originated security-engine performance before speed claims;
    S09/S11/S12/S13/S14/S15/S16/S16a/S17 then lift CLI, status/debug,
    telemetry, plugins, rule UI, Confirm UX, profile UI, timeline/workbench, and
@@ -611,6 +615,12 @@ a valid claim -- mark it `[ ]` instead.
     requests, responses, tool calls, tool results, MCP executions, usage, parse
     status, and linkage. OpenAI, Anthropic, and Google/Gemini are first-slice
     providers; Bedrock is explicitly later adapter coverage.
+    S08b must also add the missing host/service AI attribution contract:
+    `SourceEngine::HostAi` or equivalent, an explicit attribution scope on
+    events/quota dimensions, logger/resolved-event fields for accounting owner,
+    and fixture tests proving a host-originated VM naming/session summary call
+    with `vm_id` correlation does not increment VM-owned model, MCP, token,
+    cost, quota, or health counters.
     S08b must add service-owned runtime `/enforcement/*` and `/detection/*`
     routes for validate, compile, backtest, live add/update/delete/list, stats,
     plus detection hunt. Supported Sigma detection constructs should lower into
@@ -703,8 +713,12 @@ a valid claim -- mark it `[ ]` instead.
     detection/latest block, and stale/partial metrics state.
 27. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
-    cost usage, enforcement/detection match stats, detection finding health,
-    latest detection/latest block summaries, and future S22 quota/budget inputs.
+    cost, MCP, enforcement, detection, and host/service AI accounting. VM
+    snapshots remain authoritative for VM-originated activity only; host AI
+    prompts need separate service-owned counters and OTel dimensions even when
+    correlated with a VM/session/profile. S12 also owns enforcement/detection
+    match stats, detection finding health, latest detection/latest block
+    summaries, and future S22 quota/budget inputs.
     Running status reads memory only; persistent VMs seed/recompute from
     `session.db` exactly once at load.
 28. [ ] [S13 - Remote enforcement plugin](S13-remote-policy-plugin.md)

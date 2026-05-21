@@ -83,6 +83,14 @@ and the docs build after fixing asset supervisor finish-event logging.
   CEL, Sigma, backtest, telemetry, quotas, timeline, plugins, or UI rely on
   them. OpenAI, Anthropic, and Google/Gemini are first-class first-slice
   providers; Bedrock is later adapter coverage, not a release blocker.
+- **Host AI accounting is separate from VM accounting.** Service-owned model
+  prompts such as VM naming, session summarization, support-bundle summaries,
+  and admin/workbench helpers may correlate with a VM/profile/session, but they
+  must carry host/service attribution and increment host counters, host
+  telemetry, and host quota dimensions. They must not inflate VM health,
+  running-VM model call counts, VM MCP/tool counts, VM token/cost totals, or VM
+  quota dimensions unless the call actually originates from that VM runtime
+  path.
 - **Everyday work needs a unified structured timeline.** SDK-backed
   Codex/Claude work and terminal fallback workflows must feed a first-class
   Conversation Engine and the single `/timeline/{id}` read model so sessions
@@ -191,6 +199,9 @@ folded into the descriptor-driven UI work in S14 / S16 / S17.
   dimensions directly against provider-specific model JSON. S08b must consume
   the canonical AI interaction evidence side sprint for OpenAI, Anthropic, and
   Google/Gemini before policy surfaces freeze.
+- Do not expose service-owned AI prompts through VM metrics. S08b/S12 must add
+  explicit host/service AI attribution, counters, logger fields, and tests
+  proving host calls linked to a VM/session do not charge VM health totals.
 - Do not add more independent `session.db` tables as security authority. S08b
   must define the canonical resolved-event journal and decide which existing
   domain tables remain projections/read models.
