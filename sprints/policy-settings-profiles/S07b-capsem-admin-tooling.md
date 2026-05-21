@@ -253,6 +253,38 @@ Fourteenth slice landed on 2026-05-20:
   installed CLI smoke proved `capsem-admin image build --dry-run --json` from a
   generated TOML profile.
 
+Fifteenth through seventeenth slices landed on 2026-05-20:
+
+- Profile V2 now requires a `ui` enum (`everyday` or `coding`) across Python,
+  JSON Schema, Rust parsing, fixtures, and generated built-in profile drafts.
+- `capsem-admin profile init-builtins --guest-dir guest` generates the
+  `everyday-work` and `coding` base profiles from the current typed guest
+  config, preserving floating package intent as `*` in the profile contract.
+- Live VM asset build lanes now require a Profile V2 payload:
+  `scripts/build-assets.sh --profile`, Justfile `build-assets`/`build-kernel`/`build-rootfs`,
+  and PR install CI route through `capsem-admin image build` instead of an
+  unprofiled `capsem-builder build guest/` path.
+- Verification covered generated profile validation, dry-run image build,
+  focused Python/Rust profile gates, compile checks, docs build, and static
+  live-caller checks for the removed unprofiled build lane.
+
+Eighteenth slice landed on 2026-05-21:
+
+- `capsem-admin image verify <profile> --assets-dir <dir> --inventory
+  <inventory.json>` now accepts a typed `capsem.image-inventory.v1` proof
+  artifact.
+- The verifier checks profile-declared apt packages, Python modules, node
+  packages, and required tools against the image inventory. Exact versions must
+  match; profile version `*` accepts any installed version while still requiring
+  the package or tool to be present.
+- The typed `capsem.image-verification.v1` report now includes
+  `inventory_checked`, optional `inventory_path`, and per-package/tool contract
+  rows with `missing` and `version_mismatch` failures. Optional profile tools
+  remain informational until a profile marks them `required = true`.
+- Verification: `uv run python -m pytest tests/test_image_verify.py -q` passed
+  with 10 tests. Remaining image proof is guest SBOM/probe generation and
+  boot-time runtime truth, not the contract comparison surface.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -551,12 +583,13 @@ The checker must fail closed for:
       and command JSON output. Profile payloads, profile manifests, package/
       tool contracts, assets, settings doctor, validation reports, and profile
       init drafts have landed; build-plan, image-workspace, and local asset
-      image-verify reports have landed; fast manifest-check reports have
-      landed; manifest-generate, profile-manifest generation has landed;
+      image-verify reports plus typed package/tool image-inventory contract
+      rows have landed; fast manifest-check reports have landed;
+      manifest-generate, profile-manifest generation has landed;
       minisign-backed manifest signing, manifest signature verification, and
-      profile/asset signature verification have landed; package/tool image
-      proof and richer doctor reports remain. Full manifest byte/hash download
-      checks have landed.
+      profile/asset signature verification have landed; guest SBOM/probe
+      image proof and richer doctor reports remain. Full manifest byte/hash
+      download checks have landed.
 - [ ] Add Pydantic v2 models and schema/export commands for policy packs and
       detection packs once S08a chooses real CEL and the Sigma-compatible
       detection format.
@@ -592,9 +625,10 @@ The checker must fail closed for:
       profile-payload and VM-asset hash/size verification, and minisign
       profile/asset signature verification have landed.
 - [~] Implement image verification against profile package/tool contract. Local
-      profile-declared asset existence/size/hash verification has landed;
-      release host SBOM attestation covers `.pkg` and `.deb`; guest
-      profile-derived package/tool SBOM and in-guest image proof remain.
+      profile-declared asset existence/size/hash verification and typed
+      package/tool inventory contract comparison have landed; release host SBOM
+      attestation covers `.pkg` and `.deb`; guest profile-derived package/tool
+      SBOM generation and in-guest image proof remain.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
@@ -615,8 +649,9 @@ The checker must fail closed for:
   checks, and reports; explicit JSON I/O tests for `model_validate_json()` /
   `TypeAdapter.validate_json()` and `model_dump_json()`; profile manifest
   generate/check/sign tests; profile-to-image build plan tests;
-  guest-config-to-profile generation tests; admin doctor checks;
-  no-hand-edited-settings guard tests.
+  guest-config-to-profile generation tests; image inventory package/tool
+  contract comparison tests; admin doctor checks; no-hand-edited-settings
+  guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
   generate`; `manifest check --fast`; `manifest check --download`;
@@ -627,10 +662,11 @@ The checker must fail closed for:
   manager, unknown profile field/table, wrong schema id/version,
   manifest/payload id or revision mismatch, missing per-arch asset table, URL
   scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch, missing
-  signature URL, hash mismatch after download, duplicate profile revision,
-  revoked current profile, path traversal, stale manifest rollback, and
-  untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin module
-  tests.
+  signature URL, hash mismatch after download, image inventory missing package
+  or required tool, image inventory version mismatch, duplicate profile
+  revision, revoked current profile, path traversal, stale manifest rollback,
+  and untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin
+  module tests.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default, boot at least the host-arch image through
   Capsem, and run an in-guest verification probe that proves declared

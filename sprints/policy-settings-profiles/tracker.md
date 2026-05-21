@@ -406,6 +406,14 @@ a valid claim -- mark it `[ ]` instead.
     default generated profile path; docs build passed with `pnpm --dir docs run
     build`; and a static `rg` check found no remaining `capsem-builder build
     guest/` live caller in Justfile/scripts/CI/tests.
+    Eighteenth slice added typed package/tool inventory checking to
+    `capsem-admin image verify`: optional `--inventory` reads a
+    `capsem.image-inventory.v1` Pydantic JSON artifact, compares profile
+    apt/Python/node package contracts and required tools against the
+    image-derived inventory, accepts `*` as present-any-version, fails closed on
+    missing or exact-version mismatches, and reports per-contract rows in the
+    existing `capsem.image-verification.v1` output. Verification: `uv run
+    python -m pytest tests/test_image_verify.py -q` passed with 10 tests.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

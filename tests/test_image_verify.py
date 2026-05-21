@@ -9,7 +9,9 @@ from click.testing import CliRunner
 from capsem.admin.cli import cli
 from capsem.builder.image_plan import ImagePlan, derive_image_plan
 from capsem.builder.image_verify import (
+    ImageInventory,
     ImageVerificationReport,
+    dump_image_inventory_json,
     dump_image_verification_report_json,
     verify_image_assets,
 )
@@ -17,6 +19,8 @@ from capsem.builder.profiles import (
     ArchAssets,
     AssetDeclaration,
     ProfilePayloadV2,
+    ToolContract,
+    ToolSource,
     create_profile_draft,
     dump_profile_json,
 )
@@ -70,6 +74,38 @@ def _write_assets(assets_dir: Path, payloads: dict[tuple[str, str], bytes]) -> N
         target.write_bytes(payload)
 
 
+def _profile_with_package_tool_contract() -> tuple[
+    ProfilePayloadV2,
+    ImagePlan,
+    dict[tuple[str, str], bytes],
+]:
+    profile, _, payloads = _profile_with_local_asset_contract()
+    packages = profile.packages.model_copy(
+        update={
+            "system": profile.packages.system.model_copy(
+                update={"apt": {"coreutils": "*", "curl": "8.0.0"}}
+            ),
+            "python_modules": {"pytest": "*", "requests": "2.32.3"},
+            "node_packages": {"@openai/codex": "0.1.0"},
+        }
+    )
+    tools = {
+        **profile.tools,
+        "codex": ToolContract(
+            version="0.17.0",
+            required=True,
+            source=ToolSource.GUEST,
+        ),
+        "optional_host_tool": ToolContract(
+            version="1.0.0",
+            required=False,
+            source=ToolSource.HOST,
+        ),
+    }
+    profile = profile.model_copy(update={"packages": packages, "tools": tools})
+    return profile, derive_image_plan(profile), payloads
+
+
 def test_verify_image_assets_accepts_matching_local_assets(tmp_path: Path) -> None:
     _, plan, payloads = _profile_with_local_asset_contract()
     _write_assets(tmp_path, payloads)
@@ -83,6 +119,62 @@ def test_verify_image_assets_accepts_matching_local_assets(tmp_path: Path) -> No
     assert report.profile_id == "corp-dev"
     assert len(report.assets) == 6
     assert {asset.kind for asset in report.assets} == {"kernel", "initrd", "rootfs"}
+
+
+def test_verify_image_inventory_accepts_matching_package_and_tool_contract(
+    tmp_path: Path,
+) -> None:
+    _, plan, payloads = _profile_with_package_tool_contract()
+    _write_assets(tmp_path, payloads)
+    inventory = ImageInventory(
+        apt={"coreutils": "9.1", "curl": "8.0.0"},
+        python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
+        node_packages={"@openai/codex": "0.1.0"},
+        tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
+    )
+
+    report = verify_image_assets(
+        plan,
+        tmp_path,
+        inventory=inventory,
+        inventory_path=tmp_path / "inventory.json",
+    )
+
+    assert report.ok is True
+    assert report.inventory_checked is True
+    assert report.inventory_path == str(tmp_path / "inventory.json")
+    assert len(report.package_contract) == 5
+    assert len(report.tool_contract) == 2
+    assert {row.name for row in report.tool_contract} == {"capsem_doctor", "codex"}
+    assert all(row.ok for row in [*report.package_contract, *report.tool_contract])
+
+
+def test_verify_image_inventory_reports_missing_and_mismatched_contract(
+    tmp_path: Path,
+) -> None:
+    _, plan, payloads = _profile_with_package_tool_contract()
+    _write_assets(tmp_path, payloads)
+    inventory = ImageInventory(
+        apt={"curl": "7.0.0"},
+        python_modules={"pytest": "8.3.5", "requests": "2.32.0"},
+        node_packages={"@openai/codex": "0.1.0"},
+        tools={"capsem_doctor": "2026.05.20"},
+    )
+
+    report = verify_image_assets(plan, tmp_path, inventory=inventory)
+
+    failures = {
+        (row.kind, row.name): row.failure
+        for row in [*report.package_contract, *report.tool_contract]
+        if not row.ok
+    }
+    assert report.ok is False
+    assert failures == {
+        ("apt", "coreutils"): "missing",
+        ("apt", "curl"): "version_mismatch",
+        ("python", "requests"): "version_mismatch",
+        ("tool", "codex"): "missing",
+    }
 
 
 def test_verify_image_assets_reports_missing_asset(tmp_path: Path) -> None:
@@ -158,6 +250,84 @@ def test_capsem_admin_image_verify_accepts_matching_assets(tmp_path: Path) -> No
     assert '"schema": "capsem.image-verification.v1"' in result.output
     assert '"ok": true' in result.output
     assert '"profile_id": "corp-dev"' in result.output
+
+
+def test_capsem_admin_image_verify_accepts_inventory_contract(tmp_path: Path) -> None:
+    profile, _, payloads = _profile_with_package_tool_contract()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    _write_assets(assets_dir, payloads)
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(
+        dump_image_inventory_json(
+            ImageInventory(
+                apt={"coreutils": "9.1", "curl": "8.0.0"},
+                python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
+                node_packages={"@openai/codex": "0.1.0"},
+                tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "verify",
+            str(profile_path),
+            "--assets-dir",
+            str(assets_dir),
+            "--inventory",
+            str(inventory_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"inventory_checked": true' in result.output
+    assert '"package_contract": [' in result.output
+    assert '"tool_contract": [' in result.output
+
+
+def test_capsem_admin_image_verify_returns_nonzero_on_inventory_mismatch(
+    tmp_path: Path,
+) -> None:
+    profile, _, payloads = _profile_with_package_tool_contract()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    _write_assets(assets_dir, payloads)
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(
+        dump_image_inventory_json(
+            ImageInventory(
+                apt={"coreutils": "9.1", "curl": "7.0.0"},
+                python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
+                node_packages={"@openai/codex": "0.1.0"},
+                tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "verify",
+            str(profile_path),
+            "--assets-dir",
+            str(assets_dir),
+            "--inventory",
+            str(inventory_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert '"failure": "version_mismatch"' in result.output
 
 
 def test_capsem_admin_image_verify_returns_nonzero_on_mismatch(tmp_path: Path) -> None:

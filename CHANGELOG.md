@@ -121,6 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile-declared local kernel/initrd/rootfs assets by architecture, size, and
   BLAKE3 hash, with typed `capsem.image-verification.v1` JSON output and
   non-zero exits on missing or mismatched assets.
+- Added typed `capsem.image-inventory.v1` package/tool inventory checks to
+  `capsem-admin image verify --inventory`, comparing apt, Python, node, and
+  required guest tool versions against the Profile V2 image plan while
+  preserving Pydantic-only JSON input/output.
 - Added `capsem-admin manifest check <manifest> --fast` with typed
   `capsem.manifest-check.v1` reports, Pydantic manifest validation, local
   `file://` profile payload hash/id/revision checks, remote HTTP(S) `HEAD`

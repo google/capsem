@@ -21,6 +21,7 @@ from capsem.builder.image_plan import (
 )
 from capsem.builder.image_verify import (
     dump_image_verification_report_json,
+    load_image_inventory_json,
     verify_image_assets,
 )
 from capsem.builder.image_workspace import (
@@ -511,6 +512,13 @@ def image_plan(profile_path: str, arch: ImageArch, json_output: bool) -> None:
     show_default=True,
 )
 @click.option(
+    "--inventory",
+    "inventory_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Optional capsem.image-inventory.v1 JSON proof for package/tool checks.",
+)
+@click.option(
     "--json",
     "json_output",
     is_flag=True,
@@ -520,14 +528,26 @@ def image_verify(
     profile_path: str,
     assets_dir: str,
     arch: ImageArch,
+    inventory_path: str | None,
     json_output: bool,
 ) -> None:
-    """Verify profile-declared image assets in a local asset directory."""
+    """Verify profile-declared image assets and optional image inventory."""
     try:
         profile = _load_profile(Path(profile_path))
         plan = derive_image_plan(profile, arch=arch)
-        report = verify_image_assets(plan, Path(assets_dir))
-    except (ValidationError, ValueError) as error:
+        inventory_file = Path(inventory_path) if inventory_path is not None else None
+        inventory = (
+            load_image_inventory_json(inventory_file)
+            if inventory_file is not None
+            else None
+        )
+        report = verify_image_assets(
+            plan,
+            Path(assets_dir),
+            inventory=inventory,
+            inventory_path=inventory_file,
+        )
+    except (OSError, ValidationError, ValueError) as error:
         raise click.ClickException(str(error)) from error
 
     if json_output:
@@ -537,10 +557,25 @@ def image_verify(
         click.echo(f"assets dir: {report.assets_dir}")
         ok_assets = sum(1 for asset in report.assets if asset.ok)
         click.echo(f"assets: {ok_assets}/{len(report.assets)} ok")
+        if report.inventory_checked:
+            ok_packages = sum(1 for row in report.package_contract if row.ok)
+            ok_tools = sum(1 for row in report.tool_contract if row.ok)
+            click.echo(
+                "package contract: "
+                f"{ok_packages}/{len(report.package_contract)} ok"
+            )
+            click.echo(f"tool contract: {ok_tools}/{len(report.tool_contract)} ok")
         for asset in report.assets:
             if not asset.ok:
                 click.echo(
                     f"{asset.arch}/{asset.kind}: {asset.failure} {asset.path}",
+                    err=True,
+                )
+        for row in [*report.package_contract, *report.tool_contract]:
+            if not row.ok:
+                click.echo(
+                    f"{row.kind}/{row.name}: {row.failure} "
+                    f"expected={row.expected_version} actual={row.actual_version}",
                     err=True,
                 )
 

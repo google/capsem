@@ -9,7 +9,7 @@ import blake3
 from pydantic import BaseModel, ConfigDict, Field
 
 from capsem.builder.image_plan import ImagePlan
-from capsem.builder.profiles import AssetDeclaration
+from capsem.builder.profiles import AssetDeclaration, VersionStr
 
 
 class StrictModel(BaseModel):
@@ -29,6 +29,28 @@ class ImageAssetVerification(StrictModel):
     failure: Literal["missing", "size_mismatch", "hash_mismatch"] | None = None
 
 
+class ImageInventory(StrictModel):
+    schema_: Literal["capsem.image-inventory.v1"] = Field(
+        default="capsem.image-inventory.v1",
+        alias="schema",
+    )
+    apt: dict[str, VersionStr] = Field(default_factory=dict)
+    python_modules: dict[str, VersionStr] = Field(default_factory=dict)
+    node_packages: dict[str, VersionStr] = Field(default_factory=dict)
+    tools: dict[str, VersionStr] = Field(default_factory=dict)
+
+
+class ImageContractVerification(StrictModel):
+    kind: Literal["apt", "python", "node", "tool"]
+    name: str
+    expected_version: str
+    actual_version: str | None = None
+    expected_source: Literal["guest", "host", "profile"] | None = None
+    required: bool | None = None
+    ok: bool
+    failure: Literal["missing", "version_mismatch"] | None = None
+
+
 class ImageVerificationReport(StrictModel):
     schema_: Literal["capsem.image-verification.v1"] = Field(
         default="capsem.image-verification.v1",
@@ -38,7 +60,11 @@ class ImageVerificationReport(StrictModel):
     profile_id: str
     profile_revision: str
     assets_dir: str
+    inventory_path: str | None = None
+    inventory_checked: bool = False
     assets: list[ImageAssetVerification]
+    package_contract: list[ImageContractVerification] = Field(default_factory=list)
+    tool_contract: list[ImageContractVerification] = Field(default_factory=list)
 
 
 def _blake3_hash(path: Path) -> str:
@@ -100,7 +126,123 @@ def _verify_one(
     )
 
 
-def verify_image_assets(plan: ImagePlan, assets_dir: Path) -> ImageVerificationReport:
+def _version_satisfies(expected: str, actual: str) -> bool:
+    return expected == "*" or actual == expected
+
+
+def _verify_contract_entry(
+    *,
+    kind: Literal["apt", "python", "node", "tool"],
+    name: str,
+    expected_version: str,
+    actual_versions: dict[str, VersionStr],
+    expected_source: Literal["guest", "host", "profile"] | None = None,
+    required: bool | None = None,
+) -> ImageContractVerification:
+    actual_version = actual_versions.get(name)
+    if actual_version is None:
+        return ImageContractVerification(
+            kind=kind,
+            name=name,
+            expected_version=expected_version,
+            expected_source=expected_source,
+            required=required,
+            ok=False,
+            failure="missing",
+        )
+    if not _version_satisfies(expected_version, actual_version):
+        return ImageContractVerification(
+            kind=kind,
+            name=name,
+            expected_version=expected_version,
+            actual_version=actual_version,
+            expected_source=expected_source,
+            required=required,
+            ok=False,
+            failure="version_mismatch",
+        )
+    return ImageContractVerification(
+        kind=kind,
+        name=name,
+        expected_version=expected_version,
+        actual_version=actual_version,
+        expected_source=expected_source,
+        required=required,
+        ok=True,
+    )
+
+
+def _verify_package_contract(
+    plan: ImagePlan,
+    inventory: ImageInventory,
+) -> list[ImageContractVerification]:
+    rows: list[ImageContractVerification] = []
+    for name, expected_version in sorted(plan.packages.system.apt.items()):
+        rows.append(
+            _verify_contract_entry(
+                kind="apt",
+                name=name,
+                expected_version=expected_version,
+                actual_versions=inventory.apt,
+            )
+        )
+    for name, expected_version in sorted(plan.packages.python_modules.items()):
+        rows.append(
+            _verify_contract_entry(
+                kind="python",
+                name=name,
+                expected_version=expected_version,
+                actual_versions=inventory.python_modules,
+            )
+        )
+    for name, expected_version in sorted(plan.packages.node_packages.items()):
+        rows.append(
+            _verify_contract_entry(
+                kind="node",
+                name=name,
+                expected_version=expected_version,
+                actual_versions=inventory.node_packages,
+            )
+        )
+    return rows
+
+
+def _verify_tool_contract(
+    plan: ImagePlan,
+    inventory: ImageInventory,
+) -> list[ImageContractVerification]:
+    rows: list[ImageContractVerification] = []
+    for name, tool in sorted(plan.tools.items()):
+        if not tool.required:
+            continue
+        rows.append(
+            _verify_contract_entry(
+                kind="tool",
+                name=name,
+                expected_version=tool.version,
+                actual_versions=inventory.tools,
+                expected_source=tool.source.value,
+                required=tool.required,
+            )
+        )
+    return rows
+
+
+def load_image_inventory_json(path: Path) -> ImageInventory:
+    return ImageInventory.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def dump_image_inventory_json(inventory: ImageInventory) -> str:
+    return inventory.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+
+
+def verify_image_assets(
+    plan: ImagePlan,
+    assets_dir: Path,
+    *,
+    inventory: ImageInventory | None = None,
+    inventory_path: Path | None = None,
+) -> ImageVerificationReport:
     assets: list[ImageAssetVerification] = []
     for arch in plan.arches:
         assets.extend(
@@ -125,13 +267,24 @@ def verify_image_assets(plan: ImagePlan, assets_dir: Path) -> ImageVerificationR
                 ),
             ]
         )
+    package_contract: list[ImageContractVerification] = []
+    tool_contract: list[ImageContractVerification] = []
+    if inventory is not None:
+        package_contract = _verify_package_contract(plan, inventory)
+        tool_contract = _verify_tool_contract(plan, inventory)
 
     return ImageVerificationReport(
-        ok=all(asset.ok for asset in assets),
+        ok=all(asset.ok for asset in assets)
+        and all(row.ok for row in package_contract)
+        and all(row.ok for row in tool_contract),
         profile_id=plan.profile_id,
         profile_revision=plan.profile_revision,
         assets_dir=str(assets_dir),
+        inventory_path=str(inventory_path) if inventory_path is not None else None,
+        inventory_checked=inventory is not None,
         assets=assets,
+        package_contract=package_contract,
+        tool_contract=tool_contract,
     )
 
 
