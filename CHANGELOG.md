@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.
+- Added canonical policy-context CEL evaluation in `capsem-security-engine`, so
+  runtime enforcement/detection rules now use roots such as
+  `http.request.host` and reject internal `event.*` paths.
 - Added Rust Detection IR evaluation against the new S08b normalized
   `SecurityEvent` contract so Sigma-derived findings can run on the shared
   event model instead of a parallel fixture-only shape.

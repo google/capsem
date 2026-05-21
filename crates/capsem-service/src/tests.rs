@@ -6515,7 +6515,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     let Json(compiled) = handle_compile_enforcement_rule(Json(RuntimeEnforcementRuleRequest {
         id: "block-metadata".into(),
         pack_id: Some("runtime-pack".into()),
-        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        condition: "http.request.host == 'metadata.google.internal'".into(),
         decision: capsem_security_engine::SecurityDecisionAction::Block,
         reason: Some("metadata access".into()),
         enabled: true,
@@ -6529,7 +6529,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
         Json(RuntimeEnforcementRuleRequest {
             id: "block-metadata".into(),
             pack_id: Some("runtime-pack".into()),
-            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            condition: "http.request.host == 'metadata.google.internal'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("metadata access".into()),
             enabled: true,
@@ -6563,7 +6563,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
         Json(RuntimeEnforcementRuleRequest {
             id: "ask-sensitive".into(),
             pack_id: Some("runtime-pack".into()),
-            condition: "event.common.event_type == 'model.request'".into(),
+            condition: "common.event_type == 'model.request'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Ask,
             reason: Some("sensitive model request".into()),
             enabled: true,
@@ -6578,7 +6578,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
         Json(RuntimeEnforcementRuleRequest {
             id: "ask-sensitive".into(),
             pack_id: Some("runtime-pack".into()),
-            condition: "event.common.event_type == 'model.response'".into(),
+            condition: "common.event_type == 'model.response'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("sensitive model response".into()),
             enabled: false,
@@ -6599,6 +6599,23 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
 }
 
 #[tokio::test]
+async fn handle_enforcement_compile_rejects_internal_event_root() {
+    let err = handle_compile_enforcement_rule(Json(RuntimeEnforcementRuleRequest {
+        id: "bad-event-root".into(),
+        pack_id: Some("runtime-pack".into()),
+        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        decision: capsem_security_engine::SecurityDecisionAction::Block,
+        reason: Some("event root should be internal".into()),
+        enabled: true,
+    }))
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("event.*"));
+}
+
+#[tokio::test]
 async fn handle_detection_runtime_routes_reject_invalid_without_poisoning_registry() {
     let state = make_test_state();
     let err = handle_create_detection_rule(
@@ -6608,7 +6625,7 @@ async fn handle_detection_runtime_routes_reject_invalid_without_poisoning_regist
             pack_id: "runtime-detection".into(),
             sigma_id: None,
             title: "Bad detection".into(),
-            condition: "event.subject.host ==".into(),
+            condition: "http.request.host ==".into(),
             severity: capsem_security_engine::Severity::High,
             confidence: capsem_security_engine::Confidence::High,
             tags: Vec::new(),
@@ -6623,6 +6640,26 @@ async fn handle_detection_runtime_routes_reject_invalid_without_poisoning_regist
 }
 
 #[tokio::test]
+async fn handle_detection_compile_rejects_internal_event_root() {
+    let err = handle_compile_detection_rule(Json(RuntimeDetectionRuleRequest {
+        id: "bad-detection-event-root".into(),
+        pack_id: "runtime-detection".into(),
+        sigma_id: None,
+        title: "Bad detection".into(),
+        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        severity: capsem_security_engine::Severity::High,
+        confidence: capsem_security_engine::Confidence::High,
+        tags: Vec::new(),
+        enabled: true,
+    }))
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("event.*"));
+}
+
+#[tokio::test]
 async fn handle_detection_runtime_routes_compile_install_update_delete() {
     let state = make_test_state();
     let Json(compiled) = handle_compile_detection_rule(Json(RuntimeDetectionRuleRequest {
@@ -6630,7 +6667,7 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
         pack_id: "runtime-detection".into(),
         sigma_id: Some("sigma-1".into()),
         title: "Model request".into(),
-        condition: "event.common.event_type == 'model.request'".into(),
+        condition: "common.event_type == 'model.request'".into(),
         severity: capsem_security_engine::Severity::Medium,
         confidence: capsem_security_engine::Confidence::High,
         tags: vec!["model".into()],
@@ -6647,7 +6684,7 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
             pack_id: "runtime-detection".into(),
             sigma_id: Some("sigma-1".into()),
             title: "Model request".into(),
-            condition: "event.common.event_type == 'model.request'".into(),
+            condition: "common.event_type == 'model.request'".into(),
             severity: capsem_security_engine::Severity::Medium,
             confidence: capsem_security_engine::Confidence::High,
             tags: vec!["model".into()],
@@ -6666,7 +6703,7 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
             pack_id: "runtime-detection".into(),
             sigma_id: Some("sigma-1".into()),
             title: "Model response".into(),
-            condition: "event.common.event_type == 'model.response'".into(),
+            condition: "common.event_type == 'model.response'".into(),
             severity: capsem_security_engine::Severity::High,
             confidence: capsem_security_engine::Confidence::Medium,
             tags: vec!["model".into(), "response".into()],
@@ -6702,7 +6739,7 @@ async fn handle_enforcement_backtest_matches_and_dedupes_inline_events() {
         rule: RuntimeEnforcementRuleRequest {
             id: "block-metadata".into(),
             pack_id: Some("runtime-pack".into()),
-            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            condition: "http.request.host == 'metadata.google.internal'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("metadata access".into()),
             enabled: true,
@@ -6745,7 +6782,7 @@ async fn handle_detection_backtest_returns_finding_rows_with_event_refs() {
             pack_id: "runtime-detection".into(),
             sigma_id: Some("sigma-1".into()),
             title: "Metadata access".into(),
-            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            condition: "http.request.host == 'metadata.google.internal'".into(),
             severity: capsem_security_engine::Severity::High,
             confidence: capsem_security_engine::Confidence::High,
             tags: vec!["metadata".into()],
@@ -6791,7 +6828,7 @@ async fn handle_detection_hunt_runs_multiple_detection_rules_over_inline_events(
                 pack_id: "runtime-detection".into(),
                 sigma_id: Some("sigma-1".into()),
                 title: "Metadata access".into(),
-                condition: "event.subject.host == 'metadata.google.internal'".into(),
+                condition: "http.request.host == 'metadata.google.internal'".into(),
                 severity: capsem_security_engine::Severity::High,
                 confidence: capsem_security_engine::Confidence::High,
                 tags: vec!["metadata".into()],
@@ -6802,7 +6839,7 @@ async fn handle_detection_hunt_runs_multiple_detection_rules_over_inline_events(
                 pack_id: "runtime-detection".into(),
                 sigma_id: Some("sigma-2".into()),
                 title: "API access".into(),
-                condition: "event.subject.host == 'api.example.test'".into(),
+                condition: "http.request.host == 'api.example.test'".into(),
                 severity: capsem_security_engine::Severity::Medium,
                 confidence: capsem_security_engine::Confidence::High,
                 tags: vec!["api".into()],

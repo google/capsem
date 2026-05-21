@@ -451,10 +451,12 @@ Implementation status as of the current service-route slices:
   and tests for JSON/MessagePack roundtrip, unknown-field rejection,
   case-insensitive header lookup, redacted/missing body semantics, and no
   current `V1` type suffixes.
-- Correction required before route/corpus stability: the currently landed CEL
-  path evaluates internal `SecurityEvent` data. S08b must move rule authoring
-  to the canonical policy context roots and reject `event.*` before S08c
-  fixtures or S14/S15 UI surfaces harden the wrong contract.
+- Landed: `capsem-security-engine` now builds a canonical policy context from
+  normalized security events, injects direct CEL roots (`common`, `http`, `dns`,
+  `mcp`, `model`, `file`, `process`, `profile`), supports
+  `http.request.header(name).exists()`, and rejects authored `event.*` at
+  compile time. `capsem-core` Detection IR lowering now emits canonical roots
+  instead of `event.subject.*`.
 - Guardrail: malformed CEL fails before registry mutation; list/stats expose
   rule id, pack id, origin/scope, enabled state, compile status, generation,
   compiled plan id, match count, and last matched event/timestamp.

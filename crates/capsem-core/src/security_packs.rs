@@ -233,10 +233,7 @@ pub fn compile_detection_ir_to_cel_detection_rules(
     ir.rules
         .iter()
         .map(|rule| {
-            let mut terms = vec![format!(
-                "event.subject.family == {}",
-                cel_string_literal(rule.event_family.as_cel_family())
-            )];
+            let mut terms = vec![event_family_cel_guard(rule.event_family)?];
             for matcher in &rule.matchers {
                 match matcher.operator {
                     DetectionOperator::EqualsAny => {
@@ -274,23 +271,6 @@ pub fn compile_detection_ir_to_cel_detection_rules(
             })
         })
         .collect()
-}
-
-impl EventFamily {
-    fn as_cel_family(self) -> &'static str {
-        match self {
-            Self::Dns => "dns",
-            Self::Http => "http",
-            Self::Mcp => "mcp",
-            Self::Model => "model",
-            Self::File => "file",
-            Self::Process => "process",
-            Self::Credential => "credential",
-            Self::Vm => "vm",
-            Self::Profile => "profile",
-            Self::Conversation => "conversation",
-        }
-    }
 }
 
 impl From<Severity> for capsem_security_engine::Severity {
@@ -337,7 +317,47 @@ fn runtime_cel_path(event_family: EventFamily, field_path: &str) -> Result<Strin
         return Err(unsupported_field_path(field_path));
     }
 
-    Ok(format!("event.subject.{suffix}"))
+    let root = match event_family {
+        EventFamily::Dns => "dns",
+        EventFamily::Http => "http",
+        EventFamily::Mcp => "mcp",
+        EventFamily::Model => "model",
+        EventFamily::File => "file",
+        EventFamily::Process => "process",
+        EventFamily::Profile => "profile",
+        EventFamily::Credential | EventFamily::Vm | EventFamily::Conversation => {
+            return Err(unsupported_field_path(field_path));
+        }
+    };
+
+    let canonical_suffix = match (event_family, scope, suffix) {
+        (EventFamily::Http, "request", "request_bytes") => "bytes",
+        (EventFamily::Http, "response", "response_bytes") => "bytes",
+        _ => suffix,
+    };
+
+    Ok(format!("{root}.{scope}.{canonical_suffix}"))
+}
+
+fn event_family_cel_guard(event_family: EventFamily) -> Result<String> {
+    let prefix = match event_family {
+        EventFamily::Dns => "dns.",
+        EventFamily::Http => "http.",
+        EventFamily::Mcp => "mcp.",
+        EventFamily::Model => "model.",
+        EventFamily::File => "file.",
+        EventFamily::Process => "process.",
+        EventFamily::Profile => "profile.",
+        EventFamily::Credential | EventFamily::Vm | EventFamily::Conversation => {
+            return Err(SecurityPackSchemaError::UnsupportedDetectionIr(format!(
+                "unsupported Detection IR event family {event_family:?} for CEL lowering"
+            )));
+        }
+    };
+    Ok(format!(
+        "common.event_type.startsWith({})",
+        cel_string_literal(prefix)
+    ))
 }
 
 fn is_supported_runtime_field(event_family: EventFamily, scope: &str, suffix: &str) -> bool {

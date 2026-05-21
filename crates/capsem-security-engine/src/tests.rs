@@ -780,7 +780,9 @@ fn real_cel_enforcement_blocks_matching_security_event() {
     let rule = CelEnforcementRule {
         id: "block-metadata".into(),
         pack_id: Some("corp-enforcement".into()),
-        condition: "event.subject.host == 'metadata.google.internal' && event.common.event_type == 'http.request'".into(),
+        condition:
+            "http.request.host == 'metadata.google.internal' && common.event_type == 'http.request'"
+                .into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("metadata service access".into()),
     };
@@ -808,6 +810,48 @@ fn real_cel_enforcement_blocks_matching_security_event() {
 }
 
 #[test]
+fn real_cel_enforcement_rejects_internal_event_root() {
+    let err = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "bad-event-root".into(),
+        pack_id: Some("corp-enforcement".into()),
+        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("bad".into()),
+    }])
+    .unwrap_err();
+
+    assert!(err.to_string().contains("bad-event-root"));
+    assert!(err.to_string().contains("event.*"));
+}
+
+#[test]
+fn policy_cel_context_supports_header_exists_helper() {
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_owned(), vec!["Bearer test".to_owned()]);
+    let mut policy_context = capsem_proto::PolicyContext::new();
+    policy_context.http.request = Some(capsem_proto::HttpRequestPolicyContext {
+        host: Some("api.example.test".into()),
+        headers,
+        ..capsem_proto::HttpRequestPolicyContext::default()
+    });
+
+    let program = cel::Program::compile(
+        "http.request.host.contains('example') && http.request.header('authorization').exists()",
+    )
+    .unwrap();
+
+    assert!(evaluate_policy_cel_bool("header-helper", &program, &policy_context).unwrap());
+}
+
+#[test]
+fn policy_cel_context_missing_header_is_absent() {
+    let policy_context = capsem_proto::PolicyContext::new();
+    let program = cel::Program::compile("http.request.header('authorization').exists()").unwrap();
+
+    assert!(!evaluate_policy_cel_bool("missing-header", &program, &policy_context).unwrap());
+}
+
+#[test]
 fn real_cel_enforcement_compile_errors_fail_closed_before_install() {
     let err = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
         id: "bad-cel".into(),
@@ -829,7 +873,7 @@ fn real_cel_detection_emits_findings_before_resolved_event_emission() {
         pack_id: "corp-detection".into(),
         sigma_id: Some("sigma-metadata".into()),
         title: "Metadata service access".into(),
-        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        condition: "http.request.host == 'metadata.google.internal'".into(),
         severity: Severity::High,
         confidence: Confidence::High,
         tags: vec!["network".into(), "metadata".into()],
@@ -865,6 +909,24 @@ fn real_cel_detection_emits_findings_before_resolved_event_emission() {
 }
 
 #[test]
+fn real_cel_detection_rejects_internal_event_root() {
+    let err = CelDetectionEvaluator::compile(vec![CelDetectionRule {
+        id: "bad-detection-event-root".into(),
+        pack_id: "corp-detection".into(),
+        sigma_id: None,
+        title: "Bad detection".into(),
+        condition: "event.subject.host == 'metadata.google.internal'".into(),
+        severity: Severity::Medium,
+        confidence: Confidence::Medium,
+        tags: Vec::new(),
+    }])
+    .unwrap_err();
+
+    assert!(err.to_string().contains("bad-detection-event-root"));
+    assert!(err.to_string().contains("event.*"));
+}
+
+#[test]
 fn real_cel_detection_compile_errors_fail_closed_before_install() {
     let err = CelDetectionEvaluator::compile(vec![CelDetectionRule {
         id: "bad-detection-cel".into(),
@@ -891,7 +953,7 @@ fn security_engine_records_enforcement_and_detection_match_stats() {
             .add_or_update(
                 RuntimeRuleRecord {
                     metadata: rule_metadata("block-metadata"),
-                    source: "event.subject.host == 'metadata.google.internal'".into(),
+                    source: "http.request.host == 'metadata.google.internal'".into(),
                     enabled: true,
                 },
                 compile_rule_source,
@@ -901,7 +963,7 @@ fn security_engine_records_enforcement_and_detection_match_stats() {
             .add_or_update(
                 RuntimeRuleRecord {
                     metadata: rule_metadata("detect-metadata"),
-                    source: "event.subject.host == 'metadata.google.internal'".into(),
+                    source: "http.request.host == 'metadata.google.internal'".into(),
                     enabled: true,
                 },
                 compile_rule_source,
@@ -915,7 +977,7 @@ fn security_engine_records_enforcement_and_detection_match_stats() {
         CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
             id: "block-metadata".into(),
             pack_id: Some("pack-1".into()),
-            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            condition: "http.request.host == 'metadata.google.internal'".into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("metadata access".into()),
         }])
@@ -927,7 +989,7 @@ fn security_engine_records_enforcement_and_detection_match_stats() {
             pack_id: "pack-1".into(),
             sigma_id: None,
             title: "Metadata access".into(),
-            condition: "event.subject.host == 'metadata.google.internal'".into(),
+            condition: "http.request.host == 'metadata.google.internal'".into(),
             severity: Severity::High,
             confidence: Confidence::High,
             tags: Vec::new(),

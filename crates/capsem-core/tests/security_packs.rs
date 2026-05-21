@@ -149,10 +149,10 @@ fn detection_ir_lowers_to_real_cel_detection_rules() {
     );
     assert!(rules[0]
         .condition
-        .contains("event.subject.family == \"http\""));
+        .contains("common.event_type.startsWith(\"http.\")"));
     assert!(rules[0]
         .condition
-        .contains("event.subject.host == \"169.254.169.254\""));
+        .contains("http.request.host == \"169.254.169.254\""));
 
     let event = SecurityEvent::http(
         SecurityEventCommon {

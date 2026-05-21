@@ -1,5 +1,16 @@
+use capsem_proto::{
+    BodyPolicyContext, CommonPolicyContext, DnsPolicyContext, DnsRequestPolicyContext,
+    FileActivityPolicyContext, FilePolicyContext, HttpPolicyContext, HttpRequestPolicyContext,
+    HttpResponsePolicyContext, McpPolicyContext, McpRequestPolicyContext, ModelPolicyContext,
+    ModelRequestPolicyContext, PolicyContext, ProcessActivityPolicyContext,
+    ProcessIdentityPolicyContext, ProcessPolicyContext, ProfileActivityPolicyContext,
+    ProfilePolicyContext,
+};
+use cel::extractors::This;
+use cel::objects::OptionalValue;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 use thiserror::Error;
 
 pub const SECURITY_EVENT_SCHEMA_VERSION: u32 = 1;
@@ -1472,12 +1483,7 @@ impl CelEnforcementEvaluator {
     pub fn compile(rules: Vec<CelEnforcementRule>) -> Result<Self, SecurityEngineError> {
         let mut compiled_rules = Vec::with_capacity(rules.len());
         for rule in rules {
-            let program = cel::Program::compile(&rule.condition).map_err(|error| {
-                SecurityEngineError::CelCompileFailed {
-                    rule_id: rule.id.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+            let program = compile_policy_cel(&rule.id, &rule.condition)?;
             compiled_rules.push(CompiledCelEnforcementRule { rule, program });
         }
         Ok(Self {
@@ -1542,12 +1548,7 @@ impl CelDetectionEvaluator {
     pub fn compile(rules: Vec<CelDetectionRule>) -> Result<Self, SecurityEngineError> {
         let mut compiled_rules = Vec::with_capacity(rules.len());
         for rule in rules {
-            let program = cel::Program::compile(&rule.condition).map_err(|error| {
-                SecurityEngineError::CelCompileFailed {
-                    rule_id: rule.id.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+            let program = compile_policy_cel(&rule.id, &rule.condition)?;
             compiled_rules.push(CompiledCelDetectionRule { rule, program });
         }
         Ok(Self {
@@ -1586,18 +1587,18 @@ fn evaluate_cel_bool(
     program: &cel::Program,
     event: &SecurityEvent,
 ) -> Result<bool, SecurityEngineError> {
+    evaluate_policy_cel_bool(rule_id, program, &policy_context_from_event(event))
+}
+
+fn evaluate_policy_cel_bool(
+    rule_id: &str,
+    program: &cel::Program,
+    policy_context: &PolicyContext,
+) -> Result<bool, SecurityEngineError> {
     let mut context = cel::Context::default();
-    let event_value =
-        cel::to_value(event).map_err(|error| SecurityEngineError::CelEvaluationFailed {
-            rule_id: rule_id.to_owned(),
-            message: error.to_string(),
-        })?;
-    context
-        .add_variable("event", event_value)
-        .map_err(|error| SecurityEngineError::CelEvaluationFailed {
-            rule_id: rule_id.to_owned(),
-            message: error.to_string(),
-        })?;
+    add_policy_context_roots(&mut context, rule_id, policy_context)?;
+    context.add_function("header", policy_header);
+    context.add_function("exists", policy_exists);
 
     match program
         .execute(&context)
@@ -1611,6 +1612,313 @@ fn evaluate_cel_bool(
             actual: format!("{value:?}"),
         }),
     }
+}
+
+fn compile_policy_cel(rule_id: &str, condition: &str) -> Result<cel::Program, SecurityEngineError> {
+    let program = cel::Program::compile(condition).map_err(|error| {
+        SecurityEngineError::CelCompileFailed {
+            rule_id: rule_id.to_owned(),
+            message: error.to_string(),
+        }
+    })?;
+    validate_policy_cel_references(rule_id, &program)?;
+    Ok(program)
+}
+
+fn validate_policy_cel_references(
+    rule_id: &str,
+    program: &cel::Program,
+) -> Result<(), SecurityEngineError> {
+    let allowed_roots = [
+        "common", "http", "dns", "mcp", "model", "file", "process", "profile",
+    ];
+    let references = program.references();
+    for variable in references.variables() {
+        if variable == "event" {
+            return Err(SecurityEngineError::CelCompileFailed {
+                rule_id: rule_id.to_owned(),
+                message: "internal event.* paths are not part of the policy CEL ABI".into(),
+            });
+        }
+        if !allowed_roots.contains(&variable) {
+            return Err(SecurityEngineError::CelCompileFailed {
+                rule_id: rule_id.to_owned(),
+                message: format!("unknown policy CEL root {variable:?}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn add_policy_context_roots(
+    context: &mut cel::Context,
+    rule_id: &str,
+    policy_context: &PolicyContext,
+) -> Result<(), SecurityEngineError> {
+    add_policy_context_root(context, rule_id, "common", &policy_context.common)?;
+    add_policy_context_root(context, rule_id, "http", &policy_context.http)?;
+    add_policy_context_root(context, rule_id, "dns", &policy_context.dns)?;
+    add_policy_context_root(context, rule_id, "mcp", &policy_context.mcp)?;
+    add_policy_context_root(context, rule_id, "model", &policy_context.model)?;
+    add_policy_context_root(context, rule_id, "file", &policy_context.file)?;
+    add_policy_context_root(context, rule_id, "process", &policy_context.process)?;
+    add_policy_context_root(context, rule_id, "profile", &policy_context.profile)?;
+    Ok(())
+}
+
+fn add_policy_context_root<T>(
+    context: &mut cel::Context,
+    rule_id: &str,
+    name: &str,
+    value: &T,
+) -> Result<(), SecurityEngineError>
+where
+    T: Serialize,
+{
+    let value = cel::to_value(value).map_err(|error| SecurityEngineError::CelEvaluationFailed {
+        rule_id: rule_id.to_owned(),
+        message: error.to_string(),
+    })?;
+    context
+        .add_variable(name, value)
+        .map_err(|error| SecurityEngineError::CelEvaluationFailed {
+            rule_id: rule_id.to_owned(),
+            message: error.to_string(),
+        })
+}
+
+fn policy_header(
+    ftx: &cel::FunctionContext,
+    This(this): This<cel::Value>,
+    name: Arc<String>,
+) -> Result<cel::Value, cel::ExecutionError> {
+    let Some(headers) = policy_map_field(&this, "headers") else {
+        return Ok(optional_none());
+    };
+    let Some(value) = headers.map.iter().find_map(|(key, value)| match key {
+        cel::objects::Key::String(header_name) if header_name.eq_ignore_ascii_case(&name) => {
+            Some(value)
+        }
+        _ => None,
+    }) else {
+        return Ok(optional_none());
+    };
+
+    let first = match value {
+        cel::Value::List(values) => values.first().cloned(),
+        cel::Value::String(_) => Some(value.clone()),
+        other => return Err(ftx.error(format!("unsupported header value shape: {other:?}"))),
+    };
+
+    Ok(first.map(optional_of).unwrap_or_else(optional_none))
+}
+
+fn policy_exists(This(this): This<cel::Value>) -> Result<bool, cel::ExecutionError> {
+    Ok(<&OptionalValue>::try_from(&this)?.value().is_some())
+}
+
+fn policy_map_field<'a>(value: &'a cel::Value, field: &str) -> Option<&'a cel::objects::Map> {
+    let cel::Value::Map(map) = value else {
+        return None;
+    };
+    match map.get(&cel::objects::KeyRef::String(field)) {
+        Some(cel::Value::Map(map)) => Some(map),
+        _ => None,
+    }
+}
+
+fn optional_of(value: cel::Value) -> cel::Value {
+    cel::Value::Opaque(Arc::new(OptionalValue::of(value)))
+}
+
+fn optional_none() -> cel::Value {
+    cel::Value::Opaque(Arc::new(OptionalValue::none()))
+}
+
+fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
+    let mut context = PolicyContext::new();
+    context.common =
+        CommonPolicyContext {
+            session_id: event.common.session_id.clone(),
+            vm_id: event.common.vm_id.clone(),
+            profile_id: event.common.profile_id.clone(),
+            profile_revision: event.common.profile_revision.clone(),
+            user_id: event.common.user_id.clone(),
+            event_type: Some(event.common.event_type.clone()),
+            enforceability: Some(
+                match event.common.enforceability {
+                    Enforceability::InlineBlockable => "inline_blockable",
+                    Enforceability::ObserveOnly => "observe_only",
+                    Enforceability::RemediationOnly => "remediation_only",
+                }
+                .into(),
+            ),
+            actor: event.common.accounting_owner.clone(),
+            process: event.common.process_id.as_ref().map(|process_id| {
+                ProcessIdentityPolicyContext {
+                    pid: process_id.parse::<u32>().ok(),
+                    ppid: event
+                        .common
+                        .parent_process_id
+                        .as_deref()
+                        .and_then(|pid| pid.parse::<u32>().ok()),
+                    executable: None,
+                    command: None,
+                    cwd: None,
+                }
+            }),
+            labels: event
+                .labels
+                .iter()
+                .map(|label| (label.clone(), "true".to_owned()))
+                .collect(),
+        };
+
+    match &event.subject {
+        SecurityEventSubject::Dns(subject) => {
+            context.dns = DnsPolicyContext {
+                request: Some(DnsRequestPolicyContext {
+                    qname: Some(subject.qname.clone()),
+                    qtype: None,
+                    domain_class: Some(subject.domain_class.clone()),
+                    transport: None,
+                }),
+            };
+        }
+        SecurityEventSubject::Http(subject) => {
+            context.http = HttpPolicyContext {
+                request: Some(HttpRequestPolicyContext {
+                    method: Some(subject.method.clone()),
+                    scheme: None,
+                    host: Some(subject.host.clone()),
+                    port: None,
+                    path: None,
+                    query: None,
+                    url: None,
+                    path_class: Some(subject.path_class.clone()),
+                    bytes: Some(subject.request_bytes),
+                    headers: BTreeMap::new(),
+                    body: BodyPolicyContext::missing(),
+                }),
+                response: subject
+                    .response_bytes
+                    .map(|bytes| HttpResponsePolicyContext {
+                        status: None,
+                        bytes: Some(bytes),
+                        headers: BTreeMap::new(),
+                        body: BodyPolicyContext::missing(),
+                    }),
+            };
+        }
+        SecurityEventSubject::Mcp(subject) => {
+            context.mcp = McpPolicyContext {
+                request: Some(McpRequestPolicyContext {
+                    method: None,
+                    server_id: Some(subject.server_id.clone()),
+                    tool_name: Some(subject.tool_name.clone()),
+                    server_name: None,
+                    arguments_status: subject.evidence.as_deref().map(|evidence| {
+                        if evidence.request_arguments_json.is_some() {
+                            "valid_json".to_owned()
+                        } else if evidence.request_arguments_raw.is_some() {
+                            "not_json".to_owned()
+                        } else {
+                            "absent".to_owned()
+                        }
+                    }),
+                }),
+                response: subject.evidence.as_deref().map(|evidence| {
+                    capsem_proto::McpResponsePolicyContext {
+                        method: None,
+                        server_id: Some(evidence.server_id.clone()),
+                        tool_name: Some(evidence.tool_name.clone()),
+                        is_error: Some(evidence.is_error),
+                        result_status: Some(if evidence.is_error { "error" } else { "ok" }.into()),
+                    }
+                }),
+            };
+        }
+        SecurityEventSubject::Model(subject) => {
+            context.model = ModelPolicyContext {
+                request: Some(ModelRequestPolicyContext {
+                    provider: Some(subject.provider.clone()),
+                    api_family: subject
+                        .evidence
+                        .as_deref()
+                        .and_then(|evidence| serialized_enum_string(evidence.api_family)),
+                    model: Some(subject.model.clone()),
+                    stream: subject
+                        .evidence
+                        .as_deref()
+                        .map(|evidence| evidence.request.stream),
+                    operation: None,
+                    estimated_input_tokens: subject.estimated_input_tokens,
+                    estimated_output_tokens: subject.estimated_output_tokens,
+                    estimated_cost_micros: subject.estimated_cost_micros,
+                    body: BodyPolicyContext::missing(),
+                }),
+                response: Some(capsem_proto::ModelResponsePolicyContext {
+                    provider: Some(subject.provider.clone()),
+                    api_family: subject
+                        .evidence
+                        .as_deref()
+                        .and_then(|evidence| serialized_enum_string(evidence.api_family)),
+                    model: Some(subject.model.clone()),
+                    status: None,
+                    stop_reason: subject
+                        .evidence
+                        .as_deref()
+                        .and_then(|evidence| evidence.response.as_ref())
+                        .and_then(|response| response.stop_reason.clone()),
+                    estimated_output_tokens: subject.estimated_output_tokens,
+                    body: BodyPolicyContext::missing(),
+                }),
+            };
+        }
+        SecurityEventSubject::File(subject) => {
+            context.file = FilePolicyContext {
+                activity: Some(FileActivityPolicyContext {
+                    operation: Some(subject.operation.clone()),
+                    path: None,
+                    path_class: Some(subject.path_class.clone()),
+                    byte_count: subject.byte_count,
+                }),
+            };
+        }
+        SecurityEventSubject::Process(subject) => {
+            context.process = ProcessPolicyContext {
+                activity: Some(ProcessActivityPolicyContext {
+                    operation: Some(subject.operation.clone()),
+                    executable: None,
+                    command: None,
+                    command_class: subject.command_class.clone(),
+                    argv: Vec::new(),
+                    cwd: None,
+                }),
+            };
+        }
+        SecurityEventSubject::Profile(subject) => {
+            context.profile = ProfilePolicyContext {
+                activity: Some(ProfileActivityPolicyContext {
+                    operation: Some(subject.operation.clone()),
+                    profile_id: Some(subject.profile_id.clone()),
+                    profile_revision: Some(subject.profile_revision.clone()),
+                    profile_name: None,
+                }),
+            };
+        }
+        SecurityEventSubject::Credential(_)
+        | SecurityEventSubject::VmLifecycle(_)
+        | SecurityEventSubject::Conversation(_)
+        | SecurityEventSubject::Snapshot(_) => {}
+    }
+    context
+}
+
+fn serialized_enum_string<T: Serialize>(value: T) -> Option<String> {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
 }
 
 #[derive(Default)]

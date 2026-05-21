@@ -865,9 +865,19 @@ a valid claim -- mark it `[ ]` instead.
     common/HTTP/DNS/MCP/model/file/process/profile roots, deterministic header
     maps, explicit body states, and schema tests. Verification:
     `cargo test -p capsem-proto policy_context` passed and
-    `cargo test -p capsem-proto` passed. Still missing: CEL context injection,
-    `event.*` rejection in runtime/admin validation, Detection IR lowering onto
-    canonical roots, and service backtest/hunt tests using the public rule ABI.
+    `cargo test -p capsem-proto` passed. Twenty-eighth S08b.2 implementation
+    slice wired `capsem-security-engine` CEL evaluation to canonical policy
+    roots, added `http.request.header(name).exists()`, rejected `event.*` in
+    enforcement/detection compile paths, moved Detection IR lowering to
+    canonical roots, and updated service backtest/hunt/runtime-route tests to
+    use the public ABI. Verification: `cargo test -p capsem-security-engine`
+    passed; `cargo test -p capsem-core --test security_packs` passed; focused
+    service route/backtest/hunt tests passed; full serialized
+    `cargo test -p capsem-service -- --test-threads=1` passed with localhost
+    test permissions for the asset-supervisor loopback fixtures. Still missing:
+    historical/session-journal hunt, gateway/CLI/UI route exposure,
+    persistence/profile-pack seeding, deeper HTTP header/body projection from
+    Network Engine, and VM/runtime integration.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
