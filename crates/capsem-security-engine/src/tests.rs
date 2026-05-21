@@ -371,6 +371,88 @@ fn backtest_rows_keep_mismatches_and_full_event_refs() {
     ));
 }
 
+#[test]
+fn runtime_rule_registry_keeps_previous_plan_when_update_fails() {
+    let mut registry = RuntimeRuleRegistry::default();
+    registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: rule_metadata("deny-metadata"),
+                source: "host == '169.254.169.254'".into(),
+                enabled: true,
+            },
+            compile_rule_source,
+        )
+        .unwrap();
+
+    let err = registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: rule_metadata("deny-metadata"),
+                source: "invalid cel".into(),
+                enabled: true,
+            },
+            compile_rule_source,
+        )
+        .unwrap_err();
+
+    assert!(err.to_string().contains("invalid"));
+    let listed = registry.list();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].metadata.id, "deny-metadata");
+    assert_eq!(listed[0].source, "host == '169.254.169.254'");
+    assert!(matches!(listed[0].compile_status, CompileStatus::Compiled));
+    assert_eq!(listed[0].generation, 1);
+}
+
+#[test]
+fn runtime_rule_registry_tracks_match_stats_and_delete() {
+    let mut registry = RuntimeRuleRegistry::default();
+    registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: rule_metadata("detect-metadata"),
+                source: "host == '169.254.169.254'".into(),
+                enabled: true,
+            },
+            compile_rule_source,
+        )
+        .unwrap();
+
+    registry
+        .record_match("detect-metadata", "evt-1", 1_789)
+        .unwrap();
+    registry
+        .record_match("detect-metadata", "evt-2", 1_790)
+        .unwrap();
+
+    let stats = registry.stats("detect-metadata").unwrap();
+    assert_eq!(stats.match_count, 2);
+    assert_eq!(stats.last_matched_event.as_deref(), Some("evt-2"));
+    assert_eq!(stats.last_matched_unix_ms, Some(1_790));
+
+    let removed = registry.delete("detect-metadata").unwrap();
+    assert_eq!(removed.metadata.id, "detect-metadata");
+    assert!(registry.list().is_empty());
+}
+
+fn rule_metadata(id: &str) -> RuntimeRuleMetadata {
+    RuntimeRuleMetadata {
+        id: id.into(),
+        pack_id: Some("pack-1".into()),
+        scope: RuleScope::Runtime,
+        origin: RuleOrigin::Runtime,
+    }
+}
+
+fn compile_rule_source(source: &str) -> Result<String, RuleRegistryError> {
+    if source.contains("invalid") {
+        Err(RuleRegistryError::CompileFailed("invalid rule".into()))
+    } else {
+        Ok(format!("compiled:{source}"))
+    }
+}
+
 fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecurityEvent {
     let event = SecurityEvent::http(
         SecurityEventCommon {

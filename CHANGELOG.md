@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests.
 - Added S08b backtest result shaping with full event refs, mismatch outcomes,
   default 100-row match limits, and evidence-signature deduplication.
+- Added the first S08b runtime rule registry contract with compile-first
+  add/update, previous-plan preservation on compile failure, delete, and live
+  match stats.
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.

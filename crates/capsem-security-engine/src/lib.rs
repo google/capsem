@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use thiserror::Error;
 
 pub const SECURITY_EVENT_SCHEMA_VERSION: u32 = 1;
@@ -837,6 +837,151 @@ pub fn dedupe_backtest_matches(rows: Vec<BacktestMatchRow>, limit: usize) -> Bac
         unique_evidence_matches,
         truncated: unique_evidence_matches > deduped.len(),
         rows: deduped,
+    }
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RuleRegistryError {
+    #[error("rule compilation failed: {0}")]
+    CompileFailed(String),
+    #[error("runtime rule not found: {0}")]
+    NotFound(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleScope {
+    Profile,
+    User,
+    Corp,
+    Runtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleOrigin {
+    Profile,
+    User,
+    Corp,
+    Runtime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRuleMetadata {
+    pub id: String,
+    #[serde(default)]
+    pub pack_id: Option<String>,
+    pub scope: RuleScope,
+    pub origin: RuleOrigin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRuleRecord {
+    pub metadata: RuntimeRuleMetadata,
+    pub source: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CompileStatus {
+    Compiled,
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRuleStats {
+    pub match_count: u64,
+    #[serde(default)]
+    pub last_matched_event: Option<String>,
+    #[serde(default)]
+    pub last_matched_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeRuleEntry {
+    pub metadata: RuntimeRuleMetadata,
+    pub source: String,
+    pub enabled: bool,
+    pub compile_status: CompileStatus,
+    pub generation: u64,
+    pub stats: RuntimeRuleStats,
+    pub compiled_plan: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeRuleRegistry {
+    rules: BTreeMap<String, RuntimeRuleEntry>,
+}
+
+impl RuntimeRuleRegistry {
+    pub fn add_or_update<F>(
+        &mut self,
+        record: RuntimeRuleRecord,
+        compile: F,
+    ) -> Result<(), RuleRegistryError>
+    where
+        F: FnOnce(&str) -> Result<String, RuleRegistryError>,
+    {
+        let compiled_plan = compile(&record.source)?;
+        let generation = self
+            .rules
+            .get(&record.metadata.id)
+            .map_or(1, |entry| entry.generation + 1);
+        let stats = self
+            .rules
+            .get(&record.metadata.id)
+            .map_or_else(RuntimeRuleStats::default, |entry| entry.stats.clone());
+        self.rules.insert(
+            record.metadata.id.clone(),
+            RuntimeRuleEntry {
+                metadata: record.metadata,
+                source: record.source,
+                enabled: record.enabled,
+                compile_status: CompileStatus::Compiled,
+                generation,
+                stats,
+                compiled_plan,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn delete(&mut self, rule_id: &str) -> Result<RuntimeRuleEntry, RuleRegistryError> {
+        self.rules
+            .remove(rule_id)
+            .ok_or_else(|| RuleRegistryError::NotFound(rule_id.to_owned()))
+    }
+
+    pub fn list(&self) -> Vec<&RuntimeRuleEntry> {
+        self.rules.values().collect()
+    }
+
+    pub fn stats(&self, rule_id: &str) -> Result<&RuntimeRuleStats, RuleRegistryError> {
+        self.rules
+            .get(rule_id)
+            .map(|entry| &entry.stats)
+            .ok_or_else(|| RuleRegistryError::NotFound(rule_id.to_owned()))
+    }
+
+    pub fn record_match(
+        &mut self,
+        rule_id: &str,
+        event_id: &str,
+        timestamp_unix_ms: u64,
+    ) -> Result<(), RuleRegistryError> {
+        let entry = self
+            .rules
+            .get_mut(rule_id)
+            .ok_or_else(|| RuleRegistryError::NotFound(rule_id.to_owned()))?;
+        entry.stats.match_count += 1;
+        entry.stats.last_matched_event = Some(event_id.to_owned());
+        entry.stats.last_matched_unix_ms = Some(timestamp_unix_ms);
+        Ok(())
     }
 }
 
