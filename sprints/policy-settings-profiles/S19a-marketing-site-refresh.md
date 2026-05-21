@@ -42,6 +42,8 @@ The landing page should be organized around four product pillars:
    - paginated timeline/workbench for reviewing AI work.
 2. **Ship Safely**
    - VM isolation;
+   - release SBOMs, SLSA provenance, signed manifests, and package
+     attestations as supply-chain security proof points;
    - profile-owned policy packs;
    - real CEL enforcement after S08a;
    - Security Engine pipeline: preprocessors, policy, ask/confirm, detection,
@@ -75,6 +77,10 @@ The landing page should be organized around four product pillars:
 - Add feature claims for profile-backed VM creation, signed profile catalogs,
   profile-owned packages/assets, standard `mcpServers`, skills, rules, and
   timeline/workbench review.
+- Add SBOM and release-attestation proof points under the security story. Keep
+  the wording aligned with S07b: host Rust workspace SBOM is shipped/attested;
+  profile-derived guest package/tool SBOM remains image-verification work until
+  that sprint lands it.
 - Distinguish shipped/near-term capabilities from roadmap items without making
   the page timid. The page can say where Capsem is going, but release claims
   must match the sprint tracker.
