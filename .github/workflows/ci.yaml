@@ -328,7 +328,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends b3sum minisign
 
       - name: Build install VM assets
-        run: bash scripts/build-assets.sh --assets-dir assets --arch arm64
+        run: bash scripts/build-assets.sh --profile config/profiles/base/coding.profile.toml --assets-dir assets --arch arm64
 
       - name: Build host builder Docker image
         run: just build-host-image

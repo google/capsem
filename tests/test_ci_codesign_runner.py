@@ -48,12 +48,16 @@ def test_pr_install_e2e_sets_up_asset_build_prerequisites():
     assert "dtolnay/rust-toolchain@stable" in install_job
     assert "Normalize cargo proxy" in install_job
     assert "Normalize cargo proxy after Python setup" in workflow
-    assert "bash scripts/build-assets.sh --assets-dir assets --arch arm64" in install_job
+    asset_build = (
+        "bash scripts/build-assets.sh --profile "
+        "config/profiles/base/coding.profile.toml --assets-dir assets --arch arm64"
+    )
+    assert asset_build in install_job
     assert install_job.index("pnpm/action-setup@v5") < install_job.index("just test-install")
     assert install_job.index("actions/setup-node@v5") < install_job.index("just test-install")
     assert install_job.index("uv sync") < install_job.index("just test-install")
     assert install_job.index("b3sum minisign") < install_job.index("just test-install")
-    assert install_job.index("bash scripts/build-assets.sh --assets-dir assets --arch arm64") < install_job.index("just test-install")
+    assert install_job.index(asset_build) < install_job.index("just test-install")
 
 
 def test_ci_rust_coverage_floor_matches_just_test_gate():

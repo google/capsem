@@ -9,10 +9,12 @@ The asset pipeline moves kernel, initrd, and rootfs images from build through to
 
 ## Build
 
-Guest image configuration lives in `guest/config/` as TOML files. The `capsem-builder` CLI loads them, renders Jinja2 Dockerfile templates, and produces per-architecture assets:
+Profile V2 payloads are the build authority for release assets. The
+`capsem-admin` CLI derives a temporary build workspace, renders the existing
+Jinja2 Dockerfile templates, and produces per-architecture assets:
 
 ```
-guest/config/*.toml -> load_guest_config() -> capsem-builder build -> assets/{arch}/
+capsem.profile.v2 -> capsem-admin image build -> generated workspace -> assets/{arch}/
 ```
 
 Two build templates exist:
@@ -51,9 +53,9 @@ assets/
 
 | Command | What it does |
 |---------|-------------|
-| `just build-assets` | Full build: kernel + rootfs + checksums |
+| `just build-assets` | Full build using `config/profiles/base/coding.profile.toml`: kernel + rootfs + checksums |
 | `just run` | Repack initrd with latest guest binaries, rebuild app, sign, boot |
-| `capsem-builder build guest/ --arch arm64 --template rootfs` | Build one template for one arch |
+| `capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64 --template rootfs` | Build one template for one arch |
 
 ## Manifest Format
 

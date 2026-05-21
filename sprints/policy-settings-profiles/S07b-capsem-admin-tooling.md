@@ -562,13 +562,12 @@ The checker must fail closed for:
       detection format.
 - [x] Add `capsem-admin` package/distribution entry point and bootstrap install
       wiring.
-- [~] Update Justfile recipes and shell scripts to use `capsem-admin`, with
+- [x] Update Justfile recipes and shell scripts to use `capsem-admin`, with
       `--arch all` as the default and single-arch overrides for CI shards.
-      Public `capsem-admin image build` exists; Justfile and
-      `scripts/build-assets.sh` now accept profile inputs and route those builds
-      through `capsem-admin image build`. Remaining cutover is making release
-      builds require a generated release profile instead of the existing
-      unprofiled guest-config fallback.
+      Public `capsem-admin image build` exists; Justfile,
+      `scripts/build-assets.sh`, and PR install CI now require/generated-pass a
+      Profile V2 payload and route kernel/rootfs builds through
+      `capsem-admin image build`.
 - [ ] Replace builder doctor with admin doctor checks and remove guest config as
       input authority.
 - [~] Refactor manifest generation/check/sign scripts into importable Python
@@ -581,12 +580,12 @@ The checker must fail closed for:
 - [ ] Replace raw dict/list plumbing in admin workflows with Pydantic model
       parsing, validation, normalized accessors, `model_validate_json()` /
       `TypeAdapter.validate_json()` input, and `model_dump_json()` output.
-- [~] Remove hand-edited image settings as release-build authority. Profile-
+- [x] Remove hand-edited image settings as release-build authority. Profile-
       derived build workspace materialization, public `image build` routing,
       guest-config-derived built-in `everyday-work`/`coding` profile
-      generation, and profile-aware local asset build recipes have landed;
-      release builds still need to require generated release profiles before
-      this closes.
+      generation, and profile-required local/release asset build recipes have
+      landed. The remaining `guest/config` reader is now transitional profile
+      generation input, not a release build lane.
 - [x] Implement fast manifest checks using HTTP `HEAD`/metadata and local path
       checks.
 - [x] Implement full manifest download/verify checks. Full byte download,
@@ -621,8 +620,9 @@ The checker must fail closed for:
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
   generate`; `manifest check --fast`; `manifest check --download`;
-  profile-aware `scripts/build-assets.sh --profile`; bootstrap-installed CLI
-  smoke.
+  profile-required `scripts/build-assets.sh --profile`; Justfile
+  `build-assets`/`build-kernel`/`build-rootfs` routing through
+  `capsem-admin image build`; bootstrap-installed CLI smoke.
 - Adversarial: malformed profile, missing package version, unsupported package
   manager, unknown profile field/table, wrong schema id/version,
   manifest/payload id or revision mismatch, missing per-arch asset table, URL
@@ -640,7 +640,5 @@ The checker must fail closed for:
   and failure category.
 - Performance: fast manifest check uses bounded concurrency and never downloads
   full assets; full download check streams to disk and verifies incrementally.
-- Missing/deferred: release recipe cutover still needs to require the generated
-  profile path and remove the unprofiled guest-config fallback from release
-  lanes. Full Docker image build may stay in release gates if too expensive for
-  every PR; keep a lightweight fixture-build test in PR gates.
+- Missing/deferred: full Docker image build may stay in release gates if too
+  expensive for every PR; keep a lightweight fixture-build test in PR gates.

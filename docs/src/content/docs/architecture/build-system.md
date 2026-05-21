@@ -343,13 +343,13 @@ Usage:
 uv run capsem-builder validate guest
 
 # Dry-run: render Dockerfiles without building
-uv run capsem-builder build --dry-run --json
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
 
 # Build rootfs for arm64 only
-uv run capsem-builder build --arch arm64
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64
 
 # Build kernel for all architectures
-uv run capsem-builder build --template kernel
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --template kernel
 
 # Scaffold a new image config
 uv run capsem-builder new my-image --from guest

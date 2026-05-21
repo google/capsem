@@ -394,6 +394,18 @@ a valid claim -- mark it `[ ]` instead.
     `cargo fmt --check`, `uv run python -m compileall src/capsem`,
     profile validation for both generated base profiles, and a coding profile
     `capsem-admin image build --dry-run --json` smoke passed.
+    Seventeenth slice removed the unprofiled VM asset build fallback from live
+    build lanes. `scripts/build-assets.sh` now requires `--profile`, Justfile
+    `build-assets`/`build-kernel`/`build-rootfs` default to
+    `config/profiles/base/coding.profile.toml`, and PR install CI passes that
+    profile explicitly before `just test-install`. Verification: `uv run
+    python -m pytest tests/test_build_assets_script.py
+    tests/test_ci_codesign_runner.py tests/test_release_workflow_policy.py -q`
+    passed with 42 tests; the expanded focused gate with admin/image workspace
+    tests passed with 75 tests; `just --dry-run build-assets arm64` showed the
+    default generated profile path; docs build passed with `pnpm --dir docs run
+    build`; and a static `rg` check found no remaining `capsem-builder build
+    guest/` live caller in Justfile/scripts/CI/tests.
 19. [~] [S08 - HTTP gateway API](S08-http-gateway-api.md)
     -- started by explicit user direction after S07 closeout. First gateway
     contract slice landed for Profile V2 catalog/revision routes, profile

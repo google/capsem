@@ -55,6 +55,7 @@ mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
 host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray"
 assets_dir := "assets"
+default_asset_profile := "config/profiles/base/coding.profile.toml"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray"
 
@@ -301,39 +302,30 @@ exec +CMD: run-service
     {{cli_binary}} run "{{CMD}}"
 
 
-# Build kernel only for one arch (CI-facing primitive). Pass profile for Profile V2-derived builds.
-build-kernel arch profile="": _install-tools
+# Build kernel only for one arch (CI-facing primitive).
+build-kernel arch profile=default_asset_profile: _install-tools
     #!/bin/bash
     set -euo pipefail
-    if [[ -n "{{profile}}" ]]; then
-        uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template kernel --out {{assets_dir}}/ --json
-    else
-        uv run capsem-builder build guest/ --arch {{arch}} --template kernel --output {{assets_dir}}/
-    fi
+    test -f "{{profile}}" || { echo "ERROR: profile not found: {{profile}}" >&2; exit 1; }
+    uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template kernel --out {{assets_dir}}/ --json
 
-# Build rootfs only for one arch (CI-facing primitive). Pass profile for Profile V2-derived builds.
-build-rootfs arch profile="": _install-tools
+# Build rootfs only for one arch (CI-facing primitive).
+build-rootfs arch profile=default_asset_profile: _install-tools
     #!/bin/bash
     set -euo pipefail
-    if [[ -n "{{profile}}" ]]; then
-        uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template rootfs --out {{assets_dir}}/ --json
-    else
-        uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
-    fi
+    test -f "{{profile}}" || { echo "ERROR: profile not found: {{profile}}" >&2; exit 1; }
+    uv run capsem-admin image build "{{profile}}" --arch {{arch}} --template rootfs --out {{assets_dir}}/ --json
 
 # VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch and profile to build one.
-build-assets arch="" profile="": _install-tools _clean-stale
+build-assets arch="" profile=default_asset_profile: _install-tools _clean-stale
     #!/bin/bash
     set -euo pipefail
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
-    profile_args=()
-    if [[ -n "{{profile}}" ]]; then
-        profile_args=(--profile "{{profile}}")
-    fi
+    test -f "{{profile}}" || { echo "ERROR: profile not found: {{profile}}" >&2; exit 1; }
     if [[ -n "{{arch}}" ]]; then
-        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}" --arch "{{arch}}" "${profile_args[@]}"
+        bash scripts/build-assets.sh --profile "{{profile}}" --assets-dir "{{assets_dir}}" --arch "{{arch}}"
     else
-        bash scripts/build-assets.sh --assets-dir "{{assets_dir}}" "${profile_args[@]}"
+        bash scripts/build-assets.sh --profile "{{profile}}" --assets-dir "{{assets_dir}}"
     fi
     just _docker-gc
 

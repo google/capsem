@@ -165,6 +165,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added profile-aware `scripts/build-assets.sh --profile` and Justfile
   `build-assets` / `build-kernel` / `build-rootfs` profile arguments so local
   asset builds can route through `capsem-admin image build`.
+- Changed VM asset build recipes and PR install CI to require a Profile V2
+  payload, using `config/profiles/base/coding.profile.toml` by default and
+  removing the unprofiled `capsem-builder build guest/` fallback from live
+  build lanes.
 - Fixed release SBOM attestation to cover Linux `.deb` packages as well as the
   macOS `.pkg`, and documented that the current `cargo-sbom` artifact is the
   Rust host SBOM while profile-derived guest package/tool SBOMs remain S07b

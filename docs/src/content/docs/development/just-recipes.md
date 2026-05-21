@@ -86,7 +86,7 @@ LIMIT 20;"
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker) | ~10 min |
+| `just build-assets` | Full rebuild: kernel + rootfs via Profile V2 (needs Docker) | ~10 min |
 | `just build-kernel <arch>` | Kernel only | ~5 min |
 | `just build-rootfs <arch>` | Rootfs only | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + `.deb` package | ~15 min |
@@ -150,7 +150,7 @@ ui               -> _ensure-setup + _pnpm-install + run-service
 build-ui         -> _pnpm-install + frontend build + cargo build -p capsem-app
 smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
-build-assets     -> _install-tools + _clean-stale + doctor + capsem-builder kernel/rootfs
+build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> _build-host
 cut-release      -> test + _stamp-version
 ```

@@ -75,11 +75,10 @@ def test_build_assets_script_routes_profile_builds_through_capsem_admin(
     assert (assets / "manifest.json").exists()
 
 
-def test_build_assets_script_keeps_lower_level_builder_for_unprofiled_builds(
+def test_build_assets_script_rejects_unprofiled_builds(
     tmp_path: Path,
 ) -> None:
     bin_dir, log = _fake_uv(tmp_path)
-    assets = tmp_path / "assets"
     env = os.environ | {
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "UV_LOG": str(log),
@@ -89,8 +88,6 @@ def test_build_assets_script_keeps_lower_level_builder_for_unprofiled_builds(
         [
             "bash",
             "scripts/build-assets.sh",
-            "--assets-dir",
-            str(assets),
             "--arch",
             "x86_64",
         ],
@@ -101,15 +98,9 @@ def test_build_assets_script_keeps_lower_level_builder_for_unprofiled_builds(
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr
-    commands = log.read_text(encoding="utf-8").splitlines()
-    assert len(commands) == 3
-    assert commands[0].startswith("run capsem-builder build guest/")
-    assert "--arch x86_64" in commands[0]
-    assert "--template kernel" in commands[0]
-    assert commands[1].startswith("run capsem-builder build guest/")
-    assert "--template rootfs" in commands[1]
-    assert "capsem-admin image build" not in "\n".join(commands)
+    assert result.returncode == 1
+    assert "--profile is required" in result.stderr
+    assert not log.exists()
 
 
 def test_build_assets_script_rejects_missing_profile(tmp_path: Path) -> None:
@@ -141,8 +132,10 @@ def test_build_assets_script_rejects_missing_profile(tmp_path: Path) -> None:
 def test_justfile_exposes_profile_aware_asset_recipes() -> None:
     justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
 
-    assert 'build-kernel arch profile=""' in justfile
-    assert 'build-rootfs arch profile=""' in justfile
-    assert 'build-assets arch="" profile=""' in justfile
+    assert 'default_asset_profile := "config/profiles/base/coding.profile.toml"' in justfile
+    assert "build-kernel arch profile=default_asset_profile" in justfile
+    assert "build-rootfs arch profile=default_asset_profile" in justfile
+    assert 'build-assets arch="" profile=default_asset_profile' in justfile
     assert 'uv run capsem-admin image build "{{profile}}"' in justfile
-    assert 'profile_args=(--profile "{{profile}}")' in justfile
+    assert 'bash scripts/build-assets.sh --profile "{{profile}}"' in justfile
+    assert "capsem-builder build guest/" not in justfile

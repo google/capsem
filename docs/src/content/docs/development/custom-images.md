@@ -135,8 +135,8 @@ After editing configs:
 # 1. Validate your changes (fast, catches typos)
 uv run capsem-builder validate guest/
 
-# 2. Preview the generated Dockerfile without building
-uv run capsem-builder build guest/ --dry-run
+# 2. Preview the profile-derived Dockerfile without building
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
 
 # 3. Rebuild the rootfs (kernel rebuild only needed if you changed defconfig)
 just build-rootfs
@@ -176,8 +176,8 @@ Settings-only changes (security, resources, environment) take effect on the next
 ```bash
 uv run capsem-builder validate guest/           # lint all configs
 uv run capsem-builder inspect guest/            # show resolved config summary
-uv run capsem-builder build guest/ --arch arm64 # build for arm64
-uv run capsem-builder build guest/ --dry-run    # preview Dockerfiles
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
 uv run capsem-builder doctor guest/             # check prerequisites
 ```
 

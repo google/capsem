@@ -161,12 +161,13 @@ Boot sequence: capsem-service spawns capsem-process, which loads the kernel + in
 
 ## VM image builds (`just build-assets`)
 
-The slow path (~10 min, first-time only). The [capsem-builder](/architecture/build-system/) Python CLI reads TOML configs from `guest/config/` and produces kernel + rootfs via Docker.
+The slow path (~10 min, first-time only). `capsem-admin image build` reads a
+Profile V2 payload, materializes a generated build workspace, and produces
+kernel + rootfs via Docker.
 
 ```bash
-uv run capsem-builder build guest/ --arch arm64    # build everything
-uv run capsem-builder validate guest/               # lint configs
-uv run capsem-builder doctor guest/                  # check prerequisites
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
 ```
 
 ### Container runtime

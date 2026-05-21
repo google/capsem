@@ -226,9 +226,9 @@ The `PATH` is set by the host at boot via the settings registry -- do not set PA
 
 | Command | What it does |
 |---------|-------------|
-| `capsem-builder build [DIR]` | Build all architectures |
-| `capsem-builder build --arch arm64` | Single architecture |
-| `capsem-builder build --dry-run` | Preview without building |
+| `capsem-admin image build <profile>` | Build all architectures from a Profile V2 payload |
+| `capsem-admin image build <profile> --arch arm64` | Single architecture |
+| `capsem-admin image build <profile> --dry-run --json` | Preview without building |
 | `capsem-builder validate [DIR]` | Lint configs with diagnostics |
 | `capsem-builder inspect [DIR]` | Render build manifest |
 | `capsem-builder audit` | Vulnerability scan |
