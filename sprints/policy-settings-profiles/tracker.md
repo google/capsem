@@ -879,16 +879,16 @@ a valid claim -- mark it `[ ]` instead.
     prove VM-originated allow/block/ask/detect latency, rule-count scaling,
     Sigma/CEL matching speed, backtest/hunt scan rates, and resolved-event
     evidence correctness before public surfaces or marketing make speed claims.
-    Planning note: S08d must reproduce a Howard John-style CEL microbenchmark
-    rig and then adapt it to Capsem canonical roots. Required microbench
+    Planning note: S08d must adapt a Howard John-style CEL microbenchmark rig
+    to measure Capsem's implementation. Required microbench
     coverage includes CEL context/materialization cost, fast field access,
     slower body/regex access, header lookup versus optimized native Rust, and
     canonical expressions such as `http.request.host.contains("google")` and
-    `http.request.header("authorization").exists()`. The concrete reproduction
-    target is Agentgateway's `crates/agentgateway/src/cel/benches.rs` at commit
+    `http.request.header("authorization").exists()`. The concrete source model
+    is Agentgateway's `crates/agentgateway/src/cel/benches.rs` at commit
     `2f9ffa89c25a45f3eca34ba39bb6241a1e6d8a4b`: compile, execute-ref,
     execute-snapshot, lookup, and the `simple_access`, `header`, `bbr`, `jwt`,
-    `cidr`, and `regex` cases.
+    `cidr`, and `regex` cases mapped onto Capsem equivalents.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

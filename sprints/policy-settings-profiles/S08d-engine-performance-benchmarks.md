@@ -25,17 +25,17 @@ Sigma-compatible detection.
   or Sigma.
 - Speed claims must use canonical policy roots such as
   `http.request.host.contains("google")`, not internal envelope paths.
-- Capsem must reproduce a Howard John-style CEL microbenchmark rig before
-  adapting it. The benchmark suite should include a small, faithful baseline
-  comparable to the public methodology in
+- Capsem must adapt the Howard John-style CEL benchmark methodology to measure
+  our implementation. The suite should use comparable categories from
   <https://blog.howardjohn.info/posts/cel-fast/>: context/materialization cost,
   fast field access, slow/body/regex access, header lookup, and native Rust
   comparator implementations.
-- The reproduction should start from the concrete Agentgateway benchmark shape
-  in `crates/agentgateway/src/cel/benches.rs` at commit
+- The adaptation should use the concrete Agentgateway benchmark shape in
+  `crates/agentgateway/src/cel/benches.rs` at commit
   `2f9ffa89c25a45f3eca34ba39bb6241a1e6d8a4b`, covering the same high-level
-  benchmark families: compile, execute over request references, execute over
-  request snapshots, and low-level lookup comparisons.
+  benchmark families where they map to Capsem: compile, execute over borrowed
+  policy/request context, execute over materialized/snapshot context, and
+  low-level lookup comparisons.
 - Benchmarks must include VM-originated events that cross the real transport/
   service/process boundary. Microbenchmarks are useful, but they are not enough
   for marketing or release claims.
@@ -91,11 +91,13 @@ For each scenario, capture:
 Add Criterion or equivalent Rust microbenchmarks for the pieces that should be
 extremely fast:
 
-- Reproduced CEL baseline rig inspired by the Howard John post:
-  - mirror the Agentgateway benchmark cases: `simple_access`, `header`,
-    `bbr`/body JSON extraction, `jwt`, `cidr`, and `regex`;
-  - mirror the Agentgateway benchmark phases: expression compile,
-    execute-ref, execute-snapshot, and lookup;
+- Adapted CEL benchmark rig inspired by the Howard John post:
+  - map the Agentgateway benchmark cases to Capsem equivalents:
+    `simple_access`, `header`, `bbr`/body JSON extraction, `jwt`, `cidr`, and
+    `regex`;
+  - map the Agentgateway benchmark phases to Capsem equivalents: expression
+    compile, borrowed/reference execution, materialized/snapshot execution, and
+    lookup;
   - build/materialize CEL context repeatedly;
   - evaluate a fast field expression repeatedly;
   - evaluate a slower expression repeatedly;
@@ -103,10 +105,10 @@ extremely fast:
   - compare regex/matches with compile-time/precompiled regex versus runtime
     work;
   - report allocations where the harness can measure them.
-- Low-level lookup comparators should include the same categories as the
-  upstream rig: direct native access, nested `match`, nested map lookup, and CEL
-  lookup. Capsem may add additional borrowed-view/native-resolver variants after
-  the canonical correctness path lands.
+- Low-level lookup comparators should adapt the same categories as the upstream
+  rig: direct native access, nested `match`, nested map lookup, and CEL lookup.
+  Capsem may add additional borrowed-view/native-resolver variants after the
+  canonical correctness path lands.
 - Capsem canonical-root variants of that rig:
   - `http.request.host.contains("google")`;
   - `http.request.url.contains("google")`;
@@ -170,9 +172,9 @@ clearly not numerical and matches the sprint tracker.
   JSON under `benchmarks/security-engine/`.
 - Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
   evidence dedup, and registry plan swaps.
-- Reproduce the Howard John-style CEL benchmark suite, keep it as a local
-  baseline artifact, mirror the Agentgateway `benches.rs` families/cases, and
-  adapt it to Capsem canonical roots before drawing optimization conclusions.
+- Adapt the Howard John-style CEL benchmark methodology into a Capsem local
+  baseline artifact, using the Agentgateway `benches.rs` families/cases as the
+  source model where they map, before drawing optimization conclusions.
 - Add correctness assertions for every benchmark scenario: expected final
   action, expected detection finding, and persisted resolved-event evidence.
 - Add rule-pack and event fixtures for low/medium/high rule-count cases.
@@ -200,7 +202,7 @@ clearly not numerical and matches the sprint tracker.
 - Telemetry: benchmark runs confirm VM status/OTel counters increment for
   enforcement evaluations, detection evaluations, matches, findings, errors,
   and forward-plugin metrics when enabled.
-- Performance: reproduced CEL rig numbers, Capsem canonical-root microbench
+- Performance: adapted CEL rig numbers, Capsem canonical-root microbench
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,
   concurrency scaling, backtest/hunt scan rates.
