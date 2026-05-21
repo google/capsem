@@ -20,6 +20,9 @@ from capsem.builder.image_plan import (
     dump_image_plan_json,
 )
 from capsem.builder.image_verify import (
+    ImageInventory,
+    ImageInventoryMap,
+    ImageVerificationArch,
     dump_image_verification_report_json,
     load_image_inventory_json,
     verify_image_assets,
@@ -83,6 +86,39 @@ class SettingsValidationReport(StrictModel):
     ok: bool
     path: str
     diagnostics: list[AdminDiagnostic] = Field(default_factory=list)
+
+
+def _load_image_inventories(
+    plan_arches: list[ImageVerificationArch],
+    assets_dir: Path,
+    inventory_path: str | None,
+) -> ImageInventoryMap:
+    inventories: dict[ImageVerificationArch, tuple[Path | None, ImageInventory]] = {}
+    if inventory_path is None:
+        for arch in plan_arches:
+            candidate = assets_dir / arch / "image-inventory.json"
+            if candidate.exists():
+                inventories[arch] = (candidate, load_image_inventory_json(candidate))
+        return inventories
+
+    root = Path(inventory_path)
+    if root.is_dir():
+        for arch in plan_arches:
+            candidate = root / arch / "image-inventory.json"
+            if not candidate.exists():
+                raise ValueError(
+                    f"missing image inventory for arch '{arch}': {candidate}"
+                )
+            inventories[arch] = (candidate, load_image_inventory_json(candidate))
+        return inventories
+
+    if len(plan_arches) != 1:
+        raise ValueError(
+            "--inventory FILE can only be used with a single --arch; "
+            "pass an inventory directory for all-arch verification"
+        )
+    inventories[plan_arches[0]] = (root, load_image_inventory_json(root))
+    return inventories
 
 
 class SettingsDoctorReport(SettingsValidationReport):
@@ -515,8 +551,11 @@ def image_plan(profile_path: str, arch: ImageArch, json_output: bool) -> None:
     "--inventory",
     "inventory_path",
     default=None,
-    type=click.Path(exists=True, dir_okay=False),
-    help="Optional capsem.image-inventory.v1 JSON proof for package/tool checks.",
+    type=click.Path(exists=True, file_okay=True, dir_okay=True),
+    help=(
+        "Optional inventory file for one arch, or directory containing "
+        "<arch>/image-inventory.json. Defaults to auto-discover under --assets-dir."
+    ),
 )
 @click.option(
     "--json",
@@ -535,17 +574,16 @@ def image_verify(
     try:
         profile = _load_profile(Path(profile_path))
         plan = derive_image_plan(profile, arch=arch)
-        inventory_file = Path(inventory_path) if inventory_path is not None else None
-        inventory = (
-            load_image_inventory_json(inventory_file)
-            if inventory_file is not None
-            else None
+        assets_root = Path(assets_dir)
+        inventories = _load_image_inventories(
+            [plan_arch.arch for plan_arch in plan.arches],
+            assets_root,
+            inventory_path,
         )
         report = verify_image_assets(
             plan,
-            Path(assets_dir),
-            inventory=inventory,
-            inventory_path=inventory_file,
+            assets_root,
+            inventories=inventories,
         )
     except (OSError, ValidationError, ValueError) as error:
         raise click.ClickException(str(error)) from error
@@ -557,27 +595,38 @@ def image_verify(
         click.echo(f"assets dir: {report.assets_dir}")
         ok_assets = sum(1 for asset in report.assets if asset.ok)
         click.echo(f"assets: {ok_assets}/{len(report.assets)} ok")
-        if report.inventory_checked:
-            ok_packages = sum(1 for row in report.package_contract if row.ok)
-            ok_tools = sum(1 for row in report.tool_contract if row.ok)
+        if report.inventories:
+            package_rows = [
+                row
+                for inventory in report.inventories
+                for row in inventory.package_contract
+            ]
+            tool_rows = [
+                row
+                for inventory in report.inventories
+                for row in inventory.tool_contract
+            ]
+            ok_packages = sum(1 for row in package_rows if row.ok)
+            ok_tools = sum(1 for row in tool_rows if row.ok)
             click.echo(
                 "package contract: "
-                f"{ok_packages}/{len(report.package_contract)} ok"
+                f"{ok_packages}/{len(package_rows)} ok"
             )
-            click.echo(f"tool contract: {ok_tools}/{len(report.tool_contract)} ok")
+            click.echo(f"tool contract: {ok_tools}/{len(tool_rows)} ok")
         for asset in report.assets:
             if not asset.ok:
                 click.echo(
                     f"{asset.arch}/{asset.kind}: {asset.failure} {asset.path}",
                     err=True,
                 )
-        for row in [*report.package_contract, *report.tool_contract]:
-            if not row.ok:
-                click.echo(
-                    f"{row.kind}/{row.name}: {row.failure} "
-                    f"expected={row.expected_version} actual={row.actual_version}",
-                    err=True,
-                )
+        for inventory in report.inventories:
+            for row in [*inventory.package_contract, *inventory.tool_contract]:
+                if not row.ok:
+                    click.echo(
+                        f"{inventory.arch}/{row.kind}/{row.name}: {row.failure} "
+                        f"expected={row.expected_version} actual={row.actual_version}",
+                        err=True,
+                    )
 
     if not report.ok:
         raise SystemExit(1)

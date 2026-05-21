@@ -91,6 +91,7 @@ capsem-admin image plan corp-dev.profile.toml --json
 capsem-admin image build-workspace corp-dev.profile.toml --out build/corp-dev-image --arch all --json
 capsem-admin image build corp-dev.profile.toml --out assets/ --arch all --template rootfs --json
 capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --json
+capsem-admin image verify corp-dev.profile.toml --assets-dir assets/ --arch arm64 --inventory assets/arm64/image-inventory.json --json
 capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
 capsem-admin manifest check manifest.json --fast --json
 capsem-admin manifest check manifest.json --download --download-dir downloaded/ --pubkey profile-sign.pub --json
@@ -109,7 +110,11 @@ profile is the source of truth and generated `guest/config` TOML is only an
 intermediate for the current Docker templates. `image verify` consumes
 the derived plan and checks local assets under
 `<assets-dir>/<arch>/<asset filename>` for existence, declared byte size, and
-BLAKE3 hash before a manifest or release workflow trusts them.
+BLAKE3 hash before a manifest or release workflow trusts them. When
+`<assets-dir>/<arch>/image-inventory.json` exists, verification also checks the
+profile's apt, Python, node, and required-tool contract for that architecture.
+Passing `--inventory` is only needed for a non-standard single-arch inventory
+file or alternate inventory directory.
 
 `manifest check --fast` validates the signed profile-catalog manifest shape and
 performs cheap reachability checks. Local `file://` profile payloads are hashed

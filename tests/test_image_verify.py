@@ -74,6 +74,26 @@ def _write_assets(assets_dir: Path, payloads: dict[tuple[str, str], bytes]) -> N
         target.write_bytes(payload)
 
 
+def _matching_inventory() -> ImageInventory:
+    return ImageInventory(
+        apt={"coreutils": "9.1", "curl": "8.0.0"},
+        python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
+        node_packages={"@openai/codex": "0.1.0"},
+        tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
+    )
+
+
+def _write_inventory(
+    path: Path,
+    inventory: ImageInventory | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        dump_image_inventory_json(inventory or _matching_inventory()),
+        encoding="utf-8",
+    )
+
+
 def _profile_with_package_tool_contract() -> tuple[
     ProfilePayloadV2,
     ImagePlan,
@@ -126,27 +146,32 @@ def test_verify_image_inventory_accepts_matching_package_and_tool_contract(
 ) -> None:
     _, plan, payloads = _profile_with_package_tool_contract()
     _write_assets(tmp_path, payloads)
-    inventory = ImageInventory(
-        apt={"coreutils": "9.1", "curl": "8.0.0"},
-        python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
-        node_packages={"@openai/codex": "0.1.0"},
-        tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
-    )
+    inventory = _matching_inventory()
+    inventory_path = tmp_path / "arm64-inventory.json"
 
     report = verify_image_assets(
         plan,
         tmp_path,
-        inventory=inventory,
-        inventory_path=tmp_path / "inventory.json",
+        inventories={"arm64": (inventory_path, inventory)},
     )
 
     assert report.ok is True
-    assert report.inventory_checked is True
-    assert report.inventory_path == str(tmp_path / "inventory.json")
-    assert len(report.package_contract) == 5
-    assert len(report.tool_contract) == 2
-    assert {row.name for row in report.tool_contract} == {"capsem_doctor", "codex"}
-    assert all(row.ok for row in [*report.package_contract, *report.tool_contract])
+    assert len(report.inventories) == 1
+    assert report.inventories[0].arch == "arm64"
+    assert report.inventories[0].path == str(inventory_path)
+    assert len(report.inventories[0].package_contract) == 5
+    assert len(report.inventories[0].tool_contract) == 2
+    assert {row.name for row in report.inventories[0].tool_contract} == {
+        "capsem_doctor",
+        "codex",
+    }
+    assert all(
+        row.ok
+        for row in [
+            *report.inventories[0].package_contract,
+            *report.inventories[0].tool_contract,
+        ]
+    )
 
 
 def test_verify_image_inventory_reports_missing_and_mismatched_contract(
@@ -161,14 +186,18 @@ def test_verify_image_inventory_reports_missing_and_mismatched_contract(
         tools={"capsem_doctor": "2026.05.20"},
     )
 
-    report = verify_image_assets(plan, tmp_path, inventory=inventory)
+    report = verify_image_assets(plan, tmp_path, inventories={"x86_64": (None, inventory)})
 
     failures = {
         (row.kind, row.name): row.failure
-        for row in [*report.package_contract, *report.tool_contract]
+        for row in [
+            *report.inventories[0].package_contract,
+            *report.inventories[0].tool_contract,
+        ]
         if not row.ok
     }
     assert report.ok is False
+    assert report.inventories[0].arch == "x86_64"
     assert failures == {
         ("apt", "coreutils"): "missing",
         ("apt", "curl"): "version_mismatch",
@@ -259,18 +288,8 @@ def test_capsem_admin_image_verify_accepts_inventory_contract(tmp_path: Path) ->
     profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
     assets_dir = tmp_path / "assets"
     _write_assets(assets_dir, payloads)
-    inventory_path = tmp_path / "inventory.json"
-    inventory_path.write_text(
-        dump_image_inventory_json(
-            ImageInventory(
-                apt={"coreutils": "9.1", "curl": "8.0.0"},
-                python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
-                node_packages={"@openai/codex": "0.1.0"},
-                tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
-            )
-        ),
-        encoding="utf-8",
-    )
+    _write_inventory(assets_dir / "arm64" / "image-inventory.json")
+    _write_inventory(assets_dir / "x86_64" / "image-inventory.json")
 
     result = CliRunner().invoke(
         cli,
@@ -280,6 +299,39 @@ def test_capsem_admin_image_verify_accepts_inventory_contract(tmp_path: Path) ->
             str(profile_path),
             "--assets-dir",
             str(assets_dir),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert '"inventories": [' in result.output
+    assert '"arch": "arm64"' in result.output
+    assert '"arch": "x86_64"' in result.output
+    assert '"package_contract": [' in result.output
+    assert '"tool_contract": [' in result.output
+
+
+def test_capsem_admin_image_verify_accepts_single_arch_inventory_file(
+    tmp_path: Path,
+) -> None:
+    profile, _, payloads = _profile_with_package_tool_contract()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    _write_assets(assets_dir, payloads)
+    inventory_path = tmp_path / "image-inventory.json"
+    _write_inventory(inventory_path)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "verify",
+            str(profile_path),
+            "--assets-dir",
+            str(assets_dir),
+            "--arch",
+            "arm64",
             "--inventory",
             str(inventory_path),
             "--json",
@@ -287,9 +339,8 @@ def test_capsem_admin_image_verify_accepts_inventory_contract(tmp_path: Path) ->
     )
 
     assert result.exit_code == 0
-    assert '"inventory_checked": true' in result.output
-    assert '"package_contract": [' in result.output
-    assert '"tool_contract": [' in result.output
+    assert '"arch": "arm64"' in result.output
+    assert '"arch": "x86_64"' not in result.output
 
 
 def test_capsem_admin_image_verify_returns_nonzero_on_inventory_mismatch(
@@ -300,18 +351,44 @@ def test_capsem_admin_image_verify_returns_nonzero_on_inventory_mismatch(
     profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
     assets_dir = tmp_path / "assets"
     _write_assets(assets_dir, payloads)
-    inventory_path = tmp_path / "inventory.json"
-    inventory_path.write_text(
-        dump_image_inventory_json(
-            ImageInventory(
-                apt={"coreutils": "9.1", "curl": "7.0.0"},
-                python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
-                node_packages={"@openai/codex": "0.1.0"},
-                tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
-            )
+    _write_inventory(assets_dir / "arm64" / "image-inventory.json")
+    _write_inventory(
+        assets_dir / "x86_64" / "image-inventory.json",
+        ImageInventory(
+            apt={"coreutils": "9.1", "curl": "7.0.0"},
+            python_modules={"pytest": "8.3.5", "requests": "2.32.3"},
+            node_packages={"@openai/codex": "0.1.0"},
+            tools={"capsem_doctor": "2026.05.20", "codex": "0.17.0"},
         ),
-        encoding="utf-8",
     )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "verify",
+            str(profile_path),
+            "--assets-dir",
+            str(assets_dir),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert '"arch": "x86_64"' in result.output
+    assert '"failure": "version_mismatch"' in result.output
+
+
+def test_capsem_admin_image_verify_rejects_all_arch_single_inventory_file(
+    tmp_path: Path,
+) -> None:
+    profile, _, payloads = _profile_with_package_tool_contract()
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(dump_profile_json(profile), encoding="utf-8")
+    assets_dir = tmp_path / "assets"
+    _write_assets(assets_dir, payloads)
+    inventory_path = tmp_path / "image-inventory.json"
+    _write_inventory(inventory_path)
 
     result = CliRunner().invoke(
         cli,
@@ -328,7 +405,7 @@ def test_capsem_admin_image_verify_returns_nonzero_on_inventory_mismatch(
     )
 
     assert result.exit_code == 1
-    assert '"failure": "version_mismatch"' in result.output
+    assert "--inventory FILE can only be used with a single --arch" in result.output
 
 
 def test_capsem_admin_image_verify_returns_nonzero_on_mismatch(tmp_path: Path) -> None:

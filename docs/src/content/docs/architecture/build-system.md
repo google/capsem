@@ -179,11 +179,13 @@ assets/
     initrd.img
     rootfs.squashfs
     tool-versions.txt
+    image-inventory.json
   x86_64/
     vmlinuz
     initrd.img
     rootfs.squashfs
     tool-versions.txt
+    image-inventory.json
   manifest.json
   B3SUMS
 ```

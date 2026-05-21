@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Mapping
 
 import blake3
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,13 +11,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from capsem.builder.image_plan import ImagePlan
 from capsem.builder.profiles import AssetDeclaration, VersionStr
 
+ImageVerificationArch = Literal["arm64", "x86_64"]
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
 
 class ImageAssetVerification(StrictModel):
-    arch: Literal["arm64", "x86_64"]
+    arch: ImageVerificationArch
     kind: Literal["kernel", "initrd", "rootfs"]
     path: str
     exists: bool
@@ -40,6 +42,9 @@ class ImageInventory(StrictModel):
     tools: dict[str, VersionStr] = Field(default_factory=dict)
 
 
+ImageInventoryMap = Mapping[ImageVerificationArch, tuple[Path | None, ImageInventory]]
+
+
 class ImageContractVerification(StrictModel):
     kind: Literal["apt", "python", "node", "tool"]
     name: str
@@ -51,6 +56,14 @@ class ImageContractVerification(StrictModel):
     failure: Literal["missing", "version_mismatch"] | None = None
 
 
+class ImageInventoryVerification(StrictModel):
+    arch: ImageVerificationArch
+    path: str | None = None
+    ok: bool
+    package_contract: list[ImageContractVerification] = Field(default_factory=list)
+    tool_contract: list[ImageContractVerification] = Field(default_factory=list)
+
+
 class ImageVerificationReport(StrictModel):
     schema_: Literal["capsem.image-verification.v1"] = Field(
         default="capsem.image-verification.v1",
@@ -60,11 +73,8 @@ class ImageVerificationReport(StrictModel):
     profile_id: str
     profile_revision: str
     assets_dir: str
-    inventory_path: str | None = None
-    inventory_checked: bool = False
     assets: list[ImageAssetVerification]
-    package_contract: list[ImageContractVerification] = Field(default_factory=list)
-    tool_contract: list[ImageContractVerification] = Field(default_factory=list)
+    inventories: list[ImageInventoryVerification] = Field(default_factory=list)
 
 
 def _blake3_hash(path: Path) -> str:
@@ -85,7 +95,7 @@ def _asset_filename(asset: AssetDeclaration) -> str:
 
 def _verify_one(
     assets_dir: Path,
-    arch: Literal["arm64", "x86_64"],
+    arch: ImageVerificationArch,
     kind: Literal["kernel", "initrd", "rootfs"],
     asset: AssetDeclaration,
 ) -> ImageAssetVerification:
@@ -242,8 +252,7 @@ def verify_image_assets(
     plan: ImagePlan,
     assets_dir: Path,
     *,
-    inventory: ImageInventory | None = None,
-    inventory_path: Path | None = None,
+    inventories: ImageInventoryMap | None = None,
 ) -> ImageVerificationReport:
     assets: list[ImageAssetVerification] = []
     for arch in plan.arches:
@@ -269,24 +278,34 @@ def verify_image_assets(
                 ),
             ]
         )
-    package_contract: list[ImageContractVerification] = []
-    tool_contract: list[ImageContractVerification] = []
-    if inventory is not None:
+    inventory_reports: list[ImageInventoryVerification] = []
+    inventory_by_arch = inventories or {}
+    for arch in plan.arches:
+        inventory_tuple = inventory_by_arch.get(arch.arch)
+        if inventory_tuple is None:
+            continue
+        inventory_path, inventory = inventory_tuple
         package_contract = _verify_package_contract(plan, inventory)
         tool_contract = _verify_tool_contract(plan, inventory)
+        inventory_reports.append(
+            ImageInventoryVerification(
+                arch=arch.arch,
+                path=str(inventory_path) if inventory_path is not None else None,
+                ok=all(row.ok for row in package_contract)
+                and all(row.ok for row in tool_contract),
+                package_contract=package_contract,
+                tool_contract=tool_contract,
+            )
+        )
 
     return ImageVerificationReport(
         ok=all(asset.ok for asset in assets)
-        and all(row.ok for row in package_contract)
-        and all(row.ok for row in tool_contract),
+        and all(inventory.ok for inventory in inventory_reports),
         profile_id=plan.profile_id,
         profile_revision=plan.profile_revision,
         assets_dir=str(assets_dir),
-        inventory_path=str(inventory_path) if inventory_path is not None else None,
-        inventory_checked=inventory is not None,
         assets=assets,
-        package_contract=package_contract,
-        tool_contract=tool_contract,
+        inventories=inventory_reports,
     )
 
 

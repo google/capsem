@@ -302,6 +302,22 @@ Nineteenth slice landed on 2026-05-21:
   -q` passed with 171 tests; `uv run python -m compileall src/capsem` passed.
   Remaining image proof is SBOM/signature linkage and in-guest boot probes.
 
+Twentieth slice landed on 2026-05-21:
+
+- Image verification now treats package/tool inventory as an architecture-
+  scoped proof, matching the actual rootfs build output layout.
+- `capsem-admin image verify <profile> --assets-dir <dir>` auto-discovers
+  `<assets-dir>/<arch>/image-inventory.json` for every selected architecture
+  and emits `inventories[]` rows with `arch`, `path`, package contract rows,
+  and required-tool contract rows.
+- `--inventory FILE` is allowed only with a single `--arch`; all-arch callers
+  must either use the standard auto-discovered asset layout or pass an
+  inventory directory containing `<arch>/image-inventory.json`. This avoids
+  accidentally proving an arm64 build with x86_64 inventory data.
+- Verification: `uv run python -m pytest tests/test_image_verify.py -q` passed
+  with 12 tests. Docs now show `image-inventory.json` beside
+  `tool-versions.txt` in every arch asset directory.
+
 ## Why This Sprint Exists
 
 S07a defines the product trust model: the signed manifest lists profile
@@ -643,9 +659,9 @@ The checker must fail closed for:
       profile/asset signature verification have landed.
 - [~] Implement image verification against profile package/tool contract. Local
       profile-declared asset existence/size/hash verification and typed
-      package/tool inventory extraction plus contract comparison have landed;
-      release host SBOM attestation covers `.pkg` and `.deb`; guest SBOM
-      linkage and in-guest image proof remain.
+      package/tool inventory extraction plus per-architecture contract
+      comparison have landed; release host SBOM attestation covers `.pkg` and
+      `.deb`; guest SBOM linkage and in-guest image proof remain.
 - [x] Add packaged-install proof for `capsem-admin` in bootstrap and release
       tests. Developer bootstrap proof and OS package layout/release-policy
       proof have landed.
@@ -667,8 +683,8 @@ The checker must fail closed for:
   `TypeAdapter.validate_json()` and `model_dump_json()`; profile manifest
   generate/check/sign tests; profile-to-image build plan tests;
   guest-config-to-profile generation tests; image inventory package/tool
-  extraction and contract comparison tests; admin doctor checks;
-  no-hand-edited-settings guard tests.
+  extraction, per-architecture auto-discovery, and contract comparison tests;
+  admin doctor checks; no-hand-edited-settings guard tests.
 - Functional: `capsem-admin profile init`; `profile validate`; `profile
   schema`; `profile init-builtins`; `image plan`; `image verify`; `manifest
   generate`; `manifest check --fast`; `manifest check --download`;
@@ -680,10 +696,10 @@ The checker must fail closed for:
   manifest/payload id or revision mismatch, missing per-arch asset table, URL
   scheme rejection, HTTP `HEAD` 404/405/timeout, size mismatch, missing
   signature URL, hash mismatch after download, image inventory missing package
-  or required tool, image inventory version mismatch, duplicate profile
-  revision, revoked current profile, path traversal, stale manifest rollback,
-  and untyped/raw dict or `json.loads`/`json.dumps` bypass attempts in admin
-  module tests.
+  or required tool, image inventory version mismatch, ambiguous all-arch
+  single-file inventory input, duplicate profile revision, revoked current
+  profile, path traversal, stale manifest rollback, and untyped/raw dict or
+  `json.loads`/`json.dumps` bypass attempts in admin module tests.
 - E2E/VM or integration: build or fixture-build profile-derived images for all
   supported release arches by default, boot at least the host-arch image through
   Capsem, and run an in-guest verification probe that proves declared
