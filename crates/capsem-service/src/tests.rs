@@ -6728,6 +6728,156 @@ async fn handle_detection_hunt_runs_multiple_detection_rules_over_inline_events(
     assert!(rule_ids.contains("detect-api"));
 }
 
+fn insert_hunt_security_http_fixture(
+    conn: &rusqlite::Connection,
+    event_id: &str,
+    trace_id: &str,
+    timestamp_unix_ms: i64,
+    host: &str,
+    path: &str,
+) {
+    conn.execute(
+        "INSERT INTO security_events (
+            event_id, timestamp, timestamp_unix_ms, event_family, event_type,
+            source_engine, final_action, enforceability, attribution_scope,
+            origin_kind, accounting_owner, trace_id, vm_id, session_id,
+            profile_id, user_id, redaction_state, label_count, mutation_count,
+            finding_count
+         ) VALUES (
+            ?1, '2026-05-21T10:00:00Z', ?2, 'http', 'http.request',
+            'network', 'continue', 'inline_blockable', 'vm',
+            'guest_network', 'vm:hunt-vm', ?3, 'hunt-vm', 'hunt-session',
+            'coding', 'user-1', 'raw', 0, 0, 0
+         )",
+        rusqlite::params![event_id, timestamp_unix_ms, trace_id],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO net_events (
+            timestamp, domain, port, decision, method, path, status_code,
+            bytes_sent, bytes_received, duration_ms, trace_id
+         ) VALUES (
+            '2026-05-21T10:00:00Z', ?1, 443, 'allowed', 'GET', ?2,
+            200, 12, 34, 5, ?3
+         )",
+        rusqlite::params![host, path, trace_id],
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = "hunt-vm";
+    let session_dir = state.run_dir.join("sessions").join(vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let db_path = session_dir.join("session.db");
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        capsem_logger::schema::apply_pragmas(&conn).unwrap();
+        capsem_logger::schema::create_tables(&conn).unwrap();
+        insert_hunt_security_http_fixture(
+            &conn,
+            "evt-admin-google",
+            "trace-admin-google",
+            1_700_000_000_001,
+            "google.example.test",
+            "/admin/settings",
+        );
+        insert_hunt_security_http_fixture(
+            &conn,
+            "evt-public-google",
+            "trace-public-google",
+            1_700_000_000_002,
+            "google.example.test",
+            "/public",
+        );
+        insert_hunt_security_http_fixture(
+            &conn,
+            "evt-admin-api",
+            "trace-admin-api",
+            1_700_000_000_003,
+            "api.example.test",
+            "/admin/settings",
+        );
+        conn.execute(
+            "INSERT INTO security_events (
+                event_id, timestamp, timestamp_unix_ms, event_family,
+                event_type, source_engine, final_action, enforceability,
+                attribution_scope, origin_kind, trace_id, vm_id, session_id,
+                profile_id, user_id, redaction_state
+             ) VALUES (
+                'evt-mcp-ignored', '2026-05-21T10:00:00Z',
+                1700000000004, 'mcp', 'mcp.request', 'network',
+                'continue', 'inline_blockable', 'vm', 'guest_network',
+                'trace-mcp', 'hunt-vm', 'hunt-session', 'coding', 'user-1',
+                'raw'
+             )",
+            [],
+        )
+        .unwrap();
+    }
+
+    state.instances.lock().unwrap().insert(
+        vm_id.into(),
+        InstanceInfo {
+            id: vm_id.into(),
+            pid: std::process::id(),
+            uds_path: state.run_dir.join("hunt.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: None,
+            profile_pin: None,
+        },
+    );
+
+    let Json(result) = handle_session_detection_hunt(
+        Path(vm_id.into()),
+        State(state),
+        Json(RuntimeSessionDetectionHuntRequest {
+            rules: vec![RuntimeDetectionRuleRequest {
+                id: "detect-google-admin".into(),
+                pack_id: "runtime-detection".into(),
+                sigma_id: Some("sigma-google-admin".into()),
+                title: "Google admin path".into(),
+                condition: "http.request.host.contains('google') \
+                    && http.request.path.startsWith('/admin')"
+                    .into(),
+                severity: capsem_security_engine::Severity::High,
+                confidence: capsem_security_engine::Confidence::High,
+                tags: vec!["http".into(), "admin".into()],
+                enabled: true,
+            }],
+            limit: None,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.total_matches, 1);
+    assert_eq!(result.unique_evidence_matches, 1);
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0].event_ref.corpus, "session_db");
+    assert_eq!(
+        result.rows[0].event_ref.session_id.as_deref(),
+        Some("hunt-session")
+    );
+    assert_eq!(result.rows[0].event_ref.event_id, "evt-admin-google");
+    assert_eq!(result.rows[0].rule_id, "detect-google-admin");
+    assert_eq!(result.rows[0].pack_id, "runtime-detection");
+    assert!(matches!(
+        result.rows[0].outcome,
+        capsem_security_engine::BacktestOutcome::Matched
+    ));
+}
+
 #[tokio::test]
 async fn handle_lint_config_returns_array() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;

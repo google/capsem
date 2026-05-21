@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and return the shared deduplicated `BacktestResult` shape.
 - Added the first service-owned detection hunt handler for running multiple
   candidate detection rules over a supplied normalized event corpus.
+- Added the first session-backed detection hunt golden path:
+  `/sessions/{id}/detection/hunt` reads a hand-built canonical session DB
+  corpus, reconstructs HTTP security events from structured journal/projection
+  rows, and runs real CEL detection rules against paths/hosts from the DB.
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.

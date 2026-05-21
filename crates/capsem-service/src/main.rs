@@ -4139,6 +4139,14 @@ struct RuntimeDetectionHuntRequest {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSessionDetectionHuntRequest {
+    rules: Vec<RuntimeDetectionRuleRequest>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -5676,6 +5684,290 @@ fn backtest_outcome(expected: Option<&str>, actual: &str) -> seceng::BacktestOut
     }
 }
 
+fn security_events_query_rows(
+    reader: &capsem_logger::DbReader,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let json_str = reader
+        .query_raw(
+            "SELECT
+                se.event_id, se.timestamp_unix_ms, se.event_family, se.event_type,
+                se.source_engine, se.enforceability, se.attribution_scope,
+                se.origin_kind, se.accounting_owner, se.trace_id, se.span_id,
+                se.parent_event_id, se.stream_id, se.activity_id, se.sequence_no,
+                se.vm_id, se.session_id, se.profile_id, se.profile_revision,
+                se.user_id, se.process_id, se.parent_process_id, se.exec_id,
+                se.turn_id, se.message_id, se.tool_call_id, se.mcp_call_id,
+                se.redaction_state,
+                n.domain, n.port, n.method, n.path, n.query, n.status_code,
+                n.bytes_sent, n.bytes_received
+             FROM security_events se
+             LEFT JOIN net_events n
+                ON n.trace_id = se.trace_id
+               AND se.event_family = 'http'
+             ORDER BY se.timestamp_unix_ms ASC, se.id ASC
+             LIMIT 10000",
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query session security events: {error}"),
+            )
+        })?;
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("parse session security events: {error}"),
+        )
+    })?;
+    Ok(value
+        .get("rows")
+        .and_then(|rows| rows.as_array())
+        .cloned()
+        .unwrap_or_default())
+}
+
+fn session_cell<'a>(
+    row: &'a serde_json::Value,
+    index: usize,
+) -> Result<&'a serde_json::Value, AppError> {
+    row.as_array()
+        .and_then(|cells| cells.get(index))
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session security event row missing column {index}"),
+            )
+        })
+}
+
+fn session_required_string(row: &serde_json::Value, index: usize) -> Result<String, AppError> {
+    session_cell(row, index)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session security event column {index} was not a string"),
+            )
+        })
+}
+
+fn session_optional_string(
+    row: &serde_json::Value,
+    index: usize,
+) -> Result<Option<String>, AppError> {
+    let value = session_cell(row, index)?;
+    if value.is_null() {
+        Ok(None)
+    } else {
+        value
+            .as_str()
+            .map(|value| Some(value.to_owned()))
+            .ok_or_else(|| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("session security event column {index} was not a nullable string"),
+                )
+            })
+    }
+}
+
+fn session_required_u64(row: &serde_json::Value, index: usize) -> Result<u64, AppError> {
+    let value = session_cell(row, index)?;
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session security event column {index} was not an unsigned integer"),
+            )
+        })
+}
+
+fn session_optional_u64(row: &serde_json::Value, index: usize) -> Result<Option<u64>, AppError> {
+    let value = session_cell(row, index)?;
+    if value.is_null() {
+        Ok(None)
+    } else {
+        session_required_u64(row, index).map(Some)
+    }
+}
+
+fn parse_session_source_engine(value: &str) -> Result<seceng::SourceEngine, AppError> {
+    match value {
+        "network" => Ok(seceng::SourceEngine::Network),
+        "file" => Ok(seceng::SourceEngine::File),
+        "process" => Ok(seceng::SourceEngine::Process),
+        "conversation" => Ok(seceng::SourceEngine::Conversation),
+        "security" => Ok(seceng::SourceEngine::Security),
+        "vm" => Ok(seceng::SourceEngine::Vm),
+        "profile" => Ok(seceng::SourceEngine::Profile),
+        "host_ai" => Ok(seceng::SourceEngine::HostAi),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unsupported session source_engine '{value}'"),
+        )),
+    }
+}
+
+fn parse_session_attribution_scope(value: &str) -> Result<seceng::AiAttributionScope, AppError> {
+    match value {
+        "host" => Ok(seceng::AiAttributionScope::Host),
+        "vm" => Ok(seceng::AiAttributionScope::Vm),
+        "profile" => Ok(seceng::AiAttributionScope::Profile),
+        "session" => Ok(seceng::AiAttributionScope::Session),
+        "unknown" => Ok(seceng::AiAttributionScope::Unknown),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unsupported session attribution_scope '{value}'"),
+        )),
+    }
+}
+
+fn parse_session_origin_kind(value: &str) -> Result<seceng::AiOriginKind, AppError> {
+    match value {
+        "guest_network" => Ok(seceng::AiOriginKind::GuestNetwork),
+        "host_service" => Ok(seceng::AiOriginKind::HostService),
+        "host_admin" => Ok(seceng::AiOriginKind::HostAdmin),
+        "host_workbench" => Ok(seceng::AiOriginKind::HostWorkbench),
+        "test_fixture" => Ok(seceng::AiOriginKind::TestFixture),
+        "unknown" => Ok(seceng::AiOriginKind::Unknown),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unsupported session origin_kind '{value}'"),
+        )),
+    }
+}
+
+fn parse_session_enforceability(value: &str) -> Result<seceng::Enforceability, AppError> {
+    match value {
+        "inline_blockable" => Ok(seceng::Enforceability::InlineBlockable),
+        "observe_only" => Ok(seceng::Enforceability::ObserveOnly),
+        "remediation_only" => Ok(seceng::Enforceability::RemediationOnly),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unsupported session enforceability '{value}'"),
+        )),
+    }
+}
+
+fn parse_session_redaction_state(value: &str) -> Result<seceng::RedactionState, AppError> {
+    match value {
+        "raw" => Ok(seceng::RedactionState::Raw),
+        "redacted" => Ok(seceng::RedactionState::Redacted),
+        "summary-only" => Ok(seceng::RedactionState::SummaryOnly),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unsupported session redaction_state '{value}'"),
+        )),
+    }
+}
+
+fn session_security_event_from_row(
+    row: &serde_json::Value,
+) -> Result<Option<seceng::SecurityEvent>, AppError> {
+    let event_family = session_required_string(row, 2)?;
+    if event_family != "http" {
+        return Ok(None);
+    }
+    let host = match session_optional_string(row, 28)? {
+        Some(host) => host,
+        None => return Ok(None),
+    };
+    let method = session_optional_string(row, 30)?.unwrap_or_else(|| "GET".into());
+    let path = session_optional_string(row, 31)?;
+    let query = session_optional_string(row, 32)?;
+    let port = session_optional_u64(row, 29)?.and_then(|value| u16::try_from(value).ok());
+    let status = session_optional_u64(row, 33)?.and_then(|value| u16::try_from(value).ok());
+    let request_bytes = session_optional_u64(row, 34)?.unwrap_or_default();
+    let response_bytes = session_optional_u64(row, 35)?;
+    let common = seceng::SecurityEventCommon {
+        event_id: session_required_string(row, 0)?,
+        parent_event_id: session_optional_string(row, 11)?,
+        stream_id: session_optional_string(row, 12)?,
+        activity_id: session_optional_string(row, 13)?,
+        sequence_no: session_optional_u64(row, 14)?,
+        source_engine: parse_session_source_engine(&session_required_string(row, 4)?)?,
+        attribution_scope: parse_session_attribution_scope(&session_required_string(row, 6)?)?,
+        origin_kind: parse_session_origin_kind(&session_required_string(row, 7)?)?,
+        accounting_owner: session_optional_string(row, 8)?,
+        enforceability: parse_session_enforceability(&session_required_string(row, 5)?)?,
+        trace_id: session_optional_string(row, 9)?,
+        span_id: session_optional_string(row, 10)?,
+        timestamp_unix_ms: session_required_u64(row, 1)?,
+        vm_id: session_optional_string(row, 15)?,
+        session_id: session_optional_string(row, 16)?,
+        profile_id: session_optional_string(row, 17)?,
+        profile_revision: session_optional_string(row, 18)?,
+        profile_pack_ids: Vec::new(),
+        enforcement_packs: Vec::new(),
+        detection_packs: Vec::new(),
+        user_id: session_optional_string(row, 19)?,
+        process_id: session_optional_string(row, 20)?,
+        parent_process_id: session_optional_string(row, 21)?,
+        exec_id: session_optional_string(row, 22)?,
+        turn_id: session_optional_string(row, 23)?,
+        message_id: session_optional_string(row, 24)?,
+        tool_call_id: session_optional_string(row, 25)?,
+        mcp_call_id: session_optional_string(row, 26)?,
+        event_type: session_required_string(row, 3)?,
+        redaction_state: parse_session_redaction_state(&session_required_string(row, 27)?)?,
+    };
+    let url = Some(match (&path, &query) {
+        (Some(path), Some(query)) if !query.is_empty() => format!("https://{host}{path}?{query}"),
+        (Some(path), _) => format!("https://{host}{path}"),
+        _ => format!("https://{host}"),
+    });
+    Ok(Some(seceng::SecurityEvent::http(
+        common,
+        seceng::HttpSecuritySubject {
+            method,
+            scheme: Some("https".into()),
+            host,
+            port,
+            path_class: path.clone().unwrap_or_default(),
+            path,
+            query,
+            url,
+            request_bytes,
+            request_headers: Default::default(),
+            request_body: None,
+            response_status: status,
+            response_headers: Default::default(),
+            response_bytes,
+            response_body: None,
+        },
+    )))
+}
+
+fn session_backtest_events(
+    session_id: &str,
+    reader: &capsem_logger::DbReader,
+) -> Result<Vec<RuntimeBacktestEvent>, AppError> {
+    let mut events = Vec::new();
+    for row in security_events_query_rows(reader)? {
+        if let Some(event) = session_security_event_from_row(&row)? {
+            events.push(RuntimeBacktestEvent {
+                event_ref: Some(seceng::BacktestEventRef {
+                    corpus: "session_db".into(),
+                    session_id: event
+                        .common
+                        .session_id
+                        .clone()
+                        .or_else(|| Some(session_id.to_owned())),
+                    event_id: event.common.event_id.clone(),
+                    sequence_no: event.common.sequence_no,
+                    timestamp_unix_ms: event.common.timestamp_unix_ms,
+                }),
+                event,
+                expected: None,
+            });
+        }
+    }
+    Ok(events)
+}
+
 fn security_decision_action_text(
     action: seceng::SecurityDecisionAction,
 ) -> Result<String, AppError> {
@@ -6026,20 +6318,22 @@ async fn handle_detection_backtest(
     )))
 }
 
-async fn handle_detection_hunt(
-    Json(request): Json<RuntimeDetectionHuntRequest>,
-) -> Result<Json<seceng::BacktestResult>, AppError> {
-    if request.rules.is_empty() {
+fn run_detection_hunt(
+    rules: &[RuntimeDetectionRuleRequest],
+    events: &[RuntimeBacktestEvent],
+    limit: Option<usize>,
+) -> Result<seceng::BacktestResult, AppError> {
+    if rules.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             "detection hunt requires at least one rule".into(),
         ));
     }
 
-    let mut rules = Vec::with_capacity(request.rules.len());
-    for rule in &request.rules {
+    let mut compiled_rules = Vec::with_capacity(rules.len());
+    for rule in rules {
         validate_runtime_rule_id(&rule.id)?;
-        rules.push(seceng::CelDetectionRule {
+        compiled_rules.push(seceng::CelDetectionRule {
             id: rule.id.clone(),
             pack_id: rule.pack_id.clone(),
             sigma_id: rule.sigma_id.clone(),
@@ -6051,15 +6345,16 @@ async fn handle_detection_hunt(
         });
     }
 
-    let mut evaluator = seceng::CelDetectionEvaluator::compile(rules).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("compile detection hunt rules: {error}"),
-        )
-    })?;
+    let mut evaluator =
+        seceng::CelDetectionEvaluator::compile(compiled_rules).map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("compile detection hunt rules: {error}"),
+            )
+        })?;
 
     let mut rows = Vec::new();
-    for input in &request.events {
+    for input in events {
         let findings = seceng::DetectionEvaluator::evaluate(&mut evaluator, &input.event).map_err(
             |error| {
                 AppError(
@@ -6080,10 +6375,40 @@ async fn handle_detection_hunt(
         }
     }
 
-    Ok(Json(seceng::dedupe_backtest_matches(
+    Ok(seceng::dedupe_backtest_matches(
         rows,
-        runtime_backtest_limit(request.limit),
-    )))
+        runtime_backtest_limit(limit),
+    ))
+}
+
+async fn handle_detection_hunt(
+    Json(request): Json<RuntimeDetectionHuntRequest>,
+) -> Result<Json<seceng::BacktestResult>, AppError> {
+    Ok(Json(run_detection_hunt(
+        &request.rules,
+        &request.events,
+        request.limit,
+    )?))
+}
+
+async fn handle_session_detection_hunt(
+    Path(id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+    Json(request): Json<RuntimeSessionDetectionHuntRequest>,
+) -> Result<Json<seceng::BacktestResult>, AppError> {
+    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open session DB for detection hunt: {error}"),
+        )
+    })?;
+    let events = session_backtest_events(&id, &reader)?;
+    Ok(Json(run_detection_hunt(
+        &request.rules,
+        &events,
+        request.limit,
+    )?))
 }
 
 /// GET /confirm/pending -- list pending S15 confirmation prompts.
@@ -8918,6 +9243,10 @@ async fn main() -> Result<()> {
         .route("/detection/compile", post(handle_compile_detection_rule))
         .route("/detection/backtest", post(handle_detection_backtest))
         .route("/detection/hunt", post(handle_detection_hunt))
+        .route(
+            "/sessions/{id}/detection/hunt",
+            post(handle_session_detection_hunt),
+        )
         .route("/detection/stats", get(handle_detection_stats))
         .route(
             "/detection/{id}",

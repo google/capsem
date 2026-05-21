@@ -935,6 +935,23 @@ a valid claim -- mark it `[ ]` instead.
     journal slice: production Network/File/Process Engine emitters, historical
     session-journal backtest/hunt source selection, gateway/CLI/UI route
     exposure, persistence/profile-pack seeding, and VM/runtime integration.
+    Thirty-third TDD golden-path slice added the first session-backed
+    detection hunt route, `POST /sessions/{id}/detection/hunt`. The test
+    hand-creates a `session.db` corpus with multiple canonical
+    `security_events` rows plus HTTP `net_events` projections: one matching
+    Google admin path, two HTTP misses across different hosts/paths, and one
+    non-HTTP canonical event. The route reconstructs typed HTTP
+    `SecurityEvent` values from the structured journal/projection rows and
+    runs the real CEL detection hunt evaluator, returning a `session_db`
+    `BacktestResult` row for the matched event. Verification:
+    `cargo test -p capsem-service
+    handle_session_detection_hunt_reads_hand_built_security_db_corpus`,
+    `cargo test -p capsem-service
+    handle_detection_hunt_runs_multiple_detection_rules_over_inline_events`,
+    `cargo check -p capsem-service`, and `cargo test -p capsem-service
+    --no-run` passed. Still missing after this golden-path slice: broader
+    file/process/model/MCP session reconstruction, gateway/CLI/UI route
+    exposure, persistence/profile-pack seeding, and production engine emitters.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
