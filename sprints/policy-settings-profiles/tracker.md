@@ -663,6 +663,11 @@ a valid claim -- mark it `[ ]` instead.
     plugin output cannot drop prior labels/findings/mutations. Verification:
     `cargo test -p capsem-security-engine` passed with 18 tests and
     `cargo test -p capsem-core --test security_packs` passed with 6 tests.
+    Tenth fixture-sync slice updated committed security-event/resolved-event
+    JSON fixtures to include plugin-facing context, trace labels, decisions,
+    findings, and declarative mutations. Verification:
+    `cargo test -p capsem-security-engine` passed with 18 tests and
+    `cargo test -p capsem-core --test security_packs` passed with 6 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

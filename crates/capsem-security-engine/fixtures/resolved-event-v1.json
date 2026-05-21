@@ -19,6 +19,15 @@
       "host": "169.254.169.254",
       "path_class": "metadata",
       "request_bytes": 128
+    },
+    "labels": [
+      "metadata_access"
+    ],
+    "decision": {
+      "action": "allow",
+      "rule": "runtime.allow",
+      "reason": "resolved locally",
+      "terminal": false
     }
   },
   "steps": [

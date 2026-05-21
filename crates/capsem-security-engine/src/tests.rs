@@ -508,6 +508,16 @@ fn security_event_fixture_covers_every_family_and_pack_identity() {
         .unwrap();
     assert_eq!(http.common.enforcement_packs[0].id, "corp-enforcement");
     assert_eq!(http.common.detection_packs[0].id, "corp-detection");
+    assert_eq!(http.trace.labels, vec!["pii_access"]);
+    assert_eq!(http.labels, vec!["metadata_access"]);
+    assert_eq!(
+        http.decision.as_ref().unwrap().action,
+        SecurityDecisionAction::Ask
+    );
+    assert!(matches!(
+        http.mutations[0],
+        EventMutation::StripHeader { .. }
+    ));
 }
 
 #[test]
@@ -519,6 +529,11 @@ fn resolved_event_fixture_pins_schema_version_and_findings() {
     assert_eq!(resolved.event.schema_version, SECURITY_EVENT_SCHEMA_VERSION);
     assert_eq!(resolved.detection_findings[0].finding_id, "finding-1");
     assert_eq!(resolved.detection_findings[0].event_id, "evt-http");
+    assert_eq!(resolved.event.labels, vec!["metadata_access"]);
+    assert_eq!(
+        resolved.event.decision.as_ref().unwrap().action,
+        SecurityDecisionAction::Allow
+    );
     assert!(matches!(resolved.final_action, SecurityAction::Continue));
 }
 

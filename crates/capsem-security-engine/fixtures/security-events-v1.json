@@ -58,7 +58,59 @@
       "host": "169.254.169.254",
       "path_class": "metadata",
       "request_bytes": 128
-    }
+    },
+    "context": {
+      "history": [
+        {
+          "event_id": "evt-file",
+          "event_type": "file.read",
+          "labels": [
+            "pii_access"
+          ]
+        }
+      ]
+    },
+    "trace": {
+      "labels": [
+        "pii_access"
+      ],
+      "history": [
+        {
+          "event_id": "evt-dns",
+          "event_type": "dns.request",
+          "labels": [
+            "metadata_lookup"
+          ]
+        }
+      ]
+    },
+    "labels": [
+      "metadata_access"
+    ],
+    "findings": [
+      {
+        "finding_id": "finding-metadata",
+        "event_id": "evt-http",
+        "rule_id": "metadata-access",
+        "pack_id": "corp-detection",
+        "title": "Metadata endpoint access",
+        "severity": "high",
+        "confidence": "medium"
+      }
+    ],
+    "decision": {
+      "action": "ask",
+      "rule": "plugin.pii-egress.ask",
+      "reason": "Open-world request after PII access",
+      "terminal": false
+    },
+    "mutations": [
+      {
+        "op": "strip_header",
+        "path": "subject.headers.authorization",
+        "reason": "Drop credential before egress"
+      }
+    ]
   },
   {
     "schema_version": 1,

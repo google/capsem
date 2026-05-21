@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added deterministic S08b plugin transform validation with canonical event
   hashes, immutable core event enforcement, and prior label/finding/mutation
   preservation.
+- Updated S08b security-event JSON fixtures to include plugin-facing context,
+  trace labels, decisions, findings, and declarative mutations.
 - Added a deferred S22 rate-limit, budget, and quota sprint while keeping S13
   scoped to remote enforcement/observer plumbing and reserving S08/S12
   compatibility points for future throttle decisions.
