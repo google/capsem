@@ -69,11 +69,12 @@ The landing page should be organized around four product pillars:
    - `capsem-admin` for profile/settings/enforcement/detection/image/manifest
      workflows;
    - OpenTelemetry and VM health: model calls, provider/model summaries, token
-     counts, estimated cost, detection findings, enforcement counters,
-     forward-plugin health, and activity counters;
+     counts, estimated cost, detection findings, enforcement counters, and
+     activity counters;
    - forensic `session.db`, structured timeline, Sigma hunt over a specific
      timeline/session, support bundles, and audit trails;
-   - SOAR/centralized forward-plugin integration direction.
+   - SOAR/remote enforcement plugin direction, with quotas/budgets clearly
+     marked as later S22 work if mentioned.
 
 ## Content Requirements
 
@@ -131,8 +132,8 @@ The landing page should be organized around four product pillars:
   benchmark theater. Use numbers only when measured by S08d or another recorded
   benchmark artifact.
 - The enterprise pillar should mention observability, forensic trails, Sigma
-  timeline analysis, SOAR/centralized forward plugin, OpenTelemetry, and corp
-  profile governance as one coherent operating story.
+  timeline analysis, remote enforcement, OpenTelemetry, and corp profile
+  governance as one coherent operating story.
 
 ## Testing Matrix
 
@@ -157,8 +158,8 @@ The landing page should be organized around four product pillars:
 - The landing page has four clear pillars: Ship Fast With AI, Ship Safely,
   Scale Your Productivity Without Drag, and Enterprise Ready.
 - All feature claims align with the sprint tracker and release state.
-- Security, detection, observability, corp profile, forensic, SOAR/remote
-  enforcement/forward-plugin, and OpenTelemetry capabilities are represented
-  without overclaiming.
+- Security, detection, observability, corp profile, forensic, remote
+  enforcement, and OpenTelemetry capabilities are represented without
+  overclaiming.
 - Site build and responsive visual verification pass, including the hero
   screenshot plus one screenshot for each of the four pillar sections.

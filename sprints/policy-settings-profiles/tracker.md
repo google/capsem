@@ -627,14 +627,14 @@ a valid claim -- mark it `[ ]` instead.
 27. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
     cost usage, enforcement/detection match stats, detection finding health,
-    and centralized forward-plugin health. Running status reads memory only;
+    and future S22 quota/budget inputs. Running status reads memory only;
     persistent VMs seed/recompute from `session.db` exactly once at load.
 28. [ ] [S13 - Remote enforcement plugin](S13-remote-policy-plugin.md)
     -- decision mode participates only in `/enforcement/*`; observer mode can
     receive resolved events and detection findings but cannot convert detection
-    into blocking decisions. This is also the centralized forward-plugin sprint:
-    forwarded decisions/findings keep the same resolved-event ids and expose
-    VM-status/OTel health without bypassing local runtime APIs.
+    into blocking decisions. S13 is not the rate-limit/budget or centralized
+    quota sprint; it preserves event identity needed by S22 without expanding
+    this release scope.
 29. [ ] [S14 - Rules UI components](S14-rules-ui-components.md)
     -- enforcement-rule editor component is consumed by S15; detection
     rule/finding/backtest UX consumes S08b/S08c.
@@ -653,17 +653,16 @@ a valid claim -- mark it `[ ]` instead.
 34. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
     -- adds first-class enforcement and detection-format pages, corporate admin
     security links, `capsem-admin` enforcement/detection validation/backtest
-    docs, add-detection/add-enforcement admin guides, centralized forward-plugin
-    guide, telemetry extension guide, and VM health/OTel docs for model/provider/
-    token/cost, enforcement counters, detection metrics, and unified event
-    evidence.
+    docs, add-detection/add-enforcement admin guides, telemetry extension guide,
+    and VM health/OTel docs for model/provider/token/cost, enforcement counters,
+    detection metrics, future quota inputs, and unified event evidence.
 35. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
     -- refresh the landing page around four pillars: Ship Fast With AI, Ship
     Safely, Scale Your Productivity Without Drag, and Enterprise Ready. Include
     realtime CEL enforcement, Sigma-compatible detection with backtest and
     forensic timeline/session analysis, fast matching over unified events,
-    forward-plugin observability, and S08d artifact-backed engine performance
-    claims without overclaiming beyond the sprint tracker. Current-site
+    and S08d artifact-backed engine performance claims without overclaiming
+    beyond the sprint tracker. Current-site
     baseline screenshots were captured in
     `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`; refreshed
     pillar screenshots remain part of S19a's final gate.
@@ -680,6 +679,11 @@ a valid claim -- mark it `[ ]` instead.
     -- proposed standalone, non-blocking operations sprint. Provide reporting
     setup docs, collector examples, privacy guidance, and dashboard packaging
     after S12/runtime fields are stable.
+40. [ ] [S22 - Rate limits, budgets, and quotas](S22-rate-limits-budgets-and-quotas.md)
+    -- proposed later full sprint, not S08/S13 scope. Decide local engine vs
+    plugin-backed provider vs hybrid centralized quota design, then implement
+    HTTP/MCP/model/token/cost/request limits using S08b normalized event
+    dimensions and the reserved `Throttle` action.
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 

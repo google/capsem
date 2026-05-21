@@ -147,6 +147,7 @@ enum SecurityAction {
     Continue,
     Rewrite(RewritePatch),
     Block(BlockResponse),
+    Throttle(ThrottlePlan),
     Quarantine(QuarantinePlan),
     Restore(RestorePlan),
     DropConnection(DropReason),
@@ -159,6 +160,12 @@ enum SecurityAction {
 resolved event can include the challenge, answer, timeout/default, and final
 action in one journal. The UI/CLI prompt implementation is behind a
 `ConfirmService` trait, but the lifecycle belongs to the Security Engine.
+
+`Throttle` is a forward-compatibility action for [S22](S22-rate-limits-budgets-and-quotas.md).
+S08b does not implement rate limiting, budgets, or centralized quota providers.
+It only reserves the typed action and resolved-event evidence slot so a future
+rate-limit/budget engine or plugin-backed provider can delay, deny, or
+explain quota decisions without rewriting transport/file/process engines.
 
 Enforcement and detection content is profile-owned. The Security Engine receives the
 VM-effective enforcement and detection packs resolved from a signed profile revision;
@@ -521,6 +528,10 @@ Each event carries at least:
 - `trace_id`;
 - `source_engine`;
 - `enforceability`.
+- quota dimensions needed by future S22 work: event family/type, profile
+  revision, provider/model, MCP server/tool, HTTP host/method/path class, DNS
+  domain class, estimated tokens/cost, request/byte counts, and correlation ids
+  when known.
 
 ## Sub-Sprints
 

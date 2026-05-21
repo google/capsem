@@ -28,6 +28,11 @@ migrated.
 - CLI lands after the UDS and HTTP contracts are tested.
 - UI lands after backend contracts and reusable components exist.
 - Telemetry and remote policy plugins are service-scoped.
+- Rate limits, request quotas, and cost budgets are not part of the S13 ship
+  scope. S08b and S12 reserve typed event dimensions, counters, and a future
+  throttle action so S22 can implement the full design later without an engine
+  rewrite; S22 will decide local engine vs plugin-backed provider vs hybrid
+  centralized coordination.
 - S08a decides the policy-rule versus detection-rule abstraction, the real CEL
   enforcement runtime, the real Sigma-compatible detection path, and
   profile-owned rule-pack semantics before telemetry, plugins, rule UI, Confirm
@@ -89,6 +94,8 @@ migrated.
     backtest/hunt scan rates before public speed claims.
 15. Add CLI.
 16. Add credential brokerage, status/debug, observability, remote enforcement.
+    Remote enforcement is not the rate-limit/budget system; S22 owns that later
+    full design.
 17. Build reusable rule/settings UI components.
 18. Build settings/profile/security UI.
 19. Build unified timeline and agent workbench UI for SDK-backed and
@@ -138,6 +145,10 @@ migrated.
   health from the S12 accumulator. Persistent VMs recompute/seed from
   `session.db` once at process load; status/list/metrics fan-out never reads
   SQLite.
+- Future quota/rate-limit/budget work can consume the same normalized security
+  event dimensions and live S12 counters without changing the Network, File,
+  Process, or Security Engine contracts; release docs must not claim budget
+  enforcement until S22 lands.
 - File writes, deletes, snapshots, restores, quarantine, and observe-only file
   activity are owned by the File Engine and represented in the same Security
   Engine pipeline as network activity.

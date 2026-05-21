@@ -150,11 +150,6 @@ Under `docs/src/content/docs/`, likely pages:
 - `configuration/corporate-security.md` - corp admin entry page linking profile
   governance, enforcement packs, detection packs, remote enforcement,
   telemetry, and audit/export operations.
-- `configuration/centralized-forward-plugin.md` - planned centralized forward
-  plugin guide: service settings, authentication, decision-mode forwarding,
-  observer-mode event/finding forwarding, failure semantics, match-count
-  reporting, and the contract that a centralized controller can observe detections
-  without silently turning findings into enforcement.
 - `development/capsem-admin.md` - developer reference for the admin package:
   module layout, Pydantic models, JSON I/O boundaries, schema generation,
   builder integration, doctor integration, test fixtures, bootstrap editable
@@ -274,12 +269,6 @@ Final paths should follow the actual docs tree present when this sprint starts.
       persistent VM pins, and no implicit migration on profile update.
 - [ ] Write corporate deployment guide.
 - [ ] Write telemetry and remote enforcement configuration guide.
-- [ ] Write centralized forward-plugin guide for the not-yet-implemented S13
-      plugin: decision-mode forwarding for realtime enforcement, observer-mode
-      forwarding for resolved events and detection findings, auth/timeout/
-      fail-open/fail-closed semantics, centralized rule/update flow, and how
-      forwarded decisions/findings are represented in the same resolved event,
-      telemetry, audit, timeline, and VM status model.
 - [ ] Write VM health/metrics guide covering live status values, boot-time
       recompute/seed from `session.db`, no hot-path SQL reads, OTel labels,
       redaction/cardinality rules, model call count, provider/model summaries,
@@ -292,6 +281,9 @@ Final paths should follow the actual docs tree present when this sprint starts.
       new fields safely: normalized event field first, resolved-event evidence
       second, VM accumulator summary third, OTel labels only when bounded, and
       UI/status rendering through the typed metrics contract.
+- [ ] Add future rate-limit/budget note that points to S22:
+      S08b/S12 expose quota dimensions and usage counters, but release docs do
+      not claim budget enforcement until the later full sprint lands.
 - [ ] Write security-engine benchmark page:
       explain S08d methodology, `capsem-bench security-engine`, host serial
       artifact capture, VM-originated event paths, CEL/Sigma rule-pack scale,
@@ -375,8 +367,8 @@ listed revision that must not be installed or launched is `revoked`.
 - Telemetry: docs cover OpenTelemetry endpoint behavior, redaction, retry, and
   failure semantics after S12, including live VM health model metrics
   (provider, model, call count, token counts, estimated cost), enforcement
-  match counters, detection finding attribution, centralized forward-plugin
-  attribution, and the unified event/timeline evidence model.
+  match counters, detection finding attribution, future quota/budget input
+  fields, and the unified event/timeline evidence model.
 - Performance: docs mention profile discovery/remote enforcement timeout
   behavior only once measured or specified; security-engine speed claims cite
   S08d benchmark artifacts with host/arch/profile/rule-pack context.
