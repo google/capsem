@@ -704,6 +704,14 @@ a valid claim -- mark it `[ ]` instead.
     accounting. Verification: `cargo test -p capsem-security-engine` passed
     with 21 tests and `cargo test -p capsem-core --test security_packs` passed
     with 6 tests.
+    Thirteenth parser-adapter slice added
+    `capsem-core::net::ai_traffic::evidence`, projecting existing request
+    metadata plus OpenAI/Anthropic/Gemini stream summaries into canonical
+    `ModelInteractionEvidence`. The adapter preserves provider/API family,
+    path-derived Gemini model names, usage/cost micros, tool-call origin,
+    argument status, returned tool results, raw-shape version, and host-vs-VM
+    attribution. Verification: `cargo test -p capsem-core
+    ai_traffic::evidence` passed with 5 tests.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

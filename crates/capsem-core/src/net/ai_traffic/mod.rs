@@ -1,3 +1,4 @@
+pub mod events;
 /// AI traffic parsing and telemetry: SSE stream parsing, request metadata
 /// extraction, and provider-agnostic event normalization for AI provider
 /// traffic flowing through the MITM proxy (vsock:5002).
@@ -29,7 +30,7 @@
 /// - Builtin tool NetEvents are not linked to their tool_call entries.
 /// - `tool_origin()` imports `mcp::builtin_tools::is_builtin_tool()` --
 ///   cross-module coupling that should be replaced by a shared registry.
-pub mod events;
+pub mod evidence;
 pub mod pricing;
 pub mod provider;
 pub mod request_parser;

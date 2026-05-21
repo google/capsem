@@ -9,6 +9,12 @@ model/MCP evidence on policy-facing subjects, OpenAI/Anthropic/Gemini/host
 fixtures, and tests proving host AI can correlate to a VM/session without
 charging VM accounting.
 
+The second slice added the first `capsem-core::net::ai_traffic::evidence`
+adapter, projecting the existing provider request metadata and stream summaries
+into canonical `ModelInteractionEvidence` for OpenAI, Anthropic, and Gemini.
+It pins tool-call origin, argument status, tool-result return, usage, raw shape,
+and host-vs-VM attribution behavior with focused Rust tests.
+
 This is intentionally a side document rather than another numbered board item:
 S08b remains the active engine implementation sprint, but S08b must not harden
 model/MCP enforcement, detection, telemetry, quotas, timeline, or plugin

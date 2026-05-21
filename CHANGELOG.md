@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including OpenAI/Anthropic/Gemini/host fixtures, host-vs-VM attribution fields
   on security events and quota dimensions, optional model/MCP evidence subjects,
   and tests proving host AI does not charge VM accounting.
+- Added the first `capsem-core` AI evidence adapter so existing OpenAI,
+  Anthropic, and Gemini request/stream parser summaries project into canonical
+  `ModelInteractionEvidence` with tool-call, tool-result, usage, argument
+  status, and host-vs-VM attribution tests.
 - Added the first S08b `capsem-security-engine` contract crate with normalized
   security events, resolved-event actions, detection findings, quota dimensions,
   and throttle-ready serialization tests.
