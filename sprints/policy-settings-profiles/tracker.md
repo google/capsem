@@ -1809,6 +1809,20 @@ a valid claim -- mark it `[ ]` instead.
     enforcement/detection pack corpora, expected backtest/hunt outputs,
     offline `capsem-admin` backtest commands, Rust/admin parity over identical
     expected rows, real-session fixture generation, and corpus workflow docs.
+    Second TDD admin-detection-backtest slice added a shared Sigma detection
+    pack fixture and `capsem-admin detection backtest` over policy-context JSONL
+    fixtures. The old `check` command now delegates to the same typed path, but
+    the documented command is `backtest` because this is offline fixture replay,
+    not live hunting. Verification: red `uv run pytest
+    tests/test_admin_cli.py::test_capsem_admin_detection_backtest_uses_policy_context_corpus
+    -q` first failed because `backtest` did not exist, then caught pySigma's
+    UUID requirement for Sigma rule ids, then passed. Widened `uv run pytest
+    tests/test_admin_cli.py -q` passed with **29** tests, `uv run python -m
+    compileall -q src/capsem/builder/security_packs.py src/capsem/admin/cli.py
+    tests/test_admin_cli.py` passed, and focused Rust corpus parity still
+    passed. Still missing in S08c: enforcement backtest, shared expected row
+    artifacts, Rust/admin parity over identical expected rows, real-session
+    fixture generation, and corpus workflow docs.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

@@ -90,7 +90,7 @@ session-scoped enforcement replay, it should be named and designed separately.
   `event.*` authoring.
 - [ ] Add `capsem-admin enforcement validate|compile|backtest` over the shared
   corpus without requiring a Capsem service.
-- [ ] Add `capsem-admin detection validate|compile|backtest` over the shared corpus
+- [x] Add `capsem-admin detection validate|compile|backtest` over the shared corpus
   without requiring a Capsem service.
 - [ ] Keep `capsem-admin detection hunt` optional unless it can target a local
   service/session store explicitly; offline detection backtest is mandatory.
@@ -118,6 +118,10 @@ session-scoped enforcement replay, it should be named and designed separately.
   such as `http.request.host`, `http.request.header(...)`, and
   `http.request.body.text`, and asserts the rejected `event.subject.*` root
   stays rejected before rule install.
+- Slice 2 added `capsem-admin detection backtest`, a shared Sigma detection
+  pack fixture under `data/detection/sigma/`, and documentation updates so
+  offline detection checks now target policy-context JSONL instead of the old
+  normalized-event/subject shape.
 
 ## Coverage Ledger
 

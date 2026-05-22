@@ -72,22 +72,22 @@ findings:
 | `field_mapping` | Explicit Sigma-field to normalized-event-field mapping. No implicit Windows/Linux/cloud mapping is used. |
 | `findings` | Default severity, confidence, tags, and export routes. |
 
-## Compile And Check
+## Compile And Backtest
 
 ```bash
 capsem-admin detection validate corp-detections.yml --json
 capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
-capsem-admin detection check corp-detections.yml --events events.jsonl --json
+capsem-admin detection backtest corp-detections.yml --events policy-contexts.jsonl --json
 ```
 
 `validate` proves the envelope shape. `compile` proves pySigma accepts the
-Sigma YAML and the supported subset maps into Detection IR. `check` compiles
-the pack and evaluates normalized `SecurityEvent` JSONL fixtures.
+Sigma YAML and the supported subset maps into Detection IR. `backtest` compiles
+the pack and evaluates typed policy-context JSONL fixtures.
 
-Example fixture event:
+Example fixture line:
 
 ```json
-{"event_id":"evt-1","event_family":"http","event_type":"http.request","subject":{"request":{"host":"169.254.169.254"}}}
+{"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"corp-smoke","session_id":"session-1","event_id":"evt-1","sequence":1,"timestamp_unix_ms":1789002001},"expected_labels":["metadata-egress"],"context":{"schema_version":1,"common":{"event_type":"http.request"},"http":{"request":{"host":"169.254.169.254","body":{"state":"missing"}}}}}
 ```
 
 ## Supported Sigma Subset

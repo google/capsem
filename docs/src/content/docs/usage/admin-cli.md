@@ -90,12 +90,15 @@ capsem-admin policy validate corp-policy.toml --json
 capsem-admin detection schema
 capsem-admin detection validate corp-detections.yml --json
 capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
-capsem-admin detection check corp-detections.yml --events events.jsonl --json
+capsem-admin detection backtest corp-detections.yml --events policy-contexts.jsonl --json
 ```
 
 Policy packs are enforcement contracts. Detection packs are finding contracts.
 Detection packs may embed Sigma YAML, but Sigma is validated with pySigma and
-compiled into Capsem Detection IR before runtime consumption.
+compiled into Capsem Detection IR before runtime consumption. Offline
+backtests use the same policy-context fixture envelope that runtime CEL
+evaluates, with roots such as `http.request.host` rather than internal event
+paths.
 
 ## JSON Boundaries
 

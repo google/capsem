@@ -634,3 +634,24 @@ def test_policy_context_corpus_loads_through_pydantic_models() -> None:
     assert first.context.http.request.body.text == "token=secret"
     assert first.context.http.request.body.size == 12
     assert first.expected_labels == ["detect-google-secret"]
+
+
+def test_capsem_admin_detection_backtest_uses_policy_context_corpus() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "detection",
+            "backtest",
+            "data/detection/sigma/google-secret-egress.yml",
+            "--events",
+            "data/policy-context/canonical-policy-contexts.jsonl",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"event_count": 2' in result.output
+    assert '"match_count": 1' in result.output
+    assert '"event_id": "evt-http-google-secret"' in result.output
+    assert '"http.request.host": "googleapis.com"' in result.output
+    assert '"http.request.body.text": "token=secret"' in result.output

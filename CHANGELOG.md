@@ -144,6 +144,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first S08c shared policy-context/CEL corpus fixtures, with Python
   Pydantic loading and Rust CEL parity coverage over canonical
   `http.request.*` roots plus rejected `event.subject.*` authoring.
+- Added `capsem-admin detection backtest` for offline pySigma-backed detection
+  checks against typed policy-context fixture JSONL.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API

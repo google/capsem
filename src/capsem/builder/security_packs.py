@@ -622,8 +622,8 @@ def compile_detection_pack(pack: DetectionPackV1, *, base_dir: Path) -> Detectio
     )
 
 
-def _event_value(event: SecurityEventV1, field_path: str) -> DetectionValue | None:
-    current: Any = event.model_dump(mode="json")
+def _event_value(context: PolicyContextV1, field_path: str) -> DetectionValue | None:
+    current: Any = context.model_dump(mode="json")
     for part in field_path.split("."):
         if not isinstance(current, dict) or part not in current:
             return None
@@ -635,17 +635,28 @@ def _event_value(event: SecurityEventV1, field_path: str) -> DetectionValue | No
 
 def _rule_matches(
     rule: DetectionIRRuleV1,
-    event: SecurityEventV1,
+    fixture: PolicyContextFixtureV1,
 ) -> tuple[bool, dict[str, DetectionValue]]:
-    if event.event_family is not rule.event_family:
+    if _context_event_family(fixture.context) is not rule.event_family:
         return False, {}
     matched: dict[str, DetectionValue] = {}
     for matcher in rule.matchers:
-        value = _event_value(event, matcher.field_path)
+        value = _event_value(fixture.context, matcher.field_path)
         if value is None or value not in matcher.values:
             return False, {}
         matched[matcher.field_path] = value
     return True, matched
+
+
+def _context_event_family(context: PolicyContextV1) -> EventFamily | None:
+    event_type = context.common.event_type
+    if event_type is None or "." not in event_type:
+        return None
+    family = event_type.split(".", 1)[0]
+    try:
+        return EventFamily(family)
+    except ValueError:
+        return None
 
 
 def run_detection_check(
@@ -658,22 +669,18 @@ def run_detection_check(
     diagnostics: list[str] = []
     findings: list[DetectionFindingV1] = []
     ir = compile_detection_pack(pack, base_dir=base_dir)
-    event_count = 0
-    for line_number, line in enumerate(events_path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            event = SecurityEventV1.model_validate_json(line)
-        except Exception as error:
-            diagnostics.append(f"{events_path}:{line_number}: {error}")
-            continue
-        event_count += 1
+    try:
+        fixtures = load_policy_context_fixture_jsonl(events_path)
+    except Exception as error:
+        fixtures = []
+        diagnostics.append(str(error))
+    for fixture in fixtures:
         for rule in ir.rules:
-            matched, matched_fields = _rule_matches(rule, event)
+            matched, matched_fields = _rule_matches(rule, fixture)
             if matched:
                 findings.append(
                     DetectionFindingV1(
-                        event_id=event.event_id,
+                        event_id=fixture.event_ref.event_id,
                         rule_id=rule.id,
                         pack_id=ir.pack_id,
                         pack_version=ir.pack_version,
@@ -689,7 +696,7 @@ def run_detection_check(
         ok=not diagnostics,
         pack_id=pack.id,
         pack_version=pack.version,
-        event_count=event_count,
+        event_count=len(fixtures),
         rule_count=len(ir.rules),
         match_count=len(findings),
         findings=findings,

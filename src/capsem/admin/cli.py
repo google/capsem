@@ -877,7 +877,30 @@ def detection_compile(
 )
 @click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
 def detection_check(detection_path: str, events_path: str, json_output: bool) -> None:
-    """Evaluate a detection pack against normalized SecurityEvent JSONL fixtures."""
+    """Evaluate a detection pack against policy-context JSONL fixtures."""
+    _run_detection_backtest(detection_path, events_path, json_output)
+
+
+@detection.command("backtest")
+@click.argument("detection_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--events",
+    "events_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSONL policy-context fixture file.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def detection_backtest(detection_path: str, events_path: str, json_output: bool) -> None:
+    """Backtest a detection pack against policy-context JSONL fixtures."""
+    _run_detection_backtest(detection_path, events_path, json_output)
+
+
+def _run_detection_backtest(
+    detection_path: str,
+    events_path: str,
+    json_output: bool,
+) -> None:
     path = Path(detection_path)
     try:
         pack = _load_detection_pack(path)

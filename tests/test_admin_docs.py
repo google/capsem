@@ -28,7 +28,7 @@ def test_detection_docs_require_pysigma_and_detection_ir() -> None:
 
     assert "pySigma" in doc
     assert "capsem.detection.ir.v1" in doc
-    assert "capsem-admin detection check" in doc
+    assert "capsem-admin detection backtest" in doc
     assert "Rejected constructs fail closed" in doc
     assert "avoiding a second, ad hoc Sigma" in doc
     assert "implementation inside Capsem" in doc

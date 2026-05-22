@@ -104,7 +104,7 @@ capsem-admin policy validate corp-policy.toml --json
 capsem-admin detection schema
 capsem-admin detection validate corp-detections.yml --json
 capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
-capsem-admin detection check corp-detections.yml --events events.jsonl --json
+capsem-admin detection backtest corp-detections.yml --events policy-contexts.jsonl --json
 ```
 
 `profile init` writes a valid JSON or TOML draft for the selected profile id.
