@@ -23,7 +23,8 @@ use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, BlockResponse, Enforceability, HttpBodySecuritySubject,
     HttpSecuritySubject, RedactionState, ResolvedEventStep, ResolvedEventStepKind,
     ResolvedSecurityEvent, SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError,
-    SecurityEvent, SecurityEventCommon, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    SecurityEvent, SecurityEventCommon, SecurityResult, SourceEngine, StepStatus,
+    RESOLVED_EVENT_SCHEMA_VERSION,
 };
 use tracing::{info, warn};
 
@@ -76,6 +77,7 @@ pub struct TelemetryRequestContext {
     pub policy_action: Option<String>,
     pub policy_rule: Option<String>,
     pub policy_reason: Option<String>,
+    pub runtime_security_result: Option<SecurityResult>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -195,7 +197,13 @@ impl ChunkHook for TelemetryHook {
             .clone();
 
         let net_event = build_net_event(&req_ctx, &resp_stats);
-        let resolved_event = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
+        let resolved_event = req_ctx
+            .runtime_security_result
+            .clone()
+            .map(|result| result.resolved_event)
+            .unwrap_or_else(|| {
+                build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event)
+            });
         let model_call = maybe_build_model_call(
             &req_ctx,
             &resp_stats,

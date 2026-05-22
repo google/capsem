@@ -1252,9 +1252,22 @@ a valid claim -- mark it `[ ]` instead.
     first, then `cargo test -p capsem-core runtime_security_engine_ --lib`,
     escalated `cargo test -p capsem-core net::mitm_proxy::tests --lib`,
     `cargo test -p capsem-core telemetry_hook --lib`, and `cargo test -p
-    capsem-security-engine` passed. Still missing after this slice: carrying
-    the live resolved Security Engine result into the canonical telemetry sink,
-    DNS/MCP/file/process emitters, visible UI screens/editors,
+    capsem-security-engine` passed. Still missing after this slice: DNS/MCP/
+    file/process emitters, visible UI screens/editors, persistence/profile-pack
+    seeding, VM status/live metrics integration, and S08d performance proof.
+    Fifty-first TDD resolved-result telemetry slice removed the lossy
+    `NetEvent` reconstruction for inline runtime decisions. The red response
+    test now asserts the session DB gets a canonical `http.response` security
+    event with the live rule id after response enforcement; `TelemetryRequestContext`
+    can carry an actual `SecurityResult`, and `TelemetryHook` persists that
+    resolved event directly when present, falling back to reconstruction only
+    for non-runtime paths. Verification: red DB assertion first, then escalated
+    `cargo test -p capsem-core
+    runtime_security_engine_blocks_response_body_before_guest_delivery --lib`,
+    escalated `cargo test -p capsem-core net::mitm_proxy::tests --lib`, and
+    `cargo test -p capsem-core telemetry_hook --lib` passed. Still missing
+    after this slice: emitting separate request+response events when both
+    phases match, DNS/MCP/file/process emitters, visible UI screens/editors,
     persistence/profile-pack seeding, VM status/live metrics integration, and
     S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)

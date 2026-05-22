@@ -127,6 +127,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added response-body-aware inline HTTP enforcement: when a runtime Security
   Engine is installed, MITM can evaluate decoded `http.response.body.text`
   before guest delivery and synthesize a 403 without leaking the upstream body.
+- Changed MITM security-event telemetry to persist the actual runtime
+  `SecurityResult` when inline enforcement runs, preserving response-phase
+  event types, rule ids, findings, and resolved steps instead of rebuilding a
+  request-shaped event from `NetEvent`.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without

@@ -677,6 +677,16 @@ async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
             .is_some_and(|preview| !preview.contains("needle-from-upstream")),
         "blocked response body must not be journaled back through the guest response preview"
     );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.event_type, se.final_action, steps.rule_id \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("http.response"));
+    assert!(security.contains("block-response-secret-inline"));
 }
 
 #[tokio::test]

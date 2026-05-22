@@ -179,7 +179,7 @@ struct RuntimeHttpResponseInput {
 }
 
 enum RuntimeHttpDecision {
-    Allow,
+    Allow(Option<SecurityResult>),
     Reject(TelemetryRequestContext, String),
 }
 
@@ -222,6 +222,7 @@ fn evaluate_runtime_http_request_inner(
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
+        runtime_security_result: None,
     };
     let timestamp_unix_ms = SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -237,7 +238,7 @@ fn evaluate_runtime_http_request_inner(
     let result = engine.evaluate(event)?;
 
     if runtime_action_allows_transport(&result.action) {
-        return Ok(RuntimeHttpDecision::Allow);
+        return Ok(RuntimeHttpDecision::Allow(Some(result)));
     }
 
     let decision = result.resolved_event.event.decision.as_ref();
@@ -253,6 +254,7 @@ fn evaluate_runtime_http_request_inner(
     denied_ctx.policy_action = Some(policy_action);
     denied_ctx.policy_rule = policy_rule;
     denied_ctx.policy_reason = Some(policy_reason.clone());
+    denied_ctx.runtime_security_result = Some(result);
 
     Ok(RuntimeHttpDecision::Reject(
         denied_ctx,
@@ -291,7 +293,7 @@ fn evaluate_runtime_http_response_inner(
     let result = engine.evaluate(event)?;
 
     if runtime_action_allows_transport(&result.action) {
-        return Ok(RuntimeHttpDecision::Allow);
+        return Ok(RuntimeHttpDecision::Allow(Some(result)));
     }
 
     let decision = result.resolved_event.event.decision.as_ref();
@@ -307,6 +309,7 @@ fn evaluate_runtime_http_response_inner(
     denied_ctx.policy_action = Some(policy_action);
     denied_ctx.policy_rule = policy_rule;
     denied_ctx.policy_reason = Some(policy_reason.clone());
+    denied_ctx.runtime_security_result = Some(result);
 
     Ok(RuntimeHttpDecision::Reject(
         denied_ctx,
@@ -949,6 +952,7 @@ async fn handle_request(
             policy_action: None,
             policy_rule: None,
             policy_reason: None,
+            runtime_security_result: None,
         };
 
         let deny_body = Full::new(Bytes::from(body_text))
@@ -998,6 +1002,7 @@ async fn handle_request(
             policy_action: None,
             policy_rule: None,
             policy_reason: None,
+            runtime_security_result: None,
         };
         let deny_body = Full::new(Bytes::from(body_text))
             .map_err(|never| match never {})
@@ -1039,6 +1044,7 @@ async fn handle_request(
         None
     };
 
+    let mut runtime_request_security_result: Option<SecurityResult> = None;
     if let Some(runtime_decision) = evaluate_runtime_http_request(
         config,
         RuntimeHttpRequestInput {
@@ -1057,7 +1063,9 @@ async fn handle_request(
         },
     ) {
         match runtime_decision {
-            Ok(RuntimeHttpDecision::Allow) => {}
+            Ok(RuntimeHttpDecision::Allow(result)) => {
+                runtime_request_security_result = result;
+            }
             Ok(RuntimeHttpDecision::Reject(req_ctx, body_text)) => {
                 let deny_body = Full::new(Bytes::from(body_text))
                     .map_err(|never| match never {})
@@ -1091,6 +1099,7 @@ async fn handle_request(
                     policy_action: Some("error".into()),
                     policy_rule: None,
                     policy_reason: Some(reason.clone()),
+                    runtime_security_result: None,
                 };
                 let deny_body = Full::new(Bytes::from(format!("Capsem: {reason}\n")))
                     .map_err(|never| match never {})
@@ -1368,6 +1377,7 @@ async fn handle_request(
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
+        runtime_security_result: runtime_request_security_result,
     };
 
     let response_body_security_enabled = config.security_engine.has_engine();
@@ -1404,7 +1414,9 @@ async fn handle_request(
             },
         ) {
             match runtime_decision {
-                Ok(RuntimeHttpDecision::Allow) => {}
+                Ok(RuntimeHttpDecision::Allow(result)) => {
+                    req_ctx.runtime_security_result = result;
+                }
                 Ok(RuntimeHttpDecision::Reject(denied_ctx, body_text)) => {
                     let deny_body = Full::new(Bytes::from(body_text))
                         .map_err(|never| match never {})
