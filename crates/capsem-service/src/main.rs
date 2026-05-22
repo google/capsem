@@ -6442,11 +6442,19 @@ fn backtest_matched_fields(
     event: &seceng::SecurityEvent,
 ) -> Result<Vec<seceng::MatchedField>, AppError> {
     let mut fields = Vec::new();
+    push_common_matched_fields(&mut fields, event)?;
     match &event.subject {
         seceng::SecurityEventSubject::Http(subject) => {
             push_matched_field(&mut fields, "http.request.method", &subject.method)?;
             push_matched_field(&mut fields, "http.request.host", &subject.host)?;
             push_matched_field(&mut fields, "http.request.path_class", &subject.path_class)?;
+            push_matched_field(&mut fields, "http.request.bytes", subject.request_bytes)?;
+            for (name, values) in &subject.request_headers {
+                push_matched_field(&mut fields, &format!("http.request.headers.{name}"), values)?;
+            }
+            if let Some(body) = &subject.request_body {
+                push_http_body_matched_fields(&mut fields, "http.request.body", body)?;
+            }
             if let Some(value) = &subject.scheme {
                 push_matched_field(&mut fields, "http.request.scheme", value)?;
             }
@@ -6465,6 +6473,19 @@ fn backtest_matched_fields(
             if let Some(value) = subject.response_status {
                 push_matched_field(&mut fields, "http.response.status", value)?;
             }
+            if let Some(value) = subject.response_bytes {
+                push_matched_field(&mut fields, "http.response.bytes", value)?;
+            }
+            for (name, values) in &subject.response_headers {
+                push_matched_field(
+                    &mut fields,
+                    &format!("http.response.headers.{name}"),
+                    values,
+                )?;
+            }
+            if let Some(body) = &subject.response_body {
+                push_http_body_matched_fields(&mut fields, "http.response.body", body)?;
+            }
         }
         seceng::SecurityEventSubject::Dns(subject) => {
             push_matched_field(&mut fields, "dns.request.qname", &subject.qname)?;
@@ -6477,6 +6498,50 @@ fn backtest_matched_fields(
         seceng::SecurityEventSubject::Mcp(subject) => {
             push_matched_field(&mut fields, "mcp.request.server_id", &subject.server_id)?;
             push_matched_field(&mut fields, "mcp.request.tool_name", &subject.tool_name)?;
+            if let Some(evidence) = &subject.evidence {
+                push_matched_field(
+                    &mut fields,
+                    "mcp.request.arguments_status",
+                    mcp_arguments_status(evidence),
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "mcp.request.namespaced_tool_name",
+                    &evidence.namespaced_tool_name,
+                )?;
+                push_matched_field(&mut fields, "mcp.request.transport", &evidence.transport)?;
+                if let Some(value) = &evidence.request_arguments_raw {
+                    push_matched_field(&mut fields, "mcp.request.arguments_raw", value)?;
+                }
+                if let Some(value) = &evidence.request_arguments_json {
+                    push_matched_field(&mut fields, "mcp.request.arguments_json", value)?;
+                }
+                push_matched_field(&mut fields, "mcp.response.is_error", evidence.is_error)?;
+                push_matched_field(
+                    &mut fields,
+                    "mcp.response.result_status",
+                    if evidence.is_error { "error" } else { "ok" },
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "mcp.response.result_kind",
+                    evidence.result_kind,
+                )?;
+                if let Some(value) = &evidence.result_preview {
+                    push_matched_field(&mut fields, "mcp.response.result_preview", value)?;
+                }
+                if let Some(value) = &evidence.result_json {
+                    push_matched_field(&mut fields, "mcp.response.result_json", value)?;
+                }
+                push_matched_field(&mut fields, "mcp.response.latency_ms", evidence.latency_ms)?;
+                push_matched_field(&mut fields, "mcp.link.status", evidence.link_status)?;
+                if let Some(value) = &evidence.linked_model_interaction_id {
+                    push_matched_field(&mut fields, "mcp.link.model_interaction_id", value)?;
+                }
+                if let Some(value) = &evidence.linked_model_tool_call_id {
+                    push_matched_field(&mut fields, "mcp.link.model_tool_call_id", value)?;
+                }
+            }
         }
         seceng::SecurityEventSubject::Model(subject) => {
             push_matched_field(&mut fields, "model.request.provider", &subject.provider)?;
@@ -6489,6 +6554,151 @@ fn backtest_matched_fields(
             }
             if let Some(value) = subject.estimated_cost_micros {
                 push_matched_field(&mut fields, "model.usage.estimated_cost_micros", value)?;
+            }
+            if let Some(evidence) = &subject.evidence {
+                push_matched_field(&mut fields, "model.request.api_family", evidence.api_family)?;
+                push_matched_field(&mut fields, "model.request.stream", evidence.request.stream)?;
+                push_matched_field(
+                    &mut fields,
+                    "model.request.message_count",
+                    evidence.request.message_count,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.request.tools_declared_count",
+                    evidence.request.tools_declared_count,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.request.unknown_fields_present",
+                    evidence.request.unknown_fields_present,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.evidence.parse_status",
+                    evidence.parse_status,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.evidence.status",
+                    evidence.evidence_status,
+                )?;
+                for (index, tool_call) in evidence.tool_calls.iter().enumerate() {
+                    let prefix = format!("model.request.tool_calls[{index}]");
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.tool_call_id"),
+                        &tool_call.tool_call_id,
+                    )?;
+                    if let Some(value) = &tool_call.provider_call_id {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.provider_call_id"),
+                            value,
+                        )?;
+                    }
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.raw_name"),
+                        &tool_call.raw_name,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.name"),
+                        &tool_call.normalized_name,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.arguments_status"),
+                        tool_call.arguments_status,
+                    )?;
+                    push_matched_field(&mut fields, &format!("{prefix}.origin"), tool_call.origin)?;
+                    push_matched_field(&mut fields, &format!("{prefix}.status"), tool_call.status)?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.parse_confidence"),
+                        tool_call.parse_confidence,
+                    )?;
+                    if let Some(value) = &tool_call.linked_mcp_call_id {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.linked_mcp_call_id"),
+                            value,
+                        )?;
+                    }
+                    if let Some(value) = &tool_call.arguments_raw {
+                        push_matched_field(&mut fields, &format!("{prefix}.arguments_raw"), value)?;
+                    }
+                    if let Some(value) = &tool_call.arguments_json {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.arguments_json"),
+                            value,
+                        )?;
+                    }
+                }
+                if let Some(response) = &evidence.response {
+                    if let Some(value) = &response.stop_reason {
+                        push_matched_field(&mut fields, "model.response.stop_reason", value)?;
+                    }
+                    if let Some(value) = &response.provider_response_id {
+                        push_matched_field(
+                            &mut fields,
+                            "model.response.provider_response_id",
+                            value,
+                        )?;
+                    }
+                }
+                for (index, tool_result) in evidence.tool_results.iter().enumerate() {
+                    let prefix = format!("model.response.tool_results[{index}]");
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.tool_call_id"),
+                        &tool_result.tool_call_id,
+                    )?;
+                    if let Some(value) = &tool_result.linked_mcp_call_id {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.linked_mcp_call_id"),
+                            value,
+                        )?;
+                    }
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.content_kind"),
+                        tool_result.content_kind,
+                    )?;
+                    if let Some(value) = &tool_result.content_preview {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.content_preview"),
+                            value,
+                        )?;
+                    }
+                    if let Some(value) = &tool_result.content_json {
+                        push_matched_field(&mut fields, &format!("{prefix}.content_json"), value)?;
+                    }
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.is_error"),
+                        tool_result.is_error,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.result_status"),
+                        tool_result.result_status,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.returned_to_model"),
+                        tool_result.returned_to_model,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.parse_confidence"),
+                        tool_result.parse_confidence,
+                    )?;
+                }
             }
         }
         seceng::SecurityEventSubject::File(subject) => {
@@ -6555,6 +6765,93 @@ fn backtest_matched_fields(
         }
     }
     Ok(fields)
+}
+
+fn push_common_matched_fields(
+    fields: &mut Vec<seceng::MatchedField>,
+    event: &seceng::SecurityEvent,
+) -> Result<(), AppError> {
+    push_matched_field(fields, "common.event_id", &event.common.event_id)?;
+    push_matched_field(fields, "common.event_type", &event.common.event_type)?;
+    push_matched_field(fields, "common.source_engine", event.common.source_engine)?;
+    push_matched_field(fields, "common.enforceability", event.common.enforceability)?;
+    push_matched_field(
+        fields,
+        "common.attribution_scope",
+        event.common.attribution_scope,
+    )?;
+    push_matched_field(fields, "common.origin_kind", event.common.origin_kind)?;
+    push_matched_field(
+        fields,
+        "common.timestamp_unix_ms",
+        event.common.timestamp_unix_ms,
+    )?;
+    if let Some(value) = &event.common.vm_id {
+        push_matched_field(fields, "common.vm_id", value)?;
+    }
+    if let Some(value) = &event.common.session_id {
+        push_matched_field(fields, "common.session_id", value)?;
+    }
+    if let Some(value) = &event.common.profile_id {
+        push_matched_field(fields, "common.profile_id", value)?;
+    }
+    if let Some(value) = &event.common.user_id {
+        push_matched_field(fields, "common.user_id", value)?;
+    }
+    if let Some(value) = &event.common.process_id {
+        push_matched_field(fields, "common.process_id", value)?;
+    }
+    if let Some(value) = &event.common.exec_id {
+        push_matched_field(fields, "common.exec_id", value)?;
+    }
+    if let Some(value) = &event.common.turn_id {
+        push_matched_field(fields, "common.turn_id", value)?;
+    }
+    if let Some(value) = &event.common.message_id {
+        push_matched_field(fields, "common.message_id", value)?;
+    }
+    if let Some(value) = &event.common.tool_call_id {
+        push_matched_field(fields, "common.tool_call_id", value)?;
+    }
+    if let Some(value) = &event.common.mcp_call_id {
+        push_matched_field(fields, "common.mcp_call_id", value)?;
+    }
+    if let Some(value) = &event.common.accounting_owner {
+        push_matched_field(fields, "common.accounting_owner", value)?;
+    }
+    Ok(())
+}
+
+fn push_http_body_matched_fields(
+    fields: &mut Vec<seceng::MatchedField>,
+    prefix: &str,
+    body: &seceng::HttpBodySecuritySubject,
+) -> Result<(), AppError> {
+    push_matched_field(fields, &format!("{prefix}.state"), body.state)?;
+    if let Some(value) = &body.text {
+        push_matched_field(fields, &format!("{prefix}.text"), value)?;
+    }
+    if let Some(value) = &body.content_type {
+        push_matched_field(fields, &format!("{prefix}.content_type"), value)?;
+    }
+    if let Some(value) = body.size {
+        push_matched_field(fields, &format!("{prefix}.size"), value)?;
+    }
+    push_matched_field(fields, &format!("{prefix}.truncated"), body.truncated)?;
+    if let Some(value) = &body.redaction_reason {
+        push_matched_field(fields, &format!("{prefix}.redaction_reason"), value)?;
+    }
+    Ok(())
+}
+
+fn mcp_arguments_status(evidence: &seceng::McpToolExecutionEvidence) -> &'static str {
+    if evidence.request_arguments_json.is_some() {
+        "valid_json"
+    } else if evidence.request_arguments_raw.is_some() {
+        "not_json"
+    } else {
+        "absent"
+    }
 }
 
 fn push_matched_field(

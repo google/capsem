@@ -105,6 +105,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed runtime enforcement/detection backtest evidence rows to report
   canonical policy paths such as `http.request.host` instead of an opaque
   whole-subject blob.
+- Expanded enforcement/detection backtest evidence rows with common
+  attribution, HTTP headers/body, MCP request/response/link evidence, and model
+  tool-call/tool-result paths so forensic hunts explain the fields rules
+  matched.
 - Added typed model tool-call policy projection under
   `model.request.tool_calls`, including name, origin, argument status, status,
   linked MCP call id, and parse confidence, with session-backed detection hunt

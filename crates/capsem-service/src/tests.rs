@@ -8119,6 +8119,42 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
     .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(matched_rule_ids, expected_rule_ids);
     assert_eq!(result.total_matches, 9);
+
+    let mcp_row = result
+        .rows
+        .iter()
+        .find(|row| row.rule_id == "detect-mcp-read")
+        .expect("MCP hunt match should be returned");
+    assert!(mcp_row.matched_fields.iter().any(|field| {
+        field.path == "mcp.request.arguments_status"
+            && field.value == serde_json::json!("valid_json")
+    }));
+    assert!(mcp_row
+        .matched_fields
+        .iter()
+        .any(|field| field.path == "mcp.response.is_error"
+            && field.value == serde_json::json!(false)));
+
+    let model_row = result
+        .rows
+        .iter()
+        .find(|row| row.rule_id == "detect-model-gemini")
+        .expect("model hunt match should be returned");
+    assert!(model_row.matched_fields.iter().any(|field| {
+        field.path == "model.request.api_family"
+            && field.value == serde_json::json!("google_gemini_content")
+    }));
+    assert!(model_row.matched_fields.iter().any(
+        |field| field.path == "model.request.stream" && field.value == serde_json::json!(true)
+    ));
+    assert!(model_row.matched_fields.iter().any(|field| {
+        field.path == "model.request.tool_calls[0].name"
+            && field.value == serde_json::json!("filesystem.read_file")
+    }));
+    assert!(model_row.matched_fields.iter().any(|field| {
+        field.path == "model.response.tool_results[0].returned_to_model"
+            && field.value == serde_json::json!(true)
+    }));
 }
 
 #[tokio::test]

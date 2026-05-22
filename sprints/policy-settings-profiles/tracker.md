@@ -1650,6 +1650,28 @@ a valid claim -- mark it `[ ]` instead.
     --check` passed; `git diff --check` passed. Still missing after this slice:
     visible UI screens/editors, ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Seventy-fourth TDD forensic-evidence slice expanded matched-field evidence
+    beyond shallow family identity. Backtest and hunt rows now include common
+    attribution fields, HTTP header/body fields, MCP request argument status,
+    MCP response/error/link fields, model API-family/stream/parse-status
+    fields, indexed model tool-call fields, and indexed model tool-result
+    fields. The session-backed hand-built corpus test now proves a rule that
+    matches `mcp.request.arguments_status` and `mcp.response.is_error` returns
+    those exact paths, and a rule that matches Gemini tool-call/tool-result
+    evidence returns `model.request.api_family`, `model.request.stream`,
+    `model.request.tool_calls[0].name`, and
+    `model.response.tool_results[0].returned_to_model`. Verification: red
+    `cargo test -p capsem-service
+    handle_session_detection_hunt_reconstructs_core_projection_families --bin
+    capsem-service` first failed on missing `mcp.request.arguments_status`,
+    then passed; focused `handle_enforcement_backtest_matches_and_dedupes_inline_events`,
+    `handle_detection_backtest_returns_finding_rows_with_event_refs`, and
+    `handle_session_detection_hunt_reads_hand_built_security_db_corpus` each
+    passed; widened `cargo test -p capsem-service --bin capsem-service --
+    --test-threads=1` **206** passed; `cargo fmt --all -- --check` passed;
+    `git diff --check` passed. Still missing after this slice: visible UI
+    screens/editors, ask/confirm UX for process decisions, S12 OTel/prometheus
+    export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
