@@ -149,6 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem-admin policy backtest` for offline enforcement checks against
   typed policy-context fixture JSONL, with golden expected-result artifacts for
   the first shared S08c corpus.
+- Added Rust S08c parity coverage proving the real CEL evaluator matches the
+  committed admin enforcement backtest expected artifact.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API

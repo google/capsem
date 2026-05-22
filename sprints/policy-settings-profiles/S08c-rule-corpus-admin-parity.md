@@ -136,6 +136,12 @@ session-scoped enforcement replay, it should be named and designed separately.
   authority. S08c remains open until enforcement compile/parity uses the same
   CEL semantics as Rust runtime or an equivalent shared expected-row generator,
   and until real-session fixtures are generated from the resolved-event journal.
+- Slice 4 added the first Rust expected-artifact parity test: the real CEL
+  evaluator consumes the shared policy-context JSONL corpus and compares its
+  enforcement backtest row shape to
+  `data/enforcement/backtest-expected/http-google-secret.json`. The red pass
+  caught header-case drift between fixture storage and canonical evidence keys,
+  which is exactly the class of mismatch this corpus is meant to pin.
 
 ## Coverage Ledger
 

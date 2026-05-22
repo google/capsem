@@ -1840,6 +1840,19 @@ a valid claim -- mark it `[ ]` instead.
     enforcement and detection outputs, real-session fixture generation from
     the resolved-event journal, corpus update workflow docs, and broader
     expected outputs for hunt/backtest diversity.
+    Fourth TDD Rust-parity slice made the Rust security engine consume the
+    committed admin enforcement expected artifact. The new test evaluates
+    `data/enforcement/cel/http-google-secret.cel` with the real CEL runtime
+    over `data/policy-context/canonical-policy-contexts.jsonl` and compares the
+    produced row shape to
+    `data/enforcement/backtest-expected/http-google-secret.json`. Verification:
+    red `cargo test -p capsem-security-engine
+    s08c_enforcement_expected_artifact_matches_rust_cel` first failed on a
+    header evidence mismatch (`Authorization` fixture storage versus canonical
+    `http.request.headers.authorization` output), then passed after the row
+    construction preserved the value under the canonical key. Still missing in
+    S08c: detection expected-row parity in Rust/admin, policy compile/full CEL
+    parity for offline admin, real-session fixtures, and workflow docs.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to
