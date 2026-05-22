@@ -90,3 +90,6 @@ detection backtests. Conditions must target canonical roots such as
 internal `event.*` or raw `subject.*` authoring is rejected before install or
 replay. Runtime enforcement remains the CEL authority; the offline admin
 backtest is a fixture replay gate for committed policy-context corpora.
+
+See [Rule Corpus Workflow](/security/rule-corpus/) for the fixture and
+cross-language parity process.

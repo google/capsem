@@ -101,7 +101,7 @@ session-scoped enforcement replay, it should be named and designed separately.
   identical backtest outcomes.
 - [ ] Generate initial real-session normalized event fixtures from S08b's
   resolved-event journal and add them to the corpus once stable.
-- [ ] Document the corpus update workflow so future rule-language changes must
+- [x] Document the corpus update workflow so future rule-language changes must
   update Python, Rust, and expected-result fixtures together.
 
 ## Implementation Notes
@@ -151,6 +151,10 @@ session-scoped enforcement replay, it should be named and designed separately.
   admin-supported canonical CEL subset before offline policy backtest. This
   closes the offline validate/compile/backtest command surface while keeping
   full runtime-CEL parity listed as explicit remaining debt.
+- Slice 7 added the corp/developer rule-corpus workflow page, documenting the
+  required fixture layout, admin commands, expected artifact updates, and Rust
+  parity gates. Detection docs now show canonical `http.request.*` IR paths
+  rather than legacy `subject.*` examples.
 
 ## Coverage Ledger
 

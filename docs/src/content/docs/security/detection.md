@@ -38,7 +38,7 @@ owner: corp
 description: Default corp detections.
 field_mapping:
   http:
-    Host: subject.request.host
+    Host: http.request.host
 sources:
   - id: metadata-access
     type: sigma
@@ -127,7 +127,7 @@ Detection IR is the runtime contract:
       "condition": "selection",
       "matchers": [
         {
-          "field_path": "subject.request.host",
+          "field_path": "http.request.host",
           "operator": "equals_any",
           "values": ["169.254.169.254"],
           "sigma_field": "Host"
@@ -156,3 +156,6 @@ schemas/fixtures/detection-ir-v1-invalid-extra-field.json
 
 The Python compiler output is compared against the golden fixture, and Rust
 tests validate, parse, and evaluate that same fixture.
+
+See [Rule Corpus Workflow](/security/rule-corpus/) for the fixture and
+cross-language parity process.

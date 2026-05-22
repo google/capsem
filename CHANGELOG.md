@@ -156,6 +156,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the admin detection backtest expected artifact.
 - Added `capsem-admin policy compile` to fail closed on unsupported or legacy
   enforcement roots before offline backtest.
+- Added rule-corpus workflow documentation tying policy-context fixtures,
+  enforcement/detection expected artifacts, admin commands, and Rust parity
+  tests together.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API

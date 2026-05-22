@@ -32,6 +32,8 @@ def test_detection_docs_require_pysigma_and_detection_ir() -> None:
     assert "Rejected constructs fail closed" in doc
     assert "avoiding a second, ad hoc Sigma" in doc
     assert "implementation inside Capsem" in doc
+    assert "http.request.host" in doc
+    assert "subject.request.host" not in doc
 
 
 def test_enforcement_docs_keep_policy_and_detection_separate() -> None:
@@ -42,6 +44,18 @@ def test_enforcement_docs_keep_policy_and_detection_separate() -> None:
     assert "capsem-admin policy compile" in doc
     assert "capsem-admin policy backtest" in doc
     assert "`allow`, `block`, `ask`, or `rewrite`" in doc
+
+
+def test_rule_corpus_docs_pin_cross_language_update_workflow() -> None:
+    doc = _doc("security/rule-corpus.md")
+
+    assert "data/policy-context/canonical-policy-contexts.jsonl" in doc
+    assert "data/enforcement/backtest-expected/" in doc
+    assert "data/detection/backtest-expected/" in doc
+    assert "capsem-admin policy compile" in doc
+    assert "capsem-admin detection compile" in doc
+    assert "cargo test -p capsem-core --test security_packs" in doc
+    assert "cargo test -p capsem-security-engine" in doc
 
 
 def test_corp_custom_image_docs_use_profile_admin_flow() -> None:

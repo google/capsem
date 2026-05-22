@@ -1879,6 +1879,18 @@ a valid claim -- mark it `[ ]` instead.
     constructs beyond the admin subset, real-session fixtures from the
     resolved-event journal, corpus workflow docs, and broader hunt/backtest
     diversity.
+    Seventh TDD docs-workflow slice added
+    `docs/src/content/docs/security/rule-corpus.md`, linking the shared
+    policy-context corpus, enforcement/detection expected artifacts, admin
+    commands, and Rust parity tests into one update workflow. Detection docs
+    now show canonical `http.request.*` Detection IR examples instead of
+    legacy `subject.*` paths. Verification: red `uv run pytest
+    tests/test_admin_docs.py::test_rule_corpus_docs_pin_cross_language_update_workflow
+    -q` first failed because the page was missing; the focused docs test now
+    pins the page and the cross-language command list. Still missing in S08c:
+    full runtime-CEL parity for all CEL constructs beyond the admin subset,
+    real-session fixtures from the resolved-event journal, and broader
+    hunt/backtest diversity.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to
