@@ -1603,6 +1603,23 @@ a valid claim -- mark it `[ ]` instead.
     -q` **1** passed; docs build `pnpm --dir docs run build` passed. Still
     missing after this slice: visible UI screens/editors, ask/confirm UX for
     process decisions, S12 OTel/prometheus export, and S08d performance proof.
+    Seventy-first TDD timeline-attribution slice enriched the security layer
+    of `/timeline/{id}` so canonical resolved events show first matched
+    rule/pack, finding count, VM id, profile id, user id, and accounting owner
+    directly in the timeline summary instead of forcing operators into raw SQL.
+    The existing timeline integration test now writes a blocked
+    `ResolvedSecurityEvent` with an enforcement step plus detection finding and
+    asserts the returned security row contains `rule=...`, `pack=...`,
+    `findings=1`, `vm=...`, `profile=...`, `user=...`, and `owner=...`.
+    Verification: `cargo test -p capsem-service
+    timeline_handler_returns_policy_layers_and_null_trace_rows --bin
+    capsem-service` **1** passed and `cargo test -p capsem-service
+    timeline_column_helpers_emit_policy_suffix_for_current_schema --bin
+    capsem-service` **1** passed; widened `cargo test -p capsem-service
+    --bin capsem-service -- --test-threads=1` **206** passed; `cargo fmt
+    --all -- --check` passed; `git diff --check` passed. Still missing after
+    this slice: visible UI screens/editors, ask/confirm UX for process
+    decisions, S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

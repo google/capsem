@@ -97,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   events as the CLI.
 - Updated HTTP gateway log contract tests and architecture docs so `/logs/{id}`
   is treated as the typed security/process/serial log envelope.
+- Enriched `/timeline/{id}` security rows with canonical resolved-event rule,
+  pack, finding-count, VM, profile, user, and accounting-owner attribution so
+  timeline debugging no longer has to jump straight to SQL for those fields.
 - Added typed model tool-call policy projection under
   `model.request.tool_calls`, including name, origin, argument status, status,
   linked MCP call id, and parse confidence, with session-backed detection hunt

@@ -669,15 +669,30 @@ async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
                 schema_version: capsem_security_engine::RESOLVED_EVENT_SCHEMA_VERSION,
                 event: security_event,
                 steps: vec![capsem_security_engine::ResolvedEventStep {
-                    kind: capsem_security_engine::ResolvedEventStepKind::DetectionMatch,
-                    status: capsem_security_engine::StepStatus::Skipped,
-                    rule_id: None,
-                    pack_id: None,
-                    message: Some("no detection".into()),
+                    kind: capsem_security_engine::ResolvedEventStepKind::EnforcementMatch,
+                    status: capsem_security_engine::StepStatus::Matched,
+                    rule_id: Some("runtime.block-example".into()),
+                    pack_id: Some("runtime-pack".into()),
+                    message: Some("blocked by timeline test".into()),
                 }],
                 plugin_transforms: Vec::new(),
-                detection_findings: Vec::new(),
-                final_action: capsem_security_engine::SecurityAction::Continue,
+                detection_findings: vec![capsem_security_engine::DetectionFinding {
+                    finding_id: "finding-timeline-security".into(),
+                    event_id: "evt_timeline_security".into(),
+                    rule_id: "detect.timeline".into(),
+                    pack_id: "detect-pack".into(),
+                    sigma_id: Some("sigma-timeline".into()),
+                    title: "Timeline security finding".into(),
+                    severity: capsem_security_engine::Severity::Medium,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["timeline".into()],
+                }],
+                final_action: capsem_security_engine::SecurityAction::Block(
+                    capsem_security_engine::BlockResponse {
+                        reason_code: "blocked by timeline test".into(),
+                        rule_id: Some("runtime.block-example".into()),
+                    },
+                ),
                 emitter_results: Vec::new(),
             },
         ))
@@ -741,6 +756,30 @@ async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
             .is_some_and(|trace| trace.is_null())),
         "trace filter should retain pre-trace NULL rows: {json}"
     );
+    let security_summary = rows
+        .iter()
+        .filter_map(|row| {
+            let cells = row.as_array()?;
+            (cells.get(1)?.as_str()? == "security").then(|| cells.get(3)?.as_str())
+        })
+        .flatten()
+        .next()
+        .expect("security timeline row");
+    for expected in [
+        "http/http.request action=block",
+        "rule=runtime.block-example",
+        "pack=runtime-pack",
+        "findings=1",
+        "vm=timeline-vm",
+        "profile=coding",
+        "user=user-1",
+        "owner=vm:timeline-vm",
+    ] {
+        assert!(
+            security_summary.contains(expected),
+            "missing {expected} from security timeline summary {security_summary:?}: {json}"
+        );
+    }
 }
 
 #[test]

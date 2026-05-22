@@ -9169,6 +9169,51 @@ fn timeline_policy_suffix(
     }
 }
 
+fn timeline_security_summary_suffix(
+    tables: &HashSet<String>,
+    columns: &HashMap<String, HashSet<String>>,
+) -> String {
+    let mut suffix = String::new();
+    if tables.contains("security_event_steps") {
+        suffix.push_str(
+            " || COALESCE(' rule=' || (
+                SELECT step.rule_id
+                FROM security_event_steps step
+                WHERE step.event_id = security_events.event_id
+                  AND step.rule_id IS NOT NULL
+                ORDER BY step.step_index ASC
+                LIMIT 1
+             ), '')",
+        );
+        suffix.push_str(
+            " || COALESCE(' pack=' || (
+                SELECT step.pack_id
+                FROM security_event_steps step
+                WHERE step.event_id = security_events.event_id
+                  AND step.pack_id IS NOT NULL
+                ORDER BY step.step_index ASC
+                LIMIT 1
+             ), '')",
+        );
+    }
+    if timeline_has_column(columns, "security_events", "finding_count") {
+        suffix.push_str(
+            " || CASE WHEN finding_count > 0 THEN ' findings=' || finding_count ELSE '' END",
+        );
+    }
+    for (label, column) in [
+        ("vm", "vm_id"),
+        ("profile", "profile_id"),
+        ("user", "user_id"),
+        ("owner", "accounting_owner"),
+    ] {
+        if timeline_has_column(columns, "security_events", column) {
+            suffix.push_str(&format!(" || COALESCE(' {label}=' || {column}, '')"));
+        }
+    }
+    suffix
+}
+
 async fn handle_timeline(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -9301,9 +9346,10 @@ async fn handle_timeline(
             "final_action",
             "'continue'",
         );
+        let security_suffix = timeline_security_summary_suffix(&existing_tables, &existing_columns);
         parts.push(format!(
             "SELECT timestamp, 'security' AS layer, {event_ref} AS ref, \
-             {event_family} || '/' || {event_type} || ' action=' || {final_action} AS summary, \
+             {event_family} || '/' || {event_type} || ' action=' || {final_action}{security_suffix} AS summary, \
              {final_action} AS status, NULL AS duration_ms, {trace_id} AS trace_id FROM security_events"
         ));
     }
