@@ -1313,6 +1313,21 @@ a valid claim -- mark it `[ ]` instead.
     only journaling the existing DNS handler policy result, file/process
     emitters, visible UI screens/editors, persistence/profile-pack seeding, VM
     status/live metrics integration, and S08d performance proof.
+    Fifty-fifth TDD file-emitter slice added a shared canonical file activity
+    builder and wired both current file producers through it. The red builder
+    test locked the deterministic `file.activity` event shape; file monitor
+    flushes and MCP file restore/delete now write `ResolvedSecurityEvent` rows
+    beside `fs_events`, using `SourceEngine::File`, observe-only
+    enforceability, classified path roots, byte counts, trace id, and
+    VM/profile/session/user env identity. Verification: red
+    `cargo test -p capsem-core file_security_events --lib` first, then
+    `cargo test -p capsem-core file_security_events --lib` **2** tests,
+    `cargo test -p capsem-core fs_monitor --lib` **14** tests, and `cargo test
+    -p capsem-core file_tools --lib` **44** tests passed. Still missing after
+    this slice: routing file activity through live file/security enforcement
+    instead of observe-only journaling, process emitter, visible UI
+    screens/editors, persistence/profile-pack seeding, VM status/live metrics
+    integration, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

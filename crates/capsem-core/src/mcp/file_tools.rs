@@ -831,14 +831,18 @@ pub fn handle_revert_file(
         } else {
             None
         };
-        db.try_write(capsem_logger::WriteOp::FileEvent(
-            capsem_logger::FileEvent {
-                timestamp: SystemTime::now(),
-                action: file_action,
-                path: format!("{} (from {})", path_str, cp_str_owned),
-                size,
-                trace_id: crate::telemetry::ambient_capsem_trace_id(),
-            },
+        let event = capsem_logger::FileEvent {
+            timestamp: SystemTime::now(),
+            action: file_action,
+            path: format!("{} (from {})", path_str, cp_str_owned),
+            size,
+            trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        };
+        let resolved_event =
+            crate::file_security_events::build_file_resolved_security_event(&event);
+        db.try_write(capsem_logger::WriteOp::FileEvent(event));
+        db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+            resolved_event,
         ));
     }
 

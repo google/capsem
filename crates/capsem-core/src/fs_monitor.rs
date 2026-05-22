@@ -259,14 +259,18 @@ impl FsMonitor {
         } else {
             None
         };
-        db.write(WriteOp::FileEvent(FileEvent {
+        let event = FileEvent {
             timestamp: SystemTime::now(),
             action,
             path: path.to_string(),
             size,
             trace_id: crate::telemetry::ambient_capsem_trace_id(),
-        }))
-        .await;
+        };
+        let resolved_event =
+            crate::file_security_events::build_file_resolved_security_event(&event);
+        db.write(WriteOp::FileEvent(event)).await;
+        db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
+            .await;
     }
 
     /// Signal the monitor to stop.
