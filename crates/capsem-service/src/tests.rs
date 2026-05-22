@@ -6838,6 +6838,48 @@ async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
         },
     );
 
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let reconstructed = session_backtest_events(vm_id, &reader).unwrap();
+    assert_eq!(reconstructed.len(), 3);
+    let admin_event = reconstructed
+        .iter()
+        .find(|event| event.event.common.event_id == "evt-admin-google")
+        .expect("golden corpus should include the Google admin HTTP event");
+    let proto = capsem_security_engine::policy_context_from_event(&admin_event.event);
+    assert_eq!(proto.common.session_id.as_deref(), Some("hunt-session"));
+    assert_eq!(proto.common.vm_id.as_deref(), Some("hunt-vm"));
+    assert_eq!(proto.common.profile_id.as_deref(), Some("coding"));
+    assert_eq!(proto.common.user_id.as_deref(), Some("user-1"));
+    assert_eq!(proto.common.event_type.as_deref(), Some("http.request"));
+    assert_eq!(
+        proto.common.enforceability.as_deref(),
+        Some("inline_blockable")
+    );
+    assert_eq!(proto.common.actor.as_deref(), Some("vm:hunt-vm"));
+    let request = proto
+        .http
+        .request
+        .as_ref()
+        .expect("reconstructed HTTP event must project a proto HTTP request");
+    assert_eq!(request.method.as_deref(), Some("GET"));
+    assert_eq!(request.scheme.as_deref(), Some("https"));
+    assert_eq!(request.host.as_deref(), Some("google.example.test"));
+    assert_eq!(request.port, Some(443));
+    assert_eq!(request.path.as_deref(), Some("/admin/settings"));
+    assert_eq!(
+        request.url.as_deref(),
+        Some("https://google.example.test/admin/settings")
+    );
+    assert_eq!(request.path_class.as_deref(), Some("/admin/settings"));
+    assert_eq!(request.bytes, Some(12));
+    let response = proto
+        .http
+        .response
+        .as_ref()
+        .expect("net projection should preserve HTTP response metadata");
+    assert_eq!(response.status, Some(200));
+    assert_eq!(response.bytes, Some(34));
+
     let Json(result) = handle_session_detection_hunt(
         Path(vm_id.into()),
         State(state),

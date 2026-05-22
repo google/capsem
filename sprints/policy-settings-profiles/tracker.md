@@ -943,7 +943,11 @@ a valid claim -- mark it `[ ]` instead.
     non-HTTP canonical event. The route reconstructs typed HTTP
     `SecurityEvent` values from the structured journal/projection rows and
     runs the real CEL detection hunt evaluator, returning a `session_db`
-    `BacktestResult` row for the matched event. Verification:
+    `BacktestResult` row for the matched event. A follow-up TDD guard makes
+    `capsem_security_engine::policy_context_from_event` public and proves the
+    hand-built session DB row projects through `SecurityEvent` into
+    `capsem_proto::PolicyContext` without losing common identity, HTTP
+    request, or HTTP response fields. Verification:
     `cargo test -p capsem-service
     handle_session_detection_hunt_reads_hand_built_security_db_corpus`,
     `cargo test -p capsem-service

@@ -1805,7 +1805,7 @@ fn optional_none() -> cel::Value {
     cel::Value::Opaque(Arc::new(OptionalValue::none()))
 }
 
-fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
+pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
     let mut context = PolicyContext::new();
     context.common =
         CommonPolicyContext {
