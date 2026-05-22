@@ -756,6 +756,40 @@ fn security_engine_pipeline_orders_confirm_detection_and_postprocessors() {
 }
 
 #[test]
+fn security_engine_default_denies_ask_when_confirm_resolver_is_missing() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(AskEnforcement));
+
+    let result = engine
+        .evaluate(http_request_event("evt-ask-default"))
+        .unwrap();
+
+    assert!(matches!(result.action, SecurityAction::Block(_)));
+    let decision = result.resolved_event.event.decision.as_ref().unwrap();
+    assert_eq!(decision.action, SecurityDecisionAction::Block);
+    assert_eq!(decision.rule.as_deref(), Some("enforcement.ask"));
+    assert_eq!(
+        decision.reason.as_deref(),
+        Some(
+            "operator approval required; default denied because no confirm resolver is configured"
+        )
+    );
+    let confirm_step = result
+        .resolved_event
+        .steps
+        .iter()
+        .find(|step| step.kind == ResolvedEventStepKind::Confirm)
+        .expect("confirm step should be recorded for default deny");
+    assert_eq!(confirm_step.status, StepStatus::Applied);
+    assert_eq!(
+        confirm_step.message.as_deref(),
+        Some(
+            "operator approval required; default denied because no confirm resolver is configured"
+        )
+    );
+}
+
+#[test]
 fn security_engine_fails_closed_when_enforcement_errors() {
     let mut engine = SecurityEngine::default();
     engine.set_enforcement(Box::new(FailingEnforcement));

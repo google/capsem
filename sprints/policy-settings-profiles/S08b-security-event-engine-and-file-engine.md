@@ -38,6 +38,11 @@ conditions are wrapped with their typed callback guard, and generated DNS rules
 use canonical `dns.request.qname` CEL paths. Profile-scoped seed rules remain
 per-profile service state and are deliberately excluded from the global
 runtime-rule broadcast snapshot that is pushed to every running VM.
+The latest confirm-lifecycle slice made missing confirm resolvers fail closed
+inside the Security Engine: an `ask` decision now records an applied confirm
+step and becomes a terminal block with the original rule/pack attribution. The
+process exec path now observes that resolved block instead of leaking an
+unresolved ask into job completion or logs.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

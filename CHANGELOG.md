@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first S08b Security Engine core pipeline shell, ordering
   preprocessors, enforcement, confirm, detection, postprocessors, and resolved
   event construction with fail-closed enforcement errors.
+- Changed Security Engine `ask` decisions without a configured confirm resolver
+  to record an applied confirm step and fail closed to a terminal block, so
+  inline process decisions do not leave unresolved prompts in logs or jobs.
 - Added a real CEL-backed S08b enforcement evaluator in `capsem-security-engine`
   so enforcement rules compile through the `cel` crate before install and
   evaluate against normalized `SecurityEvent` values at runtime.

@@ -1747,6 +1747,25 @@ a valid claim -- mark it `[ ]` instead.
     serial. Still missing after this slice: visible UI screens/editors,
     ask/confirm UX for process decisions, S12 OTel/prometheus export, and S08d
     performance proof.
+    Seventy-ninth TDD confirm-default slice closed the unresolved inline ask
+    gap in the Security Engine. The red engine test first proved an `Ask`
+    decision with no confirm resolver stayed as final action `ask`; the engine
+    now records an applied `Confirm` step and converts that decision into a
+    terminal `Block` that preserves the matched rule/pack and explains the
+    default deny. The process exec path now sees that resolved block, returns a
+    blocked job error, and journals/logs a completed decision instead of a
+    dangling prompt. Verification: red `cargo test -p capsem-security-engine
+    security_engine_default_denies_ask_when_confirm_resolver_is_missing` first
+    failed on final action `ask`, then passed; `cargo test -p capsem-core
+    process_exec_security_evaluation_default_denies_ask_without_confirm_resolver
+    --lib` passed; widened `cargo test -p capsem-security-engine` passed with
+    **38** tests, `cargo test -p capsem-core process_security_events --lib`
+    passed with **5** tests, and `cargo test -p capsem-process
+    process_exec_security_log_record_carries_attribution_rule_and_reason`
+    passed; widened `cargo test -p capsem-process -- --test-threads=1` passed
+    with **110** tests. Still missing after this slice: visible UI
+    screens/editors, interactive confirm prompt UX in S15, S12 OTel/prometheus
+    export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

@@ -2211,19 +2211,16 @@ impl SecurityEngine {
                     }
                 }
             } else {
+                let ask_decision = event.decision.clone().expect("decision checked above");
+                let resolved_decision = default_deny_confirm_decision(&ask_decision);
                 steps.push(phase_step(
                     SecurityEnginePhase::Confirm,
-                    StepStatus::Skipped,
-                    event
-                        .decision
-                        .as_ref()
-                        .and_then(|decision| decision.rule.clone()),
-                    event
-                        .decision
-                        .as_ref()
-                        .and_then(|decision| decision.pack_id.clone()),
-                    Some("no confirm resolver configured".into()),
+                    StepStatus::Applied,
+                    resolved_decision.rule.clone(),
+                    resolved_decision.pack_id.clone(),
+                    resolved_decision.reason.clone(),
                 ));
+                event.decision = Some(resolved_decision);
             }
         }
 
@@ -2411,6 +2408,21 @@ fn security_action_from_event(event: &SecurityEvent) -> SecurityAction {
             replacement_ref: event.common.event_id.clone(),
         }),
         None => SecurityAction::Continue,
+    }
+}
+
+fn default_deny_confirm_decision(decision: &SecurityDecision) -> SecurityDecision {
+    let reason = decision
+        .reason
+        .as_deref()
+        .map(|reason| format!("{reason}; default denied because no confirm resolver is configured"))
+        .unwrap_or_else(|| "default denied because no confirm resolver is configured".into());
+    SecurityDecision {
+        action: SecurityDecisionAction::Block,
+        rule: decision.rule.clone(),
+        pack_id: decision.pack_id.clone(),
+        reason: Some(reason),
+        terminal: true,
     }
 }
 

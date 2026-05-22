@@ -109,6 +109,54 @@ fn process_exec_security_evaluation_blocks_matching_cel_rule() {
 }
 
 #[test]
+fn process_exec_security_evaluation_default_denies_ask_without_confirm_resolver() {
+    let event = ExecEvent {
+        timestamp: SystemTime::UNIX_EPOCH,
+        exec_id: 45,
+        command: "bash -lc 'echo ask'".into(),
+        source: "api".into(),
+        mcp_call_id: None,
+        trace_id: Some("trace_exec_ask".into()),
+        process_name: Some("capsem-agent".into()),
+    };
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "process.ask-shell".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition:
+                "process.activity.operation == 'exec' && process.activity.command_class == 'shell'"
+                    .into(),
+            decision: SecurityDecisionAction::Ask,
+            reason: Some("shell commands require approval".into()),
+        }])
+        .unwrap(),
+    ));
+    let engine = std::sync::Mutex::new(engine);
+
+    let evaluation = evaluate_exec_security_event(&event, Some(&engine));
+
+    assert!(!evaluation.allow_guest_exec);
+    assert_eq!(
+        evaluation.denial_message.as_deref(),
+        Some(
+            "process exec blocked by process.ask-shell: shell commands require approval; default denied because no confirm resolver is configured"
+        )
+    );
+    assert!(matches!(
+        evaluation.resolved_event.final_action,
+        SecurityAction::Block(_)
+    ));
+    assert!(evaluation
+        .resolved_event
+        .steps
+        .iter()
+        .any(|step| step.kind == ResolvedEventStepKind::Confirm
+            && step.status == StepStatus::Applied
+            && step.rule_id.as_deref() == Some("process.ask-shell")));
+}
+
+#[test]
 fn command_classifier_uses_executable_basename() {
     let event = ExecEvent {
         timestamp: SystemTime::UNIX_EPOCH,
