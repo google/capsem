@@ -2,9 +2,9 @@ use capsem_proto::{
     BodyPolicyContext, BodyState, CommonPolicyContext, DnsPolicyContext, DnsRequestPolicyContext,
     FileActivityPolicyContext, FilePolicyContext, HttpPolicyContext, HttpRequestPolicyContext,
     HttpResponsePolicyContext, McpPolicyContext, McpRequestPolicyContext, ModelPolicyContext,
-    ModelRequestPolicyContext, ModelToolCallPolicyContext, PolicyContext,
-    ProcessActivityPolicyContext, ProcessIdentityPolicyContext, ProcessPolicyContext,
-    ProfileActivityPolicyContext, ProfilePolicyContext,
+    ModelRequestPolicyContext, ModelToolCallPolicyContext, ModelToolResultPolicyContext,
+    PolicyContext, ProcessActivityPolicyContext, ProcessIdentityPolicyContext,
+    ProcessPolicyContext, ProfileActivityPolicyContext, ProfilePolicyContext,
 };
 use cel::extractors::This;
 use cel::objects::OptionalValue;
@@ -1946,6 +1946,11 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                         .and_then(|response| response.stop_reason.clone()),
                     estimated_output_tokens: subject.estimated_output_tokens,
                     body: BodyPolicyContext::missing(),
+                    tool_results: subject
+                        .evidence
+                        .as_deref()
+                        .map(model_tool_result_policy_contexts)
+                        .unwrap_or_default(),
                 }),
             };
         }
@@ -2011,6 +2016,26 @@ fn model_tool_call_policy_contexts(
             status: serialized_enum_string(tool_call.status),
             linked_mcp_call_id: tool_call.linked_mcp_call_id.clone(),
             parse_confidence: serialized_enum_string(tool_call.parse_confidence),
+        })
+        .collect()
+}
+
+fn model_tool_result_policy_contexts(
+    evidence: &ModelInteractionEvidence,
+) -> Vec<ModelToolResultPolicyContext> {
+    evidence
+        .tool_results
+        .iter()
+        .map(|tool_result| ModelToolResultPolicyContext {
+            tool_call_id: Some(tool_result.tool_call_id.clone()),
+            linked_mcp_call_id: tool_result.linked_mcp_call_id.clone(),
+            content_kind: serialized_enum_string(tool_result.content_kind),
+            content_preview: tool_result.content_preview.clone(),
+            content_json: tool_result.content_json.clone(),
+            is_error: Some(tool_result.is_error),
+            result_status: serialized_enum_string(tool_result.result_status),
+            returned_to_model: Some(tool_result.returned_to_model),
+            parse_confidence: serialized_enum_string(tool_result.parse_confidence),
         })
         .collect()
 }

@@ -387,6 +387,31 @@ pub struct ModelResponsePolicyContext {
     pub estimated_output_tokens: Option<u64>,
     #[serde(default)]
     pub body: BodyPolicyContext,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_results: Vec<ModelToolResultPolicyContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelToolResultPolicyContext {
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub linked_mcp_call_id: Option<String>,
+    #[serde(default)]
+    pub content_kind: Option<String>,
+    #[serde(default)]
+    pub content_preview: Option<String>,
+    #[serde(default)]
+    pub content_json: Option<String>,
+    #[serde(default)]
+    pub is_error: Option<bool>,
+    #[serde(default)]
+    pub result_status: Option<String>,
+    #[serde(default)]
+    pub returned_to_model: Option<bool>,
+    #[serde(default)]
+    pub parse_confidence: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -6093,6 +6093,7 @@ fn session_model_evidence_from_row(
         None => None,
     };
     let tool_calls = session_model_tool_calls(reader, &interaction_id)?;
+    let tool_results = session_model_tool_results(reader, &interaction_id)?;
     Ok(Some(seceng::ModelInteractionEvidence {
         interaction_id,
         trace_id: session_required_string(row, SESSION_COL_AI_TRACE_ID)?,
@@ -6139,7 +6140,7 @@ fn session_model_evidence_from_row(
         },
         response,
         tool_calls,
-        tool_results: Vec::new(),
+        tool_results,
         mcp_executions: Vec::new(),
         usage,
         parse_status: parse_session_enum::<seceng::ParseStatus>(
@@ -6280,6 +6281,66 @@ fn session_model_tool_calls(
         });
     }
     Ok(tool_calls)
+}
+
+fn session_model_tool_results(
+    reader: &capsem_logger::DbReader,
+    interaction_id: &str,
+) -> Result<Vec<seceng::ModelToolResultEvidence>, AppError> {
+    let json_str = reader
+        .query_raw_with_params(
+            "SELECT
+                tr.tool_call_id, tr.linked_mcp_call_id, tr.content_kind,
+                tr.content_preview, tr.content_json, tr.is_error,
+                tr.result_status, tr.returned_to_model, tr.parse_confidence
+             FROM ai_model_interactions ami
+             JOIN ai_model_tool_results tr ON tr.interaction_id = ami.id
+             WHERE ami.interaction_id = ?
+             ORDER BY tr.id ASC",
+            &[serde_json::Value::String(interaction_id.to_owned())],
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query session model tool results: {error}"),
+            )
+        })?;
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("parse session model tool results: {error}"),
+        )
+    })?;
+
+    let mut tool_results = Vec::new();
+    for row in value
+        .get("rows")
+        .and_then(|rows| rows.as_array())
+        .cloned()
+        .unwrap_or_default()
+    {
+        tool_results.push(seceng::ModelToolResultEvidence {
+            tool_call_id: session_tool_call_row_string(&row, 0)?,
+            linked_mcp_call_id: session_tool_call_row_optional_string(&row, 1)?,
+            content_kind: parse_session_enum::<seceng::AiContentKind>(
+                &session_tool_call_row_string(&row, 2)?,
+                "model tool-result content kind",
+            )?,
+            content_preview: session_tool_call_row_optional_string(&row, 3)?,
+            content_json: session_tool_call_row_optional_string(&row, 4)?,
+            is_error: session_optional_bool(&row, 5)?.unwrap_or(false),
+            result_status: parse_session_enum::<seceng::ToolCallStatus>(
+                &session_tool_call_row_string(&row, 6)?,
+                "model tool-result status",
+            )?,
+            returned_to_model: session_optional_bool(&row, 7)?.unwrap_or(false),
+            parse_confidence: parse_session_enum::<seceng::Confidence>(
+                &session_tool_call_row_string(&row, 8)?,
+                "model tool-result parse confidence",
+            )?,
+        });
+    }
+    Ok(tool_results)
 }
 
 fn session_mcp_evidence_from_row(

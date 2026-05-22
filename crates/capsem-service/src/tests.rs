@@ -7100,6 +7100,19 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
             rusqlite::params![interaction_row_id],
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO ai_model_tool_results (
+                interaction_id, tool_call_id, linked_mcp_call_id,
+                content_kind, content_preview, content_json, is_error,
+                result_status, returned_to_model, parse_confidence
+             ) VALUES (
+                ?1, 'tool-call-1', 'mcp-call-1', 'json',
+                '{\"ok\":true}', '{\"ok\":true}', 0,
+                'returned_to_model', 1, 'high'
+             )",
+            rusqlite::params![interaction_row_id],
+        )
+        .unwrap();
 
         insert_hunt_security_event_fixture(
             &conn,
@@ -7275,6 +7288,17 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
         model_request.tool_calls[0].arguments_status.as_deref(),
         Some("valid_json")
     );
+    let model_response = model_proto
+        .model
+        .response
+        .as_ref()
+        .expect("model policy response should be populated");
+    assert_eq!(model_response.tool_results.len(), 1);
+    assert_eq!(
+        model_response.tool_results[0].content_kind.as_deref(),
+        Some("json")
+    );
+    assert_eq!(model_response.tool_results[0].returned_to_model, Some(true));
 
     let Json(result) = handle_session_detection_hunt(
         Path(vm_id.into()),
@@ -7317,7 +7341,9 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                         && model.request.stream == true \
                         && model.request.tool_calls[0].name == 'filesystem.read_file' \
                         && model.request.tool_calls[0].origin == 'mcp_tool' \
-                        && model.request.tool_calls[0].arguments_status == 'valid_json'"
+                        && model.request.tool_calls[0].arguments_status == 'valid_json' \
+                        && model.response.tool_results[0].content_kind == 'json' \
+                        && model.response.tool_results[0].returned_to_model == true"
                         .into(),
                     severity: capsem_security_engine::Severity::Medium,
                     confidence: capsem_security_engine::Confidence::High,

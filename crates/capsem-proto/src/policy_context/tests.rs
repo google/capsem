@@ -111,6 +111,17 @@ fn sample_policy_context() -> PolicyContext {
                 stop_reason: Some("end_turn".to_string()),
                 estimated_output_tokens: Some(40),
                 body: BodyPolicyContext::missing(),
+                tool_results: vec![ModelToolResultPolicyContext {
+                    tool_call_id: Some("toolu_1".to_string()),
+                    linked_mcp_call_id: Some("mcp-call-1".to_string()),
+                    content_kind: Some("json".to_string()),
+                    content_preview: Some("{\"ok\":true}".to_string()),
+                    content_json: Some("{\"ok\":true}".to_string()),
+                    is_error: Some(false),
+                    result_status: Some("returned_to_model".to_string()),
+                    returned_to_model: Some(true),
+                    parse_confidence: Some("high".to_string()),
+                }],
             }),
         },
         file: FilePolicyContext {

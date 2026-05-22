@@ -999,6 +999,17 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
         status: ToolCallStatus::Executed,
         parse_confidence: Confidence::High,
     }];
+    model_evidence.tool_results = vec![ModelToolResultEvidence {
+        tool_call_id: "tool-call-1".into(),
+        linked_mcp_call_id: Some("mcp-call-1".into()),
+        content_kind: AiContentKind::Json,
+        content_preview: Some(r#"{"ok":true}"#.into()),
+        content_json: Some(r#"{"ok":true}"#.into()),
+        is_error: false,
+        result_status: ToolCallStatus::ReturnedToModel,
+        returned_to_model: true,
+        parse_confidence: Confidence::High,
+    }];
     assert_match_and_pass(
         SecurityEvent::model(
             common("evt-cel-model", "model.request", SourceEngine::Network),
@@ -1007,7 +1018,9 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
         "model.request.provider == 'google_gemini' \
             && model.request.model.contains('gemini') \
             && model.request.tool_calls[0].name == 'filesystem.read_file' \
-            && model.request.tool_calls[0].arguments_status == 'valid_json'",
+            && model.request.tool_calls[0].arguments_status == 'valid_json' \
+            && model.response.tool_results[0].content_kind == 'json' \
+            && model.response.tool_results[0].returned_to_model == true",
         "model.request.tool_calls[0].name == 'filesystem.write_file'",
     );
 

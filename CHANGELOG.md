@@ -92,6 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `model.request.tool_calls`, including name, origin, argument status, status,
   linked MCP call id, and parse confidence, with session-backed detection hunt
   reconstruction from `ai_model_tool_calls`.
+- Added typed model tool-result policy projection under
+  `model.response.tool_results`, including content kind, previews, error
+  status, returned-to-model state, linked MCP call id, and parse confidence,
+  with session-backed detection hunt reconstruction from
+  `ai_model_tool_results`.
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.
