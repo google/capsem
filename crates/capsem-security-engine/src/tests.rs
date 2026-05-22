@@ -912,6 +912,189 @@ fn real_cel_policy_context_exposes_http_request_surface() {
 }
 
 #[test]
+fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
+    fn assert_match_and_pass(event: SecurityEvent, matched: &str, passed: &str) {
+        let context = policy_context_from_event(&event);
+        let matched_program = cel::Program::compile(matched).unwrap();
+        assert!(
+            evaluate_policy_cel_bool(matched, &matched_program, &context).unwrap(),
+            "expected CEL to match for {}: {matched}",
+            event.common.event_id
+        );
+
+        let passed_program = cel::Program::compile(passed).unwrap();
+        assert!(
+            !evaluate_policy_cel_bool(passed, &passed_program, &context).unwrap(),
+            "expected CEL to pass/no-match for {}: {passed}",
+            event.common.event_id
+        );
+    }
+
+    assert_match_and_pass(
+        SecurityEvent::dns(
+            common("evt-cel-dns", "dns.request", SourceEngine::Network),
+            DnsSecuritySubject {
+                qname: "google.example.test".into(),
+                domain_class: "external".into(),
+            },
+        ),
+        "dns.request.qname.contains('google') && dns.request.domain_class == 'external'",
+        "dns.request.qname.contains('metadata')",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::http(
+            common("evt-cel-http", "http.request", SourceEngine::Network),
+            HttpSecuritySubject {
+                method: "POST".into(),
+                scheme: Some("https".into()),
+                host: "google.example.test".into(),
+                port: Some(443),
+                path: Some("/admin/settings".into()),
+                query: Some("debug=true".into()),
+                url: Some("https://google.example.test/admin/settings?debug=true".into()),
+                path_class: "admin".into(),
+                request_bytes: 128,
+                request_body: Some(HttpBodySecuritySubject::text("secret")),
+                response_status: Some(403),
+                response_bytes: Some(32),
+                ..Default::default()
+            },
+        ),
+        "http.request.host.contains('google') && http.request.path.startsWith('/admin')",
+        "http.request.host.contains('openai')",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::mcp(
+            common("evt-cel-mcp", "mcp.request", SourceEngine::Network),
+            McpSecuritySubject {
+                server_id: "filesystem".into(),
+                tool_name: "read_file".into(),
+                evidence: None,
+            },
+        ),
+        "mcp.request.server_id == 'filesystem' && mcp.request.tool_name == 'read_file'",
+        "mcp.request.tool_name == 'write_file'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::model(
+            common("evt-cel-model", "model.request", SourceEngine::Network),
+            ModelSecuritySubject::from_interaction_evidence(model_interaction_evidence(
+                "cel-model",
+                AiAttributionScope::Vm,
+                SourceEngine::Network,
+                AiOriginKind::GuestNetwork,
+                "vm:vm-1",
+            )),
+        ),
+        "model.request.provider == 'google_gemini' && model.request.model.contains('gemini')",
+        "model.request.provider == 'openai'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::file(
+            common("evt-cel-file", "file.write", SourceEngine::File),
+            FileSecuritySubject {
+                operation: "write".into(),
+                path_class: "workspace".into(),
+                byte_count: Some(64),
+            },
+        ),
+        "file.activity.operation == 'write' && file.activity.path_class == 'workspace'",
+        "file.activity.operation == 'delete'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::process(
+            common("evt-cel-process", "process.exec", SourceEngine::Process),
+            ProcessSecuritySubject {
+                operation: "exec".into(),
+                command_class: Some("shell".into()),
+            },
+        ),
+        "process.activity.operation == 'exec' && process.activity.command_class == 'shell'",
+        "process.activity.command_class == 'python'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::profile(
+            common("evt-cel-profile", "profile.update", SourceEngine::Profile),
+            ProfileSecuritySubject {
+                operation: "update".into(),
+                profile_id: "coding".into(),
+                profile_revision: "rev-a".into(),
+            },
+        ),
+        "profile.activity.operation == 'update' && profile.activity.profile_id == 'coding'",
+        "profile.activity.profile_id == 'everyday'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
+            common: common(
+                "evt-cel-credential",
+                "credential.read",
+                SourceEngine::Security,
+            ),
+            subject: SecurityEventSubject::Credential(CredentialSecuritySubject {
+                operation: "read".into(),
+                credential_id: "api-token".into(),
+            }),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
+        },
+        "common.event_type == 'credential.read' && common.profile_id == 'coding'",
+        "common.event_type == 'credential.write'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::vm_lifecycle(
+            common("evt-cel-vm", "vm.start", SourceEngine::Vm),
+            VmLifecycleSecuritySubject {
+                operation: "start".into(),
+            },
+        ),
+        "common.event_type == 'vm.start' && common.vm_id == 'vm-1'",
+        "common.event_type == 'vm.stop'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::conversation(
+            common(
+                "evt-cel-conversation",
+                "conversation.message",
+                SourceEngine::Conversation,
+            ),
+            ConversationSecuritySubject {
+                operation: "append".into(),
+                conversation_id: Some("conv-1".into()),
+            },
+        ),
+        "common.event_type == 'conversation.message' && common.session_id == 'session-1'",
+        "common.event_type == 'conversation.delete'",
+    );
+
+    assert_match_and_pass(
+        SecurityEvent::snapshot(
+            common("evt-cel-snapshot", "snapshot.create", SourceEngine::File),
+            SnapshotSecuritySubject {
+                operation: "create".into(),
+                snapshot_id: "snap-1".into(),
+            },
+        ),
+        "common.event_type == 'snapshot.create' && common.actor == 'vm:vm-1'",
+        "common.event_type == 'snapshot.restore'",
+    );
+}
+
+#[test]
 fn policy_cel_context_missing_header_is_absent() {
     let policy_context = capsem_proto::PolicyContext::new();
     let program = cel::Program::compile("http.request.header('authorization').exists()").unwrap();

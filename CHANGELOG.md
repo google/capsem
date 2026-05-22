@@ -82,6 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added canonical policy-context CEL evaluation in `capsem-security-engine`, so
   runtime enforcement/detection rules now use roots such as
   `http.request.host` and reject internal `event.*` paths.
+- Added all-family CEL match/pass smoke coverage for the policy context,
+  covering dedicated DNS, HTTP, MCP, model, file, process, and profile roots
+  plus common-root coverage for credential, VM, conversation, and snapshot
+  security events.
 - Added typed HTTP request policy projection for canonical CEL rules, including
   request URL/path, case-insensitive headers, and body text predicates such as
   `http.request.body.text.contains("secret")`.

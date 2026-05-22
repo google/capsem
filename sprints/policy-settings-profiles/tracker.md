@@ -956,6 +956,18 @@ a valid claim -- mark it `[ ]` instead.
     --no-run` passed. Still missing after this golden-path slice: broader
     file/process/model/MCP session reconstruction, gateway/CLI/UI route
     exposure, persistence/profile-pack seeding, and production engine emitters.
+    Thirty-fourth TDD coverage slice added a core
+    `capsem-security-engine` CEL match/pass smoke test across every current
+    `SecurityEvent` family. The test proves authored roots match and fail to
+    match as expected for dedicated DNS, HTTP, MCP, model, file, process, and
+    profile policy-context roots, and keeps credential, VM, conversation, and
+    snapshot events visible through the common root until those families gain
+    dedicated policy-facing roots. Verification:
+    `cargo test -p capsem-security-engine
+    policy_context_cel_match_and_pass_smoke_covers_all_event_families` passed.
+    Still missing after this coverage slice: deeper per-family CEL surface
+    tests, broader session reconstruction beyond HTTP, gateway/CLI/UI route
+    exposure, persistence/profile-pack seeding, and production engine emitters.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
