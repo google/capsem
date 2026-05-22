@@ -1297,6 +1297,22 @@ a valid claim -- mark it `[ ]` instead.
     result, DNS/file/process emitters, visible UI screens/editors,
     persistence/profile-pack seeding, VM status/live metrics integration, and
     S08d performance proof.
+    Fifty-fourth TDD DNS emitter slice made DNS handler decisions enter the
+    canonical Security Engine journal. The red test first proved DNS only built
+    the legacy `dns_events` row; `build_dns_resolved_security_event` now lifts
+    qname, qtype/qclass-derived event identity, domain classification, trace
+    id, VM/profile/session/user env identity, policy decision, enforcement
+    step, and final continue/block/error action into a typed `dns.request`
+    `ResolvedSecurityEvent`. `capsem-process` now writes that canonical row
+    beside the existing DNS projection from the production vsock DNS handler.
+    Verification: red `cargo test -p capsem-core
+    build_resolved_security_event_for_denied_query --lib` first, then the same
+    focused test passed and `cargo test -p capsem-core net::dns::telemetry
+    --lib` passed with **8** DNS telemetry tests. Still missing after this
+    slice: routing DNS through the live runtime Security Engine rather than
+    only journaling the existing DNS handler policy result, file/process
+    emitters, visible UI screens/editors, persistence/profile-pack seeding, VM
+    status/live metrics integration, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

@@ -987,7 +987,11 @@ async fn serve_dns_session(
         req.process_name.clone(),
         capsem_core::telemetry::ambient_capsem_trace_id(),
     );
+    let resolved_event = capsem_core::net::dns::build_dns_resolved_security_event(&event);
     db.try_write(capsem_logger::WriteOp::DnsEvent(event));
+    db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+        resolved_event,
+    ));
 
     let response = capsem_proto::DnsResponse {
         raw: result.answer_bytes,

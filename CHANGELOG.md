@@ -137,6 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added canonical MCP Security Engine journaling for framed MCP tool calls so
   allowed and blocked MCP requests write `security_events` alongside the
   existing `mcp_calls` projection.
+- Added canonical DNS Security Engine journaling so DNS handler results write
+  `security_events` alongside the existing `dns_events` projection.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without

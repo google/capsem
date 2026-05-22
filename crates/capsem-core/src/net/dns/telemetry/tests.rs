@@ -162,3 +162,42 @@ fn build_event_carries_policy_fields() {
     assert_eq!(evt.process_name.as_deref(), Some("claude"));
     assert_eq!(evt.trace_id.as_deref(), Some("trace_dns"));
 }
+
+#[test]
+fn build_resolved_security_event_for_denied_query() {
+    let mut res = denied_result();
+    res.matched_rule = Some("policy.dns.block_openai".into());
+    res.policy_mode = Some("enforce".into());
+    res.policy_action = Some("block".into());
+    res.policy_rule = Some("policy.dns.block_openai".into());
+    res.policy_reason = Some("DNS to OpenAI API is blocked".into());
+    let evt = build_dns_event(
+        &res,
+        Some("udp"),
+        Some("agent".into()),
+        Some("trace_dns".into()),
+    );
+
+    let resolved = build_dns_resolved_security_event(&evt);
+
+    assert_eq!(resolved.event.common.event_type, "dns.request");
+    assert!(matches!(
+        resolved.final_action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+    assert_eq!(
+        resolved.event.decision.as_ref().unwrap().rule.as_deref(),
+        Some("policy.dns.block_openai")
+    );
+    assert_eq!(
+        resolved.steps[0].rule_id.as_deref(),
+        Some("policy.dns.block_openai")
+    );
+    match resolved.event.subject {
+        capsem_security_engine::SecurityEventSubject::Dns(subject) => {
+            assert_eq!(subject.qname, "api.openai.com");
+            assert_eq!(subject.domain_class, "external");
+        }
+        other => panic!("expected DNS subject, got {other:?}"),
+    }
+}
