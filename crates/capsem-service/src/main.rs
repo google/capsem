@@ -5699,11 +5699,35 @@ fn security_events_query_rows(
                 se.turn_id, se.message_id, se.tool_call_id, se.mcp_call_id,
                 se.redaction_state,
                 n.domain, n.port, n.method, n.path, n.query, n.status_code,
-                n.bytes_sent, n.bytes_received
+                n.bytes_sent, n.bytes_received,
+                d.qname,
+                m.server_name, m.tool_name,
+                mc.provider, mc.model, mc.input_tokens, mc.output_tokens,
+                f.action, f.path, f.size,
+                x.command, x.process_name,
+                s.slot, s.origin, s.name
              FROM security_events se
              LEFT JOIN net_events n
                 ON n.trace_id = se.trace_id
                AND se.event_family = 'http'
+             LEFT JOIN dns_events d
+                ON d.trace_id = se.trace_id
+               AND se.event_family = 'dns'
+             LEFT JOIN mcp_calls m
+                ON m.trace_id = se.trace_id
+               AND se.event_family = 'mcp'
+             LEFT JOIN model_calls mc
+                ON mc.trace_id = se.trace_id
+               AND se.event_family = 'model'
+             LEFT JOIN fs_events f
+                ON f.trace_id = se.trace_id
+               AND se.event_family = 'file'
+             LEFT JOIN exec_events x
+                ON x.trace_id = se.trace_id
+               AND se.event_family = 'process'
+             LEFT JOIN snapshot_events s
+                ON s.trace_id = se.trace_id
+               AND se.event_family = 'snapshot'
              ORDER BY se.timestamp_unix_ms ASC, se.id ASC
              LIMIT 10000",
         )
@@ -5864,81 +5888,325 @@ fn parse_session_redaction_state(value: &str) -> Result<seceng::RedactionState, 
     }
 }
 
-fn session_security_event_from_row(
+const SESSION_COL_EVENT_ID: usize = 0;
+const SESSION_COL_TIMESTAMP_UNIX_MS: usize = 1;
+const SESSION_COL_EVENT_FAMILY: usize = 2;
+const SESSION_COL_EVENT_TYPE: usize = 3;
+const SESSION_COL_SOURCE_ENGINE: usize = 4;
+const SESSION_COL_ENFORCEABILITY: usize = 5;
+const SESSION_COL_ATTRIBUTION_SCOPE: usize = 6;
+const SESSION_COL_ORIGIN_KIND: usize = 7;
+const SESSION_COL_ACCOUNTING_OWNER: usize = 8;
+const SESSION_COL_TRACE_ID: usize = 9;
+const SESSION_COL_SPAN_ID: usize = 10;
+const SESSION_COL_PARENT_EVENT_ID: usize = 11;
+const SESSION_COL_STREAM_ID: usize = 12;
+const SESSION_COL_ACTIVITY_ID: usize = 13;
+const SESSION_COL_SEQUENCE_NO: usize = 14;
+const SESSION_COL_VM_ID: usize = 15;
+const SESSION_COL_SESSION_ID: usize = 16;
+const SESSION_COL_PROFILE_ID: usize = 17;
+const SESSION_COL_PROFILE_REVISION: usize = 18;
+const SESSION_COL_USER_ID: usize = 19;
+const SESSION_COL_PROCESS_ID: usize = 20;
+const SESSION_COL_PARENT_PROCESS_ID: usize = 21;
+const SESSION_COL_EXEC_ID: usize = 22;
+const SESSION_COL_TURN_ID: usize = 23;
+const SESSION_COL_MESSAGE_ID: usize = 24;
+const SESSION_COL_TOOL_CALL_ID: usize = 25;
+const SESSION_COL_MCP_CALL_ID: usize = 26;
+const SESSION_COL_REDACTION_STATE: usize = 27;
+const SESSION_COL_HTTP_HOST: usize = 28;
+const SESSION_COL_HTTP_PORT: usize = 29;
+const SESSION_COL_HTTP_METHOD: usize = 30;
+const SESSION_COL_HTTP_PATH: usize = 31;
+const SESSION_COL_HTTP_QUERY: usize = 32;
+const SESSION_COL_HTTP_STATUS: usize = 33;
+const SESSION_COL_HTTP_REQUEST_BYTES: usize = 34;
+const SESSION_COL_HTTP_RESPONSE_BYTES: usize = 35;
+const SESSION_COL_DNS_QNAME: usize = 36;
+const SESSION_COL_MCP_SERVER_ID: usize = 37;
+const SESSION_COL_MCP_TOOL_NAME: usize = 38;
+const SESSION_COL_MODEL_PROVIDER: usize = 39;
+const SESSION_COL_MODEL_NAME: usize = 40;
+const SESSION_COL_MODEL_INPUT_TOKENS: usize = 41;
+const SESSION_COL_MODEL_OUTPUT_TOKENS: usize = 42;
+const SESSION_COL_FILE_OPERATION: usize = 43;
+const SESSION_COL_FILE_PATH: usize = 44;
+const SESSION_COL_FILE_BYTE_COUNT: usize = 45;
+const SESSION_COL_PROCESS_COMMAND: usize = 46;
+const SESSION_COL_PROCESS_NAME: usize = 47;
+const SESSION_COL_SNAPSHOT_SLOT: usize = 48;
+const SESSION_COL_SNAPSHOT_NAME: usize = 50;
+
+fn session_security_event_common_from_row(
     row: &serde_json::Value,
-) -> Result<Option<seceng::SecurityEvent>, AppError> {
-    let event_family = session_required_string(row, 2)?;
-    if event_family != "http" {
-        return Ok(None);
-    }
-    let host = match session_optional_string(row, 28)? {
-        Some(host) => host,
-        None => return Ok(None),
-    };
-    let method = session_optional_string(row, 30)?.unwrap_or_else(|| "GET".into());
-    let path = session_optional_string(row, 31)?;
-    let query = session_optional_string(row, 32)?;
-    let port = session_optional_u64(row, 29)?.and_then(|value| u16::try_from(value).ok());
-    let status = session_optional_u64(row, 33)?.and_then(|value| u16::try_from(value).ok());
-    let request_bytes = session_optional_u64(row, 34)?.unwrap_or_default();
-    let response_bytes = session_optional_u64(row, 35)?;
-    let common = seceng::SecurityEventCommon {
-        event_id: session_required_string(row, 0)?,
-        parent_event_id: session_optional_string(row, 11)?,
-        stream_id: session_optional_string(row, 12)?,
-        activity_id: session_optional_string(row, 13)?,
-        sequence_no: session_optional_u64(row, 14)?,
-        source_engine: parse_session_source_engine(&session_required_string(row, 4)?)?,
-        attribution_scope: parse_session_attribution_scope(&session_required_string(row, 6)?)?,
-        origin_kind: parse_session_origin_kind(&session_required_string(row, 7)?)?,
-        accounting_owner: session_optional_string(row, 8)?,
-        enforceability: parse_session_enforceability(&session_required_string(row, 5)?)?,
-        trace_id: session_optional_string(row, 9)?,
-        span_id: session_optional_string(row, 10)?,
-        timestamp_unix_ms: session_required_u64(row, 1)?,
-        vm_id: session_optional_string(row, 15)?,
-        session_id: session_optional_string(row, 16)?,
-        profile_id: session_optional_string(row, 17)?,
-        profile_revision: session_optional_string(row, 18)?,
+) -> Result<seceng::SecurityEventCommon, AppError> {
+    Ok(seceng::SecurityEventCommon {
+        event_id: session_required_string(row, SESSION_COL_EVENT_ID)?,
+        parent_event_id: session_optional_string(row, SESSION_COL_PARENT_EVENT_ID)?,
+        stream_id: session_optional_string(row, SESSION_COL_STREAM_ID)?,
+        activity_id: session_optional_string(row, SESSION_COL_ACTIVITY_ID)?,
+        sequence_no: session_optional_u64(row, SESSION_COL_SEQUENCE_NO)?,
+        source_engine: parse_session_source_engine(&session_required_string(
+            row,
+            SESSION_COL_SOURCE_ENGINE,
+        )?)?,
+        attribution_scope: parse_session_attribution_scope(&session_required_string(
+            row,
+            SESSION_COL_ATTRIBUTION_SCOPE,
+        )?)?,
+        origin_kind: parse_session_origin_kind(&session_required_string(
+            row,
+            SESSION_COL_ORIGIN_KIND,
+        )?)?,
+        accounting_owner: session_optional_string(row, SESSION_COL_ACCOUNTING_OWNER)?,
+        enforceability: parse_session_enforceability(&session_required_string(
+            row,
+            SESSION_COL_ENFORCEABILITY,
+        )?)?,
+        trace_id: session_optional_string(row, SESSION_COL_TRACE_ID)?,
+        span_id: session_optional_string(row, SESSION_COL_SPAN_ID)?,
+        timestamp_unix_ms: session_required_u64(row, SESSION_COL_TIMESTAMP_UNIX_MS)?,
+        vm_id: session_optional_string(row, SESSION_COL_VM_ID)?,
+        session_id: session_optional_string(row, SESSION_COL_SESSION_ID)?,
+        profile_id: session_optional_string(row, SESSION_COL_PROFILE_ID)?,
+        profile_revision: session_optional_string(row, SESSION_COL_PROFILE_REVISION)?,
         profile_pack_ids: Vec::new(),
         enforcement_packs: Vec::new(),
         detection_packs: Vec::new(),
-        user_id: session_optional_string(row, 19)?,
-        process_id: session_optional_string(row, 20)?,
-        parent_process_id: session_optional_string(row, 21)?,
-        exec_id: session_optional_string(row, 22)?,
-        turn_id: session_optional_string(row, 23)?,
-        message_id: session_optional_string(row, 24)?,
-        tool_call_id: session_optional_string(row, 25)?,
-        mcp_call_id: session_optional_string(row, 26)?,
-        event_type: session_required_string(row, 3)?,
-        redaction_state: parse_session_redaction_state(&session_required_string(row, 27)?)?,
-    };
-    let url = Some(match (&path, &query) {
-        (Some(path), Some(query)) if !query.is_empty() => format!("https://{host}{path}?{query}"),
-        (Some(path), _) => format!("https://{host}{path}"),
-        _ => format!("https://{host}"),
-    });
-    Ok(Some(seceng::SecurityEvent::http(
-        common,
-        seceng::HttpSecuritySubject {
-            method,
-            scheme: Some("https".into()),
-            host,
-            port,
-            path_class: path.clone().unwrap_or_default(),
-            path,
-            query,
-            url,
-            request_bytes,
-            request_headers: Default::default(),
-            request_body: None,
-            response_status: status,
-            response_headers: Default::default(),
-            response_bytes,
-            response_body: None,
-        },
-    )))
+        user_id: session_optional_string(row, SESSION_COL_USER_ID)?,
+        process_id: session_optional_string(row, SESSION_COL_PROCESS_ID)?,
+        parent_process_id: session_optional_string(row, SESSION_COL_PARENT_PROCESS_ID)?,
+        exec_id: session_optional_string(row, SESSION_COL_EXEC_ID)?,
+        turn_id: session_optional_string(row, SESSION_COL_TURN_ID)?,
+        message_id: session_optional_string(row, SESSION_COL_MESSAGE_ID)?,
+        tool_call_id: session_optional_string(row, SESSION_COL_TOOL_CALL_ID)?,
+        mcp_call_id: session_optional_string(row, SESSION_COL_MCP_CALL_ID)?,
+        event_type: session_required_string(row, SESSION_COL_EVENT_TYPE)?,
+        redaction_state: parse_session_redaction_state(&session_required_string(
+            row,
+            SESSION_COL_REDACTION_STATE,
+        )?)?,
+    })
+}
+
+fn session_event_operation(event_type: &str, fallback: &str) -> String {
+    event_type
+        .split_once('.')
+        .map(|(_, operation)| operation)
+        .filter(|operation| !operation.is_empty())
+        .unwrap_or(fallback)
+        .to_owned()
+}
+
+fn session_domain_class(qname: &str) -> String {
+    if qname == "localhost"
+        || qname.ends_with(".localhost")
+        || qname.ends_with(".internal")
+        || qname.contains("metadata")
+    {
+        "internal".into()
+    } else {
+        "external".into()
+    }
+}
+
+fn session_security_event_from_row(
+    row: &serde_json::Value,
+) -> Result<Option<seceng::SecurityEvent>, AppError> {
+    let event_family = session_required_string(row, SESSION_COL_EVENT_FAMILY)?;
+    let common = session_security_event_common_from_row(row)?;
+    match event_family.as_str() {
+        "http" => {
+            let host = match session_optional_string(row, SESSION_COL_HTTP_HOST)? {
+                Some(host) => host,
+                None => return Ok(None),
+            };
+            let method = session_optional_string(row, SESSION_COL_HTTP_METHOD)?
+                .unwrap_or_else(|| "GET".into());
+            let path = session_optional_string(row, SESSION_COL_HTTP_PATH)?;
+            let query = session_optional_string(row, SESSION_COL_HTTP_QUERY)?;
+            let port = session_optional_u64(row, SESSION_COL_HTTP_PORT)?
+                .and_then(|value| u16::try_from(value).ok());
+            let status = session_optional_u64(row, SESSION_COL_HTTP_STATUS)?
+                .and_then(|value| u16::try_from(value).ok());
+            let request_bytes =
+                session_optional_u64(row, SESSION_COL_HTTP_REQUEST_BYTES)?.unwrap_or_default();
+            let response_bytes = session_optional_u64(row, SESSION_COL_HTTP_RESPONSE_BYTES)?;
+            let url = Some(match (&path, &query) {
+                (Some(path), Some(query)) if !query.is_empty() => {
+                    format!("https://{host}{path}?{query}")
+                }
+                (Some(path), _) => format!("https://{host}{path}"),
+                _ => format!("https://{host}"),
+            });
+            Ok(Some(seceng::SecurityEvent::http(
+                common,
+                seceng::HttpSecuritySubject {
+                    method,
+                    scheme: Some("https".into()),
+                    host,
+                    port,
+                    path_class: path.clone().unwrap_or_default(),
+                    path,
+                    query,
+                    url,
+                    request_bytes,
+                    request_headers: Default::default(),
+                    request_body: None,
+                    response_status: status,
+                    response_headers: Default::default(),
+                    response_bytes,
+                    response_body: None,
+                },
+            )))
+        }
+        "dns" => {
+            let qname = match session_optional_string(row, SESSION_COL_DNS_QNAME)? {
+                Some(qname) => qname,
+                None => return Ok(None),
+            };
+            let domain_class = session_domain_class(&qname);
+            Ok(Some(seceng::SecurityEvent::dns(
+                common,
+                seceng::DnsSecuritySubject {
+                    qname,
+                    domain_class,
+                },
+            )))
+        }
+        "mcp" => {
+            let server_id = match session_optional_string(row, SESSION_COL_MCP_SERVER_ID)? {
+                Some(server_id) => server_id,
+                None => return Ok(None),
+            };
+            let tool_name = match session_optional_string(row, SESSION_COL_MCP_TOOL_NAME)? {
+                Some(tool_name) => tool_name,
+                None => return Ok(None),
+            };
+            Ok(Some(seceng::SecurityEvent::mcp(
+                common,
+                seceng::McpSecuritySubject {
+                    server_id,
+                    tool_name,
+                    evidence: None,
+                },
+            )))
+        }
+        "model" => {
+            let provider = match session_optional_string(row, SESSION_COL_MODEL_PROVIDER)? {
+                Some(provider) => provider,
+                None => return Ok(None),
+            };
+            let model = match session_optional_string(row, SESSION_COL_MODEL_NAME)? {
+                Some(model) => model,
+                None => return Ok(None),
+            };
+            Ok(Some(seceng::SecurityEvent::model(
+                common,
+                seceng::ModelSecuritySubject {
+                    provider,
+                    model,
+                    estimated_input_tokens: session_optional_u64(
+                        row,
+                        SESSION_COL_MODEL_INPUT_TOKENS,
+                    )?,
+                    estimated_output_tokens: session_optional_u64(
+                        row,
+                        SESSION_COL_MODEL_OUTPUT_TOKENS,
+                    )?,
+                    estimated_cost_micros: None,
+                    evidence: None,
+                },
+            )))
+        }
+        "file" => {
+            let operation = session_optional_string(row, SESSION_COL_FILE_OPERATION)?
+                .unwrap_or_else(|| session_event_operation(&common.event_type, "activity"));
+            let path_class =
+                session_optional_string(row, SESSION_COL_FILE_PATH)?.unwrap_or_default();
+            Ok(Some(seceng::SecurityEvent::file(
+                common,
+                seceng::FileSecuritySubject {
+                    operation,
+                    path_class,
+                    byte_count: session_optional_u64(row, SESSION_COL_FILE_BYTE_COUNT)?,
+                },
+            )))
+        }
+        "process" => {
+            let operation = session_event_operation(&common.event_type, "activity");
+            let command = session_optional_string(row, SESSION_COL_PROCESS_COMMAND)?;
+            let command_class =
+                session_optional_string(row, SESSION_COL_PROCESS_NAME)?.or_else(|| {
+                    command
+                        .as_ref()
+                        .and_then(|command| command.split_whitespace().next())
+                        .map(str::to_owned)
+                });
+            Ok(Some(seceng::SecurityEvent::process(
+                common,
+                seceng::ProcessSecuritySubject {
+                    operation,
+                    command_class,
+                },
+            )))
+        }
+        "snapshot" => {
+            let operation = session_event_operation(&common.event_type, "activity");
+            let snapshot_id = session_optional_string(row, SESSION_COL_SNAPSHOT_NAME)?
+                .or_else(|| {
+                    session_optional_u64(row, SESSION_COL_SNAPSHOT_SLOT)
+                        .ok()
+                        .flatten()
+                        .map(|slot| slot.to_string())
+                })
+                .unwrap_or_else(|| common.event_id.clone());
+            Ok(Some(seceng::SecurityEvent::snapshot(
+                common,
+                seceng::SnapshotSecuritySubject {
+                    operation,
+                    snapshot_id,
+                },
+            )))
+        }
+        "vm" => {
+            let operation = session_event_operation(&common.event_type, "activity");
+            Ok(Some(seceng::SecurityEvent::vm_lifecycle(
+                common,
+                seceng::VmLifecycleSecuritySubject { operation },
+            )))
+        }
+        "profile" => {
+            let operation = session_event_operation(&common.event_type, "activity");
+            let profile_id = common.profile_id.clone().unwrap_or_default();
+            let profile_revision = common.profile_revision.clone().unwrap_or_default();
+            Ok(Some(seceng::SecurityEvent::profile(
+                common,
+                seceng::ProfileSecuritySubject {
+                    operation,
+                    profile_id,
+                    profile_revision,
+                },
+            )))
+        }
+        "conversation" => {
+            let operation = session_event_operation(&common.event_type, "activity");
+            let conversation_id = common
+                .activity_id
+                .clone()
+                .or_else(|| common.turn_id.clone());
+            Ok(Some(seceng::SecurityEvent::conversation(
+                common,
+                seceng::ConversationSecuritySubject {
+                    operation,
+                    conversation_id,
+                },
+            )))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn session_backtest_events(

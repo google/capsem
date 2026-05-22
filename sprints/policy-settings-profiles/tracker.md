@@ -968,6 +968,25 @@ a valid claim -- mark it `[ ]` instead.
     Still missing after this coverage slice: deeper per-family CEL surface
     tests, broader session reconstruction beyond HTTP, gateway/CLI/UI route
     exposure, persistence/profile-pack seeding, and production engine emitters.
+    Thirty-fifth TDD session-hunt slice broadened
+    `/sessions/{id}/detection/hunt` reconstruction from HTTP-only to the core
+    structured projection families already present in `session.db`: DNS, MCP,
+    model, file, process, and snapshot, with common-only VM/profile/
+    conversation reconstruction also available. A hand-built DB test now
+    creates one canonical `security_events` row plus one projection row for
+    the six projection-backed families, adds VM/profile/conversation
+    common-only rows, and proves real CEL rules match all nine reconstructed
+    event types through the session hunt route. Verification:
+    `cargo test -p capsem-service
+    handle_session_detection_hunt_reconstructs_core_projection_families`,
+    `cargo test -p capsem-service
+    handle_session_detection_hunt_reads_hand_built_security_db_corpus`,
+    `cargo test -p capsem-service
+    handle_detection_hunt_runs_multiple_detection_rules_over_inline_events`,
+    and `cargo check -p capsem-service` passed. Still missing after this slice:
+    richer model/MCP evidence projection from the canonical AI tables, file path
+    identity beyond today's path-class surface, gateway/CLI/UI route exposure,
+    persistence/profile-pack seeding, and production engine emitters.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

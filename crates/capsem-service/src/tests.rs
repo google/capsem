@@ -6765,6 +6765,40 @@ fn insert_hunt_security_http_fixture(
     .unwrap();
 }
 
+fn insert_hunt_security_event_fixture(
+    conn: &rusqlite::Connection,
+    event_id: &str,
+    trace_id: &str,
+    timestamp_unix_ms: i64,
+    event_family: &str,
+    event_type: &str,
+    source_engine: &str,
+) {
+    conn.execute(
+        "INSERT INTO security_events (
+            event_id, timestamp, timestamp_unix_ms, event_family, event_type,
+            source_engine, final_action, enforceability, attribution_scope,
+            origin_kind, accounting_owner, trace_id, vm_id, session_id,
+            profile_id, user_id, redaction_state, label_count, mutation_count,
+            finding_count
+         ) VALUES (
+            ?1, '2026-05-21T10:00:00Z', ?2, ?3, ?4,
+            ?5, 'continue', 'inline_blockable', 'vm',
+            'guest_network', 'vm:hunt-vm', ?6, 'hunt-vm', 'hunt-session',
+            'coding', 'user-1', 'raw', 0, 0, 0
+         )",
+        rusqlite::params![
+            event_id,
+            timestamp_unix_ms,
+            event_family,
+            event_type,
+            source_engine,
+            trace_id
+        ],
+    )
+    .unwrap();
+}
+
 #[tokio::test]
 async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -6918,6 +6952,344 @@ async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
         result.rows[0].outcome,
         capsem_security_engine::BacktestOutcome::Matched
     ));
+}
+
+#[tokio::test]
+async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = "hunt-vm";
+    let session_dir = state.run_dir.join("sessions").join(vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let db_path = session_dir.join("session.db");
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        capsem_logger::schema::apply_pragmas(&conn).unwrap();
+        capsem_logger::schema::create_tables(&conn).unwrap();
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-dns-google",
+            "trace-dns-google",
+            1_700_000_100_001,
+            "dns",
+            "dns.request",
+            "network",
+        );
+        conn.execute(
+            "INSERT INTO dns_events (
+                timestamp, qname, qtype, qclass, rcode, decision, trace_id
+             ) VALUES (
+                '2026-05-21T10:00:00Z', 'google.example.test', 1, 1, 0,
+                'allowed', 'trace-dns-google'
+             )",
+            [],
+        )
+        .unwrap();
+
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-mcp-read",
+            "trace-mcp-read",
+            1_700_000_100_002,
+            "mcp",
+            "mcp.request",
+            "network",
+        );
+        conn.execute(
+            "INSERT INTO mcp_calls (
+                timestamp, server_name, method, tool_name, decision, trace_id
+             ) VALUES (
+                '2026-05-21T10:00:00Z', 'filesystem', 'tools/call',
+                'read_file', 'allowed', 'trace-mcp-read'
+             )",
+            [],
+        )
+        .unwrap();
+
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-model-gemini",
+            "trace-model-gemini",
+            1_700_000_100_003,
+            "model",
+            "model.request",
+            "network",
+        );
+        conn.execute(
+            "INSERT INTO model_calls (
+                timestamp, provider, model, method, path, input_tokens,
+                output_tokens, trace_id
+             ) VALUES (
+                '2026-05-21T10:00:00Z', 'google_gemini', 'gemini-2.5-pro',
+                'POST', '/v1beta/models/gemini-2.5-pro:generateContent',
+                12, 34, 'trace-model-gemini'
+             )",
+            [],
+        )
+        .unwrap();
+
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-file-write",
+            "trace-file-write",
+            1_700_000_100_004,
+            "file",
+            "file.write",
+            "file",
+        );
+        conn.execute(
+            "INSERT INTO fs_events (
+                timestamp, action, path, size, trace_id
+             ) VALUES (
+                '2026-05-21T10:00:00Z', 'write',
+                '/workspace/secret.txt', 64, 'trace-file-write'
+             )",
+            [],
+        )
+        .unwrap();
+
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-process-exec",
+            "trace-process-exec",
+            1_700_000_100_005,
+            "process",
+            "process.exec",
+            "process",
+        );
+        conn.execute(
+            "INSERT INTO exec_events (
+                timestamp, exec_id, command, process_name, trace_id
+             ) VALUES (
+                '2026-05-21T10:00:00Z', 7, 'bash -lc echo ok',
+                'bash', 'trace-process-exec'
+             )",
+            [],
+        )
+        .unwrap();
+
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-snapshot-create",
+            "trace-snapshot-create",
+            1_700_000_100_006,
+            "snapshot",
+            "snapshot.create",
+            "file",
+        );
+        conn.execute(
+            "INSERT INTO snapshot_events (
+                timestamp, slot, origin, name, trace_id
+             ) VALUES (
+                '2026-05-21T10:00:00Z', 2, 'manual',
+                'before-edit', 'trace-snapshot-create'
+             )",
+            [],
+        )
+        .unwrap();
+
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-vm-start",
+            "trace-vm-start",
+            1_700_000_100_007,
+            "vm",
+            "vm.start",
+            "vm",
+        );
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-profile-update",
+            "trace-profile-update",
+            1_700_000_100_008,
+            "profile",
+            "profile.update",
+            "profile",
+        );
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-conversation-message",
+            "trace-conversation-message",
+            1_700_000_100_009,
+            "conversation",
+            "conversation.message",
+            "conversation",
+        );
+    }
+
+    state.instances.lock().unwrap().insert(
+        vm_id.into(),
+        InstanceInfo {
+            id: vm_id.into(),
+            pid: std::process::id(),
+            uds_path: state.run_dir.join("hunt.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: None,
+            profile_pin: None,
+        },
+    );
+
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let reconstructed = session_backtest_events(vm_id, &reader).unwrap();
+    assert_eq!(reconstructed.len(), 9);
+    let event_ids = reconstructed
+        .iter()
+        .map(|event| event.event.common.event_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(event_ids.contains("evt-dns-google"));
+    assert!(event_ids.contains("evt-mcp-read"));
+    assert!(event_ids.contains("evt-model-gemini"));
+    assert!(event_ids.contains("evt-file-write"));
+    assert!(event_ids.contains("evt-process-exec"));
+    assert!(event_ids.contains("evt-snapshot-create"));
+    assert!(event_ids.contains("evt-vm-start"));
+    assert!(event_ids.contains("evt-profile-update"));
+    assert!(event_ids.contains("evt-conversation-message"));
+
+    let Json(result) = handle_session_detection_hunt(
+        Path(vm_id.into()),
+        State(state),
+        Json(RuntimeSessionDetectionHuntRequest {
+            rules: vec![
+                RuntimeDetectionRuleRequest {
+                    id: "detect-dns-google".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-dns-google".into()),
+                    title: "DNS Google".into(),
+                    condition: "dns.request.qname.contains('google')".into(),
+                    severity: capsem_security_engine::Severity::Medium,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["dns".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-mcp-read".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-mcp-read".into()),
+                    title: "MCP file read".into(),
+                    condition: "mcp.request.server_id == 'filesystem' \
+                        && mcp.request.tool_name == 'read_file'"
+                        .into(),
+                    severity: capsem_security_engine::Severity::Medium,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["mcp".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-model-gemini".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-model-gemini".into()),
+                    title: "Gemini model".into(),
+                    condition: "model.request.provider == 'google_gemini' \
+                        && model.request.model.contains('gemini')"
+                        .into(),
+                    severity: capsem_security_engine::Severity::Medium,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["model".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-file-write".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-file-write".into()),
+                    title: "Workspace file write".into(),
+                    condition: "file.activity.operation == 'write' \
+                        && file.activity.path_class.contains('/workspace')"
+                        .into(),
+                    severity: capsem_security_engine::Severity::Medium,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["file".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-process-exec".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-process-exec".into()),
+                    title: "Process exec".into(),
+                    condition: "process.activity.operation == 'exec' \
+                        && process.activity.command_class == 'bash'"
+                        .into(),
+                    severity: capsem_security_engine::Severity::Medium,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["process".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-snapshot-create".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-snapshot-create".into()),
+                    title: "Snapshot create".into(),
+                    condition: "common.event_type == 'snapshot.create'".into(),
+                    severity: capsem_security_engine::Severity::Low,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["snapshot".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-vm-start".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-vm-start".into()),
+                    title: "VM start".into(),
+                    condition: "common.event_type == 'vm.start'".into(),
+                    severity: capsem_security_engine::Severity::Low,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["vm".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-profile-update".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-profile-update".into()),
+                    title: "Profile update".into(),
+                    condition: "profile.activity.operation == 'update' \
+                        && profile.activity.profile_id == 'coding'"
+                        .into(),
+                    severity: capsem_security_engine::Severity::Low,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["profile".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-conversation-message".into(),
+                    pack_id: "runtime-detection".into(),
+                    sigma_id: Some("sigma-conversation-message".into()),
+                    title: "Conversation message".into(),
+                    condition: "common.event_type == 'conversation.message'".into(),
+                    severity: capsem_security_engine::Severity::Low,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["conversation".into()],
+                    enabled: true,
+                },
+            ],
+            limit: None,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let matched_rule_ids = result
+        .rows
+        .iter()
+        .map(|row| row.rule_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(result.total_matches, 9);
+    assert_eq!(matched_rule_ids.len(), 9);
+    assert!(matched_rule_ids.contains("detect-dns-google"));
+    assert!(matched_rule_ids.contains("detect-mcp-read"));
+    assert!(matched_rule_ids.contains("detect-model-gemini"));
+    assert!(matched_rule_ids.contains("detect-file-write"));
+    assert!(matched_rule_ids.contains("detect-process-exec"));
+    assert!(matched_rule_ids.contains("detect-snapshot-create"));
+    assert!(matched_rule_ids.contains("detect-vm-start"));
+    assert!(matched_rule_ids.contains("detect-profile-update"));
+    assert!(matched_rule_ids.contains("detect-conversation-message"));
 }
 
 #[tokio::test]
