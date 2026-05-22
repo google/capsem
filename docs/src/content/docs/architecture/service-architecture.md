@@ -214,7 +214,7 @@ The service exposes a REST API over UDS. The gateway proxies this transparently.
 | POST | `/purge` | Kill all temp VMs (`all: true` includes persistent) |
 | POST | `/files/{id}/content?path=<relpath>` | Write workspace file |
 | GET | `/files/{id}/content?path=<relpath>` | Read workspace file |
-| GET | `/logs/{id}` | Serial/boot logs |
+| GET | `/logs/{id}` | Security, process, and serial logs |
 | POST | `/inspect/{id}` | SQL query against session.db |
 | DELETE | `/delete/{id}` | Destroy VM and wipe state |
 | POST | `/suspend/{id}` | Suspend VM to disk (persistent only) |

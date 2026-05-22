@@ -321,7 +321,7 @@ class TestGatewayLogs:
     """Log retrieval through the gateway."""
 
     def test_logs_for_running_vm(self, e2e_client):
-        """GET /logs/{id} returns boot logs for a running VM."""
+        """GET /logs/{id} returns the typed log envelope for a running VM."""
         name = vm_name("gw-logs")
         resp = e2e_client.post("/provision", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
@@ -333,6 +333,7 @@ class TestGatewayLogs:
             logs_resp = e2e_client.get(f"/logs/{vm_id}")
             assert logs_resp is not None
             assert "logs" in logs_resp
+            assert "security_logs" in logs_resp or "serial_logs" in logs_resp
         finally:
             e2e_client.delete(f"/delete/{vm_id}")
 

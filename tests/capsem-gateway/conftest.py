@@ -352,7 +352,15 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
         elif self.clean_path.startswith("/logs/"):
-            self._send_json({"logs": "mock boot log\n", "serial_logs": None, "process_logs": None})
+            self._send_json({
+                "logs": "mock boot log\n",
+                "serial_logs": None,
+                "process_logs": None,
+                "security_logs": (
+                    '{"target":"security.event","fields":'
+                    '{"message":"resolved_security_event","event_id":"evt-gw-log"}}\n'
+                ),
+            })
         elif parsed.path.startswith("/files/") and parsed.path.endswith("/content"):
             parts = parsed.path.strip("/").split("/")
             if len(parts) >= 3:

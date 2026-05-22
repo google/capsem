@@ -87,10 +87,12 @@ class TestProxyEndpointCoverage:
         assert resp.get("name") == "snapshot1"
 
     def test_get_logs(self, gw_client):
-        """GET /logs/{id} returns boot logs."""
+        """GET /logs/{id} returns boot and security logs."""
         resp = gw_client.get("/logs/vm-001")
         assert resp is not None
         assert "logs" in resp
+        assert "security_logs" in resp
+        assert "resolved_security_event" in resp["security_logs"]
 
     def test_delete_vm(self, gw_client):
         """DELETE /delete/{id} destroys a VM."""

@@ -95,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added canonical security-log support to the MCP VM log tool's grep/tail
   filtering so agent-side debugging sees the same resolved Security Engine
   events as the CLI.
+- Updated HTTP gateway log contract tests and architecture docs so `/logs/{id}`
+  is treated as the typed security/process/serial log envelope.
 - Added typed model tool-call policy projection under
   `model.request.tool_calls`, including name, origin, argument status, status,
   linked MCP call id, and parse confidence, with session-backed detection hunt

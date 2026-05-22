@@ -1595,6 +1595,14 @@ a valid claim -- mark it `[ ]` instead.
     **5** passed; docs build `pnpm --dir docs run build` passed. Still
     missing after this slice: visible UI screens/editors, ask/confirm UX for
     process decisions, S12 OTel/prometheus export, and S08d performance proof.
+    Seventieth TDD gateway-log contract slice updated the gateway mock and
+    proxy coverage so `/logs/{id}` preserves the typed log envelope with
+    `security_logs`, and refreshed service architecture docs from "boot logs"
+    to security/process/serial logs. Verification: `uv run pytest
+    tests/capsem-gateway/test_gw_proxy_advanced.py::TestProxyEndpointCoverage::test_get_logs
+    -q` **1** passed; docs build `pnpm --dir docs run build` passed. Still
+    missing after this slice: visible UI screens/editors, ask/confirm UX for
+    process decisions, S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
