@@ -97,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status, returned-to-model state, linked MCP call id, and parse confidence,
   with session-backed detection hunt reconstruction from
   `ai_model_tool_results`.
+- Added a typed frontend API client surface for runtime enforcement and
+  detection routes, including validate/compile/install/delete/list/stats,
+  backtest, live hunt, and session-backed detection hunt calls.
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.

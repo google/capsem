@@ -13,6 +13,17 @@ import type {
   ForkRequest,
   ForkResponse,
   StatsResponse,
+  RuntimeEnforcementRuleRequest,
+  RuntimeDetectionRuleRequest,
+  RuntimeRuleListResponse,
+  RuntimeRuleCompileResponse,
+  RuntimeRuleInstallResponse,
+  RuntimeRuleDeleteResponse,
+  RuntimeEnforcementBacktestRequest,
+  RuntimeDetectionBacktestRequest,
+  RuntimeDetectionHuntRequest,
+  RuntimeSessionDetectionHuntRequest,
+  RuntimeBacktestResult,
 } from './types/gateway';
 import type {
   SettingsResponse,
@@ -830,6 +841,109 @@ export async function approveMcpTool(name: string): Promise<void> {
 /** Call a built-in MCP file tool. */
 export async function callMcpTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   const resp = await _post(`/mcp/tools/${encodeURIComponent(name)}/call`, args);
+  return await resp.json();
+}
+
+// -- Runtime security rules --
+
+export async function getRuntimeEnforcementRules(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/enforcement');
+  return await resp.json();
+}
+
+export async function getRuntimeEnforcementStats(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/enforcement/stats');
+  return await resp.json();
+}
+
+export async function validateRuntimeEnforcementRule(
+  rule: RuntimeEnforcementRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/enforcement/validate', rule);
+  return await resp.json();
+}
+
+export async function compileRuntimeEnforcementRule(
+  rule: RuntimeEnforcementRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/enforcement/compile', rule);
+  return await resp.json();
+}
+
+export async function installRuntimeEnforcementRule(
+  rule: RuntimeEnforcementRuleRequest,
+): Promise<RuntimeRuleInstallResponse> {
+  const resp = await _post('/enforcement', rule);
+  return await resp.json();
+}
+
+export async function backtestRuntimeEnforcementRule(
+  request: RuntimeEnforcementBacktestRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post('/enforcement/backtest', request);
+  return await resp.json();
+}
+
+export async function deleteRuntimeEnforcementRule(id: string): Promise<RuntimeRuleDeleteResponse> {
+  const resp = await _delete(`/enforcement/${encodeURIComponent(id)}`);
+  return await resp.json();
+}
+
+export async function getRuntimeDetectionRules(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/detection');
+  return await resp.json();
+}
+
+export async function getRuntimeDetectionStats(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/detection/stats');
+  return await resp.json();
+}
+
+export async function validateRuntimeDetectionRule(
+  rule: RuntimeDetectionRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/detection/validate', rule);
+  return await resp.json();
+}
+
+export async function compileRuntimeDetectionRule(
+  rule: RuntimeDetectionRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/detection/compile', rule);
+  return await resp.json();
+}
+
+export async function installRuntimeDetectionRule(
+  rule: RuntimeDetectionRuleRequest,
+): Promise<RuntimeRuleInstallResponse> {
+  const resp = await _post('/detection', rule);
+  return await resp.json();
+}
+
+export async function backtestRuntimeDetectionRule(
+  request: RuntimeDetectionBacktestRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post('/detection/backtest', request);
+  return await resp.json();
+}
+
+export async function huntRuntimeDetectionRules(
+  request: RuntimeDetectionHuntRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post('/detection/hunt', request);
+  return await resp.json();
+}
+
+export async function huntSessionRuntimeDetectionRules(
+  sessionId: string,
+  request: RuntimeSessionDetectionHuntRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post(`/sessions/${encodeURIComponent(sessionId)}/detection/hunt`, request);
+  return await resp.json();
+}
+
+export async function deleteRuntimeDetectionRule(id: string): Promise<RuntimeRuleDeleteResponse> {
+  const resp = await _delete(`/detection/${encodeURIComponent(id)}`);
   return await resp.json();
 }
 

@@ -481,6 +481,128 @@ describe('api', () => {
     });
   });
 
+  // ---- Runtime security rules ----
+
+  describe('Runtime security rules', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('getRuntimeDetectionRules sends GET /detection', async () => {
+      const rules = [
+        {
+          id: 'detect-google',
+          pack_id: 'runtime',
+          scope: 'runtime',
+          origin: 'runtime',
+          enabled: true,
+          compiled: true,
+          compile_status: { status: 'compiled' },
+          generation: 1,
+          condition: "dns.request.qname.contains('google')",
+          compiled_plan: 'cel:123',
+          match_count: 2,
+          last_matched_event: 'evt-1',
+          last_matched_unix_ms: 1700000000000,
+        },
+      ];
+      mockFetch.mockReturnValueOnce(jsonResponse({ kind: 'detection', rules }));
+
+      const result = await api.getRuntimeDetectionRules();
+
+      expect(result.rules).toEqual(rules);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/detection');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('validateRuntimeEnforcementRule sends POST /enforcement/validate', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        compiled: true,
+        id: 'block-admin',
+        compiled_plan: 'cel:admin',
+      }));
+      const rule = {
+        id: 'block-admin',
+        pack_id: 'runtime',
+        condition: "http.request.path.startsWith('/admin')",
+        decision: 'block' as const,
+        reason: 'admin path',
+        enabled: true,
+      };
+
+      const result = await api.validateRuntimeEnforcementRule(rule);
+
+      expect(result.compiled).toBe(true);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/enforcement/validate');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual(rule);
+    });
+
+    it('installRuntimeDetectionRule posts to /detection', async () => {
+      const rule = {
+        id: 'detect-secret',
+        pack_id: 'runtime-detection',
+        title: 'Secret egress',
+        condition: "http.request.body.text.contains('secret')",
+        severity: 'high' as const,
+        confidence: 'high' as const,
+        tags: ['http', 'egress'],
+        enabled: true,
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse({ kind: 'detection', rule: { id: rule.id } }));
+
+      const result = await api.installRuntimeDetectionRule(rule);
+
+      expect(result.rule.id).toBe(rule.id);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/detection');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual(rule);
+    });
+
+    it('huntSessionRuntimeDetectionRules posts rules to /sessions/{id}/detection/hunt', async () => {
+      const rules = [{
+        id: 'detect-tool-result',
+        pack_id: 'runtime-detection',
+        title: 'Tool result returned',
+        condition: 'model.response.tool_results[0].returned_to_model == true',
+        severity: 'medium' as const,
+        confidence: 'high' as const,
+        tags: ['model'],
+        enabled: true,
+      }];
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        total_matches: 1,
+        unique_evidence_matches: 1,
+        truncated: false,
+        rows: [],
+      }));
+
+      const result = await api.huntSessionRuntimeDetectionRules('vm 1', { rules, limit: 50 });
+
+      expect(result.total_matches).toBe(1);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/sessions/vm%201/detection/hunt');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual({ rules, limit: 50 });
+    });
+
+    it('deleteRuntimeEnforcementRule sends DELETE /enforcement/{id}', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ kind: 'enforcement', id: 'block admin', removed: true }));
+
+      await api.deleteRuntimeEnforcementRule('block admin');
+
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/enforcement/block%20admin');
+      expect(call[1].method).toBe('DELETE');
+    });
+  });
+
   // ---- VM state ----
 
   describe('VM state', () => {

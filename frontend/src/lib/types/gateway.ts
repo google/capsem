@@ -238,3 +238,120 @@ export interface McpToolSummary {
   total_bytes: number;
   total_duration_ms: number;
 }
+
+// Runtime enforcement/detection routes.
+export type RuntimeRuleKind = 'enforcement' | 'detection';
+export type RuntimeRuleScope = 'profile' | 'user' | 'corp' | 'runtime';
+export type RuntimeRuleOrigin = 'profile' | 'user' | 'corp' | 'runtime';
+export type RuntimeSecurityDecision = 'allow' | 'ask' | 'block' | 'rewrite' | 'throttle';
+export type RuntimeSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical';
+export type RuntimeConfidence = 'low' | 'medium' | 'high';
+
+export interface RuntimeRuleEntry {
+  id: string;
+  pack_id?: string | null;
+  scope: RuntimeRuleScope;
+  origin: RuntimeRuleOrigin;
+  enabled: boolean;
+  compiled: boolean;
+  compile_status: Record<string, unknown>;
+  generation: number;
+  condition: string;
+  compiled_plan: string;
+  match_count: number;
+  last_matched_event?: string | null;
+  last_matched_unix_ms?: number | null;
+}
+
+export interface RuntimeRuleListResponse {
+  kind: RuntimeRuleKind;
+  rules: RuntimeRuleEntry[];
+}
+
+export interface RuntimeRuleCompileResponse {
+  compiled: boolean;
+  id: string;
+  compiled_plan: string;
+}
+
+export interface RuntimeRuleInstallResponse {
+  kind: RuntimeRuleKind;
+  rule: RuntimeRuleEntry;
+}
+
+export interface RuntimeRuleDeleteResponse {
+  kind: RuntimeRuleKind;
+  id: string;
+  removed: boolean;
+}
+
+export interface RuntimeEnforcementRuleRequest {
+  id: string;
+  pack_id?: string | null;
+  condition: string;
+  decision: RuntimeSecurityDecision;
+  reason?: string | null;
+  enabled?: boolean;
+}
+
+export interface RuntimeDetectionRuleRequest {
+  id: string;
+  pack_id: string;
+  sigma_id?: string | null;
+  title: string;
+  condition: string;
+  severity: RuntimeSeverity;
+  confidence: RuntimeConfidence;
+  tags?: string[];
+  enabled?: boolean;
+}
+
+export interface RuntimeBacktestEvent {
+  event_ref?: Record<string, unknown>;
+  event: Record<string, unknown>;
+  expected?: string;
+}
+
+export interface RuntimeEnforcementBacktestRequest {
+  rule: RuntimeEnforcementRuleRequest;
+  events: RuntimeBacktestEvent[];
+  limit?: number;
+}
+
+export interface RuntimeDetectionBacktestRequest {
+  rule: RuntimeDetectionRuleRequest;
+  events: RuntimeBacktestEvent[];
+  limit?: number;
+}
+
+export interface RuntimeDetectionHuntRequest {
+  rules: RuntimeDetectionRuleRequest[];
+  events: RuntimeBacktestEvent[];
+  limit?: number;
+}
+
+export interface RuntimeSessionDetectionHuntRequest {
+  rules: RuntimeDetectionRuleRequest[];
+  limit?: number;
+}
+
+export interface RuntimeMatchedField {
+  path: string;
+  value: unknown;
+}
+
+export interface RuntimeBacktestMatchRow {
+  event_ref: Record<string, unknown>;
+  rule_id: string;
+  pack_id: string;
+  evidence_signature: string;
+  matched_fields: RuntimeMatchedField[];
+  outcome: Record<string, unknown>;
+}
+
+export interface RuntimeBacktestResult {
+  total_matches: number;
+  unique_evidence_matches: number;
+  truncated: boolean;
+  rows: RuntimeBacktestMatchRow[];
+}

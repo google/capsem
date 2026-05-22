@@ -1049,6 +1049,20 @@ a valid claim -- mark it `[ ]` instead.
     passed. Still missing after this slice: gateway/CLI/UI route exposure,
     persistence/profile-pack seeding, production engine emitters, and wider
     S08d performance proof for model/result matching.
+    Fortieth TDD route-exposure slice added the frontend API client contract
+    for runtime security routes. `frontend/src/lib/types/gateway.ts` now
+    mirrors the service's runtime enforcement/detection rule requests, rule
+    entries, compile/install/delete responses, backtest events/results, live
+    detection hunt, and session-backed detection hunt shapes.
+    `frontend/src/lib/api.ts` exposes typed helpers for
+    `/enforcement/*`, `/detection/*`, and
+    `/sessions/{id}/detection/hunt`; the gateway already forwards these
+    through its authenticated fallback proxy. Verification: red first with
+    missing API functions, then `pnpm run test -- src/lib/__tests__/api.test.ts`
+    passed with **402** tests and `pnpm run check` passed with **0** errors,
+    **0** warnings, **0** hints. Still missing after this slice: CLI command
+    exposure, visible UI screens/editors, persistence/profile-pack seeding,
+    production engine emitters, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
