@@ -1,9 +1,13 @@
 use std::time::SystemTime;
 
+use capsem_security_engine::{
+    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+};
+
 use super::*;
 
 #[test]
-fn builds_observe_only_process_exec_security_event() {
+fn builds_inline_blockable_process_exec_security_event() {
     let event = ExecEvent {
         timestamp: SystemTime::UNIX_EPOCH,
         exec_id: 42,
@@ -18,6 +22,10 @@ fn builds_observe_only_process_exec_security_event() {
 
     assert_eq!(resolved.event.common.event_type, "process.exec");
     assert_eq!(resolved.event.common.source_engine, SourceEngine::Process);
+    assert_eq!(
+        resolved.event.common.enforceability,
+        Enforceability::InlineBlockable
+    );
     assert_eq!(resolved.event.common.activity_id.as_deref(), Some("api"));
     assert_eq!(resolved.event.common.exec_id.as_deref(), Some("42"));
     assert_eq!(resolved.event.common.mcp_call_id.as_deref(), Some("7"));
@@ -32,6 +40,72 @@ fn builds_observe_only_process_exec_security_event() {
         }
         other => panic!("expected process subject, got {other:?}"),
     }
+}
+
+#[test]
+fn process_exec_security_evaluation_allows_when_no_engine_is_installed() {
+    let event = ExecEvent {
+        timestamp: SystemTime::UNIX_EPOCH,
+        exec_id: 43,
+        command: "python3 -c 'print(1)'".into(),
+        source: "api".into(),
+        mcp_call_id: None,
+        trace_id: Some("trace_exec_no_engine".into()),
+        process_name: Some("capsem-agent".into()),
+    };
+
+    let evaluation = evaluate_exec_security_event(&event, None);
+
+    assert!(evaluation.allow_guest_exec);
+    assert!(evaluation.denial_message.is_none());
+    assert!(matches!(
+        evaluation.resolved_event.final_action,
+        SecurityAction::Continue
+    ));
+}
+
+#[test]
+fn process_exec_security_evaluation_blocks_matching_cel_rule() {
+    let event = ExecEvent {
+        timestamp: SystemTime::UNIX_EPOCH,
+        exec_id: 44,
+        command: "bash -lc 'echo blocked'".into(),
+        source: "api".into(),
+        mcp_call_id: None,
+        trace_id: Some("trace_exec_blocked".into()),
+        process_name: Some("capsem-agent".into()),
+    };
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "process.block-shell".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition:
+                "process.activity.operation == 'exec' && process.activity.command_class == 'shell'"
+                    .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("shell commands are blocked".into()),
+        }])
+        .unwrap(),
+    ));
+    let engine = std::sync::Mutex::new(engine);
+
+    let evaluation = evaluate_exec_security_event(&event, Some(&engine));
+
+    assert!(!evaluation.allow_guest_exec);
+    assert_eq!(
+        evaluation.denial_message.as_deref(),
+        Some("process exec blocked by process.block-shell: shell commands are blocked")
+    );
+    assert!(matches!(
+        evaluation.resolved_event.final_action,
+        SecurityAction::Block(_)
+    ));
+    assert_eq!(evaluation.resolved_event.steps.len(), 1);
+    assert_eq!(
+        evaluation.resolved_event.steps[0].rule_id.as_deref(),
+        Some("process.block-shell")
+    );
 }
 
 #[test]

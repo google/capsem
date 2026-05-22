@@ -1406,6 +1406,23 @@ a valid claim -- mark it `[ ]` instead.
     --check` passed after formatting. Still missing after this slice: live Process
     Engine enforcement/detection, visible UI screens/editors, S12
     OTel/prometheus export, and S08d performance proof.
+    Sixtieth TDD Process Engine enforcement slice moved `process.exec` from
+    observe-only journaling to an inline Security Engine decision point.
+    `capsem-core` now builds `InlineBlockable` process events, evaluates them
+    against the runtime engine, preserves detection/findings/steps in the
+    resolved row, and fail-closes engine errors. `capsem-process` evaluates the
+    exec before guest dispatch, journals the existing `exec_events` projection
+    plus the canonical `ResolvedSecurityEvent`, and resolves blocked IPC jobs
+    with a typed error instead of leaking the command to the guest or hanging
+    the caller. Verification: red `cargo test -p capsem-core
+    process_security_events --lib` first, then `cargo test -p capsem-core
+    process_security_events --lib` **4** passed and `cargo test -p
+    capsem-process blocked_exec_resolves_job_without_guest_dispatch_state`
+    **1** passed; widened gates: `cargo test -p capsem-process` **107**
+    passed, `cargo fmt --all -- --check` passed, and `git diff --check`
+    passed. Still missing after this slice: real-VM process-rule E2E, visible
+    UI screens/editors, ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

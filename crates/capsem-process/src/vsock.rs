@@ -395,6 +395,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let vm_handle_for_cmd = vm_handle_original;
     let db_for_cmd = Arc::clone(&db);
     let pty_log_for_cmd = pty_log.clone();
+    let mitm_config_for_cmd = Arc::clone(&mitm_config);
     let mut ctrl_rx = ctrl_rx;
 
     tokio::spawn(async move {
@@ -426,14 +427,32 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         trace_id: None,
                         process_name: None,
                     };
-                    let resolved_event =
-                        capsem_core::process_security_events::build_exec_resolved_security_event(
+                    let runtime_engine: Option<
+                        &dyn capsem_core::net::mitm_proxy::RuntimeSecurityEngine,
+                    > = if mitm_config_for_cmd.security_engine.has_engine() {
+                        Some(mitm_config_for_cmd.security_engine.as_ref())
+                    } else {
+                        None
+                    };
+                    let evaluation =
+                        capsem_core::process_security_events::evaluate_exec_security_event(
                             &event,
+                            runtime_engine,
                         );
                     db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(event));
                     db_for_cmd.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-                        resolved_event,
+                        evaluation.resolved_event,
                     ));
+                    if !evaluation.allow_guest_exec {
+                        resolve_blocked_exec_job(
+                            &js_for_cmd,
+                            id,
+                            evaluation.denial_message.unwrap_or_else(|| {
+                                "process exec blocked by security engine".into()
+                            }),
+                        );
+                        continue;
+                    }
                     capsem_core::try_send!(
                         "hub_exec",
                         hub_tx.send(HostToGuest::Exec { id, command }).await
@@ -1053,6 +1072,27 @@ fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
         | GuestToHost::FileContent { id, .. }
         | GuestToHost::Error { id, .. } => Some(*id),
         _ => None,
+    }
+}
+
+fn resolve_blocked_exec_job(job_store: &Arc<JobStore>, id: u64, message: String) {
+    let active = {
+        let mut guard = job_store.active_exec.lock().unwrap();
+        if guard.as_ref().is_some_and(|active| active.id == id) {
+            guard.take()
+        } else {
+            None
+        }
+    };
+    if let Some(active) = active {
+        active.deposited.notify_waiters();
+    }
+
+    if let Some(tx) = job_store.jobs.lock().unwrap().remove(&id) {
+        capsem_core::try_send!(
+            "job_result_exec_blocked",
+            tx.send(JobResult::Error { message })
+        );
     }
 }
 

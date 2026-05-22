@@ -5,18 +5,68 @@ use std::path::Path;
 use capsem_logger::ExecEvent;
 use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, Enforceability, ProcessSecuritySubject, RedactionState,
-    ResolvedSecurityEvent, SecurityAction, SecurityEvent, SecurityEventCommon, SourceEngine,
-    RESOLVED_EVENT_SCHEMA_VERSION,
+    ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent, SecurityAction,
+    SecurityEngineError, SecurityError, SecurityEvent, SecurityEventCommon, SourceEngine,
+    StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
+
+use crate::net::mitm_proxy::RuntimeSecurityEngine;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessExecSecurityEvaluation {
+    pub resolved_event: ResolvedSecurityEvent,
+    pub allow_guest_exec: bool,
+    pub denial_message: Option<String>,
+}
 
 /// Build the normalized Security Engine journal row for an exec request.
 pub fn build_exec_resolved_security_event(event: &ExecEvent) -> ResolvedSecurityEvent {
+    initial_resolved_exec_event(build_exec_security_event(event))
+}
+
+/// Evaluate an exec request against the runtime Security Engine before it is
+/// delivered to the guest.
+pub fn evaluate_exec_security_event(
+    event: &ExecEvent,
+    engine: Option<&dyn RuntimeSecurityEngine>,
+) -> ProcessExecSecurityEvaluation {
+    let security_event = build_exec_security_event(event);
+    let Some(engine) = engine else {
+        return ProcessExecSecurityEvaluation {
+            resolved_event: initial_resolved_exec_event(security_event),
+            allow_guest_exec: true,
+            denial_message: None,
+        };
+    };
+
+    match engine.evaluate(security_event.clone()) {
+        Ok(result) => {
+            let denial_message = exec_denial_message(&result.resolved_event.final_action);
+            ProcessExecSecurityEvaluation {
+                resolved_event: result.resolved_event,
+                allow_guest_exec: denial_message.is_none(),
+                denial_message,
+            }
+        }
+        Err(error) => {
+            let resolved_event = engine_error_resolved_exec_event(security_event, error);
+            let denial_message = exec_denial_message(&resolved_event.final_action);
+            ProcessExecSecurityEvaluation {
+                resolved_event,
+                allow_guest_exec: false,
+                denial_message,
+            }
+        }
+    }
+}
+
+fn build_exec_security_event(event: &ExecEvent) -> SecurityEvent {
     let timestamp_unix_ms = event
         .timestamp
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    let security_event = SecurityEvent::process(
+    SecurityEvent::process(
         SecurityEventCommon {
             event_id: process_security_event_id(
                 event.trace_id.as_deref(),
@@ -32,7 +82,7 @@ pub fn build_exec_resolved_security_event(event: &ExecEvent) -> ResolvedSecurity
             attribution_scope: AiAttributionScope::Vm,
             origin_kind: AiOriginKind::HostService,
             accounting_owner: None,
-            enforceability: Enforceability::ObserveOnly,
+            enforceability: Enforceability::InlineBlockable,
             trace_id: event.trace_id.clone(),
             span_id: None,
             timestamp_unix_ms,
@@ -58,8 +108,10 @@ pub fn build_exec_resolved_security_event(event: &ExecEvent) -> ResolvedSecurity
             operation: "exec".into(),
             command_class: classify_command(&event.command).map(str::to_owned),
         },
-    );
+    )
+}
 
+fn initial_resolved_exec_event(security_event: SecurityEvent) -> ResolvedSecurityEvent {
     ResolvedSecurityEvent {
         schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
         event: security_event,
@@ -68,6 +120,69 @@ pub fn build_exec_resolved_security_event(event: &ExecEvent) -> ResolvedSecurity
         detection_findings: Vec::new(),
         final_action: SecurityAction::Continue,
         emitter_results: Vec::new(),
+    }
+}
+
+fn engine_error_resolved_exec_event(
+    security_event: SecurityEvent,
+    error: SecurityEngineError,
+) -> ResolvedSecurityEvent {
+    let message = error.to_string();
+    let action = SecurityAction::Error(SecurityError {
+        code: "process_engine_error".into(),
+        message: message.clone(),
+    });
+    ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event: security_event,
+        steps: vec![ResolvedEventStep {
+            kind: ResolvedEventStepKind::EnforcementMatch,
+            status: StepStatus::Error,
+            rule_id: None,
+            pack_id: None,
+            message: Some(message),
+        }],
+        plugin_transforms: Vec::new(),
+        detection_findings: Vec::new(),
+        final_action: action,
+        emitter_results: Vec::new(),
+    }
+}
+
+fn exec_denial_message(action: &SecurityAction) -> Option<String> {
+    match action {
+        SecurityAction::Continue | SecurityAction::ObserveOnly => None,
+        SecurityAction::Block(block) => Some(match block.rule_id.as_deref() {
+            Some(rule_id) => format!("process exec blocked by {rule_id}: {}", block.reason_code),
+            None => format!("process exec blocked: {}", block.reason_code),
+        }),
+        SecurityAction::Ask(plan) => Some(format!(
+            "process exec requires confirmation {}: {}",
+            plan.prompt_id, plan.reason_code
+        )),
+        SecurityAction::Rewrite(patch) => Some(format!(
+            "process exec rewrite is not supported for {}",
+            patch.target
+        )),
+        SecurityAction::Throttle(plan) => Some(format!(
+            "process exec throttled by {}: {}",
+            plan.quota_id, plan.reason_code
+        )),
+        SecurityAction::Quarantine(plan) => Some(format!(
+            "process exec quarantined by {}",
+            plan.quarantine_id
+        )),
+        SecurityAction::Restore(plan) => Some(format!(
+            "process exec restore requested for {}: {}",
+            plan.snapshot_id, plan.reason_code
+        )),
+        SecurityAction::DropConnection(reason) => {
+            Some(format!("process exec dropped: {}", reason.reason_code))
+        }
+        SecurityAction::Error(error) => Some(format!(
+            "process exec security engine error {}: {}",
+            error.code, error.message
+        )),
     }
 }
 

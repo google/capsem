@@ -216,3 +216,26 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
         other => panic!("expected Exec result, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn blocked_exec_resolves_job_without_guest_dispatch_state() {
+    use crate::job_store::{ActiveExec, JobResult, JobStore};
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let js = Arc::new(JobStore::new());
+    let id: u64 = 77;
+    let (tx, rx) = oneshot::channel::<JobResult>();
+    js.jobs.lock().unwrap().insert(id, tx);
+    *js.active_exec.lock().unwrap() = Some(ActiveExec::new(id));
+
+    resolve_blocked_exec_job(&js, id, "blocked by process rule".into());
+
+    assert!(js.active_exec.lock().unwrap().is_none());
+    assert!(js.jobs.lock().unwrap().is_empty());
+    let result = rx.await.expect("blocked exec must resolve job");
+    match result {
+        JobResult::Error { message } => assert_eq!(message, "blocked by process rule"),
+        other => panic!("expected blocked exec error, got {other:?}"),
+    }
+}
