@@ -138,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a typed frontend API client surface for runtime enforcement and
   detection routes, including validate/compile/install/delete/list/stats,
   backtest, live hunt, and session-backed detection hunt calls.
+- Added a Policy settings "Live Rules" UI for runtime enforcement and detection
+  overlays, including rule priority, attribution, match counts, validation,
+  install, and guarded runtime-only delete actions.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API

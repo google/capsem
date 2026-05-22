@@ -270,6 +270,7 @@ export interface RuntimeRuleEntry {
   enabled: boolean;
   compiled: boolean;
   compile_status: Record<string, unknown>;
+  priority: number;
   generation: number;
   condition: string;
   compiled_plan: string;
@@ -304,6 +305,7 @@ export interface RuntimeEnforcementRuleRequest {
   id: string;
   pack_id?: string | null;
   condition: string;
+  priority?: number;
   decision: RuntimeSecurityDecision;
   reason?: string | null;
   enabled?: boolean;
@@ -315,6 +317,7 @@ export interface RuntimeDetectionRuleRequest {
   sigma_id?: string | null;
   title: string;
   condition: string;
+  priority?: number;
   severity: RuntimeSeverity;
   confidence: RuntimeConfidence;
   tags?: string[];

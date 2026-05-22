@@ -503,8 +503,15 @@ Implementation status as of the current service-route slices:
   validate, backtest, live create/update/delete/list/stats, inline detection
   hunt, and `POST /sessions/{id}/detection/hunt` preserving forensic
   matched-field rows.
-- Still open: visible UI exposure, persisted/profile-seeded rule plans, and
-  VM/runtime cutover.
+- Landed: frontend Policy settings exposure for live runtime enforcement and
+  detection overlays. Operators can list enforcement/detection rules, see
+  priority, origin/scope attribution, pack ids, match counts, compile/enabled
+  state, and condition text, validate/install runtime overlay rules, and delete
+  only runtime-scoped overlays while profile/user/corp-owned rows remain
+  read-only.
+- Still open: persisted rule-plan recovery, interactive confirm UX, S12
+  telemetry/export projection, S08d performance proof, and remaining VM/runtime
+  cutover breadth.
 
 ## Session Database Architecture
 

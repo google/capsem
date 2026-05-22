@@ -1766,6 +1766,24 @@ a valid claim -- mark it `[ ]` instead.
     with **110** tests. Still missing after this slice: visible UI
     screens/editors, interactive confirm prompt UX in S15, S12 OTel/prometheus
     export, and S08d performance proof.
+    Eightieth TDD runtime-rule-UI slice made the service-owned
+    enforcement/detection route groups visible in Settings -> Policy. The new
+    Live Rules panel loads enforcement and detection lists, exposes priority,
+    origin/scope attribution, compiled/enabled state, match counts, pack ids,
+    and rule conditions, submits validate/install requests with priority
+    preserved, and only allows delete for runtime-scoped overlay rules so
+    profile/user/corp-owned policy is not silently mutated from the runtime
+    editor. Verification: red `pnpm --dir frontend exec vitest run
+    src/lib/__tests__/runtime-security-rules-section.test.ts` first failed
+    because the component did not exist, then focused `pnpm --dir frontend exec
+    vitest run src/lib/__tests__/runtime-security-rules-section.test.ts
+    src/lib/__tests__/api.test.ts` passed with **61** tests; `pnpm --dir
+    frontend run check` passed with **0** errors/warnings; `pnpm --dir frontend
+    run build` passed; browser visual verification of Settings -> Policy
+    rendered the Live Rules panel and cleanly surfaced the current dev
+    gateway's `404` for missing runtime routes. Still missing after this slice:
+    interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
+    performance proof, and VM/runtime cutover breadth.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
