@@ -79,7 +79,7 @@ sequenceDiagram
 | `capsem_delete` | Permanently destroy VM and all state | `DELETE /delete/{id}` |
 | `capsem_purge` | Kill all temp VMs (all=true includes persistent) | `POST /purge` |
 | `capsem_fork` | Fork VM into reusable image | `POST /fork/{id}` |
-| `capsem_vm_logs` | Get serial/process logs (grep + tail params) | `GET /logs/{id}` |
+| `capsem_vm_logs` | Get security, process, and serial logs (grep + tail params) | `GET /logs/{id}` |
 | `capsem_service_logs` | Get service logs (grep + tail params) | Service log file |
 | `capsem_host_logs` | Get an allowlisted host log by symbolic name | `GET /host-logs/{name}` |
 | `capsem_panics` | Extract structured panics and backtraces from host logs | `GET /panics` |

@@ -46,7 +46,7 @@ fn tail_lines(text: &str, n: u64) -> String {
 
 /// Apply tail to log-valued string fields in a JSON object.
 fn tail_log_fields(val: &mut Value, n: u64) {
-    for key in ["logs", "serial_logs", "process_logs"] {
+    for key in ["logs", "serial_logs", "process_logs", "security_logs"] {
         if let Some(Value::String(s)) = val.get_mut(key) {
             *s = tail_lines(s, n);
         }
@@ -55,7 +55,7 @@ fn tail_log_fields(val: &mut Value, n: u64) {
 
 /// Apply grep filtering to log-valued fields in a JSON object.
 fn grep_log_fields(val: &mut Value, pattern: &str) {
-    for key in ["logs", "serial_logs", "process_logs"] {
+    for key in ["logs", "serial_logs", "process_logs", "security_logs"] {
         if let Some(Value::String(s)) = val.get_mut(key) {
             *s = grep_lines(s, pattern);
         }

@@ -1587,6 +1587,14 @@ a valid claim -- mark it `[ ]` instead.
     fmt --all -- --check` passed, and `git diff --check` passed. Still
     missing after this slice: visible UI screens/editors, ask/confirm UX for
     process decisions, S12 OTel/prometheus export, and S08d performance proof.
+    Sixty-ninth TDD MCP-log parity slice extended the agent-facing
+    `capsem_vm_logs` helper so grep/tail filtering applies to the new
+    `security_logs` field as well as serial/process logs. The architecture doc
+    now describes VM logs as security, process, and serial logs instead of
+    serial/process only. Verification: `cargo test -p capsem-mcp log_fields`
+    **5** passed; docs build `pnpm --dir docs run build` passed. Still
+    missing after this slice: visible UI screens/editors, ask/confirm UX for
+    process decisions, S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

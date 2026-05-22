@@ -192,11 +192,13 @@ fn tail_log_fields_applies_to_all() {
         "logs": "a\nb\nc\nd\ne",
         "serial_logs": "1\n2\n3\n4\n5",
         "process_logs": "x\ny\nz",
+        "security_logs": "allow\nblock\ndetect",
     });
     tail_log_fields(&mut val, 2);
     assert_eq!(val["logs"], "d\ne");
     assert_eq!(val["serial_logs"], "4\n5");
     assert_eq!(val["process_logs"], "y\nz");
+    assert_eq!(val["security_logs"], "block\ndetect");
 }
 
 // -----------------------------------------------------------------------
@@ -344,21 +346,24 @@ fn grep_log_fields_filters_all_log_keys() {
         "logs": "INFO boot\nERROR crash\nINFO done",
         "serial_logs": "serial: ok\nserial: ERROR fail",
         "process_logs": "proc started\nproc ERROR exit",
+        "security_logs": "security allow\nsecurity ERROR block",
     });
     grep_log_fields(&mut val, "error");
     assert_eq!(val["logs"], "ERROR crash");
     assert_eq!(val["serial_logs"], "serial: ERROR fail");
     assert_eq!(val["process_logs"], "proc ERROR exit");
+    assert_eq!(val["security_logs"], "security ERROR block");
 }
 
 #[test]
 fn grep_log_fields_missing_optional_keys() {
-    // serial_logs and process_logs may be absent
+    // serial_logs, process_logs, and security_logs may be absent
     let mut val = json!({ "logs": "INFO ok\nERROR bad" });
     grep_log_fields(&mut val, "error");
     assert_eq!(val["logs"], "ERROR bad");
     assert!(val.get("serial_logs").is_none());
     assert!(val.get("process_logs").is_none());
+    assert!(val.get("security_logs").is_none());
 }
 
 #[test]
