@@ -122,15 +122,33 @@ session-scoped enforcement replay, it should be named and designed separately.
   pack fixture under `data/detection/sigma/`, and documentation updates so
   offline detection checks now target policy-context JSONL instead of the old
   normalized-event/subject shape.
+- Slice 3 added `capsem-admin policy backtest`, a shared enforcement policy
+  pack fixture under `data/enforcement/policy/`, and first expected-result
+  artifacts under `data/enforcement/backtest-expected/` and
+  `data/detection/backtest-expected/`. The admin backtest accepts canonical
+  policy-context roots with CEL-shaped clauses such as
+  `http.request.host.contains("google")`,
+  `http.request.header("authorization").exists()`, and
+  `http.request.body.text.contains("secret")`, and rejects `event.*` /
+  `subject.*` roots during replay.
+- Important debt: the offline policy backtest is currently a constrained
+  fixture replay evaluator for the committed corpus, not the full runtime CEL
+  authority. S08c remains open until enforcement compile/parity uses the same
+  CEL semantics as Rust runtime or an equivalent shared expected-row generator,
+  and until real-session fixtures are generated from the resolved-event journal.
 
 ## Coverage Ledger
 
 - Unit/contract: Python Pydantic and Rust serde/schema validation over the same
-  enforcement/detection/event fixtures.
+  enforcement/detection/event fixtures; first admin policy and detection
+  backtest reports compare against committed expected-result JSON artifacts.
 - Functional: admin offline backtest and Rust runtime backtest produce the same
-  matched event refs, decisions/findings, and counts.
+  matched event refs, decisions/findings, and counts. This is partially proven
+  for canonical root acceptance and detection IR; full expected-row parity is
+  still open.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
-  duplicate rule ids, mismatched expected labels, and evidence-dedup behavior.
+  duplicate rule ids, mismatched expected labels, internal `event.*` /
+  `subject.*` authoring, and evidence-dedup behavior.
 - E2E/VM or integration: real-session fixture generation after S08b journal
   lands; no live VM dependency for every corpus test.
 - Telemetry/observability: backtest reports include event refs and full local

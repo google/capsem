@@ -101,6 +101,7 @@ capsem-admin manifest sign manifest.json --key manifest-sign.key --out manifest.
 capsem-admin manifest verify-signature manifest.json --signature manifest.json.minisig --pubkey manifest-sign.pub --json
 capsem-admin policy schema
 capsem-admin policy validate corp-policy.toml --json
+capsem-admin policy backtest corp-policy.toml --events policy-contexts.jsonl --json
 capsem-admin detection schema
 capsem-admin detection validate corp-detections.yml --json
 capsem-admin detection compile corp-detections.yml --out detection.ir.json --json

@@ -1823,6 +1823,23 @@ a valid claim -- mark it `[ ]` instead.
     passed. Still missing in S08c: enforcement backtest, shared expected row
     artifacts, Rust/admin parity over identical expected rows, real-session
     fixture generation, and corpus workflow docs.
+    Third TDD admin-policy-backtest slice added a shared enforcement policy
+    pack fixture, `capsem-admin policy backtest` over the same policy-context
+    JSONL corpus, and first committed expected-result artifacts for both
+    enforcement and detection backtests. The policy fixture uses canonical
+    high-level roots (`http.request.host.contains("google")`,
+    `http.request.header("authorization").exists()`,
+    `http.request.body.text.contains("secret")`) instead of internal
+    `event.*` translations. Verification: red `uv run pytest
+    tests/test_admin_cli.py::test_capsem_admin_policy_backtest_uses_policy_context_corpus
+    -q` first failed because `policy backtest` did not exist, then focused
+    policy/detection backtest tests passed with **3** tests, including an
+    adversarial `event.subject.*` root rejection. Focused Rust corpus parity
+    still passed. Still missing in S08c: policy compile/full CEL parity for
+    offline admin backtest, Rust/admin expected-row parity over identical
+    enforcement and detection outputs, real-session fixture generation from
+    the resolved-event journal, corpus update workflow docs, and broader
+    expected outputs for hunt/backtest diversity.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from click.testing import CliRunner
+from pydantic import TypeAdapter
 from unittest.mock import patch
 
 from capsem.admin.cli import cli
@@ -19,6 +20,9 @@ from capsem.builder.service_settings import (
     validate_service_settings_toml,
 )
 from capsem.builder.security_packs import load_policy_context_fixture_jsonl
+
+
+_JsonObject = TypeAdapter(dict[str, object])
 
 
 def test_capsem_admin_settings_schema_outputs_service_settings_schema() -> None:
@@ -655,3 +659,79 @@ def test_capsem_admin_detection_backtest_uses_policy_context_corpus() -> None:
     assert '"event_id": "evt-http-google-secret"' in result.output
     assert '"http.request.host": "googleapis.com"' in result.output
     assert '"http.request.body.text": "token=secret"' in result.output
+
+    actual = _JsonObject.validate_json(result.output)
+    actual.pop("timing")
+    expected = _JsonObject.validate_json(
+        Path("data/detection/backtest-expected/google-secret-egress.json").read_bytes()
+    )
+    assert actual == expected
+
+
+def test_capsem_admin_policy_backtest_uses_policy_context_corpus() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "backtest",
+            "data/enforcement/policy/http-google-secret-policy.toml",
+            "--events",
+            "data/policy-context/canonical-policy-contexts.jsonl",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"event_count": 2' in result.output
+    assert '"match_count": 1' in result.output
+    assert '"event_id": "evt-http-google-secret"' in result.output
+    assert '"rule_id": "block-google-secret"' in result.output
+    assert '"decision": "block"' in result.output
+    assert '"http.request.host": "googleapis.com"' in result.output
+
+    actual = _JsonObject.validate_json(result.output)
+    actual.pop("timing")
+    expected = _JsonObject.validate_json(
+        Path("data/enforcement/backtest-expected/http-google-secret.json").read_bytes()
+    )
+    assert actual == expected
+
+
+def test_capsem_admin_policy_backtest_rejects_internal_event_roots(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "bad-policy.toml"
+    policy_path.write_text(
+        """
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.bad-root"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+
+[[rules]]
+id = "bad-root"
+name = "Bad Root"
+event_family = "http"
+event_type = "http.request"
+condition = "event.subject.host.contains('google')"
+decision = "block"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "backtest",
+            str(policy_path),
+            "--events",
+            "data/policy-context/canonical-policy-contexts.jsonl",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert '"ok": false' in result.output
+    assert "unsupported internal event root" in result.output

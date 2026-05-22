@@ -86,6 +86,7 @@ capsem-admin manifest verify-signature manifest.json --signature manifest.json.m
 ```bash
 capsem-admin policy schema
 capsem-admin policy validate corp-policy.toml --json
+capsem-admin policy backtest corp-policy.toml --events policy-contexts.jsonl --json
 
 capsem-admin detection schema
 capsem-admin detection validate corp-detections.yml --json

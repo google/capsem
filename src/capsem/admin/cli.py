@@ -73,8 +73,10 @@ from capsem.builder.security_packs import (
     dump_detection_compile_report_json,
     dump_detection_ir_json,
     dump_detection_pack_schema_json,
+    dump_policy_backtest_report_json,
     dump_policy_pack_schema_json,
     run_detection_check,
+    run_policy_backtest,
     validate_detection_pack_json,
     validate_detection_pack_toml,
     validate_detection_pack_yaml,
@@ -786,6 +788,38 @@ def policy_validate(policy_path: str, json_output: bool) -> None:
     else:
         for diagnostic in report.diagnostics:
             click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
+    if not report.ok:
+        raise SystemExit(1)
+
+
+@policy.command("backtest")
+@click.argument("policy_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--events",
+    "events_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSONL policy-context fixture file.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def policy_backtest(policy_path: str, events_path: str, json_output: bool) -> None:
+    """Backtest a policy pack against policy-context JSONL fixtures."""
+    path = Path(policy_path)
+    try:
+        pack = _load_policy_pack(path)
+        report = run_policy_backtest(pack, events_path=Path(events_path))
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_policy_backtest_report_json(report))
+    else:
+        click.echo(
+            f"checked {report.event_count} event(s), "
+            f"{report.match_count} enforcement match(es)"
+        )
+        for diagnostic in report.diagnostics:
+            click.echo(diagnostic, err=True)
     if not report.ok:
         raise SystemExit(1)
 

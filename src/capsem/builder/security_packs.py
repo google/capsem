@@ -305,6 +305,31 @@ class DetectionCheckReportV1(StrictModel):
     timing: DetectionCheckTimingV1
 
 
+class PolicyBacktestMatchV1(StrictModel):
+    event_ref: PolicyContextEventRefV1
+    rule_id: RuleId
+    pack_id: PackId
+    decision: PolicyDecision
+    reason: NonEmptyStr | None = None
+    matched_fields: dict[NonEmptyStr, DetectionValue] = Field(default_factory=dict)
+
+
+class PolicyBacktestReportV1(StrictModel):
+    schema_: Literal["capsem.policy-backtest.v1"] = Field(
+        default="capsem.policy-backtest.v1",
+        alias="schema",
+    )
+    ok: bool
+    pack_id: PackId
+    pack_version: NonEmptyStr
+    event_count: Annotated[int, Field(ge=0)]
+    rule_count: Annotated[int, Field(ge=0)]
+    match_count: Annotated[int, Field(ge=0)]
+    rows: list[PolicyBacktestMatchV1] = Field(default_factory=list)
+    diagnostics: list[str] = Field(default_factory=list)
+    timing: DetectionCheckTimingV1
+
+
 class DetectionCompileReportV1(StrictModel):
     schema_: Literal["capsem.detection-compile.v1"] = Field(
         default="capsem.detection-compile.v1",
@@ -648,6 +673,81 @@ def _rule_matches(
     return True, matched
 
 
+_STRING_LITERAL = r"(?P<quote>['\"])(?P<value>[^'\"]*)(?P=quote)"
+_CONTAINS_RE = re.compile(
+    rf"^(?P<path>[a-z][a-z0-9_.]*)\.contains\({_STRING_LITERAL}\)$"
+)
+_STARTS_WITH_RE = re.compile(
+    rf"^(?P<path>[a-z][a-z0-9_.]*)\.startsWith\({_STRING_LITERAL}\)$"
+)
+_EQUALS_RE = re.compile(
+    rf"^(?P<path>[a-z][a-z0-9_.]*)\s*==\s*{_STRING_LITERAL}$"
+)
+_HEADER_EXISTS_RE = re.compile(
+    r"^http\.request\.header\((?P<quote>['\"])(?P<header>[^'\"]+)(?P=quote)\)\.exists\(\)$",
+)
+
+
+def _policy_rule_matches(
+    rule: PolicyRuleV1,
+    fixture: PolicyContextFixtureV1,
+) -> tuple[bool, dict[str, DetectionValue]]:
+    if _context_event_family(fixture.context) is not rule.event_family:
+        return False, {}
+    matched: dict[str, DetectionValue] = {}
+    for clause in (part.strip() for part in rule.condition.split("&&")):
+        if not clause:
+            continue
+        if clause in {"event", "subject"} or clause.startswith(("event.", "subject.")):
+            raise ValueError(f"rule {rule.id} uses unsupported internal event root")
+        if clause == "false":
+            return False, {}
+        if clause == "true":
+            matched["condition"] = True
+            continue
+        header_match = _HEADER_EXISTS_RE.match(clause)
+        if header_match is not None:
+            request = fixture.context.http.request
+            if request is None:
+                return False, {}
+            lookup = request.header(header_match.group("header"))
+            if not lookup.exists:
+                return False, {}
+            matched[f"http.request.headers.{header_match.group('header').lower()}"] = (
+                lookup.values[0] if lookup.values else True
+            )
+            continue
+        contains_match = _CONTAINS_RE.match(clause)
+        if contains_match is not None:
+            path = contains_match.group("path")
+            value = _event_value(fixture.context, path)
+            needle = contains_match.group("value")
+            if not isinstance(value, str) or needle not in value:
+                return False, {}
+            matched[path] = value
+            continue
+        starts_with_match = _STARTS_WITH_RE.match(clause)
+        if starts_with_match is not None:
+            path = starts_with_match.group("path")
+            value = _event_value(fixture.context, path)
+            prefix = starts_with_match.group("value")
+            if not isinstance(value, str) or not value.startswith(prefix):
+                return False, {}
+            matched[path] = value
+            continue
+        equals_match = _EQUALS_RE.match(clause)
+        if equals_match is not None:
+            path = equals_match.group("path")
+            value = _event_value(fixture.context, path)
+            expected = equals_match.group("value")
+            if value != expected:
+                return False, {}
+            matched[path] = value
+            continue
+        raise ValueError(f"rule {rule.id} uses unsupported CEL clause: {clause}")
+    return bool(matched), matched
+
+
 def _context_event_family(context: PolicyContextV1) -> EventFamily | None:
     event_type = context.common.event_type
     if event_type is None or "." not in event_type:
@@ -707,8 +807,61 @@ def run_detection_check(
     )
 
 
+def run_policy_backtest(
+    pack: PolicyPackV1,
+    *,
+    events_path: Path,
+) -> PolicyBacktestReportV1:
+    started = time.perf_counter()
+    diagnostics: list[str] = []
+    rows: list[PolicyBacktestMatchV1] = []
+    try:
+        fixtures = load_policy_context_fixture_jsonl(events_path)
+    except Exception as error:
+        fixtures = []
+        diagnostics.append(str(error))
+    for fixture in fixtures:
+        for rule in sorted(pack.rules, key=lambda item: (item.priority, item.id)):
+            if not rule.enabled:
+                continue
+            try:
+                matched, matched_fields = _policy_rule_matches(rule, fixture)
+            except Exception as error:
+                diagnostics.append(str(error))
+                continue
+            if matched:
+                rows.append(
+                    PolicyBacktestMatchV1(
+                        event_ref=fixture.event_ref,
+                        rule_id=rule.id,
+                        pack_id=pack.id,
+                        decision=rule.decision,
+                        reason=rule.reason,
+                        matched_fields=matched_fields,
+                    )
+                )
+                break
+    return PolicyBacktestReportV1(
+        ok=not diagnostics,
+        pack_id=pack.id,
+        pack_version=pack.version,
+        event_count=len(fixtures),
+        rule_count=len(pack.rules),
+        match_count=len(rows),
+        rows=rows,
+        diagnostics=diagnostics,
+        timing=DetectionCheckTimingV1(
+            duration_ms=(time.perf_counter() - started) * 1000,
+        ),
+    )
+
+
 def dump_detection_ir_json(ir: DetectionIRV1) -> str:
     return ir.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+
+
+def dump_policy_backtest_report_json(report: PolicyBacktestReportV1) -> str:
+    return report.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
 def dump_detection_check_report_json(report: DetectionCheckReportV1) -> str:

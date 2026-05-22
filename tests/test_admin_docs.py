@@ -39,6 +39,7 @@ def test_enforcement_docs_keep_policy_and_detection_separate() -> None:
 
     assert "Do not use Sigma as a blocking policy language" in doc
     assert "capsem-admin policy validate" in doc
+    assert "capsem-admin policy backtest" in doc
     assert "`allow`, `block`, `ask`, or `rewrite`" in doc
 
 

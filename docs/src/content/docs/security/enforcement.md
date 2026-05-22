@@ -26,7 +26,7 @@ modes.
       "event_family": "http",
       "event_type": "http.request",
       "priority": 10,
-      "condition": "subject.request.host == '169.254.169.254'",
+      "condition": "http.request.host == \"169.254.169.254\"",
       "decision": "block",
       "reason": "metadata endpoints are not reachable from corp VMs"
     }
@@ -39,6 +39,7 @@ Validate and export the schema:
 ```bash
 capsem-admin policy schema
 capsem-admin policy validate corp-policy.json --json
+capsem-admin policy backtest corp-policy.json --events policy-contexts.jsonl --json
 ```
 
 | Field | Meaning |
@@ -47,7 +48,7 @@ capsem-admin policy validate corp-policy.json --json
 | `id` / `version` | Pack identity pinned by the profile. |
 | `status` | `active`, `deprecated`, or `revoked`. Revoked packs must not install or launch. |
 | `event_family` / `event_type` | Normalized event boundary where the rule applies. |
-| `condition` | CEL expression over the normalized event subject. |
+| `condition` | CEL expression over the canonical policy context. |
 | `decision` | `allow`, `block`, `ask`, or `rewrite`. |
 | `rewrite` | Required for `rewrite`, rejected for all other decisions. |
 
@@ -81,3 +82,10 @@ telemetry, audit logging, and detection-export sinks.
 Do not use Sigma as a blocking policy language. Sigma is accepted in detection
 packs, validated with pySigma, and compiled into Detection IR. Enforcement
 policy uses policy packs and CEL conditions.
+
+Offline policy backtests use the same policy-context fixture envelope as
+detection backtests. Conditions must target canonical roots such as
+`http.request.host`, `http.request.header(...)`, and `http.request.body.text`;
+internal `event.*` or raw `subject.*` authoring is rejected before install or
+replay. Runtime enforcement remains the CEL authority; the offline admin
+backtest is a fixture replay gate for committed policy-context corpora.
