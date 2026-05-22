@@ -2676,6 +2676,14 @@ pub struct RuntimeRuleMetadata {
     pub pack_id: Option<String>,
     pub scope: RuleScope,
     pub origin: RuleOrigin,
+    #[serde(default = "default_runtime_rule_priority")]
+    pub priority: i32,
+}
+
+pub const DEFAULT_RUNTIME_RULE_PRIORITY: i32 = 100;
+
+pub fn default_runtime_rule_priority() -> i32 {
+    DEFAULT_RUNTIME_RULE_PRIORITY
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2786,60 +2794,65 @@ impl RuntimeRuleRegistry {
     }
 
     pub fn enabled_enforcement_rules(&self) -> Vec<CelEnforcementRule> {
-        self.rules
-            .values()
-            .filter_map(|entry| {
-                if !entry.enabled {
-                    return None;
+        self.enabled_rules_by_priority()
+            .into_iter()
+            .filter_map(|entry| match &entry.definition {
+                RuntimeRuleDefinition::Enforcement { decision, reason } => {
+                    Some(CelEnforcementRule {
+                        id: entry.metadata.id.clone(),
+                        pack_id: entry.metadata.pack_id.clone(),
+                        condition: entry.source.clone(),
+                        decision: *decision,
+                        reason: reason.clone(),
+                    })
                 }
-                match &entry.definition {
-                    RuntimeRuleDefinition::Enforcement { decision, reason } => {
-                        Some(CelEnforcementRule {
-                            id: entry.metadata.id.clone(),
-                            pack_id: entry.metadata.pack_id.clone(),
-                            condition: entry.source.clone(),
-                            decision: *decision,
-                            reason: reason.clone(),
-                        })
-                    }
-                    RuntimeRuleDefinition::Detection { .. } => None,
-                }
+                RuntimeRuleDefinition::Detection { .. } => None,
             })
             .collect()
     }
 
     pub fn enabled_detection_rules(&self) -> Vec<CelDetectionRule> {
-        self.rules
-            .values()
-            .filter_map(|entry| {
-                if !entry.enabled {
-                    return None;
-                }
-                match &entry.definition {
-                    RuntimeRuleDefinition::Detection {
-                        sigma_id,
-                        title,
-                        severity,
-                        confidence,
-                        tags,
-                    } => Some(CelDetectionRule {
-                        id: entry.metadata.id.clone(),
-                        pack_id: entry
-                            .metadata
-                            .pack_id
-                            .clone()
-                            .unwrap_or_else(|| "runtime".into()),
-                        sigma_id: sigma_id.clone(),
-                        title: title.clone(),
-                        condition: entry.source.clone(),
-                        severity: *severity,
-                        confidence: *confidence,
-                        tags: tags.clone(),
-                    }),
-                    RuntimeRuleDefinition::Enforcement { .. } => None,
-                }
+        self.enabled_rules_by_priority()
+            .into_iter()
+            .filter_map(|entry| match &entry.definition {
+                RuntimeRuleDefinition::Detection {
+                    sigma_id,
+                    title,
+                    severity,
+                    confidence,
+                    tags,
+                } => Some(CelDetectionRule {
+                    id: entry.metadata.id.clone(),
+                    pack_id: entry
+                        .metadata
+                        .pack_id
+                        .clone()
+                        .unwrap_or_else(|| "runtime".into()),
+                    sigma_id: sigma_id.clone(),
+                    title: title.clone(),
+                    condition: entry.source.clone(),
+                    severity: *severity,
+                    confidence: *confidence,
+                    tags: tags.clone(),
+                }),
+                RuntimeRuleDefinition::Enforcement { .. } => None,
             })
             .collect()
+    }
+
+    fn enabled_rules_by_priority(&self) -> Vec<&RuntimeRuleEntry> {
+        let mut entries = self
+            .rules
+            .values()
+            .filter(|entry| entry.enabled)
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| {
+            left.metadata
+                .priority
+                .cmp(&right.metadata.priority)
+                .then_with(|| left.metadata.id.cmp(&right.metadata.id))
+        });
+        entries
     }
 
     pub fn stats(&self, rule_id: &str) -> Result<&RuntimeRuleStats, RuleRegistryError> {

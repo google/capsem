@@ -519,7 +519,7 @@ fn profile_decision_to_security_action(decision: RuleDecision) -> SecurityDecisi
 
 fn domain_from_simple_network_condition(rule: &EffectiveRule) -> Option<String> {
     match rule.callback.as_str() {
-        "dns.request" => extract_condition_eq(&rule.condition, "qname"),
+        "dns.request" => extract_condition_eq(&rule.condition, "dns.request.qname"),
         "http.request" | "http.read" | "http.write" | "http.response" => {
             extract_condition_eq(&rule.condition, "http.request.host")
         }

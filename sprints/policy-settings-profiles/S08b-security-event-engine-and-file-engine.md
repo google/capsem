@@ -30,6 +30,14 @@ enforcement or detection rules match, the engine can notify a
 `RuleMatchRecorder`; `RuntimeRuleRegistry` implements that contract so future
 `/enforcement/stats` and `/detection/stats` routes read counters populated by
 the same runtime path that made the decision/finding.
+The latest profile-seeding slice made the service runtime registry consume the
+default effective profile's enforcement rules at startup. Runtime rule metadata
+now includes deterministic priority, registry projections sort by
+`(priority, id)`, service APIs preserve/report priority, profile rule
+conditions are wrapped with their typed callback guard, and generated DNS rules
+use canonical `dns.request.qname` CEL paths. Profile-scoped seed rules remain
+per-profile service state and are deliberately excluded from the global
+runtime-rule broadcast snapshot that is pushed to every running VM.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

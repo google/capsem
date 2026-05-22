@@ -1837,7 +1837,7 @@ fn everyday_work_security_settings() -> SecurityProfileSettings {
             format!("allow_{name}"),
             ProfileRule {
                 callback: "dns.request".to_string(),
-                condition: format!("qname == '{domain}'"),
+                condition: format!("dns.request.qname == '{domain}'"),
                 decision: RuleDecision::Allow,
                 priority: 1,
                 rewrite_target: None,
@@ -3341,7 +3341,11 @@ fn derived_provider_toggle_rules(
 
         for host in derived_hosts {
             for (rule_type, callback, condition) in [
-                ("dns", "dns.request", format!("qname == '{host}'")),
+                (
+                    "dns",
+                    "dns.request",
+                    format!("dns.request.qname == '{host}'"),
+                ),
                 (
                     "http",
                     "http.request",

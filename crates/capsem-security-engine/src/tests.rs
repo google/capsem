@@ -1747,12 +1747,60 @@ fn runtime_rule_registry_rebuilds_enabled_cel_rules_with_typed_metadata() {
     assert_eq!(findings[0].tags, vec!["metadata".to_string()]);
 }
 
+#[test]
+fn runtime_rule_registry_rebuilds_enabled_cel_rules_by_priority() {
+    let mut registry = RuntimeRuleRegistry::default();
+    let mut catch_all = rule_metadata("aaa-catch-all");
+    catch_all.priority = 1000;
+    registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: catch_all,
+                definition: RuntimeRuleDefinition::Enforcement {
+                    decision: SecurityDecisionAction::Ask,
+                    reason: Some("catch all".into()),
+                },
+                source: "true".into(),
+                enabled: true,
+            },
+            compile_rule_source,
+        )
+        .unwrap();
+
+    let mut specific = rule_metadata("zzz-specific-block");
+    specific.priority = 10;
+    registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: specific,
+                definition: RuntimeRuleDefinition::Enforcement {
+                    decision: SecurityDecisionAction::Block,
+                    reason: Some("specific block".into()),
+                },
+                source: "http.request.host == 'metadata.google.internal'".into(),
+                enabled: true,
+            },
+            compile_rule_source,
+        )
+        .unwrap();
+
+    let mut enforcement =
+        CelEnforcementEvaluator::compile(registry.enabled_enforcement_rules()).unwrap();
+    let decision = enforcement
+        .evaluate(&http_request_event("evt-priority"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(decision.rule.as_deref(), Some("zzz-specific-block"));
+    assert_eq!(decision.action, SecurityDecisionAction::Block);
+}
+
 fn rule_metadata(id: &str) -> RuntimeRuleMetadata {
     RuntimeRuleMetadata {
         id: id.into(),
         pack_id: Some("pack-1".into()),
         scope: RuleScope::Runtime,
         origin: RuleOrigin::Runtime,
+        priority: DEFAULT_RUNTIME_RULE_PRIORITY,
     }
 }
 

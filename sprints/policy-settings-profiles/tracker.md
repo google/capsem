@@ -1716,6 +1716,37 @@ a valid claim -- mark it `[ ]` instead.
     --check` passed; `git diff --check` passed. Still missing after this
     slice: visible UI screens/editors, ask/confirm UX for process decisions,
     S12 OTel/prometheus export, and S08d performance proof.
+    Seventy-eighth TDD profile-rule seeding slice made profile-owned
+    enforcement rules first-class runtime registry inputs. `RuntimeRuleMetadata`
+    now carries a deterministic `priority`, enabled enforcement/detection
+    registry projections sort by `(priority, id)`, service runtime rule
+    requests/reporting preserve priority, and service startup seeds the default
+    effective profile's rules into the enforcement registry with profile/user/
+    corp scope and origin. Profile conditions are wrapped with their callback
+    guard before CEL compilation so catch-all `true` rules stay scoped to their
+    event type, and generated DNS rules now use canonical
+    `dns.request.qname` paths instead of the removed bare `qname` shortcut.
+    Profile-scoped seed rules are deliberately excluded from the global
+    runtime-rule broadcast snapshot so non-default-profile VMs do not inherit
+    default-profile policy.
+    Verification: red `cargo test -p capsem-security-engine
+    runtime_rule_registry_rebuilds_enabled_cel_rules_by_priority` first failed
+    on missing priority metadata, then passed; red `cargo test -p
+    capsem-service
+    profile_seeded_enforcement_rules_preserve_priority_and_callback_scope
+    --bin capsem-service` first failed on missing profile seeding, then passed;
+    `cargo test -p capsem-service
+    handle_enforcement_runtime_routes_compile_install_and_report_stats --bin
+    capsem-service -- --test-threads=1` passed; `cargo test -p capsem-core
+    provider_toggle_enabled_emits_allow_rule_at_priority_zero --lib` passed;
+    `cargo test -p capsem-process mcp_runtime -- --test-threads=1` passed
+    with **13** tests;
+    escalated `cargo test -p capsem-service --bin capsem-service --
+    --test-threads=1` passed with **207** tests. A parallel Cargo attempt hit
+    the known macOS codesign lock race, so broad gates for this slice stayed
+    serial. Still missing after this slice: visible UI screens/editors,
+    ask/confirm UX for process decisions, S12 OTel/prometheus export, and S08d
+    performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

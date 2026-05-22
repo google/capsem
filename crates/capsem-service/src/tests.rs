@@ -2249,6 +2249,7 @@ async fn reload_config_returns_structured_failed_session_state() {
         Json(RuntimeEnforcementRuleRequest {
             id: "block-live".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "http.request.host == 'live.test'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("live block".into()),
@@ -2262,6 +2263,7 @@ async fn reload_config_returns_structured_failed_session_state() {
         Json(RuntimeDetectionRuleRequest {
             id: "detect-live".into(),
             pack_id: "runtime-detection".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             sigma_id: Some("sigma-live".into()),
             title: "Live detection".into(),
             condition: "http.request.host == 'live.test'".into(),
@@ -6733,6 +6735,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     let Json(compiled) = handle_compile_enforcement_rule(Json(RuntimeEnforcementRuleRequest {
         id: "block-metadata".into(),
         pack_id: Some("runtime-pack".into()),
+        priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
         condition: "http.request.host == 'metadata.google.internal'".into(),
         decision: capsem_security_engine::SecurityDecisionAction::Block,
         reason: Some("metadata access".into()),
@@ -6747,6 +6750,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
         Json(RuntimeEnforcementRuleRequest {
             id: "block-metadata".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "http.request.host == 'metadata.google.internal'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("metadata access".into()),
@@ -6760,6 +6764,10 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     assert_eq!(installed["rule"]["definition"]["kind"], "enforcement");
     assert_eq!(installed["rule"]["definition"]["decision"], "block");
     assert_eq!(installed["rule"]["definition"]["reason"], "metadata access");
+    assert_eq!(
+        installed["rule"]["priority"],
+        seceng::DEFAULT_RUNTIME_RULE_PRIORITY
+    );
 
     state
         .enforcement_registry
@@ -6784,6 +6792,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
         Json(RuntimeEnforcementRuleRequest {
             id: "ask-sensitive".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "common.event_type == 'model.request'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Ask,
             reason: Some("sensitive model request".into()),
@@ -6799,6 +6808,7 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
         Json(RuntimeEnforcementRuleRequest {
             id: "ask-sensitive".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "common.event_type == 'model.response'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("sensitive model response".into()),
@@ -6879,6 +6889,7 @@ async fn handle_create_enforcement_rule_pushes_runtime_snapshot_to_running_vm() 
         Json(RuntimeEnforcementRuleRequest {
             id: "block-live".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "http.request.host == 'live.test'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("live block".into()),
@@ -6949,6 +6960,7 @@ async fn handle_enforcement_stats_drains_process_runtime_rule_matches() {
         Json(RuntimeEnforcementRuleRequest {
             id: "block-live".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "http.request.host == 'live.test'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("live block".into()),
@@ -6962,6 +6974,7 @@ async fn handle_enforcement_stats_drains_process_runtime_rule_matches() {
         Json(RuntimeDetectionRuleRequest {
             id: "detect-live".into(),
             pack_id: "runtime-detection".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             sigma_id: Some("sigma-live".into()),
             title: "Live detection".into(),
             condition: "http.request.host == 'live.test'".into(),
@@ -7025,6 +7038,7 @@ async fn runtime_security_engine_evaluates_installed_rules_and_records_stats() {
         Json(RuntimeEnforcementRuleRequest {
             id: "block-metadata".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "http.request.host == 'metadata.google.internal'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("metadata access".into()),
@@ -7038,6 +7052,7 @@ async fn runtime_security_engine_evaluates_installed_rules_and_records_stats() {
         Json(RuntimeDetectionRuleRequest {
             id: "detect-metadata".into(),
             pack_id: "runtime-detection".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             sigma_id: Some("sigma-1".into()),
             title: "Metadata access".into(),
             condition: "http.request.host == 'metadata.google.internal'".into(),
@@ -7097,10 +7112,99 @@ async fn runtime_security_engine_evaluates_installed_rules_and_records_stats() {
 }
 
 #[tokio::test]
+async fn profile_seeded_enforcement_rules_preserve_priority_and_callback_scope() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let mut profile = custom_profile(
+        capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+        "Everyday Work",
+    );
+    profile.security.rules.http.clear();
+    profile.security.rules.dns.clear();
+    profile.security.rules.http.insert(
+        "aaa_block".into(),
+        capsem_core::settings_profiles::ProfileRule {
+            callback: "http.request".into(),
+            condition: "true".into(),
+            decision: capsem_core::settings_profiles::RuleDecision::Block,
+            priority: 100,
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+            reason: Some("profile fallback block".into()),
+        },
+    );
+    profile.security.rules.http.insert(
+        "zzz_allow".into(),
+        capsem_core::settings_profiles::ProfileRule {
+            callback: "http.request".into(),
+            condition: "http.request.host == 'allowed.example.test'".into(),
+            decision: capsem_core::settings_profiles::RuleDecision::Allow,
+            priority: 10,
+            rewrite_target: None,
+            rewrite_value: None,
+            strip_request_headers: Vec::new(),
+            strip_response_headers: Vec::new(),
+            reason: Some("profile allow".into()),
+        },
+    );
+    capsem_core::settings_profiles::create_user_profile(&state.service_settings.profiles, profile)
+        .unwrap();
+
+    let seeded = seed_runtime_security_rules_from_profiles(&state).unwrap();
+    assert!(seeded >= 2);
+
+    {
+        let registry = state.enforcement_registry.lock().unwrap();
+        let listed = registry.list();
+        let allow = listed
+            .iter()
+            .find(|entry| entry.metadata.id == "profile:everyday-work:http.zzz_allow")
+            .expect("profile allow rule should be seeded");
+        assert_eq!(allow.metadata.priority, 10);
+        assert_eq!(allow.metadata.scope, seceng::RuleScope::User);
+        assert_eq!(allow.metadata.origin, seceng::RuleOrigin::User);
+        assert_eq!(
+            allow.source,
+            "common.event_type == 'http.request' && (http.request.host == 'allowed.example.test')"
+        );
+    }
+    let snapshot = runtime_security_rules_snapshot_from_registries(&state).unwrap();
+    assert!(
+        snapshot.enforcement.is_empty(),
+        "profile-seeded rules are per-profile and must not be broadcast as global runtime rules"
+    );
+
+    let mut engine = runtime_security_engine_from_registries(&state).unwrap();
+    let result = engine
+        .evaluate(runtime_http_event(
+            "evt-profile-seeded",
+            10,
+            "allowed.example.test",
+        ))
+        .unwrap();
+    assert!(matches!(
+        result.action,
+        capsem_security_engine::SecurityAction::Continue
+    ));
+    assert_eq!(
+        result
+            .resolved_event
+            .event
+            .decision
+            .unwrap()
+            .rule
+            .as_deref(),
+        Some("profile:everyday-work:http.zzz_allow")
+    );
+}
+
+#[tokio::test]
 async fn handle_enforcement_compile_rejects_internal_event_root() {
     let err = handle_compile_enforcement_rule(Json(RuntimeEnforcementRuleRequest {
         id: "bad-event-root".into(),
         pack_id: Some("runtime-pack".into()),
+        priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
         condition: "event.subject.host == 'metadata.google.internal'".into(),
         decision: capsem_security_engine::SecurityDecisionAction::Block,
         reason: Some("event root should be internal".into()),
@@ -7121,6 +7225,7 @@ async fn handle_detection_runtime_routes_reject_invalid_without_poisoning_regist
         Json(RuntimeDetectionRuleRequest {
             id: "bad-detection".into(),
             pack_id: "runtime-detection".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             sigma_id: None,
             title: "Bad detection".into(),
             condition: "http.request.host ==".into(),
@@ -7142,6 +7247,7 @@ async fn handle_detection_compile_rejects_internal_event_root() {
     let err = handle_compile_detection_rule(Json(RuntimeDetectionRuleRequest {
         id: "bad-detection-event-root".into(),
         pack_id: "runtime-detection".into(),
+        priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
         sigma_id: None,
         title: "Bad detection".into(),
         condition: "event.subject.host == 'metadata.google.internal'".into(),
@@ -7163,6 +7269,7 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
     let Json(compiled) = handle_compile_detection_rule(Json(RuntimeDetectionRuleRequest {
         id: "detect-model-request".into(),
         pack_id: "runtime-detection".into(),
+        priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
         sigma_id: Some("sigma-1".into()),
         title: "Model request".into(),
         condition: "common.event_type == 'model.request'".into(),
@@ -7180,6 +7287,7 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
         Json(RuntimeDetectionRuleRequest {
             id: "detect-model-request".into(),
             pack_id: "runtime-detection".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             sigma_id: Some("sigma-1".into()),
             title: "Model request".into(),
             condition: "common.event_type == 'model.request'".into(),
@@ -7204,6 +7312,7 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
         Json(RuntimeDetectionRuleRequest {
             id: "detect-model-request".into(),
             pack_id: "runtime-detection".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             sigma_id: Some("sigma-1".into()),
             title: "Model response".into(),
             condition: "common.event_type == 'model.response'".into(),
@@ -7242,6 +7351,7 @@ async fn handle_enforcement_backtest_matches_and_dedupes_inline_events() {
         rule: RuntimeEnforcementRuleRequest {
             id: "block-metadata".into(),
             pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "http.request.host == 'metadata.google.internal'".into(),
             decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("metadata access".into()),
@@ -7294,6 +7404,7 @@ async fn handle_detection_backtest_returns_finding_rows_with_event_refs() {
         rule: RuntimeDetectionRuleRequest {
             id: "detect-metadata".into(),
             pack_id: "runtime-detection".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             sigma_id: Some("sigma-1".into()),
             title: "Metadata access".into(),
             condition: "http.request.host == 'metadata.google.internal'".into(),
@@ -7344,6 +7455,7 @@ async fn handle_detection_hunt_runs_multiple_detection_rules_over_inline_events(
             RuntimeDetectionRuleRequest {
                 id: "detect-metadata".into(),
                 pack_id: "runtime-detection".into(),
+                priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                 sigma_id: Some("sigma-1".into()),
                 title: "Metadata access".into(),
                 condition: "http.request.host == 'metadata.google.internal'".into(),
@@ -7355,6 +7467,7 @@ async fn handle_detection_hunt_runs_multiple_detection_rules_over_inline_events(
             RuntimeDetectionRuleRequest {
                 id: "detect-api".into(),
                 pack_id: "runtime-detection".into(),
+                priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                 sigma_id: Some("sigma-2".into()),
                 title: "API access".into(),
                 condition: "http.request.host == 'api.example.test'".into(),
@@ -7590,6 +7703,7 @@ async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
             rules: vec![RuntimeDetectionRuleRequest {
                 id: "detect-google-admin".into(),
                 pack_id: "runtime-detection".into(),
+                priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                 sigma_id: Some("sigma-google-admin".into()),
                 title: "Google admin path".into(),
                 condition: "http.request.host.contains('google') \
@@ -7977,6 +8091,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-dns-google".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-dns-google".into()),
                     title: "DNS Google".into(),
                     condition: "dns.request.qname.contains('google')".into(),
@@ -7988,6 +8103,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-mcp-read".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-mcp-read".into()),
                     title: "MCP file read".into(),
                     condition: "mcp.request.server_id == 'filesystem' \
@@ -8003,6 +8119,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-model-gemini".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-model-gemini".into()),
                     title: "Gemini model".into(),
                     condition: "model.request.provider == 'google_gemini' \
@@ -8022,6 +8139,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-file-write".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-file-write".into()),
                     title: "Workspace file write".into(),
                     condition: "file.activity.operation == 'write' \
@@ -8036,6 +8154,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-process-exec".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-process-exec".into()),
                     title: "Process exec".into(),
                     condition: "process.activity.operation == 'exec' \
@@ -8049,6 +8168,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-snapshot-create".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-snapshot-create".into()),
                     title: "Snapshot create".into(),
                     condition: "common.event_type == 'snapshot.create'".into(),
@@ -8060,6 +8180,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-vm-start".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-vm-start".into()),
                     title: "VM start".into(),
                     condition: "common.event_type == 'vm.start'".into(),
@@ -8071,6 +8192,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-profile-update".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-profile-update".into()),
                     title: "Profile update".into(),
                     condition: "profile.activity.operation == 'update' \
@@ -8084,6 +8206,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 RuntimeDetectionRuleRequest {
                     id: "detect-conversation-message".into(),
                     pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
                     sigma_id: Some("sigma-conversation-message".into()),
                     title: "Conversation message".into(),
                     condition: "common.event_type == 'conversation.message'".into(),

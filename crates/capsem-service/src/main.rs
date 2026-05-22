@@ -4423,6 +4423,8 @@ struct RuntimeEnforcementRuleRequest {
     id: String,
     #[serde(default)]
     pack_id: Option<String>,
+    #[serde(default = "seceng::default_runtime_rule_priority")]
+    priority: i32,
     condition: String,
     decision: seceng::SecurityDecisionAction,
     #[serde(default)]
@@ -4436,6 +4438,8 @@ struct RuntimeEnforcementRuleRequest {
 struct RuntimeDetectionRuleRequest {
     id: String,
     pack_id: String,
+    #[serde(default = "seceng::default_runtime_rule_priority")]
+    priority: i32,
     #[serde(default)]
     sigma_id: Option<String>,
     title: String,
@@ -5921,6 +5925,7 @@ fn runtime_enforcement_record(
             pack_id: request.pack_id.clone(),
             scope: seceng::RuleScope::Runtime,
             origin: seceng::RuleOrigin::Runtime,
+            priority: request.priority,
         },
         definition: seceng::RuntimeRuleDefinition::Enforcement {
             decision: request.decision,
@@ -5938,6 +5943,7 @@ fn runtime_detection_record(request: &RuntimeDetectionRuleRequest) -> seceng::Ru
             pack_id: Some(request.pack_id.clone()),
             scope: seceng::RuleScope::Runtime,
             origin: seceng::RuleOrigin::Runtime,
+            priority: request.priority,
         },
         definition: seceng::RuntimeRuleDefinition::Detection {
             sigma_id: request.sigma_id.clone(),
@@ -5951,6 +5957,154 @@ fn runtime_detection_record(request: &RuntimeDetectionRuleRequest) -> seceng::Ru
     }
 }
 
+fn profile_rule_decision(
+    decision: capsem_core::settings_profiles::RuleDecision,
+) -> seceng::SecurityDecisionAction {
+    match decision {
+        capsem_core::settings_profiles::RuleDecision::Allow => {
+            seceng::SecurityDecisionAction::Allow
+        }
+        capsem_core::settings_profiles::RuleDecision::Ask => seceng::SecurityDecisionAction::Ask,
+        capsem_core::settings_profiles::RuleDecision::Block => {
+            seceng::SecurityDecisionAction::Block
+        }
+        capsem_core::settings_profiles::RuleDecision::Rewrite => {
+            seceng::SecurityDecisionAction::Rewrite
+        }
+    }
+}
+
+fn profile_rule_scope_origin(
+    source: capsem_core::settings_profiles::ProfileSource,
+) -> (seceng::RuleScope, seceng::RuleOrigin) {
+    match source {
+        capsem_core::settings_profiles::ProfileSource::Corp => {
+            (seceng::RuleScope::Corp, seceng::RuleOrigin::Corp)
+        }
+        capsem_core::settings_profiles::ProfileSource::User => {
+            (seceng::RuleScope::User, seceng::RuleOrigin::User)
+        }
+        capsem_core::settings_profiles::ProfileSource::BuiltIn
+        | capsem_core::settings_profiles::ProfileSource::Base => {
+            (seceng::RuleScope::Profile, seceng::RuleOrigin::Profile)
+        }
+    }
+}
+
+fn profile_rule_callback_guard(callback: &str) -> Result<&'static str, AppError> {
+    match callback {
+        "dns.request" => Ok("common.event_type == 'dns.request'"),
+        "dns.response" => Ok("common.event_type == 'dns.response'"),
+        "http.request" | "http.read" | "http.write" => Ok("common.event_type == 'http.request'"),
+        "http.response" => Ok("common.event_type == 'http.response'"),
+        "mcp.request" => Ok("common.event_type == 'mcp.request'"),
+        "mcp.response" => Ok("common.event_type == 'mcp.response'"),
+        "model.request" => Ok("common.event_type == 'model.request'"),
+        "model.response" => Ok("common.event_type == 'model.response'"),
+        "model.tool_call" => Ok("common.event_type == 'model.tool_call'"),
+        "model.tool_response" => Ok("common.event_type == 'model.tool_response'"),
+        "hook.decision" => Ok("common.event_type == 'hook.decision'"),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile rule callback '{callback}' cannot be seeded into runtime enforcement"),
+        )),
+    }
+}
+
+fn profile_rule_condition(
+    rule: &capsem_core::settings_profiles::EffectiveRule,
+) -> Result<String, AppError> {
+    let guard = profile_rule_callback_guard(&rule.callback)?;
+    Ok(format!("{guard} && ({})", rule.condition))
+}
+
+fn profile_seeded_enforcement_record(
+    rule: &capsem_core::settings_profiles::EffectiveRule,
+) -> Result<seceng::RuntimeRuleRecord, AppError> {
+    let (scope, origin) = profile_rule_scope_origin(rule.provenance.source);
+    let rule_id = format!("profile:{}:{}", rule.provenance.profile_id, rule.id);
+    validate_runtime_rule_id(&rule_id)?;
+    Ok(seceng::RuntimeRuleRecord {
+        metadata: seceng::RuntimeRuleMetadata {
+            id: rule_id,
+            pack_id: Some(format!("profile:{}", rule.provenance.profile_id)),
+            scope,
+            origin,
+            priority: rule.priority,
+        },
+        definition: seceng::RuntimeRuleDefinition::Enforcement {
+            decision: profile_rule_decision(rule.decision),
+            reason: rule.reason.clone(),
+        },
+        source: profile_rule_condition(rule)?,
+        enabled: true,
+    })
+}
+
+fn compile_runtime_enforcement_record(
+    record: &seceng::RuntimeRuleRecord,
+) -> Result<String, seceng::SecurityEngineError> {
+    let seceng::RuntimeRuleDefinition::Enforcement { decision, reason } = &record.definition else {
+        return Err(seceng::SecurityEngineError::CelCompileFailed {
+            rule_id: record.metadata.id.clone(),
+            message: "expected enforcement rule definition".into(),
+        });
+    };
+    seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
+        id: record.metadata.id.clone(),
+        pack_id: record.metadata.pack_id.clone(),
+        condition: record.source.clone(),
+        decision: *decision,
+        reason: reason.clone(),
+    }])?;
+    Ok(runtime_rule_plan_id(&record.source))
+}
+
+fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Result<usize, AppError> {
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(
+        &state.service_settings.profiles,
+        None,
+    )
+    .map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("resolve default profile security rules: {error}"),
+        )
+    })?;
+
+    let mut registry = state.enforcement_registry.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime enforcement registry lock poisoned: {error}"),
+        )
+    })?;
+    let mut seeded = 0usize;
+    for rule in &effective.rules {
+        let record = profile_seeded_enforcement_record(rule)?;
+        let compiled_plan = compile_runtime_enforcement_record(&record).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("compile profile rule '{}': {error}", record.metadata.id),
+            )
+        })?;
+        registry
+            .add_or_update(record, |_| Ok(compiled_plan.clone()))
+            .map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("install profile rule: {error}"),
+                )
+            })?;
+        seeded += 1;
+    }
+    info!(
+        profile_id = effective.profile_id,
+        rule_count = seeded,
+        "seeded profile enforcement rules into runtime registry"
+    );
+    Ok(seeded)
+}
+
 fn runtime_rule_entry_json(entry: &seceng::RuntimeRuleEntry) -> serde_json::Value {
     let compiled = matches!(&entry.compile_status, seceng::CompileStatus::Compiled);
     json!({
@@ -5958,6 +6112,7 @@ fn runtime_rule_entry_json(entry: &seceng::RuntimeRuleEntry) -> serde_json::Valu
         "pack_id": &entry.metadata.pack_id,
         "scope": entry.metadata.scope,
         "origin": entry.metadata.origin,
+        "priority": entry.metadata.priority,
         "definition": &entry.definition,
         "enabled": entry.enabled,
         "compiled": compiled,
@@ -6135,10 +6290,10 @@ fn runtime_security_rules_snapshot_from_registries(
                 format!("runtime enforcement registry lock poisoned: {error}"),
             )
         })?;
-        registry
-            .enabled_enforcement_rules()
+        runtime_registry_entries_by_priority(&registry)
             .into_iter()
-            .map(runtime_enforcement_rule_snapshot)
+            .filter(|entry| entry.metadata.scope == seceng::RuleScope::Runtime && entry.enabled)
+            .filter_map(runtime_enforcement_entry_snapshot)
             .collect()
     };
     let detection = {
@@ -6148,10 +6303,10 @@ fn runtime_security_rules_snapshot_from_registries(
                 format!("runtime detection registry lock poisoned: {error}"),
             )
         })?;
-        registry
-            .enabled_detection_rules()
+        runtime_registry_entries_by_priority(&registry)
             .into_iter()
-            .map(runtime_detection_rule_snapshot)
+            .filter(|entry| entry.metadata.scope == seceng::RuleScope::Runtime && entry.enabled)
+            .filter_map(runtime_detection_entry_snapshot)
             .collect()
     };
 
@@ -6161,31 +6316,61 @@ fn runtime_security_rules_snapshot_from_registries(
     })
 }
 
-fn runtime_enforcement_rule_snapshot(
-    rule: seceng::CelEnforcementRule,
-) -> capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
-    capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
-        id: rule.id,
-        pack_id: rule.pack_id,
-        condition: rule.condition,
-        decision: runtime_decision_action_snapshot(rule.decision),
-        reason: rule.reason,
-    }
+fn runtime_registry_entries_by_priority(
+    registry: &seceng::RuntimeRuleRegistry,
+) -> Vec<&seceng::RuntimeRuleEntry> {
+    let mut entries = registry.list();
+    entries.sort_by(|left, right| {
+        left.metadata
+            .priority
+            .cmp(&right.metadata.priority)
+            .then_with(|| left.metadata.id.cmp(&right.metadata.id))
+    });
+    entries
 }
 
-fn runtime_detection_rule_snapshot(
-    rule: seceng::CelDetectionRule,
-) -> capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
-    capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
-        id: rule.id,
-        pack_id: rule.pack_id,
-        sigma_id: rule.sigma_id,
-        title: rule.title,
-        condition: rule.condition,
-        severity: runtime_detection_severity_snapshot(rule.severity),
-        confidence: runtime_detection_confidence_snapshot(rule.confidence),
-        tags: rule.tags,
-    }
+fn runtime_enforcement_entry_snapshot(
+    entry: &seceng::RuntimeRuleEntry,
+) -> Option<capsem_proto::ipc::RuntimeEnforcementRuleSnapshot> {
+    let seceng::RuntimeRuleDefinition::Enforcement { decision, reason } = &entry.definition else {
+        return None;
+    };
+    Some(capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+        id: entry.metadata.id.clone(),
+        pack_id: entry.metadata.pack_id.clone(),
+        condition: entry.source.clone(),
+        decision: runtime_decision_action_snapshot(*decision),
+        reason: reason.clone(),
+    })
+}
+
+fn runtime_detection_entry_snapshot(
+    entry: &seceng::RuntimeRuleEntry,
+) -> Option<capsem_proto::ipc::RuntimeDetectionRuleSnapshot> {
+    let seceng::RuntimeRuleDefinition::Detection {
+        sigma_id,
+        title,
+        severity,
+        confidence,
+        tags,
+    } = &entry.definition
+    else {
+        return None;
+    };
+    Some(capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
+        id: entry.metadata.id.clone(),
+        pack_id: entry
+            .metadata
+            .pack_id
+            .clone()
+            .unwrap_or_else(|| "runtime".into()),
+        sigma_id: sigma_id.clone(),
+        title: title.clone(),
+        condition: entry.source.clone(),
+        severity: runtime_detection_severity_snapshot(*severity),
+        confidence: runtime_detection_confidence_snapshot(*confidence),
+        tags: tags.clone(),
+    })
 }
 
 fn runtime_decision_action_snapshot(
@@ -11099,6 +11284,9 @@ async fn main() -> Result<()> {
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
+
+    seed_runtime_security_rules_from_profiles(&state)
+        .map_err(|error| anyhow!("seed profile runtime security rules: {}", error.1))?;
 
     Arc::clone(&state.asset_supervisor).spawn();
     let _profile_catalog_reconcile_task =

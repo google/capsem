@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added first service-owned runtime `/enforcement/*` and `/detection/*`
   handlers for validate/compile, live add/update/delete/list, and stats backed
   by real CEL compilation and compile-first registry installs.
+- Added deterministic priority ordering to runtime enforcement/detection
+  registries and seeded the default effective profile's enforcement rules into
+  the service runtime registry at startup, with profile/user/corp attribution
+  and typed callback guards around profile CEL conditions; profile-scoped rules
+  are kept out of the global runtime-rule broadcast snapshot.
 - Added service-owned runtime enforcement and detection backtest handlers that
   evaluate candidate CEL rules against typed normalized `SecurityEvent` inputs
   and return the shared deduplicated `BacktestResult` shape.

@@ -3455,6 +3455,7 @@ enabled = true
     assert_eq!(dns_allow.priority, 0);
     assert_eq!(dns_allow.decision, RuleDecision::Allow);
     assert_eq!(dns_allow.callback, "dns.request");
+    assert_eq!(dns_allow.condition, "dns.request.qname == 'api.openai.com'");
     assert_eq!(
         dns_allow.owner_setting_path.as_deref(),
         Some("ai.providers.openai.enabled")
