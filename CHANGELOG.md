@@ -160,6 +160,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `security.process` fields that power `capsem logs` remain queryable.
 - Added service log endpoint coverage proving structured process security
   decision lines are returned verbatim with VM/profile/user/rule attribution.
+- Added testable `capsem logs` formatting so structured process security lines
+  survive CLI tailing, and taught shell IPC handling to ignore runtime rule
+  match-drain replies.
 - Added live VM status security metrics from the canonical resolved-event
   stream, including security event counts, block counts, detection counts,
   latest block, and latest detection surfaced through process metrics snapshots

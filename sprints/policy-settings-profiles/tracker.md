@@ -1516,6 +1516,25 @@ a valid claim -- mark it `[ ]` instead.
     `capsem logs` E2E for an actual process-rule block, visible UI
     screens/editors, ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Sixty-sixth TDD Process Engine CLI-log slice extracted the `capsem logs`
+    formatter so CLI output is directly testable. The new CLI test feeds a
+    process log with an older line plus a structured `security.process`
+    `process_exec_security_decision` line, applies `--tail 1`, and proves the
+    rendered output keeps the process-log header plus target, event type, final
+    action, profile id, user id, rule id, and reason while dropping the older
+    line. The compile gate also exposed a real stale IPC match arm in
+    `capsem shell`; the CLI now ignores `RuntimeRuleMatches` process replies
+    the same way it ignores other service-internal process responses.
+    Verification: red `cargo test -p capsem
+    format_session_logs_preserves_structured_process_security_line` first
+    failed on the missing `RuntimeRuleMatches` match arm, then passed after the
+    fix; widened gate `cargo test -p capsem` passed with escalation after the
+    sandbox-only run hit existing loopback/socket `Operation not permitted`
+    failures (**263** passed); `cargo fmt --all -- --check` passed, and
+    `git diff --check` passed. Still missing after this slice: real-VM
+    `capsem logs` E2E for an actual process-rule block, visible UI
+    screens/editors, ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

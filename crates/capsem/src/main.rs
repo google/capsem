@@ -876,6 +876,46 @@ fn format_session_profile_for_list(session: &client::SessionInfo) -> String {
     }
 }
 
+fn tail_log_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= n {
+        text.to_string()
+    } else {
+        lines[lines.len() - n..].join("\n")
+    }
+}
+
+fn format_session_logs(session: &str, logs: LogsResponse, tail: Option<usize>) -> String {
+    let mut output = String::new();
+
+    if let Some(process_logs) = logs.process_logs {
+        output.push_str(&format!("--- Process Logs ({session}) ---\n"));
+        output.push_str(&match tail {
+            Some(n) => tail_log_lines(&process_logs, n),
+            None => process_logs,
+        });
+        output.push('\n');
+    }
+
+    if let Some(serial_logs) = logs.serial_logs {
+        output.push_str(&format!("--- Serial Logs ({session}) ---\n"));
+        output.push_str(&match tail {
+            Some(n) => tail_log_lines(&serial_logs, n),
+            None => serial_logs,
+        });
+        output.push('\n');
+    } else if !logs.logs.is_empty() {
+        output.push_str(&format!("--- Serial Logs ({session}) ---\n"));
+        output.push_str(&match tail {
+            Some(n) => tail_log_lines(&logs.logs, n),
+            None => logs.logs,
+        });
+        output.push('\n');
+    }
+
+    output
+}
+
 fn enforcement_rule_body(
     id: &str,
     condition: &str,
@@ -1180,7 +1220,8 @@ async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
                 ProcessToService::ShutdownRequested { .. }
                 | ProcessToService::SuspendRequested { .. }
                 | ProcessToService::SnapshotReady { .. }
-                | ProcessToService::MetricsSnapshot { .. } => {}
+                | ProcessToService::MetricsSnapshot { .. }
+                | ProcessToService::RuntimeRuleMatches { .. } => {}
             }
         }
     });
@@ -1834,40 +1875,7 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", session)).await?;
             let logs = resp.into_result()?;
-
-            let tail_lines = |text: &str, n: usize| -> String {
-                let lines: Vec<&str> = text.lines().collect();
-                if lines.len() <= n {
-                    text.to_string()
-                } else {
-                    lines[lines.len() - n..].join("\n")
-                }
-            };
-
-            if let Some(process_logs) = logs.process_logs {
-                println!("--- Process Logs ({}) ---", session);
-                let output = match tail {
-                    Some(n) => tail_lines(&process_logs, *n),
-                    None => process_logs,
-                };
-                println!("{}", output);
-            }
-
-            if let Some(serial_logs) = logs.serial_logs {
-                println!("--- Serial Logs ({}) ---", session);
-                let output = match tail {
-                    Some(n) => tail_lines(&serial_logs, *n),
-                    None => serial_logs,
-                };
-                println!("{}", output);
-            } else if !logs.logs.is_empty() {
-                println!("--- Serial Logs ({}) ---", session);
-                let output = match tail {
-                    Some(n) => tail_lines(&logs.logs, *n),
-                    None => logs.logs,
-                };
-                println!("{}", output);
-            }
+            print!("{}", format_session_logs(session, logs, *tail));
         }
         Commands::Session(SessionCommands::History {
             session,
@@ -3175,6 +3183,45 @@ mod tests {
             }
             _ => panic!("expected Logs"),
         }
+    }
+
+    #[test]
+    fn format_session_logs_preserves_structured_process_security_line() {
+        let process_security_line = serde_json::json!({
+            "target": "security.process",
+            "fields": {
+                "message": "process_exec_security_decision",
+                "event_type": "process.exec",
+                "final_action": "block",
+                "vm_id": "vm-cli-logs",
+                "profile_id": "coding",
+                "user_id": "elie",
+                "rule_id": "runtime.block-shell",
+                "reason": "shell exec blocked"
+            }
+        })
+        .to_string();
+        let output = format_session_logs(
+            "vm-cli-logs",
+            LogsResponse {
+                logs: String::new(),
+                serial_logs: Some("serial booted\n".into()),
+                process_logs: Some(format!("old line\n{process_security_line}\n")),
+            },
+            Some(1),
+        );
+
+        assert!(output.contains("--- Process Logs (vm-cli-logs) ---"));
+        assert!(output.contains(r#""target":"security.process""#));
+        assert!(output.contains(r#""message":"process_exec_security_decision""#));
+        assert!(output.contains(r#""event_type":"process.exec""#));
+        assert!(output.contains(r#""final_action":"block""#));
+        assert!(output.contains(r#""profile_id":"coding""#));
+        assert!(output.contains(r#""user_id":"elie""#));
+        assert!(output.contains(r#""rule_id":"runtime.block-shell""#));
+        assert!(!output.contains("old line"));
+        assert!(output.contains("--- Serial Logs (vm-cli-logs) ---"));
+        assert!(output.contains("serial booted"));
     }
 
     #[test]
