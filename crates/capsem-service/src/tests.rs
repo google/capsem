@@ -7783,7 +7783,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                     sigma_id: Some("sigma-process-exec".into()),
                     title: "Process exec".into(),
                     condition: "process.activity.operation == 'exec' \
-                        && process.activity.command_class == 'bash'"
+                        && process.activity.command_class == 'shell'"
                         .into(),
                     severity: capsem_security_engine::Severity::Medium,
                     confidence: capsem_security_engine::Confidence::High,

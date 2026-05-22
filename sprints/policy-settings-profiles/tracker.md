@@ -1423,6 +1423,27 @@ a valid claim -- mark it `[ ]` instead.
     passed. Still missing after this slice: real-VM process-rule E2E, visible
     UI screens/editors, ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Sixty-first TDD Process Engine historical-parity slice removed a
+    live-versus-forensic vocabulary drift for process rules. The red service
+    test changed the session-backed hunt rule from raw `bash` to canonical
+    `shell` and proved the process fixture no longer matched. `capsem-core`
+    now exposes the shared Process Engine command classifier, and service
+    session reconstruction uses it for `exec_events` command/process-name rows
+    before projecting `process.activity.command_class`. The process runtime
+    snapshot test also now proves service-owned enforcement and detection rule
+    snapshots evaluate against process events, not just HTTP events.
+    Verification: red `cargo test -p capsem-service
+    handle_session_detection_hunt_reconstructs_core_projection_families --bin
+    capsem-service` first, then that test passed; `cargo test -p
+    capsem-process load_runtime_policy_state_merges_service_runtime_rule_snapshot`
+    **1** passed; `cargo test -p capsem-core process_security_events --lib`
+    **4** passed; widened gates: `cargo test -p capsem-process` **107**
+    passed, `cargo test -p capsem-service handle_session_detection_hunt --bin
+    capsem-service` **2** passed, `cargo fmt --all -- --check` passed, and
+    `git diff --check` passed. Still missing after this slice: real-VM
+    process-rule E2E, visible UI screens/editors, ask/confirm UX for process
+    decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

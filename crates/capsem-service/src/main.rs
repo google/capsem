@@ -7194,13 +7194,16 @@ fn session_security_event_from_row(
         "process" => {
             let operation = session_event_operation(&common.event_type, "activity");
             let command = session_optional_string(row, SESSION_COL_PROCESS_COMMAND)?;
-            let command_class =
-                session_optional_string(row, SESSION_COL_PROCESS_NAME)?.or_else(|| {
-                    command
-                        .as_ref()
-                        .and_then(|command| command.split_whitespace().next())
-                        .map(str::to_owned)
-                });
+            let process_name = session_optional_string(row, SESSION_COL_PROCESS_NAME)?;
+            let command_class = command
+                .as_deref()
+                .and_then(capsem_core::process_security_events::classify_command_class)
+                .or_else(|| {
+                    process_name
+                        .as_deref()
+                        .and_then(capsem_core::process_security_events::classify_command_class)
+                })
+                .map(str::to_owned);
             Ok(Some(seceng::SecurityEvent::process(
                 common,
                 seceng::ProcessSecuritySubject {

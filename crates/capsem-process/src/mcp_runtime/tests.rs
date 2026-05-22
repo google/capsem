@@ -8,8 +8,8 @@ use capsem_core::settings_profiles::{
     CapabilityMode, EffectiveRule, McpConnectorCapsemMetadata, McpConnectorConfig, RuleDecision,
 };
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, Enforceability, HttpSecuritySubject, RedactionState,
-    SecurityAction, SecurityEvent, SecurityEventCommon, SourceEngine,
+    AiAttributionScope, AiOriginKind, Enforceability, HttpSecuritySubject, ProcessSecuritySubject,
+    RedactionState, SecurityAction, SecurityEvent, SecurityEventCommon, SourceEngine,
 };
 
 use capsem_core::mcp::policy::McpUserConfig;
@@ -413,6 +413,12 @@ fn load_runtime_policy_state_merges_service_runtime_rule_snapshot() {
             condition: "http.request.host == 'live-policy.test'".into(),
             decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
             reason: Some("live runtime block".into()),
+        }, capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+            id: "runtime.block-process-shell".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "process.activity.operation == 'exec' && process.activity.command_class == 'shell'".into(),
+            decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
+            reason: Some("shell exec block".into()),
         }],
         detection: vec![capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
             id: "runtime.detect-live".into(),
@@ -423,6 +429,15 @@ fn load_runtime_policy_state_merges_service_runtime_rule_snapshot() {
             severity: capsem_proto::ipc::RuntimeDetectionSeverity::High,
             confidence: capsem_proto::ipc::RuntimeDetectionConfidence::High,
             tags: vec!["runtime".into()],
+        }, capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
+            id: "runtime.detect-process-python".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-process".into()),
+            title: "Python exec detection".into(),
+            condition: "process.activity.operation == 'exec' && process.activity.command_class == 'python'".into(),
+            severity: capsem_proto::ipc::RuntimeDetectionSeverity::Medium,
+            confidence: capsem_proto::ipc::RuntimeDetectionConfidence::High,
+            tags: vec!["process".into()],
         }],
     };
 
@@ -454,6 +469,29 @@ fn load_runtime_policy_state_merges_service_runtime_rule_snapshot() {
     assert_eq!(
         detected.resolved_event.event.findings[0].rule_id,
         "runtime.detect-live"
+    );
+
+    let blocked_process = security_engine
+        .evaluate(process_event("exec-shell", "exec", Some("shell")))
+        .expect("runtime snapshot process enforcement should evaluate");
+    assert!(matches!(blocked_process.action, SecurityAction::Block(_)));
+    assert_eq!(
+        blocked_process
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("runtime.block-process-shell")
+    );
+
+    let detected_process = security_engine
+        .evaluate(process_event("exec-python", "exec", Some("python")))
+        .expect("runtime snapshot process detection should evaluate");
+    assert!(matches!(detected_process.action, SecurityAction::Continue));
+    assert_eq!(
+        detected_process.resolved_event.event.findings[0].rule_id,
+        "runtime.detect-process-python"
     );
 }
 
@@ -552,6 +590,47 @@ fn http_event(host: &str, path: &str) -> SecurityEvent {
             url: Some(format!("https://{host}{path}")),
             path_class: path.trim_start_matches('/').to_string(),
             ..HttpSecuritySubject::default()
+        },
+    )
+}
+
+fn process_event(event_id: &str, operation: &str, command_class: Option<&str>) -> SecurityEvent {
+    SecurityEvent::process(
+        SecurityEventCommon {
+            event_id: event_id.into(),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Process,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::HostService,
+            accounting_owner: None,
+            enforceability: Enforceability::InlineBlockable,
+            trace_id: Some("trace-process-test".into()),
+            span_id: None,
+            timestamp_unix_ms: 1,
+            vm_id: None,
+            session_id: None,
+            profile_id: None,
+            profile_revision: None,
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: None,
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "process.exec".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        ProcessSecuritySubject {
+            operation: operation.into(),
+            command_class: command_class.map(str::to_owned),
         },
     )
 }

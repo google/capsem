@@ -147,6 +147,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   events now evaluate through the runtime Security Engine before guest
   delivery, blocked exec calls resolve the pending IPC job with an error, and
   the canonical resolved event records the final decision.
+- Added shared Process Engine command classification for session-backed
+  detection hunt reconstruction, so historical `process.exec` events use the
+  same canonical classes such as `shell`, `python`, and `network` as live exec
+  enforcement.
 - Added live VM status security metrics from the canonical resolved-event
   stream, including security event counts, block counts, detection counts,
   latest block, and latest detection surfaced through process metrics snapshots

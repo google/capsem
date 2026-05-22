@@ -106,7 +106,7 @@ fn build_exec_security_event(event: &ExecEvent) -> SecurityEvent {
         },
         ProcessSecuritySubject {
             operation: "exec".into(),
-            command_class: classify_command(&event.command).map(str::to_owned),
+            command_class: classify_command_class(&event.command).map(str::to_owned),
         },
     )
 }
@@ -193,7 +193,7 @@ fn non_empty_env(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn classify_command(command: &str) -> Option<&'static str> {
+pub fn classify_command_class(command: &str) -> Option<&'static str> {
     let executable = command
         .split_whitespace()
         .next()?
