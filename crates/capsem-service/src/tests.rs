@@ -6997,10 +6997,36 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
         );
         conn.execute(
             "INSERT INTO mcp_calls (
-                timestamp, server_name, method, tool_name, decision, trace_id
+                timestamp, server_name, method, tool_name, request_id, decision,
+                trace_id
              ) VALUES (
                 '2026-05-21T10:00:00Z', 'filesystem', 'tools/call',
-                'read_file', 'allowed', 'trace-mcp-read'
+                'read_file', 'mcp-call-1', 'allowed', 'trace-mcp-read'
+             )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE security_events
+             SET mcp_call_id = 'mcp-call-1'
+             WHERE event_id = 'evt-mcp-read'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ai_mcp_execution_evidence (
+                mcp_call_id, server_id, tool_name, namespaced_tool_name,
+                transport, request_arguments_raw, request_arguments_json,
+                result_kind, result_preview, result_json, is_error,
+                latency_ms, linked_model_interaction_id,
+                linked_model_tool_call_id, link_status
+             ) VALUES (
+                'mcp-call-1', 'filesystem', 'read_file',
+                'filesystem.read_file', 'json-rpc',
+                '{\"path\":\"/workspace/secret.txt\"}',
+                '{\"path\":\"/workspace/secret.txt\"}', 'text',
+                'contents', NULL, 0, 12, 'interaction-gemini',
+                'tool-call-1', 'linked'
              )",
             [],
         )
@@ -7025,6 +7051,36 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                 12, 34, 'trace-model-gemini'
              )",
             [],
+        )
+        .unwrap();
+        let model_call_row_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO ai_model_interactions (
+                model_call_id, interaction_id, trace_id,
+                attribution_scope, source_engine, origin_kind, accounting_owner,
+                profile_id, vm_id, session_id, user_id,
+                provider, api_family, model, parse_status, evidence_status,
+                request_id, request_model, request_stream,
+                request_system_prompt_preview, request_message_count,
+                request_tools_declared_count, request_raw_shape_version,
+                request_unknown_fields_present,
+                response_id, response_provider_response_id, response_stop_reason,
+                response_text_preview, response_thinking_preview,
+                response_raw_shape_version,
+                usage_input_tokens, usage_output_tokens,
+                usage_estimated_cost_micros
+             ) VALUES (
+                ?1, 'interaction-gemini', 'trace-model-gemini',
+                'vm', 'network', 'guest_network', 'vm:hunt-vm',
+                'coding', 'hunt-vm', 'hunt-session', 'user-1',
+                'google_gemini', 'google_gemini_content',
+                'gemini-2.5-pro', 'complete', 'complete',
+                'model-request-1', 'gemini-2.5-pro', 1,
+                'system preview', 3, 2, 'gemini-v1beta', 0,
+                'model-response-1', 'provider-response-1', 'stop',
+                'hello', NULL, 'gemini-v1beta-response', 12, 34, 5678
+             )",
+            rusqlite::params![model_call_row_id],
         )
         .unwrap();
 
@@ -7152,6 +7208,47 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
     assert!(event_ids.contains("evt-vm-start"));
     assert!(event_ids.contains("evt-profile-update"));
     assert!(event_ids.contains("evt-conversation-message"));
+    let mcp_proto = capsem_security_engine::policy_context_from_event(
+        &reconstructed
+            .iter()
+            .find(|event| event.event.common.event_id == "evt-mcp-read")
+            .expect("MCP event should reconstruct from canonical evidence")
+            .event,
+    );
+    assert_eq!(
+        mcp_proto
+            .mcp
+            .request
+            .as_ref()
+            .and_then(|request| request.arguments_status.as_deref()),
+        Some("valid_json")
+    );
+    assert_eq!(
+        mcp_proto
+            .mcp
+            .response
+            .as_ref()
+            .and_then(|response| response.is_error),
+        Some(false)
+    );
+    let model_proto = capsem_security_engine::policy_context_from_event(
+        &reconstructed
+            .iter()
+            .find(|event| event.event.common.event_id == "evt-model-gemini")
+            .expect("model event should reconstruct from canonical AI evidence")
+            .event,
+    );
+    let model_request = model_proto
+        .model
+        .request
+        .as_ref()
+        .expect("model policy request should be populated");
+    assert_eq!(
+        model_request.api_family.as_deref(),
+        Some("google_gemini_content")
+    );
+    assert_eq!(model_request.stream, Some(true));
+    assert_eq!(model_request.estimated_cost_micros, Some(5678));
 
     let Json(result) = handle_session_detection_hunt(
         Path(vm_id.into()),
@@ -7175,7 +7272,9 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                     sigma_id: Some("sigma-mcp-read".into()),
                     title: "MCP file read".into(),
                     condition: "mcp.request.server_id == 'filesystem' \
-                        && mcp.request.tool_name == 'read_file'"
+                        && mcp.request.tool_name == 'read_file' \
+                        && mcp.request.arguments_status == 'valid_json' \
+                        && mcp.response.is_error == false"
                         .into(),
                     severity: capsem_security_engine::Severity::Medium,
                     confidence: capsem_security_engine::Confidence::High,
@@ -7188,7 +7287,8 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                     sigma_id: Some("sigma-model-gemini".into()),
                     title: "Gemini model".into(),
                     condition: "model.request.provider == 'google_gemini' \
-                        && model.request.model.contains('gemini')"
+                        && model.request.api_family == 'google_gemini_content' \
+                        && model.request.stream == true"
                         .into(),
                     severity: capsem_security_engine::Severity::Medium,
                     confidence: capsem_security_engine::Confidence::High,
@@ -7279,17 +7379,21 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
         .iter()
         .map(|row| row.rule_id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
+    let expected_rule_ids = [
+        "detect-dns-google",
+        "detect-mcp-read",
+        "detect-model-gemini",
+        "detect-file-write",
+        "detect-process-exec",
+        "detect-snapshot-create",
+        "detect-vm-start",
+        "detect-profile-update",
+        "detect-conversation-message",
+    ]
+    .into_iter()
+    .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(matched_rule_ids, expected_rule_ids);
     assert_eq!(result.total_matches, 9);
-    assert_eq!(matched_rule_ids.len(), 9);
-    assert!(matched_rule_ids.contains("detect-dns-google"));
-    assert!(matched_rule_ids.contains("detect-mcp-read"));
-    assert!(matched_rule_ids.contains("detect-model-gemini"));
-    assert!(matched_rule_ids.contains("detect-file-write"));
-    assert!(matched_rule_ids.contains("detect-process-exec"));
-    assert!(matched_rule_ids.contains("detect-snapshot-create"));
-    assert!(matched_rule_ids.contains("detect-vm-start"));
-    assert!(matched_rule_ids.contains("detect-profile-update"));
-    assert!(matched_rule_ids.contains("detect-conversation-message"));
 }
 
 #[tokio::test]

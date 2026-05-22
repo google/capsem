@@ -5705,7 +5705,28 @@ fn security_events_query_rows(
                 mc.provider, mc.model, mc.input_tokens, mc.output_tokens,
                 f.action, f.path, f.size,
                 x.command, x.process_name,
-                s.slot, s.origin, s.name
+                s.slot, s.origin, s.name,
+                ami.interaction_id, ami.trace_id, ami.attribution_scope,
+                ami.source_engine, ami.origin_kind, ami.accounting_owner,
+                ami.profile_id, ami.vm_id, ami.session_id, ami.user_id,
+                ami.provider, ami.api_family, ami.model, ami.parse_status,
+                ami.evidence_status, ami.request_id, ami.request_model,
+                ami.request_stream, ami.request_system_prompt_preview,
+                ami.request_message_count, ami.request_tools_declared_count,
+                ami.request_raw_shape_version,
+                ami.request_unknown_fields_present,
+                ami.response_id, ami.response_provider_response_id,
+                ami.response_stop_reason, ami.response_text_preview,
+                ami.response_thinking_preview, ami.response_raw_shape_version,
+                ami.usage_input_tokens, ami.usage_output_tokens,
+                ami.usage_estimated_cost_micros,
+                ame.mcp_call_id, ame.server_id, ame.tool_name,
+                ame.namespaced_tool_name, ame.transport,
+                ame.request_arguments_raw, ame.request_arguments_json,
+                ame.result_kind, ame.result_preview, ame.result_json,
+                ame.is_error, ame.latency_ms,
+                ame.linked_model_interaction_id,
+                ame.linked_model_tool_call_id, ame.link_status
              FROM security_events se
              LEFT JOIN net_events n
                 ON n.trace_id = se.trace_id
@@ -5728,6 +5749,13 @@ fn security_events_query_rows(
              LEFT JOIN snapshot_events s
                 ON s.trace_id = se.trace_id
                AND se.event_family = 'snapshot'
+             LEFT JOIN ai_model_interactions ami
+                ON ami.trace_id = se.trace_id
+               AND se.event_family = 'model'
+             LEFT JOIN ai_mcp_execution_evidence ame
+                ON (ame.mcp_call_id = se.mcp_call_id
+                    OR ame.mcp_call_id = m.request_id)
+               AND se.event_family = 'mcp'
              ORDER BY se.timestamp_unix_ms ASC, se.id ASC
              LIMIT 10000",
         )
@@ -5816,6 +5844,38 @@ fn session_optional_u64(row: &serde_json::Value, index: usize) -> Result<Option<
     } else {
         session_required_u64(row, index).map(Some)
     }
+}
+
+fn session_optional_bool(row: &serde_json::Value, index: usize) -> Result<Option<bool>, AppError> {
+    let value = session_cell(row, index)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    if let Some(value) = value.as_bool() {
+        return Ok(Some(value));
+    }
+    if let Some(value) = value.as_i64() {
+        return Ok(Some(value != 0));
+    }
+    if let Some(value) = value.as_u64() {
+        return Ok(Some(value != 0));
+    }
+    Err(AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("session security event column {index} was not a nullable boolean"),
+    ))
+}
+
+fn parse_session_enum<T>(value: &str, label: &str) -> Result<T, AppError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_value(serde_json::Value::String(value.to_owned())).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unsupported session {label} '{value}': {error}"),
+        )
+    })
 }
 
 fn parse_session_source_engine(value: &str) -> Result<seceng::SourceEngine, AppError> {
@@ -5938,6 +5998,203 @@ const SESSION_COL_PROCESS_COMMAND: usize = 46;
 const SESSION_COL_PROCESS_NAME: usize = 47;
 const SESSION_COL_SNAPSHOT_SLOT: usize = 48;
 const SESSION_COL_SNAPSHOT_NAME: usize = 50;
+const SESSION_COL_AI_INTERACTION_ID: usize = 51;
+const SESSION_COL_AI_TRACE_ID: usize = 52;
+const SESSION_COL_AI_ATTRIBUTION_SCOPE: usize = 53;
+const SESSION_COL_AI_SOURCE_ENGINE: usize = 54;
+const SESSION_COL_AI_ORIGIN_KIND: usize = 55;
+const SESSION_COL_AI_ACCOUNTING_OWNER: usize = 56;
+const SESSION_COL_AI_PROFILE_ID: usize = 57;
+const SESSION_COL_AI_VM_ID: usize = 58;
+const SESSION_COL_AI_SESSION_ID: usize = 59;
+const SESSION_COL_AI_USER_ID: usize = 60;
+const SESSION_COL_AI_PROVIDER: usize = 61;
+const SESSION_COL_AI_API_FAMILY: usize = 62;
+const SESSION_COL_AI_MODEL: usize = 63;
+const SESSION_COL_AI_PARSE_STATUS: usize = 64;
+const SESSION_COL_AI_EVIDENCE_STATUS: usize = 65;
+const SESSION_COL_AI_REQUEST_ID: usize = 66;
+const SESSION_COL_AI_REQUEST_MODEL: usize = 67;
+const SESSION_COL_AI_REQUEST_STREAM: usize = 68;
+const SESSION_COL_AI_REQUEST_SYSTEM_PROMPT: usize = 69;
+const SESSION_COL_AI_REQUEST_MESSAGE_COUNT: usize = 70;
+const SESSION_COL_AI_REQUEST_TOOLS_COUNT: usize = 71;
+const SESSION_COL_AI_REQUEST_RAW_SHAPE: usize = 72;
+const SESSION_COL_AI_REQUEST_UNKNOWN_FIELDS: usize = 73;
+const SESSION_COL_AI_RESPONSE_ID: usize = 74;
+const SESSION_COL_AI_RESPONSE_PROVIDER_ID: usize = 75;
+const SESSION_COL_AI_RESPONSE_STOP_REASON: usize = 76;
+const SESSION_COL_AI_RESPONSE_TEXT_PREVIEW: usize = 77;
+const SESSION_COL_AI_RESPONSE_THINKING_PREVIEW: usize = 78;
+const SESSION_COL_AI_RESPONSE_RAW_SHAPE: usize = 79;
+const SESSION_COL_AI_USAGE_INPUT_TOKENS: usize = 80;
+const SESSION_COL_AI_USAGE_OUTPUT_TOKENS: usize = 81;
+const SESSION_COL_AI_USAGE_COST_MICROS: usize = 82;
+const SESSION_COL_MCP_EVIDENCE_CALL_ID: usize = 83;
+const SESSION_COL_MCP_EVIDENCE_SERVER_ID: usize = 84;
+const SESSION_COL_MCP_EVIDENCE_TOOL_NAME: usize = 85;
+const SESSION_COL_MCP_EVIDENCE_NAMESPACED_TOOL: usize = 86;
+const SESSION_COL_MCP_EVIDENCE_TRANSPORT: usize = 87;
+const SESSION_COL_MCP_EVIDENCE_REQUEST_RAW: usize = 88;
+const SESSION_COL_MCP_EVIDENCE_REQUEST_JSON: usize = 89;
+const SESSION_COL_MCP_EVIDENCE_RESULT_KIND: usize = 90;
+const SESSION_COL_MCP_EVIDENCE_RESULT_PREVIEW: usize = 91;
+const SESSION_COL_MCP_EVIDENCE_RESULT_JSON: usize = 92;
+const SESSION_COL_MCP_EVIDENCE_IS_ERROR: usize = 93;
+const SESSION_COL_MCP_EVIDENCE_LATENCY_MS: usize = 94;
+const SESSION_COL_MCP_EVIDENCE_LINKED_INTERACTION: usize = 95;
+const SESSION_COL_MCP_EVIDENCE_LINKED_TOOL_CALL: usize = 96;
+const SESSION_COL_MCP_EVIDENCE_LINK_STATUS: usize = 97;
+
+fn session_ai_usage_from_row(row: &serde_json::Value) -> Result<seceng::AiUsageEvidence, AppError> {
+    Ok(seceng::AiUsageEvidence {
+        input_tokens: session_optional_u64(row, SESSION_COL_AI_USAGE_INPUT_TOKENS)?,
+        output_tokens: session_optional_u64(row, SESSION_COL_AI_USAGE_OUTPUT_TOKENS)?,
+        estimated_cost_micros: session_optional_u64(row, SESSION_COL_AI_USAGE_COST_MICROS)?,
+        details: std::collections::BTreeMap::new(),
+    })
+}
+
+fn session_model_evidence_from_row(
+    row: &serde_json::Value,
+) -> Result<Option<seceng::ModelInteractionEvidence>, AppError> {
+    let interaction_id = match session_optional_string(row, SESSION_COL_AI_INTERACTION_ID)? {
+        Some(interaction_id) => interaction_id,
+        None => return Ok(None),
+    };
+    let provider = parse_session_enum::<seceng::AiProvider>(
+        &session_required_string(row, SESSION_COL_AI_PROVIDER)?,
+        "AI provider",
+    )?;
+    let api_family = parse_session_enum::<seceng::AiApiFamily>(
+        &session_required_string(row, SESSION_COL_AI_API_FAMILY)?,
+        "AI API family",
+    )?;
+    let usage = session_ai_usage_from_row(row)?;
+    let response = match session_optional_string(row, SESSION_COL_AI_RESPONSE_ID)? {
+        Some(response_id) => Some(seceng::ModelResponseEvidence {
+            response_id,
+            provider_response_id: session_optional_string(
+                row,
+                SESSION_COL_AI_RESPONSE_PROVIDER_ID,
+            )?,
+            stop_reason: session_optional_string(row, SESSION_COL_AI_RESPONSE_STOP_REASON)?,
+            text_preview: session_optional_string(row, SESSION_COL_AI_RESPONSE_TEXT_PREVIEW)?,
+            thinking_preview: session_optional_string(
+                row,
+                SESSION_COL_AI_RESPONSE_THINKING_PREVIEW,
+            )?,
+            content_blocks: Vec::new(),
+            usage: usage.clone(),
+            raw_shape_version: session_optional_string(row, SESSION_COL_AI_RESPONSE_RAW_SHAPE)?
+                .unwrap_or_else(|| "unknown".into()),
+        }),
+        None => None,
+    };
+    Ok(Some(seceng::ModelInteractionEvidence {
+        interaction_id,
+        trace_id: session_required_string(row, SESSION_COL_AI_TRACE_ID)?,
+        attribution_scope: parse_session_attribution_scope(&session_required_string(
+            row,
+            SESSION_COL_AI_ATTRIBUTION_SCOPE,
+        )?)?,
+        source_engine: parse_session_source_engine(&session_required_string(
+            row,
+            SESSION_COL_AI_SOURCE_ENGINE,
+        )?)?,
+        origin_kind: parse_session_origin_kind(&session_required_string(
+            row,
+            SESSION_COL_AI_ORIGIN_KIND,
+        )?)?,
+        accounting_owner: session_optional_string(row, SESSION_COL_AI_ACCOUNTING_OWNER)?,
+        profile_id: session_optional_string(row, SESSION_COL_AI_PROFILE_ID)?,
+        vm_id: session_optional_string(row, SESSION_COL_AI_VM_ID)?,
+        session_id: session_optional_string(row, SESSION_COL_AI_SESSION_ID)?,
+        user_id: session_optional_string(row, SESSION_COL_AI_USER_ID)?,
+        provider,
+        api_family,
+        model: session_required_string(row, SESSION_COL_AI_MODEL)?,
+        request: seceng::ModelRequestEvidence {
+            request_id: session_required_string(row, SESSION_COL_AI_REQUEST_ID)?,
+            provider,
+            api_family,
+            model: session_optional_string(row, SESSION_COL_AI_REQUEST_MODEL)?,
+            stream: session_optional_bool(row, SESSION_COL_AI_REQUEST_STREAM)?.unwrap_or(false),
+            system_prompt_preview: session_optional_string(
+                row,
+                SESSION_COL_AI_REQUEST_SYSTEM_PROMPT,
+            )?,
+            message_count: session_optional_u64(row, SESSION_COL_AI_REQUEST_MESSAGE_COUNT)?
+                .unwrap_or_default(),
+            tools_declared_count: session_optional_u64(row, SESSION_COL_AI_REQUEST_TOOLS_COUNT)?
+                .unwrap_or_default(),
+            raw_shape_version: session_required_string(row, SESSION_COL_AI_REQUEST_RAW_SHAPE)?,
+            unknown_fields_present: session_optional_bool(
+                row,
+                SESSION_COL_AI_REQUEST_UNKNOWN_FIELDS,
+            )?
+            .unwrap_or(false),
+        },
+        response,
+        tool_calls: Vec::new(),
+        tool_results: Vec::new(),
+        mcp_executions: Vec::new(),
+        usage,
+        parse_status: parse_session_enum::<seceng::ParseStatus>(
+            &session_required_string(row, SESSION_COL_AI_PARSE_STATUS)?,
+            "AI parse status",
+        )?,
+        evidence_status: parse_session_enum::<seceng::EvidenceStatus>(
+            &session_required_string(row, SESSION_COL_AI_EVIDENCE_STATUS)?,
+            "AI evidence status",
+        )?,
+    }))
+}
+
+fn session_mcp_evidence_from_row(
+    row: &serde_json::Value,
+) -> Result<Option<seceng::McpToolExecutionEvidence>, AppError> {
+    let mcp_call_id = match session_optional_string(row, SESSION_COL_MCP_EVIDENCE_CALL_ID)? {
+        Some(mcp_call_id) => mcp_call_id,
+        None => return Ok(None),
+    };
+    Ok(Some(seceng::McpToolExecutionEvidence {
+        mcp_call_id,
+        server_id: session_required_string(row, SESSION_COL_MCP_EVIDENCE_SERVER_ID)?,
+        tool_name: session_required_string(row, SESSION_COL_MCP_EVIDENCE_TOOL_NAME)?,
+        namespaced_tool_name: session_required_string(
+            row,
+            SESSION_COL_MCP_EVIDENCE_NAMESPACED_TOOL,
+        )?,
+        transport: session_required_string(row, SESSION_COL_MCP_EVIDENCE_TRANSPORT)?,
+        request_arguments_raw: session_optional_string(row, SESSION_COL_MCP_EVIDENCE_REQUEST_RAW)?,
+        request_arguments_json: session_optional_string(
+            row,
+            SESSION_COL_MCP_EVIDENCE_REQUEST_JSON,
+        )?,
+        result_kind: parse_session_enum::<seceng::AiContentKind>(
+            &session_required_string(row, SESSION_COL_MCP_EVIDENCE_RESULT_KIND)?,
+            "MCP evidence result kind",
+        )?,
+        result_preview: session_optional_string(row, SESSION_COL_MCP_EVIDENCE_RESULT_PREVIEW)?,
+        result_json: session_optional_string(row, SESSION_COL_MCP_EVIDENCE_RESULT_JSON)?,
+        is_error: session_optional_bool(row, SESSION_COL_MCP_EVIDENCE_IS_ERROR)?.unwrap_or(false),
+        latency_ms: session_optional_u64(row, SESSION_COL_MCP_EVIDENCE_LATENCY_MS)?
+            .unwrap_or_default(),
+        linked_model_interaction_id: session_optional_string(
+            row,
+            SESSION_COL_MCP_EVIDENCE_LINKED_INTERACTION,
+        )?,
+        linked_model_tool_call_id: session_optional_string(
+            row,
+            SESSION_COL_MCP_EVIDENCE_LINKED_TOOL_CALL,
+        )?,
+        link_status: parse_session_enum::<seceng::LinkStatus>(
+            &session_required_string(row, SESSION_COL_MCP_EVIDENCE_LINK_STATUS)?,
+            "MCP evidence link status",
+        )?,
+    }))
+}
 
 fn session_security_event_common_from_row(
     row: &serde_json::Value,
@@ -6077,24 +6334,42 @@ fn session_security_event_from_row(
             )))
         }
         "mcp" => {
-            let server_id = match session_optional_string(row, SESSION_COL_MCP_SERVER_ID)? {
-                Some(server_id) => server_id,
-                None => return Ok(None),
-            };
-            let tool_name = match session_optional_string(row, SESSION_COL_MCP_TOOL_NAME)? {
-                Some(tool_name) => tool_name,
-                None => return Ok(None),
+            let evidence = session_mcp_evidence_from_row(row)?;
+            let server_id = evidence
+                .as_ref()
+                .map(|evidence| evidence.server_id.clone())
+                .or_else(|| {
+                    session_optional_string(row, SESSION_COL_MCP_SERVER_ID)
+                        .ok()
+                        .flatten()
+                });
+            let tool_name = evidence
+                .as_ref()
+                .map(|evidence| evidence.tool_name.clone())
+                .or_else(|| {
+                    session_optional_string(row, SESSION_COL_MCP_TOOL_NAME)
+                        .ok()
+                        .flatten()
+                });
+            let (Some(server_id), Some(tool_name)) = (server_id, tool_name) else {
+                return Ok(None);
             };
             Ok(Some(seceng::SecurityEvent::mcp(
                 common,
                 seceng::McpSecuritySubject {
                     server_id,
                     tool_name,
-                    evidence: None,
+                    evidence: evidence.map(Box::new),
                 },
             )))
         }
         "model" => {
+            if let Some(evidence) = session_model_evidence_from_row(row)? {
+                return Ok(Some(seceng::SecurityEvent::model(
+                    common,
+                    seceng::ModelSecuritySubject::from_interaction_evidence(evidence),
+                )));
+            }
             let provider = match session_optional_string(row, SESSION_COL_MODEL_PROVIDER)? {
                 Some(provider) => provider,
                 None => return Ok(None),

@@ -81,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process, and snapshot projections into typed `SecurityEvent` values for CEL
   backtest/hunt rules, with common-row reconstruction for VM, profile, and
   conversation events.
+- Added canonical AI evidence reconstruction for session-backed detection hunt:
+  model events now prefer `ai_model_interactions` for provider/API family,
+  stream, usage, and cost fields, while MCP events attach
+  `ai_mcp_execution_evidence` for argument/result status.
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.

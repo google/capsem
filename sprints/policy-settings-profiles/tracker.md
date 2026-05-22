@@ -987,6 +987,20 @@ a valid claim -- mark it `[ ]` instead.
     richer model/MCP evidence projection from the canonical AI tables, file path
     identity beyond today's path-class surface, gateway/CLI/UI route exposure,
     persistence/profile-pack seeding, and production engine emitters.
+    Thirty-sixth TDD session-hunt evidence slice made model/MCP reconstruction
+    prefer canonical AI evidence rows when present. The session query now joins
+    `ai_model_interactions` for model provider/API family/stream/usage/cost
+    reconstruction and `ai_mcp_execution_evidence` for MCP argument/result
+    status. The hand-built DB test now proves model CEL rules can match
+    `model.request.api_family == 'google_gemini_content'` and stream mode, MCP
+    CEL rules can match valid-json arguments plus non-error response status, and
+    the reconstructed model `PolicyContext` preserves cost evidence. Known
+    remaining debt: direct numeric CEL comparisons against unsigned usage/cost
+    fields still belong to the signed/unsigned numeric ergonomics work already
+    tracked in S08b/S08d. Still missing after this slice: richer model tool-call
+    array policy roots, file path identity beyond today's path-class surface,
+    gateway/CLI/UI route exposure, persistence/profile-pack seeding, and
+    production engine emitters.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
