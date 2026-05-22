@@ -91,6 +91,17 @@ fn sample_policy_context() -> PolicyContext {
                 estimated_output_tokens: Some(40),
                 estimated_cost_micros: Some(12),
                 body: BodyPolicyContext::redacted("prompt redacted"),
+                tool_calls: vec![ModelToolCallPolicyContext {
+                    tool_call_id: Some("toolu_1".to_string()),
+                    provider_call_id: Some("provider-toolu-1".to_string()),
+                    raw_name: Some("filesystem.read_file".to_string()),
+                    name: Some("filesystem.read_file".to_string()),
+                    origin: Some("mcp_tool".to_string()),
+                    arguments_status: Some("valid_json".to_string()),
+                    status: Some("executed".to_string()),
+                    linked_mcp_call_id: Some("mcp-call-1".to_string()),
+                    parse_confidence: Some("high".to_string()),
+                }],
             }),
             response: Some(ModelResponsePolicyContext {
                 provider: Some("anthropic".to_string()),

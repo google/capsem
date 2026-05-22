@@ -88,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added raw file path policy projection for normalized file security events,
   so CEL and Detection IR rules can target `file.activity.path` separately from
   classified `file.activity.path_class`.
+- Added typed model tool-call policy projection under
+  `model.request.tool_calls`, including name, origin, argument status, status,
+  linked MCP call id, and parse confidence, with session-backed detection hunt
+  reconstruction from `ai_model_tool_calls`.
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.

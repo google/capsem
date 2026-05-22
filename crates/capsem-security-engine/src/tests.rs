@@ -978,19 +978,37 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
         "mcp.request.tool_name == 'write_file'",
     );
 
+    let mut model_evidence = model_interaction_evidence(
+        "cel-model",
+        AiAttributionScope::Vm,
+        SourceEngine::Network,
+        AiOriginKind::GuestNetwork,
+        "vm:vm-1",
+    );
+    model_evidence.tool_calls = vec![ModelToolCallEvidence {
+        tool_call_id: "tool-call-1".into(),
+        index: 0,
+        provider_call_id: Some("provider-tool-call-1".into()),
+        raw_name: "filesystem.read_file".into(),
+        normalized_name: "filesystem.read_file".into(),
+        arguments_raw: Some(r#"{"path":"/workspace/secret.txt"}"#.into()),
+        arguments_json: Some(r#"{"path":"/workspace/secret.txt"}"#.into()),
+        arguments_status: ArgumentsStatus::ValidJson,
+        origin: ToolOrigin::McpTool,
+        linked_mcp_call_id: Some("mcp-call-1".into()),
+        status: ToolCallStatus::Executed,
+        parse_confidence: Confidence::High,
+    }];
     assert_match_and_pass(
         SecurityEvent::model(
             common("evt-cel-model", "model.request", SourceEngine::Network),
-            ModelSecuritySubject::from_interaction_evidence(model_interaction_evidence(
-                "cel-model",
-                AiAttributionScope::Vm,
-                SourceEngine::Network,
-                AiOriginKind::GuestNetwork,
-                "vm:vm-1",
-            )),
+            ModelSecuritySubject::from_interaction_evidence(model_evidence),
         ),
-        "model.request.provider == 'google_gemini' && model.request.model.contains('gemini')",
-        "model.request.provider == 'openai'",
+        "model.request.provider == 'google_gemini' \
+            && model.request.model.contains('gemini') \
+            && model.request.tool_calls[0].name == 'filesystem.read_file' \
+            && model.request.tool_calls[0].arguments_status == 'valid_json'",
+        "model.request.tool_calls[0].name == 'filesystem.write_file'",
     );
 
     assert_match_and_pass(

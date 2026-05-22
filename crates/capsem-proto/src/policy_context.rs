@@ -343,6 +343,31 @@ pub struct ModelRequestPolicyContext {
     pub estimated_cost_micros: Option<u64>,
     #[serde(default)]
     pub body: BodyPolicyContext,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ModelToolCallPolicyContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelToolCallPolicyContext {
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub provider_call_id: Option<String>,
+    #[serde(default)]
+    pub raw_name: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub arguments_status: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub linked_mcp_call_id: Option<String>,
+    #[serde(default)]
+    pub parse_confidence: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

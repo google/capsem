@@ -1014,6 +1014,23 @@ a valid claim -- mark it `[ ]` instead.
     --test security_packs` passed. Still missing after this slice: richer model
     tool-call array policy roots, gateway/CLI/UI route exposure,
     persistence/profile-pack seeding, and production engine emitters.
+    Thirty-eighth TDD model-tool-call slice added typed model tool-call policy
+    roots. `capsem-proto` now exposes `model.request.tool_calls[]` entries
+    with tool-call id, provider call id, raw name, normalized name, origin,
+    arguments status, execution status, linked MCP call id, and parse
+    confidence. `capsem-security-engine` projects canonical
+    `ModelToolCallEvidence` into those roots, and session-backed detection hunt
+    reconstructs them from `ai_model_tool_calls`. The session hunt test now
+    proves CEL can match `model.request.tool_calls[0].name`, `.origin`, and
+    `.arguments_status` from a hand-built canonical AI evidence corpus.
+    Verification: `cargo test -p capsem-proto policy_context`, `cargo test -p
+    capsem-security-engine
+    policy_context_cel_match_and_pass_smoke_covers_all_event_families`, and
+    `cargo test -p capsem-service
+    handle_session_detection_hunt_reconstructs_core_projection_families` passed.
+    Still missing after this slice: richer tool-result policy roots, gateway/
+    CLI/UI route exposure, persistence/profile-pack seeding, and production
+    engine emitters.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

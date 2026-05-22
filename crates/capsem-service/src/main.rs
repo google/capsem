@@ -6056,6 +6056,7 @@ fn session_ai_usage_from_row(row: &serde_json::Value) -> Result<seceng::AiUsageE
 }
 
 fn session_model_evidence_from_row(
+    reader: &capsem_logger::DbReader,
     row: &serde_json::Value,
 ) -> Result<Option<seceng::ModelInteractionEvidence>, AppError> {
     let interaction_id = match session_optional_string(row, SESSION_COL_AI_INTERACTION_ID)? {
@@ -6091,6 +6092,7 @@ fn session_model_evidence_from_row(
         }),
         None => None,
     };
+    let tool_calls = session_model_tool_calls(reader, &interaction_id)?;
     Ok(Some(seceng::ModelInteractionEvidence {
         interaction_id,
         trace_id: session_required_string(row, SESSION_COL_AI_TRACE_ID)?,
@@ -6136,7 +6138,7 @@ fn session_model_evidence_from_row(
             .unwrap_or(false),
         },
         response,
-        tool_calls: Vec::new(),
+        tool_calls,
         tool_results: Vec::new(),
         mcp_executions: Vec::new(),
         usage,
@@ -6149,6 +6151,135 @@ fn session_model_evidence_from_row(
             "AI evidence status",
         )?,
     }))
+}
+
+fn session_tool_call_row_string(row: &serde_json::Value, index: usize) -> Result<String, AppError> {
+    row.as_array()
+        .and_then(|cells| cells.get(index))
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session model tool-call row missing string column {index}"),
+            )
+        })
+}
+
+fn session_tool_call_row_optional_string(
+    row: &serde_json::Value,
+    index: usize,
+) -> Result<Option<String>, AppError> {
+    let value = row
+        .as_array()
+        .and_then(|cells| cells.get(index))
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session model tool-call row missing column {index}"),
+            )
+        })?;
+    if value.is_null() {
+        Ok(None)
+    } else {
+        value
+            .as_str()
+            .map(|value| Some(value.to_owned()))
+            .ok_or_else(|| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("session model tool-call column {index} was not a nullable string"),
+                )
+            })
+    }
+}
+
+fn session_tool_call_row_u64(row: &serde_json::Value, index: usize) -> Result<u64, AppError> {
+    let value = row
+        .as_array()
+        .and_then(|cells| cells.get(index))
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session model tool-call row missing column {index}"),
+            )
+        })?;
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session model tool-call column {index} was not an unsigned integer"),
+            )
+        })
+}
+
+fn session_model_tool_calls(
+    reader: &capsem_logger::DbReader,
+    interaction_id: &str,
+) -> Result<Vec<seceng::ModelToolCallEvidence>, AppError> {
+    let json_str = reader
+        .query_raw_with_params(
+            "SELECT
+                tc.tool_call_id, tc.call_index, tc.provider_call_id,
+                tc.raw_name, tc.normalized_name, tc.arguments_raw,
+                tc.arguments_json, tc.arguments_status, tc.origin,
+                tc.linked_mcp_call_id, tc.status, tc.parse_confidence
+             FROM ai_model_interactions ami
+             JOIN ai_model_tool_calls tc ON tc.interaction_id = ami.id
+             WHERE ami.interaction_id = ?
+             ORDER BY tc.call_index ASC, tc.id ASC",
+            &[serde_json::Value::String(interaction_id.to_owned())],
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query session model tool calls: {error}"),
+            )
+        })?;
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("parse session model tool calls: {error}"),
+        )
+    })?;
+
+    let mut tool_calls = Vec::new();
+    for row in value
+        .get("rows")
+        .and_then(|rows| rows.as_array())
+        .cloned()
+        .unwrap_or_default()
+    {
+        tool_calls.push(seceng::ModelToolCallEvidence {
+            tool_call_id: session_tool_call_row_string(&row, 0)?,
+            index: session_tool_call_row_u64(&row, 1)?,
+            provider_call_id: session_tool_call_row_optional_string(&row, 2)?,
+            raw_name: session_tool_call_row_string(&row, 3)?,
+            normalized_name: session_tool_call_row_string(&row, 4)?,
+            arguments_raw: session_tool_call_row_optional_string(&row, 5)?,
+            arguments_json: session_tool_call_row_optional_string(&row, 6)?,
+            arguments_status: parse_session_enum::<seceng::ArgumentsStatus>(
+                &session_tool_call_row_string(&row, 7)?,
+                "model tool-call arguments status",
+            )?,
+            origin: parse_session_enum::<seceng::ToolOrigin>(
+                &session_tool_call_row_string(&row, 8)?,
+                "model tool-call origin",
+            )?,
+            linked_mcp_call_id: session_tool_call_row_optional_string(&row, 9)?,
+            status: parse_session_enum::<seceng::ToolCallStatus>(
+                &session_tool_call_row_string(&row, 10)?,
+                "model tool-call status",
+            )?,
+            parse_confidence: parse_session_enum::<seceng::Confidence>(
+                &session_tool_call_row_string(&row, 11)?,
+                "model tool-call parse confidence",
+            )?,
+        });
+    }
+    Ok(tool_calls)
 }
 
 fn session_mcp_evidence_from_row(
@@ -6282,6 +6413,7 @@ fn session_file_path_class(path: &str) -> String {
 }
 
 fn session_security_event_from_row(
+    reader: &capsem_logger::DbReader,
     row: &serde_json::Value,
 ) -> Result<Option<seceng::SecurityEvent>, AppError> {
     let event_family = session_required_string(row, SESSION_COL_EVENT_FAMILY)?;
@@ -6376,7 +6508,7 @@ fn session_security_event_from_row(
             )))
         }
         "model" => {
-            if let Some(evidence) = session_model_evidence_from_row(row)? {
+            if let Some(evidence) = session_model_evidence_from_row(reader, row)? {
                 return Ok(Some(seceng::SecurityEvent::model(
                     common,
                     seceng::ModelSecuritySubject::from_interaction_evidence(evidence),
@@ -6506,7 +6638,7 @@ fn session_backtest_events(
 ) -> Result<Vec<RuntimeBacktestEvent>, AppError> {
     let mut events = Vec::new();
     for row in security_events_query_rows(reader)? {
-        if let Some(event) = session_security_event_from_row(&row)? {
+        if let Some(event) = session_security_event_from_row(reader, &row)? {
             events.push(RuntimeBacktestEvent {
                 event_ref: Some(seceng::BacktestEventRef {
                     corpus: "session_db".into(),

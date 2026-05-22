@@ -2,9 +2,9 @@ use capsem_proto::{
     BodyPolicyContext, BodyState, CommonPolicyContext, DnsPolicyContext, DnsRequestPolicyContext,
     FileActivityPolicyContext, FilePolicyContext, HttpPolicyContext, HttpRequestPolicyContext,
     HttpResponsePolicyContext, McpPolicyContext, McpRequestPolicyContext, ModelPolicyContext,
-    ModelRequestPolicyContext, PolicyContext, ProcessActivityPolicyContext,
-    ProcessIdentityPolicyContext, ProcessPolicyContext, ProfileActivityPolicyContext,
-    ProfilePolicyContext,
+    ModelRequestPolicyContext, ModelToolCallPolicyContext, PolicyContext,
+    ProcessActivityPolicyContext, ProcessIdentityPolicyContext, ProcessPolicyContext,
+    ProfileActivityPolicyContext, ProfilePolicyContext,
 };
 use cel::extractors::This;
 use cel::objects::OptionalValue;
@@ -1925,6 +1925,11 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                     estimated_output_tokens: subject.estimated_output_tokens,
                     estimated_cost_micros: subject.estimated_cost_micros,
                     body: BodyPolicyContext::missing(),
+                    tool_calls: subject
+                        .evidence
+                        .as_deref()
+                        .map(model_tool_call_policy_contexts)
+                        .unwrap_or_default(),
                 }),
                 response: Some(capsem_proto::ModelResponsePolicyContext {
                     provider: Some(subject.provider.clone()),
@@ -1988,6 +1993,26 @@ fn serialized_enum_string<T: Serialize>(value: T) -> Option<String> {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
+}
+
+fn model_tool_call_policy_contexts(
+    evidence: &ModelInteractionEvidence,
+) -> Vec<ModelToolCallPolicyContext> {
+    evidence
+        .tool_calls
+        .iter()
+        .map(|tool_call| ModelToolCallPolicyContext {
+            tool_call_id: Some(tool_call.tool_call_id.clone()),
+            provider_call_id: tool_call.provider_call_id.clone(),
+            raw_name: Some(tool_call.raw_name.clone()),
+            name: Some(tool_call.normalized_name.clone()),
+            origin: serialized_enum_string(tool_call.origin),
+            arguments_status: serialized_enum_string(tool_call.arguments_status),
+            status: serialized_enum_string(tool_call.status),
+            linked_mcp_call_id: tool_call.linked_mcp_call_id.clone(),
+            parse_confidence: serialized_enum_string(tool_call.parse_confidence),
+        })
+        .collect()
 }
 
 fn http_body_policy_context(body: &HttpBodySecuritySubject) -> BodyPolicyContext {

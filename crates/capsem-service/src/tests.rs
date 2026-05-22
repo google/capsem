@@ -7083,6 +7083,23 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
             rusqlite::params![model_call_row_id],
         )
         .unwrap();
+        let interaction_row_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO ai_model_tool_calls (
+                interaction_id, tool_call_id, call_index, provider_call_id,
+                raw_name, normalized_name, arguments_raw, arguments_json,
+                arguments_status, origin, linked_mcp_call_id, status,
+                parse_confidence
+             ) VALUES (
+                ?1, 'tool-call-1', 0, 'provider-tool-call-1',
+                'filesystem.read_file', 'filesystem.read_file',
+                '{\"path\":\"/workspace/secret.txt\"}',
+                '{\"path\":\"/workspace/secret.txt\"}', 'valid_json',
+                'mcp_tool', 'mcp-call-1', 'executed', 'high'
+             )",
+            rusqlite::params![interaction_row_id],
+        )
+        .unwrap();
 
         insert_hunt_security_event_fixture(
             &conn,
@@ -7249,6 +7266,15 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
     );
     assert_eq!(model_request.stream, Some(true));
     assert_eq!(model_request.estimated_cost_micros, Some(5678));
+    assert_eq!(model_request.tool_calls.len(), 1);
+    assert_eq!(
+        model_request.tool_calls[0].name.as_deref(),
+        Some("filesystem.read_file")
+    );
+    assert_eq!(
+        model_request.tool_calls[0].arguments_status.as_deref(),
+        Some("valid_json")
+    );
 
     let Json(result) = handle_session_detection_hunt(
         Path(vm_id.into()),
@@ -7288,7 +7314,10 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                     title: "Gemini model".into(),
                     condition: "model.request.provider == 'google_gemini' \
                         && model.request.api_family == 'google_gemini_content' \
-                        && model.request.stream == true"
+                        && model.request.stream == true \
+                        && model.request.tool_calls[0].name == 'filesystem.read_file' \
+                        && model.request.tool_calls[0].origin == 'mcp_tool' \
+                        && model.request.tool_calls[0].arguments_status == 'valid_json'"
                         .into(),
                     severity: capsem_security_engine::Severity::Medium,
                     confidence: capsem_security_engine::Confidence::High,
