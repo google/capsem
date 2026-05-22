@@ -998,11 +998,14 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
             common("evt-cel-file", "file.write", SourceEngine::File),
             FileSecuritySubject {
                 operation: "write".into(),
+                path: Some("/workspace/secret.txt".into()),
                 path_class: "workspace".into(),
                 byte_count: Some(64),
             },
         ),
-        "file.activity.operation == 'write' && file.activity.path_class == 'workspace'",
+        "file.activity.operation == 'write' \
+            && file.activity.path == '/workspace/secret.txt' \
+            && file.activity.path_class == 'workspace'",
         "file.activity.operation == 'delete'",
     );
 

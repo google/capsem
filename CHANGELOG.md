@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model events now prefer `ai_model_interactions` for provider/API family,
   stream, usage, and cost fields, while MCP events attach
   `ai_mcp_execution_evidence` for argument/result status.
+- Added raw file path policy projection for normalized file security events,
+  so CEL and Detection IR rules can target `file.activity.path` separately from
+  classified `file.activity.path_class`.
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.

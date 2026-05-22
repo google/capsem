@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use capsem_core::security_packs::{
     compile_detection_ir_to_cel_detection_rules, evaluate_detection_ir,
     evaluate_detection_ir_security_event, parse_detection_ir_v1_json,
-    validate_detection_ir_v1_json, SecurityEventV1, SecurityPackSchemaError,
+    validate_detection_ir_v1_json, DetectionIRMatcherV1, DetectionOperator, EventFamily,
+    SecurityEventV1, SecurityPackSchemaError,
 };
 use capsem_security_engine::{
-    CelDetectionEvaluator, DetectionEvaluator, HttpBodySecuritySubject, HttpSecuritySubject,
-    RedactionState, SecurityEvent, SecurityEventCommon,
+    CelDetectionEvaluator, DetectionEvaluator, FileSecuritySubject, HttpBodySecuritySubject,
+    HttpSecuritySubject, RedactionState, SecurityEvent, SecurityEventCommon,
 };
 use serde_json::Value;
 
@@ -284,6 +285,83 @@ fn detection_ir_lowers_http_url_path_and_body_to_policy_context_roots() {
             request_body: Some(HttpBodySecuritySubject::text("secret")),
             response_bytes: None,
             ..Default::default()
+        },
+    );
+    let mut evaluator = CelDetectionEvaluator::compile(rules).unwrap();
+    let findings = evaluator.evaluate(&event).unwrap();
+    assert_eq!(findings.len(), 1);
+}
+
+#[test]
+fn detection_ir_lowers_file_path_to_policy_context_roots() {
+    let mut ir = parse_detection_ir_v1_json(&fixture("detection-ir-v1-valid.json")).unwrap();
+    let rule = &mut ir.rules[0];
+    rule.id = "workspace-file-write".into();
+    rule.event_family = EventFamily::File;
+    rule.matchers = vec![
+        DetectionIRMatcherV1 {
+            field_path: "subject.activity.operation".into(),
+            operator: DetectionOperator::EqualsAny,
+            values: vec![serde_json::json!("write")],
+            sigma_field: "operation".into(),
+        },
+        DetectionIRMatcherV1 {
+            field_path: "subject.activity.path".into(),
+            operator: DetectionOperator::EqualsAny,
+            values: vec![serde_json::json!("/workspace/secret.txt")],
+            sigma_field: "path".into(),
+        },
+        DetectionIRMatcherV1 {
+            field_path: "subject.activity.path_class".into(),
+            operator: DetectionOperator::EqualsAny,
+            values: vec![serde_json::json!("workspace")],
+            sigma_field: "path_class".into(),
+        },
+    ];
+
+    let rules = compile_detection_ir_to_cel_detection_rules(&ir).unwrap();
+    assert!(rules[0]
+        .condition
+        .contains("file.activity.path == \"/workspace/secret.txt\""));
+
+    let event = SecurityEvent::file(
+        SecurityEventCommon {
+            event_id: "evt-file-path".into(),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: Some("file-write-1".into()),
+            sequence_no: Some(1),
+            source_engine: capsem_security_engine::SourceEngine::File,
+            attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+            origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:vm-1".into()),
+            enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+            trace_id: Some("trace-file".into()),
+            span_id: None,
+            timestamp_unix_ms: 1_790,
+            vm_id: Some("vm-1".into()),
+            session_id: Some("session-1".into()),
+            profile_id: Some("coding".into()),
+            profile_revision: Some("rev-a".into()),
+            profile_pack_ids: vec!["corp-default-detections".into()],
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: Some("user-1".into()),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "file.write".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        FileSecuritySubject {
+            operation: "write".into(),
+            path: Some("/workspace/secret.txt".into()),
+            path_class: "workspace".into(),
+            byte_count: Some(64),
         },
     );
     let mut evaluator = CelDetectionEvaluator::compile(rules).unwrap();

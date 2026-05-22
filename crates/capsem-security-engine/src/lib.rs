@@ -665,6 +665,8 @@ impl McpSecuritySubject {
 #[serde(deny_unknown_fields)]
 pub struct FileSecuritySubject {
     pub operation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     pub path_class: String,
     #[serde(default)]
     pub byte_count: Option<u64>,
@@ -1946,7 +1948,7 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
             context.file = FilePolicyContext {
                 activity: Some(FileActivityPolicyContext {
                     operation: Some(subject.operation.clone()),
-                    path: None,
+                    path: subject.path.clone(),
                     path_class: Some(subject.path_class.clone()),
                     byte_count: subject.byte_count,
                 }),

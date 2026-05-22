@@ -380,7 +380,7 @@ fn is_supported_runtime_field(event_family: EventFamily, scope: &str, suffix: &s
             | "estimated_output_tokens"
             | "estimated_cost_micros",
         ) => true,
-        (EventFamily::File, "activity", "operation" | "path_class" | "byte_count") => true,
+        (EventFamily::File, "activity", "operation" | "path" | "path_class" | "byte_count") => true,
         (EventFamily::Process, "activity", "operation" | "command_class") => true,
         (EventFamily::Credential, "activity", "operation" | "credential_id") => true,
         (EventFamily::Vm, "activity", "operation") => true,
@@ -504,6 +504,7 @@ fn security_event_subject_value(subject: &SecurityEventSubject) -> Map<String, V
         SecurityEventSubject::File(subject) => map_from_value(serde_json::json!({
             "activity": {
                 "operation": subject.operation,
+                "path": subject.path,
                 "path_class": subject.path_class,
                 "byte_count": subject.byte_count,
             }

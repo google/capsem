@@ -157,6 +157,7 @@
     "subject": {
       "family": "file",
       "operation": "write",
+      "path": "/workspace/secret.txt",
       "path_class": "workspace",
       "byte_count": 64
     }

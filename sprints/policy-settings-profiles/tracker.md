@@ -1001,6 +1001,19 @@ a valid claim -- mark it `[ ]` instead.
     array policy roots, file path identity beyond today's path-class surface,
     gateway/CLI/UI route exposure, persistence/profile-pack seeding, and
     production engine emitters.
+    Thirty-seventh TDD file-policy slice split raw file path from path class in
+    the normalized policy surface. `FileSecuritySubject` now carries an
+    optional raw `path`, `capsem-security-engine` projects it to
+    `file.activity.path`, session reconstruction classifies `/workspace/*` as
+    `workspace` instead of smuggling the raw path through `path_class`, and
+    Detection IR lowering accepts `subject.activity.path` for file rules. The
+    session hunt test now proves file CEL rules match both exact raw path and
+    classified path class. Verification: `cargo test -p capsem-service
+    handle_session_detection_hunt_reconstructs_core_projection_families`,
+    `cargo test -p capsem-security-engine`, and `cargo test -p capsem-core
+    --test security_packs` passed. Still missing after this slice: richer model
+    tool-call array policy roots, gateway/CLI/UI route exposure,
+    persistence/profile-pack seeding, and production engine emitters.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

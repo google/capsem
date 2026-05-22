@@ -7301,7 +7301,8 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                     sigma_id: Some("sigma-file-write".into()),
                     title: "Workspace file write".into(),
                     condition: "file.activity.operation == 'write' \
-                        && file.activity.path_class.contains('/workspace')"
+                        && file.activity.path == '/workspace/secret.txt' \
+                        && file.activity.path_class == 'workspace'"
                         .into(),
                     severity: capsem_security_engine::Severity::Medium,
                     confidence: capsem_security_engine::Confidence::High,

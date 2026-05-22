@@ -6269,6 +6269,18 @@ fn session_domain_class(qname: &str) -> String {
     }
 }
 
+fn session_file_path_class(path: &str) -> String {
+    if path == "/workspace" || path.starts_with("/workspace/") {
+        "workspace".into()
+    } else if path == "/tmp" || path.starts_with("/tmp/") {
+        "temporary".into()
+    } else if path.starts_with("/var/folders/") {
+        "temporary".into()
+    } else {
+        "unknown".into()
+    }
+}
+
 fn session_security_event_from_row(
     row: &serde_json::Value,
 ) -> Result<Option<seceng::SecurityEvent>, AppError> {
@@ -6399,12 +6411,16 @@ fn session_security_event_from_row(
         "file" => {
             let operation = session_optional_string(row, SESSION_COL_FILE_OPERATION)?
                 .unwrap_or_else(|| session_event_operation(&common.event_type, "activity"));
-            let path_class =
-                session_optional_string(row, SESSION_COL_FILE_PATH)?.unwrap_or_default();
+            let path = session_optional_string(row, SESSION_COL_FILE_PATH)?;
+            let path_class = path
+                .as_deref()
+                .map(session_file_path_class)
+                .unwrap_or_else(|| "unknown".into());
             Ok(Some(seceng::SecurityEvent::file(
                 common,
                 seceng::FileSecuritySubject {
                     operation,
+                    path,
                     path_class,
                     byte_count: session_optional_u64(row, SESSION_COL_FILE_BYTE_COUNT)?,
                 },
