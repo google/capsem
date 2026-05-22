@@ -1238,10 +1238,25 @@ a valid claim -- mark it `[ ]` instead.
     --bin capsem-service`, and escalated `cargo test -p capsem-core
     net::mitm_proxy::tests --lib` passed. A non-escalated core MITM focused
     run failed only on the known local socket bind permission and passed under
-    the socket-capable gate. Still missing after this slice: response-phase
-    enforcement/detection, DNS/MCP/file/process emitters, visible UI
-    screens/editors, persistence/profile-pack seeding, VM status/live metrics
-    integration, and S08d performance proof.
+    the socket-capable gate. Still missing after this slice: DNS/MCP/file/
+    process emitters, visible UI screens/editors, persistence/profile-pack
+    seeding, VM status/live metrics integration, and S08d performance proof.
+    Fiftieth TDD response-phase Network Engine slice added inline HTTP response
+    enforcement before guest delivery. The red test proved upstream must be
+    touched first, then a `http.response.body.text` CEL rule must block the
+    returned body before the VM sees it. MITM now buffers response bodies only
+    when a runtime Security Engine is installed, decodes gzip before policy
+    evaluation, builds an `http.response` security event with response status,
+    headers, bytes, and body text preview, and synthesizes a 403 on block/error
+    without replaying the upstream body. Verification: red response-body test
+    first, then `cargo test -p capsem-core runtime_security_engine_ --lib`,
+    escalated `cargo test -p capsem-core net::mitm_proxy::tests --lib`,
+    `cargo test -p capsem-core telemetry_hook --lib`, and `cargo test -p
+    capsem-security-engine` passed. Still missing after this slice: carrying
+    the live resolved Security Engine result into the canonical telemetry sink,
+    DNS/MCP/file/process emitters, visible UI screens/editors,
+    persistence/profile-pack seeding, VM status/live metrics integration, and
+    S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

@@ -42,6 +42,7 @@ use crate::net::ai_traffic::{request_parser, TraceState};
 /// `ModelCall`. `handle_request` seeds this into `HookState` after
 /// the request head and upstream response head have been observed,
 /// before the body wrapper begins iterating chunks.
+#[derive(Clone)]
 pub struct TelemetryRequestContext {
     pub domain: String,
     pub process_name: Option<String>,
@@ -439,6 +440,24 @@ pub fn build_http_security_event(
             response_body: response_body_preview.map(HttpBodySecuritySubject::text),
         },
     )
+}
+
+pub fn build_http_response_security_event(
+    req_ctx: &TelemetryRequestContext,
+    timestamp_unix_ms: u64,
+    trace_id: Option<String>,
+    response_bytes: Option<u64>,
+    response_body_preview: Option<String>,
+) -> SecurityEvent {
+    let mut event = build_http_security_event(
+        req_ctx,
+        timestamp_unix_ms,
+        trace_id,
+        response_bytes,
+        response_body_preview,
+    );
+    event.common.event_type = "http.response".into();
+    event
 }
 
 fn http_security_event_id(

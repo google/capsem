@@ -621,6 +621,113 @@ async fn runtime_security_engine_blocks_request_body_before_upstream_dispatch() 
         .is_some_and(|preview| preview.contains("needle")));
 }
 
+#[tokio::test]
+async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-response-secret-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.response.body.text.contains('needle-from-upstream')".into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("response secret ingress".into()),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_fixture_response(
+        200,
+        "OK",
+        vec![("content-type", "text/plain")],
+        "safe prefix needle-from-upstream unsafe suffix",
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, None).await;
+
+    let (status, body) =
+        send_openai_json_request(&mut sender, "127.0.0.1", "/inspect", Bytes::new()).await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("response secret ingress"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.starts_with("POST /inspect"),
+        "response policy must run after upstream request dispatch"
+    );
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-response-secret-inline")
+    );
+    assert!(
+        events[0]
+            .response_body_preview
+            .as_deref()
+            .is_some_and(|preview| !preview.contains("needle-from-upstream")),
+        "blocked response body must not be journaled back through the guest response preview"
+    );
+}
+
+#[tokio::test]
+async fn runtime_security_engine_matches_decoded_gzip_response_body() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-gzip-response-secret-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.response.body.text.contains('compressed-needle')".into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("compressed response secret ingress".into()),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let gzipped = gzip_bytes(b"safe prefix compressed-needle unsafe suffix");
+    let (port, upstream_task) = spawn_http_fixture_response_bytes(
+        200,
+        "OK",
+        vec![("content-type", "text/plain"), ("content-encoding", "gzip")],
+        gzipped,
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, None).await;
+
+    let (status, body) =
+        send_openai_json_request(&mut sender, "127.0.0.1", "/inspect", Bytes::new()).await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("compressed response secret ingress"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(upstream_request.starts_with("POST /inspect"));
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-gzip-response-secret-inline")
+    );
+}
+
 // emit_model_call / trace-chain unit tests now live in
 // telemetry_hook/tests.rs against the pure builders. Gzip-decode
 // unit tests now live in decompression_hook/tests.rs against the

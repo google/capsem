@@ -124,6 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Engine is installed, MITM now buffers bounded request bodies before upstream
   dispatch so `http.request.body.text` CEL rules can block without touching the
   network, while preserving the forwarded bytes and telemetry body preview.
+- Added response-body-aware inline HTTP enforcement: when a runtime Security
+  Engine is installed, MITM can evaluate decoded `http.response.body.text`
+  before guest delivery and synthesize a 403 without leaking the upstream body.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without

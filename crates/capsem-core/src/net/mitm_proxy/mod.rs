@@ -172,6 +172,12 @@ struct RuntimeHttpRequestInput {
     conn_type: &'static str,
 }
 
+struct RuntimeHttpResponseInput {
+    req_ctx: TelemetryRequestContext,
+    response_bytes: u64,
+    response_body_preview: Option<String>,
+}
+
 enum RuntimeHttpDecision {
     Allow,
     Reject(TelemetryRequestContext, String),
@@ -254,6 +260,60 @@ fn evaluate_runtime_http_request_inner(
     ))
 }
 
+fn evaluate_runtime_http_response(
+    config: &MitmProxyConfig,
+    input: RuntimeHttpResponseInput,
+) -> Option<Result<RuntimeHttpDecision, SecurityEngineError>> {
+    if !config.security_engine.has_engine() {
+        return None;
+    }
+    Some(evaluate_runtime_http_response_inner(
+        config.security_engine.as_ref(),
+        input,
+    ))
+}
+
+fn evaluate_runtime_http_response_inner(
+    engine: &dyn RuntimeSecurityEngine,
+    input: RuntimeHttpResponseInput,
+) -> Result<RuntimeHttpDecision, SecurityEngineError> {
+    let timestamp_unix_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let event = telemetry_hook::build_http_response_security_event(
+        &input.req_ctx,
+        timestamp_unix_ms,
+        crate::telemetry::ambient_capsem_trace_id(),
+        Some(input.response_bytes),
+        input.response_body_preview,
+    );
+    let result = engine.evaluate(event)?;
+
+    if runtime_action_allows_transport(&result.action) {
+        return Ok(RuntimeHttpDecision::Allow);
+    }
+
+    let decision = result.resolved_event.event.decision.as_ref();
+    let policy_rule = decision.and_then(|decision| decision.rule.clone());
+    let policy_reason = runtime_security_reason(&result);
+    let policy_action = decision
+        .map(|decision| security_decision_action_label(decision.action).to_string())
+        .unwrap_or_else(|| security_action_label(&result.action).to_string());
+    let mut denied_ctx = input.req_ctx;
+    denied_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+    denied_ctx.decision = Decision::Denied;
+    denied_ctx.matched_rule = policy_rule.clone().or_else(|| Some(policy_reason.clone()));
+    denied_ctx.policy_action = Some(policy_action);
+    denied_ctx.policy_rule = policy_rule;
+    denied_ctx.policy_reason = Some(policy_reason.clone());
+
+    Ok(RuntimeHttpDecision::Reject(
+        denied_ctx,
+        format!("Capsem: response blocked by security engine ({policy_reason})\n"),
+    ))
+}
+
 fn runtime_action_allows_transport(action: &SecurityAction) -> bool {
     matches!(
         action,
@@ -327,6 +387,37 @@ async fn collect_request_body_for_security(
     let preview_len = stats.max_preview.min(bytes.len());
     stats.preview.extend_from_slice(&bytes[..preview_len]);
     Ok(bytes)
+}
+
+async fn collect_response_body_for_security(
+    body: hyper::body::Incoming,
+    is_gzip: bool,
+    max_size: usize,
+) -> Result<Bytes, anyhow::Error> {
+    use http_body_util::{BodyExt, Limited};
+
+    let raw = Limited::new(body, max_size)
+        .collect()
+        .await
+        .map_err(|error| anyhow::anyhow!("response body read failed: {error}"))?
+        .to_bytes();
+    if !is_gzip {
+        return Ok(raw);
+    }
+
+    let mut decoder = flate2::read::GzDecoder::new(raw.as_ref());
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut decoded)
+        .map_err(|error| anyhow::anyhow!("gzip response decode failed: {error}"))?;
+    Ok(Bytes::from(decoded))
+}
+
+fn response_body_preview_text(bytes: &Bytes, max_preview: usize) -> Option<String> {
+    if max_preview == 0 || bytes.is_empty() {
+        return None;
+    }
+    let preview_len = max_preview.min(bytes.len());
+    Some(String::from_utf8_lossy(&bytes[..preview_len]).into_owned())
 }
 
 /// RAII helper: decrements the `mitm.active_connections` gauge when
@@ -1255,9 +1346,7 @@ async fn handle_request(
         0
     };
 
-    let resp_body: ProxyBoxBody = resp_body.map_err(|e| -> anyhow::Error { e.into() }).boxed();
-
-    let req_ctx = TelemetryRequestContext {
+    let mut req_ctx = TelemetryRequestContext {
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider,
@@ -1281,6 +1370,76 @@ async fn handle_request(
         policy_reason: None,
     };
 
+    let response_body_security_enabled = config.security_engine.has_engine();
+    let resp_body: ProxyBoxBody = if response_body_security_enabled {
+        let response_body =
+            match collect_response_body_for_security(resp_body, is_gzip, 100 * 1024 * 1024).await {
+                Ok(body) => body,
+                Err(error) => {
+                    let reason = format!("security response body inspection failed: {error}");
+                    req_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+                    req_ctx.decision = Decision::Error;
+                    req_ctx.matched_rule = Some(reason.clone());
+                    req_ctx.policy_mode = Some("runtime".into());
+                    req_ctx.policy_action = Some("error".into());
+                    req_ctx.policy_reason = Some(reason.clone());
+                    let deny_body = Full::new(Bytes::from(format!("Capsem: {reason}\n")))
+                        .map_err(|never| match never {})
+                        .boxed();
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(seal_with_telemetry(deny_body, req_ctx))
+                        .unwrap());
+                }
+            };
+        let response_bytes = response_body.len() as u64;
+        let response_body_preview = response_body_preview_text(&response_body, resp_max_preview);
+
+        if let Some(runtime_decision) = evaluate_runtime_http_response(
+            config,
+            RuntimeHttpResponseInput {
+                req_ctx: req_ctx.clone(),
+                response_bytes,
+                response_body_preview,
+            },
+        ) {
+            match runtime_decision {
+                Ok(RuntimeHttpDecision::Allow) => {}
+                Ok(RuntimeHttpDecision::Reject(denied_ctx, body_text)) => {
+                    let deny_body = Full::new(Bytes::from(body_text))
+                        .map_err(|never| match never {})
+                        .boxed();
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(seal_with_telemetry(deny_body, denied_ctx))
+                        .unwrap());
+                }
+                Err(error) => {
+                    let reason = format!("security engine error: {error}");
+                    req_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+                    req_ctx.decision = Decision::Error;
+                    req_ctx.matched_rule = Some(reason.clone());
+                    req_ctx.policy_mode = Some("runtime".into());
+                    req_ctx.policy_action = Some("error".into());
+                    req_ctx.policy_reason = Some(reason.clone());
+                    let deny_body = Full::new(Bytes::from(format!("Capsem: {reason}\n")))
+                        .map_err(|never| match never {})
+                        .boxed();
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(seal_with_telemetry(deny_body, req_ctx))
+                        .unwrap());
+                }
+            }
+        }
+
+        Full::new(response_body)
+            .map_err(|never| match never {})
+            .boxed()
+    } else {
+        resp_body.map_err(|e| -> anyhow::Error { e.into() }).boxed()
+    };
+
     // Drive the sync ChunkHook chain on every response chunk:
     //   DecompressionHook (gzip) → SseParserHook (AI) →
     //   InterpreterHook* → TelemetryHook. The TelemetryHook reads the
@@ -1299,7 +1458,7 @@ async fn handle_request(
         crate::telemetry::ambient_capsem_trace_id(),
     )
     .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig {
-        gzip: is_gzip,
+        gzip: is_gzip && !response_body_security_enabled,
     })
     .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
     let chunk_dispatched = if is_gzip {
