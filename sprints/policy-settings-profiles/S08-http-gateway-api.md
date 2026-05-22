@@ -14,9 +14,10 @@ gateway, and reports the pinned profile revision through `/info/{vm_id}`.
 Adversarial typed-error coverage now spans malformed profile create, locked
 skill delete, locked MCP server delete, built-in rule delete, invalid
 rules/evaluate callback, asset cleanup while updating, and revoked revision
-install. S08b security-route proxy coverage now proves HTTP forwards
-`POST /enforcement/validate` and preserves `/sessions/{id}/detection/hunt`
-backtest rows with forensic matched fields.
+install. S08b security-route proxy coverage now proves HTTP forwards the
+enforcement and detection route groups, including compile, backtest, list,
+stats, create/update/delete, inline detection hunt, and
+`/sessions/{id}/detection/hunt` rows with forensic matched fields.
 
 S08 is not closed yet. Remaining scope is the S15 confirm resolution routes and
 stream when S15 makes those production routes real.
@@ -105,11 +106,9 @@ state and profile-backed VM creation.
   profile-scoped first-use asset reconciliation, waits for gateway exec-ready,
   execs inside the VM, and verifies `/info/{vm_id}` reports the same pinned
   profile identity/status.
-  Current S08b coverage proves HTTP parity for `POST /enforcement/validate`
-  and `POST /sessions/{id}/detection/hunt` evidence rows. Future S08b/S08c
-  lift adds the remaining enforcement/detection compile, backtest, live
-  add/update/delete/list/stats, and inline detection hunt routes with the same
-  event-row evidence as UDS.
+  Current S08b coverage proves HTTP parity for enforcement/detection compile,
+  validate, backtest, live add/update/delete/list/stats, inline detection hunt,
+  and `POST /sessions/{id}/detection/hunt` evidence rows.
 - Adversarial: malformed requests, locked mutations (built-in rule
   delete attempt, profile lock), gateway/service mismatch, revoked profile,
   stale catalog, incompatible revision, interrupted download, and repeated

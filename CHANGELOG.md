@@ -112,6 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added HTTP gateway contract coverage for runtime enforcement validation and
   session detection hunt routes so the security API preserves forensic matched
   fields through the gateway.
+- Expanded HTTP gateway contract coverage across the S08b enforcement and
+  detection route groups, including compile, backtest, list, stats, live
+  create/update/delete, inline hunt, and session hunt passthrough.
 - Improved `capsem detection hunt-session` human output to show matched event
   ids, rules, packs, outcomes, and canonical evidence fields instead of counts
   only.

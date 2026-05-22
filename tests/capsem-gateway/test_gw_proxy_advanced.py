@@ -144,6 +144,53 @@ class TestProxyEndpointCoverage:
         assert resp.get("compiled") is True
         assert resp.get("id") == "block-gateway"
 
+    def test_security_runtime_route_groups(self, gw_client):
+        """Gateway mirrors the S08b enforcement and detection route groups."""
+        enforcement_rule = {
+            "id": "block-gateway",
+            "condition": "http.request.host.contains('example')",
+            "decision": "block",
+            "reason": "gateway smoke",
+            "enabled": True,
+        }
+        detection_rule = {
+            "id": "detect-gateway",
+            "pack_id": "runtime-detection",
+            "title": "Gateway smoke",
+            "condition": "http.request.host.contains('example')",
+            "severity": "medium",
+            "confidence": "high",
+            "tags": ["gateway"],
+            "enabled": True,
+        }
+
+        assert gw_client.post("/enforcement/compile", enforcement_rule)["compiled"] is True
+        assert gw_client.post("/enforcement/backtest", {
+            "rule": enforcement_rule,
+            "events": [],
+        })["total_matches"] == 0
+        assert gw_client.post("/enforcement", enforcement_rule)["rule"]["id"] == "block-gateway"
+        assert gw_client.put("/enforcement/block-gateway", enforcement_rule)["rule"]["id"] == "block-gateway"
+        assert gw_client.get("/enforcement")["kind"] == "enforcement"
+        assert gw_client.get("/enforcement/stats")["kind"] == "enforcement"
+        assert gw_client.delete("/enforcement/block-gateway")["removed"] is True
+
+        assert gw_client.post("/detection/validate", detection_rule)["compiled"] is True
+        assert gw_client.post("/detection/compile", detection_rule)["compiled"] is True
+        assert gw_client.post("/detection/backtest", {
+            "rule": detection_rule,
+            "events": [],
+        })["total_matches"] == 0
+        assert gw_client.post("/detection/hunt", {
+            "rules": [detection_rule],
+            "events": [],
+        })["total_matches"] == 0
+        assert gw_client.post("/detection", detection_rule)["rule"]["id"] == "detect-gateway"
+        assert gw_client.put("/detection/detect-gateway", detection_rule)["rule"]["id"] == "detect-gateway"
+        assert gw_client.get("/detection")["kind"] == "detection"
+        assert gw_client.get("/detection/stats")["kind"] == "detection"
+        assert gw_client.delete("/detection/detect-gateway")["removed"] is True
+
 
 class TestProxyEdgeCases:
 

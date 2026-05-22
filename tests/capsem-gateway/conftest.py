@@ -101,6 +101,63 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         payload.update(data)
         self._send_json(payload, status=status)
 
+    def _send_runtime_rule_list(self, kind):
+        self._send_json({
+            "kind": kind,
+            "rules": [{
+                "id": f"{kind}-gateway",
+                "pack_id": f"runtime-{kind}",
+                "enabled": True,
+                "compiled_plan": "cel",
+                "condition": "http.request.host.contains('example')",
+                "match_count": 0,
+            }],
+        })
+
+    def _send_runtime_rule_stats(self, kind):
+        self._send_json({
+            "kind": kind,
+            "rules": [{
+                "id": f"{kind}-gateway",
+                "pack_id": f"runtime-{kind}",
+                "enabled": True,
+                "compiled_plan": "cel",
+                "condition": "http.request.host.contains('example')",
+                "match_count": 1,
+                "last_matched_event": "evt-gateway",
+            }],
+            "sync": {"checked": 1, "errors": []},
+        })
+
+    def _send_runtime_compile(self, data):
+        self._send_json({
+            "compiled": True,
+            "id": data.get("id", "gateway-rule"),
+            "compiled_plan": "cel",
+        })
+
+    def _send_runtime_rule_write(self, kind, data):
+        self._send_json({
+            "kind": kind,
+            "rule": {
+                "id": data.get("id", f"{kind}-gateway"),
+                "pack_id": data.get("pack_id", f"runtime-{kind}"),
+                "enabled": data.get("enabled", True),
+                "compiled_plan": "cel",
+                "condition": data.get("condition", "true"),
+                "match_count": 0,
+            },
+            "propagation": {"checked": 1, "errors": []},
+        })
+
+    def _send_empty_backtest_result(self):
+        self._send_json({
+            "total_matches": 0,
+            "unique_evidence_matches": 0,
+            "truncated": False,
+            "rows": [],
+        })
+
     def do_GET(self):
         parsed = urlparse(self.clean_path)
         if self.clean_path == "/list" or self.clean_path.startswith("/list?"):
@@ -361,6 +418,14 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     '{"message":"resolved_security_event","event_id":"evt-gw-log"}}\n'
                 ),
             })
+        elif parsed.path == "/enforcement":
+            self._send_runtime_rule_list("enforcement")
+        elif parsed.path == "/enforcement/stats":
+            self._send_runtime_rule_stats("enforcement")
+        elif parsed.path == "/detection":
+            self._send_runtime_rule_list("detection")
+        elif parsed.path == "/detection/stats":
+            self._send_runtime_rule_stats("detection")
         elif parsed.path.startswith("/files/") and parsed.path.endswith("/content"):
             parts = parsed.path.strip("/").split("/")
             if len(parts) >= 3:
@@ -547,13 +612,24 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 "reason": "mock ask",
                 "enforced": False,
             })
-        elif parsed.path == "/enforcement/validate":
+        elif parsed.path in {"/enforcement/validate", "/enforcement/compile"}:
             data = json.loads(body) if body else {}
-            self._send_json({
-                "compiled": True,
-                "id": data.get("id", "block-gateway"),
-                "compiled_plan": "cel",
-            })
+            self._send_runtime_compile(data)
+        elif parsed.path == "/enforcement/backtest":
+            self._send_empty_backtest_result()
+        elif parsed.path == "/enforcement":
+            data = json.loads(body) if body else {}
+            self._send_runtime_rule_write("enforcement", data)
+        elif parsed.path in {"/detection/validate", "/detection/compile"}:
+            data = json.loads(body) if body else {}
+            self._send_runtime_compile(data)
+        elif parsed.path == "/detection/backtest":
+            self._send_empty_backtest_result()
+        elif parsed.path == "/detection/hunt":
+            self._send_empty_backtest_result()
+        elif parsed.path == "/detection":
+            data = json.loads(body) if body else {}
+            self._send_runtime_rule_write("detection", data)
         elif parsed.path.startswith("/sessions/") and parsed.path.endswith("/detection/hunt"):
             data = json.loads(body) if body else {}
             rule = (data.get("rules") or [{}])[0]
@@ -637,6 +713,12 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 "source": "user",
                 "locked": False,
             })
+        elif self.clean_path.startswith("/enforcement/"):
+            data = json.loads(body) if body else {}
+            self._send_runtime_rule_write("enforcement", data)
+        elif self.clean_path.startswith("/detection/"):
+            data = json.loads(body) if body else {}
+            self._send_runtime_rule_write("detection", data)
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
@@ -696,6 +778,20 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 "mode": "settings_profiles_v2",
                 "profile_id": "everyday-work",
                 "rule_id": rule_id,
+                "removed": True,
+            })
+        elif self.clean_path.startswith("/enforcement/"):
+            rule_id = self.clean_path.split("/enforcement/", 1)[1].split("?")[0]
+            self._send_json({
+                "kind": "enforcement",
+                "id": rule_id,
+                "removed": True,
+            })
+        elif self.clean_path.startswith("/detection/"):
+            rule_id = self.clean_path.split("/detection/", 1)[1].split("?")[0]
+            self._send_json({
+                "kind": "detection",
+                "id": rule_id,
                 "removed": True,
             })
         else:

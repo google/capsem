@@ -1702,6 +1702,20 @@ a valid claim -- mark it `[ ]` instead.
     passed. Still missing after this slice: remaining security route breadth,
     visible UI screens/editors, ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Seventy-seventh TDD gateway-route-breadth slice expanded HTTP gateway
+    parity across the S08b runtime security route groups. The gateway proxy
+    suite now covers enforcement compile, backtest, live create/update/delete,
+    list, stats, detection validate/compile/backtest, inline hunt, live
+    create/update/delete, list, stats, and the existing session hunt route.
+    Verification: red `uv run pytest
+    tests/capsem-gateway/test_gw_proxy_advanced.py::TestProxyEndpointCoverage::test_security_runtime_route_groups
+    -q` first failed on missing `/enforcement/compile` mock coverage, then
+    passed; widened `uv run pytest
+    tests/capsem-gateway/test_gw_proxy_advanced.py -q` passed (**25** passed).
+    Docs build `pnpm --dir docs run build` passed; `cargo fmt --all --
+    --check` passed; `git diff --check` passed. Still missing after this
+    slice: visible UI screens/editors, ask/confirm UX for process decisions,
+    S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

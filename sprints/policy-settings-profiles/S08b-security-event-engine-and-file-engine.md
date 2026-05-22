@@ -486,11 +486,12 @@ Implementation status as of the current service-route slices:
   canonical common, HTTP, MCP, model tool-call/tool-result, file, process,
   profile, conversation, and snapshot policy paths instead of opaque subject
   blobs.
-- Landed: first HTTP gateway security-route proof for
-  `POST /enforcement/validate` and `POST /sessions/{id}/detection/hunt`
-  preserving forensic matched-field rows.
-- Still open: remaining gateway/CLI route breadth, visible UI exposure,
-  persisted/profile-seeded rule plans, and VM/runtime cutover.
+- Landed: HTTP gateway security-route proof for enforcement/detection compile,
+  validate, backtest, live create/update/delete/list/stats, inline detection
+  hunt, and `POST /sessions/{id}/detection/hunt` preserving forensic
+  matched-field rows.
+- Still open: visible UI exposure, persisted/profile-seeded rule plans, and
+  VM/runtime cutover.
 
 ## Session Database Architecture
 
