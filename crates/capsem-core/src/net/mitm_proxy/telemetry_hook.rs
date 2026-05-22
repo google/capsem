@@ -77,7 +77,7 @@ pub struct TelemetryRequestContext {
     pub policy_action: Option<String>,
     pub policy_rule: Option<String>,
     pub policy_reason: Option<String>,
-    pub runtime_security_result: Option<SecurityResult>,
+    pub runtime_security_results: Vec<SecurityResult>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -197,13 +197,20 @@ impl ChunkHook for TelemetryHook {
             .clone();
 
         let net_event = build_net_event(&req_ctx, &resp_stats);
-        let resolved_event = req_ctx
-            .runtime_security_result
-            .clone()
-            .map(|result| result.resolved_event)
-            .unwrap_or_else(|| {
-                build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event)
-            });
+        let resolved_events = if req_ctx.runtime_security_results.is_empty() {
+            vec![build_http_resolved_security_event(
+                &req_ctx,
+                &resp_stats,
+                &net_event,
+            )]
+        } else {
+            req_ctx
+                .runtime_security_results
+                .iter()
+                .cloned()
+                .map(|result| result.resolved_event)
+                .collect()
+        };
         let model_call = maybe_build_model_call(
             &req_ctx,
             &resp_stats,
@@ -219,8 +226,10 @@ impl ChunkHook for TelemetryHook {
         let db = Arc::clone(&self.deps.db);
         tokio::spawn(async move {
             db.write(WriteOp::NetEvent(net_event)).await;
-            db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
-                .await;
+            for resolved_event in resolved_events {
+                db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
+                    .await;
+            }
             if let Some(mc) = model_call {
                 db.write(WriteOp::ModelCall(mc)).await;
             }

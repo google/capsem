@@ -1270,6 +1270,20 @@ a valid claim -- mark it `[ ]` instead.
     phases match, DNS/MCP/file/process emitters, visible UI screens/editors,
     persistence/profile-pack seeding, VM status/live metrics integration, and
     S08d performance proof.
+    Fifty-second TDD multi-phase telemetry slice made the Network Engine keep
+    every inline runtime `SecurityResult` for one HTTP transaction. The red
+    assertion extended the response-block test to require both `http.request`
+    and `http.response` rows in `security_events`; `TelemetryRequestContext`
+    now carries a vector of runtime results, request-phase and response-phase
+    evaluation append to it, and `TelemetryHook` writes each resolved event
+    before falling back to the synthetic non-runtime path. Verification:
+    escalated `cargo test -p capsem-core
+    runtime_security_engine_blocks_response_body_before_guest_delivery --lib`,
+    escalated `cargo test -p capsem-core net::mitm_proxy::tests --lib`, and
+    `cargo test -p capsem-core telemetry_hook --lib` passed. Still missing
+    after this slice: DNS/MCP/file/process emitters, visible UI screens/
+    editors, persistence/profile-pack seeding, VM status/live metrics
+    integration, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

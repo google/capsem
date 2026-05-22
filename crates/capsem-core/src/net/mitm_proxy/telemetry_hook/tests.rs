@@ -54,7 +54,7 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
-        runtime_security_result: None,
+        runtime_security_results: Vec::new(),
     }
 }
 

@@ -131,6 +131,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SecurityResult` when inline enforcement runs, preserving response-phase
   event types, rule ids, findings, and resolved steps instead of rebuilding a
   request-shaped event from `NetEvent`.
+- Changed MITM runtime telemetry to persist every resolved request/response
+  phase result for a transaction, so an allowed request event is not overwritten
+  by a later response-phase block or finding.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without

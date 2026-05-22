@@ -686,6 +686,7 @@ async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
         )
         .unwrap();
     assert!(security.contains("http.response"));
+    assert!(security.contains("http.request"));
     assert!(security.contains("block-response-secret-inline"));
 }
 
