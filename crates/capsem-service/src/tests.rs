@@ -3268,6 +3268,9 @@ async fn telemetry_identity_env_uses_attached_profile_and_user_id() {
     assert!(env
         .iter()
         .any(|(k, v)| { k == capsem_core::telemetry::CAPSEM_VM_ID_ENV && v == "vm-ident" }));
+    assert!(env
+        .iter()
+        .any(|(k, v)| { k == capsem_core::telemetry::CAPSEM_SESSION_ID_ENV && v == "vm-ident" }));
     assert!(env.iter().any(|(k, v)| {
         k == capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV && v == "everyday-work"
     }));

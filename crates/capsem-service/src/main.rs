@@ -409,11 +409,19 @@ impl ServiceState {
         vm_id: &str,
         session_dir: &FsPath,
     ) -> Result<Vec<(String, String)>> {
+        let settings = self.current_service_settings();
         let effective = capsem_core::settings_profiles::load_vm_effective_settings(session_dir)
             .context("load vm-effective settings for telemetry identity")?;
-        Ok(capsem_core::telemetry::child_identity_env(
+        let profile_revision = capsem_core::settings_profiles::load_installed_profile_revision(
+            &settings.profiles,
+            &effective.profile_id,
+        )
+        .context("load installed profile revision for telemetry identity")?
+        .map(|record| record.revision);
+        Ok(capsem_core::telemetry::child_identity_env_with_revision(
             vm_id,
             &effective.profile_id,
+            profile_revision.as_deref(),
             &capsem_core::telemetry::host_user_id(),
         ))
     }

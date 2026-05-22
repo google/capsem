@@ -67,13 +67,20 @@ fn host_user_id_uses_user_then_username_then_uid() {
 
 #[test]
 fn child_identity_env_includes_profile_and_user_identity() {
-    let env = child_identity_env("vm-1", "everyday-work", "elie");
+    let env =
+        child_identity_env_with_revision("vm-1", "everyday-work", Some("2026.0522.1"), "elie");
     assert!(env
         .iter()
         .any(|(k, v)| k == CAPSEM_VM_ID_ENV && v == "vm-1"));
     assert!(env
         .iter()
+        .any(|(k, v)| k == CAPSEM_SESSION_ID_ENV && v == "vm-1"));
+    assert!(env
+        .iter()
         .any(|(k, v)| k == CAPSEM_PROFILE_ID_ENV && v == "everyday-work"));
+    assert!(env
+        .iter()
+        .any(|(k, v)| k == CAPSEM_PROFILE_REVISION_ENV && v == "2026.0522.1"));
     assert!(env
         .iter()
         .any(|(k, v)| k == CAPSEM_USER_ID_ENV && v == "elie"));

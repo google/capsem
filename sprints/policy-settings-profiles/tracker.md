@@ -1158,6 +1158,30 @@ a valid claim -- mark it `[ ]` instead.
     persistence/profile-pack seeding, streaming/sliding-window body inspection
     optimization, oversized-body adversarial coverage, and S08d performance
     proof.
+    Forty-sixth TDD telemetry-identity slice made the normalized Network
+    Engine journal carry the VM banner instead of relying on side tables.
+    `TelemetryRequestContext` now owns a typed identity snapshot, MITM
+    `security_events` write `vm_id`, `session_id`, `profile_id`,
+    `profile_revision`, and `user_id`, canonical AI evidence inherits the same
+    VM/profile/user/session fields, service spawn env now includes
+    `CAPSEM_SESSION_ID` plus installed `CAPSEM_PROFILE_REVISION` when present,
+    and the MCP aggregator child env preserves the same runtime identity.
+    Verification: red security-event identity test first, then `cargo test -p
+    capsem-core net::mitm_proxy::telemetry_hook`, `cargo test -p capsem-core
+    telemetry::tests::child_identity_env_includes_profile_and_user_identity`,
+    `cargo test -p capsem-service
+    telemetry_identity_env_uses_attached_profile_and_user_id --bin
+    capsem-service`, `cargo test -p capsem-process
+    aggregator_child_env_preserves_runtime_identity`, full `cargo test -p
+    capsem-process`, escalated full `cargo test -p capsem-core`, and escalated
+    full `cargo test -p capsem-service --bin capsem-service` passed. A
+    parallel focused test attempt tripped the macOS codesign lock while another
+    cargo test was signing the same binary; the same tests passed when rerun
+    serially. Still missing after this slice: live status accumulators for
+    latest detection/latest block/model cost, response-phase
+    enforcement/detection, live service route propagation into already-running
+    VM processes, DNS/MCP/file/process emitters, visible UI screens/editors,
+    persistence/profile-pack seeding, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

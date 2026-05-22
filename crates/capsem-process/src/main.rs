@@ -137,7 +137,9 @@ fn aggregator_child_env(vm_id: &str, trace_id: &str) -> std::collections::HashMa
         env.insert(k, v);
     }
     for key in [
+        capsem_core::telemetry::CAPSEM_SESSION_ID_ENV,
         capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV,
+        capsem_core::telemetry::CAPSEM_PROFILE_REVISION_ENV,
         capsem_core::telemetry::CAPSEM_USER_ID_ENV,
     ] {
         if let Ok(value) = std::env::var(key) {
@@ -914,6 +916,8 @@ mod tests {
     use super::*;
     use clap::Parser;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // -----------------------------------------------------------------------
     // Args parsing
     // -----------------------------------------------------------------------
@@ -1233,5 +1237,58 @@ mod tests {
         assert!(!env.contains_key("CAPSEM_CORP_CONFIG"));
         assert!(!env.contains_key("CAPSEM_TEST_UPSTREAM_OVERRIDES"));
         assert!(!env.contains_key("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn aggregator_child_env_preserves_runtime_identity() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = [
+            capsem_core::telemetry::CAPSEM_SESSION_ID_ENV,
+            capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV,
+            capsem_core::telemetry::CAPSEM_PROFILE_REVISION_ENV,
+            capsem_core::telemetry::CAPSEM_USER_ID_ENV,
+        ];
+        let previous: Vec<(&str, Option<String>)> = keys
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect();
+        std::env::set_var(capsem_core::telemetry::CAPSEM_SESSION_ID_ENV, "session-1");
+        std::env::set_var(capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV, "coding");
+        std::env::set_var(
+            capsem_core::telemetry::CAPSEM_PROFILE_REVISION_ENV,
+            "2026.0522.1",
+        );
+        std::env::set_var(capsem_core::telemetry::CAPSEM_USER_ID_ENV, "sansa");
+
+        let env = aggregator_child_env("vm-1", "trace-1");
+
+        for (key, value) in previous {
+            if let Some(value) = value {
+                std::env::set_var(key, value);
+            } else {
+                std::env::remove_var(key);
+            }
+        }
+
+        assert_eq!(
+            env.get(capsem_core::telemetry::CAPSEM_SESSION_ID_ENV)
+                .map(String::as_str),
+            Some("session-1")
+        );
+        assert_eq!(
+            env.get(capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV)
+                .map(String::as_str),
+            Some("coding")
+        );
+        assert_eq!(
+            env.get(capsem_core::telemetry::CAPSEM_PROFILE_REVISION_ENV)
+                .map(String::as_str),
+            Some("2026.0522.1")
+        );
+        assert_eq!(
+            env.get(capsem_core::telemetry::CAPSEM_USER_ID_ENV)
+                .map(String::as_str),
+            Some("sansa")
+        );
     }
 }

@@ -92,7 +92,9 @@ pub struct TelemetryGuard {
 static PARENT_TRACEPARENT: OnceLock<String> = OnceLock::new();
 
 pub const CAPSEM_VM_ID_ENV: &str = "CAPSEM_VM_ID";
+pub const CAPSEM_SESSION_ID_ENV: &str = "CAPSEM_SESSION_ID";
 pub const CAPSEM_PROFILE_ID_ENV: &str = "CAPSEM_PROFILE_ID";
+pub const CAPSEM_PROFILE_REVISION_ENV: &str = "CAPSEM_PROFILE_REVISION";
 pub const CAPSEM_USER_ID_ENV: &str = "CAPSEM_USER_ID";
 
 /// Initialize tracing. Call exactly once per binary, in `main()`, before
@@ -262,12 +264,29 @@ pub fn child_trace_env(vm_id: &str) -> Vec<(String, String)> {
 
 /// Build the child-process identity + trace environment.
 ///
-/// `CAPSEM_PROFILE_ID` and `CAPSEM_USER_ID` are host telemetry facts for the
-/// child process. They are not forwarded into the guest unless a caller also
-/// passes them through `--env`.
+/// `CAPSEM_SESSION_ID`, `CAPSEM_PROFILE_ID`, `CAPSEM_PROFILE_REVISION`, and
+/// `CAPSEM_USER_ID` are host telemetry facts for the child process. They are
+/// not forwarded into the guest unless a caller also passes them through
+/// `--env`.
 pub fn child_identity_env(vm_id: &str, profile_id: &str, user_id: &str) -> Vec<(String, String)> {
+    child_identity_env_with_revision(vm_id, profile_id, None, user_id)
+}
+
+pub fn child_identity_env_with_revision(
+    vm_id: &str,
+    profile_id: &str,
+    profile_revision: Option<&str>,
+    user_id: &str,
+) -> Vec<(String, String)> {
     let mut out = child_trace_env(vm_id);
+    out.push((CAPSEM_SESSION_ID_ENV.to_string(), vm_id.to_string()));
     out.push((CAPSEM_PROFILE_ID_ENV.to_string(), profile_id.to_string()));
+    if let Some(profile_revision) = profile_revision {
+        out.push((
+            CAPSEM_PROFILE_REVISION_ENV.to_string(),
+            profile_revision.to_string(),
+        ));
+    }
     out.push((CAPSEM_USER_ID_ENV.to_string(), user_id.to_string()));
     out
 }

@@ -49,6 +49,7 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         max_response_preview: 4096,
         port: 443,
         conn_type: "https-mitm",
+        identity: TelemetryIdentityContext::default(),
         policy_mode: None,
         policy_action: None,
         policy_rule: None,
@@ -130,6 +131,37 @@ fn build_http_resolved_security_event_carries_http_subject_and_allow_action() {
 }
 
 #[test]
+fn build_http_resolved_security_event_carries_vm_profile_and_user_identity() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.identity = TelemetryIdentityContext {
+        vm_id: Some("vm-winterfell".into()),
+        session_id: Some("session-winterfell".into()),
+        profile_id: Some("coding".into()),
+        profile_revision: Some("2026.0522.1".into()),
+        user_id: Some("arya".into()),
+    };
+    let resp_stats = empty_resp_stats();
+    let net_event = build_net_event(&req_ctx, &resp_stats);
+
+    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
+
+    assert_eq!(
+        resolved.event.common.vm_id.as_deref(),
+        Some("vm-winterfell")
+    );
+    assert_eq!(
+        resolved.event.common.session_id.as_deref(),
+        Some("session-winterfell")
+    );
+    assert_eq!(resolved.event.common.profile_id.as_deref(), Some("coding"));
+    assert_eq!(
+        resolved.event.common.profile_revision.as_deref(),
+        Some("2026.0522.1")
+    );
+    assert_eq!(resolved.event.common.user_id.as_deref(), Some("arya"));
+}
+
+#[test]
 fn build_http_resolved_security_event_maps_denied_network_decision_to_block() {
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.decision = Decision::Denied;
@@ -208,7 +240,14 @@ fn non_ai_provider_is_not_a_model_call() {
 fn llm_events_flow_into_model_call() {
     use crate::net::ai_traffic::events::{LlmEvent, StopReason};
 
-    let req_ctx = anthropic_req_ctx();
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.identity = TelemetryIdentityContext {
+        vm_id: Some("vm-ai".into()),
+        session_id: Some("session-ai".into()),
+        profile_id: Some("coding".into()),
+        profile_revision: Some("2026.0522.1".into()),
+        user_id: Some("bran".into()),
+    };
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
     let events = vec![
@@ -241,6 +280,10 @@ fn llm_events_flow_into_model_call() {
     assert_eq!(evidence.source_engine, SourceEngine::Network);
     assert_eq!(evidence.attribution_scope, AiAttributionScope::Vm);
     assert_eq!(evidence.origin_kind, AiOriginKind::GuestNetwork);
+    assert_eq!(evidence.vm_id.as_deref(), Some("vm-ai"));
+    assert_eq!(evidence.session_id.as_deref(), Some("session-ai"));
+    assert_eq!(evidence.profile_id.as_deref(), Some("coding"));
+    assert_eq!(evidence.user_id.as_deref(), Some("bran"));
     assert_eq!(
         evidence
             .response

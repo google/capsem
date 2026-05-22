@@ -48,7 +48,7 @@ use crate::net::ai_traffic::provider::ProviderKind;
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
 use protocol::Protocol;
-use telemetry_hook::TelemetryRequestContext;
+use telemetry_hook::{TelemetryIdentityContext, TelemetryRequestContext};
 use util::{format_headers, parse_http_host_target, split_path_query};
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts};
@@ -161,6 +161,7 @@ fn evaluate_runtime_http_request_inner(
         max_response_preview: input.max_response_preview,
         port: input.port,
         conn_type: input.conn_type,
+        identity: TelemetryIdentityContext::from_env(),
         policy_mode: Some("runtime".into()),
         policy_action: None,
         policy_rule: None,
@@ -717,6 +718,7 @@ async fn handle_request(
         Protocol::McpFrame => "mcp-frame",
         Protocol::Unknown => "unknown-mitm",
     };
+    let telemetry_identity = TelemetryIdentityContext::from_env();
 
     let start_time = Instant::now();
     let (parts, req_body) = req.into_parts();
@@ -801,6 +803,7 @@ async fn handle_request(
             max_response_preview: 0,
             port: upstream_port,
             conn_type,
+            identity: telemetry_identity.clone(),
             policy_mode: None,
             policy_action: None,
             policy_rule: None,
@@ -849,6 +852,7 @@ async fn handle_request(
             max_response_preview: 0,
             port: upstream_port,
             conn_type,
+            identity: telemetry_identity.clone(),
             policy_mode: None,
             policy_action: None,
             policy_rule: None,
@@ -941,6 +945,7 @@ async fn handle_request(
                     max_response_preview: 0,
                     port: upstream_port,
                     conn_type,
+                    identity: telemetry_identity.clone(),
                     policy_mode: Some("runtime".into()),
                     policy_action: Some("error".into()),
                     policy_rule: None,
@@ -1219,6 +1224,7 @@ async fn handle_request(
         max_response_preview: resp_max_preview,
         port: upstream_port,
         conn_type,
+        identity: telemetry_identity,
         policy_mode: None,
         policy_action: None,
         policy_rule: None,

@@ -70,10 +70,39 @@ pub struct TelemetryRequestContext {
     /// `NetEvent.conn_type` label. `https-mitm` for TLS,
     /// `http-mitm` for plain HTTP.
     pub conn_type: &'static str,
+    pub identity: TelemetryIdentityContext,
     pub policy_mode: Option<String>,
     pub policy_action: Option<String>,
     pub policy_rule: Option<String>,
     pub policy_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TelemetryIdentityContext {
+    pub vm_id: Option<String>,
+    pub session_id: Option<String>,
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<String>,
+    pub user_id: Option<String>,
+}
+
+impl TelemetryIdentityContext {
+    pub fn from_env() -> Self {
+        Self {
+            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
+            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
+            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
+            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+        }
+    }
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn cost_micros(estimated_cost_usd: f64) -> Option<u64> {
@@ -374,14 +403,14 @@ pub fn build_http_security_event(
             trace_id,
             span_id: None,
             timestamp_unix_ms,
-            vm_id: None,
-            session_id: None,
-            profile_id: None,
-            profile_revision: None,
+            vm_id: req_ctx.identity.vm_id.clone(),
+            session_id: req_ctx.identity.session_id.clone(),
+            profile_id: req_ctx.identity.profile_id.clone(),
+            profile_revision: req_ctx.identity.profile_revision.clone(),
             profile_pack_ids: Vec::new(),
             enforcement_packs: Vec::new(),
             detection_packs: Vec::new(),
-            user_id: None,
+            user_id: req_ctx.identity.user_id.clone(),
             process_id: None,
             parent_process_id: None,
             exec_id: None,
@@ -674,10 +703,10 @@ pub fn maybe_build_model_call(
         source_engine: SourceEngine::Network,
         origin_kind: AiOriginKind::GuestNetwork,
         accounting_owner: None,
-        profile_id: None,
-        vm_id: None,
-        session_id: None,
-        user_id: None,
+        profile_id: req_ctx.identity.profile_id.as_deref(),
+        vm_id: req_ctx.identity.vm_id.as_deref(),
+        session_id: req_ctx.identity.session_id.as_deref(),
+        user_id: req_ctx.identity.user_id.as_deref(),
     }));
 
     let model_call = ModelCall {
