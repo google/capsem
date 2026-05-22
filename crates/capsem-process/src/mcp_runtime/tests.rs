@@ -506,14 +506,36 @@ fn runtime_rule_match_accumulator_drains_recorded_security_engine_matches() {
         .expect("default effective profile should resolve");
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
     let snapshot = capsem_proto::ipc::RuntimeSecurityRulesSnapshot {
-        enforcement: vec![capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
-            id: "runtime.block-live".into(),
-            pack_id: Some("runtime-pack".into()),
-            condition: "http.request.host == 'live-policy.test'".into(),
-            decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
-            reason: Some("live runtime block".into()),
+        enforcement: vec![
+            capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+                id: "runtime.block-live".into(),
+                pack_id: Some("runtime-pack".into()),
+                condition: "http.request.host == 'live-policy.test'".into(),
+                decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
+                reason: Some("live runtime block".into()),
+            },
+            capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+                id: "runtime.block-process-shell".into(),
+                pack_id: Some("runtime-pack".into()),
+                condition:
+                    "process.activity.operation == 'exec' && process.activity.command_class == 'shell'"
+                        .into(),
+                decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
+                reason: Some("shell exec block".into()),
+            },
+        ],
+        detection: vec![capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
+            id: "runtime.detect-process-python".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-process".into()),
+            title: "Python exec detection".into(),
+            condition:
+                "process.activity.operation == 'exec' && process.activity.command_class == 'python'"
+                    .into(),
+            severity: capsem_proto::ipc::RuntimeDetectionSeverity::Medium,
+            confidence: capsem_proto::ipc::RuntimeDetectionConfidence::High,
+            tags: vec!["process".into()],
         }],
-        detection: vec![],
     };
     let accumulator = RuntimeRuleMatchAccumulator::default();
     let runtime = load_runtime_policy_state_with_runtime_rules_and_recorder(
@@ -532,19 +554,78 @@ fn runtime_rule_match_accumulator_drains_recorded_security_engine_matches() {
     security_engine
         .evaluate(http_event("live-policy.test", "/second"))
         .expect("second rule match should evaluate");
+    security_engine
+        .evaluate(process_event("exec-shell", "exec", Some("shell")))
+        .expect("process enforcement match should evaluate");
+    security_engine
+        .evaluate(process_event("exec-python", "exec", Some("python")))
+        .expect("process detection match should evaluate");
 
-    let drained = accumulator.drain();
-    assert_eq!(drained.len(), 1);
-    assert_eq!(drained[0].rule_id, "runtime.block-live");
-    assert_eq!(drained[0].match_count, 2);
+    let drained = accumulator
+        .drain()
+        .into_iter()
+        .map(|rule_match| (rule_match.rule_id.clone(), rule_match))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(drained.len(), 3);
+    let http = drained.get("runtime.block-live").unwrap();
+    assert_eq!(http.match_count, 2);
     assert_eq!(
-        drained[0].last_matched_event.as_deref(),
+        http.last_matched_event.as_deref(),
         Some("test-http-live-policy.test-/second")
     );
+    let shell = drained.get("runtime.block-process-shell").unwrap();
+    assert_eq!(shell.match_count, 1);
+    assert_eq!(shell.last_matched_event.as_deref(), Some("exec-shell"));
+    let python = drained.get("runtime.detect-process-python").unwrap();
+    assert_eq!(python.match_count, 1);
+    assert_eq!(python.last_matched_event.as_deref(), Some("exec-python"));
     assert!(
         accumulator.drain().is_empty(),
         "drain must return deltas, not replay old matches"
     );
+}
+
+#[test]
+fn invalid_runtime_process_rule_fails_closed_with_generic_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    let snapshot = capsem_proto::ipc::RuntimeSecurityRulesSnapshot {
+        enforcement: vec![capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+            id: "runtime.bad-process-rule".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "process.activity.command_class ==".into(),
+            decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
+            reason: Some("bad process rule".into()),
+        }],
+        detection: vec![],
+    };
+
+    let runtime = load_runtime_policy_state_with_runtime_rules(&session_dir, Some(&snapshot));
+    let security_engine = runtime
+        .security_engine
+        .as_ref()
+        .expect("compile failure should still install a fail-closed Security Engine");
+
+    let result = security_engine
+        .evaluate(process_event("exec-after-bad-rule", "exec", Some("shell")))
+        .expect("fail-closed process rule should evaluate");
+
+    match result.action {
+        SecurityAction::Block(block) => {
+            assert_eq!(block.rule_id.as_deref(), Some("runtime.compile_failed"));
+            assert_eq!(
+                block.reason_code,
+                "runtime security rules failed to compile"
+            );
+        }
+        other => panic!("expected fail-closed process block, got {other:?}"),
+    }
 }
 
 fn http_event(host: &str, path: &str) -> SecurityEvent {

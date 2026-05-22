@@ -1444,6 +1444,25 @@ a valid claim -- mark it `[ ]` instead.
     process-rule E2E, visible UI screens/editors, ask/confirm UX for process
     decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Sixty-second TDD Process Engine stats/fail-closed slice made runtime rule
+    stats and compile-failure semantics subsystem-neutral. The process-local
+    runtime match accumulator test now records HTTP enforcement, process
+    enforcement, and process detection matches through the same Security Engine
+    recorder and drains separate rule counters with last-matched event ids.
+    A red invalid-process-rule test proved the fail-closed runtime rule still
+    emitted HTTP-only wording; `capsem-process` now logs and reports generic
+    runtime Security Engine compile-failure wording while keeping the
+    fail-closed block behavior. Verification: red `cargo test -p
+    capsem-process invalid_runtime_process_rule_fails_closed_with_generic_reason`
+    first, then that test passed; `cargo test -p capsem-process
+    runtime_rule_match_accumulator_drains_recorded_security_engine_matches`
+    **1** passed; widened gates: `cargo test -p capsem-process` **108**
+    passed, `cargo test -p capsem-service
+    handle_enforcement_stats_drains_process_runtime_rule_matches --bin
+    capsem-service` **1** passed, `cargo fmt --all -- --check` passed, and
+    `git diff --check` passed. Still missing after this slice: real-VM
+    process-rule E2E, visible UI screens/editors, ask/confirm UX for process
+    decisions, S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

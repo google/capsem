@@ -151,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detection hunt reconstruction, so historical `process.exec` events use the
   same canonical classes such as `shell`, `python`, and `network` as live exec
   enforcement.
+- Added Process Engine runtime rule match stats coverage and subsystem-neutral
+  fail-closed wording for runtime Security Engine compile failures.
 - Added live VM status security metrics from the canonical resolved-event
   stream, including security event counts, block counts, detection counts,
   latest block, and latest detection surfaced through process metrics snapshots

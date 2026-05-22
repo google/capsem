@@ -379,14 +379,14 @@ fn build_runtime_security_engine_from_rules(
             Err(error) => {
                 warn!(
                     error = %error,
-                    "failed to compile HTTP runtime enforcement rules; installing fail-closed network rule"
+                    "failed to compile runtime enforcement rules; installing fail-closed security rule"
                 );
                 CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
                     id: "runtime.compile_failed".into(),
                     pack_id: Some("runtime".into()),
                     condition: "true".into(),
                     decision: SecurityDecisionAction::Block,
-                    reason: Some("HTTP runtime rules failed to compile".into()),
+                    reason: Some("runtime security rules failed to compile".into()),
                 }])
                 .expect("static fail-closed CEL rule must compile")
             }
@@ -411,7 +411,7 @@ fn build_runtime_security_engine_from_rules(
         profile_id = %effective
             .map(|effective| effective.profile_id.as_str())
             .unwrap_or("unknown"),
-        "installed HTTP runtime security engine"
+        "installed runtime security engine"
     );
     let runtime: Arc<dyn RuntimeSecurityEngine> = Arc::new(Mutex::new(engine));
     Some(runtime)
