@@ -112,6 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `security_decisions` to session DB triage so normalized
   `security_events` decisions and failed steps surface alongside network, DNS,
   MCP, exec, and audit signals.
+- Added production MITM telemetry dual-write for canonical resolved HTTP
+  `security_events` while preserving the existing `net_events` projection, so
+  Network Engine traffic now starts entering the S08b normalized event journal.
 - Fixed local setup-generated profile payloads to include the required UI mode
   when installing a local profile revision from `CAPSEM_ASSETS_DIR`.
 - Added the shared `capsem-proto` policy context schema that future CEL and

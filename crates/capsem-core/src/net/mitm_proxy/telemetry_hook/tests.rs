@@ -81,6 +81,90 @@ fn build_net_event_carries_request_fields() {
     assert_eq!(ev.conn_type.as_deref(), Some("https-mitm"));
 }
 
+#[test]
+fn build_http_resolved_security_event_carries_http_subject_and_allow_action() {
+    let req_ctx = anthropic_req_ctx();
+    let mut resp_stats = empty_resp_stats();
+    resp_stats.bytes = 4567;
+    resp_stats.preview = b"chunk-preview".to_vec();
+    let net_event = build_net_event(&req_ctx, &resp_stats);
+
+    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
+
+    assert_eq!(resolved.event.common.event_type, "http.request");
+    assert_eq!(
+        resolved.event.common.trace_id.as_deref(),
+        net_event.trace_id.as_deref()
+    );
+    assert_eq!(resolved.event.common.source_engine, SourceEngine::Network);
+    assert_eq!(
+        resolved.event.common.attribution_scope,
+        AiAttributionScope::Vm
+    );
+    assert!(matches!(
+        resolved.final_action,
+        capsem_security_engine::SecurityAction::Continue
+    ));
+    let capsem_security_engine::SecurityEventSubject::Http(subject) = &resolved.event.subject
+    else {
+        panic!("expected http subject");
+    };
+    assert_eq!(subject.method, "POST");
+    assert_eq!(subject.host, "api.anthropic.com");
+    assert_eq!(subject.port, Some(443));
+    assert_eq!(subject.path.as_deref(), Some("/v1/messages"));
+    assert_eq!(
+        subject.url.as_deref(),
+        Some("https://api.anthropic.com/v1/messages")
+    );
+    assert_eq!(subject.request_bytes, 37);
+    assert_eq!(subject.response_status, Some(200));
+    assert_eq!(subject.response_bytes, Some(4567));
+    assert_eq!(
+        subject
+            .response_body
+            .as_ref()
+            .and_then(|body| body.text.as_deref()),
+        Some("chunk-preview")
+    );
+}
+
+#[test]
+fn build_http_resolved_security_event_maps_denied_network_decision_to_block() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.decision = Decision::Denied;
+    req_ctx.status_code = Some(403);
+    req_ctx.matched_rule = Some("runtime.block_metadata".into());
+    req_ctx.policy_rule = Some("policy.http.block_metadata".into());
+    req_ctx.policy_reason = Some("metadata access".into());
+    let resp_stats = empty_resp_stats();
+    let net_event = build_net_event(&req_ctx, &resp_stats);
+
+    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
+
+    assert!(matches!(
+        resolved.final_action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+    assert_eq!(
+        resolved
+            .event
+            .decision
+            .as_ref()
+            .and_then(|d| d.rule.as_deref()),
+        Some("policy.http.block_metadata")
+    );
+    assert_eq!(resolved.steps.len(), 1);
+    assert_eq!(
+        resolved.steps[0].kind,
+        capsem_security_engine::ResolvedEventStepKind::EnforcementMatch
+    );
+    assert_eq!(
+        resolved.steps[0].status,
+        capsem_security_engine::StepStatus::Matched
+    );
+}
+
 /// HEAD request to an AI domain is *not* a model call (probe).
 #[test]
 fn head_request_is_not_a_model_call() {
@@ -222,6 +306,14 @@ fn fake_deps() -> Arc<TelemetryDeps> {
     })
 }
 
+fn deps_with_db(db: Arc<DbWriter>) -> Arc<TelemetryDeps> {
+    Arc::new(TelemetryDeps {
+        db,
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+    })
+}
+
 /// Without a seeded request context, the hook is shadow-mode: it
 /// doesn't allocate the response stats slot and doesn't emit on end.
 #[test]
@@ -278,4 +370,58 @@ async fn chunk_counting_with_seeded_context() {
     let stats = state.peek::<TelemetryResponseStats>().expect("stats slot");
     assert_eq!(stats.bytes, 11);
     assert_eq!(stats.preview, b"hello world");
+}
+
+#[tokio::test]
+async fn response_end_writes_net_event_and_resolved_security_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("db writer"));
+    let hook = TelemetryHook::new(deps_with_db(Arc::clone(&db)));
+    let mut state = HookState::default();
+    let conn = any_conn();
+
+    {
+        let mut c = ChunkCtx {
+            state: &mut state,
+            conn: &conn,
+            trace_id: None,
+        };
+        let slot = c.state::<Option<TelemetryRequestContext>>(|| None);
+        *slot = Some(anthropic_req_ctx());
+    }
+
+    let mut chunk = Bytes::from_static(b"ok");
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_chunk(&mut chunk, &mut ctx);
+    }
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut ctx);
+    }
+    tokio::task::yield_now().await;
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let net_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM net_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(net_count, 1);
+    let security_row: (String, String, String, String) = conn
+        .query_row(
+            "SELECT event_family, event_type, source_engine, final_action FROM security_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        security_row,
+        (
+            "http".to_string(),
+            "http.request".to_string(),
+            "network".to_string(),
+            "continue".to_string(),
+        )
+    );
 }

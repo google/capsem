@@ -1096,6 +1096,24 @@ a valid claim -- mark it `[ ]` instead.
     missing after this slice: visible UI screens/editors,
     persistence/profile-pack seeding, production network/file/process emitters
     calling the runtime engine, and S08d performance proof.
+    Forty-third TDD production-emitter slice made the MITM telemetry hook
+    dual-write canonical resolved HTTP `security_events` alongside the legacy
+    `net_events` projection. The builder lifts method, scheme, host, port,
+    path, query, URL, classified path segment, request/response headers,
+    body previews, bytes, trace id, and Network Engine source attribution into
+    the typed S08b `SecurityEvent` envelope, then maps allowed/redirected,
+    denied, and error network decisions to `SecurityAction::Continue`,
+    `Block`, and `Error`. The hook integration test writes a real session DB
+    and proves both `net_events` and canonical `security_events` rows land.
+    Verification: red builder tests first, then `cargo test -p capsem-core
+    net::mitm_proxy::telemetry_hook` (**11** tests) and escalated `cargo test
+    -p capsem-core` passed with **1377** unit tests, **76** integration tests,
+    and doc tests. The non-escalated broad run failed only on pre-existing
+    network/socket-permission tests, which passed under the expected test
+    permissions. Still missing after this slice: production inline runtime
+    enforcement before upstream, VM/profile/session/user enrichment in emitted
+    events, DNS/MCP/file/process emitters, visible UI screens/editors,
+    persistence/profile-pack seeding, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
