@@ -2911,6 +2911,82 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     (state, dir)
 }
 
+#[tokio::test]
+async fn handle_logs_returns_structured_process_security_events_verbatim() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = "vm-process-logs";
+    let session_dir = state.run_dir.join("sessions").join(vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(&session_dir.join("serial.log"), "guest booted\n").unwrap();
+    let process_security_line = serde_json::json!({
+        "timestamp": "2026-05-22T00:00:00Z",
+        "level": "INFO",
+        "target": "security.process",
+        "fields": {
+            "message": "process_exec_security_decision",
+            "event_id": "evt-process-1",
+            "event_family": "process",
+            "event_type": "process.exec",
+            "source_engine": "process",
+            "final_action": "block",
+            "enforceability": "inline_blockable",
+            "attribution_scope": "vm",
+            "origin_kind": "host_service",
+            "trace_id": "trace-process-log",
+            "vm_id": "vm-process-logs",
+            "session_id": "vm-process-logs",
+            "profile_id": "coding",
+            "profile_revision": "2026.0522.1",
+            "user_id": "elie",
+            "exec_id": "88",
+            "mcp_call_id": "12",
+            "operation": "exec",
+            "command_class": "shell",
+            "rule_id": "runtime.block-shell",
+            "pack_id": "runtime-pack",
+            "reason": "shell exec blocked",
+            "finding_count": 0
+        }
+    })
+    .to_string();
+    std::fs::write(session_dir.join("process.log"), process_security_line).unwrap();
+
+    state.instances.lock().unwrap().insert(
+        vm_id.into(),
+        InstanceInfo {
+            id: vm_id.into(),
+            pid: std::process::id(),
+            uds_path: state.run_dir.join("vm-process-logs.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: None,
+            profile_pin: None,
+        },
+    );
+
+    let Json(response) = handle_logs(State(state), Path(vm_id.into())).await.unwrap();
+    let process_logs = response.process_logs.expect("process log returned");
+
+    assert_eq!(response.serial_logs.as_deref(), Some("guest booted\n"));
+    assert!(process_logs.contains(r#""target":"security.process""#));
+    assert!(process_logs.contains(r#""message":"process_exec_security_decision""#));
+    assert!(process_logs.contains(r#""event_type":"process.exec""#));
+    assert!(process_logs.contains(r#""final_action":"block""#));
+    assert!(process_logs.contains(r#""profile_id":"coding""#));
+    assert!(process_logs.contains(r#""user_id":"elie""#));
+    assert!(process_logs.contains(r#""vm_id":"vm-process-logs""#));
+    assert!(process_logs.contains(r#""exec_id":"88""#));
+    assert!(process_logs.contains(r#""mcp_call_id":"12""#));
+    assert!(process_logs.contains(r#""rule_id":"runtime.block-shell""#));
+    assert!(process_logs.contains(r#""reason":"shell exec blocked""#));
+}
+
 fn make_test_state_with_profile_assets(base_url: &str) -> (Arc<ServiceState>, tempfile::TempDir) {
     make_test_state_with_profile_assets_and_process(
         base_url,

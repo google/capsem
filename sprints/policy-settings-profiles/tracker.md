@@ -1500,6 +1500,22 @@ a valid claim -- mark it `[ ]` instead.
     Still missing after this slice: real-VM `capsem logs` E2E for a
     process-rule block, visible UI screens/editors, ask/confirm UX for process
     decisions, S12 OTel/prometheus export, and S08d performance proof.
+    Sixty-fifth TDD Process Engine log-route slice locked the service boundary
+    that `capsem logs <vm>` consumes. The new service test creates a synthetic
+    VM session with a structured `security.process` JSONL entry in
+    `process.log`, calls `handle_logs`, and proves the endpoint returns the
+    line verbatim with `process_exec_security_decision`, `process.exec`,
+    `final_action=block`, `vm_id`, `profile_id`, `user_id`, `exec_id`,
+    `mcp_call_id`, `rule_id`, and `reason` intact. Verification: `cargo test
+    -p capsem-service
+    handle_logs_returns_structured_process_security_events_verbatim --bin
+    capsem-service` **1** passed; widened gate `cargo test -p capsem-service
+    --bin capsem-service` passed with escalation after the sandbox-only run
+    hit unrelated filesystem `Operation not permitted` errors in existing
+    host-style tests (**205** passed). Still missing after this slice: real-VM
+    `capsem logs` E2E for an actual process-rule block, visible UI
+    screens/editors, ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
