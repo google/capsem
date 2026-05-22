@@ -473,6 +473,21 @@ fn tool_router_registers_all_tools() {
     );
 }
 
+#[test]
+fn vm_logs_tool_description_mentions_security_logs() {
+    let tools = CapsemHandler::tool_router();
+    let all_tools = tools.list_all();
+    let tool = all_tools
+        .iter()
+        .find(|tool| tool.name == "capsem_vm_logs")
+        .expect("capsem_vm_logs registered");
+    let description = tool.description.as_deref().unwrap_or_default();
+    assert!(
+        description.contains("security"),
+        "capsem_vm_logs description should mention security logs: {description}"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Handler server info
 // -----------------------------------------------------------------------

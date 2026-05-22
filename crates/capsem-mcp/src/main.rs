@@ -673,7 +673,7 @@ impl CapsemHandler {
 
     #[tool(
         name = "capsem_vm_logs",
-        description = "Get serial and process logs for a session. Use grep to filter lines, tail to limit to last N lines"
+        description = "Get security, process, and serial logs for a session. Use grep to filter lines, tail to limit to last N lines"
     )]
     async fn vm_logs(&self, Parameters(params): Parameters<LogsParams>) -> Result<String, String> {
         match self

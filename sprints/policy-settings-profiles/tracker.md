@@ -1620,6 +1620,15 @@ a valid claim -- mark it `[ ]` instead.
     --all -- --check` passed; `git diff --check` passed. Still missing after
     this slice: visible UI screens/editors, ask/confirm UX for process
     decisions, S12 OTel/prometheus export, and S08d performance proof.
+    Seventy-second TDD MCP metadata slice corrected the agent-facing
+    `capsem_vm_logs` description and MCP usage docs so security logs and the
+    security timeline layer are advertised as first-class, not hidden behind
+    implementation knowledge. Verification: red `cargo test -p capsem-mcp
+    vm_logs_tool_description_mentions_security_logs` first failed on a test
+    lifetime issue while adding the guard, then passed after the test fix; docs
+    build `pnpm --dir docs run build` passed. Still missing after this slice:
+    visible UI screens/editors, ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

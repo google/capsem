@@ -100,6 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enriched `/timeline/{id}` security rows with canonical resolved-event rule,
   pack, finding-count, VM, profile, user, and accounting-owner attribution so
   timeline debugging no longer has to jump straight to SQL for those fields.
+- Updated MCP tool metadata and usage docs so `capsem_vm_logs` and
+  `capsem_timeline` advertise security-log and security-layer support.
 - Added typed model tool-call policy projection under
   `model.request.tool_calls`, including name, origin, argument status, status,
   linked MCP call id, and parse confidence, with session-backed detection hunt

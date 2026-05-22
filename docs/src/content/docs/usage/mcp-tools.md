@@ -53,12 +53,12 @@ The binary is installed to `~/.capsem/bin/capsem-mcp` by `capsem setup`.
 |------|-----------|-------------|
 | `capsem_inspect_schema` | -- | Get CREATE TABLE statements for all session telemetry tables. Call before `capsem_inspect` to know what columns are available. |
 | `capsem_inspect` | `id`, `sql` | Run a read-only SQL query against a session's telemetry database. Returns columns and rows. |
-| `capsem_vm_logs` | `id`, `grep?`, `tail?` | Serial + process logs for a session. `grep` filters lines, `tail` limits to last N lines. |
+| `capsem_vm_logs` | `id`, `grep?`, `tail?` | Security, process, and serial logs for a session. `grep` filters lines, `tail` limits to last N lines. |
 | `capsem_service_logs` | `grep?`, `tail?` | Latest `capsem-service` logs (last ~100 KB). `grep` + `tail` filters. |
 | `capsem_host_logs` | `name`, `grep?`, `tail?`, `maxBytes?` | Read an allowlisted host log by symbolic name: `service`, `mcp`, `gateway`, `tray`, or `app`. |
 | `capsem_panics` | `since?`, `limit?`, `id?` | Extract structured Rust panics and backtraces from recent host logs. |
 | `capsem_triage` | `since?`, `limit?`, `id?` | Summarize recent panics, dropped IPC frames, server errors, and slow operations. |
-| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, MCP, network, filesystem, and model events. |
+| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, MCP, network, security, filesystem, and model events. |
 
 ## MCP aggregator
 
