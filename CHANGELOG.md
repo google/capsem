@@ -151,6 +151,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the first shared S08c corpus.
 - Added Rust S08c parity coverage proving the real CEL evaluator matches the
   committed admin enforcement backtest expected artifact.
+- Added a committed Detection IR artifact for the S08c Sigma corpus and Rust
+  parity coverage proving canonical `http.request.*` detection fields match
+  the admin detection backtest expected artifact.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API

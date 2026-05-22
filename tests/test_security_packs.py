@@ -57,7 +57,7 @@ def _policy_json() -> str:
           "event_family": "http",
           "event_type": "http.request",
           "priority": 10,
-          "condition": "subject.request.host == '169.254.169.254'",
+          "condition": "http.request.host == \\"169.254.169.254\\"",
           "decision": "block",
           "reason": "metadata endpoints are not reachable from corp VMs"
         }
@@ -77,8 +77,8 @@ def _detection_toml() -> str:
         description = "Default corp detections."
 
         [field_mapping.http]
-        Host = "subject.request.host"
-        Url = "subject.request.url"
+        Host = "http.request.host"
+        Url = "http.request.url"
 
         [[sources]]
         id = "metadata-access"
@@ -117,8 +117,8 @@ def _detection_yaml() -> str:
         description: Default corp detections.
         field_mapping:
           http:
-            Host: subject.request.host
-            Url: subject.request.url
+            Host: http.request.host
+            Url: http.request.url
         sources:
           - id: metadata-access
             type: sigma
@@ -183,7 +183,7 @@ def test_detection_pack_toml_enters_and_leaves_through_pydantic(tmp_path: Path) 
 
     assert reparsed == pack
     assert pack.sources[0].type == "sigma"
-    assert pack.field_mapping["http"]["Host"] == "subject.request.host"
+    assert pack.field_mapping["http"]["Host"] == "http.request.host"
 
 
 def test_detection_pack_yaml_enters_through_pydantic(tmp_path: Path) -> None:
@@ -207,7 +207,7 @@ def test_detection_pack_compiles_sigma_to_typed_ir(tmp_path: Path) -> None:
     assert ir.pack_id == "corp-default-detections"
     assert ir.rules[0].sigma_id == "11111111-1111-4111-8111-111111111111"
     assert ir.rules[0].event_family.value == "http"
-    assert ir.rules[0].matchers[0].field_path == "subject.request.host"
+    assert ir.rules[0].matchers[0].field_path == "http.request.host"
     assert ir.rules[0].matchers[0].values == ["169.254.169.254"]
     assert '"schema": "capsem.detection.ir.v1"' in dumped
 
@@ -267,7 +267,7 @@ def test_detection_pack_rejects_unsupported_sigma_subset(
         compile_detection_pack(pack, base_dir=tmp_path)
 
 
-def test_detection_check_matches_normalized_event_fixture(tmp_path: Path) -> None:
+def test_detection_check_matches_policy_context_fixture(tmp_path: Path) -> None:
     pack_path = tmp_path / "detection-pack.yml"
     pack_path.write_text(_detection_yaml(), encoding="utf-8")
     pack = validate_detection_pack_yaml(pack_path)
@@ -275,8 +275,8 @@ def test_detection_check_matches_normalized_event_fixture(tmp_path: Path) -> Non
     events_path.write_text(
         textwrap.dedent(
             """
-            {"event_id":"evt-1","event_family":"http","event_type":"http.request","subject":{"request":{"host":"169.254.169.254","url":"http://169.254.169.254/latest"}}}
-            {"event_id":"evt-2","event_family":"http","event_type":"http.request","subject":{"request":{"host":"example.com","url":"https://example.com"}}}
+            {"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit","session_id":"session-1","event_id":"evt-1","sequence":1,"timestamp_unix_ms":1},"context":{"schema_version":1,"common":{"event_type":"http.request"},"http":{"request":{"host":"169.254.169.254","url":"http://169.254.169.254/latest"}}}}
+            {"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit","session_id":"session-1","event_id":"evt-2","sequence":2,"timestamp_unix_ms":2},"context":{"schema_version":1,"common":{"event_type":"http.request"},"http":{"request":{"host":"example.com","url":"https://example.com"}}}}
             """
         ).strip()
         + "\n",
@@ -358,8 +358,12 @@ def test_capsem_admin_detection_compile_and_check(tmp_path: Path) -> None:
     ir_path = tmp_path / "detection.ir.json"
     events_path = tmp_path / "events.jsonl"
     events_path.write_text(
-        '{"event_id":"evt-1","event_family":"http","event_type":"http.request",'
-        '"subject":{"request":{"host":"169.254.169.254"}}}\n',
+        '{"schema":"capsem.policy-context-fixture.v1",'
+        '"event_ref":{"corpus":"unit","session_id":"session-1",'
+        '"event_id":"evt-1","sequence":1,"timestamp_unix_ms":1},'
+        '"context":{"schema_version":1,'
+        '"common":{"event_type":"http.request"},'
+        '"http":{"request":{"host":"169.254.169.254"}}}}\n',
         encoding="utf-8",
     )
 

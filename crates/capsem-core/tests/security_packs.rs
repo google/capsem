@@ -77,7 +77,7 @@ fn detection_ir_evaluator_matches_normalized_event() {
     assert_eq!(findings[0].event_id, "evt-1");
     assert_eq!(findings[0].rule_id, "metadata-access");
     assert_eq!(
-        findings[0].matched_fields["subject.request.host"],
+        findings[0].matched_fields["http.request.host"],
         serde_json::json!("169.254.169.254")
     );
 }
@@ -133,7 +133,7 @@ fn detection_ir_evaluator_matches_security_engine_http_event() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].event_id, "evt-s08b-http");
     assert_eq!(
-        findings[0].matched_fields["subject.request.host"],
+        findings[0].matched_fields["http.request.host"],
         serde_json::json!("169.254.169.254")
     );
 }
@@ -208,23 +208,87 @@ fn detection_ir_lowers_to_real_cel_detection_rules() {
 }
 
 #[test]
+fn detection_ir_lowering_rejects_legacy_subject_paths() {
+    let mut ir = parse_detection_ir_v1_json(&fixture("detection-ir-v1-valid.json")).unwrap();
+    ir.rules[0].matchers[0].field_path = "subject.request.host".into();
+
+    let error = compile_detection_ir_to_cel_detection_rules(&ir).unwrap_err();
+
+    assert!(matches!(
+        error,
+        SecurityPackSchemaError::UnsupportedDetectionIr(_)
+    ));
+    assert!(error.to_string().contains("subject.request.host"));
+}
+
+#[test]
+fn s08c_detection_expected_artifact_matches_rust_detection_ir() {
+    let ir = parse_detection_ir_v1_json(include_str!(
+        "../../../data/detection/ir/google-secret-egress.json"
+    ))
+    .unwrap();
+    let fixtures: Vec<Value> =
+        include_str!("../../../data/policy-context/canonical-policy-contexts.jsonl")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+    let mut findings = Vec::new();
+
+    for fixture in &fixtures {
+        let event: SecurityEventV1 = serde_json::from_value(serde_json::json!({
+            "event_id": fixture["event_ref"]["event_id"],
+            "event_family": "http",
+            "event_type": fixture["context"]["common"]["event_type"],
+            "subject": {
+                "request": fixture["context"]["http"]["request"]
+            }
+        }))
+        .unwrap();
+        findings.extend(
+            evaluate_detection_ir(&ir, &event)
+                .into_iter()
+                .map(|finding| serde_json::to_value(finding).unwrap()),
+        );
+    }
+
+    let actual = serde_json::json!({
+        "schema": "capsem.detection-check.v1",
+        "ok": true,
+        "pack_id": ir.pack_id,
+        "pack_version": ir.pack_version,
+        "event_count": fixtures.len(),
+        "rule_count": ir.rules.len(),
+        "match_count": findings.len(),
+        "findings": findings,
+        "diagnostics": [],
+    });
+    let expected: Value = serde_json::from_str(include_str!(
+        "../../../data/detection/backtest-expected/google-secret-egress.json"
+    ))
+    .unwrap();
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn detection_ir_lowers_http_url_path_and_body_to_policy_context_roots() {
     let mut value: Value = serde_json::from_str(&fixture("detection-ir-v1-valid.json")).unwrap();
     value["rules"][0]["matchers"] = serde_json::json!([
         {
-            "field_path": "subject.request.url",
+            "field_path": "http.request.url",
             "operator": "equals_any",
             "values": ["https://google.example.test/admin/settings"],
             "sigma_field": "url"
         },
         {
-            "field_path": "subject.request.path",
+            "field_path": "http.request.path",
             "operator": "equals_any",
             "values": ["/admin/settings"],
             "sigma_field": "path"
         },
         {
-            "field_path": "subject.request.body.text",
+            "field_path": "http.request.body.text",
             "operator": "equals_any",
             "values": ["secret"],
             "sigma_field": "body"
@@ -300,19 +364,19 @@ fn detection_ir_lowers_file_path_to_policy_context_roots() {
     rule.event_family = EventFamily::File;
     rule.matchers = vec![
         DetectionIRMatcherV1 {
-            field_path: "subject.activity.operation".into(),
+            field_path: "file.activity.operation".into(),
             operator: DetectionOperator::EqualsAny,
             values: vec![serde_json::json!("write")],
             sigma_field: "operation".into(),
         },
         DetectionIRMatcherV1 {
-            field_path: "subject.activity.path".into(),
+            field_path: "file.activity.path".into(),
             operator: DetectionOperator::EqualsAny,
             values: vec![serde_json::json!("/workspace/secret.txt")],
             sigma_field: "path".into(),
         },
         DetectionIRMatcherV1 {
-            field_path: "subject.activity.path_class".into(),
+            field_path: "file.activity.path_class".into(),
             operator: DetectionOperator::EqualsAny,
             values: vec![serde_json::json!("workspace")],
             sigma_field: "path_class".into(),
@@ -372,7 +436,7 @@ fn detection_ir_lowers_file_path_to_policy_context_roots() {
 #[test]
 fn detection_ir_lowering_rejects_unsupported_runtime_field_paths() {
     let mut ir = parse_detection_ir_v1_json(&fixture("detection-ir-v1-valid.json")).unwrap();
-    ir.rules[0].matchers[0].field_path = "subject.request.raw.unsupported".into();
+    ir.rules[0].matchers[0].field_path = "http.request.raw.unsupported".into();
 
     let error = compile_detection_ir_to_cel_detection_rules(&ir).unwrap_err();
 

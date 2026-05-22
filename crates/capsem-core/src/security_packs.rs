@@ -296,17 +296,18 @@ impl From<Confidence> for capsem_security_engine::Confidence {
 }
 
 fn runtime_cel_path(event_family: EventFamily, field_path: &str) -> Result<String> {
+    let root = event_family_policy_root(event_family)?;
     let Some((scope, suffix)) = field_path
-        .strip_prefix("subject.request.")
+        .strip_prefix(&format!("{root}.request."))
         .map(|suffix| ("request", suffix))
         .or_else(|| {
             field_path
-                .strip_prefix("subject.response.")
+                .strip_prefix(&format!("{root}.response."))
                 .map(|suffix| ("response", suffix))
         })
         .or_else(|| {
             field_path
-                .strip_prefix("subject.activity.")
+                .strip_prefix(&format!("{root}.activity."))
                 .map(|suffix| ("activity", suffix))
         })
     else {
@@ -317,26 +318,28 @@ fn runtime_cel_path(event_family: EventFamily, field_path: &str) -> Result<Strin
         return Err(unsupported_field_path(field_path));
     }
 
-    let root = match event_family {
-        EventFamily::Dns => "dns",
-        EventFamily::Http => "http",
-        EventFamily::Mcp => "mcp",
-        EventFamily::Model => "model",
-        EventFamily::File => "file",
-        EventFamily::Process => "process",
-        EventFamily::Profile => "profile",
-        EventFamily::Credential | EventFamily::Vm | EventFamily::Conversation => {
-            return Err(unsupported_field_path(field_path));
-        }
-    };
-
     let canonical_suffix = match (event_family, scope, suffix) {
-        (EventFamily::Http, "request", "request_bytes") => "bytes",
-        (EventFamily::Http, "response", "response_bytes") => "bytes",
         _ => suffix,
     };
 
     Ok(format!("{root}.{scope}.{canonical_suffix}"))
+}
+
+fn event_family_policy_root(event_family: EventFamily) -> Result<&'static str> {
+    match event_family {
+        EventFamily::Dns => Ok("dns"),
+        EventFamily::Http => Ok("http"),
+        EventFamily::Mcp => Ok("mcp"),
+        EventFamily::Model => Ok("model"),
+        EventFamily::File => Ok("file"),
+        EventFamily::Process => Ok("process"),
+        EventFamily::Profile => Ok("profile"),
+        EventFamily::Credential | EventFamily::Vm | EventFamily::Conversation => {
+            Err(SecurityPackSchemaError::UnsupportedDetectionIr(format!(
+                "unsupported Detection IR event family {event_family:?} for CEL lowering"
+            )))
+        }
+    }
 }
 
 fn event_family_cel_guard(event_family: EventFamily) -> Result<String> {
@@ -367,9 +370,9 @@ fn is_supported_runtime_field(event_family: EventFamily, scope: &str, suffix: &s
             EventFamily::Http,
             "request",
             "method" | "scheme" | "host" | "port" | "path" | "query" | "url" | "path_class"
-            | "request_bytes" | "body.text",
+            | "bytes" | "body.text",
         ) => true,
-        (EventFamily::Http, "response", "status" | "response_bytes" | "body.text") => true,
+        (EventFamily::Http, "response", "status" | "bytes" | "body.text") => true,
         (EventFamily::Mcp, "request", "server_id" | "tool_name") => true,
         (
             EventFamily::Model,
@@ -591,8 +594,36 @@ fn evaluate_rule(
 }
 
 fn event_field_value<'a>(event_value: &'a Value, field_path: &str) -> Option<&'a Value> {
+    if let Some(canonical_value) = canonical_event_field_value(event_value, field_path) {
+        return Some(canonical_value);
+    }
     let mut current = event_value;
     for part in field_path.split('.') {
+        current = current.get(part)?;
+    }
+    Some(current)
+}
+
+fn canonical_event_field_value<'a>(event_value: &'a Value, field_path: &str) -> Option<&'a Value> {
+    let event_family = event_value.get("event_family")?.as_str()?;
+    let Some((scope, suffix)) = field_path
+        .strip_prefix(&format!("{event_family}.request."))
+        .map(|suffix| ("request", suffix))
+        .or_else(|| {
+            field_path
+                .strip_prefix(&format!("{event_family}.response."))
+                .map(|suffix| ("response", suffix))
+        })
+        .or_else(|| {
+            field_path
+                .strip_prefix(&format!("{event_family}.activity."))
+                .map(|suffix| ("activity", suffix))
+        })
+    else {
+        return None;
+    };
+    let mut current = event_value.get("subject")?.get(scope)?;
+    for part in suffix.split('.') {
         current = current.get(part)?;
     }
     Some(current)

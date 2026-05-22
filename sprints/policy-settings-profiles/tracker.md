@@ -1853,6 +1853,20 @@ a valid claim -- mark it `[ ]` instead.
     construction preserved the value under the canonical key. Still missing in
     S08c: detection expected-row parity in Rust/admin, policy compile/full CEL
     parity for offline admin, real-session fixtures, and workflow docs.
+    Fifth Rust-detection-parity slice added the compiled Detection IR artifact
+    for the shared Sigma corpus under `data/detection/ir/`, switched the Rust
+    Detection IR fixture from legacy `subject.request.*` to canonical
+    `http.request.*`, and made CEL lowering reject legacy `subject.*` fields.
+    Rust now evaluates the canonical Detection IR against the shared
+    policy-context corpus and compares the produced detection-check report to
+    `data/detection/backtest-expected/google-secret-egress.json`.
+    Verification: `cargo test -p capsem-core --test security_packs` passed
+    with **12** tests, including canonical Detection IR expected-artifact
+    parity and legacy subject-path rejection; `cargo test -p
+    capsem-security-engine` still passed with **40** tests. Still missing in
+    S08c: policy compile/full CEL parity for offline admin, real-session
+    fixtures from the resolved-event journal, corpus workflow docs, and broader
+    expected outputs for hunt/backtest diversity.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

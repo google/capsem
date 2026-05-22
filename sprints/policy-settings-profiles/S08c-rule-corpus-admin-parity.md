@@ -142,6 +142,11 @@ session-scoped enforcement replay, it should be named and designed separately.
   `data/enforcement/backtest-expected/http-google-secret.json`. The red pass
   caught header-case drift between fixture storage and canonical evidence keys,
   which is exactly the class of mismatch this corpus is meant to pin.
+- Slice 5 added the compiled Detection IR artifact for the shared Sigma
+  corpus under `data/detection/ir/`, made Rust Detection IR lowering require
+  canonical policy roots such as `http.request.host` instead of legacy
+  `subject.request.host`, and pinned the admin detection backtest expected
+  artifact from Rust.
 
 ## Coverage Ledger
 
@@ -149,12 +154,13 @@ session-scoped enforcement replay, it should be named and designed separately.
   enforcement/detection/event fixtures; first admin policy and detection
   backtest reports compare against committed expected-result JSON artifacts.
 - Functional: admin offline backtest and Rust runtime backtest produce the same
-  matched event refs, decisions/findings, and counts. This is partially proven
-  for canonical root acceptance and detection IR; full expected-row parity is
-  still open.
+  matched event refs, decisions/findings, and counts. This is proven for the
+  first synthetic enforcement and detection corpus; broader corpus diversity
+  and real-session rows remain open.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
   duplicate rule ids, mismatched expected labels, internal `event.*` /
-  `subject.*` authoring, and evidence-dedup behavior.
+  `subject.*` authoring, legacy Detection IR `subject.*` paths, and
+  evidence-dedup behavior.
 - E2E/VM or integration: real-session fixture generation after S08b journal
   lands; no live VM dependency for every corpus test.
 - Telemetry/observability: backtest reports include event refs and full local
