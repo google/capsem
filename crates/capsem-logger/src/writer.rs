@@ -2,13 +2,16 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
-use capsem_proto::metrics::{VmMetricsSnapshot, VmSecurityMetrics};
+use capsem_proto::metrics::{
+    VmDnsMetrics, VmFilesystemMetrics, VmHttpMetrics, VmMcpMetrics, VmMetricsSnapshot,
+    VmModelMetrics, VmProcessMetrics, VmSecurityMetrics,
+};
 use capsem_security_engine::{
     AiApiFamily, AiAttributionScope, AiContentBlock, AiContentKind, AiOriginKind, AiProvider,
     AiUsageEvidence, ArgumentsStatus, Confidence, Enforceability, EventFamily, EvidenceStatus,
     LinkStatus, ModelInteractionEvidence, ParseStatus, RedactionState, ResolvedEventStepKind,
-    ResolvedSecurityEvent, SecurityAction, Severity, SourceEngine, StepStatus, ToolCallStatus,
-    ToolOrigin,
+    ResolvedSecurityEvent, SecurityAction, SecurityEventSubject, Severity, SourceEngine,
+    StepStatus, ToolCallStatus, ToolOrigin,
 };
 use rusqlite::{params, Connection};
 use tracing::warn;
@@ -457,7 +460,7 @@ impl DbWriter {
         captured_at_unix_ms: u64,
     ) -> VmMetricsSnapshot {
         let mut snapshot = VmMetricsSnapshot::empty(vm_id, persistent, captured_at_unix_ms);
-        snapshot.security = self.metrics.snapshot();
+        self.metrics.apply_snapshot(&mut snapshot);
         snapshot
     }
 }
@@ -465,24 +468,55 @@ impl DbWriter {
 #[derive(Default)]
 struct VmMetricsAccumulator {
     security: std::sync::Mutex<VmSecurityMetrics>,
+    http: std::sync::Mutex<VmHttpMetrics>,
+    dns: std::sync::Mutex<VmDnsMetrics>,
+    model: std::sync::Mutex<VmModelMetrics>,
+    mcp: std::sync::Mutex<VmMcpMetrics>,
+    filesystem: std::sync::Mutex<VmFilesystemMetrics>,
+    process: std::sync::Mutex<VmProcessMetrics>,
 }
 
 impl VmMetricsAccumulator {
-    fn update_for_write_op(&self, op: &WriteOp) -> Option<VmSecurityMetricsUpdate> {
+    fn update_for_write_op(&self, op: &WriteOp) -> Option<VmMetricsUpdate> {
         match op {
-            WriteOp::ResolvedSecurityEvent(event) => Some(VmSecurityMetricsUpdate::from(event)),
+            WriteOp::ResolvedSecurityEvent(event) => VmMetricsUpdate::from_resolved_event(event),
             _ => None,
         }
     }
 
-    fn record_security_update(&self, update: VmSecurityMetricsUpdate) {
+    fn record_security_update(&self, update: VmMetricsUpdate) {
+        if let Some(http_update) = update.http {
+            let mut http = self.http.lock().unwrap();
+            add_http_metrics(&mut http, &http_update);
+        }
+        if let Some(dns_update) = update.dns {
+            let mut dns = self.dns.lock().unwrap();
+            add_dns_metrics(&mut dns, &dns_update);
+        }
+        if let Some(model_update) = update.model {
+            let mut model = self.model.lock().unwrap();
+            add_model_metrics(&mut model, &model_update);
+        }
+        if let Some(mcp_update) = update.mcp {
+            let mut mcp = self.mcp.lock().unwrap();
+            add_mcp_metrics(&mut mcp, &mcp_update);
+        }
+        if let Some(filesystem_update) = update.filesystem {
+            let mut filesystem = self.filesystem.lock().unwrap();
+            add_filesystem_metrics(&mut filesystem, &filesystem_update);
+        }
+        if let Some(process_update) = update.process {
+            let mut process = self.process.lock().unwrap();
+            add_process_metrics(&mut process, &process_update);
+        }
+
         let mut security = self.security.lock().unwrap();
-        security.security_events_total += 1;
-        if update.has_enforcement_decision {
+        security.security_events_total += update.security.event_count;
+        if update.security.has_enforcement_decision {
             security.enforcement_decisions_total += 1;
         }
-        security.detection_findings_total += update.detection_finding_count;
-        match update.final_action {
+        security.detection_findings_total += update.security.detection_finding_count;
+        match update.security.final_action {
             VmSecurityActionMetric::Block {
                 event_id,
                 rule_id,
@@ -501,7 +535,7 @@ impl VmMetricsAccumulator {
             VmSecurityActionMetric::Error => security.errors_total += 1,
             VmSecurityActionMetric::Other => {}
         }
-        if let Some(detection) = update.latest_detection {
+        if let Some(detection) = update.security.latest_detection {
             security.latest_detection_event_id = Some(detection.event_id);
             security.latest_detection_rule_id = Some(detection.rule_id);
             security.latest_detection_title = Some(detection.title);
@@ -510,12 +544,133 @@ impl VmMetricsAccumulator {
         }
     }
 
-    fn snapshot(&self) -> VmSecurityMetrics {
-        self.security.lock().unwrap().clone()
+    fn apply_snapshot(&self, snapshot: &mut VmMetricsSnapshot) {
+        snapshot.http = self.http.lock().unwrap().clone();
+        snapshot.dns = self.dns.lock().unwrap().clone();
+        snapshot.model = self.model.lock().unwrap().clone();
+        snapshot.mcp = self.mcp.lock().unwrap().clone();
+        snapshot.filesystem = self.filesystem.lock().unwrap().clone();
+        snapshot.process = self.process.lock().unwrap().clone();
+        snapshot.security = self.security.lock().unwrap().clone();
     }
 }
 
+#[derive(Default)]
+struct VmMetricsUpdate {
+    security: VmSecurityMetricsUpdate,
+    http: Option<VmHttpMetrics>,
+    dns: Option<VmDnsMetrics>,
+    model: Option<VmModelMetrics>,
+    mcp: Option<VmMcpMetrics>,
+    filesystem: Option<VmFilesystemMetrics>,
+    process: Option<VmProcessMetrics>,
+}
+
+impl VmMetricsUpdate {
+    fn from_resolved_event(event: &ResolvedSecurityEvent) -> Option<Self> {
+        if event.event.common.attribution_scope != AiAttributionScope::Vm {
+            return None;
+        }
+
+        let mut update = Self {
+            security: VmSecurityMetricsUpdate::from(event),
+            ..Self::default()
+        };
+        match &event.event.subject {
+            SecurityEventSubject::Http(subject) => {
+                let mut http = VmHttpMetrics {
+                    http_requests_total: 1,
+                    http_bytes_sent_total: subject.request_bytes,
+                    http_bytes_received_total: subject.response_bytes.unwrap_or_default(),
+                    ..VmHttpMetrics::default()
+                };
+                record_http_decision(&mut http, &event.final_action);
+                update.http = Some(http);
+            }
+            SecurityEventSubject::Dns(_) => {
+                let mut dns = VmDnsMetrics {
+                    dns_queries_total: 1,
+                    ..VmDnsMetrics::default()
+                };
+                record_dns_decision(&mut dns, &event.final_action);
+                update.dns = Some(dns);
+            }
+            SecurityEventSubject::Model(subject) => {
+                let mut model = VmModelMetrics {
+                    model_requests_total: 1,
+                    model_input_tokens_total: subject.estimated_input_tokens.unwrap_or_default(),
+                    model_output_tokens_total: subject.estimated_output_tokens.unwrap_or_default(),
+                    model_estimated_cost_micros_total: subject
+                        .estimated_cost_micros
+                        .unwrap_or_default(),
+                    ..VmModelMetrics::default()
+                };
+                record_model_decision(&mut model, &event.final_action);
+                update.model = Some(model);
+            }
+            SecurityEventSubject::Mcp(_) => {
+                let mut mcp = VmMcpMetrics {
+                    mcp_tool_invocations_total: 1,
+                    ..VmMcpMetrics::default()
+                };
+                record_mcp_decision(&mut mcp, &event.final_action);
+                update.mcp = Some(mcp);
+            }
+            SecurityEventSubject::File(subject) => {
+                let mut filesystem = VmFilesystemMetrics::default();
+                match subject.operation.as_str() {
+                    "read" => {
+                        filesystem.fs_reads_total = 1;
+                        filesystem.fs_bytes_read_total = subject.byte_count.unwrap_or_default();
+                    }
+                    "write" | "modify" | "modified" => {
+                        filesystem.fs_writes_total = 1;
+                        filesystem.fs_bytes_written_total = subject.byte_count.unwrap_or_default();
+                    }
+                    "create" | "created" => {
+                        filesystem.fs_creates_total = 1;
+                        filesystem.fs_bytes_written_total = subject.byte_count.unwrap_or_default();
+                    }
+                    "delete" | "deleted" => filesystem.fs_deletes_total = 1,
+                    "restore" | "restored" => {
+                        filesystem.fs_restores_total = 1;
+                        filesystem.fs_bytes_written_total = subject.byte_count.unwrap_or_default();
+                    }
+                    _ => {}
+                }
+                if matches!(event.final_action, SecurityAction::Error(_)) {
+                    filesystem.fs_errors_total = 1;
+                }
+                update.filesystem = Some(filesystem);
+            }
+            SecurityEventSubject::Process(subject) => {
+                let mut process = VmProcessMetrics {
+                    process_events_total: 1,
+                    ..VmProcessMetrics::default()
+                };
+                match subject.operation.as_str() {
+                    "exec" => process.process_exec_total = 1,
+                    "audit" => process.process_audit_total = 1,
+                    _ => {}
+                }
+                if matches!(event.final_action, SecurityAction::Error(_)) {
+                    process.process_errors_total = 1;
+                }
+                update.process = Some(process);
+            }
+            SecurityEventSubject::Credential(_)
+            | SecurityEventSubject::VmLifecycle(_)
+            | SecurityEventSubject::Profile(_)
+            | SecurityEventSubject::Conversation(_)
+            | SecurityEventSubject::Snapshot(_) => {}
+        }
+        Some(update)
+    }
+}
+
+#[derive(Default)]
 struct VmSecurityMetricsUpdate {
+    event_count: u64,
     has_enforcement_decision: bool,
     detection_finding_count: u64,
     final_action: VmSecurityActionMetric,
@@ -548,6 +703,7 @@ impl From<&ResolvedSecurityEvent> for VmSecurityMetricsUpdate {
                 timestamp_unix_ms: event.event.common.timestamp_unix_ms,
             });
         Self {
+            event_count: 1,
             has_enforcement_decision: event.event.decision.is_some(),
             detection_finding_count: event.detection_findings.len() as u64,
             final_action,
@@ -576,6 +732,131 @@ struct VmDetectionMetric {
     title: String,
     severity: String,
     timestamp_unix_ms: u64,
+}
+
+impl Default for VmSecurityActionMetric {
+    fn default() -> Self {
+        Self::Other
+    }
+}
+
+fn record_http_decision(http: &mut VmHttpMetrics, action: &SecurityAction) {
+    match action_metric_bucket(action) {
+        VmDecisionMetricBucket::Allowed => http.http_requests_allowed_total += 1,
+        VmDecisionMetricBucket::Warned => http.http_requests_warned_total += 1,
+        VmDecisionMetricBucket::Denied => http.http_requests_denied_total += 1,
+        VmDecisionMetricBucket::Errored => http.http_requests_errored_total += 1,
+    }
+}
+
+fn record_dns_decision(dns: &mut VmDnsMetrics, action: &SecurityAction) {
+    match action {
+        SecurityAction::Rewrite(_) => dns.dns_queries_rewritten_total += 1,
+        _ => match action_metric_bucket(action) {
+            VmDecisionMetricBucket::Allowed => dns.dns_queries_allowed_total += 1,
+            VmDecisionMetricBucket::Warned => dns.dns_queries_warned_total += 1,
+            VmDecisionMetricBucket::Denied => dns.dns_queries_denied_total += 1,
+            VmDecisionMetricBucket::Errored => dns.dns_queries_errored_total += 1,
+        },
+    }
+}
+
+fn record_model_decision(model: &mut VmModelMetrics, action: &SecurityAction) {
+    match action_metric_bucket(action) {
+        VmDecisionMetricBucket::Allowed => model.model_requests_allowed_total += 1,
+        VmDecisionMetricBucket::Warned => model.model_requests_warned_total += 1,
+        VmDecisionMetricBucket::Denied => model.model_requests_denied_total += 1,
+        VmDecisionMetricBucket::Errored => model.model_requests_errored_total += 1,
+    }
+}
+
+fn record_mcp_decision(mcp: &mut VmMcpMetrics, action: &SecurityAction) {
+    match action_metric_bucket(action) {
+        VmDecisionMetricBucket::Allowed => mcp.mcp_tool_invocations_allowed_total += 1,
+        VmDecisionMetricBucket::Warned => mcp.mcp_tool_invocations_warned_total += 1,
+        VmDecisionMetricBucket::Denied => mcp.mcp_tool_invocations_denied_total += 1,
+        VmDecisionMetricBucket::Errored => mcp.mcp_tool_invocations_errored_total += 1,
+    }
+}
+
+enum VmDecisionMetricBucket {
+    Allowed,
+    Warned,
+    Denied,
+    Errored,
+}
+
+fn action_metric_bucket(action: &SecurityAction) -> VmDecisionMetricBucket {
+    match action {
+        SecurityAction::Continue | SecurityAction::ObserveOnly => VmDecisionMetricBucket::Allowed,
+        SecurityAction::Ask(_) | SecurityAction::Rewrite(_) | SecurityAction::Throttle(_) => {
+            VmDecisionMetricBucket::Warned
+        }
+        SecurityAction::Block(_)
+        | SecurityAction::Quarantine(_)
+        | SecurityAction::Restore(_)
+        | SecurityAction::DropConnection(_) => VmDecisionMetricBucket::Denied,
+        SecurityAction::Error(_) => VmDecisionMetricBucket::Errored,
+    }
+}
+
+fn add_http_metrics(total: &mut VmHttpMetrics, delta: &VmHttpMetrics) {
+    total.http_requests_total += delta.http_requests_total;
+    total.http_requests_allowed_total += delta.http_requests_allowed_total;
+    total.http_requests_warned_total += delta.http_requests_warned_total;
+    total.http_requests_denied_total += delta.http_requests_denied_total;
+    total.http_requests_errored_total += delta.http_requests_errored_total;
+    total.http_bytes_sent_total += delta.http_bytes_sent_total;
+    total.http_bytes_received_total += delta.http_bytes_received_total;
+}
+
+fn add_dns_metrics(total: &mut VmDnsMetrics, delta: &VmDnsMetrics) {
+    total.dns_queries_total += delta.dns_queries_total;
+    total.dns_queries_allowed_total += delta.dns_queries_allowed_total;
+    total.dns_queries_warned_total += delta.dns_queries_warned_total;
+    total.dns_queries_denied_total += delta.dns_queries_denied_total;
+    total.dns_queries_rewritten_total += delta.dns_queries_rewritten_total;
+    total.dns_queries_errored_total += delta.dns_queries_errored_total;
+}
+
+fn add_model_metrics(total: &mut VmModelMetrics, delta: &VmModelMetrics) {
+    total.model_requests_total += delta.model_requests_total;
+    total.model_requests_allowed_total += delta.model_requests_allowed_total;
+    total.model_requests_warned_total += delta.model_requests_warned_total;
+    total.model_requests_denied_total += delta.model_requests_denied_total;
+    total.model_requests_errored_total += delta.model_requests_errored_total;
+    total.model_input_tokens_total += delta.model_input_tokens_total;
+    total.model_output_tokens_total += delta.model_output_tokens_total;
+    total.model_estimated_cost_micros_total += delta.model_estimated_cost_micros_total;
+}
+
+fn add_mcp_metrics(total: &mut VmMcpMetrics, delta: &VmMcpMetrics) {
+    total.mcp_tool_invocations_total += delta.mcp_tool_invocations_total;
+    total.mcp_tool_invocations_allowed_total += delta.mcp_tool_invocations_allowed_total;
+    total.mcp_tool_invocations_warned_total += delta.mcp_tool_invocations_warned_total;
+    total.mcp_tool_invocations_denied_total += delta.mcp_tool_invocations_denied_total;
+    total.mcp_tool_invocations_errored_total += delta.mcp_tool_invocations_errored_total;
+    total.mcp_servers_connected_total += delta.mcp_servers_connected_total;
+    total.mcp_servers_disconnected_total += delta.mcp_servers_disconnected_total;
+    total.mcp_server_errors_total += delta.mcp_server_errors_total;
+}
+
+fn add_filesystem_metrics(total: &mut VmFilesystemMetrics, delta: &VmFilesystemMetrics) {
+    total.fs_reads_total += delta.fs_reads_total;
+    total.fs_writes_total += delta.fs_writes_total;
+    total.fs_creates_total += delta.fs_creates_total;
+    total.fs_deletes_total += delta.fs_deletes_total;
+    total.fs_restores_total += delta.fs_restores_total;
+    total.fs_errors_total += delta.fs_errors_total;
+    total.fs_bytes_read_total += delta.fs_bytes_read_total;
+    total.fs_bytes_written_total += delta.fs_bytes_written_total;
+}
+
+fn add_process_metrics(total: &mut VmProcessMetrics, delta: &VmProcessMetrics) {
+    total.process_events_total += delta.process_events_total;
+    total.process_exec_total += delta.process_exec_total;
+    total.process_audit_total += delta.process_audit_total;
+    total.process_errors_total += delta.process_errors_total;
 }
 
 impl Drop for DbWriter {

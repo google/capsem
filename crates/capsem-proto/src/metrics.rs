@@ -15,6 +15,7 @@ pub struct VmMetricsSnapshot {
     pub model: VmModelMetrics,
     pub mcp: VmMcpMetrics,
     pub filesystem: VmFilesystemMetrics,
+    pub process: VmProcessMetrics,
     pub security: VmSecurityMetrics,
     pub captured_at_unix_ms: u64,
 }
@@ -33,6 +34,7 @@ impl VmMetricsSnapshot {
             model: VmModelMetrics::default(),
             mcp: VmMcpMetrics::default(),
             filesystem: VmFilesystemMetrics::default(),
+            process: VmProcessMetrics::default(),
             security: VmSecurityMetrics::default(),
             captured_at_unix_ms,
         }
@@ -146,6 +148,14 @@ pub struct VmFilesystemMetrics {
     pub fs_errors_total: u64,
     pub fs_bytes_read_total: u64,
     pub fs_bytes_written_total: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct VmProcessMetrics {
+    pub process_events_total: u64,
+    pub process_exec_total: u64,
+    pub process_audit_total: u64,
+    pub process_errors_total: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]

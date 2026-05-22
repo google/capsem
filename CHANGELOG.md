@@ -147,6 +147,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream, including security event counts, block counts, detection counts,
   latest block, and latest detection surfaced through process metrics snapshots
   and service list/info responses.
+- Added live VM status counters for canonical HTTP, DNS, model, MCP, file, and
+  process security events, with host-attributed model events excluded from VM
+  token/cost accounting.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without

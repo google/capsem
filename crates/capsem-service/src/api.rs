@@ -140,7 +140,15 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub denied_requests: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_dns_queries: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub denied_dns_queries: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_file_events: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_event_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_exec_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -205,7 +213,11 @@ impl SandboxInfo {
             total_requests: None,
             allowed_requests: None,
             denied_requests: None,
+            total_dns_queries: None,
+            denied_dns_queries: None,
             total_file_events: None,
+            process_event_count: None,
+            process_exec_count: None,
             model_call_count: None,
             security_events_total: None,
             enforcement_decisions_total: None,

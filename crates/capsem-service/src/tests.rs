@@ -1797,6 +1797,21 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
     let mut info = SandboxInfo::new("vm-metrics".into(), 123, "Running".into(), true);
     let mut snapshot =
         capsem_proto::metrics::VmMetricsSnapshot::empty("vm-metrics", true, 1_700_000_123_000);
+    snapshot.http.http_requests_total = 5;
+    snapshot.http.http_requests_allowed_total = 4;
+    snapshot.http.http_requests_denied_total = 1;
+    snapshot.dns.dns_queries_total = 7;
+    snapshot.dns.dns_queries_denied_total = 2;
+    snapshot.model.model_requests_total = 3;
+    snapshot.model.model_input_tokens_total = 11;
+    snapshot.model.model_output_tokens_total = 29;
+    snapshot.model.model_estimated_cost_micros_total = 1_250_000;
+    snapshot.mcp.mcp_tool_invocations_total = 6;
+    snapshot.filesystem.fs_reads_total = 1;
+    snapshot.filesystem.fs_writes_total = 2;
+    snapshot.filesystem.fs_deletes_total = 3;
+    snapshot.process.process_events_total = 8;
+    snapshot.process.process_exec_total = 4;
     snapshot.security.security_events_total = 9;
     snapshot.security.enforcement_decisions_total = 4;
     snapshot.security.detection_findings_total = 3;
@@ -1811,6 +1826,19 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
 
     attach_metrics_snapshot(&mut info, &snapshot);
 
+    assert_eq!(info.total_requests, Some(5));
+    assert_eq!(info.allowed_requests, Some(4));
+    assert_eq!(info.denied_requests, Some(1));
+    assert_eq!(info.total_dns_queries, Some(7));
+    assert_eq!(info.denied_dns_queries, Some(2));
+    assert_eq!(info.model_call_count, Some(3));
+    assert_eq!(info.total_input_tokens, Some(11));
+    assert_eq!(info.total_output_tokens, Some(29));
+    assert_eq!(info.total_estimated_cost, Some(1.25));
+    assert_eq!(info.total_mcp_calls, Some(6));
+    assert_eq!(info.total_file_events, Some(6));
+    assert_eq!(info.process_event_count, Some(8));
+    assert_eq!(info.process_exec_count, Some(4));
     assert_eq!(info.security_events_total, Some(9));
     assert_eq!(info.enforcement_decisions_total, Some(4));
     assert_eq!(info.detection_findings_total, Some(3));

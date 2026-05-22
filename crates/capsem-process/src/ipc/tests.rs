@@ -75,6 +75,7 @@ fn metrics_snapshot_is_process_owned_and_versioned() {
     );
     assert_eq!(snapshot.lifecycle.state, "unknown");
     assert_eq!(snapshot.ask.total_asks, 0);
+    assert_eq!(snapshot.process.process_events_total, 0);
     assert_eq!(snapshot.security.security_events_total, 0);
     assert!(snapshot.captured_at_unix_ms > 0);
 }

@@ -1363,6 +1363,27 @@ a valid claim -- mark it `[ ]` instead.
     Engine enforcement/detection, visible UI screens/editors,
     persistence/profile-pack seeding, S12 OTel/prometheus export, and S08d
     performance proof.
+    Fifty-eighth TDD status-metrics slice fed the non-security VM health
+    counters from the same canonical resolved-event stream. `DbWriter` now
+    derives HTTP request/byte totals, DNS query decisions, VM-scoped model
+    request/token/cost totals, MCP invocation decisions, filesystem operation
+    counts/bytes, and process exec counts from accepted VM-attributed
+    `ResolvedSecurityEvent` writes; host-attributed model events are
+    intentionally excluded from VM accounting. `VmMetricsSnapshot` now carries
+    a typed process bucket, and service list/info projection exposes DNS and
+    process counters alongside the existing HTTP/model/MCP/file/security
+    fields. Verification: red `cargo test -p capsem-logger
+    writer_metrics_snapshot_counts_canonical_vm_event_families --lib` first,
+    then that test passed; `cargo test -p capsem-proto --lib` **166** passed,
+    `cargo test -p capsem-logger --lib` **104** passed, `cargo test -p
+    capsem-process metrics_snapshot` **2** passed, `cargo test -p
+    capsem-process` **106** passed, `cargo test -p capsem-service
+    attach_metrics_snapshot_projects_security_status_fields --bin
+    capsem-service` passed, and `perl -e 'alarm 180; exec @ARGV' cargo test
+    -p capsem-service --bin capsem-service` **204** passed. Still missing
+    after this slice: live Process Engine enforcement/detection, persistent-VM
+    accumulator seeding from session.db on process load, visible UI
+    screens/editors, S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

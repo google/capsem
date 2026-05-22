@@ -4,9 +4,10 @@ use super::*;
 use std::collections::BTreeMap;
 
 use capsem_security_engine::{
-    BlockResponse, DetectionFinding, HttpBodySecuritySubject, HttpSecuritySubject,
-    ResolvedEventStep, SecurityEvent, SecurityEventCommon, TraceHistoryEntry,
-    RESOLVED_EVENT_SCHEMA_VERSION,
+    BlockResponse, DetectionFinding, DnsSecuritySubject, FileSecuritySubject,
+    HttpBodySecuritySubject, HttpSecuritySubject, McpSecuritySubject, ModelSecuritySubject,
+    ProcessSecuritySubject, ResolvedEventStep, SecurityEvent, SecurityEventCommon,
+    TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 use serde::Serialize;
 
@@ -243,6 +244,189 @@ fn security_common(event_id: &str) -> SecurityEventCommon {
         event_type: "http.request".to_string(),
         redaction_state: RedactionState::Raw,
     }
+}
+
+fn family_common(
+    event_id: &str,
+    event_type: &str,
+    source_engine: SourceEngine,
+    attribution_scope: AiAttributionScope,
+    vm_id: Option<&str>,
+) -> SecurityEventCommon {
+    let mut common = security_common(event_id);
+    common.event_type = event_type.to_string();
+    common.source_engine = source_engine;
+    common.attribution_scope = attribution_scope;
+    common.vm_id = vm_id.map(str::to_string);
+    common
+}
+
+fn resolved_event(event: SecurityEvent, final_action: SecurityAction) -> ResolvedSecurityEvent {
+    ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event,
+        steps: Vec::new(),
+        plugin_transforms: Vec::new(),
+        detection_findings: Vec::new(),
+        final_action,
+        emitter_results: Vec::new(),
+    }
+}
+
+fn resolved_http_event(
+    event_id: &str,
+    request_bytes: u64,
+    response_bytes: Option<u64>,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::http(
+            family_common(
+                event_id,
+                "http.request",
+                SourceEngine::Network,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            HttpSecuritySubject {
+                method: "GET".into(),
+                scheme: Some("https".into()),
+                host: "api.example.com".into(),
+                port: Some(443),
+                path: Some("/v1".into()),
+                query: None,
+                url: Some("https://api.example.com/v1".into()),
+                path_class: "api".into(),
+                request_bytes,
+                request_headers: BTreeMap::new(),
+                request_body: None,
+                response_status: Some(200),
+                response_headers: BTreeMap::new(),
+                response_bytes,
+                response_body: None,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_dns_event(event_id: &str, final_action: SecurityAction) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::dns(
+            family_common(
+                event_id,
+                "dns.request",
+                SourceEngine::Network,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            DnsSecuritySubject {
+                qname: "blocked.example".into(),
+                domain_class: "external".into(),
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_model_event(
+    event_id: &str,
+    attribution_scope: AiAttributionScope,
+    vm_id: Option<&str>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cost_micros: Option<u64>,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::model(
+            family_common(
+                event_id,
+                "model.request",
+                SourceEngine::HostAi,
+                attribution_scope,
+                vm_id,
+            ),
+            ModelSecuritySubject {
+                provider: "google_gemini".into(),
+                model: "gemini-2.5-pro".into(),
+                estimated_input_tokens: input_tokens,
+                estimated_output_tokens: output_tokens,
+                estimated_cost_micros: cost_micros,
+                evidence: None,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_mcp_event(event_id: &str, final_action: SecurityAction) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::mcp(
+            family_common(
+                event_id,
+                "mcp.request",
+                SourceEngine::Network,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            McpSecuritySubject {
+                server_id: "filesystem".into(),
+                tool_name: "read_file".into(),
+                evidence: None,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_file_event(
+    event_id: &str,
+    operation: &str,
+    byte_count: Option<u64>,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::file(
+            family_common(
+                event_id,
+                &format!("file.{operation}"),
+                SourceEngine::File,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            FileSecuritySubject {
+                operation: operation.into(),
+                path: Some("/workspace/data.txt".into()),
+                path_class: "workspace".into(),
+                byte_count,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_process_event(
+    event_id: &str,
+    operation: &str,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::process(
+            family_common(
+                event_id,
+                &format!("process.{operation}"),
+                SourceEngine::Process,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            ProcessSecuritySubject {
+                operation: operation.into(),
+                command_class: Some("shell".into()),
+            },
+        ),
+        final_action,
+    )
 }
 
 #[test]
@@ -549,6 +733,110 @@ fn writer_metrics_snapshot_counts_resolved_security_decisions_and_findings() {
         snapshot.security.latest_detection_rule_id.as_deref(),
         Some("detect.secret")
     );
+}
+
+#[test]
+fn writer_metrics_snapshot_counts_canonical_vm_event_families() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http",
+                100,
+                Some(250),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "dns denied".into(),
+                    rule_id: Some("dns.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_model_event(
+                "evt-model-vm",
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+                Some(11),
+                Some(29),
+                Some(700),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_model_event(
+                "evt-model-host",
+                AiAttributionScope::Host,
+                Some("vm-1"),
+                Some(1_000),
+                Some(2_000),
+                Some(9_000_000),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "tool denied".into(),
+                    rule_id: Some("mcp.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-write",
+                "write",
+                Some(64),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-delete",
+                "delete",
+                None,
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process",
+                "exec",
+                SecurityAction::Continue,
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.http.http_requests_total, 1);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 250);
+    assert_eq!(snapshot.dns.dns_queries_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.model.model_requests_total, 1);
+    assert_eq!(snapshot.model.model_requests_allowed_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 11);
+    assert_eq!(snapshot.model.model_output_tokens_total, 29);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 700);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.filesystem.fs_writes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_deletes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 64);
+    assert_eq!(snapshot.process.process_events_total, 1);
+    assert_eq!(snapshot.process.process_exec_total, 1);
+    assert_eq!(snapshot.security.security_events_total, 7);
 }
 
 #[test]

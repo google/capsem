@@ -2659,6 +2659,8 @@ fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot)
     info.total_requests = Some(snapshot.http.http_requests_total);
     info.allowed_requests = Some(snapshot.http.http_requests_allowed_total);
     info.denied_requests = Some(snapshot.http.http_requests_denied_total);
+    info.total_dns_queries = Some(snapshot.dns.dns_queries_total);
+    info.denied_dns_queries = Some(snapshot.dns.dns_queries_denied_total);
     info.total_input_tokens = Some(snapshot.model.model_input_tokens_total);
     info.total_output_tokens = Some(snapshot.model.model_output_tokens_total);
     info.total_estimated_cost =
@@ -2672,6 +2674,8 @@ fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot)
             + snapshot.filesystem.fs_deletes_total
             + snapshot.filesystem.fs_restores_total,
     );
+    info.process_event_count = Some(snapshot.process.process_events_total);
+    info.process_exec_count = Some(snapshot.process.process_exec_total);
     info.security_events_total = Some(snapshot.security.security_events_total);
     info.enforcement_decisions_total = Some(snapshot.security.enforcement_decisions_total);
     info.detection_findings_total = Some(snapshot.security.detection_findings_total);
