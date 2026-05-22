@@ -104,6 +104,46 @@ class TestProxyEndpointCoverage:
         resp = gw_client.post("/reload-config", {})
         assert resp is not None
 
+    def test_post_detection_hunt_session(self, gw_client):
+        """POST /sessions/{id}/detection/hunt preserves forensic evidence rows."""
+        resp = gw_client.post(
+            "/sessions/vm-001/detection/hunt",
+            {
+                "rules": [
+                    {
+                        "id": "detect-gateway",
+                        "pack_id": "runtime-detection",
+                        "title": "Gateway smoke",
+                        "condition": "http.request.host.contains('example')",
+                        "severity": "medium",
+                        "confidence": "high",
+                        "tags": ["gateway"],
+                        "enabled": True,
+                    }
+                ]
+            },
+        )
+        assert resp is not None
+        assert resp.get("total_matches") == 1
+        assert resp["rows"][0]["event_ref"]["corpus"] == "session_db"
+        assert resp["rows"][0]["matched_fields"][0]["path"] == "http.request.host"
+
+    def test_post_enforcement_validate(self, gw_client):
+        """POST /enforcement/validate forwards runtime enforcement validation."""
+        resp = gw_client.post(
+            "/enforcement/validate",
+            {
+                "id": "block-gateway",
+                "condition": "http.request.host.contains('example')",
+                "decision": "block",
+                "reason": "gateway smoke",
+                "enabled": True,
+            },
+        )
+        assert resp is not None
+        assert resp.get("compiled") is True
+        assert resp.get("id") == "block-gateway"
+
 
 class TestProxyEdgeCases:
 

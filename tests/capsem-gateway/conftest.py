@@ -547,6 +547,38 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 "reason": "mock ask",
                 "enforced": False,
             })
+        elif parsed.path == "/enforcement/validate":
+            data = json.loads(body) if body else {}
+            self._send_json({
+                "compiled": True,
+                "id": data.get("id", "block-gateway"),
+                "compiled_plan": "cel",
+            })
+        elif parsed.path.startswith("/sessions/") and parsed.path.endswith("/detection/hunt"):
+            data = json.loads(body) if body else {}
+            rule = (data.get("rules") or [{}])[0]
+            self._send_json({
+                "total_matches": 1,
+                "unique_evidence_matches": 1,
+                "truncated": False,
+                "rows": [{
+                    "event_ref": {
+                        "corpus": "session_db",
+                        "session_id": "vm-001",
+                        "event_id": "evt-gateway-hunt",
+                        "sequence_no": None,
+                        "timestamp_unix_ms": 1700000000000,
+                    },
+                    "rule_id": rule.get("id", "detect-gateway"),
+                    "pack_id": rule.get("pack_id", "runtime-detection"),
+                    "evidence_signature": "gateway-hunt-evidence",
+                    "matched_fields": [{
+                        "path": "http.request.host",
+                        "value": "example.test",
+                    }],
+                    "outcome": "matched",
+                }],
+            })
         elif self.clean_path.startswith("/exec/"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")

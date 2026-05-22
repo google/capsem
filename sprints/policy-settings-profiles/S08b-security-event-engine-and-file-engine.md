@@ -479,8 +479,17 @@ Implementation status as of the current service-route slices:
 - Detection hunt scope now landed: multiple candidate detection rules over a
   supplied typed `SecurityEvent` corpus, returning the same shared result row
   shape as backtest.
-- Still open: historical resolved-event/session journal source selection,
-  `/sessions/{id}/detection/hunt`, gateway/CLI/UI exposure,
+- Landed: historical resolved-event/session journal source selection for
+  `/sessions/{id}/detection/hunt`, with hand-built `session.db`
+  reconstruction across HTTP, DNS, MCP, model, file, process, snapshot, VM,
+  profile, and conversation events. Backtest/hunt evidence rows now expose
+  canonical common, HTTP, MCP, model tool-call/tool-result, file, process,
+  profile, conversation, and snapshot policy paths instead of opaque subject
+  blobs.
+- Landed: first HTTP gateway security-route proof for
+  `POST /enforcement/validate` and `POST /sessions/{id}/detection/hunt`
+  preserving forensic matched-field rows.
+- Still open: remaining gateway/CLI route breadth, visible UI exposure,
   persisted/profile-seeded rule plans, and VM/runtime cutover.
 
 ## Session Database Architecture
