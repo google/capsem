@@ -1483,6 +1483,23 @@ a valid claim -- mark it `[ ]` instead.
     `capsem logs` E2E for a process-rule block, visible UI screens/editors,
     ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Sixty-fourth TDD Process Engine log-serialization slice closed the next
+    debugging gap between the in-memory projection and the actual JSON line
+    written to `process.log`. The new test captures the same
+    `tracing_subscriber` JSON formatter shape used by production process logs,
+    emits a blocked `process.exec` resolved event through
+    `log_process_exec_security_decision`, and asserts the serialized
+    `security.process` entry carries the message, target, event identity,
+    attribution scope, final action, enforceability, operation,
+    command class, rule id, pack id, reason, exec id, MCP call id, trace id,
+    and finding count as first-class fields. Verification: `cargo test -p
+    capsem-process
+    process_exec_security_decision_tracing_line_serializes_debug_fields` **1**
+    passed; widened gates: `cargo test -p capsem-process` **110** passed,
+    `cargo fmt --all -- --check` passed, and `git diff --check` passed.
+    Still missing after this slice: real-VM `capsem logs` E2E for a
+    process-rule block, visible UI screens/editors, ask/confirm UX for process
+    decisions, S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

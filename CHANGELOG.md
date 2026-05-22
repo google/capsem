@@ -156,6 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added structured Process Engine decision logging for exec evaluation so
   `capsem logs <vm>` includes event ids, attribution, final action, rule/pack,
   reason, and process command class alongside the session database trail.
+- Added JSON serialization coverage for Process Engine decision logs so the
+  `security.process` fields that power `capsem logs` remain queryable.
 - Added live VM status security metrics from the canonical resolved-event
   stream, including security event counts, block counts, detection counts,
   latest block, and latest detection surfaced through process metrics snapshots

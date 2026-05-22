@@ -240,8 +240,8 @@ async fn blocked_exec_resolves_job_without_guest_dispatch_state() {
     }
 }
 
-#[test]
-fn process_exec_security_log_record_carries_attribution_rule_and_reason() {
+fn blocked_process_exec_evaluation(
+) -> capsem_core::process_security_events::ProcessExecSecurityEvaluation {
     use capsem_logger::ExecEvent;
     use capsem_security_engine::{
         CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
@@ -272,8 +272,12 @@ fn process_exec_security_log_record_carries_attribution_rule_and_reason() {
     ));
     let engine = std::sync::Mutex::new(engine);
 
-    let evaluation =
-        capsem_core::process_security_events::evaluate_exec_security_event(&event, Some(&engine));
+    capsem_core::process_security_events::evaluate_exec_security_event(&event, Some(&engine))
+}
+
+#[test]
+fn process_exec_security_log_record_carries_attribution_rule_and_reason() {
+    let evaluation = blocked_process_exec_evaluation();
     let record = process_exec_security_log_record(&evaluation.resolved_event);
 
     assert_eq!(record.event_type, "process.exec");
@@ -292,4 +296,65 @@ fn process_exec_security_log_record_carries_attribution_rule_and_reason() {
     assert_eq!(record.pack_id, Some("runtime-pack"));
     assert_eq!(record.reason, Some("shell exec blocked"));
     assert_eq!(record.finding_count, 0);
+}
+
+#[test]
+fn process_exec_security_decision_tracing_line_serializes_debug_fields() {
+    use std::io::{Result as IoResult, Write};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedWriter {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
+    let log_bytes = Arc::new(Mutex::new(Vec::new()));
+    let writer_bytes = log_bytes.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::INFO)
+        .with_writer(move || SharedWriter(writer_bytes.clone()))
+        .finish();
+    let dispatch = tracing::Dispatch::new(subscriber);
+    let evaluation = blocked_process_exec_evaluation();
+
+    tracing::dispatcher::with_default(&dispatch, || {
+        log_process_exec_security_decision(&evaluation.resolved_event);
+    });
+
+    let output = String::from_utf8(log_bytes.lock().unwrap().clone()).unwrap();
+    let line = output
+        .lines()
+        .find(|line| line.contains("process_exec_security_decision"))
+        .expect("structured process security decision log line");
+    let json: serde_json::Value = serde_json::from_str(line).unwrap();
+    let fields = &json["fields"];
+
+    assert_eq!(json["target"], "security.process");
+    assert_eq!(fields["message"], "process_exec_security_decision");
+    assert_eq!(fields["event_type"], "process.exec");
+    assert_eq!(fields["event_family"], "process");
+    assert_eq!(fields["source_engine"], "process");
+    assert_eq!(fields["final_action"], "block");
+    assert_eq!(fields["enforceability"], "inline_blockable");
+    assert_eq!(fields["attribution_scope"], "vm");
+    assert_eq!(fields["origin_kind"], "host_service");
+    assert_eq!(fields["trace_id"], "trace-process-log");
+    assert_eq!(fields["exec_id"], "88");
+    assert_eq!(fields["mcp_call_id"], "12");
+    assert_eq!(fields["operation"], "exec");
+    assert_eq!(fields["command_class"], "shell");
+    assert_eq!(fields["rule_id"], "runtime.block-shell");
+    assert_eq!(fields["pack_id"], "runtime-pack");
+    assert_eq!(fields["reason"], "shell exec blocked");
+    assert_eq!(fields["finding_count"], serde_json::json!(0));
 }
