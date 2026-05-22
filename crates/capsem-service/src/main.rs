@@ -6441,15 +6441,137 @@ fn backtest_evidence_signature(event: &seceng::SecurityEvent) -> Result<String, 
 fn backtest_matched_fields(
     event: &seceng::SecurityEvent,
 ) -> Result<Vec<seceng::MatchedField>, AppError> {
-    Ok(vec![seceng::MatchedField {
-        path: "subject".into(),
-        value: serde_json::to_value(&event.subject).map_err(|error| {
+    let mut fields = Vec::new();
+    match &event.subject {
+        seceng::SecurityEventSubject::Http(subject) => {
+            push_matched_field(&mut fields, "http.request.method", &subject.method)?;
+            push_matched_field(&mut fields, "http.request.host", &subject.host)?;
+            push_matched_field(&mut fields, "http.request.path_class", &subject.path_class)?;
+            if let Some(value) = &subject.scheme {
+                push_matched_field(&mut fields, "http.request.scheme", value)?;
+            }
+            if let Some(value) = subject.port {
+                push_matched_field(&mut fields, "http.request.port", value)?;
+            }
+            if let Some(value) = &subject.path {
+                push_matched_field(&mut fields, "http.request.path", value)?;
+            }
+            if let Some(value) = &subject.query {
+                push_matched_field(&mut fields, "http.request.query", value)?;
+            }
+            if let Some(value) = &subject.url {
+                push_matched_field(&mut fields, "http.request.url", value)?;
+            }
+            if let Some(value) = subject.response_status {
+                push_matched_field(&mut fields, "http.response.status", value)?;
+            }
+        }
+        seceng::SecurityEventSubject::Dns(subject) => {
+            push_matched_field(&mut fields, "dns.request.qname", &subject.qname)?;
+            push_matched_field(
+                &mut fields,
+                "dns.request.domain_class",
+                &subject.domain_class,
+            )?;
+        }
+        seceng::SecurityEventSubject::Mcp(subject) => {
+            push_matched_field(&mut fields, "mcp.request.server_id", &subject.server_id)?;
+            push_matched_field(&mut fields, "mcp.request.tool_name", &subject.tool_name)?;
+        }
+        seceng::SecurityEventSubject::Model(subject) => {
+            push_matched_field(&mut fields, "model.request.provider", &subject.provider)?;
+            push_matched_field(&mut fields, "model.request.model", &subject.model)?;
+            if let Some(value) = subject.estimated_input_tokens {
+                push_matched_field(&mut fields, "model.usage.input_tokens", value)?;
+            }
+            if let Some(value) = subject.estimated_output_tokens {
+                push_matched_field(&mut fields, "model.usage.output_tokens", value)?;
+            }
+            if let Some(value) = subject.estimated_cost_micros {
+                push_matched_field(&mut fields, "model.usage.estimated_cost_micros", value)?;
+            }
+        }
+        seceng::SecurityEventSubject::File(subject) => {
+            push_matched_field(&mut fields, "file.activity.operation", &subject.operation)?;
+            push_matched_field(&mut fields, "file.activity.path_class", &subject.path_class)?;
+            if let Some(value) = &subject.path {
+                push_matched_field(&mut fields, "file.activity.path", value)?;
+            }
+            if let Some(value) = subject.byte_count {
+                push_matched_field(&mut fields, "file.activity.byte_count", value)?;
+            }
+        }
+        seceng::SecurityEventSubject::Process(subject) => {
+            push_matched_field(
+                &mut fields,
+                "process.activity.operation",
+                &subject.operation,
+            )?;
+            if let Some(value) = &subject.command_class {
+                push_matched_field(&mut fields, "process.activity.command_class", value)?;
+            }
+        }
+        seceng::SecurityEventSubject::Credential(subject) => {
+            push_matched_field(
+                &mut fields,
+                "credential.activity.operation",
+                &subject.operation,
+            )?;
+            push_matched_field(
+                &mut fields,
+                "credential.activity.credential_id",
+                &subject.credential_id,
+            )?;
+        }
+        seceng::SecurityEventSubject::VmLifecycle(subject) => {
+            push_matched_field(&mut fields, "vm.activity.operation", &subject.operation)?;
+        }
+        seceng::SecurityEventSubject::Profile(subject) => {
+            push_matched_field(
+                &mut fields,
+                "profile.activity.operation",
+                &subject.operation,
+            )?;
+            push_matched_field(&mut fields, "profile.id", &subject.profile_id)?;
+            push_matched_field(&mut fields, "profile.revision", &subject.profile_revision)?;
+        }
+        seceng::SecurityEventSubject::Conversation(subject) => {
+            push_matched_field(
+                &mut fields,
+                "conversation.activity.operation",
+                &subject.operation,
+            )?;
+            if let Some(value) = &subject.conversation_id {
+                push_matched_field(&mut fields, "conversation.id", value)?;
+            }
+        }
+        seceng::SecurityEventSubject::Snapshot(subject) => {
+            push_matched_field(
+                &mut fields,
+                "snapshot.activity.operation",
+                &subject.operation,
+            )?;
+            push_matched_field(&mut fields, "snapshot.id", &subject.snapshot_id)?;
+        }
+    }
+    Ok(fields)
+}
+
+fn push_matched_field(
+    fields: &mut Vec<seceng::MatchedField>,
+    path: &str,
+    value: impl Serialize,
+) -> Result<(), AppError> {
+    fields.push(seceng::MatchedField {
+        path: path.to_owned(),
+        value: serde_json::to_value(value).map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("serialize backtest matched field: {error}"),
+                format!("serialize backtest matched field {path}: {error}"),
             )
         })?,
-    }])
+    });
+    Ok(())
 }
 
 fn backtest_outcome(expected: Option<&str>, actual: &str) -> seceng::BacktestOutcome {

@@ -1629,6 +1629,27 @@ a valid claim -- mark it `[ ]` instead.
     build `pnpm --dir docs run build` passed. Still missing after this slice:
     visible UI screens/editors, ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Seventy-third TDD backtest-evidence slice replaced the opaque
+    whole-`subject` matched-field blob with canonical policy-path evidence.
+    Runtime enforcement and detection backtest rows now report fields such as
+    `http.request.method`, `http.request.host`, `http.request.url`,
+    `http.response.status`, `dns.request.qname`, `mcp.request.tool_name`,
+    `model.request.provider`, `file.activity.path`,
+    `process.activity.command_class`, and related family-specific paths. The
+    enforcement backtest test now proves HTTP matches expose
+    `http.request.host=metadata.google.internal`, include the method, and no
+    longer include `subject`; the detection backtest test proves the same
+    canonical host evidence is present on finding rows. Verification: red
+    `cargo test -p capsem-service
+    handle_enforcement_backtest_matches_and_dedupes_inline_events --bin
+    capsem-service` first failed on the missing policy path, then passed;
+    `cargo test -p capsem-service
+    handle_detection_backtest_returns_finding_rows_with_event_refs --bin
+    capsem-service` **1** passed; widened `cargo test -p capsem-service --bin
+    capsem-service -- --test-threads=1` **206** passed; `cargo fmt --all --
+    --check` passed; `git diff --check` passed. Still missing after this slice:
+    visible UI screens/editors, ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

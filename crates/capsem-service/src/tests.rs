@@ -7275,6 +7275,17 @@ async fn handle_enforcement_backtest_matches_and_dedupes_inline_events() {
     assert_eq!(result.rows[0].event_ref.event_id, "evt-1");
     assert_eq!(result.rows[0].rule_id, "block-metadata");
     assert_eq!(result.rows[0].pack_id, "runtime-pack");
+    assert!(result.rows[0].matched_fields.iter().any(|field| {
+        field.path == "http.request.host"
+            && field.value == serde_json::json!("metadata.google.internal")
+    }));
+    assert!(result.rows[0].matched_fields.iter().any(
+        |field| field.path == "http.request.method" && field.value == serde_json::json!("GET")
+    ));
+    assert!(!result.rows[0]
+        .matched_fields
+        .iter()
+        .any(|field| field.path == "subject"));
 }
 
 #[tokio::test]
@@ -7320,6 +7331,10 @@ async fn handle_detection_backtest_returns_finding_rows_with_event_refs() {
     assert_eq!(result.rows[0].event_ref.event_id, "evt-custom");
     assert_eq!(result.rows[0].rule_id, "detect-metadata");
     assert_eq!(result.rows[0].pack_id, "runtime-detection");
+    assert!(result.rows[0].matched_fields.iter().any(|field| {
+        field.path == "http.request.host"
+            && field.value == serde_json::json!("metadata.google.internal")
+    }));
 }
 
 #[tokio::test]
