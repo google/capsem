@@ -15,6 +15,7 @@ pub struct VmMetricsSnapshot {
     pub model: VmModelMetrics,
     pub mcp: VmMcpMetrics,
     pub filesystem: VmFilesystemMetrics,
+    pub security: VmSecurityMetrics,
     pub captured_at_unix_ms: u64,
 }
 
@@ -32,6 +33,7 @@ impl VmMetricsSnapshot {
             model: VmModelMetrics::default(),
             mcp: VmMcpMetrics::default(),
             filesystem: VmFilesystemMetrics::default(),
+            security: VmSecurityMetrics::default(),
             captured_at_unix_ms,
         }
     }
@@ -144,4 +146,25 @@ pub struct VmFilesystemMetrics {
     pub fs_errors_total: u64,
     pub fs_bytes_read_total: u64,
     pub fs_bytes_written_total: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct VmSecurityMetrics {
+    pub security_events_total: u64,
+    pub enforcement_decisions_total: u64,
+    pub detection_findings_total: u64,
+    pub blocks_total: u64,
+    pub asks_total: u64,
+    pub rewrites_total: u64,
+    pub throttles_total: u64,
+    pub errors_total: u64,
+    pub latest_block_event_id: Option<String>,
+    pub latest_block_rule_id: Option<String>,
+    pub latest_block_reason: Option<String>,
+    pub latest_block_unix_ms: Option<u64>,
+    pub latest_detection_event_id: Option<String>,
+    pub latest_detection_rule_id: Option<String>,
+    pub latest_detection_title: Option<String>,
+    pub latest_detection_severity: Option<String>,
+    pub latest_detection_unix_ms: Option<u64>,
 }

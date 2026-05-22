@@ -143,6 +143,28 @@ pub struct SandboxInfo {
     pub total_file_events: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security_events_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforcement_decisions_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detection_findings_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocks_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_block_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_block_rule_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_block_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_detection_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_detection_rule_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_detection_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_detection_severity: Option<String>,
     /// Short tail of `process.log` from the last failed boot. Populated
     /// only when `status == "Defunct"`. Renders in `capsem list` /
     /// `capsem status` so a crashed VM tells the user *why* without
@@ -185,6 +207,17 @@ impl SandboxInfo {
             denied_requests: None,
             total_file_events: None,
             model_call_count: None,
+            security_events_total: None,
+            enforcement_decisions_total: None,
+            detection_findings_total: None,
+            blocks_total: None,
+            latest_block_event_id: None,
+            latest_block_rule_id: None,
+            latest_block_reason: None,
+            latest_detection_event_id: None,
+            latest_detection_rule_id: None,
+            latest_detection_title: None,
+            latest_detection_severity: None,
             last_error: None,
         }
     }

@@ -64,8 +64,9 @@ fn classify_drain_runtime_rule_matches() {
 }
 
 #[test]
-fn default_metrics_snapshot_is_process_owned_and_versioned() {
-    let snapshot = default_metrics_snapshot("vm-s07");
+fn metrics_snapshot_is_process_owned_and_versioned() {
+    let writer = capsem_logger::DbWriter::open_in_memory(16).unwrap();
+    let snapshot = metrics_snapshot(&writer, "vm-s07");
 
     assert_eq!(snapshot.vm_id, "vm-s07");
     assert_eq!(
@@ -74,6 +75,7 @@ fn default_metrics_snapshot_is_process_owned_and_versioned() {
     );
     assert_eq!(snapshot.lifecycle.state, "unknown");
     assert_eq!(snapshot.ask.total_asks, 0);
+    assert_eq!(snapshot.security.security_events_total, 0);
     assert!(snapshot.captured_at_unix_ms > 0);
 }
 

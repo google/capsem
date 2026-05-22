@@ -49,6 +49,7 @@ pub(crate) async fn handle_ipc_connection(
     term_relay: Arc<TerminalRelay>,
     job_store: Arc<JobStore>,
     mcp_runtime: Arc<McpRuntime>,
+    db: Arc<capsem_logger::DbWriter>,
     vm_ready: Arc<AtomicBool>,
     vm_id: String,
 ) -> Result<()> {
@@ -199,7 +200,7 @@ pub(crate) async fn handle_ipc_connection(
                 }
             }
             ServiceToProcess::GetMetricsSnapshot { id } => {
-                let snapshot = default_metrics_snapshot(&vm_id);
+                let snapshot = metrics_snapshot(&db, &vm_id);
                 capsem_core::try_send!(
                     "ipc_metrics_snapshot",
                     ipc_tx_out
@@ -618,14 +619,14 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
     }
 }
 
-fn default_metrics_snapshot(vm_id: &str) -> VmMetricsSnapshot {
+fn metrics_snapshot(db: &capsem_logger::DbWriter, vm_id: &str) -> VmMetricsSnapshot {
     let captured_at_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX);
-    VmMetricsSnapshot::empty(vm_id, false, captured_at_unix_ms)
+    db.metrics_snapshot(vm_id, false, captured_at_unix_ms)
 }
 
 #[cfg(test)]

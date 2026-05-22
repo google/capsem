@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
+use capsem_proto::metrics::{VmMetricsSnapshot, VmSecurityMetrics};
 use capsem_security_engine::{
     AiApiFamily, AiAttributionScope, AiContentBlock, AiContentKind, AiOriginKind, AiProvider,
     AiUsageEvidence, ArgumentsStatus, Confidence, Enforceability, EventFamily, EvidenceStatus,
@@ -329,6 +330,7 @@ pub struct DbWriter {
     tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<WriteOp>>>,
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
     db_path: PathBuf,
+    metrics: VmMetricsAccumulator,
 }
 
 impl DbWriter {
@@ -356,6 +358,7 @@ impl DbWriter {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path,
+            metrics: VmMetricsAccumulator::default(),
         })
     }
 
@@ -377,6 +380,7 @@ impl DbWriter {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
+            metrics: VmMetricsAccumulator::default(),
         })
     }
 
@@ -388,19 +392,30 @@ impl DbWriter {
     /// Non-blocking send from async context. Yields if channel full (backpressure).
     pub async fn write(&self, op: WriteOp) {
         if let Some(tx) = self.clone_sender() {
+            let metrics_update = self.metrics.update_for_write_op(&op);
             if let Err(e) = tx.send(op).await {
                 warn!(error = %e, "db writer channel closed, dropping write op");
+            } else if let Some(update) = metrics_update {
+                self.metrics.record_security_update(update);
             }
         }
     }
 
     /// Try to send without blocking. Returns false if the channel is full or closed.
     pub fn try_write(&self, op: WriteOp) -> bool {
-        self.tx
+        let metrics_update = self.metrics.update_for_write_op(&op);
+        let sent = self
+            .tx
             .lock()
             .unwrap()
             .as_ref()
-            .is_some_and(|tx| tx.try_send(op).is_ok())
+            .is_some_and(|tx| tx.try_send(op).is_ok());
+        if sent {
+            if let Some(update) = metrics_update {
+                self.metrics.record_security_update(update);
+            }
+        }
+        sent
     }
 
     /// Deterministically shut down the writer thread: drop the stored
@@ -434,6 +449,133 @@ impl DbWriter {
     pub fn path(&self) -> &Path {
         &self.db_path
     }
+
+    pub fn metrics_snapshot(
+        &self,
+        vm_id: impl Into<String>,
+        persistent: bool,
+        captured_at_unix_ms: u64,
+    ) -> VmMetricsSnapshot {
+        let mut snapshot = VmMetricsSnapshot::empty(vm_id, persistent, captured_at_unix_ms);
+        snapshot.security = self.metrics.snapshot();
+        snapshot
+    }
+}
+
+#[derive(Default)]
+struct VmMetricsAccumulator {
+    security: std::sync::Mutex<VmSecurityMetrics>,
+}
+
+impl VmMetricsAccumulator {
+    fn update_for_write_op(&self, op: &WriteOp) -> Option<VmSecurityMetricsUpdate> {
+        match op {
+            WriteOp::ResolvedSecurityEvent(event) => Some(VmSecurityMetricsUpdate::from(event)),
+            _ => None,
+        }
+    }
+
+    fn record_security_update(&self, update: VmSecurityMetricsUpdate) {
+        let mut security = self.security.lock().unwrap();
+        security.security_events_total += 1;
+        if update.has_enforcement_decision {
+            security.enforcement_decisions_total += 1;
+        }
+        security.detection_findings_total += update.detection_finding_count;
+        match update.final_action {
+            VmSecurityActionMetric::Block {
+                event_id,
+                rule_id,
+                reason,
+                timestamp_unix_ms,
+            } => {
+                security.blocks_total += 1;
+                security.latest_block_event_id = Some(event_id);
+                security.latest_block_rule_id = rule_id;
+                security.latest_block_reason = Some(reason);
+                security.latest_block_unix_ms = Some(timestamp_unix_ms);
+            }
+            VmSecurityActionMetric::Ask => security.asks_total += 1,
+            VmSecurityActionMetric::Rewrite => security.rewrites_total += 1,
+            VmSecurityActionMetric::Throttle => security.throttles_total += 1,
+            VmSecurityActionMetric::Error => security.errors_total += 1,
+            VmSecurityActionMetric::Other => {}
+        }
+        if let Some(detection) = update.latest_detection {
+            security.latest_detection_event_id = Some(detection.event_id);
+            security.latest_detection_rule_id = Some(detection.rule_id);
+            security.latest_detection_title = Some(detection.title);
+            security.latest_detection_severity = Some(detection.severity);
+            security.latest_detection_unix_ms = Some(detection.timestamp_unix_ms);
+        }
+    }
+
+    fn snapshot(&self) -> VmSecurityMetrics {
+        self.security.lock().unwrap().clone()
+    }
+}
+
+struct VmSecurityMetricsUpdate {
+    has_enforcement_decision: bool,
+    detection_finding_count: u64,
+    final_action: VmSecurityActionMetric,
+    latest_detection: Option<VmDetectionMetric>,
+}
+
+impl From<&ResolvedSecurityEvent> for VmSecurityMetricsUpdate {
+    fn from(event: &ResolvedSecurityEvent) -> Self {
+        let final_action = match &event.final_action {
+            SecurityAction::Block(block) => VmSecurityActionMetric::Block {
+                event_id: event.event.common.event_id.clone(),
+                rule_id: block.rule_id.clone(),
+                reason: block.reason_code.clone(),
+                timestamp_unix_ms: event.event.common.timestamp_unix_ms,
+            },
+            SecurityAction::Ask(_) => VmSecurityActionMetric::Ask,
+            SecurityAction::Rewrite(_) => VmSecurityActionMetric::Rewrite,
+            SecurityAction::Throttle(_) => VmSecurityActionMetric::Throttle,
+            SecurityAction::Error(_) => VmSecurityActionMetric::Error,
+            _ => VmSecurityActionMetric::Other,
+        };
+        let latest_detection = event
+            .detection_findings
+            .last()
+            .map(|finding| VmDetectionMetric {
+                event_id: finding.event_id.clone(),
+                rule_id: finding.rule_id.clone(),
+                title: finding.title.clone(),
+                severity: finding.severity.sql_text().to_string(),
+                timestamp_unix_ms: event.event.common.timestamp_unix_ms,
+            });
+        Self {
+            has_enforcement_decision: event.event.decision.is_some(),
+            detection_finding_count: event.detection_findings.len() as u64,
+            final_action,
+            latest_detection,
+        }
+    }
+}
+
+enum VmSecurityActionMetric {
+    Block {
+        event_id: String,
+        rule_id: Option<String>,
+        reason: String,
+        timestamp_unix_ms: u64,
+    },
+    Ask,
+    Rewrite,
+    Throttle,
+    Error,
+    Other,
+}
+
+struct VmDetectionMetric {
+    event_id: String,
+    rule_id: String,
+    title: String,
+    severity: String,
+    timestamp_unix_ms: u64,
 }
 
 impl Drop for DbWriter {

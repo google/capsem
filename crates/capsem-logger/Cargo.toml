@@ -17,6 +17,7 @@ tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 capsem-security-engine = { path = "../capsem-security-engine" }
+capsem-proto = { path = "../capsem-proto" }
 
 [lints]
 workspace = true

@@ -475,6 +475,83 @@ fn resolved_security_event_writes_structured_event_steps_findings_and_links() {
 }
 
 #[test]
+fn writer_metrics_snapshot_counts_resolved_security_decisions_and_findings() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let mut common = security_common("evt-metrics-block");
+    common.timestamp_unix_ms = 1_700_000_123_999;
+    let event = SecurityEvent::http(
+        common,
+        HttpSecuritySubject {
+            method: "GET".to_string(),
+            scheme: Some("https".to_string()),
+            host: "blocked.example".to_string(),
+            port: Some(443),
+            path: Some("/secret".to_string()),
+            query: None,
+            url: Some("https://blocked.example/secret".to_string()),
+            path_class: "secret".to_string(),
+            request_bytes: 0,
+            request_headers: BTreeMap::new(),
+            request_body: None,
+            response_status: None,
+            response_headers: BTreeMap::new(),
+            response_bytes: None,
+            response_body: None,
+        },
+    );
+    let finding = DetectionFinding {
+        finding_id: "finding-metrics".to_string(),
+        event_id: "evt-metrics-block".to_string(),
+        rule_id: "detect.secret".to_string(),
+        pack_id: "pack-detect".to_string(),
+        sigma_id: None,
+        title: "Secret path".to_string(),
+        severity: Severity::High,
+        confidence: Confidence::High,
+        tags: Vec::new(),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+                schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+                event,
+                steps: Vec::new(),
+                plugin_transforms: Vec::new(),
+                detection_findings: vec![finding],
+                final_action: SecurityAction::Block(BlockResponse {
+                    reason_code: "secret blocked".to_string(),
+                    rule_id: Some("enforce.secret".to_string()),
+                }),
+                emitter_results: Vec::new(),
+            }))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.vm_id, "vm-1");
+    assert!(snapshot.persistent);
+    assert_eq!(snapshot.security.security_events_total, 1);
+    assert_eq!(snapshot.security.blocks_total, 1);
+    assert_eq!(snapshot.security.detection_findings_total, 1);
+    assert_eq!(
+        snapshot.security.latest_block_event_id.as_deref(),
+        Some("evt-metrics-block")
+    );
+    assert_eq!(
+        snapshot.security.latest_block_rule_id.as_deref(),
+        Some("enforce.secret")
+    );
+    assert_eq!(
+        snapshot.security.latest_detection_rule_id.as_deref(),
+        Some("detect.secret")
+    );
+}
+
+#[test]
 fn cap_field_none_returns_none() {
     assert!(cap_field(&None).is_none());
 }

@@ -143,6 +143,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restore/delete events write `security_events` alongside `fs_events`.
 - Added canonical process Security Engine journaling so exec dispatch writes
   typed observe-only `process.exec` events alongside `exec_events`.
+- Added live VM status security metrics from the canonical resolved-event
+  stream, including security event counts, block counts, detection counts,
+  latest block, and latest detection surfaced through process metrics snapshots
+  and service list/info responses.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without

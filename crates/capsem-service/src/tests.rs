@@ -1792,6 +1792,37 @@ async fn handle_list_reports_profile_status_for_each_vm() {
     );
 }
 
+#[test]
+fn attach_metrics_snapshot_projects_security_status_fields() {
+    let mut info = SandboxInfo::new("vm-metrics".into(), 123, "Running".into(), true);
+    let mut snapshot =
+        capsem_proto::metrics::VmMetricsSnapshot::empty("vm-metrics", true, 1_700_000_123_000);
+    snapshot.security.security_events_total = 9;
+    snapshot.security.enforcement_decisions_total = 4;
+    snapshot.security.detection_findings_total = 3;
+    snapshot.security.blocks_total = 2;
+    snapshot.security.latest_block_event_id = Some("evt-block".into());
+    snapshot.security.latest_block_rule_id = Some("enforce.block".into());
+    snapshot.security.latest_block_reason = Some("blocked by policy".into());
+    snapshot.security.latest_detection_event_id = Some("evt-detect".into());
+    snapshot.security.latest_detection_rule_id = Some("detect.secret".into());
+    snapshot.security.latest_detection_title = Some("Secret access".into());
+    snapshot.security.latest_detection_severity = Some("high".into());
+
+    attach_metrics_snapshot(&mut info, &snapshot);
+
+    assert_eq!(info.security_events_total, Some(9));
+    assert_eq!(info.enforcement_decisions_total, Some(4));
+    assert_eq!(info.detection_findings_total, Some(3));
+    assert_eq!(info.blocks_total, Some(2));
+    assert_eq!(info.latest_block_event_id.as_deref(), Some("evt-block"));
+    assert_eq!(
+        info.latest_detection_rule_id.as_deref(),
+        Some("detect.secret")
+    );
+    assert_eq!(info.latest_detection_severity.as_deref(), Some("high"));
+}
+
 fn pinned_vm_entry(
     state: &ServiceState,
     name: &str,

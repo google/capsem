@@ -7,6 +7,7 @@ use axum::{
 };
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_proto::metrics::VmMetricsSnapshot;
 use capsem_security_engine as seceng;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -2654,10 +2655,73 @@ fn enrich_telemetry_from_session_db(info: &mut SandboxInfo, session_dir: &std::p
     }
 }
 
-fn attach_list_live_metrics_placeholder(_info: &mut SandboxInfo, _id: &str) {
-    // FIXME(otel-sprint): Populate `/list` from capsem-process live
-    // VmMetricsSnapshot over typed service/process IPC. Do not read
-    // session.db here; this handler is a hot path and fans out across VMs.
+fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot) {
+    info.total_requests = Some(snapshot.http.http_requests_total);
+    info.allowed_requests = Some(snapshot.http.http_requests_allowed_total);
+    info.denied_requests = Some(snapshot.http.http_requests_denied_total);
+    info.total_input_tokens = Some(snapshot.model.model_input_tokens_total);
+    info.total_output_tokens = Some(snapshot.model.model_output_tokens_total);
+    info.total_estimated_cost =
+        Some(snapshot.model.model_estimated_cost_micros_total as f64 / 1_000_000.0);
+    info.model_call_count = Some(snapshot.model.model_requests_total);
+    info.total_mcp_calls = Some(snapshot.mcp.mcp_tool_invocations_total);
+    info.total_file_events = Some(
+        snapshot.filesystem.fs_reads_total
+            + snapshot.filesystem.fs_writes_total
+            + snapshot.filesystem.fs_creates_total
+            + snapshot.filesystem.fs_deletes_total
+            + snapshot.filesystem.fs_restores_total,
+    );
+    info.security_events_total = Some(snapshot.security.security_events_total);
+    info.enforcement_decisions_total = Some(snapshot.security.enforcement_decisions_total);
+    info.detection_findings_total = Some(snapshot.security.detection_findings_total);
+    info.blocks_total = Some(snapshot.security.blocks_total);
+    info.latest_block_event_id = snapshot.security.latest_block_event_id.clone();
+    info.latest_block_rule_id = snapshot.security.latest_block_rule_id.clone();
+    info.latest_block_reason = snapshot.security.latest_block_reason.clone();
+    info.latest_detection_event_id = snapshot.security.latest_detection_event_id.clone();
+    info.latest_detection_rule_id = snapshot.security.latest_detection_rule_id.clone();
+    info.latest_detection_title = snapshot.security.latest_detection_title.clone();
+    info.latest_detection_severity = snapshot.security.latest_detection_severity.clone();
+}
+
+async fn live_metrics_snapshot_for_vm(
+    state: &Arc<ServiceState>,
+    id: &str,
+    uds_path: &std::path::Path,
+) -> Option<VmMetricsSnapshot> {
+    let request_id = state.next_job_id();
+    match send_ipc_command(
+        uds_path,
+        ServiceToProcess::GetMetricsSnapshot { id: request_id },
+        Some(2),
+    )
+    .await
+    {
+        Ok(ProcessToService::MetricsSnapshot {
+            id: snapshot_id,
+            snapshot,
+        }) if snapshot_id == request_id => Some(*snapshot),
+        Ok(ProcessToService::MetricsSnapshot {
+            id: snapshot_id, ..
+        }) => {
+            warn!(
+                vm_id = %id,
+                expected = request_id,
+                got = snapshot_id,
+                "metrics snapshot id mismatch"
+            );
+            None
+        }
+        Ok(other) => {
+            warn!(vm_id = %id, response = ?other, "unexpected metrics snapshot response");
+            None
+        }
+        Err(error) => {
+            warn!(vm_id = %id, error = %error, "failed to collect live VM metrics snapshot");
+            None
+        }
+    }
 }
 
 struct VmProfileCatalogSnapshot {
@@ -2801,7 +2865,9 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             attach_vm_profile_status(&mut info, i.profile_pin.as_ref(), &profile_catalog);
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-            attach_list_live_metrics_placeholder(&mut info, &i.id);
+            if let Some(snapshot) = live_metrics_snapshot_for_vm(&state, &i.id, &i.uds_path).await {
+                attach_metrics_snapshot(&mut info, &snapshot);
+            }
             sandboxes.push(info);
         }
     }
@@ -2968,7 +3034,7 @@ async fn handle_info(
     let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
     // Check running instances first
     {
-        let (instance_data, session_dir) = {
+        let (instance_data, session_dir, uds_path) = {
             let instances = state.instances.lock().unwrap();
             match instances.get(&id) {
                 Some(i) => {
@@ -2987,13 +3053,22 @@ async fn handle_info(
                     attach_vm_profile_status(&mut info, i.profile_pin.as_ref(), &profile_catalog);
                     info.forked_from = i.forked_from.clone();
                     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-                    (Some(info), Some(i.session_dir.clone()))
+                    (
+                        Some(info),
+                        Some(i.session_dir.clone()),
+                        Some(i.uds_path.clone()),
+                    )
                 }
-                None => (None, None),
+                None => (None, None, None),
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
             enrich_telemetry_from_session_db(&mut info, &dir);
+            if let Some(uds_path) = uds_path {
+                if let Some(snapshot) = live_metrics_snapshot_for_vm(&state, &id, &uds_path).await {
+                    attach_metrics_snapshot(&mut info, &snapshot);
+                }
+            }
             return Ok(Json(info));
         }
     }
@@ -3559,6 +3634,12 @@ async fn send_ipc_command(
             ProcessToService::RuntimeRuleMatches { id, matches } => {
                 if matches!(cmd, ServiceToProcess::DrainRuntimeRuleMatches { .. }) {
                     return Ok(ProcessToService::RuntimeRuleMatches { id, matches });
+                }
+                continue;
+            }
+            ProcessToService::MetricsSnapshot { id, snapshot } => {
+                if matches!(cmd, ServiceToProcess::GetMetricsSnapshot { .. }) {
+                    return Ok(ProcessToService::MetricsSnapshot { id, snapshot });
                 }
                 continue;
             }

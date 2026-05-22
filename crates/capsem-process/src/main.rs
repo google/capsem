@@ -719,6 +719,7 @@ async fn run_async_main_loop(
         let term_c = Arc::clone(&term_relay);
         let job_c = Arc::clone(&job_store);
         let mcp_c = Arc::clone(&mcp_runtime);
+        let db_c = Arc::clone(&db);
         let ready_c = Arc::clone(&vm_ready);
         let vm_id_c = vm_id_ws.clone();
 
@@ -730,6 +731,7 @@ async fn run_async_main_loop(
                 term_c,
                 job_c,
                 mcp_c,
+                db_c,
                 ready_c,
                 vm_id_c,
             )
