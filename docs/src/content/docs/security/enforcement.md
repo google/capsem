@@ -39,6 +39,7 @@ Validate and export the schema:
 ```bash
 capsem-admin policy schema
 capsem-admin policy validate corp-policy.json --json
+capsem-admin policy compile corp-policy.json --json
 capsem-admin policy backtest corp-policy.json --events policy-contexts.jsonl --json
 ```
 

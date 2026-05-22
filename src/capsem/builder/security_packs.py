@@ -330,6 +330,18 @@ class PolicyBacktestReportV1(StrictModel):
     timing: DetectionCheckTimingV1
 
 
+class PolicyCompileReportV1(StrictModel):
+    schema_: Literal["capsem.policy-compile.v1"] = Field(
+        default="capsem.policy-compile.v1",
+        alias="schema",
+    )
+    ok: bool
+    pack_id: PackId | None = None
+    pack_version: NonEmptyStr | None = None
+    rule_count: Annotated[int, Field(ge=0)]
+    diagnostics: list[str] = Field(default_factory=list)
+
+
 class DetectionCompileReportV1(StrictModel):
     schema_: Literal["capsem.detection-compile.v1"] = Field(
         default="capsem.detection-compile.v1",
@@ -688,6 +700,25 @@ _HEADER_EXISTS_RE = re.compile(
 )
 
 
+def _validate_policy_condition(rule: PolicyRuleV1) -> None:
+    for clause in (part.strip() for part in rule.condition.split("&&")):
+        if not clause:
+            continue
+        if clause in {"event", "subject"} or clause.startswith(("event.", "subject.")):
+            raise ValueError(f"rule {rule.id} uses unsupported internal event root")
+        if clause in {"false", "true"}:
+            continue
+        if _HEADER_EXISTS_RE.match(clause) is not None:
+            continue
+        if _CONTAINS_RE.match(clause) is not None:
+            continue
+        if _STARTS_WITH_RE.match(clause) is not None:
+            continue
+        if _EQUALS_RE.match(clause) is not None:
+            continue
+        raise ValueError(f"rule {rule.id} uses unsupported CEL clause: {clause}")
+
+
 def _policy_rule_matches(
     rule: PolicyRuleV1,
     fixture: PolicyContextFixtureV1,
@@ -695,11 +726,10 @@ def _policy_rule_matches(
     if _context_event_family(fixture.context) is not rule.event_family:
         return False, {}
     matched: dict[str, DetectionValue] = {}
+    _validate_policy_condition(rule)
     for clause in (part.strip() for part in rule.condition.split("&&")):
         if not clause:
             continue
-        if clause in {"event", "subject"} or clause.startswith(("event.", "subject.")):
-            raise ValueError(f"rule {rule.id} uses unsupported internal event root")
         if clause == "false":
             return False, {}
         if clause == "true":
@@ -807,6 +837,22 @@ def run_detection_check(
     )
 
 
+def compile_policy_pack(pack: PolicyPackV1) -> PolicyCompileReportV1:
+    diagnostics: list[str] = []
+    for rule in pack.rules:
+        try:
+            _validate_policy_condition(rule)
+        except Exception as error:
+            diagnostics.append(str(error))
+    return PolicyCompileReportV1(
+        ok=not diagnostics,
+        pack_id=pack.id,
+        pack_version=pack.version,
+        rule_count=len(pack.rules),
+        diagnostics=diagnostics,
+    )
+
+
 def run_policy_backtest(
     pack: PolicyPackV1,
     *,
@@ -858,6 +904,10 @@ def run_policy_backtest(
 
 def dump_detection_ir_json(ir: DetectionIRV1) -> str:
     return ir.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+
+
+def dump_policy_compile_report_json(report: PolicyCompileReportV1) -> str:
+    return report.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
 def dump_policy_backtest_report_json(report: PolicyBacktestReportV1) -> str:

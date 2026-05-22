@@ -154,6 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a committed Detection IR artifact for the S08c Sigma corpus and Rust
   parity coverage proving canonical `http.request.*` detection fields match
   the admin detection backtest expected artifact.
+- Added `capsem-admin policy compile` to fail closed on unsupported or legacy
+  enforcement roots before offline backtest.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API

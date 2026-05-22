@@ -88,7 +88,7 @@ session-scoped enforcement replay, it should be named and designed separately.
 - [ ] Create shared event, enforcement, detection, expected-result fixture corpus.
 - [x] Create shared policy-context fixtures and negative fixtures for rejected
   `event.*` authoring.
-- [ ] Add `capsem-admin enforcement validate|compile|backtest` over the shared
+- [x] Add `capsem-admin enforcement validate|compile|backtest` over the shared
   corpus without requiring a Capsem service.
 - [x] Add `capsem-admin detection validate|compile|backtest` over the shared corpus
   without requiring a Capsem service.
@@ -147,6 +147,10 @@ session-scoped enforcement replay, it should be named and designed separately.
   canonical policy roots such as `http.request.host` instead of legacy
   `subject.request.host`, and pinned the admin detection backtest expected
   artifact from Rust.
+- Slice 6 added `capsem-admin policy compile`, which fail-closed checks the
+  admin-supported canonical CEL subset before offline policy backtest. This
+  closes the offline validate/compile/backtest command surface while keeping
+  full runtime-CEL parity listed as explicit remaining debt.
 
 ## Coverage Ledger
 

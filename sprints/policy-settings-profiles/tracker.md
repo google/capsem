@@ -1867,6 +1867,18 @@ a valid claim -- mark it `[ ]` instead.
     S08c: policy compile/full CEL parity for offline admin, real-session
     fixtures from the resolved-event journal, corpus workflow docs, and broader
     expected outputs for hunt/backtest diversity.
+    Sixth TDD admin-policy-compile slice added `capsem-admin policy compile`
+    with a typed `capsem.policy-compile.v1` report. The command compile-checks
+    the admin-supported canonical CEL subset, rejects `event.*` / `subject.*`
+    roots before replay, and documents the command alongside policy validate
+    and backtest. Verification: red `uv run pytest
+    tests/test_admin_cli.py::test_capsem_admin_policy_compile_checks_canonical_roots
+    tests/test_admin_cli.py::test_capsem_admin_policy_compile_rejects_internal_event_roots
+    -q` first failed because the command did not exist, then passed after
+    implementation. Still missing in S08c: full runtime-CEL parity for all CEL
+    constructs beyond the admin subset, real-session fixtures from the
+    resolved-event journal, corpus workflow docs, and broader hunt/backtest
+    diversity.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

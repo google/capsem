@@ -697,6 +697,57 @@ def test_capsem_admin_policy_backtest_uses_policy_context_corpus() -> None:
     assert actual == expected
 
 
+def test_capsem_admin_policy_compile_checks_canonical_roots() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "compile",
+            "data/enforcement/policy/http-google-secret-policy.toml",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"schema": "capsem.policy-compile.v1"' in result.output
+    assert '"pack_id": "corp.enforcement.google-secret"' in result.output
+    assert '"rule_count": 1' in result.output
+    assert '"diagnostics": []' in result.output
+
+
+def test_capsem_admin_policy_compile_rejects_internal_event_roots(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "bad-policy.toml"
+    policy_path.write_text(
+        """
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.bad-root"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+
+[[rules]]
+id = "bad-root"
+name = "Bad Root"
+event_family = "http"
+event_type = "http.request"
+condition = "event.subject.host.contains('google')"
+decision = "block"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["policy", "compile", str(policy_path), "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert '"ok": false' in result.output
+    assert "unsupported internal event root" in result.output
+
+
 def test_capsem_admin_policy_backtest_rejects_internal_event_roots(
     tmp_path: Path,
 ) -> None:

@@ -69,11 +69,13 @@ from capsem.builder.security_packs import (
     DetectionPackV1,
     PolicyPackV1,
     compile_detection_pack,
+    compile_policy_pack,
     dump_detection_check_report_json,
     dump_detection_compile_report_json,
     dump_detection_ir_json,
     dump_detection_pack_schema_json,
     dump_policy_backtest_report_json,
+    dump_policy_compile_report_json,
     dump_policy_pack_schema_json,
     run_detection_check,
     run_policy_backtest,
@@ -788,6 +790,29 @@ def policy_validate(policy_path: str, json_output: bool) -> None:
     else:
         for diagnostic in report.diagnostics:
             click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
+    if not report.ok:
+        raise SystemExit(1)
+
+
+@policy.command("compile")
+@click.argument("policy_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
+def policy_compile(policy_path: str, json_output: bool) -> None:
+    """Compile-check a policy pack against the admin-supported CEL subset."""
+    path = Path(policy_path)
+    try:
+        pack = _load_policy_pack(path)
+        report = compile_policy_pack(pack)
+    except Exception as error:
+        raise click.ClickException(str(error)) from error
+
+    if json_output:
+        click.echo(dump_policy_compile_report_json(report))
+    elif report.ok:
+        click.echo(f"compiled {report.rule_count} policy rule(s)")
+    else:
+        for diagnostic in report.diagnostics:
+            click.echo(diagnostic, err=True)
     if not report.ok:
         raise SystemExit(1)
 
