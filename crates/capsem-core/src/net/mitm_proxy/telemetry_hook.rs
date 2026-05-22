@@ -253,7 +253,6 @@ pub fn build_http_resolved_security_event(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    let event_id = http_security_event_id(req_ctx, net_event, timestamp_unix_ms);
     let rule_id = req_ctx
         .policy_rule
         .clone()
@@ -262,62 +261,12 @@ pub fn build_http_resolved_security_event(
         .policy_reason
         .clone()
         .or_else(|| req_ctx.matched_rule.clone());
-    let mut event = SecurityEvent::http(
-        SecurityEventCommon {
-            event_id: event_id.clone(),
-            parent_event_id: None,
-            stream_id: None,
-            activity_id: None,
-            sequence_no: None,
-            source_engine: SourceEngine::Network,
-            attribution_scope: AiAttributionScope::Vm,
-            origin_kind: AiOriginKind::GuestNetwork,
-            accounting_owner: None,
-            enforceability: Enforceability::InlineBlockable,
-            trace_id: net_event.trace_id.clone(),
-            span_id: None,
-            timestamp_unix_ms,
-            vm_id: None,
-            session_id: None,
-            profile_id: None,
-            profile_revision: None,
-            profile_pack_ids: Vec::new(),
-            enforcement_packs: Vec::new(),
-            detection_packs: Vec::new(),
-            user_id: None,
-            process_id: None,
-            parent_process_id: None,
-            exec_id: None,
-            turn_id: None,
-            message_id: None,
-            tool_call_id: None,
-            mcp_call_id: None,
-            event_type: "http.request".into(),
-            redaction_state: RedactionState::Raw,
-        },
-        HttpSecuritySubject {
-            method: req_ctx.method.clone(),
-            scheme: Some(http_scheme(req_ctx).into()),
-            host: req_ctx.domain.clone(),
-            port: Some(req_ctx.port),
-            path: Some(req_ctx.path.clone()),
-            query: req_ctx.query.clone(),
-            url: Some(http_url(req_ctx)),
-            path_class: http_path_class(&req_ctx.path),
-            request_bytes: net_event.bytes_sent,
-            request_headers: parse_headers(req_ctx.request_headers.as_deref()),
-            request_body: net_event
-                .request_body_preview
-                .as_ref()
-                .map(|body| HttpBodySecuritySubject::text(body.clone())),
-            response_status: req_ctx.status_code,
-            response_headers: parse_headers(req_ctx.response_headers.as_deref()),
-            response_bytes: Some(resp_stats.bytes),
-            response_body: net_event
-                .response_body_preview
-                .as_ref()
-                .map(|body| HttpBodySecuritySubject::text(body.clone())),
-        },
+    let mut event = build_http_security_event(
+        req_ctx,
+        timestamp_unix_ms,
+        net_event.trace_id.clone(),
+        Some(resp_stats.bytes),
+        net_event.response_body_preview.clone(),
     );
 
     let mut steps = Vec::new();
@@ -389,13 +338,95 @@ pub fn build_http_resolved_security_event(
     }
 }
 
+pub fn build_http_security_event(
+    req_ctx: &TelemetryRequestContext,
+    timestamp_unix_ms: u64,
+    trace_id: Option<String>,
+    response_bytes: Option<u64>,
+    response_body_preview: Option<String>,
+) -> SecurityEvent {
+    let event_id =
+        http_security_event_id_from_trace(req_ctx, trace_id.as_deref(), timestamp_unix_ms);
+    let (request_bytes, request_body_preview) = {
+        let st = req_ctx
+            .request_body_stats
+            .lock()
+            .expect("req body stats lock");
+        let preview = if st.preview.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&st.preview).into_owned())
+        };
+        (st.bytes, preview)
+    };
+    SecurityEvent::http(
+        SecurityEventCommon {
+            event_id,
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: None,
+            enforceability: Enforceability::InlineBlockable,
+            trace_id,
+            span_id: None,
+            timestamp_unix_ms,
+            vm_id: None,
+            session_id: None,
+            profile_id: None,
+            profile_revision: None,
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: None,
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        HttpSecuritySubject {
+            method: req_ctx.method.clone(),
+            scheme: Some(http_scheme(req_ctx).into()),
+            host: req_ctx.domain.clone(),
+            port: Some(req_ctx.port),
+            path: Some(req_ctx.path.clone()),
+            query: req_ctx.query.clone(),
+            url: Some(http_url(req_ctx)),
+            path_class: http_path_class(&req_ctx.path),
+            request_bytes,
+            request_headers: parse_headers(req_ctx.request_headers.as_deref()),
+            request_body: request_body_preview.map(HttpBodySecuritySubject::text),
+            response_status: req_ctx.status_code,
+            response_headers: parse_headers(req_ctx.response_headers.as_deref()),
+            response_bytes,
+            response_body: response_body_preview.map(HttpBodySecuritySubject::text),
+        },
+    )
+}
+
 fn http_security_event_id(
     req_ctx: &TelemetryRequestContext,
     net_event: &NetEvent,
     timestamp_unix_ms: u64,
 ) -> String {
+    http_security_event_id_from_trace(req_ctx, net_event.trace_id.as_deref(), timestamp_unix_ms)
+}
+
+fn http_security_event_id_from_trace(
+    req_ctx: &TelemetryRequestContext,
+    trace_id: Option<&str>,
+    timestamp_unix_ms: u64,
+) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(net_event.trace_id.as_deref().unwrap_or("").as_bytes());
+    hasher.update(trace_id.unwrap_or("").as_bytes());
     hasher.update(req_ctx.domain.as_bytes());
     hasher.update(req_ctx.method.as_bytes());
     hasher.update(req_ctx.path.as_bytes());

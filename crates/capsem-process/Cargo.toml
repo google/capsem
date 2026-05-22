@@ -13,6 +13,7 @@ authors.workspace = true
 capsem-core = { path = "../capsem-core" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-proto = { path = "../capsem-proto" }
+capsem-security-engine = { path = "../capsem-security-engine" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true

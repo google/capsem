@@ -33,6 +33,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
+use capsem_security_engine::{
+    SecurityAction, SecurityDecisionAction, SecurityEngineError, SecurityEvent, SecurityResult,
+};
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
@@ -60,6 +63,7 @@ pub use upstream::{make_upstream_tls_config, UpstreamTlsConfig};
 const MAX_HELLO_SIZE: usize = 16384;
 const DEFAULT_BODY_PREVIEW_BYTES: usize = 4096;
 const LOG_BODY_PREVIEWS: bool = true;
+const SECURITY_BLOCK_STATUS: u16 = 403;
 
 /// Configuration for the MITM proxy.
 pub struct MitmProxyConfig {
@@ -81,10 +85,177 @@ pub struct MitmProxyConfig {
     /// events through this pipeline and seeds per-request context into the
     /// `ChunkDispatchBody`'s `HookState` before serving.
     pub pipeline: Arc<pipeline::Pipeline>,
+    /// Optional runtime Security Engine used by transport code to project
+    /// normalized request events into allow/block/ask/rewrite outcomes before
+    /// touching upstream. The engine boundary is intentionally typed: MITM
+    /// does not know about registries, profile storage, or service routes.
+    pub security_engine: Option<Arc<dyn RuntimeSecurityEngine>>,
     /// T3 framed MCP endpoint on the MITM listener. Dispatch state lives
     /// here so the low-privilege aggregator remains DB-free while MITM
     /// owns policy, timeouts, and `mcp_calls` telemetry.
     pub mcp_endpoint: Option<Arc<McpEndpointState>>,
+}
+
+pub trait RuntimeSecurityEngine: Send + Sync {
+    fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError>;
+}
+
+impl RuntimeSecurityEngine for std::sync::Mutex<capsem_security_engine::SecurityEngine> {
+    fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError> {
+        let mut engine = self
+            .lock()
+            .map_err(|error| SecurityEngineError::PhaseFailed {
+                phase: capsem_security_engine::SecurityEnginePhase::Enforcement,
+                message: format!("runtime security engine lock poisoned: {error}"),
+            })?;
+        engine.evaluate(event)
+    }
+}
+
+struct RuntimeHttpRequestInput {
+    domain: String,
+    process_name: Option<String>,
+    ai_provider: Option<ProviderKind>,
+    method: String,
+    path: String,
+    query: Option<String>,
+    request_headers: String,
+    start_time: Instant,
+    request_body_stats: Arc<Mutex<BodyStats>>,
+    max_response_preview: usize,
+    port: u16,
+    conn_type: &'static str,
+}
+
+enum RuntimeHttpDecision {
+    Allow,
+    Reject(TelemetryRequestContext, String),
+}
+
+fn evaluate_runtime_http_request(
+    config: &MitmProxyConfig,
+    input: RuntimeHttpRequestInput,
+) -> Option<Result<RuntimeHttpDecision, SecurityEngineError>> {
+    let engine = config.security_engine.as_ref()?;
+    Some(evaluate_runtime_http_request_inner(engine.as_ref(), input))
+}
+
+fn evaluate_runtime_http_request_inner(
+    engine: &dyn RuntimeSecurityEngine,
+    input: RuntimeHttpRequestInput,
+) -> Result<RuntimeHttpDecision, SecurityEngineError> {
+    let req_ctx = TelemetryRequestContext {
+        domain: input.domain,
+        process_name: input.process_name,
+        ai_provider: input.ai_provider,
+        method: input.method,
+        path: input.path,
+        query: input.query,
+        status_code: None,
+        decision: Decision::Allowed,
+        matched_rule: None,
+        request_headers: Some(input.request_headers),
+        response_headers: None,
+        start_time: input.start_time,
+        request_body_stats: input.request_body_stats,
+        max_response_preview: input.max_response_preview,
+        port: input.port,
+        conn_type: input.conn_type,
+        policy_mode: Some("runtime".into()),
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+    };
+    let timestamp_unix_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let event = telemetry_hook::build_http_security_event(
+        &req_ctx,
+        timestamp_unix_ms,
+        crate::telemetry::ambient_capsem_trace_id(),
+        None,
+        None,
+    );
+    let result = engine.evaluate(event)?;
+
+    if runtime_action_allows_transport(&result.action) {
+        return Ok(RuntimeHttpDecision::Allow);
+    }
+
+    let decision = result.resolved_event.event.decision.as_ref();
+    let policy_rule = decision.and_then(|decision| decision.rule.clone());
+    let policy_reason = runtime_security_reason(&result);
+    let policy_action = decision
+        .map(|decision| security_decision_action_label(decision.action).to_string())
+        .unwrap_or_else(|| security_action_label(&result.action).to_string());
+    let mut denied_ctx = req_ctx;
+    denied_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+    denied_ctx.decision = Decision::Denied;
+    denied_ctx.matched_rule = policy_rule.clone().or_else(|| Some(policy_reason.clone()));
+    denied_ctx.policy_action = Some(policy_action);
+    denied_ctx.policy_rule = policy_rule;
+    denied_ctx.policy_reason = Some(policy_reason.clone());
+
+    Ok(RuntimeHttpDecision::Reject(
+        denied_ctx,
+        format!("Capsem: request blocked by security engine ({policy_reason})\n"),
+    ))
+}
+
+fn runtime_action_allows_transport(action: &SecurityAction) -> bool {
+    matches!(
+        action,
+        SecurityAction::Continue | SecurityAction::ObserveOnly
+    )
+}
+
+fn runtime_security_reason(result: &SecurityResult) -> String {
+    if let Some(reason) = result
+        .resolved_event
+        .event
+        .decision
+        .as_ref()
+        .and_then(|decision| decision.reason.clone())
+    {
+        return reason;
+    }
+    match &result.action {
+        SecurityAction::Block(block) => block.reason_code.clone(),
+        SecurityAction::Ask(ask) => ask.reason_code.clone(),
+        SecurityAction::Throttle(throttle) => throttle.reason_code.clone(),
+        SecurityAction::DropConnection(drop) => drop.reason_code.clone(),
+        SecurityAction::Error(error) => error.message.clone(),
+        SecurityAction::Rewrite(_) => "rewrite_not_applied".into(),
+        SecurityAction::Quarantine(_) => "quarantine_not_supported_for_http".into(),
+        SecurityAction::Restore(_) => "restore_not_supported_for_http".into(),
+        SecurityAction::Continue | SecurityAction::ObserveOnly => "allowed".into(),
+    }
+}
+
+fn security_decision_action_label(action: SecurityDecisionAction) -> &'static str {
+    match action {
+        SecurityDecisionAction::Allow => "allow",
+        SecurityDecisionAction::Ask => "ask",
+        SecurityDecisionAction::Block => "block",
+        SecurityDecisionAction::Rewrite => "rewrite",
+        SecurityDecisionAction::Throttle => "throttle",
+    }
+}
+
+fn security_action_label(action: &SecurityAction) -> &'static str {
+    match action {
+        SecurityAction::Continue => "continue",
+        SecurityAction::Ask(_) => "ask",
+        SecurityAction::Rewrite(_) => "rewrite",
+        SecurityAction::Block(_) => "block",
+        SecurityAction::Throttle(_) => "throttle",
+        SecurityAction::Quarantine(_) => "quarantine",
+        SecurityAction::Restore(_) => "restore",
+        SecurityAction::DropConnection(_) => "drop_connection",
+        SecurityAction::ObserveOnly => "observe_only",
+        SecurityAction::Error(_) => "error",
+    }
 }
 
 /// RAII helper: decrements the `mitm.active_connections` gauge when
@@ -687,6 +858,69 @@ async fn handle_request(
         preview: Vec::new(),
         max_preview: req_max_preview,
     }));
+
+    if let Some(runtime_decision) = evaluate_runtime_http_request(
+        config,
+        RuntimeHttpRequestInput {
+            domain: domain.to_string(),
+            process_name: process_name.clone(),
+            ai_provider,
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            request_headers: req_hdrs.clone(),
+            start_time,
+            request_body_stats: Arc::clone(&req_stats),
+            max_response_preview: 0,
+            port: upstream_port,
+            conn_type,
+        },
+    ) {
+        match runtime_decision {
+            Ok(RuntimeHttpDecision::Allow) => {}
+            Ok(RuntimeHttpDecision::Reject(req_ctx, body_text)) => {
+                let deny_body = Full::new(Bytes::from(body_text))
+                    .map_err(|never| match never {})
+                    .boxed();
+                return Ok(hyper::Response::builder()
+                    .status(SECURITY_BLOCK_STATUS)
+                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .unwrap());
+            }
+            Err(error) => {
+                let reason = format!("security engine error: {error}");
+                let req_ctx = TelemetryRequestContext {
+                    domain: domain.to_string(),
+                    process_name: process_name.clone(),
+                    ai_provider,
+                    method: method.clone(),
+                    path: path.clone(),
+                    query: query.clone(),
+                    status_code: Some(SECURITY_BLOCK_STATUS),
+                    decision: Decision::Error,
+                    matched_rule: Some(reason.clone()),
+                    request_headers: Some(req_hdrs.clone()),
+                    response_headers: None,
+                    start_time,
+                    request_body_stats: Arc::clone(&req_stats),
+                    max_response_preview: 0,
+                    port: upstream_port,
+                    conn_type,
+                    policy_mode: Some("runtime".into()),
+                    policy_action: Some("error".into()),
+                    policy_rule: None,
+                    policy_reason: Some(reason.clone()),
+                };
+                let deny_body = Full::new(Bytes::from(format!("Capsem: {reason}\n")))
+                    .map_err(|never| match never {})
+                    .boxed();
+                return Ok(hyper::Response::builder()
+                    .status(SECURITY_BLOCK_STATUS)
+                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .unwrap());
+            }
+        }
+    }
 
     let upstream_req_body: ProxyBoxBody =
         TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed();

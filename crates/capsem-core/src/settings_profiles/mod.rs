@@ -1851,7 +1851,7 @@ fn everyday_work_security_settings() -> SecurityProfileSettings {
             format!("allow_{name}"),
             ProfileRule {
                 callback: "http.request".to_string(),
-                condition: format!("request.host == '{domain}'"),
+                condition: format!("http.request.host == '{domain}'"),
                 decision: RuleDecision::Allow,
                 priority: 1,
                 rewrite_target: None,
@@ -3342,7 +3342,11 @@ fn derived_provider_toggle_rules(
         for host in derived_hosts {
             for (rule_type, callback, condition) in [
                 ("dns", "dns.request", format!("qname == '{host}'")),
-                ("http", "http.request", format!("request.host == '{host}'")),
+                (
+                    "http",
+                    "http.request",
+                    format!("http.request.host == '{host}'"),
+                ),
             ] {
                 let safe_host = host.replace('.', "-").replace('*', "wild");
                 let id = format!("{rule_type}.provider_{provider_id}_{action_word}_{safe_host}");

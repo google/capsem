@@ -1114,6 +1114,30 @@ a valid claim -- mark it `[ ]` instead.
     enforcement before upstream, VM/profile/session/user enrichment in emitted
     events, DNS/MCP/file/process emitters, visible UI screens/editors,
     persistence/profile-pack seeding, and S08d performance proof.
+    Forty-fourth TDD inline-enforcement slice wired the Network Engine to the
+    runtime Security Engine before upstream dispatch. `MitmProxyConfig` now
+    carries a typed `RuntimeSecurityEngine` boundary, `capsem-process` builds a
+    CEL-backed HTTP enforcement engine from the VM effective profile rules,
+    bad profile HTTP CEL installs a fail-closed block-all rule, and MITM
+    evaluates normalized `http.request` events before opening or reusing an
+    upstream sender. Stop-class actions return a 403 to the guest and still
+    flow through the telemetry body wrapper so `net_events` and canonical
+    `security_events` agree. The generated built-in/demo HTTP profile rules
+    now use canonical `http.request.*` CEL paths instead of old `request.*`
+    roots. Verification: red proxy test first, then escalated `cargo test -p
+    capsem-core
+    net::mitm_proxy::tests::runtime_security_engine_blocks_plain_http_before_upstream_dispatch`,
+    `cargo test -p capsem-process mcp_runtime`, `cargo test -p
+    capsem-security-engine`, `cargo test -p capsem-process`, `cargo test -p
+    capsem-core settings_profiles --lib`, escalated `cargo test -p capsem-core
+    net::mitm_proxy::tests --lib`, escalated `cargo test -p capsem-core`, and
+    escalated `cargo test -p capsem-service --bin capsem-service` passed.
+    Still missing after this slice: request-body pre-upstream buffering
+    for body-sensitive enforcement, response-phase enforcement/detection,
+    live service route propagation into already-running VM processes,
+    VM/profile/session/user enrichment in emitted events, DNS/MCP/file/process
+    emitters, visible UI screens/editors, persistence/profile-pack seeding, and
+    S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

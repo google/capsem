@@ -517,6 +517,7 @@ async fn run_async_main_loop(
         upstream_tls: Arc::clone(&net_state.upstream_tls),
         telemetry: telemetry_deps,
         pipeline: mitm_pipeline,
+        security_engine: runtime_policy.security_engine.clone(),
         mcp_endpoint: Some(mcp_endpoint),
     });
 

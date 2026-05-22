@@ -5,12 +5,17 @@ use capsem_core::mcp::aggregator::AggregatorClient;
 use capsem_core::mcp::policy::{McpManualServer, McpPolicy, McpUserConfig, ToolDecision};
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
+use capsem_core::net::mitm_proxy::RuntimeSecurityEngine;
 use capsem_core::settings_profiles::{
     self, CapabilityMode, EffectiveRule, RuleDecision, VmNetworkMode,
 };
 use capsem_core::vm::guest_config::{GuestConfig, GuestFile};
+use capsem_security_engine::{
+    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+};
 use std::collections::HashMap;
-use tracing::warn;
+use std::sync::Mutex;
+use tracing::{info, warn};
 
 const DEFAULT_SNAPSHOT_AUTO_MAX: usize = 10;
 const DEFAULT_SNAPSHOT_MANUAL_MAX: usize = 12;
@@ -34,6 +39,7 @@ pub(crate) struct RuntimePolicyState {
     pub(crate) profile_id: String,
     pub(crate) guest_config: GuestConfig,
     pub(crate) domain_policy: DomainPolicy,
+    pub(crate) security_engine: Option<Arc<dyn RuntimeSecurityEngine>>,
     pub(crate) mcp_policy: McpPolicy,
     pub(crate) mcp_user: McpUserConfig,
     pub(crate) mcp_corp: McpUserConfig,
@@ -68,6 +74,9 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
             Action::Deny
         },
     );
+    let security_engine = effective
+        .as_ref()
+        .and_then(build_runtime_security_engine_from_effective);
 
     let mcp_user = effective
         .as_ref()
@@ -85,6 +94,7 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
         profile_id,
         guest_config,
         domain_policy,
+        security_engine,
         mcp_policy,
         mcp_user,
         mcp_corp,
@@ -238,11 +248,73 @@ fn domain_policy_lists_from_effective(
     (allow, block)
 }
 
+fn build_runtime_security_engine_from_effective(
+    effective: &settings_profiles::EffectiveVmSettings,
+) -> Option<Arc<dyn RuntimeSecurityEngine>> {
+    let rules: Vec<CelEnforcementRule> = effective
+        .rules
+        .iter()
+        .filter_map(http_runtime_enforcement_rule)
+        .collect();
+    if rules.is_empty() {
+        return None;
+    }
+
+    let evaluator = match CelEnforcementEvaluator::compile(rules) {
+        Ok(evaluator) => evaluator,
+        Err(error) => {
+            warn!(
+                error = %error,
+                "failed to compile profile HTTP runtime rules; installing fail-closed network rule"
+            );
+            CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+                id: "profile.runtime_compile_failed".into(),
+                pack_id: Some("profile".into()),
+                condition: "true".into(),
+                decision: SecurityDecisionAction::Block,
+                reason: Some("Profile HTTP runtime rules failed to compile".into()),
+            }])
+            .expect("static fail-closed CEL rule must compile")
+        }
+    };
+
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(evaluator));
+    info!(
+        profile_id = %effective.profile_id,
+        "installed profile HTTP runtime security engine"
+    );
+    let runtime: Arc<dyn RuntimeSecurityEngine> = Arc::new(Mutex::new(engine));
+    Some(runtime)
+}
+
+fn http_runtime_enforcement_rule(rule: &EffectiveRule) -> Option<CelEnforcementRule> {
+    if rule.callback != "http.request" {
+        return None;
+    }
+    Some(CelEnforcementRule {
+        id: rule.id.clone(),
+        pack_id: Some(rule.provenance.profile_id.clone()),
+        condition: rule.condition.clone(),
+        decision: profile_decision_to_security_action(rule.decision),
+        reason: rule.reason.clone(),
+    })
+}
+
+fn profile_decision_to_security_action(decision: RuleDecision) -> SecurityDecisionAction {
+    match decision {
+        RuleDecision::Allow => SecurityDecisionAction::Allow,
+        RuleDecision::Ask => SecurityDecisionAction::Ask,
+        RuleDecision::Block => SecurityDecisionAction::Block,
+        RuleDecision::Rewrite => SecurityDecisionAction::Rewrite,
+    }
+}
+
 fn domain_from_simple_network_condition(rule: &EffectiveRule) -> Option<String> {
     match rule.callback.as_str() {
         "dns.request" => extract_condition_eq(&rule.condition, "qname"),
         "http.request" | "http.read" | "http.write" | "http.response" => {
-            extract_condition_eq(&rule.condition, "request.host")
+            extract_condition_eq(&rule.condition, "http.request.host")
         }
         _ => None,
     }

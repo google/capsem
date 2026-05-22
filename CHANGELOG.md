@@ -115,6 +115,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added production MITM telemetry dual-write for canonical resolved HTTP
   `security_events` while preserving the existing `net_events` projection, so
   Network Engine traffic now starts entering the S08b normalized event journal.
+- Added inline Network Engine enforcement for HTTP requests: `capsem-process`
+  now builds a CEL-backed runtime Security Engine from effective profile HTTP
+  rules, MITM evaluates normalized `http.request` events before upstream
+  dispatch, and blocked requests journal both `net_events` and canonical
+  `security_events`.
 - Fixed local setup-generated profile payloads to include the required UI mode
   when installing a local profile revision from `CAPSEM_ASSETS_DIR`.
 - Added the shared `capsem-proto` policy context schema that future CEL and

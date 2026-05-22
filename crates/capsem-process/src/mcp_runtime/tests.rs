@@ -7,6 +7,10 @@ use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_core::settings_profiles::{
     CapabilityMode, EffectiveRule, McpConnectorCapsemMetadata, McpConnectorConfig, RuleDecision,
 };
+use capsem_security_engine::{
+    AiAttributionScope, AiOriginKind, Enforceability, HttpSecuritySubject, RedactionState,
+    SecurityAction, SecurityEvent, SecurityEventCommon, SourceEngine,
+};
 
 use capsem_core::mcp::policy::McpUserConfig;
 
@@ -235,7 +239,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
     effective.rules.push(EffectiveRule {
         id: "http.allow-example-domain".to_string(),
         callback: "http.request".to_string(),
-        condition: "request.host == \"example.com\"".to_string(),
+        condition: "http.request.host == \"example.com\"".to_string(),
         decision: RuleDecision::Allow,
         priority: 900,
         rewrite_target: None,
@@ -252,7 +256,8 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
     effective.rules.push(EffectiveRule {
         id: "http.block-example-secret-path".to_string(),
         callback: "http.request".to_string(),
-        condition: "request.host == \"example.com\" && request.path == \"/secret\"".to_string(),
+        condition: "http.request.host == \"example.com\" && http.request.path == \"/secret\""
+            .to_string(),
         decision: RuleDecision::Block,
         priority: 10,
         rewrite_target: None,
@@ -269,7 +274,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
     effective.rules.push(EffectiveRule {
         id: "http.block-bad-domain".to_string(),
         callback: "http.request".to_string(),
-        condition: "request.host == \"bad.example\"".to_string(),
+        condition: "http.request.host == \"bad.example\"".to_string(),
         decision: RuleDecision::Block,
         priority: 10,
         rewrite_target: None,
@@ -370,13 +375,70 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         "path-scoped HTTP blocks must not become full-domain DNS blocks"
     );
 
-    assert!(
-        runtime
-            .mcp_policy
-            .tool_decisions
-            .contains_key("mcp-server__delete_repository"),
-        "Profile MCP rules still feed the local MCP transport policy until S08b replaces it"
+    let security_engine = runtime
+        .security_engine
+        .as_ref()
+        .expect("canonical HTTP rules should install a runtime Security Engine");
+    let blocked = security_engine
+        .evaluate(http_event("bad.example", "/"))
+        .expect("profile runtime engine should evaluate canonical HTTP CEL");
+    assert!(matches!(blocked.action, SecurityAction::Block(_)));
+    assert_eq!(
+        blocked
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("http.block-bad-domain")
     );
+}
+
+fn http_event(host: &str, path: &str) -> SecurityEvent {
+    SecurityEvent::http(
+        SecurityEventCommon {
+            event_id: format!("test-http-{host}-{path}"),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: None,
+            enforceability: Enforceability::InlineBlockable,
+            trace_id: Some("trace-test".into()),
+            span_id: None,
+            timestamp_unix_ms: 1,
+            vm_id: None,
+            session_id: None,
+            profile_id: None,
+            profile_revision: None,
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: None,
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        HttpSecuritySubject {
+            method: "GET".into(),
+            scheme: Some("https".into()),
+            host: host.into(),
+            port: Some(443),
+            path: Some(path.into()),
+            url: Some(format!("https://{host}{path}")),
+            path_class: path.trim_start_matches('/').to_string(),
+            ..HttpSecuritySubject::default()
+        },
+    )
 }
 
 #[test]

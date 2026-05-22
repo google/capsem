@@ -1492,19 +1492,19 @@ pub enum SecurityEngineError {
     CelNonBooleanResult { rule_id: String, actual: String },
 }
 
-pub trait SecurityEventProcessor {
+pub trait SecurityEventProcessor: Send {
     fn name(&self) -> &str;
     fn process(&mut self, event: SecurityEvent) -> Result<SecurityEvent, SecurityEngineError>;
 }
 
-pub trait EnforcementEvaluator {
+pub trait EnforcementEvaluator: Send {
     fn evaluate(
         &mut self,
         event: &SecurityEvent,
     ) -> Result<Option<SecurityDecision>, SecurityEngineError>;
 }
 
-pub trait ConfirmResolver {
+pub trait ConfirmResolver: Send {
     fn resolve(
         &mut self,
         event: &SecurityEvent,
@@ -1512,14 +1512,14 @@ pub trait ConfirmResolver {
     ) -> Result<SecurityDecision, SecurityEngineError>;
 }
 
-pub trait DetectionEvaluator {
+pub trait DetectionEvaluator: Send {
     fn evaluate(
         &mut self,
         event: &SecurityEvent,
     ) -> Result<Vec<DetectionFinding>, SecurityEngineError>;
 }
 
-pub trait RuleMatchRecorder {
+pub trait RuleMatchRecorder: Send {
     fn record_rule_match(
         &mut self,
         rule_id: &str,

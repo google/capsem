@@ -7,6 +7,9 @@ use std::os::unix::net::UnixStream;
 use http_body_util::BodyExt;
 
 use crate::net::cert_authority::CertAuthority;
+use capsem_security_engine::{
+    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+};
 
 const CA_KEY: &str = include_str!("../../../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../../../config/capsem-ca.crt");
@@ -20,6 +23,12 @@ const DB_FLUSH_MS: u64 = 100;
 const TEST_DOMAIN: &str = "thisdomaindoesnotexistforsur3.ai";
 
 fn make_config_dev() -> Arc<MitmProxyConfig> {
+    make_config_dev_with_security_engine(None)
+}
+
+fn make_config_dev_with_security_engine(
+    security_engine: Option<Arc<dyn RuntimeSecurityEngine>>,
+) -> Arc<MitmProxyConfig> {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
@@ -40,6 +49,7 @@ fn make_config_dev() -> Arc<MitmProxyConfig> {
         telemetry,
         pipeline,
         mcp_endpoint: None,
+        security_engine,
     })
 }
 
@@ -387,6 +397,64 @@ async fn upstream_error_returns_502() {
     assert_eq!(events[0].decision, Decision::Error);
     assert_eq!(events[0].status_code, Some(502));
     assert_eq!(events[0].domain, "nonexistent.invalid");
+}
+
+#[tokio::test]
+async fn runtime_security_engine_blocks_plain_http_before_upstream_dispatch() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-openai-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.request.host == 'api.openai.com' \
+                && http.request.path.startsWith('/v1/chat')"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("inline OpenAI block".into()),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+    let (mut sender, proxy_task, conn_task) = open_direct_plain_http_request_conn(
+        &config,
+        "api.openai.com",
+        port,
+        Some(ProviderKind::OpenAi),
+    )
+    .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-test", "needle").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("inline OpenAI block"));
+    upstream_task.await.unwrap();
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-openai-inline")
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.final_action, steps.rule_id, steps.message \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("block"));
+    assert!(security.contains("block-openai-inline"));
 }
 
 // emit_model_call / trace-chain unit tests now live in
