@@ -318,6 +318,159 @@ class DetectionCompileReportV1(StrictModel):
     diagnostics: list[str] = Field(default_factory=list)
 
 
+class PolicyContextEventRefV1(StrictModel):
+    corpus: NonEmptyStr
+    session_id: NonEmptyStr
+    event_id: NonEmptyStr
+    sequence: Annotated[int, Field(ge=0)]
+    timestamp_unix_ms: Annotated[int, Field(ge=0)]
+
+
+class HeaderLookupV1(StrictModel):
+    exists: bool
+    values: list[NonEmptyStr] = Field(default_factory=list)
+
+
+class BodyPolicyContextV1(StrictModel):
+    state: Literal["missing", "text", "binary", "redacted"] = "missing"
+    text: str | None = None
+    content_type: str | None = None
+    size: Annotated[int, Field(ge=0)] | None = None
+    truncated: bool = False
+    redaction_reason: str | None = None
+
+
+class CommonPolicyContextV1(StrictModel):
+    session_id: NonEmptyStr | None = None
+    vm_id: NonEmptyStr | None = None
+    profile_id: NonEmptyStr | None = None
+    profile_revision: NonEmptyStr | None = None
+    user_id: NonEmptyStr | None = None
+    event_type: NonEmptyStr | None = None
+    enforceability: NonEmptyStr | None = None
+    actor: NonEmptyStr | None = None
+    labels: dict[NonEmptyStr, NonEmptyStr] = Field(default_factory=dict)
+
+
+class HttpRequestPolicyContextV1(StrictModel):
+    method: NonEmptyStr | None = None
+    scheme: NonEmptyStr | None = None
+    host: NonEmptyStr | None = None
+    port: Annotated[int, Field(ge=1, le=65535)] | None = None
+    path: NonEmptyStr | None = None
+    query: str | None = None
+    url: NonEmptyStr | None = None
+    path_class: NonEmptyStr | None = None
+    bytes: Annotated[int, Field(ge=0)] | None = None
+    headers: dict[NonEmptyStr, list[NonEmptyStr]] = Field(default_factory=dict)
+    body: BodyPolicyContextV1 = Field(default_factory=BodyPolicyContextV1)
+
+    def header(self, name: str) -> HeaderLookupV1:
+        for key, values in self.headers.items():
+            if key.lower() == name.lower():
+                return HeaderLookupV1(exists=True, values=values)
+        return HeaderLookupV1(exists=False)
+
+
+class HttpResponsePolicyContextV1(StrictModel):
+    status: Annotated[int, Field(ge=100, le=599)] | None = None
+    bytes: Annotated[int, Field(ge=0)] | None = None
+    headers: dict[NonEmptyStr, list[NonEmptyStr]] = Field(default_factory=dict)
+    body: BodyPolicyContextV1 = Field(default_factory=BodyPolicyContextV1)
+
+    def header(self, name: str) -> HeaderLookupV1:
+        for key, values in self.headers.items():
+            if key.lower() == name.lower():
+                return HeaderLookupV1(exists=True, values=values)
+        return HeaderLookupV1(exists=False)
+
+
+class HttpPolicyContextV1(StrictModel):
+    request: HttpRequestPolicyContextV1 | None = None
+    response: HttpResponsePolicyContextV1 | None = None
+
+
+class DnsRequestPolicyContextV1(StrictModel):
+    qname: NonEmptyStr | None = None
+    domain_class: NonEmptyStr | None = None
+
+
+class DnsPolicyContextV1(StrictModel):
+    request: DnsRequestPolicyContextV1 | None = None
+
+
+class McpRequestPolicyContextV1(StrictModel):
+    server_id: NonEmptyStr | None = None
+    tool_name: NonEmptyStr | None = None
+    namespaced_tool_name: NonEmptyStr | None = None
+
+
+class McpPolicyContextV1(StrictModel):
+    request: McpRequestPolicyContextV1 | None = None
+
+
+class ModelRequestPolicyContextV1(StrictModel):
+    provider: NonEmptyStr | None = None
+    api_family: NonEmptyStr | None = None
+    model: NonEmptyStr | None = None
+    stream: bool | None = None
+
+
+class ModelPolicyContextV1(StrictModel):
+    request: ModelRequestPolicyContextV1 | None = None
+
+
+class FileActivityPolicyContextV1(StrictModel):
+    operation: NonEmptyStr | None = None
+    path: NonEmptyStr | None = None
+    path_class: NonEmptyStr | None = None
+
+
+class FilePolicyContextV1(StrictModel):
+    activity: FileActivityPolicyContextV1 | None = None
+
+
+class ProcessActivityPolicyContextV1(StrictModel):
+    operation: NonEmptyStr | None = None
+    command_class: NonEmptyStr | None = None
+
+
+class ProcessPolicyContextV1(StrictModel):
+    activity: ProcessActivityPolicyContextV1 | None = None
+
+
+class ProfileActivityPolicyContextV1(StrictModel):
+    operation: NonEmptyStr | None = None
+    profile_id: NonEmptyStr | None = None
+    profile_revision: NonEmptyStr | None = None
+
+
+class ProfilePolicyContextV1(StrictModel):
+    activity: ProfileActivityPolicyContextV1 | None = None
+
+
+class PolicyContextV1(StrictModel):
+    schema_version: Literal[1] = 1
+    common: CommonPolicyContextV1 = Field(default_factory=CommonPolicyContextV1)
+    http: HttpPolicyContextV1 = Field(default_factory=HttpPolicyContextV1)
+    dns: DnsPolicyContextV1 = Field(default_factory=DnsPolicyContextV1)
+    mcp: McpPolicyContextV1 = Field(default_factory=McpPolicyContextV1)
+    model: ModelPolicyContextV1 = Field(default_factory=ModelPolicyContextV1)
+    file: FilePolicyContextV1 = Field(default_factory=FilePolicyContextV1)
+    process: ProcessPolicyContextV1 = Field(default_factory=ProcessPolicyContextV1)
+    profile: ProfilePolicyContextV1 = Field(default_factory=ProfilePolicyContextV1)
+
+
+class PolicyContextFixtureV1(StrictModel):
+    schema_: Literal["capsem.policy-context-fixture.v1"] = Field(
+        default="capsem.policy-context-fixture.v1",
+        alias="schema",
+    )
+    event_ref: PolicyContextEventRefV1
+    expected_labels: list[NonEmptyStr] = Field(default_factory=list)
+    context: PolicyContextV1
+
+
 _LOGSOURCE_TO_EVENT_FAMILY = {
     "dns": EventFamily.DNS,
     "http": EventFamily.HTTP,
@@ -557,6 +710,18 @@ def dump_detection_check_report_json(report: DetectionCheckReportV1) -> str:
 
 def dump_detection_compile_report_json(report: DetectionCompileReportV1) -> str:
     return report.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+
+
+def load_policy_context_fixture_jsonl(path: Path) -> list[PolicyContextFixtureV1]:
+    fixtures: list[PolicyContextFixtureV1] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            fixtures.append(PolicyContextFixtureV1.model_validate_json(line))
+        except Exception as error:
+            raise ValueError(f"{path}:{line_number}: {error}") from error
+    return fixtures
 
 
 def validate_policy_pack_json(payload: str | bytes) -> PolicyPackV1:

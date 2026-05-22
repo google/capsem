@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from click.testing import CliRunner
 from unittest.mock import patch
 
@@ -16,6 +18,7 @@ from capsem.builder.service_settings import (
     validate_service_settings_json,
     validate_service_settings_toml,
 )
+from capsem.builder.security_packs import load_policy_context_fixture_jsonl
 
 
 def test_capsem_admin_settings_schema_outputs_service_settings_schema() -> None:
@@ -611,3 +614,23 @@ credential_brokerage = "ask"
 
     assert result.exit_code == 0
     assert '"profile_id": "everyday-work"' in result.output
+
+
+def test_policy_context_corpus_loads_through_pydantic_models() -> None:
+    fixtures = load_policy_context_fixture_jsonl(
+        Path("data/policy-context/canonical-policy-contexts.jsonl")
+    )
+
+    assert [fixture.event_ref.event_id for fixture in fixtures] == [
+        "evt-http-google-secret",
+        "evt-http-github-clean",
+    ]
+    first = fixtures[0]
+    assert first.event_ref.session_id == "session-s08c-corpus"
+    assert first.context.common.profile_id == "coding"
+    assert first.context.http.request is not None
+    assert first.context.http.request.host == "googleapis.com"
+    assert first.context.http.request.header("authorization").exists is True
+    assert first.context.http.request.body.text == "token=secret"
+    assert first.context.http.request.body.size == 12
+    assert first.expected_labels == ["detect-google-secret"]

@@ -1789,6 +1789,26 @@ a valid claim -- mark it `[ ]` instead.
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
     Rust runtime parity, and real-session fixture generation after S08b's
     resolved-event journal stabilizes.
+    First TDD corpus-foundation slice landed the shared
+    `data/policy-context/canonical-policy-contexts.jsonl` fixture envelope so
+    Python admin tooling and Rust runtime tests consume the same canonical
+    policy-context examples. The slice also added shared CEL corpus expressions
+    for a positive `http.request.*` match and a rejected `event.subject.*`
+    authoring attempt. Python now validates the fixture through Pydantic
+    policy-context models and exposes typed header/body accessors; Rust parses
+    the embedded context through `capsem_proto::PolicyContext`, evaluates the
+    shared CEL expression, and keeps `event.subject.*` rejected before install.
+    Verification: red `uv run pytest
+    tests/test_admin_cli.py::test_policy_context_corpus_loads_through_pydantic_models
+    -q` first failed on the missing loader/model; red `cargo test -p
+    capsem-security-engine
+    s08c_policy_context_corpus_uses_canonical_cel_roots` first failed on the
+    missing fixture, then both passed. Widened `uv run pytest
+    tests/test_admin_cli.py -q` passed with **28** tests and `cargo test -p
+    capsem-security-engine` passed with **39** tests. Still missing in S08c:
+    enforcement/detection pack corpora, expected backtest/hunt outputs,
+    offline `capsem-admin` backtest commands, Rust/admin parity over identical
+    expected rows, real-session fixture generation, and corpus workflow docs.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

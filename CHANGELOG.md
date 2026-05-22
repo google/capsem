@@ -141,6 +141,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a Policy settings "Live Rules" UI for runtime enforcement and detection
   overlays, including rule priority, attribution, match counts, validation,
   install, and guarded runtime-only delete actions.
+- Added the first S08c shared policy-context/CEL corpus fixtures, with Python
+  Pydantic loading and Rust CEL parity coverage over canonical
+  `http.request.*` roots plus rejected `event.subject.*` authoring.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API

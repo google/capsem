@@ -946,6 +946,30 @@ fn real_cel_policy_context_exposes_http_request_surface() {
 }
 
 #[test]
+fn s08c_policy_context_corpus_uses_canonical_cel_roots() {
+    let fixtures = include_str!("../../../data/policy-context/canonical-policy-contexts.jsonl");
+    let contexts: Vec<capsem_proto::PolicyContext> = fixtures
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).unwrap();
+            serde_json::from_value(value["context"].clone()).unwrap()
+        })
+        .collect();
+
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[0].common.profile_id.as_deref(), Some("coding"));
+
+    let condition = include_str!("../../../data/enforcement/cel/http-google-secret.cel");
+    let program = compile_policy_cel("http-google-secret", condition).unwrap();
+    assert!(evaluate_policy_cel_bool("fixture-google", &program, &contexts[0]).unwrap());
+    assert!(!evaluate_policy_cel_bool("fixture-google", &program, &contexts[1]).unwrap());
+
+    let invalid_condition = include_str!("../../../data/enforcement/cel/invalid-event-root.cel");
+    assert!(compile_policy_cel("bad-root", invalid_condition).is_err());
+}
+
+#[test]
 fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
     fn assert_match_and_pass(event: SecurityEvent, matched: &str, passed: &str) {
         let context = policy_context_from_event(&event);

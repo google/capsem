@@ -2,7 +2,7 @@
 
 ## Status
 
-Not started. Inserted on 2026-05-21 after the S08b rule-runtime regroup.
+In progress. Inserted on 2026-05-21 after the S08b rule-runtime regroup.
 
 ## Goal
 
@@ -85,24 +85,39 @@ session-scoped enforcement replay, it should be named and designed separately.
 
 ## Tasks
 
-- Create shared event, enforcement, detection, expected-result fixture corpus.
-- Create shared policy-context fixtures and negative fixtures for rejected
+- [ ] Create shared event, enforcement, detection, expected-result fixture corpus.
+- [x] Create shared policy-context fixtures and negative fixtures for rejected
   `event.*` authoring.
-- Add `capsem-admin enforcement validate|compile|backtest` over the shared
+- [ ] Add `capsem-admin enforcement validate|compile|backtest` over the shared
   corpus without requiring a Capsem service.
-- Add `capsem-admin detection validate|compile|backtest` over the shared corpus
+- [ ] Add `capsem-admin detection validate|compile|backtest` over the shared corpus
   without requiring a Capsem service.
-- Keep `capsem-admin detection hunt` optional unless it can target a local
+- [ ] Keep `capsem-admin detection hunt` optional unless it can target a local
   service/session store explicitly; offline detection backtest is mandatory.
-- Add Rust runtime parity tests that consume the same corpus and expected
+- [x] Add Rust runtime parity tests that consume the same corpus and expected
   outputs through the S08b service/security-engine evaluator.
-- Add cross-language drift tests proving Python-generated enforcement/detection
+- [ ] Add cross-language drift tests proving Python-generated enforcement/detection
   artifacts use canonical policy roots, are accepted by Rust, and produce
   identical backtest outcomes.
-- Generate initial real-session normalized event fixtures from S08b's
+- [ ] Generate initial real-session normalized event fixtures from S08b's
   resolved-event journal and add them to the corpus once stable.
-- Document the corpus update workflow so future rule-language changes must
+- [ ] Document the corpus update workflow so future rule-language changes must
   update Python, Rust, and expected-result fixtures together.
+
+## Implementation Notes
+
+- Slice 1 landed `data/policy-context/canonical-policy-contexts.jsonl` as a
+  shared fixture envelope. Each line contains a typed event ref, expected
+  labels, and a `capsem_proto::PolicyContext` payload. It also added first CEL
+  corpus expressions under `data/enforcement/cel/`, including a positive
+  canonical-root rule and a rejected `event.subject.*` fixture.
+- Python admin tooling now has typed Pydantic models for the policy-context
+  envelope and loads the JSONL corpus without raw JSON dictionaries.
+- Rust `capsem-security-engine` consumes the same fixture, parses the embedded
+  context through `capsem_proto::PolicyContext`, validates canonical CEL roots
+  such as `http.request.host`, `http.request.header(...)`, and
+  `http.request.body.text`, and asserts the rejected `event.subject.*` root
+  stays rejected before rule install.
 
 ## Coverage Ledger
 
