@@ -246,12 +246,27 @@ export type RuntimeRuleOrigin = 'profile' | 'user' | 'corp' | 'runtime';
 export type RuntimeSecurityDecision = 'allow' | 'ask' | 'block' | 'rewrite' | 'throttle';
 export type RuntimeSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 export type RuntimeConfidence = 'low' | 'medium' | 'high';
+export type RuntimeRuleDefinition =
+  | {
+      kind: 'enforcement';
+      decision: RuntimeSecurityDecision;
+      reason?: string | null;
+    }
+  | {
+      kind: 'detection';
+      sigma_id?: string | null;
+      title: string;
+      severity: RuntimeSeverity;
+      confidence: RuntimeConfidence;
+      tags: string[];
+    };
 
 export interface RuntimeRuleEntry {
   id: string;
   pack_id?: string | null;
   scope: RuntimeRuleScope;
   origin: RuntimeRuleOrigin;
+  definition: RuntimeRuleDefinition;
   enabled: boolean;
   compiled: boolean;
   compile_status: Record<string, unknown>;

@@ -1238,6 +1238,10 @@ fn security_engine_records_enforcement_and_detection_match_stats() {
             .add_or_update(
                 RuntimeRuleRecord {
                     metadata: rule_metadata("block-metadata"),
+                    definition: RuntimeRuleDefinition::Enforcement {
+                        decision: SecurityDecisionAction::Block,
+                        reason: Some("metadata access".into()),
+                    },
                     source: "http.request.host == 'metadata.google.internal'".into(),
                     enabled: true,
                 },
@@ -1248,6 +1252,13 @@ fn security_engine_records_enforcement_and_detection_match_stats() {
             .add_or_update(
                 RuntimeRuleRecord {
                     metadata: rule_metadata("detect-metadata"),
+                    definition: RuntimeRuleDefinition::Detection {
+                        sigma_id: None,
+                        title: "Metadata access".into(),
+                        severity: Severity::High,
+                        confidence: Confidence::High,
+                        tags: Vec::new(),
+                    },
                     source: "http.request.host == 'metadata.google.internal'".into(),
                     enabled: true,
                 },
@@ -1588,6 +1599,10 @@ fn runtime_rule_registry_keeps_previous_plan_when_update_fails() {
         .add_or_update(
             RuntimeRuleRecord {
                 metadata: rule_metadata("deny-metadata"),
+                definition: RuntimeRuleDefinition::Enforcement {
+                    decision: SecurityDecisionAction::Block,
+                    reason: Some("metadata access".into()),
+                },
                 source: "host == '169.254.169.254'".into(),
                 enabled: true,
             },
@@ -1599,6 +1614,10 @@ fn runtime_rule_registry_keeps_previous_plan_when_update_fails() {
         .add_or_update(
             RuntimeRuleRecord {
                 metadata: rule_metadata("deny-metadata"),
+                definition: RuntimeRuleDefinition::Enforcement {
+                    decision: SecurityDecisionAction::Block,
+                    reason: Some("metadata access".into()),
+                },
                 source: "invalid cel".into(),
                 enabled: true,
             },
@@ -1622,6 +1641,13 @@ fn runtime_rule_registry_tracks_match_stats_and_delete() {
         .add_or_update(
             RuntimeRuleRecord {
                 metadata: rule_metadata("detect-metadata"),
+                definition: RuntimeRuleDefinition::Detection {
+                    sigma_id: Some("sigma-1".into()),
+                    title: "Metadata access".into(),
+                    severity: Severity::High,
+                    confidence: Confidence::High,
+                    tags: vec!["metadata".into()],
+                },
                 source: "host == '169.254.169.254'".into(),
                 enabled: true,
             },
@@ -1644,6 +1670,81 @@ fn runtime_rule_registry_tracks_match_stats_and_delete() {
     let removed = registry.delete("detect-metadata").unwrap();
     assert_eq!(removed.metadata.id, "detect-metadata");
     assert!(registry.list().is_empty());
+}
+
+#[test]
+fn runtime_rule_registry_rebuilds_enabled_cel_rules_with_typed_metadata() {
+    let mut registry = RuntimeRuleRegistry::default();
+    registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: rule_metadata("block-metadata"),
+                definition: RuntimeRuleDefinition::Enforcement {
+                    decision: SecurityDecisionAction::Block,
+                    reason: Some("metadata access".into()),
+                },
+                source: "http.request.host == 'metadata.google.internal'".into(),
+                enabled: true,
+            },
+            compile_rule_source,
+        )
+        .unwrap();
+    registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: rule_metadata("detect-metadata"),
+                definition: RuntimeRuleDefinition::Detection {
+                    sigma_id: Some("sigma-1".into()),
+                    title: "Metadata access".into(),
+                    severity: Severity::High,
+                    confidence: Confidence::Medium,
+                    tags: vec!["metadata".into()],
+                },
+                source: "http.request.host == 'metadata.google.internal'".into(),
+                enabled: true,
+            },
+            compile_rule_source,
+        )
+        .unwrap();
+    registry
+        .add_or_update(
+            RuntimeRuleRecord {
+                metadata: rule_metadata("disabled-detection"),
+                definition: RuntimeRuleDefinition::Detection {
+                    sigma_id: None,
+                    title: "Disabled detection".into(),
+                    severity: Severity::Low,
+                    confidence: Confidence::Low,
+                    tags: Vec::new(),
+                },
+                source: "http.request.host == 'metadata.google.internal'".into(),
+                enabled: false,
+            },
+            compile_rule_source,
+        )
+        .unwrap();
+
+    let mut enforcement =
+        CelEnforcementEvaluator::compile(registry.enabled_enforcement_rules()).unwrap();
+    let decision = enforcement
+        .evaluate(&http_request_event("evt-runtime-rebuild"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(decision.action, SecurityDecisionAction::Block);
+    assert_eq!(decision.rule.as_deref(), Some("block-metadata"));
+    assert_eq!(decision.reason.as_deref(), Some("metadata access"));
+
+    let mut detection = CelDetectionEvaluator::compile(registry.enabled_detection_rules()).unwrap();
+    let findings = detection
+        .evaluate(&http_request_event("evt-runtime-detect"))
+        .unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, "detect-metadata");
+    assert_eq!(findings[0].sigma_id.as_deref(), Some("sigma-1"));
+    assert_eq!(findings[0].title, "Metadata access");
+    assert_eq!(findings[0].severity, Severity::High);
+    assert_eq!(findings[0].confidence, Confidence::Medium);
+    assert_eq!(findings[0].tags, vec!["metadata".to_string()]);
 }
 
 fn rule_metadata(id: &str) -> RuntimeRuleMetadata {

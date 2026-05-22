@@ -291,6 +291,31 @@ async fn triage_session_db_surfaces_policy_signals() {
             },
         ))
         .await;
+    let security_event = runtime_http_event("evt-triage-security", 6, "blocked.example");
+    writer
+        .write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+            capsem_security_engine::ResolvedSecurityEvent {
+                schema_version: capsem_security_engine::RESOLVED_EVENT_SCHEMA_VERSION,
+                event: security_event,
+                steps: vec![capsem_security_engine::ResolvedEventStep {
+                    kind: capsem_security_engine::ResolvedEventStepKind::EnforcementMatch,
+                    status: capsem_security_engine::StepStatus::Error,
+                    rule_id: Some("corp-hook".into()),
+                    pack_id: Some("corp-pack".into()),
+                    message: Some("fail_closed".into()),
+                }],
+                plugin_transforms: Vec::new(),
+                detection_findings: Vec::new(),
+                final_action: capsem_security_engine::SecurityAction::Error(
+                    capsem_security_engine::SecurityError {
+                        code: "fail_closed".into(),
+                        message: "fail_closed".into(),
+                    },
+                ),
+                emitter_results: Vec::new(),
+            },
+        ))
+        .await;
     drop(writer);
 
     let triage = session_db_triage(&db_path, 10).unwrap();
@@ -6388,6 +6413,9 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     .unwrap();
     assert_eq!(installed["rule"]["id"], "block-metadata");
     assert_eq!(installed["rule"]["compiled"], true);
+    assert_eq!(installed["rule"]["definition"]["kind"], "enforcement");
+    assert_eq!(installed["rule"]["definition"]["decision"], "block");
+    assert_eq!(installed["rule"]["definition"]["reason"], "metadata access");
 
     state
         .enforcement_registry
@@ -6445,6 +6473,85 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     assert_eq!(deleted["removed"], true);
     let Json(listed_after_delete) = handle_list_enforcement_rules(State(state)).await.unwrap();
     assert!(listed_after_delete["rules"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn runtime_security_engine_evaluates_installed_rules_and_records_stats() {
+    let state = make_test_state();
+    let _ = handle_create_enforcement_rule(
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "block-metadata".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "http.request.host == 'metadata.google.internal'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("metadata access".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    let _ = handle_create_detection_rule(
+        State(state.clone()),
+        Json(RuntimeDetectionRuleRequest {
+            id: "detect-metadata".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-1".into()),
+            title: "Metadata access".into(),
+            condition: "http.request.host == 'metadata.google.internal'".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::High,
+            tags: vec!["metadata".into()],
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let mut engine = runtime_security_engine_from_registries(&state).unwrap();
+    let result = engine
+        .evaluate(runtime_http_event(
+            "evt-runtime-engine",
+            9,
+            "metadata.google.internal",
+        ))
+        .unwrap();
+
+    assert!(matches!(
+        result.action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+    assert_eq!(
+        result
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .unwrap()
+            .rule
+            .as_deref(),
+        Some("block-metadata")
+    );
+    assert_eq!(result.resolved_event.detection_findings.len(), 1);
+    assert_eq!(
+        result.resolved_event.detection_findings[0].rule_id,
+        "detect-metadata"
+    );
+
+    let Json(enforcement_stats) = handle_enforcement_stats(State(state.clone()))
+        .await
+        .unwrap();
+    assert_eq!(enforcement_stats["rules"][0]["match_count"], 1);
+    assert_eq!(
+        enforcement_stats["rules"][0]["last_matched_event"],
+        "evt-runtime-engine"
+    );
+    let Json(detection_stats) = handle_detection_stats(State(state)).await.unwrap();
+    assert_eq!(detection_stats["rules"][0]["match_count"], 1);
+    assert_eq!(
+        detection_stats["rules"][0]["last_matched_event"],
+        "evt-runtime-engine"
+    );
 }
 
 #[tokio::test]
@@ -6543,6 +6650,11 @@ async fn handle_detection_runtime_routes_compile_install_update_delete() {
     .await
     .unwrap();
     assert_eq!(installed["rule"]["id"], "detect-model-request");
+    assert_eq!(installed["rule"]["definition"]["kind"], "detection");
+    assert_eq!(installed["rule"]["definition"]["sigma_id"], "sigma-1");
+    assert_eq!(installed["rule"]["definition"]["title"], "Model request");
+    assert_eq!(installed["rule"]["definition"]["severity"], "medium");
+    assert_eq!(installed["rule"]["definition"]["confidence"], "high");
 
     let Json(updated) = handle_update_detection_rule(
         Path("detect-model-request".into()),

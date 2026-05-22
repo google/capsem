@@ -1079,6 +1079,23 @@ a valid claim -- mark it `[ ]` instead.
     **262** tests. Still missing after this slice: visible UI screens/editors,
     persistence/profile-pack seeding, production engine emitters, and S08d
     performance proof.
+    Forty-second TDD live-runtime-engine slice made installed runtime rules
+    executable instead of only listable/backtestable. `RuntimeRuleRecord` and
+    `RuntimeRuleEntry` now carry typed enforcement/detection definitions, the
+    registry can rebuild enabled `CelEnforcementRule`/`CelDetectionRule`
+    values with decision, reason, Sigma id, severity, confidence, and tags, and
+    the service can construct a live `SecurityEngine` from the separate
+    enforcement/detection registries while recording matches back to the
+    correct stats rows. Route responses now expose the typed definition to the
+    frontend contract. Hygiene while returning to green: session DB triage now
+    includes normalized `security_events` decisions/failed steps, and settings
+    policy-rule saves reject unsupported `.match(` terms before writing profile
+    overrides. Verification: red tests first, then `cargo test -p
+    capsem-security-engine`, escalated `cargo test -p capsem-service --bin
+    capsem-service` (**201** tests), and `pnpm run check` passed. Still
+    missing after this slice: visible UI screens/editors,
+    persistence/profile-pack seeding, production network/file/process emitters
+    calling the runtime engine, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

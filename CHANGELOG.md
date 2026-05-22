@@ -102,6 +102,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backtest, live hunt, and session-backed detection hunt calls.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
+- Added typed runtime rule definitions to the rule registry and service/API
+  responses so installed enforcement/detection rules can be rebuilt into live
+  Security Engine CEL evaluators without losing decision, severity, Sigma, or
+  tag metadata.
+- Added a service-side runtime Security Engine builder that evaluates installed
+  enforcement and detection registries together and records live match counts
+  back to the correct registry.
+- Added `security_decisions` to session DB triage so normalized
+  `security_events` decisions and failed steps surface alongside network, DNS,
+  MCP, exec, and audit signals.
 - Fixed local setup-generated profile payloads to include the required UI mode
   when installing a local profile revision from `CAPSEM_ASSETS_DIR`.
 - Added the shared `capsem-proto` policy context schema that future CEL and
@@ -508,6 +518,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `service.toml` and profile roots.
 
 ### Fixed
+- Fixed settings policy-rule saves to reject unsupported `.match(` condition
+  terms before writing a user profile override.
 - Fixed HTTP gzip handling so comma-separated `Content-Encoding` token lists are
   recognized case-insensitively and malformed gzip headers with reserved flags
   pass through instead of dropping bytes.

@@ -3317,6 +3317,17 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
            AND COALESCE(a.exit_code, e.exit_code) != 0 \
          ORDER BY a.timestamp DESC LIMIT {limit}"
     );
+    let security_decisions_sql = format!(
+        "SELECT se.timestamp, se.event_id, se.event_type, se.final_action, \
+                se.finding_count, se.trace_id, steps.kind, steps.status, \
+                steps.rule_id, steps.pack_id, steps.message \
+         FROM security_events se \
+         LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id \
+         WHERE se.final_action != 'continue' \
+            OR se.finding_count > 0 \
+            OR steps.status = 'error' \
+         ORDER BY se.timestamp DESC, steps.step_index ASC LIMIT {limit}"
+    );
 
     let denied_net = reader
         .query_raw(&denied_net_sql)
@@ -3333,6 +3344,9 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     let audit_failures = reader
         .query_raw(&audit_failures_sql)
         .unwrap_or_else(|_| "[]".into());
+    let security_decisions = reader
+        .query_raw(&security_decisions_sql)
+        .unwrap_or_else(|_| "[]".into());
 
     let denied_net_v: serde_json::Value = serde_json::from_str(&denied_net).unwrap_or_default();
     let mcp_errors_v: serde_json::Value = serde_json::from_str(&mcp_errors).unwrap_or_default();
@@ -3341,6 +3355,8 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
     let dns_issues_v: serde_json::Value = serde_json::from_str(&dns_issues).unwrap_or_default();
     let audit_failures_v: serde_json::Value =
         serde_json::from_str(&audit_failures).unwrap_or_default();
+    let security_decisions_v: serde_json::Value =
+        serde_json::from_str(&security_decisions).unwrap_or_default();
 
     Ok(serde_json::json!({
         "denied_net": denied_net_v,
@@ -3348,6 +3364,7 @@ fn session_db_triage(db_path: &std::path::Path, limit: usize) -> anyhow::Result<
         "mcp_errors": mcp_errors_v,
         "exec_failures": exec_failures_v,
         "audit_failures": audit_failures_v,
+        "security_decisions": security_decisions_v,
     }))
 }
 
@@ -3895,6 +3912,20 @@ fn validate_policy_rule_update(
     if update.condition.trim().is_empty() {
         return Err(format!(
             "invalid policy rule policy.{rule_type}.{rule_name}: condition cannot be empty"
+        ));
+    }
+    validate_policy_condition_terms(rule_type, rule_name, &update.condition)?;
+    Ok(())
+}
+
+fn validate_policy_condition_terms(
+    rule_type: &str,
+    rule_name: &str,
+    condition: &str,
+) -> Result<(), String> {
+    if condition.contains(".match(") {
+        return Err(format!(
+            "invalid policy rule policy.{rule_type}.{rule_name}: unsupported CEL condition term '.match('; use '.matches(' for regular-expression predicates"
         ));
     }
     Ok(())
@@ -5576,6 +5607,10 @@ fn runtime_enforcement_record(
             scope: seceng::RuleScope::Runtime,
             origin: seceng::RuleOrigin::Runtime,
         },
+        definition: seceng::RuntimeRuleDefinition::Enforcement {
+            decision: request.decision,
+            reason: request.reason.clone(),
+        },
         source: request.condition.clone(),
         enabled: request.enabled,
     }
@@ -5589,6 +5624,13 @@ fn runtime_detection_record(request: &RuntimeDetectionRuleRequest) -> seceng::Ru
             scope: seceng::RuleScope::Runtime,
             origin: seceng::RuleOrigin::Runtime,
         },
+        definition: seceng::RuntimeRuleDefinition::Detection {
+            sigma_id: request.sigma_id.clone(),
+            title: request.title.clone(),
+            severity: request.severity,
+            confidence: request.confidence,
+            tags: request.tags.clone(),
+        },
         source: request.condition.clone(),
         enabled: request.enabled,
     }
@@ -5601,6 +5643,7 @@ fn runtime_rule_entry_json(entry: &seceng::RuntimeRuleEntry) -> serde_json::Valu
         "pack_id": &entry.metadata.pack_id,
         "scope": entry.metadata.scope,
         "origin": entry.metadata.origin,
+        "definition": &entry.definition,
         "enabled": entry.enabled,
         "compiled": compiled,
         "compile_status": &entry.compile_status,
@@ -5627,6 +5670,121 @@ fn runtime_registry_rules_json(
         .into_iter()
         .map(runtime_rule_entry_json)
         .collect())
+}
+
+struct RuntimeSecurityMatchRecorder {
+    enforcement_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+    detection_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+}
+
+impl seceng::RuleMatchRecorder for RuntimeSecurityMatchRecorder {
+    fn record_rule_match(
+        &mut self,
+        rule_id: &str,
+        event_id: &str,
+        timestamp_unix_ms: u64,
+    ) -> Result<(), seceng::SecurityEngineError> {
+        let mut recorded = false;
+        record_runtime_rule_match_if_present(
+            &self.enforcement_registry,
+            rule_id,
+            event_id,
+            timestamp_unix_ms,
+            &mut recorded,
+        )?;
+        record_runtime_rule_match_if_present(
+            &self.detection_registry,
+            rule_id,
+            event_id,
+            timestamp_unix_ms,
+            &mut recorded,
+        )?;
+        if recorded {
+            Ok(())
+        } else {
+            Err(seceng::SecurityEngineError::PhaseFailed {
+                phase: seceng::SecurityEnginePhase::Detection,
+                message: format!("runtime rule not found while recording match: {rule_id}"),
+            })
+        }
+    }
+}
+
+fn record_runtime_rule_match_if_present(
+    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+    rule_id: &str,
+    event_id: &str,
+    timestamp_unix_ms: u64,
+    recorded: &mut bool,
+) -> Result<(), seceng::SecurityEngineError> {
+    let mut registry =
+        registry
+            .lock()
+            .map_err(|error| seceng::SecurityEngineError::PhaseFailed {
+                phase: seceng::SecurityEnginePhase::Detection,
+                message: format!("runtime rule registry lock poisoned: {error}"),
+            })?;
+    match registry.record_match(rule_id, event_id, timestamp_unix_ms) {
+        Ok(()) => {
+            *recorded = true;
+            Ok(())
+        }
+        Err(seceng::RuleRegistryError::NotFound(_)) => Ok(()),
+        Err(error) => Err(seceng::SecurityEngineError::PhaseFailed {
+            phase: seceng::SecurityEnginePhase::Detection,
+            message: error.to_string(),
+        }),
+    }
+}
+
+fn runtime_security_engine_from_registries(
+    state: &Arc<ServiceState>,
+) -> Result<seceng::SecurityEngine, AppError> {
+    let enforcement_rules = {
+        let registry = state.enforcement_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime enforcement registry lock poisoned: {error}"),
+            )
+        })?;
+        registry.enabled_enforcement_rules()
+    };
+    let detection_rules = {
+        let registry = state.detection_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime detection registry lock poisoned: {error}"),
+            )
+        })?;
+        registry.enabled_detection_rules()
+    };
+
+    let mut engine = seceng::SecurityEngine::default();
+    if !enforcement_rules.is_empty() {
+        engine.set_enforcement(Box::new(
+            seceng::CelEnforcementEvaluator::compile(enforcement_rules).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("compile installed enforcement rules: {error}"),
+                )
+            })?,
+        ));
+    }
+    if !detection_rules.is_empty() {
+        engine.set_detection(Box::new(
+            seceng::CelDetectionEvaluator::compile(detection_rules).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("compile installed detection rules: {error}"),
+                )
+            })?,
+        ));
+    }
+    engine.set_match_recorder(Box::new(RuntimeSecurityMatchRecorder {
+        enforcement_registry: state.enforcement_registry.clone(),
+        detection_registry: state.detection_registry.clone(),
+    }));
+    Ok(engine)
 }
 
 fn runtime_backtest_limit(limit: Option<usize>) -> usize {

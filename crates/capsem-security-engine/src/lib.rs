@@ -2679,9 +2679,29 @@ pub struct RuntimeRuleMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeRuleDefinition {
+    Enforcement {
+        decision: SecurityDecisionAction,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    Detection {
+        #[serde(default)]
+        sigma_id: Option<String>,
+        title: String,
+        severity: Severity,
+        confidence: Confidence,
+        #[serde(default)]
+        tags: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeRuleRecord {
     pub metadata: RuntimeRuleMetadata,
+    pub definition: RuntimeRuleDefinition,
     pub source: String,
     pub enabled: bool,
 }
@@ -2707,6 +2727,7 @@ pub struct RuntimeRuleStats {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeRuleEntry {
     pub metadata: RuntimeRuleMetadata,
+    pub definition: RuntimeRuleDefinition,
     pub source: String,
     pub enabled: bool,
     pub compile_status: CompileStatus,
@@ -2742,6 +2763,7 @@ impl RuntimeRuleRegistry {
             record.metadata.id.clone(),
             RuntimeRuleEntry {
                 metadata: record.metadata,
+                definition: record.definition,
                 source: record.source,
                 enabled: record.enabled,
                 compile_status: CompileStatus::Compiled,
@@ -2761,6 +2783,63 @@ impl RuntimeRuleRegistry {
 
     pub fn list(&self) -> Vec<&RuntimeRuleEntry> {
         self.rules.values().collect()
+    }
+
+    pub fn enabled_enforcement_rules(&self) -> Vec<CelEnforcementRule> {
+        self.rules
+            .values()
+            .filter_map(|entry| {
+                if !entry.enabled {
+                    return None;
+                }
+                match &entry.definition {
+                    RuntimeRuleDefinition::Enforcement { decision, reason } => {
+                        Some(CelEnforcementRule {
+                            id: entry.metadata.id.clone(),
+                            pack_id: entry.metadata.pack_id.clone(),
+                            condition: entry.source.clone(),
+                            decision: *decision,
+                            reason: reason.clone(),
+                        })
+                    }
+                    RuntimeRuleDefinition::Detection { .. } => None,
+                }
+            })
+            .collect()
+    }
+
+    pub fn enabled_detection_rules(&self) -> Vec<CelDetectionRule> {
+        self.rules
+            .values()
+            .filter_map(|entry| {
+                if !entry.enabled {
+                    return None;
+                }
+                match &entry.definition {
+                    RuntimeRuleDefinition::Detection {
+                        sigma_id,
+                        title,
+                        severity,
+                        confidence,
+                        tags,
+                    } => Some(CelDetectionRule {
+                        id: entry.metadata.id.clone(),
+                        pack_id: entry
+                            .metadata
+                            .pack_id
+                            .clone()
+                            .unwrap_or_else(|| "runtime".into()),
+                        sigma_id: sigma_id.clone(),
+                        title: title.clone(),
+                        condition: entry.source.clone(),
+                        severity: *severity,
+                        confidence: *confidence,
+                        tags: tags.clone(),
+                    }),
+                    RuntimeRuleDefinition::Enforcement { .. } => None,
+                }
+            })
+            .collect()
     }
 
     pub fn stats(&self, rule_id: &str) -> Result<&RuntimeRuleStats, RuleRegistryError> {
