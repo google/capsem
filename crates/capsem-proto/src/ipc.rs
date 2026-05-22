@@ -2,6 +2,67 @@ use serde::{Deserialize, Serialize};
 
 use crate::metrics::VmMetricsSnapshot;
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeSecurityRulesSnapshot {
+    #[serde(default)]
+    pub enforcement: Vec<RuntimeEnforcementRuleSnapshot>,
+    #[serde(default)]
+    pub detection: Vec<RuntimeDetectionRuleSnapshot>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEnforcementRuleSnapshot {
+    pub id: String,
+    #[serde(default)]
+    pub pack_id: Option<String>,
+    pub condition: String,
+    pub decision: RuntimeSecurityDecisionAction,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDetectionRuleSnapshot {
+    pub id: String,
+    pub pack_id: String,
+    #[serde(default)]
+    pub sigma_id: Option<String>,
+    pub title: String,
+    pub condition: String,
+    pub severity: RuntimeDetectionSeverity,
+    pub confidence: RuntimeDetectionConfidence,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSecurityDecisionAction {
+    Allow,
+    Ask,
+    Block,
+    Rewrite,
+    Throttle,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeDetectionSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeDetectionConfidence {
+    Low,
+    Medium,
+    High,
+}
+
 /// Messages sent from capsem-service to capsem-process over the per-VM Unix Domain Socket.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceToProcess {
@@ -23,8 +84,11 @@ pub enum ServiceToProcess {
     },
     /// Read a file from the guest.
     ReadFile { id: u64, path: String },
-    /// Request the process to reload its configuration from disk.
-    ReloadConfig,
+    /// Request the process to reload its configuration from disk plus the
+    /// service-owned runtime rule snapshot.
+    ReloadConfig {
+        runtime_rules: Option<RuntimeSecurityRulesSnapshot>,
+    },
     /// Request the process's bounded live metrics snapshot.
     GetMetricsSnapshot { id: u64 },
     /// Start streaming terminal output to this IPC connection.

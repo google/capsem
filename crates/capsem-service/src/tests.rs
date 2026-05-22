@@ -2121,7 +2121,19 @@ async fn reload_config_returns_structured_failed_session_state() {
                 let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
                     channel_from_std(std_stream).unwrap();
                 match rx.recv().await.unwrap() {
-                    ServiceToProcess::ReloadConfig => {
+                    ServiceToProcess::ReloadConfig { runtime_rules } => {
+                        let runtime_rules =
+                            runtime_rules.expect("reload should carry runtime rule snapshot");
+                        assert_eq!(runtime_rules.enforcement[0].id, "block-live");
+                        assert_eq!(
+                            runtime_rules.enforcement[0].decision,
+                            capsem_proto::ipc::RuntimeSecurityDecisionAction::Block
+                        );
+                        assert_eq!(runtime_rules.detection[0].id, "detect-live");
+                        assert_eq!(
+                            runtime_rules.detection[0].severity,
+                            capsem_proto::ipc::RuntimeDetectionSeverity::High
+                        );
                         tx.send(ProcessToService::ReloadConfigResult {
                             success: false,
                             error: Some("reload exploded".into()),
@@ -2134,6 +2146,35 @@ async fn reload_config_returns_structured_failed_session_state() {
             });
     });
 
+    let _ = handle_create_enforcement_rule(
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "block-live".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "http.request.host == 'live.test'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("live block".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    let _ = handle_create_detection_rule(
+        State(state.clone()),
+        Json(RuntimeDetectionRuleRequest {
+            id: "detect-live".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-live".into()),
+            title: "Live detection".into(),
+            condition: "http.request.host == 'live.test'".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::Medium,
+            tags: vec!["live".into()],
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
     state.instances.lock().unwrap().insert(
         "vm-reload".to_string(),
         InstanceInfo {
@@ -6476,6 +6517,81 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     assert_eq!(deleted["removed"], true);
     let Json(listed_after_delete) = handle_list_enforcement_rules(State(state)).await.unwrap();
     assert!(listed_after_delete["rules"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn handle_create_enforcement_rule_pushes_runtime_snapshot_to_running_vm() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let sock_path = dir.path().join("runtime-rules.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+
+    let server = std::thread::spawn(move || {
+        let (mut std_stream, _) = listener.accept().unwrap();
+        capsem_core::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+                    channel_from_std(std_stream).unwrap();
+                match rx.recv().await.unwrap() {
+                    ServiceToProcess::ReloadConfig { runtime_rules } => {
+                        let runtime_rules =
+                            runtime_rules.expect("runtime rule snapshot should be present");
+                        assert_eq!(runtime_rules.enforcement.len(), 1);
+                        assert_eq!(runtime_rules.enforcement[0].id, "block-live");
+                        assert_eq!(runtime_rules.detection.len(), 0);
+                        tx.send(ProcessToService::ReloadConfigResult {
+                            success: true,
+                            error: None,
+                        })
+                        .await
+                        .unwrap();
+                    }
+                    other => panic!("unexpected command: {other:?}"),
+                }
+            });
+    });
+
+    state.instances.lock().unwrap().insert(
+        "vm-runtime".to_string(),
+        InstanceInfo {
+            id: "vm-runtime".to_string(),
+            pid: std::process::id(),
+            uds_path: sock_path,
+            session_dir: dir.path().join("sessions/vm-runtime"),
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: None,
+            profile_pin: None,
+        },
+    );
+
+    let Json(installed) = handle_create_enforcement_rule(
+        State(state),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "block-live".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "http.request.host == 'live.test'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("live block".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+
+    server.join().unwrap();
+    assert_eq!(installed["rule"]["id"], "block-live");
+    assert_eq!(installed["propagation"]["target_count"], 1);
+    assert_eq!(installed["propagation"]["failed_session_count"], 0);
 }
 
 #[tokio::test]

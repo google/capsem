@@ -50,10 +50,24 @@ pub(crate) struct RuntimePolicyState {
 }
 
 pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyState {
-    load_runtime_policy_state_from_effective(session_dir)
+    load_runtime_policy_state_with_runtime_rules(session_dir, None)
+}
+
+pub(crate) fn load_runtime_policy_state_with_runtime_rules(
+    session_dir: &Path,
+    runtime_rules: Option<&capsem_proto::ipc::RuntimeSecurityRulesSnapshot>,
+) -> RuntimePolicyState {
+    load_runtime_policy_state_from_effective_with_runtime_rules(session_dir, runtime_rules)
 }
 
 fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicyState {
+    load_runtime_policy_state_from_effective_with_runtime_rules(session_dir, None)
+}
+
+fn load_runtime_policy_state_from_effective_with_runtime_rules(
+    session_dir: &Path,
+    runtime_rules: Option<&capsem_proto::ipc::RuntimeSecurityRulesSnapshot>,
+) -> RuntimePolicyState {
     let effective = load_effective_vm_settings_with_fallback(session_dir);
 
     let domain_default_allow = effective
@@ -75,9 +89,32 @@ fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicy
             Action::Deny
         },
     );
-    let security_engine = effective
+    let mut enforcement_rules = effective
         .as_ref()
-        .and_then(build_runtime_security_engine_from_effective);
+        .map(http_runtime_enforcement_rules_from_effective)
+        .unwrap_or_default();
+    let mut detection_rules = Vec::new();
+    if let Some(runtime_rules) = runtime_rules {
+        enforcement_rules.extend(
+            runtime_rules
+                .enforcement
+                .iter()
+                .cloned()
+                .map(cel_enforcement_rule_from_snapshot),
+        );
+        detection_rules.extend(
+            runtime_rules
+                .detection
+                .iter()
+                .cloned()
+                .map(cel_detection_rule_from_snapshot),
+        );
+    }
+    let security_engine = build_runtime_security_engine_from_rules(
+        effective.as_ref(),
+        enforcement_rules,
+        detection_rules,
+    );
 
     let mcp_user = effective
         .as_ref()
@@ -249,44 +286,140 @@ fn domain_policy_lists_from_effective(
     (allow, block)
 }
 
-fn build_runtime_security_engine_from_effective(
+fn http_runtime_enforcement_rules_from_effective(
     effective: &settings_profiles::EffectiveVmSettings,
-) -> Option<Arc<dyn RuntimeSecurityEngine>> {
-    let rules: Vec<CelEnforcementRule> = effective
+) -> Vec<CelEnforcementRule> {
+    effective
         .rules
         .iter()
         .filter_map(http_runtime_enforcement_rule)
-        .collect();
-    if rules.is_empty() {
+        .collect()
+}
+
+fn build_runtime_security_engine_from_rules(
+    effective: Option<&settings_profiles::EffectiveVmSettings>,
+    enforcement_rules: Vec<CelEnforcementRule>,
+    detection_rules: Vec<capsem_security_engine::CelDetectionRule>,
+) -> Option<Arc<dyn RuntimeSecurityEngine>> {
+    if enforcement_rules.is_empty() && detection_rules.is_empty() {
         return None;
     }
 
-    let evaluator = match CelEnforcementEvaluator::compile(rules) {
-        Ok(evaluator) => evaluator,
-        Err(error) => {
-            warn!(
-                error = %error,
-                "failed to compile profile HTTP runtime rules; installing fail-closed network rule"
-            );
-            CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
-                id: "profile.runtime_compile_failed".into(),
-                pack_id: Some("profile".into()),
-                condition: "true".into(),
-                decision: SecurityDecisionAction::Block,
-                reason: Some("Profile HTTP runtime rules failed to compile".into()),
-            }])
-            .expect("static fail-closed CEL rule must compile")
-        }
-    };
-
     let mut engine = SecurityEngine::default();
-    engine.set_enforcement(Box::new(evaluator));
+    if !enforcement_rules.is_empty() {
+        let evaluator = match CelEnforcementEvaluator::compile(enforcement_rules) {
+            Ok(evaluator) => evaluator,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "failed to compile HTTP runtime enforcement rules; installing fail-closed network rule"
+                );
+                CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+                    id: "runtime.compile_failed".into(),
+                    pack_id: Some("runtime".into()),
+                    condition: "true".into(),
+                    decision: SecurityDecisionAction::Block,
+                    reason: Some("HTTP runtime rules failed to compile".into()),
+                }])
+                .expect("static fail-closed CEL rule must compile")
+            }
+        };
+        engine.set_enforcement(Box::new(evaluator));
+    }
+    if !detection_rules.is_empty() {
+        match capsem_security_engine::CelDetectionEvaluator::compile(detection_rules) {
+            Ok(evaluator) => engine.set_detection(Box::new(evaluator)),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "failed to compile runtime detection rules; continuing without runtime detection"
+                );
+            }
+        }
+    }
     info!(
-        profile_id = %effective.profile_id,
-        "installed profile HTTP runtime security engine"
+        profile_id = %effective
+            .map(|effective| effective.profile_id.as_str())
+            .unwrap_or("unknown"),
+        "installed HTTP runtime security engine"
     );
     let runtime: Arc<dyn RuntimeSecurityEngine> = Arc::new(Mutex::new(engine));
     Some(runtime)
+}
+
+fn cel_enforcement_rule_from_snapshot(
+    rule: capsem_proto::ipc::RuntimeEnforcementRuleSnapshot,
+) -> CelEnforcementRule {
+    CelEnforcementRule {
+        id: rule.id,
+        pack_id: rule.pack_id,
+        condition: rule.condition,
+        decision: security_decision_action_from_snapshot(rule.decision),
+        reason: rule.reason,
+    }
+}
+
+fn cel_detection_rule_from_snapshot(
+    rule: capsem_proto::ipc::RuntimeDetectionRuleSnapshot,
+) -> capsem_security_engine::CelDetectionRule {
+    capsem_security_engine::CelDetectionRule {
+        id: rule.id,
+        pack_id: rule.pack_id,
+        sigma_id: rule.sigma_id,
+        title: rule.title,
+        condition: rule.condition,
+        severity: severity_from_snapshot(rule.severity),
+        confidence: confidence_from_snapshot(rule.confidence),
+        tags: rule.tags,
+    }
+}
+
+fn security_decision_action_from_snapshot(
+    action: capsem_proto::ipc::RuntimeSecurityDecisionAction,
+) -> SecurityDecisionAction {
+    match action {
+        capsem_proto::ipc::RuntimeSecurityDecisionAction::Allow => SecurityDecisionAction::Allow,
+        capsem_proto::ipc::RuntimeSecurityDecisionAction::Ask => SecurityDecisionAction::Ask,
+        capsem_proto::ipc::RuntimeSecurityDecisionAction::Block => SecurityDecisionAction::Block,
+        capsem_proto::ipc::RuntimeSecurityDecisionAction::Rewrite => {
+            SecurityDecisionAction::Rewrite
+        }
+        capsem_proto::ipc::RuntimeSecurityDecisionAction::Throttle => {
+            SecurityDecisionAction::Throttle
+        }
+    }
+}
+
+fn severity_from_snapshot(
+    severity: capsem_proto::ipc::RuntimeDetectionSeverity,
+) -> capsem_security_engine::Severity {
+    match severity {
+        capsem_proto::ipc::RuntimeDetectionSeverity::Info => capsem_security_engine::Severity::Info,
+        capsem_proto::ipc::RuntimeDetectionSeverity::Low => capsem_security_engine::Severity::Low,
+        capsem_proto::ipc::RuntimeDetectionSeverity::Medium => {
+            capsem_security_engine::Severity::Medium
+        }
+        capsem_proto::ipc::RuntimeDetectionSeverity::High => capsem_security_engine::Severity::High,
+        capsem_proto::ipc::RuntimeDetectionSeverity::Critical => {
+            capsem_security_engine::Severity::Critical
+        }
+    }
+}
+
+fn confidence_from_snapshot(
+    confidence: capsem_proto::ipc::RuntimeDetectionConfidence,
+) -> capsem_security_engine::Confidence {
+    match confidence {
+        capsem_proto::ipc::RuntimeDetectionConfidence::Low => {
+            capsem_security_engine::Confidence::Low
+        }
+        capsem_proto::ipc::RuntimeDetectionConfidence::Medium => {
+            capsem_security_engine::Confidence::Medium
+        }
+        capsem_proto::ipc::RuntimeDetectionConfidence::High => {
+            capsem_security_engine::Confidence::High
+        }
+    }
 }
 
 fn http_runtime_enforcement_rule(rule: &EffectiveRule) -> Option<CelEnforcementRule> {

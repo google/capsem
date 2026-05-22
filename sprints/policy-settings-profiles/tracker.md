@@ -1202,6 +1202,30 @@ a valid claim -- mark it `[ ]` instead.
     VMs, response-phase enforcement/detection, DNS/MCP/file/process emitters,
     visible UI screens/editors, persistence/profile-pack seeding, and S08d
     performance proof.
+    Forty-eighth TDD runtime-rule-propagation slice put the service-owned
+    runtime registries on a typed IPC path instead of leaving them as
+    service-local memory. `capsem-proto` now carries
+    `RuntimeSecurityRulesSnapshot` with explicit enforcement/detection rule
+    structs and decision/severity/confidence enums; `handle_reload_config`
+    sends that snapshot to each running VM; create/update/delete for
+    `/enforcement/*` and `/detection/*` broadcast the current snapshot to
+    running VMs and include a propagation summary in the response; and
+    `capsem-process` recompiles profile-derived rules plus the service snapshot
+    into the shared MITM `RuntimeSecurityEngineSlot`. Verification: red service
+    auto-push test first, then `cargo test -p capsem-proto
+    ipc::tests::reload_config_roundtrip`, `cargo test -p capsem-process
+    load_runtime_policy_state_merges_service_runtime_rule_snapshot`, `cargo
+    test -p capsem-service
+    handle_create_enforcement_rule_pushes_runtime_snapshot_to_running_vm --bin
+    capsem-service`, `cargo test -p capsem-service
+    runtime_security_engine_evaluates_installed_rules_and_records_stats --bin
+    capsem-service`, and `cargo test -p capsem-service
+    reload_config_returns_structured_failed_session_state --bin capsem-service`
+    passed. Still missing after this slice: returning live VM match-count
+    increments from process to service registries, response-phase
+    enforcement/detection, DNS/MCP/file/process emitters, visible UI
+    screens/editors, persistence/profile-pack seeding, and S08d performance
+    proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

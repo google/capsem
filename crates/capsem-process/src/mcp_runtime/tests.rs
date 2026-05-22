@@ -17,6 +17,7 @@ use capsem_core::mcp::policy::McpUserConfig;
 use super::{
     build_builtin_env, build_servers_with_builtin, insert_builtin_domain_policy_env,
     load_runtime_policy_state, load_runtime_policy_state_from_effective,
+    load_runtime_policy_state_with_runtime_rules,
 };
 
 fn env_lock() -> &'static Mutex<()> {
@@ -391,6 +392,67 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
             .as_ref()
             .and_then(|decision| decision.rule.as_deref()),
         Some("http.block-bad-domain")
+    );
+}
+
+#[test]
+fn load_runtime_policy_state_merges_service_runtime_rule_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    let snapshot = capsem_proto::ipc::RuntimeSecurityRulesSnapshot {
+        enforcement: vec![capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+            id: "runtime.block-live".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "http.request.host == 'live-policy.test'".into(),
+            decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
+            reason: Some("live runtime block".into()),
+        }],
+        detection: vec![capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
+            id: "runtime.detect-live".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-live".into()),
+            title: "Live runtime detection".into(),
+            condition: "http.request.host == 'observe-policy.test'".into(),
+            severity: capsem_proto::ipc::RuntimeDetectionSeverity::High,
+            confidence: capsem_proto::ipc::RuntimeDetectionConfidence::High,
+            tags: vec!["runtime".into()],
+        }],
+    };
+
+    let runtime = load_runtime_policy_state_with_runtime_rules(&session_dir, Some(&snapshot));
+    let security_engine = runtime
+        .security_engine
+        .as_ref()
+        .expect("runtime rule snapshot should install a Security Engine");
+
+    let blocked = security_engine
+        .evaluate(http_event("live-policy.test", "/"))
+        .expect("runtime snapshot enforcement should evaluate");
+    assert!(matches!(blocked.action, SecurityAction::Block(_)));
+    assert_eq!(
+        blocked
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("runtime.block-live")
+    );
+
+    let detected = security_engine
+        .evaluate(http_event("observe-policy.test", "/"))
+        .expect("runtime snapshot detection should evaluate");
+    assert!(matches!(detected.action, SecurityAction::Continue));
+    assert_eq!(detected.resolved_event.event.findings.len(), 1);
+    assert_eq!(
+        detected.resolved_event.event.findings[0].rule_id,
+        "runtime.detect-live"
     );
 }
 

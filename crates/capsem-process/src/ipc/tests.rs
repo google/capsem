@@ -122,7 +122,9 @@ fn classify_read_file() {
 #[test]
 fn classify_reload_config() {
     assert_eq!(
-        classify_ipc_message(&ServiceToProcess::ReloadConfig),
+        classify_ipc_message(&ServiceToProcess::ReloadConfig {
+            runtime_rules: None,
+        }),
         IpcAction::Reload
     );
 }

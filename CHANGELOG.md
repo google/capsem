@@ -128,6 +128,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without
   rebuilding the proxy config or restarting the VM process.
+- Added typed runtime enforcement/detection rule snapshots to process IPC so
+  service-owned `/enforcement/*` and `/detection/*` mutations can push live CEL
+  rule state into already-running VM processes and report per-session
+  propagation status.
 - Added VM/session/profile/user identity propagation into Network Engine
   security events and canonical AI evidence, including `CAPSEM_SESSION_ID` and
   `CAPSEM_PROFILE_REVISION` handoff through `capsem-process` and the MCP

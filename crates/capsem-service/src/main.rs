@@ -3542,13 +3542,16 @@ async fn send_ipc_command(
 
         match msg {
             ProcessToService::Pong => {
-                if matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig) {
+                if matches!(
+                    cmd,
+                    ServiceToProcess::Ping | ServiceToProcess::ReloadConfig { .. }
+                ) {
                     return Ok(ProcessToService::Pong);
                 }
                 continue;
             }
             ProcessToService::ReloadConfigResult { success, error } => {
-                if matches!(cmd, ServiceToProcess::ReloadConfig) {
+                if matches!(cmd, ServiceToProcess::ReloadConfig { .. }) {
                     return Ok(ProcessToService::ReloadConfigResult { success, error });
                 }
                 continue;
@@ -3670,6 +3673,7 @@ async fn handle_exec(
 async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    let runtime_rules = runtime_security_rules_snapshot_from_registries(&state)?;
     // Collect paths to broadcast to.
     let reload_targets = {
         let instances = state.instances.lock().unwrap();
@@ -3684,6 +3688,7 @@ async fn handle_reload_config(
             let id = id.clone();
             let session_dir = session_dir.clone();
             let state = state.clone();
+            let runtime_rules = runtime_rules.clone();
             async move {
                 if let Err(error) = state.refresh_vm_effective_settings(&session_dir) {
                     return Some(ReloadConfigFailure {
@@ -3691,7 +3696,15 @@ async fn handle_reload_config(
                         message: format!("refresh vm-effective settings: {error}"),
                     });
                 }
-                match send_ipc_command(uds_path, ServiceToProcess::ReloadConfig, Some(5)).await {
+                match send_ipc_command(
+                    uds_path,
+                    ServiceToProcess::ReloadConfig {
+                        runtime_rules: Some(runtime_rules),
+                    },
+                    Some(5),
+                )
+                .await
+                {
                     Ok(ProcessToService::ReloadConfigResult {
                         success: true,
                         error: _,
@@ -3755,7 +3768,7 @@ async fn handle_reload_config(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ReloadConfigFailure {
     session_id: String,
     message: String,
@@ -5795,6 +5808,192 @@ fn runtime_security_engine_from_registries(
     Ok(engine)
 }
 
+fn runtime_security_rules_snapshot_from_registries(
+    state: &Arc<ServiceState>,
+) -> Result<capsem_proto::ipc::RuntimeSecurityRulesSnapshot, AppError> {
+    let enforcement = {
+        let registry = state.enforcement_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime enforcement registry lock poisoned: {error}"),
+            )
+        })?;
+        registry
+            .enabled_enforcement_rules()
+            .into_iter()
+            .map(runtime_enforcement_rule_snapshot)
+            .collect()
+    };
+    let detection = {
+        let registry = state.detection_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime detection registry lock poisoned: {error}"),
+            )
+        })?;
+        registry
+            .enabled_detection_rules()
+            .into_iter()
+            .map(runtime_detection_rule_snapshot)
+            .collect()
+    };
+
+    Ok(capsem_proto::ipc::RuntimeSecurityRulesSnapshot {
+        enforcement,
+        detection,
+    })
+}
+
+fn runtime_enforcement_rule_snapshot(
+    rule: seceng::CelEnforcementRule,
+) -> capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+    capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+        id: rule.id,
+        pack_id: rule.pack_id,
+        condition: rule.condition,
+        decision: runtime_decision_action_snapshot(rule.decision),
+        reason: rule.reason,
+    }
+}
+
+fn runtime_detection_rule_snapshot(
+    rule: seceng::CelDetectionRule,
+) -> capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
+    capsem_proto::ipc::RuntimeDetectionRuleSnapshot {
+        id: rule.id,
+        pack_id: rule.pack_id,
+        sigma_id: rule.sigma_id,
+        title: rule.title,
+        condition: rule.condition,
+        severity: runtime_detection_severity_snapshot(rule.severity),
+        confidence: runtime_detection_confidence_snapshot(rule.confidence),
+        tags: rule.tags,
+    }
+}
+
+fn runtime_decision_action_snapshot(
+    action: seceng::SecurityDecisionAction,
+) -> capsem_proto::ipc::RuntimeSecurityDecisionAction {
+    match action {
+        seceng::SecurityDecisionAction::Allow => {
+            capsem_proto::ipc::RuntimeSecurityDecisionAction::Allow
+        }
+        seceng::SecurityDecisionAction::Ask => {
+            capsem_proto::ipc::RuntimeSecurityDecisionAction::Ask
+        }
+        seceng::SecurityDecisionAction::Block => {
+            capsem_proto::ipc::RuntimeSecurityDecisionAction::Block
+        }
+        seceng::SecurityDecisionAction::Rewrite => {
+            capsem_proto::ipc::RuntimeSecurityDecisionAction::Rewrite
+        }
+        seceng::SecurityDecisionAction::Throttle => {
+            capsem_proto::ipc::RuntimeSecurityDecisionAction::Throttle
+        }
+    }
+}
+
+fn runtime_detection_severity_snapshot(
+    severity: seceng::Severity,
+) -> capsem_proto::ipc::RuntimeDetectionSeverity {
+    match severity {
+        seceng::Severity::Info => capsem_proto::ipc::RuntimeDetectionSeverity::Info,
+        seceng::Severity::Low => capsem_proto::ipc::RuntimeDetectionSeverity::Low,
+        seceng::Severity::Medium => capsem_proto::ipc::RuntimeDetectionSeverity::Medium,
+        seceng::Severity::High => capsem_proto::ipc::RuntimeDetectionSeverity::High,
+        seceng::Severity::Critical => capsem_proto::ipc::RuntimeDetectionSeverity::Critical,
+    }
+}
+
+fn runtime_detection_confidence_snapshot(
+    confidence: seceng::Confidence,
+) -> capsem_proto::ipc::RuntimeDetectionConfidence {
+    match confidence {
+        seceng::Confidence::Low => capsem_proto::ipc::RuntimeDetectionConfidence::Low,
+        seceng::Confidence::Medium => capsem_proto::ipc::RuntimeDetectionConfidence::Medium,
+        seceng::Confidence::High => capsem_proto::ipc::RuntimeDetectionConfidence::High,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeRulePropagationSummary {
+    target_count: usize,
+    failed_session_ids: Vec<String>,
+    failures: Vec<ReloadConfigFailure>,
+}
+
+impl RuntimeRulePropagationSummary {
+    fn json(&self) -> serde_json::Value {
+        json!({
+            "target_count": self.target_count,
+            "failed_session_count": self.failures.len(),
+            "failed_session_ids": self.failed_session_ids,
+            "failures": self.failures,
+        })
+    }
+}
+
+async fn broadcast_runtime_security_rules(
+    state: &Arc<ServiceState>,
+) -> Result<RuntimeRulePropagationSummary, AppError> {
+    let runtime_rules = runtime_security_rules_snapshot_from_registries(state)?;
+    let targets = {
+        let instances = state.instances.lock().unwrap();
+        instances
+            .iter()
+            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    let results = futures::future::join_all(targets.iter().map(|(id, uds_path)| {
+        let id = id.clone();
+        let runtime_rules = runtime_rules.clone();
+        async move {
+            match send_ipc_command(
+                uds_path,
+                ServiceToProcess::ReloadConfig {
+                    runtime_rules: Some(runtime_rules),
+                },
+                Some(5),
+            )
+            .await
+            {
+                Ok(ProcessToService::ReloadConfigResult {
+                    success: true,
+                    error: _,
+                }) => None,
+                Ok(ProcessToService::ReloadConfigResult {
+                    success: false,
+                    error,
+                }) => Some(ReloadConfigFailure {
+                    session_id: id,
+                    message: error.unwrap_or_else(|| "runtime rule propagation failed".to_string()),
+                }),
+                Ok(ProcessToService::Pong) => None,
+                Ok(_) => Some(ReloadConfigFailure {
+                    session_id: id,
+                    message: "unexpected response".to_string(),
+                }),
+                Err(error) => Some(ReloadConfigFailure {
+                    session_id: id,
+                    message: error,
+                }),
+            }
+        }
+    }))
+    .await;
+    let failures: Vec<ReloadConfigFailure> = results.into_iter().flatten().collect();
+    let failed_session_ids = failures
+        .iter()
+        .map(|failure| failure.session_id.clone())
+        .collect();
+    Ok(RuntimeRulePropagationSummary {
+        target_count: targets.len(),
+        failed_session_ids,
+        failures,
+    })
+}
+
 fn runtime_backtest_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(seceng::DEFAULT_BACKTEST_MATCH_LIMIT)
 }
@@ -6941,32 +7140,36 @@ async fn handle_create_enforcement_rule(
         )
     })?;
     let record = runtime_enforcement_record(&request);
-    let mut registry = state.enforcement_registry.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime enforcement registry lock poisoned: {error}"),
-        )
-    })?;
-    registry
-        .add_or_update(record, |_| Ok(compiled_plan.clone()))
-        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
-    let rule = registry
-        .list()
-        .into_iter()
-        .find(|entry| entry.metadata.id == request.id)
-        .map(runtime_rule_entry_json)
-        .ok_or_else(|| {
+    let rule = {
+        let mut registry = state.enforcement_registry.lock().map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!(
-                    "installed enforcement rule '{}' was not readable",
-                    request.id
-                ),
+                format!("runtime enforcement registry lock poisoned: {error}"),
             )
         })?;
+        registry
+            .add_or_update(record, |_| Ok(compiled_plan.clone()))
+            .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
+        registry
+            .list()
+            .into_iter()
+            .find(|entry| entry.metadata.id == request.id)
+            .map(runtime_rule_entry_json)
+            .ok_or_else(|| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "installed enforcement rule '{}' was not readable",
+                        request.id
+                    ),
+                )
+            })?
+    };
+    let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "enforcement",
         "rule": rule,
+        "propagation": propagation.json(),
     })))
 }
 
@@ -6989,19 +7192,23 @@ async fn handle_delete_enforcement_rule(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     validate_runtime_rule_id(&id)?;
-    let mut registry = state.enforcement_registry.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime enforcement registry lock poisoned: {error}"),
-        )
-    })?;
-    registry
-        .delete(&id)
-        .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
+    {
+        let mut registry = state.enforcement_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime enforcement registry lock poisoned: {error}"),
+            )
+        })?;
+        registry
+            .delete(&id)
+            .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
+    }
+    let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "enforcement",
         "id": id,
         "removed": true,
+        "propagation": propagation.json(),
     })))
 }
 
@@ -7108,29 +7315,33 @@ async fn handle_create_detection_rule(
         )
     })?;
     let record = runtime_detection_record(&request);
-    let mut registry = state.detection_registry.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime detection registry lock poisoned: {error}"),
-        )
-    })?;
-    registry
-        .add_or_update(record, |_| Ok(compiled_plan.clone()))
-        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
-    let rule = registry
-        .list()
-        .into_iter()
-        .find(|entry| entry.metadata.id == request.id)
-        .map(runtime_rule_entry_json)
-        .ok_or_else(|| {
+    let rule = {
+        let mut registry = state.detection_registry.lock().map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("installed detection rule '{}' was not readable", request.id),
+                format!("runtime detection registry lock poisoned: {error}"),
             )
         })?;
+        registry
+            .add_or_update(record, |_| Ok(compiled_plan.clone()))
+            .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("install rule: {error}")))?;
+        registry
+            .list()
+            .into_iter()
+            .find(|entry| entry.metadata.id == request.id)
+            .map(runtime_rule_entry_json)
+            .ok_or_else(|| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("installed detection rule '{}' was not readable", request.id),
+                )
+            })?
+    };
+    let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "detection",
         "rule": rule,
+        "propagation": propagation.json(),
     })))
 }
 
@@ -7153,19 +7364,23 @@ async fn handle_delete_detection_rule(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     validate_runtime_rule_id(&id)?;
-    let mut registry = state.detection_registry.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("runtime detection registry lock poisoned: {error}"),
-        )
-    })?;
-    registry
-        .delete(&id)
-        .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
+    {
+        let mut registry = state.detection_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime detection registry lock poisoned: {error}"),
+            )
+        })?;
+        registry
+            .delete(&id)
+            .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
+    }
+    let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "detection",
         "id": id,
         "removed": true,
+        "propagation": propagation.json(),
     })))
 }
 

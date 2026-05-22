@@ -512,10 +512,13 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
-            ServiceToProcess::ReloadConfig => {
+            ServiceToProcess::ReloadConfig { runtime_rules } => {
                 info!("Reloading policies from disk");
                 let runtime_state =
-                    crate::mcp_runtime::load_runtime_policy_state(&mcp_runtime.session_dir);
+                    crate::mcp_runtime::load_runtime_policy_state_with_runtime_rules(
+                        &mcp_runtime.session_dir,
+                        runtime_rules.as_ref(),
+                    );
                 let servers = crate::mcp_runtime::build_servers_with_builtin(
                     &runtime_state.mcp_user,
                     &runtime_state.mcp_corp,
@@ -594,7 +597,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::Exec { .. } => IpcAction::Job,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
-        ServiceToProcess::ReloadConfig => IpcAction::Reload,
+        ServiceToProcess::ReloadConfig { .. } => IpcAction::Reload,
         ServiceToProcess::GetMetricsSnapshot { .. } => IpcAction::HealthCheck,
         ServiceToProcess::Shutdown => IpcAction::Lifecycle,
         ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,

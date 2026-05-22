@@ -314,10 +314,46 @@ fn job_ids_are_distinct() {
 
 #[test]
 fn reload_config_roundtrip() {
-    let msg = ServiceToProcess::ReloadConfig;
+    let msg = ServiceToProcess::ReloadConfig {
+        runtime_rules: Some(RuntimeSecurityRulesSnapshot {
+            enforcement: vec![RuntimeEnforcementRuleSnapshot {
+                id: "block-metadata".into(),
+                pack_id: Some("runtime-pack".into()),
+                condition: "http.request.host == 'metadata.google.internal'".into(),
+                decision: RuntimeSecurityDecisionAction::Block,
+                reason: Some("metadata access".into()),
+            }],
+            detection: vec![RuntimeDetectionRuleSnapshot {
+                id: "detect-tool".into(),
+                pack_id: "runtime-detection".into(),
+                sigma_id: Some("sigma-1".into()),
+                title: "Tool execution".into(),
+                condition: "mcp.request.tool_name == 'danger'".into(),
+                severity: RuntimeDetectionSeverity::High,
+                confidence: RuntimeDetectionConfidence::Medium,
+                tags: vec!["mcp".into()],
+            }],
+        }),
+    };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    assert!(matches!(msg2, ServiceToProcess::ReloadConfig));
+    let ServiceToProcess::ReloadConfig { runtime_rules } = msg2 else {
+        panic!("wrong variant")
+    };
+    let runtime_rules = runtime_rules.expect("runtime rule snapshot should round trip");
+    assert_eq!(runtime_rules.enforcement[0].id, "block-metadata");
+    assert_eq!(
+        runtime_rules.enforcement[0].decision,
+        RuntimeSecurityDecisionAction::Block
+    );
+    assert_eq!(
+        runtime_rules.detection[0].severity,
+        RuntimeDetectionSeverity::High
+    );
+    assert_eq!(
+        runtime_rules.detection[0].confidence,
+        RuntimeDetectionConfidence::Medium
+    );
 }
 
 #[test]
