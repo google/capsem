@@ -15,6 +15,7 @@ mod update;
 use anyhow::{Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand, ValueEnum};
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1018,16 +1019,83 @@ fn print_runtime_install_summary(kind: &str, result: &serde_json::Value) {
 }
 
 fn print_runtime_hunt_summary(result: &serde_json::Value) {
-    println!(
+    print!("{}", format_runtime_hunt_summary(result));
+}
+
+fn format_runtime_hunt_summary(result: &serde_json::Value) -> String {
+    let mut output = String::new();
+    let truncated = if result["truncated"].as_bool().unwrap_or(false) {
+        " (truncated)"
+    } else {
+        ""
+    };
+    writeln!(
+        output,
         "Detection hunt matched {} event(s), {} unique evidence signature(s){}.",
         result["total_matches"].as_u64().unwrap_or(0),
         result["unique_evidence_matches"].as_u64().unwrap_or(0),
-        if result["truncated"].as_bool().unwrap_or(false) {
-            " (truncated)"
-        } else {
-            ""
+        truncated
+    )
+    .expect("write to string");
+
+    let Some(rows) = result["rows"].as_array() else {
+        return output;
+    };
+    if rows.is_empty() {
+        return output;
+    }
+
+    writeln!(output, "Matches:").expect("write to string");
+    for row in rows {
+        let event_ref = &row["event_ref"];
+        let event_id = event_ref["event_id"].as_str().unwrap_or("-");
+        let corpus = event_ref["corpus"].as_str().unwrap_or("-");
+        let session = event_ref["session_id"].as_str().unwrap_or("-");
+        let rule_id = row["rule_id"].as_str().unwrap_or("-");
+        let pack_id = row["pack_id"].as_str().unwrap_or("-");
+        let outcome = runtime_hunt_outcome_text(&row["outcome"]);
+        writeln!(
+            output,
+            "- event={} session={} corpus={} rule={} pack={} outcome={}",
+            event_id, session, corpus, rule_id, pack_id, outcome
+        )
+        .expect("write to string");
+        if let Some(fields) = row["matched_fields"].as_array() {
+            for field in fields.iter().take(8) {
+                let path = field["path"].as_str().unwrap_or("-");
+                writeln!(
+                    output,
+                    "  {}={}",
+                    path,
+                    runtime_hunt_field_value_text(&field["value"])
+                )
+                .expect("write to string");
+            }
+            if fields.len() > 8 {
+                writeln!(output, "  ... {} more field(s)", fields.len() - 8)
+                    .expect("write to string");
+            }
         }
-    );
+    }
+    output
+}
+
+fn runtime_hunt_outcome_text(value: &serde_json::Value) -> String {
+    if let Some(outcome) = value.as_str() {
+        return outcome.to_owned();
+    }
+    value
+        .get("outcome")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn runtime_hunt_field_value_text(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 fn print_session_info(info: &SessionInfo) {
@@ -3567,6 +3635,35 @@ mod tests {
             }
             _ => panic!("expected detection hunt-session"),
         }
+    }
+
+    #[test]
+    fn format_runtime_hunt_summary_includes_event_and_evidence_rows() {
+        let summary = format_runtime_hunt_summary(&serde_json::json!({
+            "total_matches": 1,
+            "unique_evidence_matches": 1,
+            "truncated": false,
+            "rows": [{
+                "event_ref": {
+                    "corpus": "session_db",
+                    "session_id": "vm-1",
+                    "event_id": "evt-1",
+                    "timestamp_unix_ms": 1700000000000_i64
+                },
+                "rule_id": "detect-google",
+                "pack_id": "runtime-detection",
+                "matched_fields": [{
+                    "path": "http.request.host",
+                    "value": "google.example.test"
+                }],
+                "outcome": "matched"
+            }]
+        }));
+
+        assert!(summary.contains("Detection hunt matched 1 event(s)"));
+        assert!(summary.contains("detect-google"));
+        assert!(summary.contains("evt-1"));
+        assert!(summary.contains("http.request.host=google.example.test"));
     }
 
     #[test]

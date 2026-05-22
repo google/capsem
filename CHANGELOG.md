@@ -112,6 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added HTTP gateway contract coverage for runtime enforcement validation and
   session detection hunt routes so the security API preserves forensic matched
   fields through the gateway.
+- Improved `capsem detection hunt-session` human output to show matched event
+  ids, rules, packs, outcomes, and canonical evidence fields instead of counts
+  only.
 - Added typed model tool-call policy projection under
   `model.request.tool_calls`, including name, origin, argument status, status,
   linked MCP call id, and parse confidence, with session-backed detection hunt

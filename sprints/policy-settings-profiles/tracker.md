@@ -1689,6 +1689,19 @@ a valid claim -- mark it `[ ]` instead.
     missing after this slice: remaining security route breadth, visible UI
     screens/editors, ask/confirm UX for process decisions, S12 OTel/prometheus
     export, and S08d performance proof.
+    Seventy-sixth TDD CLI-hunt-debug slice made non-JSON
+    `capsem detection hunt-session` output useful for operators. The human
+    summary now includes returned event ids, session/corpus, rule id, pack id,
+    outcome, and up to eight canonical matched-field values per row, while
+    `--json` remains unchanged. Verification: red `cargo test -p capsem
+    format_runtime_hunt_summary_includes_event_and_evidence_rows` first failed
+    because the formatter did not exist, then passed; neighbor `cargo test -p
+    capsem parse_runtime_security_rule_commands` passed; `cargo test -p capsem
+    logs_response_serde` passed; widened `cargo test -p capsem` passed
+    (**264** passed); `cargo fmt --all -- --check` passed; `git diff --check`
+    passed. Still missing after this slice: remaining security route breadth,
+    visible UI screens/editors, ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
