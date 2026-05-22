@@ -170,7 +170,7 @@ reason = "gateway telemetry denial fixture"
 
 [security.rules.http.block_mitm_telemetry]
 on = "http.request"
-if = "request.host == 'blocked-mitm-policy.invalid'"
+if = "http.request.host == 'blocked-mitm-policy.invalid'"
 decision = "block"
 priority = 1
 reason = "gateway telemetry denial fixture"
@@ -232,7 +232,7 @@ reason = "gateway telemetry denial fixture"
                 "http": {
                     "block_mitm_telemetry": {
                         "on": "http.request",
-                        "if": "request.host == 'blocked-mitm-policy.invalid'",
+                        "if": "http.request.host == 'blocked-mitm-policy.invalid'",
                         "decision": "block",
                         "priority": 1,
                         "reason": "gateway telemetry denial fixture",

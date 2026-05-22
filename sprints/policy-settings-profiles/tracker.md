@@ -1535,6 +1535,33 @@ a valid claim -- mark it `[ ]` instead.
     `capsem logs` E2E for an actual process-rule block, visible UI
     screens/editors, ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Sixty-seventh TDD Process Engine real-VM log E2E slice closed the
+    remaining `capsem logs` proof. The new e2e starts a real service and VM,
+    waits for exec readiness, installs a live runtime enforcement rule for
+    `process.activity.operation == 'exec' && process.activity.command_class ==
+    'shell'`, proves `capsem exec <vm> "bash -lc ..."` is blocked with the
+    runtime rule id, then polls `capsem logs --tail 120 <vm>` until the
+    structured `security.process` `process_exec_security_decision` line is
+    visible with `process.exec`, `final_action=block`, `rule_id`, `reason`,
+    `vm_id`, and `command_class=shell`. The red runs found and fixed real
+    long-term issues: the e2e helper profile still emitted old `request.host`
+    rules that made runtime rule compilation fail closed during boot; real
+    binary builds failed on test-only runtime rule helpers, now `cfg(test)`;
+    and service-spawned process `RUST_LOG` inherited `capsem=debug` without
+    subsystem targets, filtering out `security.process` lines. Verification:
+    red `uv run pytest tests/capsem-e2e/test_process_security_logs.py -q`
+    first failed on stale binaries/invalid fixture rules/missing
+    `security.process` logs, then passed (**1** passed); `cargo build -p
+    capsem -p capsem-service -p capsem-process` passed after the real-binary
+    dead-code cleanup; focused gates `cargo test -p capsem-core
+    subsystem_targets_include_security_process_logs`, `cargo test -p capsem
+    format_session_logs_preserves_structured_process_security_line`, and full
+    `cargo test -p capsem-process` (**110** passed) passed; widened
+    `cargo test -p capsem-service --bin capsem-service` passed with
+    escalation (**205** passed); `cargo fmt --all -- --check` and
+    `git diff --check` passed. Still missing after this slice: visible UI
+    screens/editors, ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

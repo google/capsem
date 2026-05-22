@@ -1006,6 +1006,7 @@ impl ServiceState {
             .env(
                 "RUST_LOG",
                 std::env::var("RUST_LOG")
+                    .map(|filter| capsem_core::telemetry::with_subsys_targets(&filter))
                     .unwrap_or_else(|_| capsem_core::telemetry::with_subsys_targets("capsem=info")),
             )
             .arg("--id")
@@ -1350,6 +1351,7 @@ impl ServiceState {
             .env(
                 "RUST_LOG",
                 std::env::var("RUST_LOG")
+                    .map(|filter| capsem_core::telemetry::with_subsys_targets(&filter))
                     .unwrap_or_else(|_| capsem_core::telemetry::with_subsys_targets("capsem=info")),
             )
             .arg("--id")
@@ -5784,11 +5786,13 @@ fn runtime_registry_rules_json(
         .collect())
 }
 
+#[cfg(test)]
 struct RuntimeSecurityMatchRecorder {
     enforcement_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
     detection_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
 }
 
+#[cfg(test)]
 impl seceng::RuleMatchRecorder for RuntimeSecurityMatchRecorder {
     fn record_rule_match(
         &mut self,
@@ -5869,6 +5873,7 @@ fn record_runtime_rule_match_count_if_present(
     Ok(())
 }
 
+#[cfg(test)]
 fn runtime_security_engine_from_registries(
     state: &Arc<ServiceState>,
 ) -> Result<seceng::SecurityEngine, AppError> {

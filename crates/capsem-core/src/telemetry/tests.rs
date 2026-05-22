@@ -3,6 +3,13 @@
 use super::*;
 
 #[test]
+fn subsystem_targets_include_security_process_logs() {
+    let filter = with_subsys_targets("capsem=debug");
+    assert!(filter.contains("security=info"));
+    assert!(filter.contains("security.process=info"));
+}
+
+#[test]
 fn ambient_trace_id_from_capsem_env_takes_precedence() {
     let id = ambient_capsem_trace_id_from_inputs(
         Some("deadbeefcafef00d"),

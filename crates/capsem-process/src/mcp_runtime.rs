@@ -101,10 +101,12 @@ pub(crate) struct RuntimePolicyState {
     pub(crate) snapshot_interval_secs: u64,
 }
 
+#[cfg(test)]
 pub(crate) fn load_runtime_policy_state(session_dir: &Path) -> RuntimePolicyState {
     load_runtime_policy_state_with_runtime_rules(session_dir, None)
 }
 
+#[cfg(test)]
 pub(crate) fn load_runtime_policy_state_with_runtime_rules(
     session_dir: &Path,
     runtime_rules: Option<&capsem_proto::ipc::RuntimeSecurityRulesSnapshot>,
@@ -124,6 +126,7 @@ pub(crate) fn load_runtime_policy_state_with_runtime_rules_and_recorder(
     )
 }
 
+#[cfg(test)]
 fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicyState {
     load_runtime_policy_state_from_effective_with_runtime_rules(session_dir, None, None)
 }

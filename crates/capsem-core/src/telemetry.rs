@@ -63,7 +63,7 @@ pub struct TelemetryConfig {
 /// passes to spawned children should be built using
 /// [`with_subsys_targets`] to keep the list in one place.
 pub const SUBSYS_TARGETS: &str =
-    "suspend=info,fs=info,ipc=info,host=info,handshake=info,vsock=info";
+    "suspend=info,fs=info,ipc=info,host=info,handshake=info,vsock=info,security=info,security.process=info";
 
 /// Compose a filter string by appending [`SUBSYS_TARGETS`] to a base.
 /// Use for `TelemetryConfig::default_filter` and for `RUST_LOG=...` env

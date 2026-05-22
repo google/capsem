@@ -163,6 +163,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added testable `capsem logs` formatting so structured process security lines
   survive CLI tailing, and taught shell IPC handling to ignore runtime rule
   match-drain replies.
+- Added a real VM e2e for runtime process enforcement: install a shell-blocking
+  rule, prove `capsem exec` is blocked, and prove `capsem logs` shows the
+  structured `security.process` decision with VM/profile/rule attribution.
+- Fixed stale profile-asset test fixtures and child process log filters so
+  old `request.*` policy roots no longer fail closed during boot and
+  `security.process` lines are not filtered out of `process.log`.
 - Added live VM status security metrics from the canonical resolved-event
   stream, including security event counts, block counts, detection counts,
   latest block, and latest detection surfaced through process metrics snapshots
