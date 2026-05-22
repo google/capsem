@@ -417,16 +417,22 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // creates the capture slot *before* sending here. The
                     // control bridge owns delivery/replay, so this layer just
                     // forwards without replacing the active_exec slot.
-                    db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(
-                        capsem_logger::ExecEvent {
-                            timestamp: std::time::SystemTime::now(),
-                            exec_id: id,
-                            command: command.clone(),
-                            source: "api".into(),
-                            mcp_call_id: None,
-                            trace_id: None,
-                            process_name: None,
-                        },
+                    let event = capsem_logger::ExecEvent {
+                        timestamp: std::time::SystemTime::now(),
+                        exec_id: id,
+                        command: command.clone(),
+                        source: "api".into(),
+                        mcp_call_id: None,
+                        trace_id: None,
+                        process_name: None,
+                    };
+                    let resolved_event =
+                        capsem_core::process_security_events::build_exec_resolved_security_event(
+                            &event,
+                        );
+                    db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(event));
+                    db_for_cmd.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+                        resolved_event,
                     ));
                     capsem_core::try_send!(
                         "hub_exec",

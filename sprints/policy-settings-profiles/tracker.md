@@ -1328,6 +1328,19 @@ a valid claim -- mark it `[ ]` instead.
     instead of observe-only journaling, process emitter, visible UI
     screens/editors, persistence/profile-pack seeding, VM status/live metrics
     integration, and S08d performance proof.
+    Fifty-sixth TDD process-emitter slice added canonical observe-only
+    `process.exec` journaling for exec dispatch. The builder tests first locked
+    the typed event shape and command classifier; `capsem-process` now writes a
+    `ResolvedSecurityEvent` beside `exec_events` when forwarding exec commands
+    to the guest, carrying exec id, source activity, optional MCP correlation,
+    trace id, command class, and VM/profile/session/user env identity without
+    pretending process names are process ids. Verification: red `cargo test -p
+    capsem-core process_security_events --lib` first, then `cargo test -p
+    capsem-core process_security_events --lib` **2** tests and `cargo test -p
+    capsem-process` **106** tests passed. Still missing after this slice:
+    live Process Engine enforcement/detection, visible UI screens/editors,
+    persistence/profile-pack seeding, VM status/live metrics integration, and
+    S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

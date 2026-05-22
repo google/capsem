@@ -141,6 +141,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `security_events` alongside the existing `dns_events` projection.
 - Added canonical file Security Engine journaling so file monitor and MCP file
   restore/delete events write `security_events` alongside `fs_events`.
+- Added canonical process Security Engine journaling so exec dispatch writes
+  typed observe-only `process.exec` events alongside `exec_events`.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without
