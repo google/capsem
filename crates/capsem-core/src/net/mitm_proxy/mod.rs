@@ -29,7 +29,7 @@ mod util;
 
 use std::mem::ManuallyDrop;
 use std::os::unix::io::{FromRawFd, RawFd};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Instant, SystemTime};
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
@@ -89,7 +89,7 @@ pub struct MitmProxyConfig {
     /// normalized request events into allow/block/ask/rewrite outcomes before
     /// touching upstream. The engine boundary is intentionally typed: MITM
     /// does not know about registries, profile storage, or service routes.
-    pub security_engine: Option<Arc<dyn RuntimeSecurityEngine>>,
+    pub security_engine: Arc<RuntimeSecurityEngineSlot>,
     /// T3 framed MCP endpoint on the MITM listener. Dispatch state lives
     /// here so the low-privilege aggregator remains DB-free while MITM
     /// owns policy, timeouts, and `mcp_calls` telemetry.
@@ -98,6 +98,51 @@ pub struct MitmProxyConfig {
 
 pub trait RuntimeSecurityEngine: Send + Sync {
     fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError>;
+}
+
+#[derive(Default)]
+pub struct RuntimeSecurityEngineSlot {
+    inner: RwLock<Option<Arc<dyn RuntimeSecurityEngine>>>,
+}
+
+impl RuntimeSecurityEngineSlot {
+    pub fn new(engine: Option<Arc<dyn RuntimeSecurityEngine>>) -> Self {
+        Self {
+            inner: RwLock::new(engine),
+        }
+    }
+
+    pub fn set(&self, engine: Option<Arc<dyn RuntimeSecurityEngine>>) {
+        *self
+            .inner
+            .write()
+            .expect("runtime security engine slot lock poisoned") = engine;
+    }
+
+    pub fn has_engine(&self) -> bool {
+        self.inner
+            .read()
+            .expect("runtime security engine slot lock poisoned")
+            .is_some()
+    }
+}
+
+impl RuntimeSecurityEngine for RuntimeSecurityEngineSlot {
+    fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError> {
+        let engine = self
+            .inner
+            .read()
+            .map_err(|error| SecurityEngineError::PhaseFailed {
+                phase: capsem_security_engine::SecurityEnginePhase::Enforcement,
+                message: format!("runtime security engine slot lock poisoned: {error}"),
+            })?
+            .clone()
+            .ok_or_else(|| SecurityEngineError::PhaseFailed {
+                phase: capsem_security_engine::SecurityEnginePhase::Enforcement,
+                message: "runtime security engine is not installed".into(),
+            })?;
+        engine.evaluate(event)
+    }
 }
 
 impl RuntimeSecurityEngine for std::sync::Mutex<capsem_security_engine::SecurityEngine> {
@@ -136,8 +181,13 @@ fn evaluate_runtime_http_request(
     config: &MitmProxyConfig,
     input: RuntimeHttpRequestInput,
 ) -> Option<Result<RuntimeHttpDecision, SecurityEngineError>> {
-    let engine = config.security_engine.as_ref()?;
-    Some(evaluate_runtime_http_request_inner(engine.as_ref(), input))
+    if !config.security_engine.has_engine() {
+        return None;
+    }
+    Some(evaluate_runtime_http_request_inner(
+        config.security_engine.as_ref(),
+        input,
+    ))
 }
 
 fn evaluate_runtime_http_request_inner(
@@ -883,7 +933,7 @@ async fn handle_request(
         preview: Vec::new(),
         max_preview: req_max_preview,
     }));
-    let buffered_request_body = if config.security_engine.is_some() {
+    let buffered_request_body = if config.security_engine.has_engine() {
         Some(
             collect_request_body_for_security(
                 req_body

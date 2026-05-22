@@ -487,6 +487,11 @@ async fn run_async_main_loop(
     let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(
         runtime_policy.domain_policy.clone(),
     )));
+    let runtime_security_engine = Arc::new(
+        capsem_core::net::mitm_proxy::RuntimeSecurityEngineSlot::new(
+            runtime_policy.security_engine.clone(),
+        ),
+    );
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
@@ -498,6 +503,7 @@ async fn run_async_main_loop(
         aggregator: aggregator_client,
         policy: Arc::clone(&mcp_policy),
         domain_policy: Arc::clone(&mcp_domain_policy),
+        security_engine: Arc::clone(&runtime_security_engine),
         session_dir: session_dir.clone(),
         builtin_binary: builtin_bin,
     });
@@ -519,7 +525,7 @@ async fn run_async_main_loop(
         upstream_tls: Arc::clone(&net_state.upstream_tls),
         telemetry: telemetry_deps,
         pipeline: mitm_pipeline,
-        security_engine: runtime_policy.security_engine.clone(),
+        security_engine: runtime_security_engine,
         mcp_endpoint: Some(mcp_endpoint),
     });
 

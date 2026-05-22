@@ -528,6 +528,9 @@ pub(crate) async fn handle_ipc_connection(
                 let new_mcp = Arc::new(runtime_state.mcp_policy);
                 *mcp_runtime.domain_policy.write().unwrap() = Arc::clone(&new_domain);
                 *mcp_runtime.policy.write().await = new_mcp;
+                mcp_runtime
+                    .security_engine
+                    .set(runtime_state.security_engine);
 
                 let reload_result = mcp_runtime.aggregator.refresh(servers).await;
                 let (success, error) = match reload_result {

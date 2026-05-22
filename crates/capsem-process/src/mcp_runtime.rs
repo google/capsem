@@ -5,7 +5,7 @@ use capsem_core::mcp::aggregator::AggregatorClient;
 use capsem_core::mcp::policy::{McpManualServer, McpPolicy, McpUserConfig, ToolDecision};
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::mitm_proxy::RuntimeSecurityEngine;
+use capsem_core::net::mitm_proxy::{RuntimeSecurityEngine, RuntimeSecurityEngineSlot};
 use capsem_core::settings_profiles::{
     self, CapabilityMode, EffectiveRule, RuleDecision, VmNetworkMode,
 };
@@ -30,6 +30,7 @@ pub(crate) struct McpRuntime {
     pub(crate) aggregator: AggregatorClient,
     pub(crate) policy: Arc<tokio::sync::RwLock<Arc<McpPolicy>>>,
     pub(crate) domain_policy: Arc<std::sync::RwLock<Arc<DomainPolicy>>>,
+    pub(crate) security_engine: Arc<RuntimeSecurityEngineSlot>,
     pub(crate) session_dir: PathBuf,
     pub(crate) builtin_binary: Option<PathBuf>,
 }

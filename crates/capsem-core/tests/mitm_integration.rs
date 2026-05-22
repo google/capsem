@@ -84,7 +84,7 @@ fn make_proxy_config_full(
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
         telemetry,
         pipeline,
-        security_engine: None,
+        security_engine: Arc::new(mitm_proxy::RuntimeSecurityEngineSlot::default()),
         mcp_endpoint: None,
     });
     (config, db)

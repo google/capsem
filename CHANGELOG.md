@@ -124,6 +124,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Engine is installed, MITM now buffers bounded request bodies before upstream
   dispatch so `http.request.body.text` CEL rules can block without touching the
   network, while preserving the forwarded bytes and telemetry body preview.
+- Added live profile-policy reload for the Network Engine runtime Security
+  Engine: `capsem-process` now shares a swappable engine slot with MITM, so
+  `ReloadConfig` can replace profile-derived HTTP enforcement without
+  rebuilding the proxy config or restarting the VM process.
 - Added VM/session/profile/user identity propagation into Network Engine
   security events and canonical AI evidence, including `CAPSEM_SESSION_ID` and
   `CAPSEM_PROFILE_REVISION` handoff through `capsem-process` and the MCP

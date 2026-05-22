@@ -1,6 +1,7 @@
 use super::fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
 use super::util::{format_headers, is_llm_api_path};
 use super::*;
+use std::collections::BTreeMap;
 use std::os::unix::io::IntoRawFd;
 use std::os::unix::net::UnixStream;
 
@@ -49,8 +50,119 @@ fn make_config_dev_with_security_engine(
         telemetry,
         pipeline,
         mcp_endpoint: None,
-        security_engine,
+        security_engine: Arc::new(RuntimeSecurityEngineSlot::new(security_engine)),
     })
+}
+
+#[test]
+fn runtime_security_engine_slot_swaps_rules_without_rebuilding_config() {
+    let slot = RuntimeSecurityEngineSlot::new(Some(block_host_engine("initial.test")));
+
+    let blocked = slot
+        .evaluate(test_http_security_event("initial.test", "/"))
+        .expect("initial runtime engine should evaluate");
+    assert!(matches!(
+        blocked.action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+
+    let allowed = slot
+        .evaluate(test_http_security_event("updated.test", "/"))
+        .expect("non-matching host should be allowed");
+    assert!(matches!(
+        allowed.action,
+        capsem_security_engine::SecurityAction::Continue
+    ));
+
+    slot.set(Some(block_host_engine("updated.test")));
+
+    let previously_blocked = slot
+        .evaluate(test_http_security_event("initial.test", "/"))
+        .expect("swapped runtime engine should evaluate");
+    assert!(matches!(
+        previously_blocked.action,
+        capsem_security_engine::SecurityAction::Continue
+    ));
+
+    let newly_blocked = slot
+        .evaluate(test_http_security_event("updated.test", "/"))
+        .expect("updated runtime engine should evaluate");
+    assert!(matches!(
+        newly_blocked.action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+
+    slot.set(None);
+    assert!(!slot.has_engine());
+}
+
+fn block_host_engine(host: &str) -> Arc<dyn RuntimeSecurityEngine> {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: format!("block-{host}"),
+            pack_id: Some("test".into()),
+            condition: format!("http.request.host == '{host}'"),
+            decision: SecurityDecisionAction::Block,
+            reason: Some(format!("block {host}")),
+        }])
+        .expect("test CEL rule should compile"),
+    ));
+    Arc::new(std::sync::Mutex::new(engine))
+}
+
+fn test_http_security_event(host: &str, path: &str) -> capsem_security_engine::SecurityEvent {
+    capsem_security_engine::SecurityEvent::http(
+        capsem_security_engine::SecurityEventCommon {
+            event_id: format!("test-http-{host}-{path}"),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: capsem_security_engine::SourceEngine::Network,
+            attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+            origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+            accounting_owner: None,
+            enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+            trace_id: Some("trace-test".into()),
+            span_id: None,
+            timestamp_unix_ms: 1,
+            vm_id: None,
+            session_id: None,
+            profile_id: None,
+            profile_revision: None,
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: None,
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: capsem_security_engine::RedactionState::Raw,
+        },
+        capsem_security_engine::HttpSecuritySubject {
+            method: "GET".into(),
+            scheme: Some("https".into()),
+            host: host.into(),
+            port: Some(443),
+            path: Some(path.into()),
+            query: None,
+            url: Some(format!("https://{host}{path}")),
+            path_class: "external".into(),
+            request_bytes: 0,
+            request_headers: BTreeMap::new(),
+            request_body: None,
+            response_status: None,
+            response_headers: BTreeMap::new(),
+            response_bytes: None,
+            response_body: None,
+        },
+    )
 }
 
 fn make_client_hello(hostname: &str) -> Vec<u8> {

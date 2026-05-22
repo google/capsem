@@ -1180,8 +1180,28 @@ a valid claim -- mark it `[ ]` instead.
     serially. Still missing after this slice: live status accumulators for
     latest detection/latest block/model cost, response-phase
     enforcement/detection, live service route propagation into already-running
-    VM processes, DNS/MCP/file/process emitters, visible UI screens/editors,
-    persistence/profile-pack seeding, and S08d performance proof.
+    VM processes for service-owned registry rules, DNS/MCP/file/process
+    emitters, visible UI screens/editors, persistence/profile-pack seeding, and
+    S08d performance proof.
+    Forty-seventh TDD runtime-reload slice removed the boot-time HTTP Security
+    Engine stale pointer from `capsem-process`. The red slot test proved a
+    single MITM-facing handle must swap from one CEL rule set to another
+    without rebuilding `MitmProxyConfig`; `MitmProxyConfig` now owns a typed
+    `RuntimeSecurityEngineSlot`, process startup shares that slot with
+    `McpRuntime`, and `ServiceToProcess::ReloadConfig` replaces the slot with
+    the freshly loaded profile-derived Security Engine while continuing to
+    refresh MCP and domain policy. Verification: red `cargo test -p
+    capsem-core
+    net::mitm_proxy::tests::runtime_security_engine_slot_swaps_rules_without_rebuilding_config`
+    first, then the same test green, `cargo test -p capsem-process
+    mcp_runtime`, existing focused inline enforcement tests for request-head
+    and request-body blocks, `cargo test -p capsem-core
+    net::mitm_proxy::tests --lib`, and full `cargo test -p capsem-process`
+    passed. Still missing after this slice: propagating service-owned
+    `/enforcement/*` and `/detection/*` registry mutations into already-running
+    VMs, response-phase enforcement/detection, DNS/MCP/file/process emitters,
+    visible UI screens/editors, persistence/profile-pack seeding, and S08d
+    performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
