@@ -13,7 +13,7 @@ use capsem_security_engine::{
     ResolvedSecurityEvent, SecurityAction, SecurityEventSubject, Severity, SourceEngine,
     StepStatus, ToolCallStatus, ToolOrigin,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
 
 use crate::events::{
@@ -348,6 +348,7 @@ impl DbWriter {
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
+        let metrics = VmMetricsAccumulator::from_connection(&conn)?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
         let db_path = path.to_path_buf();
@@ -361,7 +362,7 @@ impl DbWriter {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path,
-            metrics: VmMetricsAccumulator::default(),
+            metrics,
         })
     }
 
@@ -371,6 +372,7 @@ impl DbWriter {
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
+        let metrics = VmMetricsAccumulator::from_connection(&conn)?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
 
@@ -383,7 +385,7 @@ impl DbWriter {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
-            metrics: VmMetricsAccumulator::default(),
+            metrics,
         })
     }
 
@@ -477,6 +479,18 @@ struct VmMetricsAccumulator {
 }
 
 impl VmMetricsAccumulator {
+    fn from_connection(conn: &Connection) -> rusqlite::Result<Self> {
+        Ok(Self {
+            security: std::sync::Mutex::new(seed_security_metrics(conn)?),
+            http: std::sync::Mutex::new(seed_http_metrics(conn)?),
+            dns: std::sync::Mutex::new(seed_dns_metrics(conn)?),
+            model: std::sync::Mutex::new(seed_model_metrics(conn)?),
+            mcp: std::sync::Mutex::new(seed_mcp_metrics(conn)?),
+            filesystem: std::sync::Mutex::new(seed_filesystem_metrics(conn)?),
+            process: std::sync::Mutex::new(seed_process_metrics(conn)?),
+        })
+    }
+
     fn update_for_write_op(&self, op: &WriteOp) -> Option<VmMetricsUpdate> {
         match op {
             WriteOp::ResolvedSecurityEvent(event) => VmMetricsUpdate::from_resolved_event(event),
@@ -553,6 +567,278 @@ impl VmMetricsAccumulator {
         snapshot.process = self.process.lock().unwrap().clone();
         snapshot.security = self.security.lock().unwrap().clone();
     }
+}
+
+fn seed_http_metrics(conn: &Connection) -> rusqlite::Result<VmHttpMetrics> {
+    conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN policy_action IN ('ask', 'rewrite', 'throttle') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(bytes_sent), 0),
+            COALESCE(SUM(bytes_received), 0)
+         FROM net_events",
+        [],
+        |row| {
+            Ok(VmHttpMetrics {
+                http_requests_total: row_u64(row, 0)?,
+                http_requests_allowed_total: row_u64(row, 1)?,
+                http_requests_warned_total: row_u64(row, 2)?,
+                http_requests_denied_total: row_u64(row, 3)?,
+                http_requests_errored_total: row_u64(row, 4)?,
+                http_bytes_sent_total: row_u64(row, 5)?,
+                http_bytes_received_total: row_u64(row, 6)?,
+            })
+        },
+    )
+}
+
+fn seed_dns_metrics(conn: &Connection) -> rusqlite::Result<VmDnsMetrics> {
+    conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN policy_action IN ('ask', 'throttle') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'redirected' OR policy_action = 'rewrite' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
+         FROM dns_events",
+        [],
+        |row| {
+            Ok(VmDnsMetrics {
+                dns_queries_total: row_u64(row, 0)?,
+                dns_queries_allowed_total: row_u64(row, 1)?,
+                dns_queries_warned_total: row_u64(row, 2)?,
+                dns_queries_denied_total: row_u64(row, 3)?,
+                dns_queries_rewritten_total: row_u64(row, 4)?,
+                dns_queries_errored_total: row_u64(row, 5)?,
+            })
+        },
+    )
+}
+
+fn seed_model_metrics(conn: &Connection) -> rusqlite::Result<VmModelMetrics> {
+    let metrics = conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(usage_input_tokens), 0),
+            COALESCE(SUM(usage_output_tokens), 0),
+            COALESCE(SUM(usage_estimated_cost_micros), 0)
+         FROM ai_model_interactions
+         WHERE attribution_scope = 'vm'",
+        [],
+        |row| {
+            Ok(VmModelMetrics {
+                model_requests_total: row_u64(row, 0)?,
+                model_requests_allowed_total: row_u64(row, 0)?,
+                model_input_tokens_total: row_u64(row, 1)?,
+                model_output_tokens_total: row_u64(row, 2)?,
+                model_estimated_cost_micros_total: row_u64(row, 3)?,
+                ..VmModelMetrics::default()
+            })
+        },
+    )?;
+    if metrics.model_requests_total > 0 {
+        return Ok(metrics);
+    }
+
+    conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(input_tokens), 0),
+            COALESCE(SUM(output_tokens), 0),
+            COALESCE(SUM(estimated_cost_usd * 1000000.0), 0)
+         FROM model_calls",
+        [],
+        |row| {
+            Ok(VmModelMetrics {
+                model_requests_total: row_u64(row, 0)?,
+                model_requests_allowed_total: row_u64(row, 0)?,
+                model_input_tokens_total: row_u64(row, 1)?,
+                model_output_tokens_total: row_u64(row, 2)?,
+                model_estimated_cost_micros_total: row_u64(row, 3)?,
+                ..VmModelMetrics::default()
+            })
+        },
+    )
+}
+
+fn seed_mcp_metrics(conn: &Connection) -> rusqlite::Result<VmMcpMetrics> {
+    conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
+         FROM mcp_calls",
+        [],
+        |row| {
+            Ok(VmMcpMetrics {
+                mcp_tool_invocations_total: row_u64(row, 0)?,
+                mcp_tool_invocations_allowed_total: row_u64(row, 1)?,
+                mcp_tool_invocations_warned_total: row_u64(row, 2)?,
+                mcp_tool_invocations_denied_total: row_u64(row, 3)?,
+                mcp_tool_invocations_errored_total: row_u64(row, 4)?,
+                ..VmMcpMetrics::default()
+            })
+        },
+    )
+}
+
+fn seed_filesystem_metrics(conn: &Connection) -> rusqlite::Result<VmFilesystemMetrics> {
+    conn.query_row(
+        "SELECT
+            COALESCE(SUM(CASE WHEN action = 'read' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN action IN ('modified', 'write') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN action IN ('created', 'create') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN action IN ('deleted', 'delete') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN action IN ('restored', 'restore') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN action = 'read' THEN size ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN action IN ('created', 'create', 'modified', 'write', 'restored', 'restore') THEN size ELSE 0 END), 0)
+         FROM fs_events",
+        [],
+        |row| {
+            Ok(VmFilesystemMetrics {
+                fs_reads_total: row_u64(row, 0)?,
+                fs_writes_total: row_u64(row, 1)?,
+                fs_creates_total: row_u64(row, 2)?,
+                fs_deletes_total: row_u64(row, 3)?,
+                fs_restores_total: row_u64(row, 4)?,
+                fs_errors_total: 0,
+                fs_bytes_read_total: row_u64(row, 5)?,
+                fs_bytes_written_total: row_u64(row, 6)?,
+            })
+        },
+    )
+}
+
+fn seed_process_metrics(conn: &Connection) -> rusqlite::Result<VmProcessMetrics> {
+    let exec_total: u64 = conn.query_row("SELECT COUNT(*) FROM exec_events", [], |row| {
+        row_u64(row, 0)
+    })?;
+    let exec_errors: u64 = conn.query_row(
+        "SELECT COUNT(*) FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0",
+        [],
+        |row| row_u64(row, 0),
+    )?;
+    let audit_total: u64 = conn.query_row("SELECT COUNT(*) FROM audit_events", [], |row| {
+        row_u64(row, 0)
+    })?;
+    let audit_errors: u64 = conn.query_row(
+        "SELECT COUNT(*) FROM audit_events WHERE exit_code IS NOT NULL AND exit_code != 0",
+        [],
+        |row| row_u64(row, 0),
+    )?;
+    Ok(VmProcessMetrics {
+        process_events_total: exec_total + audit_total,
+        process_exec_total: exec_total,
+        process_audit_total: audit_total,
+        process_errors_total: exec_errors + audit_errors,
+    })
+}
+
+fn seed_security_metrics(conn: &Connection) -> rusqlite::Result<VmSecurityMetrics> {
+    let mut metrics = conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN final_action = 'block' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN final_action = 'ask' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN final_action = 'rewrite' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN final_action = 'throttle' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN final_action = 'error' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN final_action NOT IN ('continue', 'observe_only') THEN 1 ELSE 0 END), 0)
+         FROM security_events
+         WHERE attribution_scope = 'vm'",
+        [],
+        |row| {
+            Ok(VmSecurityMetrics {
+                security_events_total: row_u64(row, 0)?,
+                blocks_total: row_u64(row, 1)?,
+                asks_total: row_u64(row, 2)?,
+                rewrites_total: row_u64(row, 3)?,
+                throttles_total: row_u64(row, 4)?,
+                errors_total: row_u64(row, 5)?,
+                enforcement_decisions_total: row_u64(row, 6)?,
+                ..VmSecurityMetrics::default()
+            })
+        },
+    )?;
+    metrics.detection_findings_total = conn.query_row(
+        "SELECT COUNT(*)
+         FROM detection_findings df
+         JOIN security_events se ON se.event_id = df.event_id
+         WHERE se.attribution_scope = 'vm'",
+        [],
+        |row| row_u64(row, 0),
+    )?;
+
+    if let Some((event_id, timestamp_unix_ms)) = conn
+        .query_row(
+            "SELECT event_id, timestamp_unix_ms
+             FROM security_events
+             WHERE attribution_scope = 'vm' AND final_action = 'block'
+             ORDER BY timestamp_unix_ms DESC, id DESC
+             LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row_u64(row, 1)?)),
+        )
+        .optional()?
+    {
+        let step: Option<(Option<String>, Option<String>)> = conn
+            .query_row(
+                "SELECT rule_id, message
+                 FROM security_event_steps
+                 WHERE event_id = ?1
+                   AND kind IN ('enforcement_match', 'confirm', 'rate_limit_check')
+                 ORDER BY step_index DESC
+                 LIMIT 1",
+                params![event_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        metrics.latest_block_event_id = Some(event_id);
+        metrics.latest_block_rule_id = step.as_ref().and_then(|(rule_id, _)| rule_id.clone());
+        metrics.latest_block_reason = step.and_then(|(_, message)| message);
+        metrics.latest_block_unix_ms = Some(timestamp_unix_ms);
+    }
+
+    if let Some(detection) = conn
+        .query_row(
+            "SELECT df.event_id, df.rule_id, df.title, df.severity, se.timestamp_unix_ms
+             FROM detection_findings df
+             JOIN security_events se ON se.event_id = df.event_id
+             WHERE se.attribution_scope = 'vm'
+             ORDER BY se.timestamp_unix_ms DESC, df.id DESC
+             LIMIT 1",
+            [],
+            |row| {
+                Ok(VmDetectionMetric {
+                    event_id: row.get(0)?,
+                    rule_id: row.get(1)?,
+                    title: row.get(2)?,
+                    severity: row.get(3)?,
+                    timestamp_unix_ms: row_u64(row, 4)?,
+                })
+            },
+        )
+        .optional()?
+    {
+        metrics.latest_detection_event_id = Some(detection.event_id);
+        metrics.latest_detection_rule_id = Some(detection.rule_id);
+        metrics.latest_detection_title = Some(detection.title);
+        metrics.latest_detection_severity = Some(detection.severity);
+        metrics.latest_detection_unix_ms = Some(detection.timestamp_unix_ms);
+    }
+
+    Ok(metrics)
+}
+
+fn row_u64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
+    let value: i64 = row.get(index)?;
+    Ok(value.max(0) as u64)
 }
 
 #[derive(Default)]

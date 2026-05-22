@@ -1384,6 +1384,28 @@ a valid claim -- mark it `[ ]` instead.
     after this slice: live Process Engine enforcement/detection, persistent-VM
     accumulator seeding from session.db on process load, visible UI
     screens/editors, S12 OTel/prometheus export, and S08d performance proof.
+    Fifty-ninth TDD status-metrics resume slice made persistent VM metrics
+    survive process restart. `DbWriter::open` now seeds the in-memory
+    `VmMetricsAccumulator` from typed `session.db` rows before spawning the
+    writer thread: `security_events`/`detection_findings` for security,
+    `net_events` for HTTP, `dns_events` for DNS, VM-attributed
+    `ai_model_interactions` with a legacy `model_calls` fallback for model
+    usage, `mcp_calls` for MCP, `fs_events` for filesystem activity, and
+    `exec_events`/`audit_events` for process totals. Host-attributed AI
+    evidence remains excluded from VM token/cost counters. The regression test
+    seeds a real file-backed DB, reopens it, verifies the seeded snapshot, then
+    writes a fresh canonical event and verifies live increments continue from
+    the seeded values. Verification: red `cargo test -p capsem-logger
+    writer_open_seeds_metrics_snapshot_from_existing_session_db --lib` first,
+    then that test passed; `cargo test -p capsem-logger --lib` **105** passed,
+    `cargo test -p capsem-process metrics_snapshot` **2** passed, `cargo test
+    -p capsem-process` **106** passed, `perl -e 'alarm 180; exec @ARGV' cargo
+    test -p capsem-service --bin capsem-service` **204** passed, and `cargo
+    test -p capsem-service attach_metrics_snapshot_projects_security_status_fields
+    --bin capsem-service` passed; `cargo fmt --all --check` and `git diff
+    --check` passed after formatting. Still missing after this slice: live Process
+    Engine enforcement/detection, visible UI screens/editors, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

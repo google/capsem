@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 
 use capsem_security_engine::{
     BlockResponse, DetectionFinding, DnsSecuritySubject, FileSecuritySubject,
-    HttpBodySecuritySubject, HttpSecuritySubject, McpSecuritySubject, ModelSecuritySubject,
-    ProcessSecuritySubject, ResolvedEventStep, SecurityEvent, SecurityEventCommon,
-    TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
+    HttpBodySecuritySubject, HttpSecuritySubject, McpSecuritySubject, ModelInteractionEvidence,
+    ModelRequestEvidence, ModelSecuritySubject, ProcessSecuritySubject, ResolvedEventStep,
+    SecurityEvent, SecurityEventCommon, TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 use serde::Serialize;
 
@@ -429,6 +429,201 @@ fn resolved_process_event(
     )
 }
 
+fn seed_time() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_123)
+}
+
+fn seed_net_event() -> crate::events::NetEvent {
+    crate::events::NetEvent {
+        timestamp: seed_time(),
+        domain: "api.example.com".into(),
+        port: 443,
+        decision: crate::events::Decision::Allowed,
+        process_name: Some("agent".into()),
+        pid: Some(4242),
+        method: Some("GET".into()),
+        path: Some("/v1".into()),
+        query: None,
+        status_code: Some(200),
+        bytes_sent: 100,
+        bytes_received: 250,
+        duration_ms: 25,
+        matched_rule: None,
+        request_headers: None,
+        response_headers: None,
+        request_body_preview: None,
+        response_body_preview: None,
+        conn_type: Some("https".into()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
+fn seed_dns_event() -> crate::events::DnsEvent {
+    crate::events::DnsEvent {
+        timestamp: seed_time(),
+        qname: "blocked.example".into(),
+        qtype: 1,
+        qclass: 1,
+        rcode: 3,
+        decision: "denied".into(),
+        matched_rule: Some("dns.block".into()),
+        source_proto: Some("udp".into()),
+        process_name: None,
+        upstream_resolver_ms: 0,
+        trace_id: Some("trace-seed".into()),
+        policy_mode: Some("enforce".into()),
+        policy_action: Some("block".into()),
+        policy_rule: Some("dns.block".into()),
+        policy_reason: Some("seeded dns deny".into()),
+    }
+}
+
+fn seed_model_call(
+    interaction_id: &str,
+    attribution_scope: AiAttributionScope,
+    vm_id: Option<&str>,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost_micros: u64,
+) -> crate::events::ModelCall {
+    crate::events::ModelCall {
+        timestamp: seed_time(),
+        provider: "google_gemini".into(),
+        model: Some("gemini-2.5-pro".into()),
+        process_name: Some("agent".into()),
+        pid: Some(4242),
+        method: "POST".into(),
+        path: "/v1beta/models/gemini-2.5-pro:generateContent".into(),
+        stream: false,
+        system_prompt_preview: None,
+        messages_count: 1,
+        tools_count: 0,
+        request_bytes: 128,
+        request_body_preview: None,
+        message_id: Some(format!("msg-{interaction_id}")),
+        status_code: Some(200),
+        text_content: Some("ok".into()),
+        thinking_content: None,
+        stop_reason: Some("stop".into()),
+        input_tokens: Some(input_tokens),
+        output_tokens: Some(output_tokens),
+        usage_details: BTreeMap::new(),
+        duration_ms: 50,
+        response_bytes: 256,
+        estimated_cost_usd: cost_micros as f64 / 1_000_000.0,
+        trace_id: Some(format!("trace-{interaction_id}")),
+        ai_evidence: Some(ModelInteractionEvidence {
+            interaction_id: interaction_id.into(),
+            trace_id: format!("trace-{interaction_id}"),
+            attribution_scope,
+            source_engine: SourceEngine::HostAi,
+            origin_kind: AiOriginKind::HostService,
+            accounting_owner: None,
+            profile_id: Some("coding".into()),
+            vm_id: vm_id.map(str::to_string),
+            session_id: Some("session-1".into()),
+            user_id: Some("user-1".into()),
+            provider: AiProvider::GoogleGemini,
+            api_family: AiApiFamily::GoogleGeminiContent,
+            model: "gemini-2.5-pro".into(),
+            request: ModelRequestEvidence {
+                request_id: format!("req-{interaction_id}"),
+                provider: AiProvider::GoogleGemini,
+                api_family: AiApiFamily::GoogleGeminiContent,
+                model: Some("gemini-2.5-pro".into()),
+                stream: false,
+                system_prompt_preview: None,
+                message_count: 1,
+                tools_declared_count: 0,
+                raw_shape_version: "google-gemini-content.v1".into(),
+                unknown_fields_present: false,
+            },
+            response: None,
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            mcp_executions: Vec::new(),
+            usage: AiUsageEvidence {
+                input_tokens: Some(input_tokens),
+                output_tokens: Some(output_tokens),
+                estimated_cost_micros: Some(cost_micros),
+                details: BTreeMap::new(),
+            },
+            parse_status: ParseStatus::Complete,
+            evidence_status: EvidenceStatus::Complete,
+        }),
+        tool_calls: Vec::new(),
+        tool_responses: Vec::new(),
+    }
+}
+
+fn seed_mcp_call() -> crate::events::McpCall {
+    crate::events::McpCall {
+        timestamp: seed_time(),
+        server_name: "filesystem".into(),
+        method: "tools/call".into(),
+        tool_name: Some("delete_file".into()),
+        request_id: Some("mcp-1".into()),
+        request_preview: Some("{}".into()),
+        response_preview: None,
+        decision: "denied".into(),
+        duration_ms: 5,
+        error_message: Some("denied".into()),
+        process_name: Some("agent".into()),
+        bytes_sent: 10,
+        bytes_received: 20,
+        policy_mode: Some("enforce".into()),
+        policy_action: Some("block".into()),
+        policy_rule: Some("mcp.block".into()),
+        policy_reason: Some("seeded mcp deny".into()),
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
+fn seed_file_event() -> crate::events::FileEvent {
+    crate::events::FileEvent {
+        timestamp: seed_time(),
+        action: crate::events::FileAction::Created,
+        path: "/workspace/seed.txt".into(),
+        size: Some(64),
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
+fn seed_exec_event() -> crate::events::ExecEvent {
+    crate::events::ExecEvent {
+        timestamp: seed_time(),
+        exec_id: 7,
+        command: "echo seeded".into(),
+        source: "api".into(),
+        mcp_call_id: None,
+        trace_id: Some("trace-seed".into()),
+        process_name: Some("sh".into()),
+    }
+}
+
+fn seed_audit_event() -> crate::events::AuditEvent {
+    crate::events::AuditEvent {
+        timestamp: seed_time(),
+        pid: 4242,
+        ppid: 1,
+        uid: 1000,
+        exe: "/bin/sh".into(),
+        comm: Some("sh".into()),
+        argv: "sh -c echo seeded".into(),
+        cwd: Some("/workspace".into()),
+        tty: None,
+        session_id: Some(1),
+        audit_id: Some("audit-seed".into()),
+        exec_event_id: None,
+        parent_exe: Some("/sbin/init".into()),
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
 #[test]
 fn resolved_security_event_writes_structured_event_steps_findings_and_links() {
     let dir = tempfile::tempdir().unwrap();
@@ -837,6 +1032,144 @@ fn writer_metrics_snapshot_counts_canonical_vm_event_families() {
     assert_eq!(snapshot.process.process_events_total, 1);
     assert_eq!(snapshot.process.process_exec_total, 1);
     assert_eq!(snapshot.security.security_events_total, 7);
+}
+
+#[test]
+fn writer_open_seeds_metrics_snapshot_from_existing_session_db() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("seeded-session.db");
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer.write(WriteOp::NetEvent(seed_net_event())).await;
+            writer.write(WriteOp::DnsEvent(seed_dns_event())).await;
+            writer
+                .write(WriteOp::ModelCall(seed_model_call(
+                    "vm-model",
+                    AiAttributionScope::Vm,
+                    Some("vm-1"),
+                    11,
+                    29,
+                    700,
+                )))
+                .await;
+            writer
+                .write(WriteOp::ModelCall(seed_model_call(
+                    "host-model",
+                    AiAttributionScope::Host,
+                    Some("vm-1"),
+                    1_000,
+                    2_000,
+                    9_000_000,
+                )))
+                .await;
+            writer.write(WriteOp::McpCall(seed_mcp_call())).await;
+            writer.write(WriteOp::FileEvent(seed_file_event())).await;
+            writer.write(WriteOp::ExecEvent(seed_exec_event())).await;
+            writer.write(WriteOp::AuditEvent(seed_audit_event())).await;
+
+            let finding = DetectionFinding {
+                finding_id: "finding-seeded".into(),
+                event_id: "evt-seeded-block".into(),
+                rule_id: "detect.seeded".into(),
+                pack_id: "pack-detect".into(),
+                sigma_id: None,
+                title: "Seeded detection".into(),
+                severity: Severity::Medium,
+                confidence: Confidence::High,
+                tags: Vec::new(),
+            };
+            writer
+                .write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+                    schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+                    event: SecurityEvent::http(
+                        family_common(
+                            "evt-seeded-block",
+                            "http.request",
+                            SourceEngine::Network,
+                            AiAttributionScope::Vm,
+                            Some("vm-1"),
+                        ),
+                        HttpSecuritySubject::default(),
+                    ),
+                    steps: vec![ResolvedEventStep {
+                        kind: ResolvedEventStepKind::EnforcementMatch,
+                        status: StepStatus::Matched,
+                        rule_id: Some("enforce.seeded".into()),
+                        pack_id: Some("pack-enforce".into()),
+                        message: Some("seeded block".into()),
+                    }],
+                    plugin_transforms: Vec::new(),
+                    detection_findings: vec![finding],
+                    final_action: SecurityAction::Block(BlockResponse {
+                        reason_code: "seeded_block".into(),
+                        rule_id: Some("enforce.seeded".into()),
+                    }),
+                    emitter_results: Vec::new(),
+                }))
+                .await;
+        });
+    }
+
+    let writer = DbWriter::open(&db_path, 64).unwrap();
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.http.http_requests_total, 1);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 250);
+    assert_eq!(snapshot.dns.dns_queries_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.model.model_requests_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 11);
+    assert_eq!(snapshot.model.model_output_tokens_total, 29);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 700);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.filesystem.fs_creates_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 64);
+    assert_eq!(snapshot.process.process_events_total, 2);
+    assert_eq!(snapshot.process.process_exec_total, 1);
+    assert_eq!(snapshot.process.process_audit_total, 1);
+    assert_eq!(snapshot.security.security_events_total, 1);
+    assert_eq!(snapshot.security.blocks_total, 1);
+    assert_eq!(snapshot.security.detection_findings_total, 1);
+    assert_eq!(
+        snapshot.security.latest_block_event_id.as_deref(),
+        Some("evt-seeded-block")
+    );
+    assert_eq!(
+        snapshot.security.latest_block_rule_id.as_deref(),
+        Some("enforce.seeded")
+    );
+    assert_eq!(
+        snapshot.security.latest_detection_rule_id.as_deref(),
+        Some("detect.seeded")
+    );
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-live-after-seed",
+                5,
+                Some(7),
+                SecurityAction::Continue,
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_001);
+    assert_eq!(snapshot.http.http_requests_total, 2);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 105);
+    assert_eq!(snapshot.http.http_bytes_received_total, 257);
+    assert_eq!(snapshot.security.security_events_total, 2);
 }
 
 #[test]
