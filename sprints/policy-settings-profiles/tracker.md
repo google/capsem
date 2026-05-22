@@ -1281,9 +1281,22 @@ a valid claim -- mark it `[ ]` instead.
     runtime_security_engine_blocks_response_body_before_guest_delivery --lib`,
     escalated `cargo test -p capsem-core net::mitm_proxy::tests --lib`, and
     `cargo test -p capsem-core telemetry_hook --lib` passed. Still missing
-    after this slice: DNS/MCP/file/process emitters, visible UI screens/
-    editors, persistence/profile-pack seeding, VM status/live metrics
-    integration, and S08d performance proof.
+    after this slice: DNS/file/process emitters, visible UI screens/editors,
+    persistence/profile-pack seeding, VM status/live metrics integration, and
+    S08d performance proof.
+    Fifty-third TDD framed-MCP emitter slice made MCP calls enter the canonical
+    Security Engine journal. The red tests first proved `log_mcp_call_with_policy`
+    only wrote `mcp_calls`; the logger now also builds a normalized
+    `mcp.request` `ResolvedSecurityEvent` with source/identity fields, MCP
+    subject, policy decision, enforcement step, and final continue/block/error
+    action while keeping `mcp_calls` as the projection table. Verification:
+    red allowed-call test first, then `cargo test -p capsem-core
+    log_mcp_call_writes_ --lib` and `cargo test -p capsem-core mcp_frame --lib`
+    passed. Still missing after this slice: routing MCP through the live
+    runtime Security Engine rather than only journaling the existing MCP policy
+    result, DNS/file/process emitters, visible UI screens/editors,
+    persistence/profile-pack seeding, VM status/live metrics integration, and
+    S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

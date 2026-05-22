@@ -12,6 +12,12 @@ use std::time::{Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
+use capsem_security_engine::{
+    AiAttributionScope, AiOriginKind, BlockResponse, Enforceability, McpSecuritySubject,
+    RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
+    SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError, SecurityEvent,
+    SecurityEventCommon, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
@@ -604,8 +610,10 @@ async fn log_mcp_call_with_policy(
         .map(|bytes| bytes.len() as u64)
         .unwrap_or(0);
 
+    let timestamp = SystemTime::now();
+    let trace_id = crate::telemetry::ambient_capsem_trace_id();
     db.write(WriteOp::McpCall(McpCall {
-        timestamp: SystemTime::now(),
+        timestamp,
         server_name: server_name.to_string(),
         method: req.method.clone(),
         tool_name: tool_name.map(String::from),
@@ -618,13 +626,187 @@ async fn log_mcp_call_with_policy(
         process_name: Some(process_name.to_string()),
         bytes_sent,
         bytes_received,
-        policy_mode: policy_fields.policy_mode,
-        policy_action: policy_fields.policy_action,
-        policy_rule: policy_fields.policy_rule,
-        policy_reason: policy_fields.policy_reason,
-        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        policy_mode: policy_fields.policy_mode.clone(),
+        policy_action: policy_fields.policy_action.clone(),
+        policy_rule: policy_fields.policy_rule.clone(),
+        policy_reason: policy_fields.policy_reason.clone(),
+        trace_id: trace_id.clone(),
     }))
     .await;
+    db.write(WriteOp::ResolvedSecurityEvent(
+        build_mcp_resolved_security_event(
+            req,
+            resp,
+            server_name,
+            tool_name,
+            decision,
+            &policy_fields,
+            timestamp,
+            trace_id,
+        ),
+    ))
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_mcp_resolved_security_event(
+    req: &JsonRpcRequest,
+    resp: &JsonRpcResponse,
+    server_name: &str,
+    tool_name: Option<&str>,
+    decision: &str,
+    policy_fields: &McpCallPolicyFields,
+    timestamp: SystemTime,
+    trace_id: Option<String>,
+) -> ResolvedSecurityEvent {
+    let timestamp_unix_ms = timestamp
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let subject_tool_name = tool_name
+        .and_then(parse_namespaced)
+        .map(|(_, tool)| tool.to_string())
+        .or_else(|| tool_name.map(str::to_string))
+        .unwrap_or_else(|| req.method.clone());
+    let event_id = mcp_security_event_id(
+        trace_id.as_deref(),
+        server_name,
+        &subject_tool_name,
+        req.id.as_ref(),
+        timestamp_unix_ms,
+    );
+    let mut event = SecurityEvent::mcp(
+        SecurityEventCommon {
+            event_id,
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: None,
+            enforceability: Enforceability::InlineBlockable,
+            trace_id,
+            span_id: None,
+            timestamp_unix_ms,
+            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
+            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
+            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
+            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
+            mcp_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
+            event_type: "mcp.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        McpSecuritySubject {
+            server_id: server_name.to_string(),
+            tool_name: subject_tool_name,
+            evidence: None,
+        },
+    );
+
+    let mut steps = Vec::new();
+    if let Some(action) = policy_fields
+        .policy_action
+        .as_deref()
+        .and_then(mcp_security_decision_action)
+    {
+        event.decision = Some(SecurityDecision {
+            action,
+            rule: policy_fields.policy_rule.clone(),
+            pack_id: None,
+            reason: policy_fields.policy_reason.clone(),
+            terminal: matches!(
+                action,
+                SecurityDecisionAction::Ask
+                    | SecurityDecisionAction::Block
+                    | SecurityDecisionAction::Rewrite
+                    | SecurityDecisionAction::Throttle
+            ),
+        });
+        steps.push(ResolvedEventStep {
+            kind: ResolvedEventStepKind::EnforcementMatch,
+            status: StepStatus::Matched,
+            rule_id: policy_fields.policy_rule.clone(),
+            pack_id: None,
+            message: policy_fields.policy_reason.clone(),
+        });
+    }
+
+    let final_action = match decision {
+        "denied" => SecurityAction::Block(BlockResponse {
+            reason_code: policy_fields
+                .policy_reason
+                .clone()
+                .unwrap_or_else(|| "mcp_call_denied".into()),
+            rule_id: policy_fields.policy_rule.clone(),
+        }),
+        "error" => SecurityAction::Error(SecurityError {
+            code: "mcp_error".into(),
+            message: resp
+                .error
+                .as_ref()
+                .map(|error| error.message.clone())
+                .unwrap_or_else(|| "MCP call failed".into()),
+        }),
+        _ => SecurityAction::Continue,
+    };
+
+    ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event,
+        steps,
+        plugin_transforms: Vec::new(),
+        detection_findings: Vec::new(),
+        final_action,
+        emitter_results: Vec::new(),
+    }
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn mcp_security_decision_action(action: &str) -> Option<SecurityDecisionAction> {
+    match action {
+        "allow" => Some(SecurityDecisionAction::Allow),
+        "ask" => Some(SecurityDecisionAction::Ask),
+        "block" => Some(SecurityDecisionAction::Block),
+        "rewrite" => Some(SecurityDecisionAction::Rewrite),
+        _ => None,
+    }
+}
+
+fn mcp_security_event_id(
+    trace_id: Option<&str>,
+    server_name: &str,
+    tool_name: &str,
+    request_id: Option<&serde_json::Value>,
+    timestamp_unix_ms: u64,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(trace_id.unwrap_or("").as_bytes());
+    hasher.update(server_name.as_bytes());
+    hasher.update(tool_name.as_bytes());
+    if let Some(request_id) = request_id {
+        hasher.update(request_id.to_string().as_bytes());
+    }
+    hasher.update(&timestamp_unix_ms.to_le_bytes());
+    let hash = hasher.finalize().to_hex().to_string();
+    format!("mcp-{}", &hash[..16])
 }
 
 #[derive(Clone)]

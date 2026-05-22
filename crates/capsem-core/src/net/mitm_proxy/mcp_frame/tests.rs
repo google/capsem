@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use capsem_logger::DbWriter;
+
 use crate::mcp::policy::{McpPolicy, ToolDecision};
 use crate::net::mitm_proxy::McpTimeouts;
 
@@ -97,4 +99,95 @@ fn mcp_decision_request_captures_tool_call_shape_without_arguments() {
         summary.request_preview.as_deref()
     );
     assert_eq!(decision_request.request_hash, summary.request_hash);
+}
+
+#[tokio::test]
+async fn log_mcp_call_writes_canonical_security_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(DbWriter::open(&dir.path().join("session.db"), 64).unwrap());
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"github__create_issue","arguments":{"owner":"capsem"}}}"#,
+    )
+    .unwrap();
+    let resp = JsonRpcResponse::ok(
+        req.id.clone(),
+        serde_json::json!({"content":[{"type":"text","text":"created"}]}),
+    );
+    let decision = McpPolicyDecision {
+        mode: McpPolicyMode::Enforce,
+        action: McpPolicyAction::Allow,
+        rule: "mcp.tool.github__create_issue".into(),
+        reason: "allowed by profile MCP policy".into(),
+        rewrite_target: None,
+        rewrite_value: None,
+        policy_rule_name: None,
+    };
+
+    log_mcp_call_with_policy(
+        &db,
+        &req,
+        &resp,
+        "codex",
+        12,
+        McpCallPolicyFields::from(&decision),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let reader = db.reader().unwrap();
+    let security = reader
+        .query_raw(
+            "SELECT event_family, event_type, final_action, steps.rule_id \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("mcp"));
+    assert!(security.contains("mcp.request"));
+    assert!(security.contains("continue"));
+    assert!(security.contains("mcp.tool.github__create_issue"));
+}
+
+#[tokio::test]
+async fn log_mcp_call_writes_blocked_security_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(DbWriter::open(&dir.path().join("session.db"), 64).unwrap());
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"github__delete_repo","arguments":{"owner":"capsem"}}}"#,
+    )
+    .unwrap();
+    let decision = McpPolicyDecision {
+        mode: McpPolicyMode::Enforce,
+        action: McpPolicyAction::Block,
+        rule: "mcp.tool.github__delete_repo".into(),
+        reason: "blocked by profile MCP policy".into(),
+        rewrite_target: None,
+        rewrite_value: None,
+        policy_rule_name: None,
+    };
+    let resp = policy_blocked_response(req.id.clone(), "request", &decision);
+
+    log_mcp_call_with_policy(
+        &db,
+        &req,
+        &resp,
+        "codex",
+        0,
+        McpCallPolicyFields::from(&decision),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let reader = db.reader().unwrap();
+    let security = reader
+        .query_raw(
+            "SELECT event_family, event_type, final_action, steps.rule_id \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("mcp"));
+    assert!(security.contains("mcp.request"));
+    assert!(security.contains("block"));
+    assert!(security.contains("mcp.tool.github__delete_repo"));
 }

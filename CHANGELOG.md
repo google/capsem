@@ -134,6 +134,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed MITM runtime telemetry to persist every resolved request/response
   phase result for a transaction, so an allowed request event is not overwritten
   by a later response-phase block or finding.
+- Added canonical MCP Security Engine journaling for framed MCP tool calls so
+  allowed and blocked MCP requests write `security_events` alongside the
+  existing `mcp_calls` projection.
 - Added live profile-policy reload for the Network Engine runtime Security
   Engine: `capsem-process` now shares a swappable engine slot with MITM, so
   `ReloadConfig` can replace profile-derived HTTP enforcement without
