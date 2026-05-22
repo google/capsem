@@ -1138,6 +1138,26 @@ a valid claim -- mark it `[ ]` instead.
     VM/profile/session/user enrichment in emitted events, DNS/MCP/file/process
     emitters, visible UI screens/editors, persistence/profile-pack seeding, and
     S08d performance proof.
+    Forty-fifth TDD body-sensitive inline-enforcement slice closed the next
+    Network Engine gap. The red test installed a real CEL rule for
+    `http.request.body.text.contains('needle')` and used a no-touch upstream
+    fixture; the old path hung because the request reached upstream before the
+    body-sensitive decision could fire. MITM now collects bounded request bytes
+    before runtime Security Engine evaluation only when a runtime engine is
+    installed, projects the body preview into the normalized `http.request`
+    event, returns a 403 without accepting upstream on a block, and forwards the
+    exact buffered bytes on allow. Verification: red/hung body test first, then
+    escalated `cargo test -p capsem-core
+    net::mitm_proxy::tests::runtime_security_engine_blocks_request_body_before_upstream_dispatch`,
+    escalated `cargo test -p capsem-core net::mitm_proxy::tests --lib`,
+    `cargo test -p capsem-core net::mitm_proxy::telemetry_hook`, and escalated
+    `cargo test -p capsem-core` passed. Still missing after this slice:
+    response-phase enforcement/detection, live service route propagation into
+    already-running VM processes, VM/profile/session/user enrichment in emitted
+    events, DNS/MCP/file/process emitters, visible UI screens/editors,
+    persistence/profile-pack seeding, streaming/sliding-window body inspection
+    optimization, oversized-body adversarial coverage, and S08d performance
+    proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

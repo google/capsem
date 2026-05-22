@@ -457,6 +457,58 @@ async fn runtime_security_engine_blocks_plain_http_before_upstream_dispatch() {
     assert!(security.contains("block-openai-inline"));
 }
 
+#[tokio::test]
+async fn runtime_security_engine_blocks_request_body_before_upstream_dispatch() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-body-secret-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.request.host == 'api.openai.com' \
+                && http.request.body.text.contains('needle')"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("body secret egress".into()),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+    let (mut sender, proxy_task, conn_task) = open_direct_plain_http_request_conn(
+        &config,
+        "api.openai.com",
+        port,
+        Some(ProviderKind::OpenAi),
+    )
+    .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-test", "needle").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("body secret egress"));
+    upstream_task.await.unwrap();
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-body-secret-inline")
+    );
+    assert!(events[0]
+        .request_body_preview
+        .as_deref()
+        .is_some_and(|preview| preview.contains("needle")));
+}
+
 // emit_model_call / trace-chain unit tests now live in
 // telemetry_hook/tests.rs against the pure builders. Gzip-decode
 // unit tests now live in decompression_hook/tests.rs against the

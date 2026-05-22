@@ -258,6 +258,26 @@ fn security_action_label(action: &SecurityAction) -> &'static str {
     }
 }
 
+async fn collect_request_body_for_security(
+    body: hyper::body::Incoming,
+    stats: &Arc<Mutex<BodyStats>>,
+    max_size: usize,
+) -> Result<Bytes, anyhow::Error> {
+    use http_body_util::{BodyExt, Limited};
+
+    let bytes = Limited::new(body, max_size)
+        .collect()
+        .await
+        .map_err(|error| anyhow::anyhow!("request body read failed: {error}"))?
+        .to_bytes();
+    let mut stats = stats.lock().expect("req body stats lock");
+    stats.bytes = bytes.len() as u64;
+    stats.preview.clear();
+    let preview_len = stats.max_preview.min(bytes.len());
+    stats.preview.extend_from_slice(&bytes[..preview_len]);
+    Ok(bytes)
+}
+
 /// RAII helper: decrements the `mitm.active_connections` gauge when
 /// `handle_connection` returns (success, error, or panic-via-unwind).
 /// Held in a `let _gauge_guard = ConnectionGauge;` binding for the
@@ -700,6 +720,7 @@ async fn handle_request(
 
     let start_time = Instant::now();
     let (parts, req_body) = req.into_parts();
+    let mut req_body = Some(req_body);
     let initial_method = parts.method.to_string();
     let (initial_path, _) = split_path_query(&parts.uri);
 
@@ -858,6 +879,20 @@ async fn handle_request(
         preview: Vec::new(),
         max_preview: req_max_preview,
     }));
+    let buffered_request_body = if config.security_engine.is_some() {
+        Some(
+            collect_request_body_for_security(
+                req_body
+                    .take()
+                    .expect("request body should be present before security collection"),
+                &req_stats,
+                100 * 1024 * 1024,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     if let Some(runtime_decision) = evaluate_runtime_http_request(
         config,
@@ -922,8 +957,18 @@ async fn handle_request(
         }
     }
 
-    let upstream_req_body: ProxyBoxBody =
-        TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed();
+    let upstream_req_body: ProxyBoxBody = if let Some(body) = buffered_request_body {
+        Full::new(body).map_err(|never| match never {}).boxed()
+    } else {
+        TrackedBody::new(
+            req_body
+                .take()
+                .expect("request body should be present for streaming upstream body"),
+            Arc::clone(&req_stats),
+            100 * 1024 * 1024,
+        )
+        .boxed()
+    };
 
     // Try to reuse a cached upstream sender, or create a new
     // connection. Each MITM connection serves one upstream via

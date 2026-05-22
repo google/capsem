@@ -120,6 +120,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules, MITM evaluates normalized `http.request` events before upstream
   dispatch, and blocked requests journal both `net_events` and canonical
   `security_events`.
+- Added request-body-aware inline HTTP enforcement: when a runtime Security
+  Engine is installed, MITM now buffers bounded request bodies before upstream
+  dispatch so `http.request.body.text` CEL rules can block without touching the
+  network, while preserving the forwarded bytes and telemetry body preview.
 - Fixed local setup-generated profile payloads to include the required UI mode
   when installing a local profile revision from `CAPSEM_ASSETS_DIR`.
 - Added the shared `capsem-proto` policy context schema that future CEL and
