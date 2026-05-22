@@ -888,6 +888,15 @@ fn tail_log_lines(text: &str, n: usize) -> String {
 fn format_session_logs(session: &str, logs: LogsResponse, tail: Option<usize>) -> String {
     let mut output = String::new();
 
+    if let Some(security_logs) = logs.security_logs {
+        output.push_str(&format!("--- Security Events ({session}) ---\n"));
+        output.push_str(&match tail {
+            Some(n) => tail_log_lines(&security_logs, n),
+            None => security_logs,
+        });
+        output.push('\n');
+    }
+
     if let Some(process_logs) = logs.process_logs {
         output.push_str(&format!("--- Process Logs ({session}) ---\n"));
         output.push_str(&match tail {
@@ -3207,10 +3216,29 @@ mod tests {
                 logs: String::new(),
                 serial_logs: Some("serial booted\n".into()),
                 process_logs: Some(format!("old line\n{process_security_line}\n")),
+                security_logs: Some(
+                    serde_json::json!({
+                        "target": "security.event",
+                        "fields": {
+                            "message": "resolved_security_event",
+                            "event_type": "process.exec",
+                            "final_action": "block",
+                            "vm_id": "vm-cli-logs",
+                            "profile_id": "coding",
+                            "user_id": "elie",
+                            "rule_id": "runtime.block-shell",
+                            "reason": "shell exec blocked"
+                        }
+                    })
+                    .to_string(),
+                ),
             },
             Some(1),
         );
 
+        assert!(output.contains("--- Security Events (vm-cli-logs) ---"));
+        assert!(output.contains(r#""target":"security.event""#));
+        assert!(output.contains(r#""message":"resolved_security_event""#));
         assert!(output.contains("--- Process Logs (vm-cli-logs) ---"));
         assert!(output.contains(r#""target":"security.process""#));
         assert!(output.contains(r#""message":"process_exec_security_decision""#));

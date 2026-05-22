@@ -428,6 +428,8 @@ pub struct LogsResponse {
     pub serial_logs: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub process_logs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security_logs: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -846,6 +848,7 @@ mod tests {
             logs: "Linux boot...\n".into(),
             serial_logs: None,
             process_logs: None,
+            security_logs: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let r2: LogsResponse = serde_json::from_str(&json).unwrap();

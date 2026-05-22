@@ -3197,6 +3197,7 @@ async fn handle_logs(
 
     let serial_log_path = session_dir.join("serial.log");
     let process_log_path = session_dir.join("process.log");
+    let security_logs = read_security_logs_from_session_db(&session_dir)?;
 
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
         let serial = std::fs::read_to_string(&serial_log_path).ok();
@@ -3215,7 +3216,207 @@ async fn handle_logs(
         logs: serial_logs.as_deref().unwrap_or("").to_string(),
         serial_logs,
         process_logs,
+        security_logs,
     }))
+}
+
+fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<String>, AppError> {
+    let db_path = session_dir.join("session.db");
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("open session security log db: {error}"),
+        )
+    })?;
+    let json_str = reader
+        .query_raw(
+            "SELECT
+                se.timestamp, se.event_id, se.event_family, se.event_type,
+                se.source_engine, se.final_action, se.enforceability,
+                se.attribution_scope, se.origin_kind, se.accounting_owner,
+                se.trace_id, se.span_id, se.parent_event_id, se.stream_id,
+                se.activity_id, se.sequence_no, se.vm_id, se.session_id,
+                se.profile_id, se.profile_revision, se.user_id, se.process_id,
+                se.parent_process_id, se.exec_id, se.turn_id, se.message_id,
+                se.tool_call_id, se.mcp_call_id, se.redaction_state,
+                se.label_count, se.mutation_count, se.finding_count,
+                (
+                    SELECT step.rule_id
+                    FROM security_event_steps step
+                    WHERE step.event_id = se.event_id
+                      AND step.rule_id IS NOT NULL
+                    ORDER BY step.step_index ASC
+                    LIMIT 1
+                ) AS rule_id,
+                (
+                    SELECT step.pack_id
+                    FROM security_event_steps step
+                    WHERE step.event_id = se.event_id
+                      AND step.pack_id IS NOT NULL
+                    ORDER BY step.step_index ASC
+                    LIMIT 1
+                ) AS pack_id,
+                (
+                    SELECT step.message
+                    FROM security_event_steps step
+                    WHERE step.event_id = se.event_id
+                      AND step.message IS NOT NULL
+                    ORDER BY step.step_index ASC
+                    LIMIT 1
+                ) AS reason,
+                (
+                    SELECT group_concat(df.rule_id, ',')
+                    FROM detection_findings df
+                    WHERE df.event_id = se.event_id
+                ) AS detection_rule_ids
+             FROM security_events se
+             WHERE se.id IN (
+                SELECT latest.id
+                FROM security_events latest
+                ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC
+                LIMIT 1000
+             )
+             ORDER BY se.timestamp_unix_ms ASC, se.id ASC",
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query session security logs: {error}"),
+            )
+        })?;
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("parse session security logs: {error}"),
+        )
+    })?;
+    let rows = value
+        .get("rows")
+        .and_then(|rows| rows.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(security_log_line_from_row(&row)?);
+    }
+    Ok(Some(lines.join("\n")))
+}
+
+fn security_log_cell<'a>(
+    row: &'a serde_json::Value,
+    index: usize,
+) -> Result<&'a serde_json::Value, AppError> {
+    row.as_array()
+        .and_then(|cells| cells.get(index))
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session security log row missing column {index}"),
+            )
+        })
+}
+
+fn security_log_string(row: &serde_json::Value, index: usize) -> Result<String, AppError> {
+    security_log_cell(row, index)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("session security log column {index} was not a string"),
+            )
+        })
+}
+
+fn security_log_optional_value(
+    row: &serde_json::Value,
+    index: usize,
+) -> Result<Option<serde_json::Value>, AppError> {
+    let value = security_log_cell(row, index)?;
+    if value.is_null() {
+        Ok(None)
+    } else {
+        Ok(Some(value.clone()))
+    }
+}
+
+fn insert_security_log_value(
+    fields: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    row: &serde_json::Value,
+    index: usize,
+) -> Result<(), AppError> {
+    if let Some(value) = security_log_optional_value(row, index)? {
+        fields.insert(key.to_owned(), value);
+    }
+    Ok(())
+}
+
+fn security_log_line_from_row(row: &serde_json::Value) -> Result<String, AppError> {
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "message".into(),
+        serde_json::Value::String("resolved_security_event".into()),
+    );
+    for (key, index) in [
+        ("event_id", 1),
+        ("event_family", 2),
+        ("event_type", 3),
+        ("source_engine", 4),
+        ("final_action", 5),
+        ("enforceability", 6),
+        ("attribution_scope", 7),
+        ("origin_kind", 8),
+        ("accounting_owner", 9),
+        ("trace_id", 10),
+        ("span_id", 11),
+        ("parent_event_id", 12),
+        ("stream_id", 13),
+        ("activity_id", 14),
+        ("sequence_no", 15),
+        ("vm_id", 16),
+        ("session_id", 17),
+        ("profile_id", 18),
+        ("profile_revision", 19),
+        ("user_id", 20),
+        ("process_id", 21),
+        ("parent_process_id", 22),
+        ("exec_id", 23),
+        ("turn_id", 24),
+        ("message_id", 25),
+        ("tool_call_id", 26),
+        ("mcp_call_id", 27),
+        ("redaction_state", 28),
+        ("label_count", 29),
+        ("mutation_count", 30),
+        ("finding_count", 31),
+        ("rule_id", 32),
+        ("pack_id", 33),
+        ("reason", 34),
+        ("detection_rule_ids", 35),
+    ] {
+        insert_security_log_value(&mut fields, key, row, index)?;
+    }
+
+    let line = json!({
+        "timestamp": security_log_string(row, 0)?,
+        "level": "INFO",
+        "target": "security.event",
+        "fields": fields,
+    });
+    serde_json::to_string(&line).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("serialize session security log line: {error}"),
+        )
+    })
 }
 
 /// `GET /panics?since=30m&limit=20` -- structured panic + backtrace

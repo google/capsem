@@ -248,6 +248,7 @@ pub struct LogsResponse {
     pub logs: String,
     pub serial_logs: Option<String>,
     pub process_logs: Option<String>,
+    pub security_logs: Option<String>,
 }
 
 /// A single command history entry from the service.

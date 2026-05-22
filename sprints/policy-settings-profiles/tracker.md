@@ -1562,6 +1562,31 @@ a valid claim -- mark it `[ ]` instead.
     `git diff --check` passed. Still missing after this slice: visible UI
     screens/editors, ask/confirm UX for process decisions, S12
     OTel/prometheus export, and S08d performance proof.
+    Sixty-eighth TDD canonical-log slice made the durable resolved-event
+    journal visible through `capsem logs`, not only through SQL/timeline
+    tooling. `GET /logs/{id}` now reads `session.db` `security_events` and
+    returns a `security_logs` JSONL section; each line is shaped like a normal
+    structured log record with `target=security.event`,
+    `message=resolved_security_event`, event identity, final action,
+    enforceability, attribution scope, origin/accounting owner, trace/span,
+    VM/session/profile/user/process/exec/MCP/tool ids, label/mutation/finding
+    counts, first matched rule/pack/reason, and detection rule ids. The service
+    keeps the latest 1000 canonical security events and sorts them in timeline
+    order so the CLI's `--tail` sees recent facts on long-running sessions. The
+    CLI prints this section before process and serial logs, preserving `--tail`
+    behavior. Verification: `cargo test -p capsem-service
+    handle_logs_returns_canonical_security_events_from_session_db --bin
+    capsem-service` **1** passed; `cargo test -p capsem
+    format_session_logs_preserves_structured_process_security_line` **1**
+    passed; `cargo test -p capsem logs_response_serde` **1** passed; `cargo
+    test -p capsem-service logs_response_roundtrip` **1** passed; widened
+    gates `cargo test -p capsem-service --bin capsem-service --
+    --test-threads=1` **206** passed after the parallel run exposed an
+    existing temp-profile fixture race, `cargo test -p capsem` **263** passed
+    with escalation after sandbox-only socket/support-bundle failures, `cargo
+    fmt --all -- --check` passed, and `git diff --check` passed. Still
+    missing after this slice: visible UI screens/editors, ask/confirm UX for
+    process decisions, S12 OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

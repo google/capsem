@@ -2987,6 +2987,132 @@ async fn handle_logs_returns_structured_process_security_events_verbatim() {
     assert!(process_logs.contains(r#""reason":"shell exec blocked""#));
 }
 
+#[tokio::test]
+async fn handle_logs_returns_canonical_security_events_from_session_db() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = "vm-security-logs";
+    let session_dir = state.run_dir.join("sessions").join(vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(&session_dir.join("serial.log"), "guest booted\n").unwrap();
+
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+            capsem_security_engine::ResolvedSecurityEvent {
+                schema_version: capsem_security_engine::RESOLVED_EVENT_SCHEMA_VERSION,
+                event: capsem_security_engine::SecurityEvent::process(
+                    capsem_security_engine::SecurityEventCommon {
+                        event_id: "evt-process-db-log".into(),
+                        parent_event_id: None,
+                        stream_id: None,
+                        activity_id: Some("activity-process".into()),
+                        sequence_no: Some(9),
+                        source_engine: capsem_security_engine::SourceEngine::Process,
+                        attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+                        origin_kind: capsem_security_engine::AiOriginKind::HostService,
+                        accounting_owner: Some("vm:vm-security-logs".into()),
+                        enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+                        trace_id: Some("trace-security-log".into()),
+                        span_id: Some("span-security-log".into()),
+                        timestamp_unix_ms: 1_700_000_000_000,
+                        vm_id: Some(vm_id.into()),
+                        session_id: Some(vm_id.into()),
+                        profile_id: Some("coding".into()),
+                        profile_revision: Some("2026.0522.1".into()),
+                        profile_pack_ids: Vec::new(),
+                        enforcement_packs: Vec::new(),
+                        detection_packs: Vec::new(),
+                        user_id: Some("elie".into()),
+                        process_id: Some("pid-1".into()),
+                        parent_process_id: Some("pid-0".into()),
+                        exec_id: Some("exec-88".into()),
+                        turn_id: None,
+                        message_id: None,
+                        tool_call_id: None,
+                        mcp_call_id: Some("mcp-12".into()),
+                        event_type: "process.exec".into(),
+                        redaction_state: capsem_security_engine::RedactionState::Raw,
+                    },
+                    capsem_security_engine::ProcessSecuritySubject {
+                        operation: "exec".into(),
+                        command_class: Some("shell".into()),
+                    },
+                ),
+                steps: vec![capsem_security_engine::ResolvedEventStep {
+                    kind: capsem_security_engine::ResolvedEventStepKind::EnforcementMatch,
+                    status: capsem_security_engine::StepStatus::Matched,
+                    rule_id: Some("runtime.block-shell".into()),
+                    pack_id: Some("runtime-pack".into()),
+                    message: Some("shell exec blocked".into()),
+                }],
+                plugin_transforms: Vec::new(),
+                detection_findings: vec![capsem_security_engine::DetectionFinding {
+                    finding_id: "finding-process-shell".into(),
+                    event_id: "evt-process-db-log".into(),
+                    rule_id: "detect.shell".into(),
+                    pack_id: "detect-pack".into(),
+                    sigma_id: Some("sigma-shell".into()),
+                    title: "Shell execution".into(),
+                    severity: capsem_security_engine::Severity::Medium,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["process".into()],
+                }],
+                final_action: capsem_security_engine::SecurityAction::Block(
+                    capsem_security_engine::BlockResponse {
+                        reason_code: "shell exec blocked".into(),
+                        rule_id: Some("runtime.block-shell".into()),
+                    },
+                ),
+                emitter_results: Vec::new(),
+            },
+        ))
+        .await;
+    drop(writer);
+
+    state.instances.lock().unwrap().insert(
+        vm_id.into(),
+        InstanceInfo {
+            id: vm_id.into(),
+            pid: std::process::id(),
+            uds_path: state.run_dir.join("vm-security-logs.sock"),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: None,
+            profile_pin: None,
+        },
+    );
+
+    let Json(response) = handle_logs(State(state), Path(vm_id.into())).await.unwrap();
+    let security_logs = response.security_logs.expect("security logs returned");
+
+    assert!(security_logs.contains(r#""target":"security.event""#));
+    assert!(security_logs.contains(r#""message":"resolved_security_event""#));
+    assert!(security_logs.contains(r#""event_id":"evt-process-db-log""#));
+    assert!(security_logs.contains(r#""event_type":"process.exec""#));
+    assert!(security_logs.contains(r#""source_engine":"process""#));
+    assert!(security_logs.contains(r#""final_action":"block""#));
+    assert!(security_logs.contains(r#""attribution_scope":"vm""#));
+    assert!(security_logs.contains(r#""origin_kind":"host_service""#));
+    assert!(security_logs.contains(r#""accounting_owner":"vm:vm-security-logs""#));
+    assert!(security_logs.contains(r#""vm_id":"vm-security-logs""#));
+    assert!(security_logs.contains(r#""profile_id":"coding""#));
+    assert!(security_logs.contains(r#""profile_revision":"2026.0522.1""#));
+    assert!(security_logs.contains(r#""user_id":"elie""#));
+    assert!(security_logs.contains(r#""exec_id":"exec-88""#));
+    assert!(security_logs.contains(r#""mcp_call_id":"mcp-12""#));
+    assert!(security_logs.contains(r#""rule_id":"runtime.block-shell""#));
+    assert!(security_logs.contains(r#""pack_id":"runtime-pack""#));
+    assert!(security_logs.contains(r#""reason":"shell exec blocked""#));
+    assert!(security_logs.contains(r#""finding_count":1"#));
+    assert!(security_logs.contains(r#""detection_rule_ids":"detect.shell""#));
+}
+
 fn make_test_state_with_profile_assets(base_url: &str) -> (Arc<ServiceState>, tempfile::TempDir) {
     make_test_state_with_profile_assets_and_process(
         base_url,

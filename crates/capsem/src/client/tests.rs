@@ -508,6 +508,7 @@ fn logs_response_serde() {
         logs: "boot log".into(),
         serial_logs: Some("serial output".into()),
         process_logs: None,
+        security_logs: None,
     };
     let json = serde_json::to_string(&resp).unwrap();
     let resp2: LogsResponse = serde_json::from_str(&json).unwrap();
