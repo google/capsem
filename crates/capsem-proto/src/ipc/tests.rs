@@ -373,6 +373,38 @@ fn reload_config_result_roundtrip() {
     }
 }
 
+#[test]
+fn runtime_rule_match_drain_roundtrip() {
+    let request = ServiceToProcess::DrainRuntimeRuleMatches { id: 77 };
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let decoded: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
+    match decoded {
+        ServiceToProcess::DrainRuntimeRuleMatches { id } => assert_eq!(id, 77),
+        other => panic!("wrong variant: {other:?}"),
+    }
+
+    let response = ProcessToService::RuntimeRuleMatches {
+        id: 77,
+        matches: vec![RuntimeRuleMatchSnapshot {
+            rule_id: "block-live".into(),
+            match_count: 2,
+            last_matched_event: Some("evt-2".into()),
+            last_matched_unix_ms: Some(1_790),
+        }],
+    };
+    let bytes = serde_json::to_vec(&response).unwrap();
+    let decoded: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match decoded {
+        ProcessToService::RuntimeRuleMatches { id, matches } => {
+            assert_eq!(id, 77);
+            assert_eq!(matches[0].rule_id, "block-live");
+            assert_eq!(matches[0].match_count, 2);
+            assert_eq!(matches[0].last_matched_event.as_deref(), Some("evt-2"));
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
 // -----------------------------------------------------------------------
 // Lifecycle IPC roundtrips
 // -----------------------------------------------------------------------

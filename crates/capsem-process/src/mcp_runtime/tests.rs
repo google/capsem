@@ -18,6 +18,7 @@ use super::{
     build_builtin_env, build_servers_with_builtin, insert_builtin_domain_policy_env,
     load_runtime_policy_state, load_runtime_policy_state_from_effective,
     load_runtime_policy_state_with_runtime_rules,
+    load_runtime_policy_state_with_runtime_rules_and_recorder, RuntimeRuleMatchAccumulator,
 };
 
 fn env_lock() -> &'static Mutex<()> {
@@ -453,6 +454,58 @@ fn load_runtime_policy_state_merges_service_runtime_rule_snapshot() {
     assert_eq!(
         detected.resolved_event.event.findings[0].rule_id,
         "runtime.detect-live"
+    );
+}
+
+#[test]
+fn runtime_rule_match_accumulator_drains_recorded_security_engine_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    let snapshot = capsem_proto::ipc::RuntimeSecurityRulesSnapshot {
+        enforcement: vec![capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+            id: "runtime.block-live".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "http.request.host == 'live-policy.test'".into(),
+            decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
+            reason: Some("live runtime block".into()),
+        }],
+        detection: vec![],
+    };
+    let accumulator = RuntimeRuleMatchAccumulator::default();
+    let runtime = load_runtime_policy_state_with_runtime_rules_and_recorder(
+        &session_dir,
+        Some(&snapshot),
+        Some(accumulator.clone()),
+    );
+    let security_engine = runtime
+        .security_engine
+        .as_ref()
+        .expect("runtime rule snapshot should install a Security Engine");
+
+    security_engine
+        .evaluate(http_event("live-policy.test", "/first"))
+        .expect("first rule match should evaluate");
+    security_engine
+        .evaluate(http_event("live-policy.test", "/second"))
+        .expect("second rule match should evaluate");
+
+    let drained = accumulator.drain();
+    assert_eq!(drained.len(), 1);
+    assert_eq!(drained[0].rule_id, "runtime.block-live");
+    assert_eq!(drained[0].match_count, 2);
+    assert_eq!(
+        drained[0].last_matched_event.as_deref(),
+        Some("test-http-live-policy.test-/second")
+    );
+    assert!(
+        accumulator.drain().is_empty(),
+        "drain must return deltas, not replay old matches"
     );
 }
 

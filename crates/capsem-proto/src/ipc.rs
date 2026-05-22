@@ -11,6 +11,16 @@ pub struct RuntimeSecurityRulesSnapshot {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeRuleMatchSnapshot {
+    pub rule_id: String,
+    pub match_count: u64,
+    #[serde(default)]
+    pub last_matched_event: Option<String>,
+    #[serde(default)]
+    pub last_matched_unix_ms: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeEnforcementRuleSnapshot {
     pub id: String,
     #[serde(default)]
@@ -89,6 +99,8 @@ pub enum ServiceToProcess {
     ReloadConfig {
         runtime_rules: Option<RuntimeSecurityRulesSnapshot>,
     },
+    /// Drain process-local runtime rule match deltas into the service registry.
+    DrainRuntimeRuleMatches { id: u64 },
     /// Request the process's bounded live metrics snapshot.
     GetMetricsSnapshot { id: u64 },
     /// Start streaming terminal output to this IPC connection.
@@ -117,6 +129,11 @@ pub enum ProcessToService {
     ReloadConfigResult {
         success: bool,
         error: Option<String>,
+    },
+    /// Response to DrainRuntimeRuleMatches.
+    RuntimeRuleMatches {
+        id: u64,
+        matches: Vec<RuntimeRuleMatchSnapshot>,
     },
     /// Response to GetMetricsSnapshot.
     MetricsSnapshot {

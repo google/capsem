@@ -3556,6 +3556,12 @@ async fn send_ipc_command(
                 }
                 continue;
             }
+            ProcessToService::RuntimeRuleMatches { id, matches } => {
+                if matches!(cmd, ServiceToProcess::DrainRuntimeRuleMatches { .. }) {
+                    return Ok(ProcessToService::RuntimeRuleMatches { id, matches });
+                }
+                continue;
+            }
             ProcessToService::TerminalOutput { .. } => continue,
             ProcessToService::StateChanged { .. } => continue,
             res => return Ok(res),
@@ -5758,6 +5764,26 @@ fn record_runtime_rule_match_if_present(
     }
 }
 
+fn record_runtime_rule_match_count_if_present(
+    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+    rule_id: &str,
+    event_id: &str,
+    timestamp_unix_ms: u64,
+    count: u64,
+    recorded: &mut bool,
+) -> Result<(), seceng::SecurityEngineError> {
+    for _ in 0..count {
+        record_runtime_rule_match_if_present(
+            registry,
+            rule_id,
+            event_id,
+            timestamp_unix_ms,
+            recorded,
+        )?;
+    }
+    Ok(())
+}
+
 fn runtime_security_engine_from_registries(
     state: &Arc<ServiceState>,
 ) -> Result<seceng::SecurityEngine, AppError> {
@@ -5976,6 +6002,102 @@ async fn broadcast_runtime_security_rules(
                 }),
                 Err(error) => Some(ReloadConfigFailure {
                     session_id: id,
+                    message: error,
+                }),
+            }
+        }
+    }))
+    .await;
+    let failures: Vec<ReloadConfigFailure> = results.into_iter().flatten().collect();
+    let failed_session_ids = failures
+        .iter()
+        .map(|failure| failure.session_id.clone())
+        .collect();
+    Ok(RuntimeRulePropagationSummary {
+        target_count: targets.len(),
+        failed_session_ids,
+        failures,
+    })
+}
+
+async fn drain_runtime_rule_matches_from_processes(
+    state: &Arc<ServiceState>,
+) -> Result<RuntimeRulePropagationSummary, AppError> {
+    let targets = {
+        let instances = state.instances.lock().unwrap();
+        instances
+            .iter()
+            .map(|(id, info)| (id.clone(), info.uds_path.clone()))
+            .collect::<Vec<_>>()
+    };
+    let results = futures::future::join_all(targets.iter().map(|(session_id, uds_path)| {
+        let session_id = session_id.clone();
+        let uds_path = uds_path.clone();
+        let state = state.clone();
+        async move {
+            let drain_id = state.next_job_id();
+            match send_ipc_command(
+                &uds_path,
+                ServiceToProcess::DrainRuntimeRuleMatches { id: drain_id },
+                Some(5),
+            )
+            .await
+            {
+                Ok(ProcessToService::RuntimeRuleMatches { id, matches }) if id == drain_id => {
+                    for rule_match in matches {
+                        let mut recorded_any = false;
+                        let event_id = rule_match
+                            .last_matched_event
+                            .as_deref()
+                            .unwrap_or("unknown");
+                        let timestamp_unix_ms = rule_match.last_matched_unix_ms.unwrap_or_default();
+                        if let Err(error) = record_runtime_rule_match_count_if_present(
+                            &state.enforcement_registry,
+                            &rule_match.rule_id,
+                            event_id,
+                            timestamp_unix_ms,
+                            rule_match.match_count,
+                            &mut recorded_any,
+                        ) {
+                            return Some(ReloadConfigFailure {
+                                session_id,
+                                message: format!("record enforcement runtime match: {error}"),
+                            });
+                        }
+                        if let Err(error) = record_runtime_rule_match_count_if_present(
+                            &state.detection_registry,
+                            &rule_match.rule_id,
+                            event_id,
+                            timestamp_unix_ms,
+                            rule_match.match_count,
+                            &mut recorded_any,
+                        ) {
+                            return Some(ReloadConfigFailure {
+                                session_id,
+                                message: format!("record detection runtime match: {error}"),
+                            });
+                        }
+                        if !recorded_any && rule_match.match_count > 0 {
+                            tracing::debug!(
+                                rule_id = %rule_match.rule_id,
+                                "process reported runtime rule match for a rule no longer in the service registry"
+                            );
+                        }
+                    }
+                    None
+                }
+                Ok(ProcessToService::RuntimeRuleMatches { id, .. }) => Some(ReloadConfigFailure {
+                    session_id,
+                    message: format!(
+                        "runtime rule match drain id mismatch: expected {drain_id}, got {id}"
+                    ),
+                }),
+                Ok(_) => Some(ReloadConfigFailure {
+                    session_id,
+                    message: "unexpected response".to_string(),
+                }),
+                Err(error) => Some(ReloadConfigFailure {
+                    session_id,
                     message: error,
                 }),
             }
@@ -7224,9 +7346,11 @@ async fn handle_list_enforcement_rules(
 async fn handle_enforcement_stats(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let sync = drain_runtime_rule_matches_from_processes(&state).await?;
     Ok(Json(json!({
         "kind": "enforcement",
         "rules": runtime_registry_rules_json(&state.enforcement_registry)?,
+        "sync": sync.json(),
     })))
 }
 
@@ -7396,9 +7520,11 @@ async fn handle_list_detection_rules(
 async fn handle_detection_stats(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let sync = drain_runtime_rule_matches_from_processes(&state).await?;
     Ok(Json(json!({
         "kind": "detection",
         "rules": runtime_registry_rules_json(&state.detection_registry)?,
+        "sync": sync.json(),
     })))
 }
 

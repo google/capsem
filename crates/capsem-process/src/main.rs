@@ -340,7 +340,12 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
-    let runtime_policy = mcp_runtime::load_runtime_policy_state(&session_dir);
+    let runtime_rule_matches = mcp_runtime::RuntimeRuleMatchAccumulator::default();
+    let runtime_policy = mcp_runtime::load_runtime_policy_state_with_runtime_rules_and_recorder(
+        &session_dir,
+        None,
+        Some(runtime_rule_matches.clone()),
+    );
     if let Ok(env_profile_id) = std::env::var(capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV) {
         if env_profile_id != runtime_policy.profile_id {
             warn!(
@@ -504,6 +509,7 @@ async fn run_async_main_loop(
         policy: Arc::clone(&mcp_policy),
         domain_policy: Arc::clone(&mcp_domain_policy),
         security_engine: Arc::clone(&runtime_security_engine),
+        rule_matches: runtime_rule_matches,
         session_dir: session_dir.clone(),
         builtin_binary: builtin_bin,
     });

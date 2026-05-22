@@ -6595,6 +6595,129 @@ async fn handle_create_enforcement_rule_pushes_runtime_snapshot_to_running_vm() 
 }
 
 #[tokio::test]
+async fn handle_enforcement_stats_drains_process_runtime_rule_matches() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let sock_path = dir.path().join("runtime-match-drain.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+
+    let server = std::thread::spawn(move || {
+        let (mut std_stream, _) = listener.accept().unwrap();
+        capsem_core::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+                let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+                    channel_from_std(std_stream).unwrap();
+                match rx.recv().await.unwrap() {
+                    ServiceToProcess::DrainRuntimeRuleMatches { id } => {
+                        tx.send(ProcessToService::RuntimeRuleMatches {
+                            id,
+                            matches: vec![
+                                capsem_proto::ipc::RuntimeRuleMatchSnapshot {
+                                    rule_id: "block-live".into(),
+                                    match_count: 2,
+                                    last_matched_event: Some("evt-block-2".into()),
+                                    last_matched_unix_ms: Some(1_790),
+                                },
+                                capsem_proto::ipc::RuntimeRuleMatchSnapshot {
+                                    rule_id: "detect-live".into(),
+                                    match_count: 1,
+                                    last_matched_event: Some("evt-detect-1".into()),
+                                    last_matched_unix_ms: Some(1_791),
+                                },
+                                capsem_proto::ipc::RuntimeRuleMatchSnapshot {
+                                    rule_id: "deleted-before-drain".into(),
+                                    match_count: 0,
+                                    last_matched_event: None,
+                                    last_matched_unix_ms: None,
+                                },
+                            ],
+                        })
+                        .await
+                        .unwrap();
+                    }
+                    other => panic!("unexpected command: {other:?}"),
+                }
+            });
+    });
+
+    let _ = handle_create_enforcement_rule(
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "block-live".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "http.request.host == 'live.test'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("live block".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    let _ = handle_create_detection_rule(
+        State(state.clone()),
+        Json(RuntimeDetectionRuleRequest {
+            id: "detect-live".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-live".into()),
+            title: "Live detection".into(),
+            condition: "http.request.host == 'live.test'".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::Medium,
+            tags: vec!["live".into()],
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    state.instances.lock().unwrap().insert(
+        "vm-runtime".to_string(),
+        InstanceInfo {
+            id: "vm-runtime".to_string(),
+            pid: std::process::id(),
+            uds_path: sock_path,
+            session_dir: dir.path().join("sessions/vm-runtime"),
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+            base_assets: None,
+            profile_pin: None,
+        },
+    );
+
+    let Json(stats) = handle_enforcement_stats(State(state.clone()))
+        .await
+        .unwrap();
+
+    server.join().unwrap();
+    assert_eq!(stats["sync"]["target_count"], 1);
+    assert_eq!(stats["sync"]["failed_session_count"], 0);
+    assert_eq!(stats["rules"][0]["id"], "block-live");
+    assert_eq!(stats["rules"][0]["match_count"], 2);
+    assert_eq!(stats["rules"][0]["last_matched_event"], "evt-block-2");
+
+    let detection = state
+        .detection_registry
+        .lock()
+        .unwrap()
+        .stats("detect-live")
+        .unwrap()
+        .clone();
+    assert_eq!(detection.match_count, 1);
+    assert_eq!(
+        detection.last_matched_event.as_deref(),
+        Some("evt-detect-1")
+    );
+}
+
+#[tokio::test]
 async fn runtime_security_engine_evaluates_installed_rules_and_records_stats() {
     let state = make_test_state();
     let _ = handle_create_enforcement_rule(

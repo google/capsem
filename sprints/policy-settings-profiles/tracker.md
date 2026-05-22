@@ -1221,11 +1221,27 @@ a valid claim -- mark it `[ ]` instead.
     runtime_security_engine_evaluates_installed_rules_and_records_stats --bin
     capsem-service`, and `cargo test -p capsem-service
     reload_config_returns_structured_failed_session_state --bin capsem-service`
-    passed. Still missing after this slice: returning live VM match-count
-    increments from process to service registries, response-phase
+    passed. Still missing after this slice: response-phase
     enforcement/detection, DNS/MCP/file/process emitters, visible UI
     screens/editors, persistence/profile-pack seeding, and S08d performance
     proof.
+    Forty-ninth TDD live-match-drain slice made stats authoritative across the
+    service/process split. `capsem-process` now attaches a rule-match recorder
+    to the same runtime Security Engine used by MITM, accumulates enforcement
+    and detection match deltas by rule id, and drains those deltas over the
+    typed `DrainRuntimeRuleMatches` / `RuntimeRuleMatches` IPC exchange.
+    Service `/enforcement/stats` and `/detection/stats` drain running VM
+    processes before rendering registry rows, report the sync summary, preserve
+    exact match counts, and tolerate zero-count stale drains. Verification:
+    red IPC/process/service tests first, then `cargo test -p capsem-proto`,
+    `cargo test -p capsem-process`, escalated `cargo test -p capsem-service
+    --bin capsem-service`, and escalated `cargo test -p capsem-core
+    net::mitm_proxy::tests --lib` passed. A non-escalated core MITM focused
+    run failed only on the known local socket bind permission and passed under
+    the socket-capable gate. Still missing after this slice: response-phase
+    enforcement/detection, DNS/MCP/file/process emitters, visible UI
+    screens/editors, persistence/profile-pack seeding, VM status/live metrics
+    integration, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

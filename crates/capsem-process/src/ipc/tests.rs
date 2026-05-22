@@ -56,6 +56,14 @@ fn classify_get_metrics_snapshot() {
 }
 
 #[test]
+fn classify_drain_runtime_rule_matches() {
+    assert_eq!(
+        classify_ipc_message(&ServiceToProcess::DrainRuntimeRuleMatches { id: 9 }),
+        IpcAction::HealthCheck
+    );
+}
+
+#[test]
 fn default_metrics_snapshot_is_process_owned_and_versioned() {
     let snapshot = default_metrics_snapshot("vm-s07");
 

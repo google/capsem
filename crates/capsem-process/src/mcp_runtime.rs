@@ -13,7 +13,7 @@ use capsem_core::vm::guest_config::{GuestConfig, GuestFile};
 use capsem_security_engine::{
     CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use tracing::{info, warn};
 
@@ -31,8 +31,60 @@ pub(crate) struct McpRuntime {
     pub(crate) policy: Arc<tokio::sync::RwLock<Arc<McpPolicy>>>,
     pub(crate) domain_policy: Arc<std::sync::RwLock<Arc<DomainPolicy>>>,
     pub(crate) security_engine: Arc<RuntimeSecurityEngineSlot>,
+    pub(crate) rule_matches: RuntimeRuleMatchAccumulator,
     pub(crate) session_dir: PathBuf,
     pub(crate) builtin_binary: Option<PathBuf>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RuntimeRuleMatchAccumulator {
+    inner: Arc<Mutex<BTreeMap<String, RuntimeRuleMatchStats>>>,
+}
+
+#[derive(Clone, Default)]
+struct RuntimeRuleMatchStats {
+    match_count: u64,
+    last_matched_event: Option<String>,
+    last_matched_unix_ms: Option<u64>,
+}
+
+impl RuntimeRuleMatchAccumulator {
+    pub(crate) fn drain(&self) -> Vec<capsem_proto::ipc::RuntimeRuleMatchSnapshot> {
+        let mut matches = self.inner.lock().unwrap();
+        let drained = std::mem::take(&mut *matches);
+        drained
+            .into_iter()
+            .map(
+                |(rule_id, stats)| capsem_proto::ipc::RuntimeRuleMatchSnapshot {
+                    rule_id,
+                    match_count: stats.match_count,
+                    last_matched_event: stats.last_matched_event,
+                    last_matched_unix_ms: stats.last_matched_unix_ms,
+                },
+            )
+            .collect()
+    }
+}
+
+impl capsem_security_engine::RuleMatchRecorder for RuntimeRuleMatchAccumulator {
+    fn record_rule_match(
+        &mut self,
+        rule_id: &str,
+        event_id: &str,
+        timestamp_unix_ms: u64,
+    ) -> Result<(), capsem_security_engine::SecurityEngineError> {
+        let mut matches = self.inner.lock().map_err(|error| {
+            capsem_security_engine::SecurityEngineError::PhaseFailed {
+                phase: capsem_security_engine::SecurityEnginePhase::Detection,
+                message: format!("runtime rule match accumulator lock poisoned: {error}"),
+            }
+        })?;
+        let stats = matches.entry(rule_id.to_owned()).or_default();
+        stats.match_count += 1;
+        stats.last_matched_event = Some(event_id.to_owned());
+        stats.last_matched_unix_ms = Some(timestamp_unix_ms);
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -57,16 +109,29 @@ pub(crate) fn load_runtime_policy_state_with_runtime_rules(
     session_dir: &Path,
     runtime_rules: Option<&capsem_proto::ipc::RuntimeSecurityRulesSnapshot>,
 ) -> RuntimePolicyState {
-    load_runtime_policy_state_from_effective_with_runtime_rules(session_dir, runtime_rules)
+    load_runtime_policy_state_with_runtime_rules_and_recorder(session_dir, runtime_rules, None)
+}
+
+pub(crate) fn load_runtime_policy_state_with_runtime_rules_and_recorder(
+    session_dir: &Path,
+    runtime_rules: Option<&capsem_proto::ipc::RuntimeSecurityRulesSnapshot>,
+    match_recorder: Option<RuntimeRuleMatchAccumulator>,
+) -> RuntimePolicyState {
+    load_runtime_policy_state_from_effective_with_runtime_rules(
+        session_dir,
+        runtime_rules,
+        match_recorder,
+    )
 }
 
 fn load_runtime_policy_state_from_effective(session_dir: &Path) -> RuntimePolicyState {
-    load_runtime_policy_state_from_effective_with_runtime_rules(session_dir, None)
+    load_runtime_policy_state_from_effective_with_runtime_rules(session_dir, None, None)
 }
 
 fn load_runtime_policy_state_from_effective_with_runtime_rules(
     session_dir: &Path,
     runtime_rules: Option<&capsem_proto::ipc::RuntimeSecurityRulesSnapshot>,
+    match_recorder: Option<RuntimeRuleMatchAccumulator>,
 ) -> RuntimePolicyState {
     let effective = load_effective_vm_settings_with_fallback(session_dir);
 
@@ -114,6 +179,7 @@ fn load_runtime_policy_state_from_effective_with_runtime_rules(
         effective.as_ref(),
         enforcement_rules,
         detection_rules,
+        match_recorder,
     );
 
     let mcp_user = effective
@@ -300,6 +366,7 @@ fn build_runtime_security_engine_from_rules(
     effective: Option<&settings_profiles::EffectiveVmSettings>,
     enforcement_rules: Vec<CelEnforcementRule>,
     detection_rules: Vec<capsem_security_engine::CelDetectionRule>,
+    match_recorder: Option<RuntimeRuleMatchAccumulator>,
 ) -> Option<Arc<dyn RuntimeSecurityEngine>> {
     if enforcement_rules.is_empty() && detection_rules.is_empty() {
         return None;
@@ -336,6 +403,9 @@ fn build_runtime_security_engine_from_rules(
                 );
             }
         }
+    }
+    if let Some(match_recorder) = match_recorder {
+        engine.set_match_recorder(Box::new(match_recorder));
     }
     info!(
         profile_id = %effective

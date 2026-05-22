@@ -210,6 +210,15 @@ pub(crate) async fn handle_ipc_connection(
                         .await
                 );
             }
+            ServiceToProcess::DrainRuntimeRuleMatches { id } => {
+                let matches = mcp_runtime.rule_matches.drain();
+                capsem_core::try_send!(
+                    "ipc_runtime_rule_matches",
+                    ipc_tx_out
+                        .send(ProcessToService::RuntimeRuleMatches { id, matches })
+                        .await
+                );
+            }
             ServiceToProcess::TerminalInput { data } => {
                 capsem_core::try_send!(
                     "ctrl_terminal_input",
@@ -515,9 +524,10 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::ReloadConfig { runtime_rules } => {
                 info!("Reloading policies from disk");
                 let runtime_state =
-                    crate::mcp_runtime::load_runtime_policy_state_with_runtime_rules(
+                    crate::mcp_runtime::load_runtime_policy_state_with_runtime_rules_and_recorder(
                         &mcp_runtime.session_dir,
                         runtime_rules.as_ref(),
+                        Some(mcp_runtime.rule_matches.clone()),
                     );
                 let servers = crate::mcp_runtime::build_servers_with_builtin(
                     &runtime_state.mcp_user,
@@ -599,6 +609,7 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::ReloadConfig { .. } => IpcAction::Reload,
         ServiceToProcess::GetMetricsSnapshot { .. } => IpcAction::HealthCheck,
+        ServiceToProcess::DrainRuntimeRuleMatches { .. } => IpcAction::HealthCheck,
         ServiceToProcess::Shutdown => IpcAction::Lifecycle,
         ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
         ServiceToProcess::PrepareSnapshot
