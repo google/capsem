@@ -3,6 +3,10 @@ use capsem_core::vm::guest_config::GuestConfig;
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostToGuest};
+use capsem_security_engine::{
+    AiAttributionScope, AiOriginKind, Enforceability, ResolvedSecurityEvent, SecurityAction,
+    SecurityEventSubject, SourceEngine,
+};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -439,6 +443,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             &event,
                             runtime_engine,
                         );
+                    log_process_exec_security_decision(&evaluation.resolved_event);
                     db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(event));
                     db_for_cmd.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
                         evaluation.resolved_event,
@@ -1093,6 +1098,184 @@ fn resolve_blocked_exec_job(job_store: &Arc<JobStore>, id: u64, message: String)
             "job_result_exec_blocked",
             tx.send(JobResult::Error { message })
         );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessExecSecurityLogRecord<'a> {
+    event_id: &'a str,
+    event_family: &'static str,
+    event_type: &'a str,
+    source_engine: &'static str,
+    final_action: &'static str,
+    enforceability: &'static str,
+    attribution_scope: &'static str,
+    origin_kind: &'static str,
+    trace_id: Option<&'a str>,
+    vm_id: Option<&'a str>,
+    session_id: Option<&'a str>,
+    profile_id: Option<&'a str>,
+    profile_revision: Option<&'a str>,
+    user_id: Option<&'a str>,
+    exec_id: Option<&'a str>,
+    mcp_call_id: Option<&'a str>,
+    operation: Option<&'a str>,
+    command_class: Option<&'a str>,
+    rule_id: Option<&'a str>,
+    pack_id: Option<&'a str>,
+    reason: Option<&'a str>,
+    finding_count: usize,
+}
+
+fn process_exec_security_log_record(
+    resolved: &ResolvedSecurityEvent,
+) -> ProcessExecSecurityLogRecord<'_> {
+    let common = &resolved.event.common;
+    let decision = resolved.event.decision.as_ref();
+    let matched_step = resolved
+        .steps
+        .iter()
+        .find(|step| step.rule_id.is_some() || step.message.is_some());
+    let (event_family, operation, command_class) = match &resolved.event.subject {
+        SecurityEventSubject::Process(subject) => (
+            "process",
+            Some(subject.operation.as_str()),
+            subject.command_class.as_deref(),
+        ),
+        _ => ("unknown", None, None),
+    };
+    ProcessExecSecurityLogRecord {
+        event_id: &common.event_id,
+        event_family,
+        event_type: &common.event_type,
+        source_engine: source_engine_log_label(common.source_engine),
+        final_action: security_action_log_label(&resolved.final_action),
+        enforceability: enforceability_log_label(common.enforceability),
+        attribution_scope: attribution_scope_log_label(common.attribution_scope),
+        origin_kind: origin_kind_log_label(common.origin_kind),
+        trace_id: common.trace_id.as_deref(),
+        vm_id: common.vm_id.as_deref(),
+        session_id: common.session_id.as_deref(),
+        profile_id: common.profile_id.as_deref(),
+        profile_revision: common.profile_revision.as_deref(),
+        user_id: common.user_id.as_deref(),
+        exec_id: common.exec_id.as_deref(),
+        mcp_call_id: common.mcp_call_id.as_deref(),
+        operation,
+        command_class,
+        rule_id: decision
+            .and_then(|decision| decision.rule.as_deref())
+            .or_else(|| matched_step.and_then(|step| step.rule_id.as_deref())),
+        pack_id: decision
+            .and_then(|decision| decision.pack_id.as_deref())
+            .or_else(|| matched_step.and_then(|step| step.pack_id.as_deref())),
+        reason: decision
+            .and_then(|decision| decision.reason.as_deref())
+            .or_else(|| matched_step.and_then(|step| step.message.as_deref()))
+            .or_else(|| security_action_reason(&resolved.final_action)),
+        finding_count: resolved.event.findings.len() + resolved.detection_findings.len(),
+    }
+}
+
+fn log_process_exec_security_decision(resolved: &ResolvedSecurityEvent) {
+    let record = process_exec_security_log_record(resolved);
+    info!(
+        target: "security.process",
+        event_id = record.event_id,
+        event_family = record.event_family,
+        event_type = record.event_type,
+        source_engine = record.source_engine,
+        final_action = record.final_action,
+        enforceability = record.enforceability,
+        attribution_scope = record.attribution_scope,
+        origin_kind = record.origin_kind,
+        trace_id = record.trace_id.unwrap_or(""),
+        vm_id = record.vm_id.unwrap_or(""),
+        session_id = record.session_id.unwrap_or(""),
+        profile_id = record.profile_id.unwrap_or(""),
+        profile_revision = record.profile_revision.unwrap_or(""),
+        user_id = record.user_id.unwrap_or(""),
+        exec_id = record.exec_id.unwrap_or(""),
+        mcp_call_id = record.mcp_call_id.unwrap_or(""),
+        operation = record.operation.unwrap_or(""),
+        command_class = record.command_class.unwrap_or(""),
+        rule_id = record.rule_id.unwrap_or(""),
+        pack_id = record.pack_id.unwrap_or(""),
+        reason = record.reason.unwrap_or(""),
+        finding_count = record.finding_count,
+        "process_exec_security_decision"
+    );
+}
+
+fn source_engine_log_label(source: SourceEngine) -> &'static str {
+    match source {
+        SourceEngine::Network => "network",
+        SourceEngine::File => "file",
+        SourceEngine::Process => "process",
+        SourceEngine::Conversation => "conversation",
+        SourceEngine::Security => "security",
+        SourceEngine::Vm => "vm",
+        SourceEngine::Profile => "profile",
+        SourceEngine::HostAi => "host_ai",
+    }
+}
+
+fn security_action_log_label(action: &SecurityAction) -> &'static str {
+    match action {
+        SecurityAction::Continue => "continue",
+        SecurityAction::Ask(_) => "ask",
+        SecurityAction::Rewrite(_) => "rewrite",
+        SecurityAction::Block(_) => "block",
+        SecurityAction::Throttle(_) => "throttle",
+        SecurityAction::Quarantine(_) => "quarantine",
+        SecurityAction::Restore(_) => "restore",
+        SecurityAction::DropConnection(_) => "drop_connection",
+        SecurityAction::ObserveOnly => "observe_only",
+        SecurityAction::Error(_) => "error",
+    }
+}
+
+fn security_action_reason(action: &SecurityAction) -> Option<&str> {
+    match action {
+        SecurityAction::Ask(plan) => Some(plan.reason_code.as_str()),
+        SecurityAction::Block(block) => Some(block.reason_code.as_str()),
+        SecurityAction::Throttle(plan) => Some(plan.reason_code.as_str()),
+        SecurityAction::Restore(plan) => Some(plan.reason_code.as_str()),
+        SecurityAction::DropConnection(reason) => Some(reason.reason_code.as_str()),
+        SecurityAction::Error(error) => Some(error.message.as_str()),
+        SecurityAction::Continue
+        | SecurityAction::Rewrite(_)
+        | SecurityAction::Quarantine(_)
+        | SecurityAction::ObserveOnly => None,
+    }
+}
+
+fn enforceability_log_label(enforceability: Enforceability) -> &'static str {
+    match enforceability {
+        Enforceability::InlineBlockable => "inline_blockable",
+        Enforceability::ObserveOnly => "observe_only",
+        Enforceability::RemediationOnly => "remediation_only",
+    }
+}
+
+fn attribution_scope_log_label(scope: AiAttributionScope) -> &'static str {
+    match scope {
+        AiAttributionScope::Host => "host",
+        AiAttributionScope::Vm => "vm",
+        AiAttributionScope::Profile => "profile",
+        AiAttributionScope::Session => "session",
+        AiAttributionScope::Unknown => "unknown",
+    }
+}
+
+fn origin_kind_log_label(origin: AiOriginKind) -> &'static str {
+    match origin {
+        AiOriginKind::GuestNetwork => "guest_network",
+        AiOriginKind::HostService => "host_service",
+        AiOriginKind::HostAdmin => "host_admin",
+        AiOriginKind::HostWorkbench => "host_workbench",
+        AiOriginKind::TestFixture => "test_fixture",
+        AiOriginKind::Unknown => "unknown",
     }
 }
 

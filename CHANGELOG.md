@@ -153,6 +153,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforcement.
 - Added Process Engine runtime rule match stats coverage and subsystem-neutral
   fail-closed wording for runtime Security Engine compile failures.
+- Added structured Process Engine decision logging for exec evaluation so
+  `capsem logs <vm>` includes event ids, attribution, final action, rule/pack,
+  reason, and process command class alongside the session database trail.
 - Added live VM status security metrics from the canonical resolved-event
   stream, including security event counts, block counts, detection counts,
   latest block, and latest detection surfaced through process metrics snapshots

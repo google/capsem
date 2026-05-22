@@ -1463,6 +1463,26 @@ a valid claim -- mark it `[ ]` instead.
     `git diff --check` passed. Still missing after this slice: real-VM
     process-rule E2E, visible UI screens/editors, ask/confirm UX for process
     decisions, S12 OTel/prometheus export, and S08d performance proof.
+    Sixty-third TDD Process Engine log-attribution slice made exec Security
+    Engine decisions visible in `process.log`, which is what `capsem logs
+    <vm>` prints. The red test first proved there was no log-shaped projection
+    carrying the resolved event fields. `capsem-process` now emits one
+    structured `security.process` tracing line named
+    `process_exec_security_decision` after runtime evaluation and before guest
+    dispatch/block resolution, carrying `event_id`, `event_family`,
+    `event_type`, `source_engine`, `final_action`, `enforceability`,
+    `attribution_scope`, `origin_kind`, `trace_id`, `vm_id`, `session_id`,
+    `profile_id`, `profile_revision`, `user_id`, `exec_id`, `mcp_call_id`,
+    `operation`, `command_class`, `rule_id`, `pack_id`, `reason`, and
+    `finding_count`. Verification: red `cargo test -p capsem-process
+    process_exec_security_log_record_carries_attribution_rule_and_reason`
+    first, then that test passed; `cargo test -p capsem-core
+    process_security_events --lib` **4** passed; widened gates: `cargo test
+    -p capsem-process` **109** passed, `cargo fmt --all -- --check` passed,
+    and `git diff --check` passed. Still missing after this slice: real-VM
+    `capsem logs` E2E for a process-rule block, visible UI screens/editors,
+    ask/confirm UX for process decisions, S12
+    OTel/prometheus export, and S08d performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

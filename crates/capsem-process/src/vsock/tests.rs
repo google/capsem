@@ -239,3 +239,57 @@ async fn blocked_exec_resolves_job_without_guest_dispatch_state() {
         other => panic!("expected blocked exec error, got {other:?}"),
     }
 }
+
+#[test]
+fn process_exec_security_log_record_carries_attribution_rule_and_reason() {
+    use capsem_logger::ExecEvent;
+    use capsem_security_engine::{
+        CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+    };
+    use std::time::SystemTime;
+
+    let event = ExecEvent {
+        timestamp: SystemTime::UNIX_EPOCH,
+        exec_id: 88,
+        command: "bash -lc 'echo blocked'".into(),
+        source: "api".into(),
+        mcp_call_id: Some(12),
+        trace_id: Some("trace-process-log".into()),
+        process_name: Some("capsem-agent".into()),
+    };
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "runtime.block-shell".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition:
+                "process.activity.operation == 'exec' && process.activity.command_class == 'shell'"
+                    .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("shell exec blocked".into()),
+        }])
+        .unwrap(),
+    ));
+    let engine = std::sync::Mutex::new(engine);
+
+    let evaluation =
+        capsem_core::process_security_events::evaluate_exec_security_event(&event, Some(&engine));
+    let record = process_exec_security_log_record(&evaluation.resolved_event);
+
+    assert_eq!(record.event_type, "process.exec");
+    assert_eq!(record.event_family, "process");
+    assert_eq!(record.source_engine, "process");
+    assert_eq!(record.final_action, "block");
+    assert_eq!(record.enforceability, "inline_blockable");
+    assert_eq!(record.attribution_scope, "vm");
+    assert_eq!(record.origin_kind, "host_service");
+    assert_eq!(record.trace_id, Some("trace-process-log"));
+    assert_eq!(record.exec_id, Some("88"));
+    assert_eq!(record.mcp_call_id, Some("12"));
+    assert_eq!(record.operation, Some("exec"));
+    assert_eq!(record.command_class, Some("shell"));
+    assert_eq!(record.rule_id, Some("runtime.block-shell"));
+    assert_eq!(record.pack_id, Some("runtime-pack"));
+    assert_eq!(record.reason, Some("shell exec blocked"));
+    assert_eq!(record.finding_count, 0);
+}
