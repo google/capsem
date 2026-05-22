@@ -325,6 +325,11 @@ fn install_local_profile_revision_from_asset_root(
     let kernel = local_asset_path(assets_root, arch, "vmlinuz")?;
     let initrd = local_asset_path(assets_root, arch, "initrd.img")?;
     let rootfs = local_asset_path(assets_root, arch, "rootfs.squashfs")?;
+    let (profile_type, ui, profile_name) = if profile_id == "coding" {
+        ("coding", "coding", "Coding")
+    } else {
+        ("everyday-work", "everyday", "Everyday Work")
+    };
 
     let service_path = capsem_dir.join("service.toml");
     let mut service_settings =
@@ -345,10 +350,11 @@ fn install_local_profile_revision_from_asset_root(
         "version": 2,
         "id": profile_id,
         "revision": LOCAL_PROFILE_REVISION,
-        "name": "Everyday Work",
+        "name": profile_name,
         "description": "Local development profile derived from the active VM assets.",
         "best_for": "Local development and smoke diagnostics.",
-        "profile_type": "everyday-work",
+        "profile_type": profile_type,
+        "ui": ui,
         "compatibility": {
             "min_binary": env!("CARGO_PKG_VERSION"),
             "guest_abi": "capsem-guest-v2"

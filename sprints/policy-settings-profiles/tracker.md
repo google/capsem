@@ -1063,6 +1063,22 @@ a valid claim -- mark it `[ ]` instead.
     **0** warnings, **0** hints. Still missing after this slice: CLI command
     exposure, visible UI screens/editors, persistence/profile-pack seeding,
     production engine emitters, and S08d performance proof.
+    Forty-first TDD CLI route-exposure slice added `capsem enforcement ...`
+    and `capsem detection ...` command groups. The CLI can list/stats,
+    validate, install, and delete runtime enforcement/detection rules, and can
+    run a one-rule session-backed detection hunt via
+    `capsem detection hunt-session`. While widening the gate, the setup local
+    profile payload generator was repaired to emit the required profile `ui`
+    field and the CLI path test was tightened to assert against
+    `capsem_core::paths::capsem_assets_dir()` rather than duplicating env
+    precedence by hand. Verification: red parser coverage first,
+    `cargo test -p capsem parse_runtime_security_rule_commands`,
+    `cargo test -p capsem
+    local_profile_revision_installs_signed_catalog_shape_from_assets`, and
+    socket-capable `cargo test -p capsem -- --test-threads=1` passed with
+    **262** tests. Still missing after this slice: visible UI screens/editors,
+    persistence/profile-pack seeding, production engine emitters, and S08d
+    performance proof.
 22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

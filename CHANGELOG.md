@@ -100,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a typed frontend API client surface for runtime enforcement and
   detection routes, including validate/compile/install/delete/list/stats,
   backtest, live hunt, and session-backed detection hunt calls.
+- Added CLI runtime security commands for enforcement and detection rule
+  list/stats/validate/install/delete plus session-backed detection hunt.
+- Fixed local setup-generated profile payloads to include the required UI mode
+  when installing a local profile revision from `CAPSEM_ASSETS_DIR`.
 - Added the shared `capsem-proto` policy context schema that future CEL and
   high-level DSL rules mirror, with versioned typed roots for common, HTTP,
   DNS, MCP, model, file, process, and profile activity.

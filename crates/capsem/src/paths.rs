@@ -180,17 +180,7 @@ mod tests {
     #[test]
     fn discover_paths_assets_always_under_home() {
         let paths = discover_paths().unwrap();
-        let expected = match std::env::var("CAPSEM_HOME") {
-            Ok(v) if !v.is_empty() => PathBuf::from(v).join("assets"),
-            _ => PathBuf::from(std::env::var("HOME").unwrap()).join(".capsem/assets"),
-        };
-        // CAPSEM_ASSETS_DIR may override further; honor the same priority
-        // the helper itself uses.
-        let expected = match std::env::var("CAPSEM_ASSETS_DIR") {
-            Ok(v) if !v.is_empty() => PathBuf::from(v),
-            _ => expected,
-        };
-        assert_eq!(paths.assets_dir, expected);
+        assert_eq!(paths.assets_dir, capsem_core::paths::capsem_assets_dir());
     }
 
     #[test]
