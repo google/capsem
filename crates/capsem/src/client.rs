@@ -87,6 +87,10 @@ pub struct SessionInfo {
     #[serde(default)]
     pub version: Option<String>,
     #[serde(default)]
+    pub base_assets: Option<SavedVmBaseAssets>,
+    #[serde(default)]
+    pub profile_pin: Option<SavedVmProfilePin>,
+    #[serde(default)]
     pub forked_from: Option<String>,
     #[serde(default)]
     pub description: Option<String>,

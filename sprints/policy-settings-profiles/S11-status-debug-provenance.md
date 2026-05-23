@@ -30,8 +30,10 @@ truth cannot lie or omit the core profile/security provenance.
       renders the exact enum value plus user-facing explanation. There is no
       `removed` status; absent revisions are reported as absent/unknown.
 - [ ] Add selected/resolved package/tool contract and VM asset readiness.
-- [ ] Add persistent VM pin rendering: profile id/revision, package contract
-      hash, pinned asset hashes, and drift/deprecated/revoked warnings.
+- [x] Add persistent VM pin rendering in `capsem info`: profile id/revision,
+      profile payload hash, package contract hash, and pinned asset hashes.
+      Drift/deprecated/revoked warnings still render through typed profile
+      status; richer warning prose remains tied to catalog/status follow-up.
 - [ ] Add VM live health rendering sourced from S12 typed metrics snapshots:
       model call count, providers, models, token totals, estimated cost,
       detection finding counts/severity, ask/policy counters, and stale/partial
@@ -65,6 +67,10 @@ truth cannot lie or omit the core profile/security provenance.
 - `capsem logs` now keeps the raw structured resolved security-event JSON lines
   intact while adding a summary line with event, block, detection, family, and
   rule counts for quick triage.
+- `capsem info <vm>` now preserves the typed `profile_pin` and base asset
+  payload from `/info`, then renders a Profile Pin block with profile
+  id/revision, profile payload hash, package contract hash, and pinned
+  kernel/initrd/rootfs hashes.
 - If settings/profile resolution fails, the debug report records the load error
   instead of silently dropping the section.
 

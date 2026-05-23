@@ -2557,6 +2557,15 @@ a valid claim -- mark it `[ ]` instead.
     enforcement/detection matches, engine provenance, and live-health fields
     that actually exist. Full S12 OTel polish can follow, but shipped UI/CLI
     cannot require raw database inspection to explain behavior.
+    VM info pin-rendering slice expanded the CLI `SessionInfo` type to retain
+    service-provided `profile_pin` and base asset payloads, then renders
+    `capsem info <vm>` Profile Pin details: profile id/revision, profile
+    payload hash, package contract hash, pinned kernel/initrd/rootfs hashes,
+    asset version, arch, and guest ABI. Verification so far: targeted `cargo
+    test -p capsem list_response_with_entries` and targeted `cargo test -p
+    capsem format_session_profile_pin_summary_prints_package_and_asset_hashes`
+    passed, then `cargo test -p capsem`, `cargo build -p capsem`, touched-file
+    rustfmt check, and `git diff --check` passed.
 27. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
     cost, MCP, enforcement, detection, and host/service AI accounting. VM

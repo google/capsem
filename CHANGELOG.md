@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   typed Profile V2 provision metadata and print profile id/revision/status,
   package contract hashes, pinned VM asset hashes, and asset-health progress
   without changing the first-line VM id output.
+- Changed `capsem info <vm>` to preserve and render Profile V2 VM pins,
+  including profile payload hash, package contract hash, and pinned
+  kernel/initrd/rootfs hashes.
 
 ### Added
 - Added `capsem mcp list` and `capsem mcp show` aliases for the Profile V2 MCP

@@ -339,6 +339,21 @@ fn list_response_with_entries() {
                 ram_mb: Some(2048),
                 cpus: Some(2),
                 version: Some("0.16.1".into()),
+                base_assets: Some(SavedVmBaseAssets {
+                    asset_version: "2026.0520.1".into(),
+                    arch: "arm64".into(),
+                    kernel_hash: "blake3:kernel".into(),
+                    initrd_hash: "blake3:initrd".into(),
+                    rootfs_hash: "blake3:rootfs".into(),
+                    guest_abi: None,
+                }),
+                profile_pin: Some(SavedVmProfilePin {
+                    profile_id: "everyday-work".into(),
+                    profile_revision: Some("2026.0520.2".into()),
+                    profile_payload_hash: Some("blake3:profile".into()),
+                    package_contract_hash: "blake3:packages".into(),
+                    base_assets: None,
+                }),
                 forked_from: None,
                 description: None,
                 profile_id: Some("everyday-work".into()),
@@ -367,6 +382,8 @@ fn list_response_with_entries() {
                 ram_mb: Some(4096),
                 cpus: Some(4),
                 version: None,
+                base_assets: None,
+                profile_pin: None,
                 forked_from: None,
                 description: None,
                 profile_id: None,
@@ -405,6 +422,16 @@ fn list_response_with_entries() {
     assert_eq!(
         resp2.sessions[0].profile_status,
         Some(SessionProfileStatus::Current)
+    );
+    let pin = resp2.sessions[0].profile_pin.as_ref().unwrap();
+    assert_eq!(pin.profile_payload_hash.as_deref(), Some("blake3:profile"));
+    assert_eq!(pin.package_contract_hash, "blake3:packages");
+    assert_eq!(
+        resp2.sessions[0]
+            .base_assets
+            .as_ref()
+            .map(|assets| assets.rootfs_hash.as_str()),
+        Some("blake3:rootfs")
     );
     assert_eq!(resp2.sessions[1].id, "mydev");
     assert!(resp2.sessions[1].persistent);

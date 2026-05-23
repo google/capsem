@@ -1405,6 +1405,42 @@ fn print_provision_profile_summary(info: &ProvisionResponse) {
     }
 }
 
+fn format_session_profile_pin_summary(info: &SessionInfo) -> Option<String> {
+    let pin = info.profile_pin.as_ref()?;
+    let mut output = String::new();
+    writeln!(output, "Profile Pin:").expect("write to string");
+    match pin.profile_revision.as_deref() {
+        Some(revision) => writeln!(output, "  profile: {}@{}", pin.profile_id, revision),
+        None => writeln!(output, "  profile: {}", pin.profile_id),
+    }
+    .expect("write to string");
+    if let Some(hash) = &pin.profile_payload_hash {
+        writeln!(output, "  profile_payload_hash: {hash}").expect("write to string");
+    }
+    writeln!(
+        output,
+        "  package_contract_hash: {}",
+        pin.package_contract_hash
+    )
+    .expect("write to string");
+
+    let base_assets = pin.base_assets.as_ref().or(info.base_assets.as_ref());
+    if let Some(base) = base_assets {
+        writeln!(
+            output,
+            "  pinned_assets: version={} arch={} guest_abi={}",
+            base.asset_version,
+            base.arch,
+            base.guest_abi.as_deref().unwrap_or("-")
+        )
+        .expect("write to string");
+        writeln!(output, "    kernel: {}", base.kernel_hash).expect("write to string");
+        writeln!(output, "    initrd: {}", base.initrd_hash).expect("write to string");
+        writeln!(output, "    rootfs: {}", base.rootfs_hash).expect("write to string");
+    }
+    Some(output)
+}
+
 fn tail_log_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() <= n {
@@ -1951,6 +1987,10 @@ fn print_session_info(info: &SessionInfo) {
     let profile = format_session_profile_for_list(info);
     if profile != "-" {
         println!("Profile: {}", profile);
+    }
+    if let Some(pin_summary) = format_session_profile_pin_summary(info) {
+        println!();
+        print!("{pin_summary}");
     }
 
     let has_telemetry = info.created_at.is_some()
@@ -5961,6 +6001,8 @@ best_for = "Testing typed profile TOML parsing."
             ram_mb: None,
             cpus: None,
             version: None,
+            base_assets: None,
+            profile_pin: None,
             forked_from: None,
             description: None,
             profile_id: Some("everyday-work".into()),
@@ -6051,6 +6093,61 @@ best_for = "Testing typed profile TOML parsing."
         assert!(summary.contains("kernel: blake3:kernel"));
         assert!(summary.contains("rootfs.squashfs: hash=blake3:rootfs"));
         assert!(summary.contains("asset_progress: rootfs.squashfs 123/123 done=true"));
+    }
+
+    #[test]
+    fn format_session_profile_pin_summary_prints_package_and_asset_hashes() {
+        let session = SessionInfo {
+            id: "vm".into(),
+            name: None,
+            pid: 0,
+            status: "Running".into(),
+            persistent: true,
+            ram_mb: None,
+            cpus: None,
+            version: None,
+            base_assets: None,
+            profile_pin: Some(client::SavedVmProfilePin {
+                profile_id: "coding".into(),
+                profile_revision: Some("2026.0520.1".into()),
+                profile_payload_hash: Some("blake3:profile".into()),
+                package_contract_hash: "blake3:packages".into(),
+                base_assets: Some(client::SavedVmBaseAssets {
+                    asset_version: "2026.0520.1".into(),
+                    arch: "arm64".into(),
+                    kernel_hash: "blake3:kernel".into(),
+                    initrd_hash: "blake3:initrd".into(),
+                    rootfs_hash: "blake3:rootfs".into(),
+                    guest_abi: Some("capsem-guest-v1".into()),
+                }),
+            }),
+            forked_from: None,
+            description: None,
+            profile_id: Some("coding".into()),
+            profile_revision: Some("2026.0520.1".into()),
+            profile_status: Some(SessionProfileStatus::Current),
+            created_at: None,
+            uptime_secs: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            total_estimated_cost: None,
+            total_tool_calls: None,
+            total_mcp_calls: None,
+            total_requests: None,
+            allowed_requests: None,
+            denied_requests: None,
+            total_file_events: None,
+            model_call_count: None,
+            last_error: None,
+        };
+
+        let summary = format_session_profile_pin_summary(&session).unwrap();
+        assert!(summary.contains("Profile Pin:"));
+        assert!(summary.contains("profile: coding@2026.0520.1"));
+        assert!(summary.contains("profile_payload_hash: blake3:profile"));
+        assert!(summary.contains("package_contract_hash: blake3:packages"));
+        assert!(summary.contains("kernel: blake3:kernel"));
+        assert!(summary.contains("rootfs: blake3:rootfs"));
     }
 
     #[test]
