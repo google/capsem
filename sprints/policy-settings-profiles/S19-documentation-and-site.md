@@ -295,7 +295,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       profile id/revision selection, first-use download, verification,
       persistent VM pins, and no implicit migration on profile update.
 - [x] Write corporate deployment guide.
-- [ ] Write telemetry and remote enforcement configuration guide.
+- [x] Write telemetry and remote enforcement configuration guide.
 - [x] Write VM health/metrics guide covering live status values, boot-time
       recompute/seed from `session.db`, no hot-path SQL reads, OTel labels,
       redaction/cardinality rules, model call count, provider/model summaries,
@@ -308,18 +308,18 @@ Final paths should follow the actual docs tree present when this sprint starts.
       new fields safely: normalized event field first, resolved-event evidence
       second, VM accumulator summary third, OTel labels only when bounded, and
       UI/status rendering through the typed metrics contract.
-- [ ] Add future rate-limit/budget note that points to S22:
+- [x] Add future rate-limit/budget note that points to S22:
       S08b/S12 expose quota dimensions and usage counters, but release docs do
       not claim budget enforcement until the later full sprint lands.
-- [ ] Add future credential-brokerage note that points to S10:
+- [x] Add future credential-brokerage note that points to S10:
       service settings/profile contracts reserve the shape, but release docs do
       not claim credential release until S10 lands.
-- [ ] Write security-engine benchmark page:
+- [x] Write security-engine benchmark page:
       explain S08d methodology, `capsem-bench security-engine`, host serial
       artifact capture, VM-originated event paths, CEL/Sigma rule-pack scale,
       backtest/hunt scan-rate methodology, correctness assertions, and the rule
       that marketing numbers must cite recorded benchmark artifacts.
-- [ ] Write custom manifest/profile payload/assets/images/rootfs dependency
+- [x] Write custom manifest/profile payload/assets/images/rootfs dependency
   guide or update the existing page.
 - [x] Remove docs that tell admins to edit `guest/config` image settings by hand
       for release images; replace with profile-derived `capsem-admin` flows.
@@ -422,6 +422,10 @@ listed revision that must not be installed or launched is `revoked`.
   priority tiers, corp-directive priority window, rule ownership metadata,
   nestable rules, HTTP read/write split, catch-all generation, mutation gate
   errors, and explicit non-migrations from the old NetworkPolicy defaults.
+- 2026-05-23: Operator extension docs slice added telemetry/remote
+  enforcement configuration, explicit S22 quota and S10 credential-brokerage
+  deferral notes, Security Engine benchmark methodology, and profile
+  assets/manifests/rootfs dependency guidance.
 
 ## Coverage Ledger
 

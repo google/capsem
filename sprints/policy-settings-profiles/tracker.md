@@ -2625,6 +2625,10 @@ a valid claim -- mark it `[ ]` instead.
     tiers, corp-directive priority window, rule ownership metadata, nestable
     rules, HTTP read/write split, catch-all generation, mutation-gate errors,
     and explicit non-migrations from the removed NetworkPolicy defaults.
+    Seventh S19 operator-extension slice added telemetry/remote enforcement
+    configuration, explicit S22 quota and S10 credential-brokerage deferral
+    notes, Security Engine benchmark methodology, and profile assets/manifests/
+    rootfs dependency guidance.
 33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate
