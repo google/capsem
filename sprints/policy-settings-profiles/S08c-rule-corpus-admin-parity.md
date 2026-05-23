@@ -160,6 +160,11 @@ session-scoped enforcement replay, it should be named and designed separately.
   Google-secret request with no authorization header, and an authorized Google
   request with no secret. Expected artifacts now prove enforcement remains one
   block while detection produces two findings.
+- Slice 9 added the first session-backed hunt expected artifact under
+  `data/detection/hunt-expected/`, pinned from a hand-built `session.db`
+  resolved-event corpus. This proves the service hunt path preserves event
+  refs, evidence signatures, common attribution, HTTP matched fields, and
+  response projection. Live VM-generated session fixture capture remains open.
 
 ## Coverage Ledger
 
@@ -174,8 +179,9 @@ session-scoped enforcement replay, it should be named and designed separately.
   duplicate rule ids, mismatched expected labels, internal `event.*` /
   `subject.*` authoring, legacy Detection IR `subject.*` paths, and
   evidence-dedup behavior.
-- E2E/VM or integration: real-session fixture generation after S08b journal
-  lands; no live VM dependency for every corpus test.
+- E2E/VM or integration: hand-built `session.db` hunt expected artifact now
+  covers the resolved-event journal read path; live VM-generated session
+  fixture capture remains open.
 - Telemetry/observability: backtest reports include event refs and full local
   evidence; export redaction is tested separately when export exists.
 - Performance: corpus backtest has a basic timing budget and reports evaluated

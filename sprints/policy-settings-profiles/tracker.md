@@ -1905,6 +1905,17 @@ a valid claim -- mark it `[ ]` instead.
     Still missing in S08c: full runtime-CEL parity for all CEL constructs
     beyond the admin subset, real-session fixtures from the resolved-event
     journal, and broader hunt/backtest coverage beyond the first HTTP corpus.
+    Ninth session-hunt-artifact slice added
+    `data/detection/hunt-expected/session-http-google-admin.json` and made the
+    hand-built `session.db` hunt service test compare the full `BacktestResult`
+    to that artifact. The expected row pins `session_db` event refs, the
+    evidence signature, common attribution fields, HTTP request fields, and
+    HTTP response projection. Verification: red `cargo test -p capsem-service
+    handle_session_detection_hunt_reads_hand_built_security_db_corpus --
+    --nocapture` first failed against an empty expected artifact and printed
+    the exact service shape; after pinning it, the focused test passed. Still
+    missing in S08c: live VM-generated session fixtures from the resolved-event
+    journal and full runtime-CEL parity beyond the admin subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

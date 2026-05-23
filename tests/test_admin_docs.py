@@ -52,6 +52,7 @@ def test_rule_corpus_docs_pin_cross_language_update_workflow() -> None:
     assert "data/policy-context/canonical-policy-contexts.jsonl" in doc
     assert "data/enforcement/backtest-expected/" in doc
     assert "data/detection/backtest-expected/" in doc
+    assert "data/detection/hunt-expected/" in doc
     assert "capsem-admin policy compile" in doc
     assert "capsem-admin detection compile" in doc
     assert "cargo test -p capsem-core --test security_packs" in doc

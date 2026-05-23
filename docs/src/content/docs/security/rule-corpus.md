@@ -20,6 +20,7 @@ expected backtest output from drifting apart.
 | `data/detection/sigma/` | Sigma-backed detection pack fixtures. |
 | `data/detection/ir/` | Compiled `capsem.detection.ir.v1` fixtures. |
 | `data/detection/backtest-expected/` | Expected detection backtest reports without timing fields. |
+| `data/detection/hunt-expected/` | Expected session-backed detection hunt reports. |
 
 Policy-context fixtures must use canonical roots such as
 `http.request.host`, `http.request.header("authorization").exists()`, and
@@ -46,7 +47,8 @@ test failures.
 
 4. Refresh the matching expected artifacts under
    `data/enforcement/backtest-expected/` and
-   `data/detection/backtest-expected/`.
+   `data/detection/backtest-expected/`. If the change affects session-backed
+   forensic search, refresh `data/detection/hunt-expected/` as well.
 5. Run both language gates:
 
    ```bash

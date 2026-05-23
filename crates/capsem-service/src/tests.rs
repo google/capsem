@@ -7735,6 +7735,12 @@ async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
         result.rows[0].outcome,
         capsem_security_engine::BacktestOutcome::Matched
     ));
+    let actual = serde_json::to_value(&result).unwrap();
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../data/detection/hunt-expected/session-http-google-admin.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[tokio::test]

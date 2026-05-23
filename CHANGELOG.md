@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the S08c policy-context corpus with detection-only and
   auth-without-secret HTTP rows so enforcement and detection parity tests cover
   divergent outcomes.
+- Added a session-backed detection hunt expected artifact for the hand-built
+  `session.db` corpus, pinning matched fields and evidence signatures from the
+  resolved-event journal path.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API
