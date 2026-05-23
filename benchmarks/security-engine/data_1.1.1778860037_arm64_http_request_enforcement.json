@@ -1,0 +1,84 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_http_request_enforcement",
+  "version": "1.1.1778860037",
+  "source_commit": "550686a4",
+  "timestamp": 1779543678.588127,
+  "arch": "arm64",
+  "host": {
+    "sysname": "Darwin",
+    "release": "25.5.0",
+    "machine": "arm64"
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_http_request_enforcement_benchmark_records_vm_originated_path -xvs",
+  "workload": {
+    "event_family": "network",
+    "event_type": "http.request",
+    "source": "vm_originated",
+    "path": "guest_curl_to_mitm_to_security_engine"
+  },
+  "runs": 8,
+  "warmup_runs": 1,
+  "gate_ms": 1000,
+  "rule": {
+    "id": "runtime.block-http-bench.a50af802",
+    "pack_id": "runtime-benchmark",
+    "condition": "http.request.host == 'example.com' && http.request.path == '/security-engine-bench-block-d95c2418'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_http_request_wall_ms": {
+      "min": 5.891,
+      "mean": 7.036,
+      "median": 6.485,
+      "p95": 10.623,
+      "p99": 10.623,
+      "max": 10.623,
+      "values": [
+        10.623,
+        7.238,
+        6.311,
+        7.105,
+        6.659,
+        5.891,
+        6.163,
+        6.297
+      ]
+    },
+    "blocked_http_request_starttransfer_ms": {
+      "min": 2.883,
+      "mean": 3.206,
+      "median": 3.132,
+      "p95": 3.56,
+      "p99": 3.56,
+      "max": 3.56,
+      "values": [
+        3.521,
+        3.56,
+        2.883,
+        3.254,
+        3.495,
+        2.935,
+        2.992,
+        3.01
+      ]
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 9,
+      "distinct_event_ids": 9,
+      "blocked_count": 9,
+      "vm_id": "sechttp-23b27c78",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elie",
+      "process_operation": null,
+      "process_command_class": null,
+      "rule_id": "runtime.block-http-bench.a50af802",
+      "reason": "HTTP request blocked by security benchmark"
+    },
+    "runtime_match_count": 9,
+    "runtime_last_event_id": "net-http-f03173435aac21a2",
+    "logs_exposed_security_decision": true
+  }
+}

@@ -235,19 +235,33 @@ clearly not numerical and matches the sprint tracker.
   `capsem-bench security-engine` guest mode open until HTTP/DNS/MCP/model
   VM-originated scenarios can run from inside the VM with useful workload
   controls.
+- Slice 6 extended the VM-originated benchmark harness with an HTTP request
+  enforcement workload. The test installs a runtime CEL rule for a unique
+  `https://example.com/...` path, warms the path once, runs a guest curl loop
+  that is blocked before upstream dispatch, asserts each 403 block response,
+  verifies runtime match counters, checks `security_events`/
+  `security_event_steps` rows for `http.request`, confirms `logs` exposes the
+  canonical decision, and archives
+  `benchmarks/security-engine/data_1.1.1778860037_arm64_http_request_enforcement.json`.
+  After separating guest wall-clock from curl first-byte timing, latest local
+  results are eight measured blocked HTTP requests at 7.036ms mean wall-clock
+  and 3.206ms mean `time_starttransfer` against a conservative 1,000ms
+  gross-regression gate. The process benchmark refreshed at 10.295ms mean and
+  10.810ms max.
 
 ## Coverage Ledger
 
 - Unit/contract: benchmark JSON schema, benchmark fixture parsing, rule-pack
   scale fixture generation, evaluator microbench setup.
-- Functional: the first VM-originated process enforcement benchmark asserts the
-  correct block action through the real service/process path. HTTP/DNS/MCP/
-  model/file detection and allow scenarios remain open.
+- Functional: VM-originated process and HTTP request enforcement benchmarks
+  assert correct block actions through the real service/process and
+  guest-network/MITM paths. DNS/MCP/model/file detection and allow scenarios
+  remain open.
 - Adversarial: invalid rules, unsupported Sigma constructs, missing event
   fields, high-cardinality evidence, oversized packs, slow emitter/journal path.
-- E2E/VM: real VM process exec events now verify action latency visible to the
-  caller plus resolved-event evidence in session storage. HTTP/DNS/MCP/model/
-  file VM-originated benchmarks remain open.
+- E2E/VM: real VM process exec and HTTP request events now verify action
+  latency visible to the caller plus resolved-event evidence in session
+  storage. DNS/MCP/model/file VM-originated benchmarks remain open.
 - Telemetry: the first VM-originated benchmark confirms runtime enforcement
   match counters and security-log projection. VM status/OTel counters for
   enforcement evaluations, detection evaluations, findings, errors, and
@@ -256,8 +270,8 @@ clearly not numerical and matches the sprint tracker.
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,
   detection evaluation, backtest evidence dedupe, runtime registry projection,
-  first process block latency artifact, concurrency scaling, backtest/hunt scan
-  rates.
+  first process and HTTP request block latency artifacts, concurrency scaling,
+  backtest/hunt scan rates.
 - Missing/deferred: exact threshold gates are chosen after the first stable
   S08d baseline; until then, marketing uses artifact-backed qualitative claims
   or explicit measured numbers with context.

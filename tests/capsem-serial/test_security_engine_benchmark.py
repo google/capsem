@@ -1,18 +1,24 @@
 """Host-side Security Engine enforcement benchmarks.
 
-This profiles the real blocked-exec path:
+This profiles real VM-originated enforcement paths:
 
-service API -> capsem-process IPC -> SecurityEvent projection -> CEL rule
-evaluation -> process decision -> session DB/log projection -> runtime counters.
+- process exec: service API -> capsem-process IPC -> SecurityEvent projection
+  -> CEL rule evaluation -> process decision -> session DB/log projection ->
+  runtime counters.
+- HTTP request: guest curl -> network transport/MITM -> SecurityEvent
+  projection -> CEL rule evaluation -> block response -> session DB/log
+  projection -> runtime counters.
 
 The Criterion benchmark in capsem-security-engine measures raw evaluator cost.
 This file records the product path cost from a VM-originated security event.
 """
 
+import base64
 from contextlib import closing
 import json
 import os
 import re
+import shlex
 import sqlite3
 import statistics
 import subprocess
@@ -30,7 +36,9 @@ pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 RUNS = int(os.environ.get("CAPSEM_SECURITY_ENGINE_BENCH_RUNS", "8"))
+HTTP_WARMUP_RUNS = int(os.environ.get("CAPSEM_SECURITY_ENGINE_HTTP_WARMUP_RUNS", "1"))
 BLOCKED_EXEC_GATE_MS = 750
+BLOCKED_HTTP_GATE_MS = 1000
 
 
 def _project_version():
@@ -54,12 +62,12 @@ def _source_commit():
         return "unknown"
 
 
-def _save_security_engine_benchmark(data):
+def _save_security_engine_benchmark(data, suffix):
     version = _project_version()
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
     out_dir = PROJECT_ROOT / "benchmarks" / "security-engine"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"data_{version}_{arch}_process_enforcement.json"
+    out_path = out_dir / f"data_{version}_{arch}_{suffix}.json"
     out_path.write_text(json.dumps(data, indent=2) + "\n")
     print(f"Security Engine benchmark saved to {out_path}")
 
@@ -80,7 +88,21 @@ def _session_db_path(service, vm):
     return next((path for path in candidates if path.exists()), None)
 
 
-def _wait_for_security_event_count(service, vm, rule_id, expected, *, timeout=10.0):
+def _guest_python(script):
+    encoded = base64.b64encode(script.encode()).decode()
+    command = f"import base64; exec(base64.b64decode({encoded!r}).decode())"
+    return f"python3 -c {shlex.quote(command)}"
+
+
+def _wait_for_security_event_count(
+    service,
+    vm,
+    rule_id,
+    expected,
+    *,
+    event_type,
+    timeout=10.0,
+):
     deadline = time.time() + timeout
     last_error = "security event count was never queried"
     while time.time() < deadline:
@@ -104,13 +126,13 @@ def _wait_for_security_event_count(service, vm, rule_id, expected, *, timeout=10
                            MIN(se.process_command_class),
                            MIN(step.rule_id),
                            MIN(step.message)
-                      FROM security_events se
+                     FROM security_events se
                       JOIN security_event_steps step
                         ON step.event_id = se.event_id
-                     WHERE se.event_type = 'process.exec'
+                     WHERE se.event_type = ?
                        AND step.rule_id = ?
                     """,
-                    (rule_id,),
+                    (event_type, rule_id),
                 ).fetchone()
         except sqlite3.Error as error:
             last_error = str(error)
@@ -131,7 +153,7 @@ def _wait_for_security_event_count(service, vm, rule_id, expected, *, timeout=10
                 "rule_id": row[8],
                 "reason": row[9],
             }
-        last_error = f"only {count}/{expected} process security events for {rule_id}"
+        last_error = f"only {count}/{expected} {event_type} security events for {rule_id}"
         time.sleep(0.25)
 
     raise AssertionError(last_error)
@@ -198,7 +220,13 @@ def test_process_enforcement_benchmark_records_vm_originated_path():
             assert "process exec blocked" in combined
             assert rule_id in combined
 
-        db_summary = _wait_for_security_event_count(svc, vm, rule_id, RUNS)
+        db_summary = _wait_for_security_event_count(
+            svc,
+            vm,
+            rule_id,
+            RUNS,
+            event_type="process.exec",
+        )
         assert db_summary["row_count"] >= RUNS
         assert db_summary["distinct_event_ids"] >= RUNS
         assert db_summary["blocked_count"] >= RUNS
@@ -275,12 +303,237 @@ def test_process_enforcement_benchmark_records_vm_originated_path():
                 "logs_exposed_security_decision": True,
             },
         }
-        _save_security_engine_benchmark(summary)
+        _save_security_engine_benchmark(summary, "process_enforcement")
 
         mean_ms = summary["operations"]["blocked_process_exec_ms"]["mean"]
         assert mean_ms < BLOCKED_EXEC_GATE_MS, (
             f"blocked process exec mean {mean_ms:.0f}ms exceeds "
             f"{BLOCKED_EXEC_GATE_MS}ms gate"
+        )
+    finally:
+        try:
+            client.delete(f"/enforcement/{rule_id}", timeout=60)
+        except Exception:
+            pass
+        try:
+            client.delete(f"/delete/{vm}", timeout=120)
+        except Exception:
+            pass
+        svc.stop()
+
+
+def test_http_request_enforcement_benchmark_records_vm_originated_path():
+    svc = ServiceInstance()
+    svc.start()
+    client = svc.client()
+    vm = f"sechttp-{uuid.uuid4().hex[:8]}"
+    rule_id = f"runtime.block-http-bench.{uuid.uuid4().hex[:8]}"
+    reason = "HTTP request blocked by security benchmark"
+    path = f"/security-engine-bench-block-{uuid.uuid4().hex[:8]}"
+
+    try:
+        client.post(
+            "/provision",
+            {"name": vm, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            timeout=180,
+        )
+        assert wait_exec_ready(client, vm, timeout=EXEC_READY_TIMEOUT), (
+            f"{vm} never became exec-ready"
+        )
+
+        install = client.post(
+            "/enforcement",
+            {
+                "id": rule_id,
+                "pack_id": "runtime-benchmark",
+                "condition": (
+                    "http.request.host == 'example.com' "
+                    f"&& http.request.path == '{path}'"
+                ),
+                "decision": "block",
+                "reason": reason,
+                "enabled": True,
+            },
+            timeout=60,
+        )
+        assert install["rule"]["id"] == rule_id
+        assert install["rule"]["compiled"] is True
+
+        script = f"""
+import json
+import subprocess
+import time
+
+runs = {RUNS}
+warmup_runs = {HTTP_WARMUP_RUNS}
+url = "https://example.com{path}"
+durations_ms = []
+starttransfer_ms = []
+results = []
+
+def run_once():
+    started = time.perf_counter()
+    proc = subprocess.run(
+        [
+            "curl",
+            "-k",
+            "-sS",
+            "--max-time",
+            "15",
+            "-w",
+            "\\nHTTP_STATUS:%{{http_code}}\\nSTARTTRANSFER:%{{time_starttransfer}}",
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    wall_ms = (time.perf_counter() - started) * 1000
+    status = None
+    starttransfer = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("HTTP_STATUS:"):
+            status = line.split(":", 1)[1]
+        if line.startswith("STARTTRANSFER:"):
+            starttransfer = float(line.split(":", 1)[1]) * 1000
+    return wall_ms, starttransfer, {{
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "http_status": status,
+        "starttransfer_ms": starttransfer,
+    }}
+
+for _ in range(warmup_runs):
+    run_once()
+
+for index in range(runs):
+    wall_ms, ttfb_ms, result = run_once()
+    durations_ms.append(wall_ms)
+    starttransfer_ms.append(ttfb_ms)
+    results.append(result)
+
+print(json.dumps({{
+    "warmup_runs": warmup_runs,
+    "durations_ms": durations_ms,
+    "starttransfer_ms": starttransfer_ms,
+    "results": results,
+}}))
+"""
+        response = client.post(
+            f"/exec/{vm}",
+            {"command": _guest_python(script), "timeout_secs": 180},
+            timeout=195,
+        )
+        assert response is not None and response.get("exit_code") == 0, response
+        payload = json.loads(response["stdout"].strip().splitlines()[-1])
+        durations_ms = payload["durations_ms"]
+        starttransfer_ms = payload["starttransfer_ms"]
+        assert len(durations_ms) == RUNS
+        assert len(starttransfer_ms) == RUNS
+        for result in payload["results"]:
+            assert result["returncode"] == 0, result
+            assert result["http_status"] == "403", result
+            assert result["starttransfer_ms"] is not None, result
+            assert reason in result["stdout"], result
+
+        db_summary = _wait_for_security_event_count(
+            svc,
+            vm,
+            rule_id,
+            RUNS,
+            event_type="http.request",
+            timeout=20.0,
+        )
+        assert db_summary["row_count"] >= RUNS
+        assert db_summary["distinct_event_ids"] >= RUNS
+        assert db_summary["blocked_count"] >= RUNS
+        assert db_summary["vm_id"] == vm
+        assert db_summary["profile_id"]
+        assert db_summary["user_id"]
+        assert db_summary["rule_id"] == rule_id
+        assert db_summary["reason"] == reason
+
+        rule_stats = _runtime_rule_stats(client, rule_id)
+        assert rule_stats["match_count"] >= RUNS
+        last_matched_event = rule_stats["last_matched_event"]
+        assert isinstance(last_matched_event, str)
+        assert last_matched_event.startswith("net-http-")
+
+        logs = client.get(f"/logs/{vm}")
+        security_logs = logs.get("security_logs") or ""
+        assert f'"rule_id":"{rule_id}"' in security_logs
+        assert f'"vm_id":"{vm}"' in security_logs
+        assert '"event_type":"http.request"' in security_logs
+        assert '"final_action":"block"' in security_logs
+
+        sorted_durations = sorted(durations_ms)
+        sorted_starttransfer = sorted(starttransfer_ms)
+        summary = {
+            "schema": "capsem.security-engine-benchmark.v1",
+            "kind": "vm_originated_http_request_enforcement",
+            "version": _project_version(),
+            "source_commit": _source_commit(),
+            "timestamp": time.time(),
+            "arch": os.uname().machine,
+            "host": {
+                "sysname": os.uname().sysname,
+                "release": os.uname().release,
+                "machine": os.uname().machine,
+            },
+            "command": (
+                "uv run pytest tests/capsem-serial/"
+                "test_security_engine_benchmark.py::"
+                "test_http_request_enforcement_benchmark_records_vm_originated_path -xvs"
+            ),
+            "workload": {
+                "event_family": "network",
+                "event_type": "http.request",
+                "source": "vm_originated",
+                "path": "guest_curl_to_mitm_to_security_engine",
+            },
+            "runs": RUNS,
+            "warmup_runs": payload["warmup_runs"],
+            "gate_ms": BLOCKED_HTTP_GATE_MS,
+            "rule": {
+                "id": rule_id,
+                "pack_id": "runtime-benchmark",
+                "condition": install["rule"]["condition"],
+                "decision": "block",
+            },
+            "operations": {
+                "blocked_http_request_wall_ms": {
+                    "min": round(min(durations_ms), 3),
+                    "mean": round(statistics.mean(durations_ms), 3),
+                    "median": round(statistics.median(durations_ms), 3),
+                    "p95": round(_percentile(sorted_durations, 0.95), 3),
+                    "p99": round(_percentile(sorted_durations, 0.99), 3),
+                    "max": round(max(durations_ms), 3),
+                    "values": [round(value, 3) for value in durations_ms],
+                },
+                "blocked_http_request_starttransfer_ms": {
+                    "min": round(min(starttransfer_ms), 3),
+                    "mean": round(statistics.mean(starttransfer_ms), 3),
+                    "median": round(statistics.median(starttransfer_ms), 3),
+                    "p95": round(_percentile(sorted_starttransfer, 0.95), 3),
+                    "p99": round(_percentile(sorted_starttransfer, 0.99), 3),
+                    "max": round(max(starttransfer_ms), 3),
+                    "values": [round(value, 3) for value in starttransfer_ms],
+                }
+            },
+            "assertions": {
+                "session_db_security_events": db_summary,
+                "runtime_match_count": rule_stats["match_count"],
+                "runtime_last_event_id": last_matched_event,
+                "logs_exposed_security_decision": True,
+            },
+        }
+        _save_security_engine_benchmark(summary, "http_request_enforcement")
+
+        mean_ms = summary["operations"]["blocked_http_request_starttransfer_ms"]["mean"]
+        assert mean_ms < BLOCKED_HTTP_GATE_MS, (
+            f"blocked HTTP request time-starttransfer mean {mean_ms:.0f}ms exceeds "
+            f"{BLOCKED_HTTP_GATE_MS}ms gate"
         )
     finally:
         try:

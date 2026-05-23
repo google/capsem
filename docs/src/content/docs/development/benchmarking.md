@@ -136,11 +136,11 @@ for a process security event:
 uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 ```
 
-The first S08d path installs a runtime CEL enforcement rule, sends repeated
-blocked shell exec requests through a live VM/process pair, asserts the
-expected block result, checks runtime match counters, verifies canonical
-`security_events` rows in `session.db`, and confirms `logs` exposes the
-Security Engine decision with VM/profile/user/rule attribution. Committed
+The first S08d paths install runtime CEL enforcement rules, send repeated
+blocked process exec and blocked HTTPS request workloads through live VMs,
+assert the expected block results, check runtime match counters, verify
+canonical `security_events` rows in `session.db`, and confirm `logs` exposes
+the Security Engine decision with VM/profile/user/rule attribution. Committed
 artifacts are written to `benchmarks/security-engine/`.
 
 ### Snapshot operations (`snapshot`)

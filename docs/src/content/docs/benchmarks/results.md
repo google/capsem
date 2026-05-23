@@ -214,12 +214,12 @@ events, and `logs` exposure.
 |--------|-------|
 | Runs | 8 |
 | Gate | 750ms mean |
-| Min blocked exec latency | 9.132ms |
-| Mean blocked exec latency | 9.438ms |
-| Median blocked exec latency | 9.346ms |
-| p95 blocked exec latency | 9.801ms |
-| p99 blocked exec latency | 9.801ms |
-| Max blocked exec latency | 9.801ms |
+| Min blocked exec latency | 9.554ms |
+| Mean blocked exec latency | 10.295ms |
+| Median blocked exec latency | 10.457ms |
+| p95 blocked exec latency | 10.810ms |
+| p99 blocked exec latency | 10.810ms |
+| Max blocked exec latency | 10.810ms |
 | Runtime matches | 8 |
 | Session DB security events | 8 |
 
@@ -227,6 +227,42 @@ Run:
 
 ```bash
 uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
+```
+
+## Security Engine HTTP request enforcement (VM-originated)
+
+First S08d network-transport benchmark artifact:
+`benchmarks/security-engine/data_1.1.1778860037_arm64_http_request_enforcement.json`.
+
+This host-side serial benchmark runs a live service and VM, installs a runtime
+CEL rule that blocks a specific HTTPS request before upstream dispatch, warms
+the path once, then runs a guest curl loop and verifies the block responses,
+runtime match counters, canonical `session.db` security events, and `logs`
+exposure.
+
+The wall-clock metric includes spawning curl in the guest. The
+`time_starttransfer` metric is curl's first-byte timing for the blocked
+response and is the better proxy for transport plus Security Engine response
+latency.
+
+| Metric | Value |
+|--------|-------|
+| Runs | 8 |
+| Warmup runs | 1 |
+| Gate | 1,000ms mean |
+| Mean wall-clock blocked request | 7.036ms |
+| Median wall-clock blocked request | 6.485ms |
+| p95 wall-clock blocked request | 10.623ms |
+| Mean `time_starttransfer` | 3.206ms |
+| Median `time_starttransfer` | 3.132ms |
+| p95 `time_starttransfer` | 3.560ms |
+| Runtime matches | 9 |
+| Session DB security events | 9 |
+
+Run:
+
+```bash
+uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_http_request_enforcement_benchmark_records_vm_originated_path -xvs
 ```
 
 ## Test environment

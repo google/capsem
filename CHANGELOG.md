@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wired `just bench` to run the Security Engine Criterion microbenchmarks and
   VM-originated process-enforcement benchmark alongside the existing in-VM and
   lifecycle/fork benchmark stages.
+- Added a VM-originated HTTP request enforcement benchmark that blocks a
+  guest HTTPS request through the MITM/Security Engine path, verifies runtime
+  counters, `session.db` security rows, and `logs` attribution, and archives a
+  dedicated security-engine benchmark artifact.
+- Refined the HTTP request enforcement benchmark to separate guest wall-clock
+  latency from curl `time_starttransfer`, with a warmup request so cold
+  proxy/TLS setup does not masquerade as Security Engine cost.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.

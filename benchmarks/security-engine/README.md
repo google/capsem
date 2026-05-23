@@ -7,8 +7,8 @@ Artifacts currently cover two lanes:
 - host-side Rust Criterion microbenchmarks for canonical CEL paths in
   `capsem-security-engine`;
 - host-side serial pytest runs that exercise VM-originated Security Engine
-  events through the real service/process IPC path and verify session DB,
-  runtime counters, and log projection.
+  events through the real service/process IPC and network transport paths and
+  verify session DB, runtime counters, and log projection.
 
 The Criterion numbers explain evaluator, detection, backtest dedupe, runtime
 registry, policy-context materialization, rule-count, and native lookup costs

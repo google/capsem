@@ -2095,6 +2095,19 @@ a valid claim -- mark it `[ ]` instead.
     benchmark after the existing in-VM and lifecycle/fork benchmark stages.
     The separate `capsem-bench security-engine` guest mode remains open until
     HTTP/DNS/MCP/model VM-originated workloads have useful guest-side controls.
+    Sixth S08d VM-originated slice added an HTTP request enforcement benchmark
+    to `tests/capsem-serial/test_security_engine_benchmark.py` and committed
+    `benchmarks/security-engine/data_1.1.1778860037_arm64_http_request_enforcement.json`.
+    The focused benchmark installs a runtime CEL rule for a unique HTTPS path,
+    warms the path once, runs a guest curl loop that is blocked before upstream
+    dispatch, asserts each 403 response, verifies runtime match counters, checks
+    `security_events` + `security_event_steps` rows for `http.request`, and
+    confirms `logs` exposes the decision. The first cold measurement looked
+    suspiciously slow, so the benchmark now records both guest wall-clock and
+    curl `time_starttransfer`. Latest local result: 7.036ms mean wall-clock
+    and 3.206ms mean first-byte timing against a 1,000ms gross-regression
+    gate. The same combined run refreshed the process artifact to 10.295ms
+    mean and 10.810ms max.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

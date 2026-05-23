@@ -167,9 +167,9 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 
 ## Host-side Security Engine benchmark
 
-Profiles VM-originated Security Engine process enforcement through the real
-service/process path. This is outside the guest via pytest, not via
-`capsem-bench`.
+Profiles VM-originated Security Engine enforcement through real service,
+process, and network transport paths. This is outside the guest via pytest, not
+via `capsem-bench`.
 
 ```bash
 uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
@@ -182,19 +182,22 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 | Operation | What it times |
 |-----------|---------------|
 | blocked_process_exec | Service API exec request -> capsem-process IPC -> process `SecurityEvent` projection -> CEL enforcement block -> response |
+| blocked_http_request | Guest curl -> network transport/MITM -> HTTP `SecurityEvent` projection -> CEL enforcement block -> response |
 
 ### Output
 
 - Per-run blocked exec latencies
+- Per-run blocked HTTP request latencies
 - JSON saved to
-  `benchmarks/security-engine/data_{version}_{arch}_process_enforcement.json`
+  `benchmarks/security-engine/data_{version}_{arch}_{workload}.json`
   with command, commit, host, rule, assertion, and latency metadata
 
 ### Regression gates
 
-The first gross-regression gate asserts the mean blocked process exec latency
-stays under 750ms. The artifact also verifies runtime match counters,
-canonical `session.db` security rows, and `logs` attribution.
+The first gross-regression gates assert mean blocked process exec latency stays
+under 750ms and mean blocked HTTP request latency stays under 1,000ms. The
+artifacts also verify runtime match counters, canonical `session.db` security
+rows, and `logs` attribution.
 
 ### When to run
 
