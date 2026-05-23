@@ -149,3 +149,7 @@ requests.
 - Visual/build proof: Settings -> Policy Live Rules was screenshot-checked
   with browser-side session hunt fixtures showing the session id control and
   evidence rows in the actual layout.
+- Final S16 replay: the focused profile UI suite passed together:
+  `session-runtime-truth`, `runtime-security-rules-section`,
+  `profile-catalog-section`, `security-engine-health-section`, and `api`
+  (**85** tests), followed by frontend check and production build.

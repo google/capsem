@@ -2470,7 +2470,7 @@ a valid claim -- mark it `[ ]` instead.
     -- conditional release blocker. Required before any shipped profile/rule
     exposes `decision = "ask"` as user-facing behavior; otherwise ask must be
     disabled or explicitly unavailable and must never silently behave as allow.
-31. [~] [S16 - Profile UI](S16-profile-ui.md)
+31. [x] [S16 - Profile UI](S16-profile-ui.md)
     -- release-blocking usable UI surface for the bedrock endpoint contract:
     profile catalog/selector/revisions, package/asset readiness, profile-backed
     VM create, VM profile state, runtime enforcement/detection overlay list/
@@ -2568,6 +2568,15 @@ a valid claim -- mark it `[ ]` instead.
     Settings -> Policy was screenshot-checked with browser-side session hunt
     fixtures showing the session id control and result rows. Still missing in
     S16: final release UI usability replay.
+    Final S16 release UI replay passed: `pnpm --dir frontend exec vitest run
+    src/lib/__tests__/session-runtime-truth.test.ts
+    src/lib/__tests__/runtime-security-rules-section.test.ts
+    src/lib/__tests__/profile-catalog-section.test.ts
+    src/lib/__tests__/security-engine-health-section.test.ts
+    src/lib/__tests__/api.test.ts` passed with **85** tests, `pnpm --dir
+    frontend run check` passed, and `pnpm --dir frontend run build` passed.
+    S16 is closed for the bedrock release; richer workbench composition moves
+    to S16a/S17 instead of reopening the profile UI contract.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
