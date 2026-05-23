@@ -117,15 +117,18 @@ paths without booting a VM:
 
 ```bash
 cargo bench -p capsem-security-engine --bench security_engine_cel
+cargo bench -p capsem-core --bench security_packs
 ```
 
 The S08d harness covers CEL compile time, warm enforcement evaluation,
 detection evaluation, backtest evidence deduplication, runtime registry
-operations, policy-context projection/materialization, 100-rule last-match
-evaluation, and a native Rust lookup comparator for the same HTTP policy. These
-numbers explain runtime hot-path costs; they do not replace VM-originated
-benchmark artifacts. Committed host-side artifacts live under
-`benchmarks/security-engine/`.
+operations, compiled-plan rebuild cost, policy-context projection/
+materialization, 100-rule last-match evaluation, Detection IR parse/lowering,
+and a native Rust lookup comparator for the same HTTP policy. These numbers
+explain runtime hot-path and rule-pack costs; they do not replace
+VM-originated benchmark artifacts. Committed host-side artifacts live under
+`benchmarks/security-engine/`. The `just bench` recipe runs both Criterion
+harnesses before the VM-originated security benchmark.
 
 ### Security Engine VM-originated benchmarks
 

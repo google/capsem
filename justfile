@@ -872,6 +872,7 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 
     echo "=== Security Engine benchmarks ==="
     cargo bench -p capsem-security-engine --bench security_engine_cel
+    cargo bench -p capsem-core --bench security_packs
     uv run python -m pytest tests/capsem-serial/test_security_engine_benchmark.py -v --tb=short -m "serial or benchmark"
 
 # Build package, runtime-clean local install, use the install.sh native command,

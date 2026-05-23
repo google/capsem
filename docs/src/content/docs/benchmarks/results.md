@@ -174,33 +174,44 @@ Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_b
 
 First S08d host-side microbenchmark artifact:
 `benchmarks/security-engine/data_1.1.1778860037_arm64_cel_microbench.json`.
+Detection IR parse/lowering artifact:
+`benchmarks/security-engine/data_1.1.1778860037_arm64_security_packs_microbench.json`.
 
-This is a Rust Criterion microbenchmark for canonical policy-context CEL paths.
-It is not a VM-originated benchmark and should not be used as an end-to-end
-latency claim.
+These are Rust Criterion microbenchmarks for canonical policy-context CEL paths
+and Detection IR pack parsing/lowering. They are not VM-originated benchmarks
+and should not be used as end-to-end latency claims.
 
 | Benchmark | Slope |
 |-----------|-------|
-| Compile `http.request.host.contains("google")` | 8.8us |
-| Compile full HTTP policy | 40.1us |
+| Compile `http.request.host.contains("google")` | 8.7us |
+| Compile full HTTP policy | 39.8us |
 | Evaluate `http.request.host.contains("google")` | 14.3us |
 | Evaluate `http.request.header("authorization").exists()` | 16.1us |
 | Evaluate full HTTP policy | 22.9us |
-| Evaluate full HTTP policy as last match across 100 rules | 1.27ms |
+| Evaluate full HTTP policy as last match across 100 rules | 1.28ms |
 | Detection finding for full HTTP policy | 23.2us |
-| Detection finding as last match across 100 rules | 1.29ms |
+| Detection finding as last match across 100 rules | 1.27ms |
 | Dedupe 100 backtest rows / 100 unique signatures | 19.4us |
-| Dedupe 1,000 backtest rows / 100 unique signatures | 167.1us |
+| Dedupe 1,000 backtest rows / 100 unique signatures | 160.9us |
 | Runtime registry install/update of one rule | 145ns |
 | Runtime registry projection of 100 enabled rules | 7.5us |
-| Project `SecurityEvent` to `PolicyContext` | 535ns |
+| Runtime projection and compile of 100 enforcement rules | 307.7us |
+| Runtime projection and compile of 100 detection rules | 312.9us |
+| Rebuild engine from 100 enforcement and 100 detection rules | 628.5us |
+| Update one existing rule and rebuild 100-rule plan | 355.3us |
+| Project `SecurityEvent` to `PolicyContext` | 538ns |
 | Project and serialize `PolicyContext` | 2.6us |
 | Native Rust lookup for equivalent HTTP policy | 12ns |
+| Parse and validate Detection IR Google-secret fixture | 122.6us |
+| Lower Detection IR Google-secret fixture to CEL rules | 1.1us |
+| Lower 100 Detection IR HTTP rules to CEL rules | 96.6us |
+| Lower and compile 100 Detection IR HTTP rules | 2.8ms |
 
 Run:
 
 ```bash
 cargo bench -p capsem-security-engine --bench security_engine_cel
+cargo bench -p capsem-core --bench security_packs
 ```
 
 ## Security Engine process enforcement (VM-originated)

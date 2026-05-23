@@ -167,6 +167,21 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 
 ## Host-side Security Engine benchmark
 
+Profiles Security Engine hot-path costs with Rust Criterion and VM-originated
+enforcement through real service, process, and network transport paths.
+
+```bash
+cargo bench -p capsem-security-engine --bench security_engine_cel
+cargo bench -p capsem-core --bench security_packs
+```
+
+The `capsem-security-engine` harness measures canonical CEL compile/evaluate,
+detection evaluation, backtest evidence dedupe, runtime registry projection,
+compiled-plan rebuilds, policy-context projection/materialization, 100-rule
+last-match paths, and native lookup comparators. The `capsem-core` security-pack
+harness measures Detection IR V1 JSON parse/validate, Detection IR to CEL
+detection-rule lowering, and lower-plus-compile costs.
+
 Profiles VM-originated Security Engine enforcement through real service,
 process, and network transport paths. This is outside the guest via pytest, not
 via `capsem-bench`.
@@ -208,6 +223,7 @@ collapsing `security_events` rows.
 ### When to run
 
 - After changes to `capsem-security-engine`
+- After changes to Detection IR parsing/lowering in `capsem-core`
 - After changes to process security event projection or exec dispatch
 - After changes to runtime enforcement rule propagation/counters
 - After changes to `security_events` logging or `capsem logs`

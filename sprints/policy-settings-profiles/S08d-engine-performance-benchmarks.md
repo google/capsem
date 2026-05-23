@@ -255,12 +255,29 @@ clearly not numerical and matches the sprint tracker.
   slice and 2.145ms mean TLS appconnect. The keep-alive lane is 0.549ms mean
   first-byte / 0.556ms mean total response after the connection is established.
   The process benchmark refreshed at 9.356ms mean and 9.992ms max.
+- Slice 7 added the missing non-VM microbench boundaries for runtime rule-plan
+  rebuilds and Detection IR security-pack lowering. The
+  `capsem-security-engine` Criterion harness now measures projection plus
+  CEL compilation for 100 enforcement rules, 100 detection rules, rebuilding a
+  `SecurityEngine` from 100 enforcement plus 100 detection rules, and updating
+  one existing rule before rebuilding a 100-rule plan. A new
+  `capsem-core` `security_packs` Criterion harness measures Detection IR V1
+  JSON parse/validate, single-rule lowering, 100-rule lowering, and 100-rule
+  lower-plus-compile cost against the committed Google-secret fixture. Latest
+  local results: 307.684us to project/compile 100 enforcement rules,
+  312.907us to project/compile 100 detection rules, 628.514us to rebuild a
+  100+100 rule engine, 355.298us to update and rebuild a 100-rule plan,
+  122.645us to parse/validate the Detection IR fixture, 1.075us to lower the
+  single-rule fixture, 96.620us to lower 100 Detection IR rules, and 2.762ms
+  to lower plus compile 100 Detection IR rules. `just bench` now runs both
+  Criterion harnesses.
 
 ## Coverage Ledger
 
 - Unit/contract: benchmark JSON schema, benchmark fixture parsing, rule-pack
   scale fixture generation, evaluator microbench setup, same-millisecond
-  event-ID regression coverage for HTTP, DNS, MCP, and file security events.
+  event-ID regression coverage for HTTP, DNS, MCP, and file security events,
+  Detection IR parse/lowering fixture coverage.
 - Functional: VM-originated process and HTTP request enforcement benchmarks
   assert correct block actions through the real service/process and
   guest-network/MITM paths. DNS/MCP/model/file detection and allow scenarios
@@ -280,6 +297,7 @@ clearly not numerical and matches the sprint tracker.
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,
   detection evaluation, backtest evidence dedupe, runtime registry projection,
+  runtime compiled-plan rebuild cost, Detection IR parse/lowering/compile cost,
   first process and HTTP request block latency artifacts, concurrency scaling,
   backtest/hunt scan rates.
 - Missing/deferred: exact threshold gates are chosen after the first stable

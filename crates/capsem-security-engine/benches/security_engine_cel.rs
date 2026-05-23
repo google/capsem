@@ -7,7 +7,8 @@ use capsem_security_engine::{
     EnforcementEvaluator, HttpBodySecuritySubject, HttpSecuritySubject, MatchedField,
     RedactionState, RuleOrigin, RuleRegistryError, RuleScope, RuntimeRuleDefinition,
     RuntimeRuleMetadata, RuntimeRuleRecord, RuntimeRuleRegistry, SecurityDecisionAction,
-    SecurityEvent, SecurityEventCommon, SecurityEventSubject, Severity, SourceEngine,
+    SecurityEngine, SecurityEvent, SecurityEventCommon, SecurityEventSubject, Severity,
+    SourceEngine,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
@@ -129,6 +130,30 @@ fn registry_enforcement_record(
     }
 }
 
+fn registry_detection_record(
+    id: impl Into<String>,
+    condition: impl Into<String>,
+) -> RuntimeRuleRecord {
+    RuntimeRuleRecord {
+        metadata: RuntimeRuleMetadata {
+            id: id.into(),
+            pack_id: Some("bench.registry".into()),
+            scope: RuleScope::Runtime,
+            origin: RuleOrigin::Runtime,
+            priority: 100,
+        },
+        definition: RuntimeRuleDefinition::Detection {
+            sigma_id: Some("sigma-bench".into()),
+            title: "Benchmark registry detection".into(),
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            tags: vec!["benchmark".into(), "http".into()],
+        },
+        source: condition.into(),
+        enabled: true,
+    }
+}
+
 fn evaluator(condition: &str) -> CelEnforcementEvaluator {
     CelEnforcementEvaluator::compile(vec![rule("bench-rule", condition)]).unwrap()
 }
@@ -181,6 +206,32 @@ fn backtest_rows(row_count: usize, unique_signatures: usize) -> Vec<BacktestMatc
             outcome: BacktestOutcome::Matched,
         })
         .collect()
+}
+
+fn registry_with_enforcement_rules(rule_count: usize) -> RuntimeRuleRegistry {
+    let mut registry = RuntimeRuleRegistry::default();
+    for index in 0..rule_count {
+        registry
+            .add_or_update(
+                registry_enforcement_record(format!("bench-runtime-{index:03}"), "false"),
+                |_| Ok::<_, RuleRegistryError>("compiled-plan".into()),
+            )
+            .unwrap();
+    }
+    registry
+}
+
+fn registry_with_detection_rules(rule_count: usize) -> RuntimeRuleRegistry {
+    let mut registry = RuntimeRuleRegistry::default();
+    for index in 0..rule_count {
+        registry
+            .add_or_update(
+                registry_detection_record(format!("bench-detect-runtime-{index:03}"), "false"),
+                |_| Ok::<_, RuleRegistryError>("compiled-plan".into()),
+            )
+            .unwrap();
+    }
+    registry
 }
 
 fn native_http_policy(event: &SecurityEvent) -> bool {
@@ -325,16 +376,67 @@ fn bench_runtime_registry(c: &mut Criterion) {
     });
 
     group.bench_function("enabled_enforcement_rules_100_rules", |b| {
-        let mut registry = RuntimeRuleRegistry::default();
-        for index in 0..100 {
+        let registry = registry_with_enforcement_rules(100);
+        b.iter(|| black_box(registry.enabled_enforcement_rules().len()));
+    });
+
+    group.bench_function("project_and_compile_enforcement_100_rules", |b| {
+        let registry = registry_with_enforcement_rules(100);
+        b.iter(|| {
+            let rules = registry.enabled_enforcement_rules();
+            let evaluator = CelEnforcementEvaluator::compile(black_box(rules)).unwrap();
+            black_box(evaluator)
+        });
+    });
+
+    group.bench_function("project_and_compile_detection_100_rules", |b| {
+        let registry = registry_with_detection_rules(100);
+        b.iter(|| {
+            let rules = registry.enabled_detection_rules();
+            let evaluator = CelDetectionEvaluator::compile(black_box(rules)).unwrap();
+            black_box(evaluator)
+        });
+    });
+
+    group.bench_function("rebuild_engine_from_100_enforcement_100_detection", |b| {
+        let enforcement_registry = registry_with_enforcement_rules(100);
+        let detection_registry = registry_with_detection_rules(100);
+        b.iter(|| {
+            let mut engine = SecurityEngine::default();
+            let enforcement = CelEnforcementEvaluator::compile(black_box(
+                enforcement_registry.enabled_enforcement_rules(),
+            ))
+            .unwrap();
+            let detection = CelDetectionEvaluator::compile(black_box(
+                detection_registry.enabled_detection_rules(),
+            ))
+            .unwrap();
+            engine.set_enforcement(Box::new(enforcement));
+            engine.set_detection(Box::new(detection));
+            black_box(engine)
+        });
+    });
+
+    group.bench_function("update_existing_then_rebuild_100_rule_plan", |b| {
+        let baseline = registry_with_enforcement_rules(100);
+        let mut generation = 0_u64;
+        b.iter(|| {
+            generation += 1;
+            let mut registry = baseline.clone();
             registry
                 .add_or_update(
-                    registry_enforcement_record(format!("bench-runtime-{index:03}"), "false"),
-                    |_| Ok::<_, RuleRegistryError>("compiled-plan".into()),
+                    registry_enforcement_record(
+                        "bench-runtime-050",
+                        format!("{} && true", CANONICAL_HTTP_POLICY),
+                    ),
+                    |_| Ok::<_, RuleRegistryError>(format!("compiled-plan-{generation}")),
                 )
                 .unwrap();
-        }
-        b.iter(|| black_box(registry.enabled_enforcement_rules().len()));
+            let evaluator =
+                CelEnforcementEvaluator::compile(black_box(registry.enabled_enforcement_rules()))
+                    .unwrap();
+            black_box(evaluator)
+        });
     });
 
     group.finish();

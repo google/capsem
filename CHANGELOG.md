@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a persistent TLS keep-alive lane to the VM-originated HTTP enforcement
   benchmark so repeated in-connection block decisions prove sub-millisecond
   MITM/Security Engine response timing and one security log row per request.
+- Added Security Engine benchmark coverage for runtime compiled-plan rebuilds
+  and Detection IR parse/lowering/compile costs, with committed artifacts and
+  `just bench` wiring for the `capsem-core` security-pack Criterion harness.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.

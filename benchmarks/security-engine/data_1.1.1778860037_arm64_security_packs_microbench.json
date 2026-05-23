@@ -1,0 +1,50 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "criterion_security_packs_microbench",
+  "capsem_version": "1.1.1778860037",
+  "source_commit": "80183298",
+  "recorded_at": "2026-05-23T14:40:23Z",
+  "host": {
+    "os": "macOS",
+    "kernel": "Darwin 25.5.0",
+    "arch": "arm64",
+    "cpu": "Apple Silicon local benchmark host"
+  },
+  "command": "cargo bench -p capsem-core --bench security_packs",
+  "profile": {
+    "cargo_profile": "bench",
+    "criterion_samples": 100,
+    "criterion_warmup_seconds": 3,
+    "criterion_target_seconds": 5
+  },
+  "scope": {
+    "vm_originated": false,
+    "notes": [
+      "Host-side microbenchmark only.",
+      "Measures Detection IR V1 JSON parse/validate, Detection IR to CEL detection-rule lowering, and lower-plus-compile costs.",
+      "Does not include VM transport, service IPC, runtime registry propagation, Security Engine dispatch, or session.db journal write latency."
+    ]
+  },
+  "measurements": [
+    {
+      "group": "security_packs_detection_ir_parse",
+      "name": "parse_validate_google_secret_fixture",
+      "slope_ns": 122645.40127612761
+    },
+    {
+      "group": "security_packs_detection_ir_lowering",
+      "name": "lower_google_secret_fixture_to_cel_rules",
+      "slope_ns": 1074.510765830669
+    },
+    {
+      "group": "security_packs_detection_ir_lowering",
+      "name": "lower_100_http_rules_to_cel_rules",
+      "slope_ns": 96619.91455031771
+    },
+    {
+      "group": "security_packs_detection_ir_lowering",
+      "name": "lower_and_compile_100_http_rules",
+      "slope_ns": 2762184.6766666663
+    }
+  ]
+}

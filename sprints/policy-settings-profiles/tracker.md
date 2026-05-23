@@ -2117,6 +2117,22 @@ a valid claim -- mark it `[ ]` instead.
     appconnect dominates at 2.145ms mean, so the slow-looking local HTTP number
     is connection/TLS/proxy setup rather than CEL evaluation. The same combined
     run refreshed the process artifact to 9.356ms mean and 9.992ms max.
+    Seventh S08d microbench slice added runtime rule-plan rebuild and
+    Detection IR/security-pack benchmark coverage. The
+    `capsem-security-engine` Criterion harness now records 100-rule
+    enforcement projection+compile, 100-rule detection projection+compile,
+    100+100 rule `SecurityEngine` rebuild, and update-plus-rebuild costs. The
+    new `capsem-core` `security_packs` Criterion harness records Detection IR
+    V1 parse/validate, single-rule lowering, 100-rule lowering, and
+    lower-plus-compile costs against the committed Google-secret fixture. Latest
+    local results: 307.684us enforcement project+compile, 312.907us detection
+    project+compile, 628.514us 100+100 engine rebuild, 355.298us update+rebuild,
+    122.645us Detection IR parse/validate, 96.620us 100-rule lowering, and
+    2.762ms lower+compile for 100 Detection IR rules. `just bench`, benchmark
+    docs, dev benchmark skill, and JSON artifacts now expose both Criterion
+    lanes. Still missing in S08d: DNS/MCP/model/file VM-originated benchmarks,
+    concurrency cases, backtest/hunt scan-rate artifacts, and broader release
+    gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
