@@ -1951,6 +1951,20 @@ a valid claim -- mark it `[ ]` instead.
     behind the Network Engine boundary, visible UI screens/editors,
     interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
     performance proof, and final release gates.
+    Ninety-first structural Network Engine model-evidence slice moved
+    canonical AI interaction evidence projection into `capsem-network-engine`.
+    Model request, response, tool-call, and tool-result evidence is now derived
+    from Network Engine-owned provider, request, and stream summaries; core
+    MITM telemetry persists the built evidence instead of owning that
+    projection. The tool-origin classifier also moved to the Network Engine
+    helper so evidence construction no longer reaches into core MCP modules.
+    Verification: `cargo test -p capsem-network-engine model_evidence` **6**
+    passed, `cargo test -p capsem-core ai_traffic::provider --lib` **15**
+    passed, and `cargo test -p capsem-core telemetry_hook --lib` **15**
+    passed. Still missing after this slice: moving model SecurityEvent builders
+    behind the Network Engine boundary, visible UI screens/editors,
+    interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
+    performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

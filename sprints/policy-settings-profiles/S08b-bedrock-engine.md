@@ -91,6 +91,11 @@ parsing into `capsem-network-engine`. The parser extracts model, stream mode,
 system prompt preview, message/tool counts, and tool-result evidence through
 provider-specific serde structs, with malformed/truncated body fallback tests
 kept beside the Network Engine parser.
+The latest model evidence slice moved canonical AI interaction evidence
+projection into `capsem-network-engine`. Model request/response/tool-call/
+tool-result evidence is now derived from Network Engine-owned provider, request,
+and stream summaries; `capsem-core` only persists the result through the MITM
+telemetry path.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

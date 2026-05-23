@@ -30,9 +30,6 @@
 ///   still be partial; unknown linkage must remain explicit rather than being
 ///   inferred from tool-name heuristics alone.
 /// - Builtin tool NetEvents are not linked to their tool_call entries.
-/// - `tool_origin()` imports `mcp::builtin_tools::is_builtin_tool()` --
-///   cross-module coupling that should be replaced by a shared registry.
-pub mod evidence;
 pub mod pricing;
 pub mod provider;
 

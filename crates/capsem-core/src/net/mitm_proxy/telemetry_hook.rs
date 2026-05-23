@@ -35,10 +35,10 @@ use super::body::BodyStats;
 use super::hooks::{ChunkCtx, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::util::is_llm_api_path;
-use crate::net::ai_traffic::evidence::{build_model_interaction_evidence, ModelEvidenceInput};
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
 use crate::net::ai_traffic::TraceState;
+use capsem_network_engine::model_evidence::{build_model_interaction_evidence, ModelEvidenceInput};
 use capsem_network_engine::model_request as request_parser;
 use capsem_network_engine::model_stream::{collect_summary, parse_non_streaming_usage, StopReason};
 

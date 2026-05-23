@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved typed AI request parsing for Anthropic, OpenAI, and Google/Gemini into
   `capsem-network-engine`, including tool-result extraction and malformed-body
   fallback tests.
+- Moved canonical AI interaction evidence projection into
+  `capsem-network-engine`, so model request/response/tool-call/tool-result
+  evidence is built at the Network Engine boundary before core telemetry
+  persistence.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.
