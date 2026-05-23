@@ -2066,6 +2066,18 @@ a valid claim -- mark it `[ ]` instead.
     missing in S08d: VM-originated security-engine benchmarks,
     detection/dedup/registry microbenches, concurrency cases, and regression
     gates.
+    Third S08d VM-originated slice added
+    `tests/capsem-serial/test_security_engine_benchmark.py` and committed
+    `benchmarks/security-engine/data_1.1.1778860037_arm64_process_enforcement.json`.
+    The focused benchmark starts a real service and VM, installs a runtime CEL
+    enforcement rule, sends eight blocked shell exec requests through
+    service/process IPC, asserts the block response, verifies runtime match
+    counters, checks `security_events` + `security_event_steps` rows in
+    `session.db`, and confirms `logs` exposes the security decision. Latest
+    local result: 9.438ms mean, 9.801ms max blocked exec latency against a
+    conservative 750ms gross-regression gate. Still missing in S08d: HTTP/DNS/
+    MCP/model/file VM-originated benchmarks, detection/dedup/registry
+    microbenches, concurrency cases, and broader release gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

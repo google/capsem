@@ -165,12 +165,52 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 - After changes to the service daemon (`capsem-service`)
 - Before cutting a release
 
+## Host-side Security Engine benchmark
+
+Profiles VM-originated Security Engine process enforcement through the real
+service/process path. This is outside the guest via pytest, not via
+`capsem-bench`.
+
+```bash
+uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
+```
+
+**Location:** `tests/capsem-serial/test_security_engine_benchmark.py`
+
+### Operations measured
+
+| Operation | What it times |
+|-----------|---------------|
+| blocked_process_exec | Service API exec request -> capsem-process IPC -> process `SecurityEvent` projection -> CEL enforcement block -> response |
+
+### Output
+
+- Per-run blocked exec latencies
+- JSON saved to
+  `benchmarks/security-engine/data_{version}_{arch}_process_enforcement.json`
+  with command, commit, host, rule, assertion, and latency metadata
+
+### Regression gates
+
+The first gross-regression gate asserts the mean blocked process exec latency
+stays under 750ms. The artifact also verifies runtime match counters,
+canonical `session.db` security rows, and `logs` attribution.
+
+### When to run
+
+- After changes to `capsem-security-engine`
+- After changes to process security event projection or exec dispatch
+- After changes to runtime enforcement rule propagation/counters
+- After changes to `security_events` logging or `capsem logs`
+- Before making release or marketing claims about Security Engine latency
+
 ## Tests
 
 - In-VM benchmark test: `just run "capsem-bench all"`
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
 - Host-side lifecycle: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs`
 - Host-side fork: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
+- Host-side Security Engine: `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs`
 - Both host-side: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
 - Full run: `just bench` or `just test`
 
@@ -182,6 +222,7 @@ Host-side benchmarks save versioned JSON to `benchmarks/` (committed to git):
 benchmarks/
   fork/data_0.16.1.json          # Fork speed, image size, data survival
   lifecycle/data_0.16.1.json     # Provision, exec-ready, exec, delete
+  security-engine/data_*.json    # CEL microbench and VM-originated enforcement
 ```
 
 These data files feed the documentation benchmark page at `docs/src/content/docs/benchmarks/results.md`. Before a release, run both benchmarks and update the results page with the new numbers. See `/release-process` for the full checklist.

@@ -21,6 +21,7 @@ just run "capsem-bench mitm-load"   # MITM proxy concurrency/load test
 just run "capsem-bench mcp-load"    # Guest MCP endpoint concurrency/load test
 just run "capsem-bench dns-load"    # DNS proxy concurrency/load test
 cargo bench -p capsem-security-engine --bench security_engine_cel
+uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 just full-test                      # Full validation including benchmarks
 ```
 
@@ -123,6 +124,22 @@ policy-context projection/materialization, 100-rule last-match evaluation, and
 a native Rust lookup comparator for the same HTTP policy. These numbers explain
 runtime hot-path costs; they do not replace VM-originated benchmark artifacts.
 Committed host-side artifacts live under `benchmarks/security-engine/`.
+
+### Security Engine VM-originated benchmarks
+
+The host-side serial benchmark measures the real VM-originated enforcement path
+for a process security event:
+
+```bash
+uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
+```
+
+The first S08d path installs a runtime CEL enforcement rule, sends repeated
+blocked shell exec requests through a live VM/process pair, asserts the
+expected block result, checks runtime match counters, verifies canonical
+`security_events` rows in `session.db`, and confirms `logs` exposes the
+Security Engine decision with VM/profile/user/rule attribution. Committed
+artifacts are written to `benchmarks/security-engine/`.
 
 ### Snapshot operations (`snapshot`)
 

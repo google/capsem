@@ -168,14 +168,14 @@ clearly not numerical and matches the sprint tracker.
 
 - [ ] Extend `capsem-bench` with `security-engine` mode or add an equivalent
   VM-originated benchmark harness that is invoked by `just bench`.
-- [ ] Add host-side serial pytest artifact capture for security-engine benchmark
+- [~] Add host-side serial pytest artifact capture for security-engine benchmark
   JSON under `benchmarks/security-engine/`.
 - [~] Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
   evidence dedup, and registry plan swaps.
 - [~] Adapt the Howard John-style CEL benchmark methodology into a Capsem local
   baseline artifact, using the Agentgateway `benches.rs` families/cases as the
   source model where they map, before drawing optimization conclusions.
-- [ ] Add correctness assertions for every benchmark scenario: expected final
+- [~] Add correctness assertions for every benchmark scenario: expected final
   action, expected detection finding, and persisted resolved-event evidence.
 - [ ] Add rule-pack and event fixtures for low/medium/high rule-count cases.
 - [ ] Add concurrency/load cases that prove engine work remains bounded under burst
@@ -185,7 +185,7 @@ clearly not numerical and matches the sprint tracker.
   latest recorded results.
 - [ ] Feed measured results into S19a marketing copy only after benchmark artifacts
   exist.
-- [ ] Add regression gates for gross latency regressions once the first stable
+- [~] Add regression gates for gross latency regressions once the first stable
   baseline is recorded.
 
 ## Implementation Notes
@@ -208,25 +208,38 @@ clearly not numerical and matches the sprint tracker.
   `cargo bench -p capsem-security-engine --bench security_engine_cel` run. The
   benchmark results docs surface those numbers with an explicit caveat that
   they are not VM-originated end-to-end latency claims.
+- Slice 3 added `tests/capsem-serial/test_security_engine_benchmark.py` as the
+  first VM-originated Security Engine benchmark. The test starts a real service
+  and VM, installs a runtime CEL enforcement rule, sends repeated blocked
+  shell exec requests through the service/process IPC path, asserts the block
+  response, drains runtime match counters, verifies canonical `security_events`
+  and `security_event_steps` rows in `session.db`, checks `logs` exposure, and
+  archives
+  `benchmarks/security-engine/data_1.1.1778860037_arm64_process_enforcement.json`.
+  The latest local run measured eight blocked exec decisions at 9.438ms mean
+  and 9.801ms max against a conservative 750ms gross-regression gate.
 
 ## Coverage Ledger
 
 - Unit/contract: benchmark JSON schema, benchmark fixture parsing, rule-pack
   scale fixture generation, evaluator microbench setup.
-- Functional: VM-originated allow/block/detect scenarios assert correct actions
-  and findings through the real service/process path.
+- Functional: the first VM-originated process enforcement benchmark asserts the
+  correct block action through the real service/process path. HTTP/DNS/MCP/
+  model/file detection and allow scenarios remain open.
 - Adversarial: invalid rules, unsupported Sigma constructs, missing event
   fields, high-cardinality evidence, oversized packs, slow emitter/journal path.
-- E2E/VM: real VM sends HTTP/DNS/MCP/model/file/process events; benchmark
-  verifies action latency visible to the VM and resolved-event evidence in
-  session storage.
-- Telemetry: benchmark runs confirm VM status/OTel counters increment for
-  enforcement evaluations, detection evaluations, matches, findings, errors,
-  and forward-plugin metrics when enabled.
+- E2E/VM: real VM process exec events now verify action latency visible to the
+  caller plus resolved-event evidence in session storage. HTTP/DNS/MCP/model/
+  file VM-originated benchmarks remain open.
+- Telemetry: the first VM-originated benchmark confirms runtime enforcement
+  match counters and security-log projection. VM status/OTel counters for
+  enforcement evaluations, detection evaluations, findings, errors, and
+  forward-plugin metrics remain open.
 - Performance: adapted CEL rig numbers, Capsem canonical-root microbench
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,
-  concurrency scaling, backtest/hunt scan rates.
+  first process block latency artifact, concurrency scaling, backtest/hunt scan
+  rates.
 - Missing/deferred: exact threshold gates are chosen after the first stable
   S08d baseline; until then, marketing uses artifact-backed qualitative claims
   or explicit measured numbers with context.

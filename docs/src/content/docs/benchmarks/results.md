@@ -194,6 +194,35 @@ Run:
 cargo bench -p capsem-security-engine --bench security_engine_cel
 ```
 
+## Security Engine process enforcement (VM-originated)
+
+First S08d VM-originated benchmark artifact:
+`benchmarks/security-engine/data_1.1.1778860037_arm64_process_enforcement.json`.
+
+This host-side serial benchmark runs a live service and VM, installs a runtime
+CEL rule that blocks shell process exec, sends eight blocked exec requests, and
+verifies the response, runtime match counters, canonical `session.db` security
+events, and `logs` exposure.
+
+| Metric | Value |
+|--------|-------|
+| Runs | 8 |
+| Gate | 750ms mean |
+| Min blocked exec latency | 9.132ms |
+| Mean blocked exec latency | 9.438ms |
+| Median blocked exec latency | 9.346ms |
+| p95 blocked exec latency | 9.801ms |
+| p99 blocked exec latency | 9.801ms |
+| Max blocked exec latency | 9.801ms |
+| Runtime matches | 8 |
+| Session DB security events | 8 |
+
+Run:
+
+```bash
+uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
+```
+
 ## Test environment
 
 | Component | Version |

@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first committed Security Engine CEL microbenchmark artifact under
   `benchmarks/security-engine/` and surfaced the host-side numbers in the
   benchmark results docs with explicit non-VM-originated caveats.
+- Added the first VM-originated Security Engine benchmark for process
+  enforcement: a serial live-service/VM test installs a runtime CEL block rule,
+  measures repeated blocked exec decisions, verifies runtime match counters,
+  `session.db` resolved-event rows, and `logs` attribution, and archives the
+  result under `benchmarks/security-engine/`.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.
