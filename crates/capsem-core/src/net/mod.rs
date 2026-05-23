@@ -3,4 +3,3 @@ pub mod cert_authority;
 pub mod dns;
 pub mod interpreters;
 pub mod mitm_proxy;
-pub mod parsers;

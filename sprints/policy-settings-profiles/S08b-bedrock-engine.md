@@ -75,6 +75,12 @@ construction. Framed MCP dispatch still owns JSON-RPC parsing/local policy and
 aggregator transmission, but it now adapts method summaries into
 `McpSecurityEventInput` before runtime CEL evaluation and resolved-event
 journaling.
+The latest model-stream parser slice moved the SSE wire parser and its
+adversarial/provider sample tests into `capsem-network-engine`. MITM SSE hooks,
+provider interpreters, and parser benchmarks now consume
+`capsem_network_engine::sse_parser` directly; the old
+`capsem-core::net::parsers` module is removed rather than left as a shadow
+authority.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

@@ -12,3 +12,4 @@ pub mod domain_policy;
 pub mod http_policy;
 pub mod http_security;
 pub mod mcp_security;
+pub mod sse_parser;

@@ -117,7 +117,7 @@ impl Hook for Emitter {
     {
         let saw = self.saw_emit_ok.clone();
         Box::pin(async move {
-            let mut sse = crate::net::parsers::sse_parser::SseEvent {
+            let mut sse = capsem_network_engine::sse_parser::SseEvent {
                 event_type: Some("test".into()),
                 data: "hello".into(),
             };

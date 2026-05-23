@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::net::parsers::sse_parser::SseEvent;
+use capsem_network_engine::sse_parser::SseEvent;
 
 /// Why the model stopped generating.
 #[derive(Debug, Clone, PartialEq)]

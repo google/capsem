@@ -19,7 +19,7 @@ use bytes::Bytes;
 
 use super::hooks::{ChunkCtx, ChunkHook, ConnMeta};
 use crate::net::ai_traffic::provider::ProviderKind;
-use crate::net::parsers::sse_parser::{SseEvent, SseParser};
+use capsem_network_engine::sse_parser::{SseEvent, SseParser};
 
 /// Per-request producer/consumer slot for parsed SSE events.
 ///

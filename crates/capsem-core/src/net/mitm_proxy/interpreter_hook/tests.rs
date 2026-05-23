@@ -120,7 +120,7 @@ fn anthropic_hook_skips_on_wrong_domain() {
             trace_id: None,
         };
         let s = c.state::<SseEventStream>(SseEventStream::default);
-        s.events.push(crate::net::parsers::sse_parser::SseEvent {
+        s.events.push(capsem_network_engine::sse_parser::SseEvent {
             event_type: Some("message_start".into()),
             data: "{}".into(),
         });
