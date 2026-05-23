@@ -66,6 +66,12 @@ is updated with the concrete branch and worktree path, verified by
   ask/confirm UX, so shipped Profile V2 `ask` decisions now resolve as
   allow/pass instead of blocking writes or pretending an interactive prompter
   exists.
+- **2026-05-23:** The prior Docker/Colima initrd-packaging caveat was replayed
+  and cleared. Colima was in a half-running state (`colima list` said running
+  while Docker could not connect and SSH reset by peer); `colima stop &&
+  colima start` restored the Docker socket, and `just _pack-initrd` passed with
+  Docker cross-compilation, initrd repack, hash-named asset refresh, and dev
+  manifest signature verification.
 
 ## Operating Mode
 
@@ -2485,7 +2491,8 @@ a valid claim -- mark it `[ ]` instead.
 30. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
     -- conditional release blocker. Required before any shipped profile/rule
     exposes `decision = "ask"` as user-facing behavior; otherwise ask must be
-    disabled or explicitly unavailable and must never silently behave as allow.
+    documented as non-interactive allow/pass and runtime/operator ask overlays
+    must remain rejected until the confirm resolver lands.
 31. [x] [S16 - Profile UI](S16-profile-ui.md)
     -- release-blocking usable UI surface for the bedrock endpoint contract:
     profile catalog/selector/revisions, package/asset readiness, profile-backed

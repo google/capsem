@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed in-guest doctor diagnostics to treat positive MCP network probes as
   conditional on the selected profile while still requiring write requests to
   be blocked when `CAPSEM_WEB_ALLOW_WRITE=0`.
+- Cleared the local Docker/Colima initrd packaging caveat after restoring the
+  half-running Colima VM and proving `just _pack-initrd` with Docker
+  cross-compilation, initrd repack, hash-named assets, and manifest signature
+  verification.
 
 ### Added
 - Added the first `capsem-file-engine` crate so file activity normalization has
