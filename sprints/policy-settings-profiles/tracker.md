@@ -1784,7 +1784,7 @@ a valid claim -- mark it `[ ]` instead.
     gateway's `404` for missing runtime routes. Still missing after this slice:
     interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
     performance proof, and VM/runtime cutover breadth.
-22. [ ] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
+22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
     Rust runtime parity, and real-session fixture generation after S08b's
@@ -2025,6 +2025,13 @@ a valid claim -- mark it `[ ]` instead.
     fixture and expected report match the real CEL evaluator. Still missing in
     S08c: full runtime-CEL parity for constructs outside the admin-supported
     subset and broader session-export corpus diversity.
+    Closeout reconciliation: S08c is closed. The admin tool intentionally
+    keeps a constrained offline CEL subset; it must fail closed for unsupported
+    constructs instead of pretending to be the runtime CEL engine. Runtime CEL
+    parity is pinned by Rust expected-artifact tests over the same committed
+    fixtures. `capsem-admin detection hunt` remains intentionally unimplemented
+    offline; installed Capsem owns session-backed detection hunt through the
+    service/CLI runtime path.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

@@ -2,7 +2,8 @@
 
 ## Status
 
-In progress. Inserted on 2026-05-21 after the S08b rule-runtime regroup.
+Done. Inserted on 2026-05-21 after the S08b rule-runtime regroup; closed on
+2026-05-23 after the first stable session-export process corpus row landed.
 
 ## Goal
 
@@ -85,14 +86,14 @@ session-scoped enforcement replay, it should be named and designed separately.
 
 ## Tasks
 
-- [ ] Create shared event, enforcement, detection, expected-result fixture corpus.
+- [x] Create shared event, enforcement, detection, expected-result fixture corpus.
 - [x] Create shared policy-context fixtures and negative fixtures for rejected
   `event.*` authoring.
 - [x] Add `capsem-admin enforcement validate|compile|backtest` over the shared
   corpus without requiring a Capsem service.
 - [x] Add `capsem-admin detection validate|compile|backtest` over the shared corpus
   without requiring a Capsem service.
-- [ ] Keep `capsem-admin detection hunt` optional unless it can target a local
+- [x] Keep `capsem-admin detection hunt` optional unless it can target a local
   service/session store explicitly; offline detection backtest is mandatory.
 - [x] Add Rust runtime parity tests that consume the same corpus and expected
   outputs through the S08b service/security-engine evaluator.
@@ -131,11 +132,11 @@ session-scoped enforcement replay, it should be named and designed separately.
   `http.request.header("authorization").exists()`, and
   `http.request.body.text.contains("secret")`, and rejects `event.*` /
   `subject.*` roots during replay.
-- Important debt: the offline policy backtest is currently a constrained
-  fixture replay evaluator for the committed corpus, not the full runtime CEL
-  authority. S08c remains open until enforcement compile/parity uses the same
-  CEL semantics as Rust runtime or an equivalent shared expected-row generator,
-  and until real-session fixtures are generated from the resolved-event journal.
+- Decision: the offline policy backtest is a constrained fixture replay
+  evaluator for committed corpora, not the full runtime CEL authority. Runtime
+  CEL parity is pinned by Rust tests that consume the same expected artifacts
+  as `capsem-admin`; unsupported admin-side CEL constructs must fail closed
+  during admin compile/backtest rather than silently approximating runtime CEL.
 - Slice 4 added the first Rust expected-artifact parity test: the real CEL
   evaluator consumes the shared policy-context JSONL corpus and compares its
   enforcement backtest row shape to
