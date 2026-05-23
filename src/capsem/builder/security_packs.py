@@ -1,4 +1,4 @@
-"""Typed policy and detection pack contracts for capsem-admin."""
+"""Typed enforcement and detection pack contracts for capsem-admin."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ class EventFamily(str, Enum):
     CONVERSATION = "conversation"
 
 
-class PolicyDecision(str, Enum):
+class EnforcementDecision(str, Enum):
     ALLOW = "allow"
     BLOCK = "block"
     ASK = "ask"
@@ -106,7 +106,7 @@ class RuleProvenance(StrictModel):
     detection_suggestion_id: NonEmptyStr | None = None
 
 
-class PolicyRuleV1(StrictModel):
+class EnforcementRuleV1(StrictModel):
     id: RuleId
     name: NonEmptyStr
     description: NonEmptyStr | None = None
@@ -115,7 +115,7 @@ class PolicyRuleV1(StrictModel):
     event_type: NonEmptyStr
     priority: Annotated[int, Field(ge=-1000, le=1000)] = 100
     condition: NonEmptyStr
-    decision: PolicyDecision
+    decision: EnforcementDecision
     rewrite: RewritePayload | None = None
     reason: NonEmptyStr | None = None
     tags: list[NonEmptyStr] = Field(default_factory=list)
@@ -123,17 +123,17 @@ class PolicyRuleV1(StrictModel):
     provenance: RuleProvenance = Field(default_factory=RuleProvenance)
 
     @model_validator(mode="after")
-    def _rewrite_matches_decision(self) -> "PolicyRuleV1":
-        if self.decision is PolicyDecision.REWRITE and self.rewrite is None:
+    def _rewrite_matches_decision(self) -> "EnforcementRuleV1":
+        if self.decision is EnforcementDecision.REWRITE and self.rewrite is None:
             raise ValueError("rewrite decision requires rewrite payload")
-        if self.decision is not PolicyDecision.REWRITE and self.rewrite is not None:
+        if self.decision is not EnforcementDecision.REWRITE and self.rewrite is not None:
             raise ValueError("rewrite payload is only valid for rewrite decision")
         return self
 
 
-class PolicyPackV1(StrictModel):
-    schema_: Literal["capsem.policy-pack.v1"] = Field(
-        default="capsem.policy-pack.v1",
+class EnforcementPackV1(StrictModel):
+    schema_: Literal["capsem.enforcement-pack.v1"] = Field(
+        default="capsem.enforcement-pack.v1",
         alias="schema",
     )
     id: PackId
@@ -143,14 +143,14 @@ class PolicyPackV1(StrictModel):
     description: NonEmptyStr | None = None
     profile_scope: ProfileScope = Field(default_factory=ProfileScope)
     locks: PackLocks = Field(default_factory=PackLocks)
-    rules: Annotated[list[PolicyRuleV1], Field(min_length=1)]
+    rules: Annotated[list[EnforcementRuleV1], Field(min_length=1)]
 
     @model_validator(mode="after")
-    def _rule_ids_are_unique(self) -> "PolicyPackV1":
+    def _rule_ids_are_unique(self) -> "EnforcementPackV1":
         seen: set[str] = set()
         for rule in self.rules:
             if rule.id in seen:
-                raise ValueError(f"duplicate policy rule id: {rule.id}")
+                raise ValueError(f"duplicate enforcement rule id: {rule.id}")
             seen.add(rule.id)
         return self
 
@@ -305,18 +305,18 @@ class DetectionCheckReportV1(StrictModel):
     timing: DetectionCheckTimingV1
 
 
-class PolicyBacktestMatchV1(StrictModel):
+class EnforcementBacktestMatchV1(StrictModel):
     event_ref: PolicyContextEventRefV1
     rule_id: RuleId
     pack_id: PackId
-    decision: PolicyDecision
+    decision: EnforcementDecision
     reason: NonEmptyStr | None = None
     matched_fields: dict[NonEmptyStr, DetectionValue] = Field(default_factory=dict)
 
 
-class PolicyBacktestReportV1(StrictModel):
-    schema_: Literal["capsem.policy-backtest.v1"] = Field(
-        default="capsem.policy-backtest.v1",
+class EnforcementBacktestReportV1(StrictModel):
+    schema_: Literal["capsem.enforcement-backtest.v1"] = Field(
+        default="capsem.enforcement-backtest.v1",
         alias="schema",
     )
     ok: bool
@@ -325,14 +325,14 @@ class PolicyBacktestReportV1(StrictModel):
     event_count: Annotated[int, Field(ge=0)]
     rule_count: Annotated[int, Field(ge=0)]
     match_count: Annotated[int, Field(ge=0)]
-    rows: list[PolicyBacktestMatchV1] = Field(default_factory=list)
+    rows: list[EnforcementBacktestMatchV1] = Field(default_factory=list)
     diagnostics: list[str] = Field(default_factory=list)
     timing: DetectionCheckTimingV1
 
 
-class PolicyCompileReportV1(StrictModel):
-    schema_: Literal["capsem.policy-compile.v1"] = Field(
-        default="capsem.policy-compile.v1",
+class EnforcementCompileReportV1(StrictModel):
+    schema_: Literal["capsem.enforcement-compile.v1"] = Field(
+        default="capsem.enforcement-compile.v1",
         alias="schema",
     )
     ok: bool
@@ -788,7 +788,7 @@ _HEADER_EXISTS_RE = re.compile(
     r"^http\.request\.header\((?P<quote>['\"])(?P<header>[^'\"]+)(?P=quote)\)\.exists\(\)$",
 )
 
-_SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
+_SUPPORTED_ENFORCEMENT_PATHS: dict[EventFamily, frozenset[str]] = {
     EventFamily.DNS: frozenset(
         {
             "dns.request.qname",
@@ -915,18 +915,18 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
 }
 
 
-def _validate_policy_path(rule: PolicyRuleV1, path: str) -> None:
+def _validate_enforcement_path(rule: EnforcementRuleV1, path: str) -> None:
     path_key = re.sub(r"\[[0-9]+\]", "[*]", path)
-    family_paths = _SUPPORTED_POLICY_PATHS.get(rule.event_family, frozenset())
+    family_paths = _SUPPORTED_ENFORCEMENT_PATHS.get(rule.event_family, frozenset())
     if path_key in family_paths:
         return
     raise ValueError(
-        f"rule {rule.id} uses unsupported policy path for "
+        f"rule {rule.id} uses unsupported enforcement path for "
         f"{rule.event_family.value}: {path}"
     )
 
 
-def _validate_policy_condition(rule: PolicyRuleV1) -> None:
+def _validate_enforcement_condition(rule: EnforcementRuleV1) -> None:
     for clause in (part.strip() for part in rule.condition.split("&&")):
         if not clause:
             continue
@@ -937,41 +937,41 @@ def _validate_policy_condition(rule: PolicyRuleV1) -> None:
         if _HEADER_EXISTS_RE.match(clause) is not None:
             if rule.event_family is not EventFamily.HTTP:
                 raise ValueError(
-                    f"rule {rule.id} uses unsupported policy path for "
+                    f"rule {rule.id} uses unsupported enforcement path for "
                     f"{rule.event_family.value}: http.request.header"
                 )
             continue
         contains_match = _CONTAINS_RE.match(clause)
         if contains_match is not None:
-            _validate_policy_path(rule, contains_match.group("path"))
+            _validate_enforcement_path(rule, contains_match.group("path"))
             continue
         starts_with_match = _STARTS_WITH_RE.match(clause)
         if starts_with_match is not None:
-            _validate_policy_path(rule, starts_with_match.group("path"))
+            _validate_enforcement_path(rule, starts_with_match.group("path"))
             continue
         equals_match = _EQUALS_RE.match(clause)
         if equals_match is not None:
-            _validate_policy_path(rule, equals_match.group("path"))
+            _validate_enforcement_path(rule, equals_match.group("path"))
             continue
         bool_equals_match = _BOOL_EQUALS_RE.match(clause)
         if bool_equals_match is not None:
-            _validate_policy_path(rule, bool_equals_match.group("path"))
+            _validate_enforcement_path(rule, bool_equals_match.group("path"))
             continue
         number_equals_match = _NUMBER_EQUALS_RE.match(clause)
         if number_equals_match is not None:
-            _validate_policy_path(rule, number_equals_match.group("path"))
+            _validate_enforcement_path(rule, number_equals_match.group("path"))
             continue
         raise ValueError(f"rule {rule.id} uses unsupported CEL clause: {clause}")
 
 
-def _policy_rule_matches(
-    rule: PolicyRuleV1,
+def _enforcement_rule_matches(
+    rule: EnforcementRuleV1,
     fixture: PolicyContextFixtureV1,
 ) -> tuple[bool, dict[str, DetectionValue]]:
     if _context_event_family(fixture.context) is not rule.event_family:
         return False, {}
     matched: dict[str, DetectionValue] = {}
-    _validate_policy_condition(rule)
+    _validate_enforcement_condition(rule)
     for clause in (part.strip() for part in rule.condition.split("&&")):
         if not clause:
             continue
@@ -1105,14 +1105,14 @@ def run_detection_check(
     )
 
 
-def compile_policy_pack(pack: PolicyPackV1) -> PolicyCompileReportV1:
+def compile_enforcement_pack(pack: EnforcementPackV1) -> EnforcementCompileReportV1:
     diagnostics: list[str] = []
     for rule in pack.rules:
         try:
-            _validate_policy_condition(rule)
+            _validate_enforcement_condition(rule)
         except Exception as error:
             diagnostics.append(str(error))
-    return PolicyCompileReportV1(
+    return EnforcementCompileReportV1(
         ok=not diagnostics,
         pack_id=pack.id,
         pack_version=pack.version,
@@ -1121,15 +1121,15 @@ def compile_policy_pack(pack: PolicyPackV1) -> PolicyCompileReportV1:
     )
 
 
-def run_policy_backtest(
-    pack: PolicyPackV1,
+def run_enforcement_backtest(
+    pack: EnforcementPackV1,
     *,
     events_path: Path,
-) -> PolicyBacktestReportV1:
+) -> EnforcementBacktestReportV1:
     started = time.perf_counter()
-    compile_report = compile_policy_pack(pack)
+    compile_report = compile_enforcement_pack(pack)
     diagnostics: list[str] = list(compile_report.diagnostics)
-    rows: list[PolicyBacktestMatchV1] = []
+    rows: list[EnforcementBacktestMatchV1] = []
     try:
         fixtures = load_policy_context_fixture_jsonl(events_path)
     except Exception as error:
@@ -1141,13 +1141,13 @@ def run_policy_backtest(
                 if not rule.enabled:
                     continue
                 try:
-                    matched, matched_fields = _policy_rule_matches(rule, fixture)
+                    matched, matched_fields = _enforcement_rule_matches(rule, fixture)
                 except Exception as error:
                     diagnostics.append(str(error))
                     continue
                 if matched:
                     rows.append(
-                        PolicyBacktestMatchV1(
+                        EnforcementBacktestMatchV1(
                             event_ref=fixture.event_ref,
                             rule_id=rule.id,
                             pack_id=pack.id,
@@ -1157,7 +1157,7 @@ def run_policy_backtest(
                         )
                     )
                     break
-    return PolicyBacktestReportV1(
+    return EnforcementBacktestReportV1(
         ok=not diagnostics,
         pack_id=pack.id,
         pack_version=pack.version,
@@ -1176,11 +1176,11 @@ def dump_detection_ir_json(ir: DetectionIRV1) -> str:
     return ir.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
-def dump_policy_compile_report_json(report: PolicyCompileReportV1) -> str:
+def dump_enforcement_compile_report_json(report: EnforcementCompileReportV1) -> str:
     return report.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
-def dump_policy_backtest_report_json(report: PolicyBacktestReportV1) -> str:
+def dump_enforcement_backtest_report_json(report: EnforcementBacktestReportV1) -> str:
     return report.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
@@ -1204,19 +1204,19 @@ def load_policy_context_fixture_jsonl(path: Path) -> list[PolicyContextFixtureV1
     return fixtures
 
 
-def validate_policy_pack_json(payload: str | bytes) -> PolicyPackV1:
-    return PolicyPackV1.model_validate_json(payload)
+def validate_enforcement_pack_json(payload: str | bytes) -> EnforcementPackV1:
+    return EnforcementPackV1.model_validate_json(payload)
 
 
 def validate_detection_pack_json(payload: str | bytes) -> DetectionPackV1:
     return DetectionPackV1.model_validate_json(payload)
 
 
-def validate_policy_pack_toml(path: Path) -> PolicyPackV1:
+def validate_enforcement_pack_toml(path: Path) -> EnforcementPackV1:
     with path.open("rb") as handle:
         raw = tomllib.load(handle)
     payload = _RawTomlAdapter.dump_json(raw)
-    return PolicyPackV1.model_validate_json(payload)
+    return EnforcementPackV1.model_validate_json(payload)
 
 
 def validate_detection_pack_toml(path: Path) -> DetectionPackV1:
@@ -1234,7 +1234,7 @@ def validate_detection_pack_yaml(path: Path) -> DetectionPackV1:
     return DetectionPackV1.model_validate_json(payload)
 
 
-def dump_policy_pack_json(pack: PolicyPackV1) -> str:
+def dump_enforcement_pack_json(pack: EnforcementPackV1) -> str:
     return pack.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
@@ -1242,7 +1242,7 @@ def dump_detection_pack_json(pack: DetectionPackV1) -> str:
     return pack.model_dump_json(by_alias=True, exclude_none=True, indent=2)
 
 
-def dump_policy_pack_toml(pack: PolicyPackV1) -> str:
+def dump_enforcement_pack_toml(pack: EnforcementPackV1) -> str:
     return tomli_w.dumps(pack.model_dump(mode="json", by_alias=True, exclude_none=True))
 
 
@@ -1250,8 +1250,8 @@ def dump_detection_pack_toml(pack: DetectionPackV1) -> str:
     return tomli_w.dumps(pack.model_dump(mode="json", by_alias=True, exclude_none=True))
 
 
-def dump_policy_pack_schema_json() -> str:
-    schema = TypeAdapter(PolicyPackV1).json_schema(
+def dump_enforcement_pack_schema_json() -> str:
+    schema = TypeAdapter(EnforcementPackV1).json_schema(
         by_alias=True,
         ref_template="#/$defs/{model}",
     )

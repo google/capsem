@@ -27,7 +27,7 @@ Policy-context fixtures must use canonical roots such as
 `http.request.host`, `http.request.header("authorization").exists()`, and
 `http.request.body.text`. Internal `event.*` and legacy `subject.*` paths are
 test failures. Unknown canonical-looking paths and cross-family roots are also
-test failures: the admin policy compiler has an explicit family-scoped
+test failures: the admin enforcement compiler has an explicit family-scoped
 allowlist, so a typo like `http.request.raw` must fail before replay.
 
 ## Update Order

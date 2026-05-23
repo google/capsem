@@ -6,7 +6,7 @@ sidebar:
 ---
 
 Detection packs describe findings. They do not block traffic or mutate
-runtime behavior. Enforcement belongs to policy packs; detection results are
+runtime behavior. Enforcement belongs to enforcement packs; detection results are
 attached to resolved security events and exported through telemetry, audit
 logging, and future detection sinks.
 

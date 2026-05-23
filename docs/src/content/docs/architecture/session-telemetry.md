@@ -252,7 +252,7 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | `bytes_sent` | INTEGER | Request body size |
 | `bytes_received` | INTEGER | Response body size |
 | `duration_ms` | INTEGER | End-to-end latency |
-| `matched_rule` | TEXT | Which policy rule matched |
+| `matched_rule` | TEXT | Which enforcement rule matched |
 | `request_headers` | TEXT | Request headers (when body logging enabled) |
 | `response_headers` | TEXT | Response headers |
 | `request_body_preview` | TEXT | First 4 KB of request body |
@@ -260,7 +260,7 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | `conn_type` | TEXT | Default `https`, `https-mitm` for proxied |
 | `policy_mode` | TEXT | Policy engine mode, when set |
 | `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
-| `policy_rule` | TEXT | Matching policy rule key |
+| `policy_rule` | TEXT | Matching enforcement rule key |
 | `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
@@ -372,7 +372,7 @@ DNS queries handled by the host DNS proxy.
 | `trace_id` | TEXT | Cross-table correlation ID |
 | `policy_mode` | TEXT | Policy engine mode, when set |
 | `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
-| `policy_rule` | TEXT | Matching policy rule key |
+| `policy_rule` | TEXT | Matching enforcement rule key |
 | `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
 
 | `endpoint_id` | TEXT | Hook endpoint identifier |
@@ -565,15 +565,15 @@ LIMIT 20;"
 ```
 
 DNS block rows prove no upstream resolution happened when
-`upstream_resolver_ms = 0`. DNS rewrite rows should carry the policy rule and
+`upstream_resolver_ms = 0`. DNS rewrite rows should carry the enforcement rule and
 `policy_action = 'rewrite'`; synthetic answer payloads are not stored in
 session telemetry.
 
 ### Model and Tool Traffic
 
-Model policy uses the existing parsed AI rows plus policy rule metadata as
+Model enforcement uses the existing parsed AI rows plus enforcement rule metadata as
 the enforcement slice lands. Today, use these rows to prove the subject and
-no-leak side of model policy tests:
+no-leak side of model enforcement tests:
 
 ```bash
 just query-session "

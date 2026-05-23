@@ -505,7 +505,7 @@ a valid claim -- mark it `[ ]` instead.
     boot test and one asset-dependent skip; `uv run python -m pytest
     tests/test_image_verify.py tests/test_image_sbom.py tests/test_leak_detection.py
     -q` passed.
-    Twenty-fourth slice added typed `capsem-admin policy validate|schema` and
+    Twenty-fourth slice added typed `capsem-admin enforcement validate|schema` and
     `capsem-admin detection validate|schema` commands backed by strict
     Pydantic `capsem.policy-pack.v1` and `capsem.detection-pack.v1` models plus
     committed schema artifacts; detection envelopes support YAML. Verification: `uv run python -m pytest
@@ -2090,7 +2090,7 @@ a valid claim -- mark it `[ ]` instead.
     artifacts, Rust/admin parity over identical expected rows, real-session
     fixture generation, and corpus workflow docs.
     Third TDD admin-policy-backtest slice added a shared enforcement policy
-    pack fixture, `capsem-admin policy backtest` over the same policy-context
+    pack fixture, `capsem-admin enforcement backtest` over the same policy-context
     JSONL corpus, and first committed expected-result artifacts for both
     enforcement and detection backtests. The policy fixture uses canonical
     high-level roots (`http.request.host.contains("google")`,
@@ -2098,7 +2098,7 @@ a valid claim -- mark it `[ ]` instead.
     `http.request.body.text.contains("secret")`) instead of internal
     `event.*` translations. Verification: red `uv run pytest
     tests/test_admin_cli.py::test_capsem_admin_policy_backtest_uses_policy_context_corpus
-    -q` first failed because `policy backtest` did not exist, then focused
+    -q` first failed because `enforcement backtest` did not exist, then focused
     policy/detection backtest tests passed with **3** tests, including an
     adversarial `event.subject.*` root rejection. Focused Rust corpus parity
     still passed. Still missing in S08c: policy compile/full CEL parity for
@@ -2136,7 +2136,7 @@ a valid claim -- mark it `[ ]` instead.
     Sixth TDD admin-policy-compile slice added `capsem-admin policy compile`
     with a typed `capsem.policy-compile.v1` report. The command compile-checks
     the admin-supported canonical CEL subset, rejects `event.*` / `subject.*`
-    roots before replay, and documents the command alongside policy validate
+    roots before replay, and documents the command alongside enforcement validate
     and backtest. Verification: red `uv run pytest
     tests/test_admin_cli.py::test_capsem_admin_policy_compile_checks_canonical_roots
     tests/test_admin_cli.py::test_capsem_admin_policy_compile_rejects_internal_event_roots
@@ -2208,11 +2208,11 @@ a valid claim -- mark it `[ ]` instead.
     from the resolved-event journal and full runtime-CEL parity beyond the
     admin subset.
     Twelfth TDD admin-backtest-compile-first slice fixed a quiet empty-corpus
-    risk: `capsem-admin policy backtest` now compile-checks policy packs before
+    risk: `capsem-admin enforcement backtest` now compile-checks enforcement packs before
     replaying fixtures, so invalid paths fail even when the events file has no
     rows. Verification: red `uv run pytest tests/test_admin_cli.py -k
     "policy_backtest_compile_checks_empty_corpus" -q` first failed with exit
-    code 0, then focused policy backtest tests passed with **3** tests. Still
+    code 0, then focused enforcement backtest tests passed with **3** tests. Still
     missing in S08c: live VM-generated session fixtures from the
     resolved-event journal and full runtime-CEL parity beyond the admin subset.
     Thirteenth cross-language drift slice pinned the Python-generated
@@ -2647,6 +2647,18 @@ a valid claim -- mark it `[ ]` instead.
     caveats, profile status docs only use `active` / `deprecated` / `revoked`
     as accepted values, and an old session-telemetry example was updated from
     `policy.http.strip_credentials` to `security.rules.http.strip_credentials`.
+    Second S18 contract/runtime replay slice passed the focused settings,
+    profile, admin, security-pack, Security Engine, profile-catalog, VM-profile
+    pin, frontend, service enforcement/detection/runtime-rule, gateway proxy,
+    admin docs, and docs-build gates. The slice also closed the public naming
+    drift: operator-facing admin enforcement packs now use
+    `capsem-admin enforcement`, `capsem.enforcement-pack.v1`,
+    `capsem.enforcement-compile.v1`, and
+    `capsem.enforcement-backtest.v1`; old `capsem-admin policy` is not kept as
+    a public alias, stale public-name grep over `src`, `tests`, `docs`, `data`,
+    and `schemas` returns no matches, and narrow internal Rust decision-type
+    names in the HTTP/MCP transport boundary now say enforcement instead of
+    policy.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

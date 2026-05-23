@@ -42,7 +42,7 @@ runtime ask by installing the real confirm resolver and queue described below.
 [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
 settles the rule taxonomy for Confirm: `accept` and `deny` resolve one pending
 ask, while `promote-allow` and `promote-deny` create synchronous
-`capsem.policy-pack.v1` policy rules. Detection findings may annotate prompts
+`capsem.enforcement-pack.v1` enforcement rules. Detection findings may annotate prompts
 or provide a `policy_suggestion_template`, but S15 must never silently turn
 detections into blocking policy.
 

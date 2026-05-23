@@ -123,7 +123,7 @@ session-scoped enforcement replay, it should be named and designed separately.
   pack fixture under `data/detection/sigma/`, and documentation updates so
   offline detection checks now target policy-context JSONL instead of the old
   normalized-event/subject shape.
-- Slice 3 added `capsem-admin policy backtest`, a shared enforcement policy
+- Slice 3 added `capsem-admin enforcement backtest`, a shared enforcement policy
   pack fixture under `data/enforcement/policy/`, and first expected-result
   artifacts under `data/enforcement/backtest-expected/` and
   `data/detection/backtest-expected/`. The admin backtest accepts canonical
@@ -132,7 +132,7 @@ session-scoped enforcement replay, it should be named and designed separately.
   `http.request.header("authorization").exists()`, and
   `http.request.body.text.contains("secret")`, and rejects `event.*` /
   `subject.*` roots during replay.
-- Decision: the offline policy backtest is a constrained fixture replay
+- Decision: the offline enforcement backtest is a constrained fixture replay
   evaluator for committed corpora, not the full runtime CEL authority. Runtime
   CEL parity is pinned by Rust tests that consume the same expected artifacts
   as `capsem-admin`; unsupported admin-side CEL constructs must fail closed
@@ -149,7 +149,7 @@ session-scoped enforcement replay, it should be named and designed separately.
   `subject.request.host`, and pinned the admin detection backtest expected
   artifact from Rust.
 - Slice 6 added `capsem-admin policy compile`, which fail-closed checks the
-  admin-supported canonical CEL subset before offline policy backtest. This
+  admin-supported canonical CEL subset before offline enforcement backtest. This
   closes the offline validate/compile/backtest command surface while keeping
   full runtime-CEL parity listed as explicit remaining debt.
 - Slice 7 added the corp/developer rule-corpus workflow page, documenting the
@@ -177,7 +177,7 @@ session-scoped enforcement replay, it should be named and designed separately.
   a quiet replay miss; the green path now rejects unknown canonical-looking
   paths and cross-family roots such as `dns.request.qname` inside an HTTP rule
   before offline replay.
-- Slice 12 made `capsem-admin policy backtest` compile-check before fixture
+- Slice 12 made `capsem-admin enforcement backtest` compile-check before fixture
   replay. The red test proved an empty policy-context corpus could previously
   report success for an invalid rule because validation happened only inside
   the fixture loop; backtest now fails closed even when there are no rows.
@@ -240,8 +240,8 @@ session-scoped enforcement replay, it should be named and designed separately.
   remains open.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
   duplicate rule ids, mismatched expected labels, internal `event.*` /
-  `subject.*` authoring, unknown canonical-looking admin policy paths,
-  cross-family policy roots, empty-corpus policy backtest compile failures,
+  `subject.*` authoring, unknown canonical-looking admin enforcement paths,
+  cross-family policy roots, empty-corpus enforcement backtest compile failures,
   legacy Detection IR `subject.*` paths, and evidence-dedup behavior.
 - E2E/VM or integration: hand-built `session.db` hunt expected artifact covers
   the resolved-event journal read path; a live VM process-enforcement E2E now

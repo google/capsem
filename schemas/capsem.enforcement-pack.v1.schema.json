@@ -1,5 +1,124 @@
 {
   "$defs": {
+    "EnforcementDecision": {
+      "enum": [
+        "allow",
+        "block",
+        "ask",
+        "rewrite"
+      ],
+      "title": "EnforcementDecision",
+      "type": "string"
+    },
+    "EnforcementRuleV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "event_family": {
+          "$ref": "#/$defs/EventFamily"
+        },
+        "event_type": {
+          "minLength": 1,
+          "title": "Event Type",
+          "type": "string"
+        },
+        "priority": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": -1000,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "condition": {
+          "minLength": 1,
+          "title": "Condition",
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/EnforcementDecision"
+        },
+        "rewrite": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RewritePayload"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "references": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "provenance": {
+          "$ref": "#/$defs/RuleProvenance"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "event_family",
+        "event_type",
+        "condition",
+        "decision"
+      ],
+      "title": "EnforcementRuleV1",
+      "type": "object"
+    },
     "EventFamily": {
       "enum": [
         "dns",
@@ -60,125 +179,6 @@
       ],
       "title": "PackStatus",
       "type": "string"
-    },
-    "PolicyDecision": {
-      "enum": [
-        "allow",
-        "block",
-        "ask",
-        "rewrite"
-      ],
-      "title": "PolicyDecision",
-      "type": "string"
-    },
-    "PolicyRuleV1": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$",
-          "title": "Id",
-          "type": "string"
-        },
-        "name": {
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "description": {
-          "anyOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Description"
-        },
-        "enabled": {
-          "default": true,
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "event_family": {
-          "$ref": "#/$defs/EventFamily"
-        },
-        "event_type": {
-          "minLength": 1,
-          "title": "Event Type",
-          "type": "string"
-        },
-        "priority": {
-          "default": 100,
-          "maximum": 1000,
-          "minimum": -1000,
-          "title": "Priority",
-          "type": "integer"
-        },
-        "condition": {
-          "minLength": 1,
-          "title": "Condition",
-          "type": "string"
-        },
-        "decision": {
-          "$ref": "#/$defs/PolicyDecision"
-        },
-        "rewrite": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RewritePayload"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "reason": {
-          "anyOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Reason"
-        },
-        "tags": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "title": "Tags",
-          "type": "array"
-        },
-        "references": {
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "title": "References",
-          "type": "array"
-        },
-        "provenance": {
-          "$ref": "#/$defs/RuleProvenance"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "event_family",
-        "event_type",
-        "condition",
-        "decision"
-      ],
-      "title": "PolicyRuleV1",
-      "type": "object"
     },
     "ProfileScope": {
       "additionalProperties": false,
@@ -341,8 +341,8 @@
   "additionalProperties": false,
   "properties": {
     "schema": {
-      "const": "capsem.policy-pack.v1",
-      "default": "capsem.policy-pack.v1",
+      "const": "capsem.enforcement-pack.v1",
+      "default": "capsem.enforcement-pack.v1",
       "title": "Schema",
       "type": "string"
     },
@@ -383,7 +383,7 @@
     },
     "rules": {
       "items": {
-        "$ref": "#/$defs/PolicyRuleV1"
+        "$ref": "#/$defs/EnforcementRuleV1"
       },
       "minItems": 1,
       "title": "Rules",
@@ -397,6 +397,6 @@
     "owner",
     "rules"
   ],
-  "title": "PolicyPackV1",
+  "title": "EnforcementPackV1",
   "type": "object"
 }

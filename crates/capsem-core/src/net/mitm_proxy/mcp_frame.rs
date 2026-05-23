@@ -167,9 +167,9 @@ where
                         }
                     }
                     Err(error) => {
-                        request_decision = McpPolicyDecision {
+                        request_decision = McpEnforcementDecision {
                             mode: McpPolicyMode::Enforce,
-                            action: McpPolicyAction::Block,
+                            action: McpEnforcementAction::Block,
                             rule: "mcp.runtime.error".into(),
                             reason: format!("security engine error: {error}"),
                             rewrite_target: None,
@@ -203,7 +203,7 @@ where
                         &response,
                         &process_name,
                         0,
-                        McpCallPolicyFields::from(&decision),
+                        McpCallEnforcementFields::from(&decision),
                         None,
                     )
                     .await;
@@ -212,14 +212,14 @@ where
             }
 
             let mut dispatch_request = request.clone();
-            let response_decision_request = if request_decision.action == McpPolicyAction::Rewrite {
+            let response_decision_request = if request_decision.action == McpEnforcementAction::Rewrite {
                 match rewrite_mcp_request(dispatch_request, &request_decision) {
                     Ok(rewritten) => {
                         dispatch_request = rewritten;
                         McpDecisionRequest::from_request(&process_name, &dispatch_request, &summary)
                     }
                     Err(error) => {
-                        let failed_decision = McpPolicyDecision {
+                        let failed_decision = McpEnforcementDecision {
                             reason: error,
                             ..request_decision.clone()
                         };
@@ -234,7 +234,7 @@ where
                             &response,
                             &process_name,
                             0,
-                            McpCallPolicyFields::from(&failed_decision),
+                            McpCallEnforcementFields::from(&failed_decision),
                             None,
                         )
                         .await;
@@ -250,7 +250,7 @@ where
                 decision_request.clone()
             };
 
-            if request_decision.action.blocks_dispatch() && request_decision.action != McpPolicyAction::Rewrite {
+            if request_decision.action.blocks_dispatch() && request_decision.action != McpEnforcementAction::Rewrite {
                 let response =
                     policy_blocked_response(request.id.clone(), "request", &request_decision);
                 let log_request =
@@ -261,7 +261,7 @@ where
                     &response,
                     &process_name,
                     0,
-                    McpCallPolicyFields::from(&request_decision),
+                    McpCallEnforcementFields::from(&request_decision),
                     runtime_block_event,
                 )
                 .await;
@@ -303,14 +303,14 @@ where
                     request_decision,
                 );
                 let response = match final_decision.action {
-                    McpPolicyAction::Ask | McpPolicyAction::Block => {
+                    McpEnforcementAction::Ask | McpEnforcementAction::Block => {
                         policy_blocked_response(
                             dispatch_request.id.clone(),
                             "response",
                             &final_decision,
                         )
                     }
-                    McpPolicyAction::Rewrite
+                    McpEnforcementAction::Rewrite
                         if final_decision
                             .rewrite_target
                             .as_deref()
@@ -320,17 +320,17 @@ where
                             policy_blocked_response(
                                 dispatch_request.id.clone(),
                                 "response rewrite",
-                                &McpPolicyDecision {
+                                &McpEnforcementDecision {
                                     reason: error,
                                     ..final_decision.clone()
                                 },
                             )
                         })
                     }
-                    McpPolicyAction::Rewrite => response,
-                    McpPolicyAction::Allow => response,
+                    McpEnforcementAction::Rewrite => response,
+                    McpEnforcementAction::Allow => response,
                 };
-                let policy_fields = McpCallPolicyFields::from(&final_decision);
+                let policy_fields = McpCallEnforcementFields::from(&final_decision);
                 log_mcp_call_with_policy(
                     &db_h,
                     &dispatch_request,
@@ -543,14 +543,14 @@ impl McpPolicyMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum McpPolicyAction {
+enum McpEnforcementAction {
     Allow,
     Ask,
     Block,
     Rewrite,
 }
 
-impl McpPolicyAction {
+impl McpEnforcementAction {
     fn as_str(self) -> &'static str {
         match self {
             Self::Allow => "allow",
@@ -566,9 +566,9 @@ impl McpPolicyAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct McpPolicyDecision {
+struct McpEnforcementDecision {
     mode: McpPolicyMode,
-    action: McpPolicyAction,
+    action: McpEnforcementAction,
     rule: String,
     reason: String,
     rewrite_target: Option<String>,
@@ -578,15 +578,15 @@ struct McpPolicyDecision {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct McpCallPolicyFields {
+struct McpCallEnforcementFields {
     policy_mode: Option<String>,
     policy_action: Option<String>,
     policy_rule: Option<String>,
     policy_reason: Option<String>,
 }
 
-impl From<&McpPolicyDecision> for McpCallPolicyFields {
-    fn from(decision: &McpPolicyDecision) -> Self {
+impl From<&McpEnforcementDecision> for McpCallEnforcementFields {
+    fn from(decision: &McpEnforcementDecision) -> Self {
         Self {
             policy_mode: Some(decision.mode.as_str().to_string()),
             policy_action: Some(decision.action.as_str().to_string()),
@@ -647,19 +647,19 @@ fn mcp_security_result_allows_dispatch(result: &SecurityResult) -> bool {
 fn mcp_policy_decision_from_security_result(
     result: &SecurityResult,
     fallback_rule: &str,
-) -> McpPolicyDecision {
+) -> McpEnforcementDecision {
     let action = match result.action {
-        SecurityAction::Continue | SecurityAction::ObserveOnly => McpPolicyAction::Allow,
-        SecurityAction::Ask(_) => McpPolicyAction::Ask,
-        SecurityAction::Rewrite(_) => McpPolicyAction::Block,
+        SecurityAction::Continue | SecurityAction::ObserveOnly => McpEnforcementAction::Allow,
+        SecurityAction::Ask(_) => McpEnforcementAction::Ask,
+        SecurityAction::Rewrite(_) => McpEnforcementAction::Block,
         SecurityAction::Block(_)
         | SecurityAction::Throttle(_)
         | SecurityAction::Quarantine(_)
         | SecurityAction::Restore(_)
         | SecurityAction::DropConnection(_)
-        | SecurityAction::Error(_) => McpPolicyAction::Block,
+        | SecurityAction::Error(_) => McpEnforcementAction::Block,
     };
-    McpPolicyDecision {
+    McpEnforcementDecision {
         mode: McpPolicyMode::Enforce,
         action,
         rule: mcp_security_result_rule_id(result).unwrap_or_else(|| fallback_rule.to_string()),
@@ -710,7 +710,7 @@ async fn log_mcp_call_with_policy(
     resp: &JsonRpcResponse,
     process_name: &str,
     duration_ms: u64,
-    policy_fields: McpCallPolicyFields,
+    policy_fields: McpCallEnforcementFields,
     resolved_event: Option<ResolvedSecurityEvent>,
 ) {
     let tool_name = req
@@ -804,7 +804,7 @@ fn build_mcp_resolved_security_event(
     server_name: &str,
     tool_name: Option<&str>,
     decision: &str,
-    policy_fields: &McpCallPolicyFields,
+    policy_fields: &McpCallEnforcementFields,
     timestamp: SystemTime,
     trace_id: Option<String>,
 ) -> ResolvedSecurityEvent {
@@ -847,7 +847,7 @@ impl LocalMcpDecisionProvider {
         }
     }
 
-    fn decide(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
+    fn decide(&self, request: &McpDecisionRequest) -> McpEnforcementDecision {
         if let Some(rule) = self.matching_request_rule(request) {
             let decision = self.decision_from_audit_rule(rule);
             if decision.action.blocks_dispatch() {
@@ -874,9 +874,9 @@ impl LocalMcpDecisionProvider {
         &self,
         request: &McpDecisionRequest,
         response: &JsonRpcResponse,
-        base: McpPolicyDecision,
-    ) -> McpPolicyDecision {
-        if matches!(base.action, McpPolicyAction::Ask | McpPolicyAction::Block) {
+        base: McpEnforcementDecision,
+    ) -> McpEnforcementDecision {
+        if matches!(base.action, McpEnforcementAction::Ask | McpEnforcementAction::Block) {
             return base;
         }
         if let Some(rule) = self.matching_response_rule(request, response) {
@@ -888,7 +888,7 @@ impl LocalMcpDecisionProvider {
         base
     }
 
-    fn decide_tool_call(&self, request: &McpDecisionRequest) -> McpPolicyDecision {
+    fn decide_tool_call(&self, request: &McpDecisionRequest) -> McpEnforcementDecision {
         let Some(tool_name) = request.tool_name.as_deref().filter(|name| !name.is_empty()) else {
             return self.block(
                 "mcp.method.tools_call.invalid".to_string(),
@@ -917,7 +917,7 @@ impl LocalMcpDecisionProvider {
         &self,
         request: &McpDecisionRequest,
         method_subject: &str,
-    ) -> McpPolicyDecision {
+    ) -> McpEnforcementDecision {
         let Some(server_name) = request
             .server_name
             .as_deref()
@@ -944,7 +944,7 @@ impl LocalMcpDecisionProvider {
         decision: ToolDecision,
         rule: String,
         subject: String,
-    ) -> McpPolicyDecision {
+    ) -> McpEnforcementDecision {
         match decision {
             ToolDecision::Block => {
                 self.block(rule, format!("audit-only local policy block for {subject}"))
@@ -981,17 +981,17 @@ impl LocalMcpDecisionProvider {
         )
     }
 
-    fn decision_from_audit_rule(&self, rule: &McpDecisionRule) -> McpPolicyDecision {
+    fn decision_from_audit_rule(&self, rule: &McpDecisionRule) -> McpEnforcementDecision {
         match rule.action {
             McpDecisionRuleAction::Allow => self.allow(rule_name(rule), rule_reason(rule)),
             McpDecisionRuleAction::Deny => self.block(rule_name(rule), rule_reason(rule)),
         }
     }
 
-    fn allow(&self, rule: String, reason: String) -> McpPolicyDecision {
-        McpPolicyDecision {
+    fn allow(&self, rule: String, reason: String) -> McpEnforcementDecision {
+        McpEnforcementDecision {
             mode: self.mode,
-            action: McpPolicyAction::Allow,
+            action: McpEnforcementAction::Allow,
             rule,
             reason,
             rewrite_target: None,
@@ -1000,10 +1000,10 @@ impl LocalMcpDecisionProvider {
         }
     }
 
-    fn ask(&self, rule: String, reason: String) -> McpPolicyDecision {
-        McpPolicyDecision {
+    fn ask(&self, rule: String, reason: String) -> McpEnforcementDecision {
+        McpEnforcementDecision {
             mode: self.mode,
-            action: McpPolicyAction::Ask,
+            action: McpEnforcementAction::Ask,
             rule,
             reason,
             rewrite_target: None,
@@ -1012,10 +1012,10 @@ impl LocalMcpDecisionProvider {
         }
     }
 
-    fn block(&self, rule: String, reason: String) -> McpPolicyDecision {
-        McpPolicyDecision {
+    fn block(&self, rule: String, reason: String) -> McpEnforcementDecision {
+        McpEnforcementDecision {
             mode: self.mode,
-            action: McpPolicyAction::Block,
+            action: McpEnforcementAction::Block,
             rule,
             reason,
             rewrite_target: None,
@@ -1030,10 +1030,10 @@ impl LocalMcpDecisionProvider {
         reason: String,
         rewrite_target: Option<String>,
         rewrite_value: Option<String>,
-    ) -> McpPolicyDecision {
-        McpPolicyDecision {
+    ) -> McpEnforcementDecision {
+        McpEnforcementDecision {
             mode: self.mode,
-            action: McpPolicyAction::Rewrite,
+            action: McpEnforcementAction::Rewrite,
             rule,
             reason,
             rewrite_target,
@@ -1046,7 +1046,7 @@ impl LocalMcpDecisionProvider {
 fn policy_blocked_response(
     id: Option<serde_json::Value>,
     subject: &str,
-    decision: &McpPolicyDecision,
+    decision: &McpEnforcementDecision,
 ) -> JsonRpcResponse {
     JsonRpcResponse::err(
         id,
@@ -1059,10 +1059,10 @@ fn is_allowed_mcp_notification(request: &JsonRpcRequest) -> bool {
     request.method == "notifications/initialized"
 }
 
-fn disallowed_notification_decision(request: &JsonRpcRequest) -> McpPolicyDecision {
-    McpPolicyDecision {
+fn disallowed_notification_decision(request: &JsonRpcRequest) -> McpEnforcementDecision {
+    McpEnforcementDecision {
         mode: McpPolicyMode::Enforce,
-        action: McpPolicyAction::Block,
+        action: McpEnforcementAction::Block,
         rule: "mcp.notification.disallowed".to_string(),
         reason: format!("MCP notification method {} is not allowed", request.method),
         rewrite_target: None,
@@ -1077,7 +1077,7 @@ fn policy_safe_request_for_rewrite_error(request: &JsonRpcRequest) -> JsonRpcReq
 
 fn policy_safe_request_for_pre_dispatch_denial<'a>(
     request: &'a JsonRpcRequest,
-    decision: &McpPolicyDecision,
+    decision: &McpEnforcementDecision,
 ) -> Cow<'a, JsonRpcRequest> {
     if decision.rule.starts_with("policy.mcp.") {
         Cow::Owned(policy_request_with_redacted_arguments(request))
@@ -1101,7 +1101,7 @@ fn policy_request_with_redacted_arguments(request: &JsonRpcRequest) -> JsonRpcRe
 
 fn rewrite_mcp_request(
     mut request: JsonRpcRequest,
-    decision: &McpPolicyDecision,
+    decision: &McpEnforcementDecision,
 ) -> Result<JsonRpcRequest, String> {
     let target = decision
         .rewrite_target
@@ -1137,7 +1137,7 @@ fn rewrite_mcp_request(
 
 fn rewrite_mcp_response(
     mut response: JsonRpcResponse,
-    decision: &McpPolicyDecision,
+    decision: &McpEnforcementDecision,
 ) -> Result<JsonRpcResponse, String> {
     let target = decision
         .rewrite_target
@@ -1322,7 +1322,7 @@ fn rule_name(rule: &McpDecisionRule) -> String {
 fn rule_reason(rule: &McpDecisionRule) -> String {
     rule.reason
         .clone()
-        .unwrap_or_else(|| format!("audit-only local policy rule {} matched", rule.id))
+        .unwrap_or_else(|| format!("audit-only local enforcement rule {} matched", rule.id))
 }
 
 #[derive(Debug, Clone)]

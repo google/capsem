@@ -48,7 +48,7 @@ class TestSettingsProfiles:
         assert resp["mode"] == "settings_profiles_v2"
 
     def test_save_settings_round_trips(self, isolated_client):
-        """POST /settings writes policy rules and GET reflects persisted rule state."""
+        """POST /settings writes enforcement rules and GET reflects persisted rule state."""
         client = isolated_client
         rule_key = "policy.http.block_example_org"
         rule = {

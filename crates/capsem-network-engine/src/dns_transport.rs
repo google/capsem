@@ -25,7 +25,7 @@ pub struct DnsHandlerResult {
     pub policy_mode: Option<String>,
     /// Typed policy action when policy matched.
     pub policy_action: Option<String>,
-    /// Fully qualified policy rule id.
+    /// Fully qualified enforcement rule id.
     pub policy_rule: Option<String>,
     /// Human-readable policy reason or fail-closed detail.
     pub policy_reason: Option<String>,

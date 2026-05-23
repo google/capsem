@@ -1,6 +1,6 @@
 ---
 title: Admin CLI
-description: Install and use capsem-admin for profile, image, manifest, policy, and detection contracts.
+description: Install and use capsem-admin for profile, image, manifest, enforcement, and detection contracts.
 sidebar:
   order: 10
 ---
@@ -37,7 +37,7 @@ uses the same entrypoint shape as the packaged CLI.
 | `profile` | Create and validate Profile V2 payloads. |
 | `image` | Derive build plans, build workspaces, verify image assets, and emit SBOMs from profiles. |
 | `manifest` | Generate, check, sign, and verify profile catalog manifests. |
-| `policy` | Validate and export schemas for profile-owned enforcement policy packs. |
+| `enforcement` | Validate and export schemas for profile-owned enforcement packs. |
 | `detection` | Validate Sigma-backed detection packs, compile Detection IR, and check event fixtures. |
 
 ## Doctor
@@ -81,13 +81,13 @@ capsem-admin manifest verify-signature manifest.json --signature manifest.json.m
 `--arch all` is the default for image build and verification workflows. Use
 `--arch arm64` or `--arch x86_64` only for local debugging or CI shards.
 
-## Policy And Detection
+## Enforcement And Detection
 
 ```bash
-capsem-admin policy schema
-capsem-admin policy validate corp-policy.toml --json
-capsem-admin policy compile corp-policy.toml --json
-capsem-admin policy backtest corp-policy.toml --events policy-contexts.jsonl --json
+capsem-admin enforcement schema
+capsem-admin enforcement validate corp-enforcement.toml --json
+capsem-admin enforcement compile corp-enforcement.toml --json
+capsem-admin enforcement backtest corp-enforcement.toml --events policy-contexts.jsonl --json
 
 capsem-admin detection schema
 capsem-admin detection validate corp-detections.yml --json
@@ -95,7 +95,7 @@ capsem-admin detection compile corp-detections.yml --out detection.ir.json --jso
 capsem-admin detection backtest corp-detections.yml --events policy-contexts.jsonl --json
 ```
 
-Policy packs are enforcement contracts. Detection packs are finding contracts.
+Enforcement packs are synchronous decision contracts. Detection packs are finding contracts.
 Detection packs may embed Sigma YAML, but Sigma is validated with pySigma and
 compiled into Capsem Detection IR before runtime consumption. Offline
 backtests use the same policy-context fixture envelope that runtime CEL

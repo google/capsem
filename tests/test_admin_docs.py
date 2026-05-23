@@ -19,7 +19,7 @@ def test_admin_cli_docs_cover_corp_and_developer_install_paths() -> None:
     assert "uv run capsem-admin --version" in doc
     assert "capsem-admin doctor --profile" in doc
     assert "capsem-admin detection compile" in doc
-    assert "capsem-admin policy validate" in doc
+    assert "capsem-admin enforcement validate" in doc
     assert "guest/config" in doc
 
 
@@ -40,9 +40,9 @@ def test_enforcement_docs_keep_policy_and_detection_separate() -> None:
     doc = _doc("security/enforcement.md")
 
     assert "Do not use Sigma as a blocking policy language" in doc
-    assert "capsem-admin policy validate" in doc
-    assert "capsem-admin policy compile" in doc
-    assert "capsem-admin policy backtest" in doc
+    assert "capsem-admin enforcement validate" in doc
+    assert "capsem-admin enforcement compile" in doc
+    assert "capsem-admin enforcement backtest" in doc
     assert "`allow`, `block`, `ask`, or `rewrite`" in doc
 
 
@@ -53,7 +53,7 @@ def test_rule_corpus_docs_pin_cross_language_update_workflow() -> None:
     assert "data/enforcement/backtest-expected/" in doc
     assert "data/detection/backtest-expected/" in doc
     assert "data/detection/hunt-expected/" in doc
-    assert "capsem-admin policy compile" in doc
+    assert "capsem-admin enforcement compile" in doc
     assert "capsem-admin detection compile" in doc
     assert "cargo test -p capsem-core --test security_packs" in doc
     assert "cargo test -p capsem-security-engine" in doc

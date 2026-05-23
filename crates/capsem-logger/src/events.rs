@@ -378,7 +378,7 @@ pub struct DnsEvent {
     /// Policy matched.
     #[serde(default)]
     pub policy_action: Option<String>,
-    /// Fully qualified policy rule id, e.g. `policy.dns.block_openai`.
+    /// Fully qualified enforcement rule id, e.g. `policy.dns.block_openai`.
     #[serde(default)]
     pub policy_rule: Option<String>,
     /// Human-readable policy reason or fail-closed detail.

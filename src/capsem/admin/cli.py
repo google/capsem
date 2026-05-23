@@ -67,23 +67,23 @@ from capsem.builder.profiles import (
 from capsem.builder.security_packs import (
     DetectionCompileReportV1,
     DetectionPackV1,
-    PolicyPackV1,
+    EnforcementPackV1,
     compile_detection_pack,
-    compile_policy_pack,
+    compile_enforcement_pack,
     dump_detection_check_report_json,
     dump_detection_compile_report_json,
     dump_detection_ir_json,
     dump_detection_pack_schema_json,
-    dump_policy_backtest_report_json,
-    dump_policy_compile_report_json,
-    dump_policy_pack_schema_json,
+    dump_enforcement_backtest_report_json,
+    dump_enforcement_compile_report_json,
+    dump_enforcement_pack_schema_json,
     run_detection_check,
-    run_policy_backtest,
+    run_enforcement_backtest,
     validate_detection_pack_json,
     validate_detection_pack_toml,
     validate_detection_pack_yaml,
-    validate_policy_pack_json,
-    validate_policy_pack_toml,
+    validate_enforcement_pack_json,
+    validate_enforcement_pack_toml,
 )
 from capsem.builder.service_settings import (
     ServiceSettingsV2,
@@ -227,10 +227,10 @@ def _load_profile(path: Path) -> ProfilePayloadV2:
     return validate_profile_toml(path)
 
 
-def _load_policy_pack(path: Path) -> PolicyPackV1:
+def _load_enforcement_pack(path: Path) -> EnforcementPackV1:
     if path.suffix.lower() == ".json":
-        return validate_policy_pack_json(path.read_text(encoding="utf-8"))
-    return validate_policy_pack_toml(path)
+        return validate_enforcement_pack_json(path.read_text(encoding="utf-8"))
+    return validate_enforcement_pack_toml(path)
 
 
 def _load_detection_pack(path: Path) -> DetectionPackV1:
@@ -273,9 +273,9 @@ def _profile_validation_report(path: Path) -> ProfileValidationReport:
     )
 
 
-def _policy_pack_validation_report(path: Path) -> SecurityPackValidationReport:
+def _enforcement_pack_validation_report(path: Path) -> SecurityPackValidationReport:
     try:
-        pack = _load_policy_pack(path)
+        pack = _load_enforcement_pack(path)
     except Exception as error:
         return SecurityPackValidationReport(
             ok=False,
@@ -442,9 +442,9 @@ def manifest() -> None:
     """Check and manage signed profile catalog manifests."""
 
 
-@cli.group()
-def policy() -> None:
-    """Validate and inspect profile-owned policy packs."""
+@cli.group("enforcement")
+def enforcement() -> None:
+    """Validate and inspect profile-owned enforcement packs."""
 
 
 @cli.group()
@@ -770,23 +770,23 @@ def profile_validate(profile_path: str, json_output: bool) -> None:
         raise SystemExit(1)
 
 
-@policy.command("schema")
-def policy_schema() -> None:
-    """Print the Policy Pack V1 JSON Schema."""
-    click.echo(dump_policy_pack_schema_json())
+@enforcement.command("schema")
+def enforcement_schema() -> None:
+    """Print the Enforcement Pack V1 JSON Schema."""
+    click.echo(dump_enforcement_pack_schema_json())
 
 
-@policy.command("validate")
-@click.argument("policy_path", type=click.Path(exists=True, dir_okay=False))
+@enforcement.command("validate")
+@click.argument("enforcement_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
-def policy_validate(policy_path: str, json_output: bool) -> None:
-    """Validate a policy pack JSON or TOML file."""
-    path = Path(policy_path)
-    report = _policy_pack_validation_report(path)
+def enforcement_validate(enforcement_path: str, json_output: bool) -> None:
+    """Validate an enforcement pack JSON or TOML file."""
+    path = Path(enforcement_path)
+    report = _enforcement_pack_validation_report(path)
     if json_output:
         click.echo(report.model_dump_json(by_alias=True, indent=2))
     elif report.ok:
-        click.echo(f"valid: policy pack {report.pack_id}@{report.version}")
+        click.echo(f"valid: enforcement pack {report.pack_id}@{report.version}")
     else:
         for diagnostic in report.diagnostics:
             click.echo(f"{diagnostic.path}: {diagnostic.message}", err=True)
@@ -794,22 +794,22 @@ def policy_validate(policy_path: str, json_output: bool) -> None:
         raise SystemExit(1)
 
 
-@policy.command("compile")
-@click.argument("policy_path", type=click.Path(exists=True, dir_okay=False))
+@enforcement.command("compile")
+@click.argument("enforcement_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
-def policy_compile(policy_path: str, json_output: bool) -> None:
-    """Compile-check a policy pack against the admin-supported CEL subset."""
-    path = Path(policy_path)
+def enforcement_compile(enforcement_path: str, json_output: bool) -> None:
+    """Compile-check an enforcement pack against the admin-supported CEL subset."""
+    path = Path(enforcement_path)
     try:
-        pack = _load_policy_pack(path)
-        report = compile_policy_pack(pack)
+        pack = _load_enforcement_pack(path)
+        report = compile_enforcement_pack(pack)
     except Exception as error:
         raise click.ClickException(str(error)) from error
 
     if json_output:
-        click.echo(dump_policy_compile_report_json(report))
+        click.echo(dump_enforcement_compile_report_json(report))
     elif report.ok:
-        click.echo(f"compiled {report.rule_count} policy rule(s)")
+        click.echo(f"compiled {report.rule_count} enforcement rule(s)")
     else:
         for diagnostic in report.diagnostics:
             click.echo(diagnostic, err=True)
@@ -817,8 +817,8 @@ def policy_compile(policy_path: str, json_output: bool) -> None:
         raise SystemExit(1)
 
 
-@policy.command("backtest")
-@click.argument("policy_path", type=click.Path(exists=True, dir_okay=False))
+@enforcement.command("backtest")
+@click.argument("enforcement_path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--events",
     "events_path",
@@ -827,17 +827,17 @@ def policy_compile(policy_path: str, json_output: bool) -> None:
     help="JSONL policy-context fixture file.",
 )
 @click.option("--json", "json_output", is_flag=True, help="Emit a typed JSON report.")
-def policy_backtest(policy_path: str, events_path: str, json_output: bool) -> None:
-    """Backtest a policy pack against policy-context JSONL fixtures."""
-    path = Path(policy_path)
+def enforcement_backtest(enforcement_path: str, events_path: str, json_output: bool) -> None:
+    """Backtest an enforcement pack against policy-context JSONL fixtures."""
+    path = Path(enforcement_path)
     try:
-        pack = _load_policy_pack(path)
-        report = run_policy_backtest(pack, events_path=Path(events_path))
+        pack = _load_enforcement_pack(path)
+        report = run_enforcement_backtest(pack, events_path=Path(events_path))
     except Exception as error:
         raise click.ClickException(str(error)) from error
 
     if json_output:
-        click.echo(dump_policy_backtest_report_json(report))
+        click.echo(dump_enforcement_backtest_report_json(report))
     else:
         click.echo(
             f"checked {report.event_count} event(s), "

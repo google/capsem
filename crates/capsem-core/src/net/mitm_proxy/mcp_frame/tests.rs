@@ -104,7 +104,7 @@ fn local_decision_provider_marks_blocked_tool_as_audit_deny() {
     let decision = provider.decide(&McpDecisionRequest::from_summary("codex", &summary));
 
     assert_eq!(decision.mode, McpPolicyMode::AuditOnly);
-    assert_eq!(decision.action, McpPolicyAction::Block);
+    assert_eq!(decision.action, McpEnforcementAction::Block);
     assert_eq!(decision.rule, "mcp.tool.github__delete_repo");
     assert!(decision.reason.contains("block"));
 }
@@ -191,7 +191,7 @@ fn runtime_mcp_block_projects_to_pre_dispatch_policy_decision() {
 
     let decision = mcp_policy_decision_from_security_result(&result, "fallback");
     assert_eq!(decision.mode, McpPolicyMode::Enforce);
-    assert_eq!(decision.action, McpPolicyAction::Block);
+    assert_eq!(decision.action, McpEnforcementAction::Block);
     assert_eq!(decision.rule, "runtime.block-mcp");
     assert_eq!(decision.reason, "blocked MCP benchmark tool");
 }
@@ -208,9 +208,9 @@ async fn log_mcp_call_writes_canonical_security_event() {
         req.id.clone(),
         serde_json::json!({"content":[{"type":"text","text":"created"}]}),
     );
-    let decision = McpPolicyDecision {
+    let decision = McpEnforcementDecision {
         mode: McpPolicyMode::Enforce,
-        action: McpPolicyAction::Allow,
+        action: McpEnforcementAction::Allow,
         rule: "mcp.tool.github__create_issue".into(),
         reason: "allowed by profile MCP policy".into(),
         rewrite_target: None,
@@ -224,7 +224,7 @@ async fn log_mcp_call_writes_canonical_security_event() {
         &resp,
         "codex",
         12,
-        McpCallPolicyFields::from(&decision),
+        McpCallEnforcementFields::from(&decision),
         None,
     )
     .await;
@@ -252,9 +252,9 @@ async fn log_mcp_call_writes_blocked_security_event() {
         br#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"github__delete_repo","arguments":{"owner":"capsem"}}}"#,
     )
     .unwrap();
-    let decision = McpPolicyDecision {
+    let decision = McpEnforcementDecision {
         mode: McpPolicyMode::Enforce,
-        action: McpPolicyAction::Block,
+        action: McpEnforcementAction::Block,
         rule: "mcp.tool.github__delete_repo".into(),
         reason: "blocked by profile MCP policy".into(),
         rewrite_target: None,
@@ -269,7 +269,7 @@ async fn log_mcp_call_writes_blocked_security_event() {
         &resp,
         "codex",
         0,
-        McpCallPolicyFields::from(&decision),
+        McpCallEnforcementFields::from(&decision),
         None,
     )
     .await;

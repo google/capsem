@@ -229,7 +229,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated MCP tool metadata and usage docs so `capsem_vm_logs` and
   `capsem_timeline` advertise security-log and security-layer support.
 - Changed runtime enforcement/detection backtest evidence rows to report
-  canonical policy paths such as `http.request.host` instead of an opaque
+  canonical enforcement paths such as `http.request.host` instead of an opaque
   whole-subject blob.
 - Expanded enforcement/detection backtest evidence rows with common
   attribution, HTTP headers/body, MCP request/response/link evidence, and model
@@ -275,7 +275,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http.request.*` roots plus rejected `event.subject.*` authoring.
 - Added `capsem-admin detection backtest` for offline pySigma-backed detection
   checks against typed policy-context fixture JSONL.
-- Added `capsem-admin policy backtest` for offline enforcement checks against
+- Added `capsem-admin enforcement backtest` for offline enforcement checks against
   typed policy-context fixture JSONL, with golden expected-result artifacts for
   the first shared S08c corpus.
 - Added Rust S08c parity coverage proving the real CEL evaluator matches the
@@ -283,12 +283,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a committed Detection IR artifact for the S08c Sigma corpus and Rust
   parity coverage proving canonical `http.request.*` detection fields match
   the admin detection backtest expected artifact.
-- Added `capsem-admin policy compile` to fail closed on unsupported or legacy
+- Added `capsem-admin enforcement compile` to fail closed on unsupported or legacy
   enforcement roots before offline backtest.
-- Added an explicit admin policy path allowlist so `capsem-admin policy compile`
+- Added an explicit admin policy path allowlist so `capsem-admin enforcement compile`
   rejects unknown canonical-looking paths and cross-family policy roots before
   offline replay.
-- Fixed `capsem-admin policy backtest` to compile-check policy packs before
+- Fixed `capsem-admin enforcement backtest` to compile-check enforcement packs before
   fixture replay, so an empty corpus cannot report success for invalid policy
   paths.
 - Added an S08c drift test proving the committed Sigma-derived Detection IR
@@ -297,10 +297,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended the real process-enforcement E2E so a VM-originated blocked exec is
   verified in both `capsem logs` and the resolved-event `session.db`
   `security_events` / `security_event_steps` journal.
-- Expanded the admin policy-context model and offline policy backtest subset
+- Expanded the admin policy-context model and offline enforcement backtest subset
   beyond HTTP so DNS/MCP/model/file/process/profile scalar roots, boolean
   equality, and numeric equality can be tested through `capsem-admin`.
-- Added indexed model tool-call/tool-result policy paths to admin backtest so
+- Added indexed model tool-call/tool-result enforcement paths to admin backtest so
   rules can match roots such as `model.request.tool_calls[0].name` and
   `model.response.tool_results[0].returned_to_model`.
 - Added rule-corpus workflow documentation tying policy-context fixtures,
@@ -615,11 +615,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem-doctor --bundle`, and verifies the bundle through
   `capsem-admin image verify`; local asset preflight now rebuilds when the
   host-arch image inventory is missing.
-- Documented the S08a policy/detection contract: `capsem.policy-pack.v1`,
+- Documented the S08a policy/detection contract: `capsem.enforcement-pack.v1`,
   `capsem.detection-pack.v1`, `capsem.detection.ir.v1`, normalized security
   event taxonomy, typed findings, admin validation/check commands,
   implementation ordering, and test matrix.
-- Added typed `capsem-admin policy validate|schema` and
+- Added typed `capsem-admin enforcement validate|schema` and
   `capsem-admin detection validate|schema` support for strict Pydantic policy
   and detection pack envelopes, including YAML detection envelopes, with
   committed JSON Schema artifacts.
@@ -814,6 +814,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallbacks, v1 install/setup fixtures, and old `user.toml`/`corp.toml`
   support-bundle/uninstall preservation paths in favor of Profile V2
   `service.toml` and profile roots.
+
+### Changed
+- Renamed the public admin enforcement-pack surface from `capsem-admin policy`
+  to `capsem-admin enforcement`, including the Pydantic model/schema ids
+  (`capsem.enforcement-pack.v1`, `capsem.enforcement-compile.v1`, and
+  `capsem.enforcement-backtest.v1`), committed fixtures, docs, and tests. The
+  old `policy` command group is not kept as a public alias.
 
 ### Fixed
 - Fixed same-millisecond Security Event ID collisions across HTTP, DNS, MCP,
@@ -1080,7 +1087,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.1778378133] - 2026-05-10
 
-### Added (policy rules)
+### Added (enforcement rules)
 - Added the MCP policy sprint plan and tracker to productize MCP
   rules as typed `allow`, `ask`, and `block` decisions across TOML,
   settings, MITM enforcement, telemetry, and VM E2E tests.
@@ -1094,13 +1101,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OpenAPI 3.1 export generated from runtime wire types so third-party
   HTTPS hook servers can receive normalized policy requests and return
   typed allow/ask/block/rewrite decisions.
-- Clarified the policy rule shape as named
+- Clarified the enforcement rule shape as named
   `policy.<type>.<rule_name>` TOML tables with `on`, CEL `if`,
   `decision`, `priority`, and capture-aware
   `rewrite_target`/`rewrite_value` fields; simple UI allow/block/header
-  controls must compile into the same policy rule IR.
+  controls must compile into the same enforcement rule IR.
 - Added the first policy settings slice: settings files can now parse,
-  preserve, return, and save priority-bearing named policy rules through
+  preserve, return, and save priority-bearing named enforcement rules through
   the `/settings` API so frontend policy editors can post rule objects.
 - Hardened policy config validation with adversarial rewrite tests:
   bogus rewrite shapes, malformed regex targets, callback/table
@@ -1111,10 +1118,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CEL-compatible subset: conjunctions, comparisons, `has(...)`, string
   helper methods, regex `matches(...)`, and per-callback subject fields
   are checked before TOML or `/settings` policy saves can persist.
-- Added the first policy rule evaluator over normalized subjects, with
+- Added the first enforcement rule evaluator over normalized subjects, with
   priority/name-ordered rule selection for MCP argument, HTTP path, and
   model response conditions.
-- Wired merged policy rules into the framed MITM MCP endpoint: named
+- Wired merged enforcement rules into the framed MITM MCP endpoint: named
   MCP request `block` rules now stop dispatch and record `policy.mcp.*`
   in `mcp_calls`, while `ask` rules fail closed without aggregator
   dispatch and record `policy_action=ask`.
@@ -1173,7 +1180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the implementation.
 - Added the policy product surface: a docs reference page, refreshed
   framed-MITM MCP/settings/session/just recipe docs, settings import/export
-  of named policy rules, and a settings UI panel that edits, deletes, and
+  of named enforcement rules, and a settings UI panel that edits, deletes, and
   stages generated `policy.<type>.<rule_name>` rules.
 - Added Policy V2 T5 VM proof for HTTP, DNS, and model traffic: real guest
   sessions now cover configured HTTP method/path/query/header blocks,
@@ -1214,7 +1221,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contiguous token-shaped literal that trips GitHub push protection while still
   constructing the same runtime string for the redactor test.
 
-### Fixed (policy rules)
+### Fixed (enforcement rules)
 - Fixed model telemetry parsing for explicit/local OpenAI-compatible
   provider paths by carrying the request's provider classification through
   the MITM chunk-hook metadata, so enforcement and SSE interpretation use
@@ -1308,7 +1315,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as visible debt instead of implied by benchmarks or unit tests.
 - Expanded the MCP development skill with the framed MITM MCP hardening
   matrix: parser/interpreter adversarial cases, dispatch coverage,
-  policy rule enforcement, telemetry assertions, VM E2E checks, and the
+  enforcement rule enforcement, telemetry assertions, VM E2E checks, and the
   aggregator DB-free boundary.
 
 ### Fixed (mitm-mcp-unification T3 hardening)
@@ -1668,7 +1675,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session per the resume prompt.
 
 ### Added (mitm-redesign T3 follow-up `d`)
-- **`DnsRedirect` policy rule -- admin-configured DNS overrides.**
+- **`DnsRedirect` enforcement rule -- admin-configured DNS overrides.**
   New `DnsRedirect { matcher, qtype, answers, ttl }` rule kind on
   `NetworkPolicy::dns_redirects` lets an admin override DNS
   resolution for a specific qname (and optionally a specific
@@ -6678,7 +6685,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CONFIG_EXPERT=y` in kernel defconfig ensures all hardening options (KALLSYMS=n, MODULES=n, etc.) are respected by `make olddefconfig`
 - Kernel symbol table (`/proc/kallsyms`) now empty -- eliminates kernel ASLR bypass vector
 - MITM proxy enables full HTTP audit trail: every request method, path, status code, and headers are logged to web.db
-- HTTP-level policy rules allow fine-grained control (e.g., allow GET but deny POST to specific paths)
+- HTTP-level enforcement rules allow fine-grained control (e.g., allow GET but deny POST to specific paths)
 - Default-deny domain policy: only explicitly allowed domains are reachable from the guest
 - No DNS leaves the VM: all resolution is faked to a local IP
 - Corporate policy (`/etc/capsem/corp.toml`) overrides user settings for enterprise lockdown

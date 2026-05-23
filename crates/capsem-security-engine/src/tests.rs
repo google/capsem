@@ -1004,7 +1004,7 @@ fn s08c_enforcement_expected_artifact_matches_rust_cel() {
     }
 
     let actual = serde_json::json!({
-        "schema": "capsem.policy-backtest.v1",
+        "schema": "capsem.enforcement-backtest.v1",
         "ok": true,
         "pack_id": "corp.enforcement.google-secret",
         "pack_version": "2026.0522.1",
@@ -1056,7 +1056,7 @@ fn s08c_session_process_export_artifact_matches_rust_cel() {
     }
 
     let actual = serde_json::json!({
-        "schema": "capsem.policy-backtest.v1",
+        "schema": "capsem.enforcement-backtest.v1",
         "ok": true,
         "pack_id": "corp.enforcement.process-shell",
         "pack_version": "2026.0522.1",

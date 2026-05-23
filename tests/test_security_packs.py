@@ -10,27 +10,27 @@ from pydantic import ValidationError
 from capsem.admin.cli import cli
 from capsem.builder.security_packs import (
     DetectionPackV1,
-    PolicyPackV1,
+    EnforcementPackV1,
     compile_detection_pack,
     dump_detection_check_report_json,
     dump_detection_ir_json,
     dump_detection_ir_schema_json,
     dump_detection_pack_json,
     dump_detection_pack_schema_json,
-    dump_policy_pack_json,
-    dump_policy_pack_schema_json,
-    dump_policy_pack_toml,
+    dump_enforcement_pack_json,
+    dump_enforcement_pack_schema_json,
+    dump_enforcement_pack_toml,
     run_detection_check,
     validate_detection_pack_json,
     validate_detection_pack_toml,
     validate_detection_pack_yaml,
-    validate_policy_pack_json,
-    validate_policy_pack_toml,
+    validate_enforcement_pack_json,
+    validate_enforcement_pack_toml,
 )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-POLICY_SCHEMA_PATH = PROJECT_ROOT / "schemas" / "capsem.policy-pack.v1.schema.json"
+ENFORCEMENT_SCHEMA_PATH = PROJECT_ROOT / "schemas" / "capsem.enforcement-pack.v1.schema.json"
 DETECTION_SCHEMA_PATH = (
     PROJECT_ROOT / "schemas" / "capsem.detection-pack.v1.schema.json"
 )
@@ -48,11 +48,11 @@ S08C_DETECTION_IR_PATH = (
 )
 
 
-def _policy_json() -> str:
+def _enforcement_json() -> str:
     return """
     {
-      "schema": "capsem.policy-pack.v1",
-      "id": "corp-default-policy",
+      "schema": "capsem.enforcement-pack.v1",
+      "id": "corp-default-enforcement",
       "version": "2026.0521.1",
       "status": "active",
       "owner": "corp",
@@ -150,33 +150,33 @@ def _detection_yaml() -> str:
     )
 
 
-def test_policy_pack_json_enters_and_leaves_through_pydantic() -> None:
-    pack = validate_policy_pack_json(_policy_json())
-    dumped = dump_policy_pack_json(pack)
-    reparsed = PolicyPackV1.model_validate_json(dumped)
+def test_enforcement_pack_json_enters_and_leaves_through_pydantic() -> None:
+    pack = validate_enforcement_pack_json(_enforcement_json())
+    dumped = dump_enforcement_pack_json(pack)
+    reparsed = EnforcementPackV1.model_validate_json(dumped)
 
     assert reparsed == pack
     assert pack.rules[0].decision.value == "block"
-    assert '"schema": "capsem.policy-pack.v1"' in dumped
+    assert '"schema": "capsem.enforcement-pack.v1"' in dumped
 
 
-def test_policy_pack_toml_json_toml_round_trip_is_canonical(tmp_path: Path) -> None:
-    pack = validate_policy_pack_json(_policy_json())
-    toml = dump_policy_pack_toml(pack)
+def test_enforcement_pack_toml_json_toml_round_trip_is_canonical(tmp_path: Path) -> None:
+    pack = validate_enforcement_pack_json(_enforcement_json())
+    toml = dump_enforcement_pack_toml(pack)
 
-    path = tmp_path / "policy-pack.toml"
+    path = tmp_path / "enforcement-pack.toml"
     path.write_text(toml, encoding="utf-8")
-    from_toml = validate_policy_pack_toml(path)
-    from_json = validate_policy_pack_json(dump_policy_pack_json(from_toml))
+    from_toml = validate_enforcement_pack_toml(path)
+    from_json = validate_enforcement_pack_json(dump_enforcement_pack_json(from_toml))
 
-    assert dump_policy_pack_toml(from_json) == toml
+    assert dump_enforcement_pack_toml(from_json) == toml
 
 
-def test_policy_pack_rewrite_requires_payload() -> None:
-    payload = _policy_json().replace('"decision": "block"', '"decision": "rewrite"')
+def test_enforcement_pack_rewrite_requires_payload() -> None:
+    payload = _enforcement_json().replace('"decision": "block"', '"decision": "rewrite"')
 
     with pytest.raises(ValidationError, match="rewrite decision requires rewrite"):
-        validate_policy_pack_json(payload)
+        validate_enforcement_pack_json(payload)
 
 
 def test_detection_pack_toml_enters_and_leaves_through_pydantic(tmp_path: Path) -> None:
@@ -322,9 +322,9 @@ def test_detection_pack_rejects_enforcement_decision(tmp_path: Path) -> None:
 
 
 def test_security_pack_schema_exports_are_stable() -> None:
-    assert POLICY_SCHEMA_PATH.read_text(
+    assert ENFORCEMENT_SCHEMA_PATH.read_text(
         encoding="utf-8",
-    ) == dump_policy_pack_schema_json() + "\n"
+    ) == dump_enforcement_pack_schema_json() + "\n"
     assert DETECTION_SCHEMA_PATH.read_text(
         encoding="utf-8",
     ) == dump_detection_pack_schema_json() + "\n"
@@ -333,21 +333,29 @@ def test_security_pack_schema_exports_are_stable() -> None:
     ) == dump_detection_ir_schema_json() + "\n"
 
 
-def test_capsem_admin_policy_validate_and_schema(tmp_path: Path) -> None:
-    path = tmp_path / "policy-pack.json"
-    path.write_text(_policy_json(), encoding="utf-8")
+def test_capsem_admin_enforcement_validate_and_schema(tmp_path: Path) -> None:
+    path = tmp_path / "enforcement-pack.json"
+    path.write_text(_enforcement_json(), encoding="utf-8")
 
     validate = CliRunner().invoke(
         cli,
-        ["policy", "validate", str(path), "--json"],
+        ["enforcement", "validate", str(path), "--json"],
     )
-    schema = CliRunner().invoke(cli, ["policy", "schema"])
+    schema = CliRunner().invoke(cli, ["enforcement", "schema"])
 
     assert validate.exit_code == 0, validate.output
     assert '"ok": true' in validate.output
-    assert '"pack_id": "corp-default-policy"' in validate.output
+    assert '"pack_id": "corp-default-enforcement"' in validate.output
     assert schema.exit_code == 0, schema.output
-    assert '"capsem.policy-pack.v1"' in schema.output
+    assert '"capsem.enforcement-pack.v1"' in schema.output
+
+
+def test_capsem_admin_policy_command_is_not_a_public_alias() -> None:
+    old_group = "pol" + "icy"
+    result = CliRunner().invoke(cli, [old_group, "schema"])
+
+    assert result.exit_code != 0
+    assert f"No such command '{old_group}'" in result.output
 
 
 def test_capsem_admin_detection_validate_and_schema(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 ---
 title: Enforcement
-description: Profile-owned policy packs and the boundary between enforcement and detection.
+description: Profile-owned enforcement packs and the boundary between enforcement and detection.
 sidebar:
   order: 26
 ---
@@ -93,9 +93,9 @@ telemetry, audit logging, and detection-export sinks.
 
 Do not use Sigma as a blocking policy language. Sigma is accepted in detection
 packs, validated with pySigma, and compiled into Detection IR. Enforcement
-policy uses policy packs and CEL conditions.
+policy uses enforcement packs and CEL conditions.
 
-Offline policy backtests use the same policy-context fixture envelope as
+Offline enforcement backtests use the same policy-context fixture envelope as
 detection backtests. Conditions must target canonical roots such as
 `http.request.host`, `http.request.header(...)`, and `http.request.body.text`;
 internal `event.*` or raw `subject.*` authoring is rejected before install or

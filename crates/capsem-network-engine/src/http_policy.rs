@@ -21,7 +21,7 @@ pub struct HttpRule {
 
 /// The result of an HTTP policy evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpPolicyDecision {
+pub struct HttpEnforcementDecision {
     pub action: Action,
     pub reason: String,
     /// Which stage made the decision: "domain" or "http-rule".
@@ -71,9 +71,9 @@ impl HttpPolicy {
     /// Evaluate at the domain level only (pre-TLS, before handshake).
     ///
     /// This is the fast path for early rejection of blocked domains.
-    pub fn evaluate_domain(&self, domain: &str) -> HttpPolicyDecision {
+    pub fn evaluate_domain(&self, domain: &str) -> HttpEnforcementDecision {
         let (action, reason) = self.domain_policy.evaluate(domain);
-        HttpPolicyDecision {
+        HttpEnforcementDecision {
             action,
             reason: reason.to_string(),
             stage: "domain",
@@ -85,7 +85,7 @@ impl HttpPolicy {
     /// If the domain is denied, returns immediately (no HTTP check).
     /// If allowed at domain level and no HTTP rules exist for this domain,
     /// allows the request (backward compat).
-    pub fn evaluate_request(&self, domain: &str, method: &str, path: &str) -> HttpPolicyDecision {
+    pub fn evaluate_request(&self, domain: &str, method: &str, path: &str) -> HttpEnforcementDecision {
         // 1. Domain-level check first.
         let domain_decision = self.evaluate_domain(domain);
         if domain_decision.action == Action::Deny {
@@ -110,7 +110,7 @@ impl HttpPolicy {
         for rule in &domain_rules {
             if matches_method(&rule.method, &method_upper) && matches_path(&rule.path_pattern, path)
             {
-                return HttpPolicyDecision {
+                return HttpEnforcementDecision {
                     action: rule.action,
                     reason: format!(
                         "http-rule: {} {} -> {:?}",

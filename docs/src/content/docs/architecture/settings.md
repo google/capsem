@@ -14,7 +14,7 @@ There are two different contracts:
 | Contract | Scope | Owned by |
 |---|---|---|
 | Service settings | App/service control plane: profile roots, default profile, catalog source, telemetry export, remote policy plugin config, credential references, and asset/cache locations. | `service.toml` plus `capsem.service-settings.v2` schema |
-| Profiles | VM/session product policy: package and tool assumptions, VM resources, AI providers, MCP servers, skills, security capabilities, and policy rules. | Profile V2 payloads plus signed profile catalog |
+| Profiles | VM/session product policy: package and tool assumptions, VM resources, AI providers, MCP servers, skills, security capabilities, and enforcement rules. | Profile V2 payloads plus signed profile catalog |
 
 Do not put VM/session policy into service settings. Do not put service-wide
 profile roots, telemetry endpoints, or credential backend configuration into a
@@ -151,7 +151,7 @@ overridden with `--current profile=revision`, and supports
 tool. Linux admins should install the distro package named `minisign` before
 using signing or signature-verification commands.
 
-Policy packs and detection packs are profile-owned security contracts. Policy
+Enforcement packs and detection packs are profile-owned security contracts. Policy
 packs are enforcement rules and detection packs are finding rules. Detection
 packs may contain Sigma YAML, but `capsem-admin detection compile` validates
 that YAML with pySigma and emits `capsem.detection.ir.v1` before Rust runtime
@@ -174,9 +174,9 @@ compatibility inputs.
 The VM process reads only the session attachment. It does not reopen host
 settings files at runtime.
 
-## Policy
+## Enforcement
 
-Policy rules are authored in Profile V2 sections such as:
+Enforcement rules are authored in Profile V2 sections such as:
 
 ```toml
 [security.rules.http.block_secret]

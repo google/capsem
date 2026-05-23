@@ -674,13 +674,13 @@ def test_capsem_admin_detection_backtest_uses_policy_context_corpus() -> None:
     assert actual == expected
 
 
-def test_capsem_admin_policy_backtest_uses_policy_context_corpus() -> None:
+def test_capsem_admin_enforcement_backtest_uses_policy_context_corpus() -> None:
     result = CliRunner().invoke(
         cli,
         [
-            "policy",
+            "enforcement",
             "backtest",
-            "data/enforcement/policy/http-google-secret-policy.toml",
+            "data/enforcement/packs/http-google-secret-enforcement.toml",
             "--events",
             "data/policy-context/canonical-policy-contexts.jsonl",
             "--json",
@@ -703,7 +703,7 @@ def test_capsem_admin_policy_backtest_uses_policy_context_corpus() -> None:
     assert actual == expected
 
 
-def test_capsem_admin_policy_backtest_uses_session_process_export_corpus() -> None:
+def test_capsem_admin_enforcement_backtest_uses_session_process_export_corpus() -> None:
     fixtures = load_policy_context_fixture_jsonl(
         Path("data/policy-context/session-process-exec-block.jsonl")
     )
@@ -720,9 +720,9 @@ def test_capsem_admin_policy_backtest_uses_session_process_export_corpus() -> No
     result = CliRunner().invoke(
         cli,
         [
-            "policy",
+            "enforcement",
             "backtest",
-            "data/enforcement/policy/process-shell-block-policy.toml",
+            "data/enforcement/packs/process-shell-block-enforcement.toml",
             "--events",
             "data/policy-context/session-process-exec-block.jsonl",
             "--json",
@@ -743,31 +743,31 @@ def test_capsem_admin_policy_backtest_uses_session_process_export_corpus() -> No
     assert actual == expected
 
 
-def test_capsem_admin_policy_compile_checks_canonical_roots() -> None:
+def test_capsem_admin_enforcement_compile_checks_canonical_roots() -> None:
     result = CliRunner().invoke(
         cli,
         [
-            "policy",
+            "enforcement",
             "compile",
-            "data/enforcement/policy/http-google-secret-policy.toml",
+            "data/enforcement/packs/http-google-secret-enforcement.toml",
             "--json",
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert '"schema": "capsem.policy-compile.v1"' in result.output
+    assert '"schema": "capsem.enforcement-compile.v1"' in result.output
     assert '"pack_id": "corp.enforcement.google-secret"' in result.output
     assert '"rule_count": 1' in result.output
     assert '"diagnostics": []' in result.output
 
 
-def test_capsem_admin_policy_compile_rejects_internal_event_roots(
+def test_capsem_admin_enforcement_compile_rejects_internal_event_roots(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "bad-policy.toml"
-    policy_path.write_text(
+    enforcement_path = tmp_path / "bad-enforcement.toml"
+    enforcement_path.write_text(
         """
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.bad-root"
 version = "2026.0522.1"
 status = "active"
@@ -786,7 +786,7 @@ decision = "block"
 
     result = CliRunner().invoke(
         cli,
-        ["policy", "compile", str(policy_path), "--json"],
+        ["enforcement", "compile", str(enforcement_path), "--json"],
     )
 
     assert result.exit_code == 1
@@ -794,13 +794,13 @@ decision = "block"
     assert "unsupported internal event root" in result.output
 
 
-def test_capsem_admin_policy_compile_rejects_unknown_canonical_paths(
+def test_capsem_admin_enforcement_compile_rejects_unknown_canonical_paths(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "bad-policy.toml"
-    policy_path.write_text(
+    enforcement_path = tmp_path / "bad-enforcement.toml"
+    enforcement_path.write_text(
         """
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.bad-path"
 version = "2026.0522.1"
 status = "active"
@@ -819,21 +819,21 @@ decision = "block"
 
     result = CliRunner().invoke(
         cli,
-        ["policy", "compile", str(policy_path), "--json"],
+        ["enforcement", "compile", str(enforcement_path), "--json"],
     )
 
     assert result.exit_code == 1
     assert '"ok": false' in result.output
-    assert "unsupported policy path" in result.output
+    assert "unsupported enforcement path" in result.output
 
 
-def test_capsem_admin_policy_compile_rejects_cross_family_paths(
+def test_capsem_admin_enforcement_compile_rejects_cross_family_paths(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "bad-policy.toml"
-    policy_path.write_text(
+    enforcement_path = tmp_path / "bad-enforcement.toml"
+    enforcement_path.write_text(
         """
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.bad-family"
 version = "2026.0522.1"
 status = "active"
@@ -852,21 +852,21 @@ decision = "block"
 
     result = CliRunner().invoke(
         cli,
-        ["policy", "compile", str(policy_path), "--json"],
+        ["enforcement", "compile", str(enforcement_path), "--json"],
     )
 
     assert result.exit_code == 1
     assert '"ok": false' in result.output
-    assert "unsupported policy path for http: dns.request.qname" in result.output
+    assert "unsupported enforcement path for http: dns.request.qname" in result.output
 
 
-def test_capsem_admin_policy_backtest_rejects_internal_event_roots(
+def test_capsem_admin_enforcement_backtest_rejects_internal_event_roots(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "bad-policy.toml"
-    policy_path.write_text(
+    enforcement_path = tmp_path / "bad-enforcement.toml"
+    enforcement_path.write_text(
         """
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.bad-root"
 version = "2026.0522.1"
 status = "active"
@@ -886,9 +886,9 @@ decision = "block"
     result = CliRunner().invoke(
         cli,
         [
-            "policy",
+            "enforcement",
             "backtest",
-            str(policy_path),
+            str(enforcement_path),
             "--events",
             "data/policy-context/canonical-policy-contexts.jsonl",
             "--json",
@@ -900,13 +900,13 @@ decision = "block"
     assert "unsupported internal event root" in result.output
 
 
-def test_capsem_admin_policy_backtest_compile_checks_empty_corpus(
+def test_capsem_admin_enforcement_backtest_compile_checks_empty_corpus(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "bad-policy.toml"
-    policy_path.write_text(
+    enforcement_path = tmp_path / "bad-enforcement.toml"
+    enforcement_path.write_text(
         """
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.bad-path"
 version = "2026.0522.1"
 status = "active"
@@ -928,9 +928,9 @@ decision = "block"
     result = CliRunner().invoke(
         cli,
         [
-            "policy",
+            "enforcement",
             "backtest",
-            str(policy_path),
+            str(enforcement_path),
             "--events",
             str(events_path),
             "--json",
@@ -939,16 +939,16 @@ decision = "block"
 
     assert result.exit_code == 1
     assert '"ok": false' in result.output
-    assert "unsupported policy path" in result.output
+    assert "unsupported enforcement path" in result.output
 
 
-def test_capsem_admin_policy_backtest_matches_core_non_http_contexts(
+def test_capsem_admin_enforcement_backtest_matches_core_non_http_contexts(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "core-policy.toml"
-    policy_path.write_text(
+    enforcement_path = tmp_path / "core-enforcement.toml"
+    enforcement_path.write_text(
         """
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.core-contexts"
 version = "2026.0522.1"
 status = "active"
@@ -1011,9 +1011,9 @@ decision = "block"
     result = CliRunner().invoke(
         cli,
         [
-            "policy",
+            "enforcement",
             "backtest",
-            str(policy_path),
+            str(enforcement_path),
             "--events",
             str(events_path),
             "--json",
@@ -1030,13 +1030,13 @@ decision = "block"
     assert '"rule_id": "profile-coding"' in result.output
 
 
-def test_capsem_admin_policy_backtest_matches_model_tool_paths(
+def test_capsem_admin_enforcement_backtest_matches_model_tool_paths(
     tmp_path: Path,
 ) -> None:
-    policy_path = tmp_path / "model-tools-policy.toml"
-    policy_path.write_text(
+    enforcement_path = tmp_path / "model-tools-enforcement.toml"
+    enforcement_path.write_text(
         """
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.model-tools"
 version = "2026.0522.1"
 status = "active"
@@ -1063,9 +1063,9 @@ decision = "block"
     result = CliRunner().invoke(
         cli,
         [
-            "policy",
+            "enforcement",
             "backtest",
-            str(policy_path),
+            str(enforcement_path),
             "--events",
             str(events_path),
             "--json",

@@ -6,7 +6,7 @@ sidebar:
 ---
 
 Capsem images are defined by signed Profile V2 payloads. Organizations create
-profiles with their own packages, tools, MCP servers, VM assets, policy packs,
+profiles with their own packages, tools, MCP servers, VM assets, enforcement packs,
 and detection packs, then use `capsem-admin` to derive build plans, verify
 assets, generate manifests, and sign the catalog.
 

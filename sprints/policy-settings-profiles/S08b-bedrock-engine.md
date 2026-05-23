@@ -121,7 +121,7 @@ the S08b runtime predicate plan and emits typed findings on
 
 S08a second decision slice names the concrete contracts S08b must implement:
 `SecurityEvent`, `ResolvedSecurityEvent`, `DetectionFinding`,
-`capsem.policy-pack.v1`, `capsem.detection-pack.v1`, and
+`capsem.enforcement-pack.v1`, `capsem.detection-pack.v1`, and
 `capsem.detection.ir.v1`.
 
 S07b has now landed the first offline admin contract proof:

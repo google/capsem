@@ -1,4 +1,4 @@
-schema = "capsem.policy-pack.v1"
+schema = "capsem.enforcement-pack.v1"
 id = "corp.enforcement.process-shell"
 version = "2026.0522.1"
 status = "active"
