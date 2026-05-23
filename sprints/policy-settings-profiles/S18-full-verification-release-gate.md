@@ -168,3 +168,14 @@ the shipped bedrock, not the historical implementation.
 - Performance: complete or explicitly waived with rationale; list/status do not
   hit network or perform expensive hash verification, and concurrent first-use
   downloads are bounded and deduplicated.
+
+## Progress Journal
+
+- 2026-05-23: Started S18 with the S19 documentation review replay.
+  Verification commands:
+  - `pnpm --dir docs run build` passed; Starlight generated 69 pages.
+  - `rg -n 'guest/config|defaults\.json|config/defaults|\[mcp\]|NetworkPolicy|domain_policy|policy_config|security preset|allow list|domain policy' docs/src/content/docs -S` produced only accepted matches: historical release notes, service-settings fixture filenames, explicit developer-only built-in-profile caveats, and text explaining old paths are not runtime/operator authority.
+  - `rg -n "^- \[ \]|^- \[~\]" sprints/policy-settings-profiles/S19-documentation-and-site.md` returned no open S19 checklist items.
+  - `rg -n "removed" docs/src/content/docs/configuration docs/src/content/docs/architecture docs/src/content/docs/security docs/src/content/docs/getting-started -S` showed `removed` only in allowed prose: absent assets can be removed, file activity uses deleted/removed wording, old runtime was removed, and docs explicitly state `removed` is not a valid profile status.
+  - `rg -n "active|deprecated|revoked|ProfileRevisionStatus" docs/src/content/docs/configuration docs/src/content/docs/architecture docs/src/content/docs/security -S` confirmed the public profile-status vocabulary is `active`, `deprecated`, and `revoked`.
+  Fix applied during replay: updated the session-telemetry HTTP header-strip example from `policy.http.strip_credentials` to `security.rules.http.strip_credentials` so examples use the shipped Security Engine rule namespace.

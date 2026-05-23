@@ -522,8 +522,9 @@ ORDER BY id DESC
 LIMIT 20;"
 ```
 
-MCP named Policy V2 blocks use `policy_action = 'block'`. The coarse
-`mcp_calls.decision` field still uses `denied` for denied JSON-RPC outcomes.
+MCP Security Engine enforcement blocks use `policy_action = 'block'`. The
+coarse `mcp_calls.decision` field still uses `denied` for denied JSON-RPC
+outcomes.
 
 ### HTTP
 
@@ -543,7 +544,7 @@ Header-strip rules should be checked against the captured headers:
 just query-session "
 SELECT domain, request_headers, response_headers
 FROM net_events
-WHERE matched_rule = 'policy.http.strip_credentials'
+WHERE matched_rule = 'security.rules.http.strip_credentials'
 ORDER BY id DESC
 LIMIT 5;"
 ```

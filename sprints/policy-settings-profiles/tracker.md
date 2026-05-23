@@ -2635,12 +2635,18 @@ a valid claim -- mark it `[ ]` instead.
     troubleshooting at profile provenance, Settings -> Policy, `capsem logs`,
     debug reports, and typed rule references. S19 is closed for the bedrock
     release; S18 owns final docs-review replay.
-33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+33. [~] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate
     must prove the engine split, CLI, UI, docs, install, VM boot, profile pins,
     enforcement/detection runtime, logs/status/debug, and benchmark artifact
     claims together.
+    First S18 docs-review replay slice started the release gate: docs build
+    passed with **69** pages, S19 has no open checklist items, stale-authority
+    grep matches are historical release notes or explicit developer-only
+    caveats, profile status docs only use `active` / `deprecated` / `revoked`
+    as accepted values, and an old session-telemetry example was updated from
+    `policy.http.strip_credentials` to `security.rules.http.strip_credentials`.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
