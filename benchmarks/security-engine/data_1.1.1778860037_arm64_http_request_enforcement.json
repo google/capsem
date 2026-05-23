@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "vm_originated_http_request_enforcement",
   "version": "1.1.1778860037",
-  "source_commit": "550686a4",
-  "timestamp": 1779543678.588127,
+  "source_commit": "9a628bf1",
+  "timestamp": 1779544196.749061,
   "arch": "arm64",
   "host": {
     "sysname": "Darwin",
@@ -21,47 +21,267 @@
   "warmup_runs": 1,
   "gate_ms": 1000,
   "rule": {
-    "id": "runtime.block-http-bench.a50af802",
+    "id": "runtime.block-http-bench.4b967a8a",
     "pack_id": "runtime-benchmark",
-    "condition": "http.request.host == 'example.com' && http.request.path == '/security-engine-bench-block-d95c2418'",
+    "condition": "http.request.host == 'example.com' && http.request.path == '/security-engine-bench-block-576193de'",
     "decision": "block"
   },
   "operations": {
     "blocked_http_request_wall_ms": {
-      "min": 5.891,
-      "mean": 7.036,
-      "median": 6.485,
-      "p95": 10.623,
-      "p99": 10.623,
-      "max": 10.623,
+      "min": 6.277,
+      "mean": 7.915,
+      "median": 6.798,
+      "p95": 10.619,
+      "p99": 10.619,
+      "max": 10.619,
       "values": [
-        10.623,
-        7.238,
-        6.311,
-        7.105,
-        6.659,
-        5.891,
-        6.163,
-        6.297
+        6.471,
+        6.277,
+        10.429,
+        6.862,
+        6.635,
+        10.619,
+        6.734,
+        9.294
       ]
     },
     "blocked_http_request_starttransfer_ms": {
-      "min": 2.883,
-      "mean": 3.206,
-      "median": 3.132,
-      "p95": 3.56,
-      "p99": 3.56,
-      "max": 3.56,
+      "min": 3.016,
+      "mean": 3.508,
+      "median": 3.516,
+      "p95": 3.834,
+      "p99": 3.834,
+      "max": 3.834,
       "values": [
-        3.521,
-        3.56,
-        2.883,
-        3.254,
-        3.495,
-        2.935,
-        2.992,
-        3.01
+        3.512,
+        3.016,
+        3.787,
+        3.569,
+        3.428,
+        3.834,
+        3.519,
+        3.397
       ]
+    },
+    "curl_phase_ms": {
+      "appconnect": {
+        "min": 2.421,
+        "mean": 2.892,
+        "median": 2.925,
+        "p95": 3.14,
+        "p99": 3.14,
+        "max": 3.14,
+        "values": [
+          2.916,
+          2.421,
+          3.021,
+          3.004,
+          2.855,
+          3.14,
+          2.933,
+          2.847
+        ]
+      },
+      "connect": {
+        "min": 0.795,
+        "mean": 0.927,
+        "median": 0.87,
+        "p95": 1.146,
+        "p99": 1.146,
+        "max": 1.146,
+        "values": [
+          0.795,
+          0.858,
+          0.882,
+          0.838,
+          1.119,
+          0.926,
+          1.146,
+          0.855
+        ]
+      },
+      "namelookup": {
+        "min": 0.751,
+        "mean": 0.81,
+        "median": 0.815,
+        "p95": 0.889,
+        "p99": 0.889,
+        "max": 0.889,
+        "values": [
+          0.751,
+          0.815,
+          0.844,
+          0.781,
+          0.771,
+          0.889,
+          0.814,
+          0.818
+        ]
+      },
+      "pretransfer": {
+        "min": 2.44,
+        "mean": 2.911,
+        "median": 2.942,
+        "p95": 3.16,
+        "p99": 3.16,
+        "max": 3.16,
+        "values": [
+          2.935,
+          2.44,
+          3.042,
+          3.025,
+          2.87,
+          3.16,
+          2.949,
+          2.865
+        ]
+      },
+      "starttransfer": {
+        "min": 3.016,
+        "mean": 3.508,
+        "median": 3.516,
+        "p95": 3.834,
+        "p99": 3.834,
+        "max": 3.834,
+        "values": [
+          3.512,
+          3.016,
+          3.787,
+          3.569,
+          3.428,
+          3.834,
+          3.519,
+          3.397
+        ]
+      },
+      "total": {
+        "min": 3.034,
+        "mean": 3.521,
+        "median": 3.528,
+        "p95": 3.846,
+        "p99": 3.846,
+        "max": 3.846,
+        "values": [
+          3.525,
+          3.034,
+          3.801,
+          3.583,
+          3.441,
+          3.846,
+          3.531,
+          3.41
+        ]
+      }
+    },
+    "curl_phase_delta_ms": {
+      "dns": {
+        "min": 0.751,
+        "mean": 0.81,
+        "median": 0.815,
+        "p95": 0.889,
+        "p99": 0.889,
+        "max": 0.889,
+        "values": [
+          0.751,
+          0.815,
+          0.844,
+          0.781,
+          0.771,
+          0.889,
+          0.814,
+          0.818
+        ]
+      },
+      "pretransfer_after_tls": {
+        "min": 0.015,
+        "mean": 0.019,
+        "median": 0.019,
+        "p95": 0.021,
+        "p99": 0.021,
+        "max": 0.021,
+        "values": [
+          0.019,
+          0.019,
+          0.021,
+          0.021,
+          0.015,
+          0.02,
+          0.016,
+          0.018
+        ]
+      },
+      "response_tail_after_first_byte": {
+        "min": 0.012,
+        "mean": 0.014,
+        "median": 0.013,
+        "p95": 0.018,
+        "p99": 0.018,
+        "max": 0.018,
+        "values": [
+          0.013,
+          0.018,
+          0.014,
+          0.014,
+          0.013,
+          0.012,
+          0.012,
+          0.013
+        ]
+      },
+      "server_first_byte_after_pretransfer": {
+        "min": 0.532,
+        "mean": 0.597,
+        "median": 0.573,
+        "p95": 0.745,
+        "p99": 0.745,
+        "max": 0.745,
+        "values": [
+          0.577,
+          0.576,
+          0.745,
+          0.544,
+          0.558,
+          0.674,
+          0.57,
+          0.532
+        ]
+      },
+      "tcp_connect": {
+        "min": 0.037,
+        "mean": 0.117,
+        "median": 0.044,
+        "p95": 0.348,
+        "p99": 0.348,
+        "max": 0.348,
+        "values": [
+          0.044,
+          0.043,
+          0.038,
+          0.057,
+          0.348,
+          0.037,
+          0.332,
+          0.037
+        ]
+      },
+      "tls_appconnect": {
+        "min": 1.563,
+        "mean": 1.965,
+        "median": 2.057,
+        "p95": 2.214,
+        "p99": 2.214,
+        "max": 2.214,
+        "values": [
+          2.121,
+          1.563,
+          2.139,
+          2.166,
+          1.736,
+          2.214,
+          1.787,
+          1.992
+        ]
+      }
     }
   },
   "assertions": {
@@ -69,16 +289,16 @@
       "row_count": 9,
       "distinct_event_ids": 9,
       "blocked_count": 9,
-      "vm_id": "sechttp-23b27c78",
+      "vm_id": "sechttp-77d7549f",
       "profile_id": "profile-asset-boot",
       "user_id": "elie",
       "process_operation": null,
       "process_command_class": null,
-      "rule_id": "runtime.block-http-bench.a50af802",
+      "rule_id": "runtime.block-http-bench.4b967a8a",
       "reason": "HTTP request blocked by security benchmark"
     },
     "runtime_match_count": 9,
-    "runtime_last_event_id": "net-http-f03173435aac21a2",
+    "runtime_last_event_id": "net-http-c7aba361b413ecbd",
     "logs_exposed_security_decision": true
   }
 }

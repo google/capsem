@@ -2104,10 +2104,13 @@ a valid claim -- mark it `[ ]` instead.
     `security_events` + `security_event_steps` rows for `http.request`, and
     confirms `logs` exposes the decision. The first cold measurement looked
     suspiciously slow, so the benchmark now records both guest wall-clock and
-    curl `time_starttransfer`. Latest local result: 7.036ms mean wall-clock
-    and 3.206ms mean first-byte timing against a 1,000ms gross-regression
-    gate. The same combined run refreshed the process artifact to 10.295ms
-    mean and 10.810ms max.
+    curl `time_starttransfer`. Latest local result: 7.915ms mean wall-clock,
+    3.508ms mean first-byte timing, and 0.597ms mean server-first-byte after
+    pretransfer against a 1,000ms gross-regression gate. The phase breakdown
+    shows TLS appconnect dominates at 1.965ms mean, so the slow-looking local
+    HTTP number is connection/TLS/proxy setup rather than CEL evaluation. The
+    same combined run refreshed the process artifact to 9.807ms mean and
+    10.145ms max.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

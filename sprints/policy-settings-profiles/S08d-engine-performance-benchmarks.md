@@ -244,10 +244,12 @@ clearly not numerical and matches the sprint tracker.
   canonical decision, and archives
   `benchmarks/security-engine/data_1.1.1778860037_arm64_http_request_enforcement.json`.
   After separating guest wall-clock from curl first-byte timing, latest local
-  results are eight measured blocked HTTP requests at 7.036ms mean wall-clock
-  and 3.206ms mean `time_starttransfer` against a conservative 1,000ms
-  gross-regression gate. The process benchmark refreshed at 10.295ms mean and
-  10.810ms max.
+  results are eight measured blocked HTTP requests at 7.915ms mean wall-clock
+  and 3.508ms mean `time_starttransfer` against a conservative 1,000ms
+  gross-regression gate. The curl phase deltas show the Security Engine/MITM
+  post-pretransfer first-byte slice at 0.597ms mean, with TLS appconnect
+  dominating at 1.965ms mean. The process benchmark refreshed at 9.807ms mean
+  and 10.145ms max.
 
 ## Coverage Ledger
 

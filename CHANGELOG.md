@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refined the HTTP request enforcement benchmark to separate guest wall-clock
   latency from curl `time_starttransfer`, with a warmup request so cold
   proxy/TLS setup does not masquerade as Security Engine cost.
+- Added curl phase timing deltas to the HTTP request enforcement benchmark so
+  DNS, TCP connect, TLS appconnect, post-pretransfer first byte, and response
+  tail costs are visible in the committed artifact.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.

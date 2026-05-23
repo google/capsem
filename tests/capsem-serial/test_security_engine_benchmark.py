@@ -79,6 +79,19 @@ def _percentile(sorted_values, percentile):
     return sorted_values[index]
 
 
+def _series_summary(values):
+    sorted_values = sorted(values)
+    return {
+        "min": round(min(values), 3),
+        "mean": round(statistics.mean(values), 3),
+        "median": round(statistics.median(values), 3),
+        "p95": round(_percentile(sorted_values, 0.95), 3),
+        "p99": round(_percentile(sorted_values, 0.99), 3),
+        "max": round(max(values), 3),
+        "values": [round(value, 3) for value in values],
+    }
+
+
 def _session_db_path(service, vm):
     candidates = [
         service.tmp_dir / "sessions" / vm / "session.db",
@@ -369,6 +382,22 @@ warmup_runs = {HTTP_WARMUP_RUNS}
 url = "https://example.com{path}"
 durations_ms = []
 starttransfer_ms = []
+curl_phase_ms = {{
+    "namelookup": [],
+    "connect": [],
+    "appconnect": [],
+    "pretransfer": [],
+    "starttransfer": [],
+    "total": [],
+}}
+curl_phase_delta_ms = {{
+    "dns": [],
+    "tcp_connect": [],
+    "tls_appconnect": [],
+    "pretransfer_after_tls": [],
+    "server_first_byte_after_pretransfer": [],
+    "response_tail_after_first_byte": [],
+}}
 results = []
 
 def run_once():
@@ -381,7 +410,13 @@ def run_once():
             "--max-time",
             "15",
             "-w",
-            "\\nHTTP_STATUS:%{{http_code}}\\nSTARTTRANSFER:%{{time_starttransfer}}",
+            "\\nHTTP_STATUS:%{{http_code}}"
+            "\\nTIME_NAMELOOKUP:%{{time_namelookup}}"
+            "\\nTIME_CONNECT:%{{time_connect}}"
+            "\\nTIME_APPCONNECT:%{{time_appconnect}}"
+            "\\nTIME_PRETRANSFER:%{{time_pretransfer}}"
+            "\\nTIME_STARTTRANSFER:%{{time_starttransfer}}"
+            "\\nTIME_TOTAL:%{{time_total}}",
             url,
         ],
         capture_output=True,
@@ -390,33 +425,51 @@ def run_once():
     )
     wall_ms = (time.perf_counter() - started) * 1000
     status = None
-    starttransfer = None
+    phases = {{}}
     for line in proc.stdout.splitlines():
         if line.startswith("HTTP_STATUS:"):
             status = line.split(":", 1)[1]
-        if line.startswith("STARTTRANSFER:"):
-            starttransfer = float(line.split(":", 1)[1]) * 1000
-    return wall_ms, starttransfer, {{
+        if line.startswith("TIME_"):
+            key, value = line.split(":", 1)
+            phases[key[5:].lower()] = float(value) * 1000
+    deltas = {{
+        "dns": phases["namelookup"],
+        "tcp_connect": phases["connect"] - phases["namelookup"],
+        "tls_appconnect": phases["appconnect"] - phases["connect"],
+        "pretransfer_after_tls": phases["pretransfer"] - phases["appconnect"],
+        "server_first_byte_after_pretransfer": (
+            phases["starttransfer"] - phases["pretransfer"]
+        ),
+        "response_tail_after_first_byte": phases["total"] - phases["starttransfer"],
+    }}
+    return wall_ms, phases, deltas, {{
         "returncode": proc.returncode,
         "stdout": proc.stdout,
         "stderr": proc.stderr,
         "http_status": status,
-        "starttransfer_ms": starttransfer,
+        "curl_phase_ms": phases,
+        "curl_phase_delta_ms": deltas,
     }}
 
 for _ in range(warmup_runs):
     run_once()
 
 for index in range(runs):
-    wall_ms, ttfb_ms, result = run_once()
+    wall_ms, phases, deltas, result = run_once()
     durations_ms.append(wall_ms)
-    starttransfer_ms.append(ttfb_ms)
+    starttransfer_ms.append(phases["starttransfer"])
+    for name, value in phases.items():
+        curl_phase_ms[name].append(value)
+    for name, value in deltas.items():
+        curl_phase_delta_ms[name].append(value)
     results.append(result)
 
 print(json.dumps({{
     "warmup_runs": warmup_runs,
     "durations_ms": durations_ms,
     "starttransfer_ms": starttransfer_ms,
+    "curl_phase_ms": curl_phase_ms,
+    "curl_phase_delta_ms": curl_phase_delta_ms,
     "results": results,
 }}))
 """
@@ -429,12 +482,16 @@ print(json.dumps({{
         payload = json.loads(response["stdout"].strip().splitlines()[-1])
         durations_ms = payload["durations_ms"]
         starttransfer_ms = payload["starttransfer_ms"]
+        curl_phase_ms = payload["curl_phase_ms"]
+        curl_phase_delta_ms = payload["curl_phase_delta_ms"]
         assert len(durations_ms) == RUNS
         assert len(starttransfer_ms) == RUNS
+        assert all(len(values) == RUNS for values in curl_phase_ms.values())
+        assert all(len(values) == RUNS for values in curl_phase_delta_ms.values())
         for result in payload["results"]:
             assert result["returncode"] == 0, result
             assert result["http_status"] == "403", result
-            assert result["starttransfer_ms"] is not None, result
+            assert result["curl_phase_ms"]["starttransfer"] is not None, result
             assert reason in result["stdout"], result
 
         db_summary = _wait_for_security_event_count(
@@ -467,8 +524,6 @@ print(json.dumps({{
         assert '"event_type":"http.request"' in security_logs
         assert '"final_action":"block"' in security_logs
 
-        sorted_durations = sorted(durations_ms)
-        sorted_starttransfer = sorted(starttransfer_ms)
         summary = {
             "schema": "capsem.security-engine-benchmark.v1",
             "kind": "vm_originated_http_request_enforcement",
@@ -502,24 +557,18 @@ print(json.dumps({{
                 "decision": "block",
             },
             "operations": {
-                "blocked_http_request_wall_ms": {
-                    "min": round(min(durations_ms), 3),
-                    "mean": round(statistics.mean(durations_ms), 3),
-                    "median": round(statistics.median(durations_ms), 3),
-                    "p95": round(_percentile(sorted_durations, 0.95), 3),
-                    "p99": round(_percentile(sorted_durations, 0.99), 3),
-                    "max": round(max(durations_ms), 3),
-                    "values": [round(value, 3) for value in durations_ms],
+                "blocked_http_request_wall_ms": _series_summary(durations_ms),
+                "blocked_http_request_starttransfer_ms": _series_summary(
+                    starttransfer_ms
+                ),
+                "curl_phase_ms": {
+                    name: _series_summary(values)
+                    for name, values in sorted(curl_phase_ms.items())
                 },
-                "blocked_http_request_starttransfer_ms": {
-                    "min": round(min(starttransfer_ms), 3),
-                    "mean": round(statistics.mean(starttransfer_ms), 3),
-                    "median": round(statistics.median(starttransfer_ms), 3),
-                    "p95": round(_percentile(sorted_starttransfer, 0.95), 3),
-                    "p99": round(_percentile(sorted_starttransfer, 0.99), 3),
-                    "max": round(max(starttransfer_ms), 3),
-                    "values": [round(value, 3) for value in starttransfer_ms],
-                }
+                "curl_phase_delta_ms": {
+                    name: _series_summary(values)
+                    for name, values in sorted(curl_phase_delta_ms.items())
+                },
             },
             "assertions": {
                 "session_db_security_events": db_summary,

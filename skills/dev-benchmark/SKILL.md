@@ -197,7 +197,10 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 The first gross-regression gates assert mean blocked process exec latency stays
 under 750ms and mean blocked HTTP request latency stays under 1,000ms. The
 artifacts also verify runtime match counters, canonical `session.db` security
-rows, and `logs` attribution.
+rows, and `logs` attribution. HTTP artifacts include both guest wall-clock
+timing and curl phase timing/deltas; use the post-pretransfer first-byte delta
+to reason about MITM/Security Engine response cost instead of raw guest curl
+wall time.
 
 ### When to run
 

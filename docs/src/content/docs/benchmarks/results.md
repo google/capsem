@@ -214,12 +214,12 @@ events, and `logs` exposure.
 |--------|-------|
 | Runs | 8 |
 | Gate | 750ms mean |
-| Min blocked exec latency | 9.554ms |
-| Mean blocked exec latency | 10.295ms |
-| Median blocked exec latency | 10.457ms |
-| p95 blocked exec latency | 10.810ms |
-| p99 blocked exec latency | 10.810ms |
-| Max blocked exec latency | 10.810ms |
+| Min blocked exec latency | 9.615ms |
+| Mean blocked exec latency | 9.807ms |
+| Median blocked exec latency | 9.750ms |
+| p95 blocked exec latency | 10.145ms |
+| p99 blocked exec latency | 10.145ms |
+| Max blocked exec latency | 10.145ms |
 | Runtime matches | 8 |
 | Session DB security events | 8 |
 
@@ -243,19 +243,27 @@ exposure.
 The wall-clock metric includes spawning curl in the guest. The
 `time_starttransfer` metric is curl's first-byte timing for the blocked
 response and is the better proxy for transport plus Security Engine response
-latency.
+latency. The phase deltas show most first-byte time is TLS/MITM appconnect;
+the post-pretransfer server-first-byte slice, which includes request dispatch,
+Security Engine evaluation, synthetic 403 generation, and first-byte delivery,
+is below 1ms on this run.
 
 | Metric | Value |
 |--------|-------|
 | Runs | 8 |
 | Warmup runs | 1 |
 | Gate | 1,000ms mean |
-| Mean wall-clock blocked request | 7.036ms |
-| Median wall-clock blocked request | 6.485ms |
-| p95 wall-clock blocked request | 10.623ms |
-| Mean `time_starttransfer` | 3.206ms |
-| Median `time_starttransfer` | 3.132ms |
-| p95 `time_starttransfer` | 3.560ms |
+| Mean wall-clock blocked request | 7.915ms |
+| Median wall-clock blocked request | 6.798ms |
+| p95 wall-clock blocked request | 10.619ms |
+| Mean `time_starttransfer` | 3.508ms |
+| Median `time_starttransfer` | 3.516ms |
+| p95 `time_starttransfer` | 3.834ms |
+| Mean DNS | 0.810ms |
+| Mean TCP connect after DNS | 0.117ms |
+| Mean TLS appconnect | 1.965ms |
+| Mean server first byte after pretransfer | 0.597ms |
+| Mean response tail after first byte | 0.014ms |
 | Runtime matches | 9 |
 | Session DB security events | 9 |
 
