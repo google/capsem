@@ -167,6 +167,33 @@ Fork is fast because APFS `clonefile()` is copy-on-write -- no actual data copyi
 
 Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
 
+## Security Engine CEL microbench (host-side)
+
+First S08d host-side microbenchmark artifact:
+`benchmarks/security-engine/data_1.1.1778860037_arm64_cel_microbench.json`.
+
+This is a Rust Criterion microbenchmark for canonical policy-context CEL paths.
+It is not a VM-originated benchmark and should not be used as an end-to-end
+latency claim.
+
+| Benchmark | Slope |
+|-----------|-------|
+| Compile `http.request.host.contains("google")` | 8.7us |
+| Compile full HTTP policy | 44.0us |
+| Evaluate `http.request.host.contains("google")` | 14.6us |
+| Evaluate `http.request.header("authorization").exists()` | 17.0us |
+| Evaluate full HTTP policy | 23.7us |
+| Evaluate full HTTP policy as last match across 100 rules | 1.29ms |
+| Project `SecurityEvent` to `PolicyContext` | 543ns |
+| Project and serialize `PolicyContext` | 2.6us |
+| Native Rust lookup for equivalent HTTP policy | 12ns |
+
+Run:
+
+```bash
+cargo bench -p capsem-security-engine --bench security_engine_cel
+```
+
 ## Test environment
 
 | Component | Version |

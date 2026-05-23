@@ -2058,6 +2058,14 @@ a valid claim -- mark it `[ ]` instead.
     native lookup comparison. Still missing in S08d: committed JSON benchmark
     artifacts, VM-originated security-engine benchmarks, detection/dedup/
     registry microbenches, concurrency cases, and regression gates.
+    Second S08d artifact slice committed
+    `benchmarks/security-engine/data_1.1.1778860037_arm64_cel_microbench.json`
+    plus a benchmark README and docs results section. The artifact records the
+    local Criterion slope estimates from the first harness and labels them as
+    host-side microbench numbers, not VM-originated release latency. Still
+    missing in S08d: VM-originated security-engine benchmarks,
+    detection/dedup/registry microbenches, concurrency cases, and regression
+    gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

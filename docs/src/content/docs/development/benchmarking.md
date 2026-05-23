@@ -122,6 +122,7 @@ The first S08d harness covers CEL compile time, warm enforcement evaluation,
 policy-context projection/materialization, 100-rule last-match evaluation, and
 a native Rust lookup comparator for the same HTTP policy. These numbers explain
 runtime hot-path costs; they do not replace VM-originated benchmark artifacts.
+Committed host-side artifacts live under `benchmarks/security-engine/`.
 
 ### Snapshot operations (`snapshot`)
 

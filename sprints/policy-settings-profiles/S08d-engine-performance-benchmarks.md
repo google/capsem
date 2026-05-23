@@ -172,7 +172,7 @@ clearly not numerical and matches the sprint tracker.
   JSON under `benchmarks/security-engine/`.
 - [~] Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
   evidence dedup, and registry plan swaps.
-- [ ] Adapt the Howard John-style CEL benchmark methodology into a Capsem local
+- [~] Adapt the Howard John-style CEL benchmark methodology into a Capsem local
   baseline artifact, using the Agentgateway `benches.rs` families/cases as the
   source model where they map, before drawing optimization conclusions.
 - [ ] Add correctness assertions for every benchmark scenario: expected final
@@ -201,6 +201,13 @@ clearly not numerical and matches the sprint tracker.
   on the missing bench file; after adding the harness, `--no-run` passed and
   the full `cargo bench -p capsem-security-engine --bench security_engine_cel`
   executed successfully. This is not yet a release benchmark artifact.
+- Slice 2 committed the first host-side S08d microbenchmark artifact under
+  `benchmarks/security-engine/`. The artifact records Criterion slope
+  estimates for the canonical HTTP CEL cases, policy-context projection,
+  100-rule last-match evaluation, and native lookup comparator from the local
+  `cargo bench -p capsem-security-engine --bench security_engine_cel` run. The
+  benchmark results docs surface those numbers with an explicit caveat that
+  they are not VM-originated end-to-end latency claims.
 
 ## Coverage Ledger
 
