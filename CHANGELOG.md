@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `capsem-admin policy backtest` to compile-check policy packs before
   fixture replay, so an empty corpus cannot report success for invalid policy
   paths.
+- Added an S08c drift test proving the committed Sigma-derived Detection IR
+  artifact exactly matches current `capsem-admin` compiler output before Rust
+  consumes it.
 - Added rule-corpus workflow documentation tying policy-context fixtures,
   enforcement/detection expected artifacts, admin commands, and Rust parity
   tests together.

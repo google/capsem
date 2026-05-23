@@ -1949,6 +1949,16 @@ a valid claim -- mark it `[ ]` instead.
     code 0, then focused policy backtest tests passed with **3** tests. Still
     missing in S08c: live VM-generated session fixtures from the
     resolved-event journal and full runtime-CEL parity beyond the admin subset.
+    Thirteenth cross-language drift slice pinned the Python-generated
+    Detection IR artifact: `tests/test_security_packs.py` now recompiles
+    `data/detection/sigma/google-secret-egress.yml` and compares it exactly to
+    `data/detection/ir/google-secret-egress.json`, which Rust already consumes
+    for expected-artifact parity. This closes the explicit cross-language drift
+    task for the first shared enforcement/detection corpus. Verification:
+    `uv run pytest tests/test_security_packs.py -k
+    "s08c_detection_ir_artifact_matches_admin_compiler_output" -q` passed.
+    Still missing in S08c: live VM-generated session fixtures from the
+    resolved-event journal and full runtime-CEL parity beyond the admin subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

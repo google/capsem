@@ -40,6 +40,12 @@ DETECTION_IR_SCHEMA_PATH = (
 DETECTION_IR_FIXTURE_PATH = (
     PROJECT_ROOT / "schemas" / "fixtures" / "detection-ir-v1-valid.json"
 )
+S08C_DETECTION_PACK_PATH = (
+    PROJECT_ROOT / "data" / "detection" / "sigma" / "google-secret-egress.yml"
+)
+S08C_DETECTION_IR_PATH = (
+    PROJECT_ROOT / "data" / "detection" / "ir" / "google-secret-egress.json"
+)
 
 
 def _policy_json() -> str:
@@ -220,6 +226,15 @@ def test_detection_ir_golden_fixture_matches_compiler_output(tmp_path: Path) -> 
     ir = compile_detection_pack(pack, base_dir=tmp_path)
 
     assert DETECTION_IR_FIXTURE_PATH.read_text(
+        encoding="utf-8",
+    ) == dump_detection_ir_json(ir) + "\n"
+
+
+def test_s08c_detection_ir_artifact_matches_admin_compiler_output() -> None:
+    pack = validate_detection_pack_yaml(S08C_DETECTION_PACK_PATH)
+    ir = compile_detection_pack(pack, base_dir=S08C_DETECTION_PACK_PATH.parent)
+
+    assert S08C_DETECTION_IR_PATH.read_text(
         encoding="utf-8",
     ) == dump_detection_ir_json(ir) + "\n"
 

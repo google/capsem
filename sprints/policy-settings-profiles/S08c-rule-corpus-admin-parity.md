@@ -96,7 +96,7 @@ session-scoped enforcement replay, it should be named and designed separately.
   service/session store explicitly; offline detection backtest is mandatory.
 - [x] Add Rust runtime parity tests that consume the same corpus and expected
   outputs through the S08b service/security-engine evaluator.
-- [ ] Add cross-language drift tests proving Python-generated enforcement/detection
+- [x] Add cross-language drift tests proving Python-generated enforcement/detection
   artifacts use canonical policy roots, are accepted by Rust, and produce
   identical backtest outcomes.
 - [ ] Generate initial real-session normalized event fixtures from S08b's
@@ -180,12 +180,21 @@ session-scoped enforcement replay, it should be named and designed separately.
   replay. The red test proved an empty policy-context corpus could previously
   report success for an invalid rule because validation happened only inside
   the fixture loop; backtest now fails closed even when there are no rows.
+- Slice 13 closed the explicit cross-language drift item for the first shared
+  corpus. Python now recompiles the committed Sigma pack and asserts
+  `data/detection/ir/google-secret-egress.json` is exactly the admin compiler
+  output; Rust already consumes that artifact and proves it produces the same
+  expected backtest report. Enforcement parity is pinned by the shared
+  `http-google-secret` expected artifact consumed by both admin and Rust CEL
+  tests.
 
 ## Coverage Ledger
 
 - Unit/contract: Python Pydantic and Rust serde/schema validation over the same
   enforcement/detection/event fixtures; first admin policy and detection
-  backtest reports compare against committed expected-result JSON artifacts.
+  backtest reports compare against committed expected-result JSON artifacts;
+  Python-generated Detection IR is pinned to the committed artifact consumed by
+  Rust.
 - Functional: admin offline backtest and Rust runtime backtest produce the same
   matched event refs, decisions/findings, and counts. This is proven for the
   first synthetic enforcement and detection corpus; broader corpus diversity
