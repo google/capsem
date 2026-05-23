@@ -1096,6 +1096,43 @@ fn make_test_state() -> Arc<ServiceState> {
 async fn handle_debug_report_returns_pasteable_text() {
     let (state, _dir) = make_test_state_with_tempdir();
     insert_fake_instance(&state, "debug-vm", std::process::id());
+    let _ = handle_create_enforcement_rule(
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "block-debug-metadata".into(),
+            pack_id: Some("runtime-debug".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
+            condition: "http.request.host == 'metadata.google.internal'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("metadata access".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    let _ = handle_create_detection_rule(
+        State(state.clone()),
+        Json(RuntimeDetectionRuleRequest {
+            id: "detect-debug-secret".into(),
+            pack_id: "runtime-debug".into(),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
+            sigma_id: Some("sigma-debug".into()),
+            title: "Secret in request".into(),
+            condition: "http.request.body.text.contains('secret')".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::Medium,
+            tags: vec!["debug".into()],
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    state
+        .enforcement_registry
+        .lock()
+        .unwrap()
+        .record_match("block-debug-metadata", "evt-debug-1", 1_789)
+        .unwrap();
 
     let Json(report) = handle_debug_report(State(state)).await.unwrap();
 
@@ -1104,6 +1141,29 @@ async fn handle_debug_report_returns_pasteable_text() {
     assert!(report.text.contains("running_vm_count: 1"));
     assert!(report.text.contains("source: profile_v2_asset_health"));
     assert!(report.text.contains("profile_asset_health_present: true"));
+    assert!(report.text.contains("[security_engine]"));
+    assert!(report.text.contains("runtime_rules_store_enabled: true"));
+    assert!(report.text.contains("enforcement_rule_count: 1"));
+    assert!(report.text.contains("enforcement_match_count_total: 1"));
+    assert!(report.text.contains("detection_rule_count: 1"));
+    assert!(report.text.contains("confirm_resolver_available: false"));
+    assert!(report.text.contains("confirm_owner: S15-confirm-ux"));
+
+    let json = serde_json::to_value(&report.json).unwrap();
+    assert_eq!(json["security_engine"]["present"], true);
+    assert_eq!(json["security_engine"]["enforcement"]["rule_count"], 1);
+    assert_eq!(
+        json["security_engine"]["enforcement"]["rules"][0]["id"],
+        "block-debug-metadata"
+    );
+    assert_eq!(
+        json["security_engine"]["enforcement"]["rules"][0]["action"],
+        "block"
+    );
+    assert_eq!(
+        json["security_engine"]["detection"]["rules"][0]["confidence"],
+        "medium"
+    );
 }
 
 #[tokio::test]

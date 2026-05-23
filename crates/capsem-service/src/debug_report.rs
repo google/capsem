@@ -31,6 +31,7 @@ pub struct DebugReportInput {
     pub install: Option<InstallReportInput>,
     pub process_pids: Vec<ProcessReportInput>,
     pub settings_profiles: Option<capsem_core::settings_profiles::SettingsProfilesDebugSnapshot>,
+    pub runtime_security: Option<RuntimeSecurityReportInput>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +62,7 @@ pub struct DebugReportJson {
     pub version: VersionReport,
     pub paths: PathsReport,
     pub runtime: RuntimeReport,
+    pub security_engine: RuntimeSecurityReport,
     pub host: HostReport,
     pub disk: DiskReport,
     pub install: InstallReport,
@@ -95,6 +97,174 @@ pub struct RuntimeReport {
     pub gateway_pid_file: FileSnapshot,
     pub gateway_port_file: FileSnapshot,
     pub gateway_token_file: FileSnapshot,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeSecurityReportInput {
+    pub runtime_rules_store_path: Option<PathBuf>,
+    pub enforcement_rules: Vec<RuntimeSecurityRuleReportInput>,
+    pub detection_rules: Vec<RuntimeSecurityRuleReportInput>,
+    pub confirm_resolver_available: bool,
+    pub confirm_owner: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeSecurityRuleReportInput {
+    pub id: String,
+    pub pack_id: Option<String>,
+    pub scope: RuntimeSecurityRuleScopeReport,
+    pub origin: RuntimeSecurityRuleOriginReport,
+    pub priority: i32,
+    pub enabled: bool,
+    pub compiled: bool,
+    pub generation: u64,
+    pub action: Option<RuntimeSecurityActionReport>,
+    pub severity: Option<RuntimeSecuritySeverityReport>,
+    pub confidence: Option<RuntimeSecurityConfidenceReport>,
+    pub match_count: u64,
+    pub last_matched_event: Option<String>,
+    pub last_matched_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeSecurityRuleScopeReport {
+    Profile,
+    User,
+    Corp,
+    Runtime,
+}
+
+impl RuntimeSecurityRuleScopeReport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::User => "user",
+            Self::Corp => "corp",
+            Self::Runtime => "runtime",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeSecurityRuleOriginReport {
+    Profile,
+    User,
+    Corp,
+    Runtime,
+}
+
+impl RuntimeSecurityRuleOriginReport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::User => "user",
+            Self::Corp => "corp",
+            Self::Runtime => "runtime",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSecurityActionReport {
+    Allow,
+    Ask,
+    Block,
+    Rewrite,
+    Throttle,
+}
+
+impl RuntimeSecurityActionReport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Ask => "ask",
+            Self::Block => "block",
+            Self::Rewrite => "rewrite",
+            Self::Throttle => "throttle",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeSecuritySeverityReport {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl RuntimeSecuritySeverityReport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeSecurityConfidenceReport {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeSecurityReport {
+    pub present: bool,
+    pub runtime_rules_store_enabled: bool,
+    pub runtime_rules_store_path: Option<String>,
+    pub enforcement: RuntimeSecurityRegistryReport,
+    pub detection: RuntimeSecurityRegistryReport,
+    pub confirm: RuntimeSecurityConfirmReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeSecurityRegistryReport {
+    pub rule_count: usize,
+    pub enabled_count: usize,
+    pub compiled_count: usize,
+    pub error_count: usize,
+    pub runtime_scope_count: usize,
+    pub profile_scope_count: usize,
+    pub scope_counts: BTreeMap<String, usize>,
+    pub match_count_total: u64,
+    pub latest_match_unix_ms: Option<u64>,
+    pub rules: Vec<RuntimeSecurityRuleReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeSecurityRuleReport {
+    pub kind: String,
+    pub id: String,
+    pub pack_id: Option<String>,
+    pub scope: RuntimeSecurityRuleScopeReport,
+    pub origin: RuntimeSecurityRuleOriginReport,
+    pub priority: i32,
+    pub enabled: bool,
+    pub compiled: bool,
+    pub generation: u64,
+    pub action: Option<RuntimeSecurityActionReport>,
+    pub severity: Option<RuntimeSecuritySeverityReport>,
+    pub confidence: Option<RuntimeSecurityConfidenceReport>,
+    pub match_count: u64,
+    pub last_matched_event: Option<String>,
+    pub last_matched_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeSecurityConfirmReport {
+    pub resolver_available: bool,
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,6 +441,7 @@ pub fn build_debug_report(input: DebugReportInput) -> Result<DebugReport> {
     let processes = build_process_report(&input.process_pids);
     let mut status = build_status_report(&input);
     append_gateway_runtime_issues(&mut status.issues, &runtime, &processes);
+    let security_engine = build_runtime_security_report(input.runtime_security.as_ref());
     let setup = build_setup_report(&input.capsem_home);
     let assets = build_asset_report(&input)?;
     let logs = collect_log_tails(&input.capsem_home, &input.run_dir);
@@ -296,6 +467,9 @@ pub fn build_debug_report(input: DebugReportInput) -> Result<DebugReport> {
     lines.push(String::new());
     lines.push("[runtime]".to_string());
     append_runtime_report(&mut lines, &runtime);
+    lines.push(String::new());
+    lines.push("[security_engine]".to_string());
+    append_runtime_security_report(&mut lines, &security_engine);
     lines.push(String::new());
     lines.push("[host]".to_string());
     append_host_report(
@@ -329,6 +503,7 @@ pub fn build_debug_report(input: DebugReportInput) -> Result<DebugReport> {
         version,
         paths,
         runtime,
+        security_engine,
         host,
         disk,
         install,
@@ -763,6 +938,76 @@ fn append_runtime_report(lines: &mut Vec<String>, runtime: &RuntimeReport) {
     ));
 }
 
+fn append_runtime_security_report(lines: &mut Vec<String>, report: &RuntimeSecurityReport) {
+    lines.push(format!("present: {}", report.present));
+    lines.push(format!(
+        "runtime_rules_store_enabled: {}",
+        report.runtime_rules_store_enabled
+    ));
+    if let Some(path) = report.runtime_rules_store_path.as_deref() {
+        lines.push(format!("runtime_rules_store_path: {path}"));
+    }
+    append_runtime_security_registry_report(lines, "enforcement", &report.enforcement);
+    append_runtime_security_registry_report(lines, "detection", &report.detection);
+    lines.push(format!(
+        "confirm_resolver_available: {}",
+        report.confirm.resolver_available
+    ));
+    if let Some(owner) = report.confirm.owner.as_deref() {
+        lines.push(format!("confirm_owner: {owner}"));
+    }
+}
+
+fn append_runtime_security_registry_report(
+    lines: &mut Vec<String>,
+    kind: &str,
+    registry: &RuntimeSecurityRegistryReport,
+) {
+    lines.push(format!("{kind}_rule_count: {}", registry.rule_count));
+    lines.push(format!("{kind}_enabled_count: {}", registry.enabled_count));
+    lines.push(format!(
+        "{kind}_compiled_count: {}",
+        registry.compiled_count
+    ));
+    lines.push(format!("{kind}_error_count: {}", registry.error_count));
+    lines.push(format!(
+        "{kind}_runtime_scope_count: {}",
+        registry.runtime_scope_count
+    ));
+    lines.push(format!(
+        "{kind}_profile_scope_count: {}",
+        registry.profile_scope_count
+    ));
+    lines.push(format!(
+        "{kind}_match_count_total: {}",
+        registry.match_count_total
+    ));
+    if let Some(timestamp) = registry.latest_match_unix_ms {
+        lines.push(format!("{kind}_latest_match_unix_ms: {timestamp}"));
+    }
+    for rule in &registry.rules {
+        let pack = rule.pack_id.as_deref().unwrap_or("-");
+        let policy = rule
+            .action
+            .map(RuntimeSecurityActionReport::as_str)
+            .or_else(|| rule.severity.map(RuntimeSecuritySeverityReport::as_str))
+            .unwrap_or("-");
+        lines.push(format!(
+            "runtime_rule: {kind} id={} pack={} scope={} origin={} enabled={} compiled={} priority={} generation={} policy={} match_count={}",
+            rule.id,
+            pack,
+            rule.scope.as_str(),
+            rule.origin.as_str(),
+            rule.enabled,
+            rule.compiled,
+            rule.priority,
+            rule.generation,
+            policy,
+            rule.match_count
+        ));
+    }
+}
+
 fn append_asset_locations_report(
     lines: &mut Vec<String>,
     locations: &capsem_core::settings_profiles::ResolvedServiceAssetLocations,
@@ -1126,6 +1371,94 @@ fn build_runtime_report(
         gateway_pid_file: file_snapshot(&run_dir.join("gateway.pid"), true, false),
         gateway_port_file: file_snapshot(&run_dir.join("gateway.port"), true, false),
         gateway_token_file: file_snapshot(&run_dir.join("gateway.token"), false, false),
+    }
+}
+
+fn build_runtime_security_report(
+    input: Option<&RuntimeSecurityReportInput>,
+) -> RuntimeSecurityReport {
+    let Some(input) = input else {
+        return RuntimeSecurityReport {
+            present: false,
+            runtime_rules_store_enabled: false,
+            runtime_rules_store_path: None,
+            enforcement: build_runtime_security_registry_report("enforcement", &[]),
+            detection: build_runtime_security_registry_report("detection", &[]),
+            confirm: RuntimeSecurityConfirmReport {
+                resolver_available: false,
+                owner: None,
+            },
+        };
+    };
+
+    RuntimeSecurityReport {
+        present: true,
+        runtime_rules_store_enabled: input.runtime_rules_store_path.is_some(),
+        runtime_rules_store_path: input
+            .runtime_rules_store_path
+            .as_ref()
+            .map(|path| redact_path_for_report(path)),
+        enforcement: build_runtime_security_registry_report(
+            "enforcement",
+            &input.enforcement_rules,
+        ),
+        detection: build_runtime_security_registry_report("detection", &input.detection_rules),
+        confirm: RuntimeSecurityConfirmReport {
+            resolver_available: input.confirm_resolver_available,
+            owner: input.confirm_owner.clone(),
+        },
+    }
+}
+
+fn build_runtime_security_registry_report(
+    kind: &str,
+    rules: &[RuntimeSecurityRuleReportInput],
+) -> RuntimeSecurityRegistryReport {
+    let mut scope_counts = BTreeMap::new();
+    for rule in rules {
+        *scope_counts
+            .entry(rule.scope.as_str().to_string())
+            .or_insert(0) += 1;
+    }
+    RuntimeSecurityRegistryReport {
+        rule_count: rules.len(),
+        enabled_count: rules.iter().filter(|rule| rule.enabled).count(),
+        compiled_count: rules.iter().filter(|rule| rule.compiled).count(),
+        error_count: rules.iter().filter(|rule| !rule.compiled).count(),
+        runtime_scope_count: rules
+            .iter()
+            .filter(|rule| rule.scope == RuntimeSecurityRuleScopeReport::Runtime)
+            .count(),
+        profile_scope_count: rules
+            .iter()
+            .filter(|rule| rule.scope == RuntimeSecurityRuleScopeReport::Profile)
+            .count(),
+        scope_counts,
+        match_count_total: rules.iter().map(|rule| rule.match_count).sum(),
+        latest_match_unix_ms: rules
+            .iter()
+            .filter_map(|rule| rule.last_matched_unix_ms)
+            .max(),
+        rules: rules
+            .iter()
+            .map(|rule| RuntimeSecurityRuleReport {
+                kind: kind.to_string(),
+                id: rule.id.clone(),
+                pack_id: rule.pack_id.clone(),
+                scope: rule.scope,
+                origin: rule.origin,
+                priority: rule.priority,
+                enabled: rule.enabled,
+                compiled: rule.compiled,
+                generation: rule.generation,
+                action: rule.action,
+                severity: rule.severity,
+                confidence: rule.confidence,
+                match_count: rule.match_count,
+                last_matched_event: rule.last_matched_event.clone(),
+                last_matched_unix_ms: rule.last_matched_unix_ms,
+            })
+            .collect(),
     }
 }
 

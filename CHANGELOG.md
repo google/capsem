@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Disabled runtime `ask` overlays until the S15 confirm prompter lands, so
   enforcement validate/compile/install/backtest and persisted restore fail
   closed instead of exposing an approval workflow with no resolver.
+- Added runtime Security Engine health to `/debug/report`, including the
+  persisted runtime-rule store path, enforcement/detection registry counts,
+  match counters, rule attribution, and the current confirm resolver state.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

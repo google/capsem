@@ -2979,6 +2979,7 @@ async fn handle_debug_report(
     let process_pids = debug_report::default_process_report_inputs(&state.run_dir, &current_exe);
     let capsem_home = capsem_core::paths::capsem_home();
     let settings_profiles = build_settings_profiles_debug_snapshot(&capsem_home);
+    let runtime_security = runtime_security_debug_report_input(&state)?;
 
     let report = debug_report::build_debug_report(debug_report::DebugReportInput {
         generated_at,
@@ -3000,6 +3001,7 @@ async fn handle_debug_report(
         install,
         process_pids,
         settings_profiles: Some(settings_profiles),
+        runtime_security: Some(runtime_security),
     })
     .map_err(|e| {
         AppError(
@@ -6543,6 +6545,123 @@ fn runtime_registry_rules_json(
         .into_iter()
         .map(runtime_rule_entry_json)
         .collect())
+}
+
+fn runtime_security_debug_report_input(
+    state: &ServiceState,
+) -> Result<debug_report::RuntimeSecurityReportInput, AppError> {
+    Ok(debug_report::RuntimeSecurityReportInput {
+        runtime_rules_store_path: state.runtime_rules_store_path.clone(),
+        enforcement_rules: runtime_registry_report_rules(&state.enforcement_registry)?,
+        detection_rules: runtime_registry_report_rules(&state.detection_registry)?,
+        confirm_resolver_available: false,
+        confirm_owner: Some("S15-confirm-ux".into()),
+    })
+}
+
+fn runtime_registry_report_rules(
+    registry: &Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+) -> Result<Vec<debug_report::RuntimeSecurityRuleReportInput>, AppError> {
+    let registry = registry.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime rule registry lock poisoned: {error}"),
+        )
+    })?;
+    Ok(registry
+        .list()
+        .into_iter()
+        .map(runtime_rule_report_input)
+        .collect())
+}
+
+fn runtime_rule_report_input(
+    entry: &seceng::RuntimeRuleEntry,
+) -> debug_report::RuntimeSecurityRuleReportInput {
+    let (action, severity, confidence) = match &entry.definition {
+        seceng::RuntimeRuleDefinition::Enforcement { decision, .. } => {
+            (Some(security_decision_action_report(*decision)), None, None)
+        }
+        seceng::RuntimeRuleDefinition::Detection {
+            severity,
+            confidence,
+            ..
+        } => (
+            None,
+            Some(severity_report(*severity)),
+            Some(confidence_report(*confidence)),
+        ),
+    };
+    debug_report::RuntimeSecurityRuleReportInput {
+        id: entry.metadata.id.clone(),
+        pack_id: entry.metadata.pack_id.clone(),
+        scope: rule_scope_report(entry.metadata.scope),
+        origin: rule_origin_report(entry.metadata.origin),
+        priority: entry.metadata.priority,
+        enabled: entry.enabled,
+        compiled: matches!(entry.compile_status, seceng::CompileStatus::Compiled),
+        generation: entry.generation,
+        action,
+        severity,
+        confidence,
+        match_count: entry.stats.match_count,
+        last_matched_event: entry.stats.last_matched_event.clone(),
+        last_matched_unix_ms: entry.stats.last_matched_unix_ms,
+    }
+}
+
+fn rule_scope_report(scope: seceng::RuleScope) -> debug_report::RuntimeSecurityRuleScopeReport {
+    match scope {
+        seceng::RuleScope::Profile => debug_report::RuntimeSecurityRuleScopeReport::Profile,
+        seceng::RuleScope::User => debug_report::RuntimeSecurityRuleScopeReport::User,
+        seceng::RuleScope::Corp => debug_report::RuntimeSecurityRuleScopeReport::Corp,
+        seceng::RuleScope::Runtime => debug_report::RuntimeSecurityRuleScopeReport::Runtime,
+    }
+}
+
+fn rule_origin_report(origin: seceng::RuleOrigin) -> debug_report::RuntimeSecurityRuleOriginReport {
+    match origin {
+        seceng::RuleOrigin::Profile => debug_report::RuntimeSecurityRuleOriginReport::Profile,
+        seceng::RuleOrigin::User => debug_report::RuntimeSecurityRuleOriginReport::User,
+        seceng::RuleOrigin::Corp => debug_report::RuntimeSecurityRuleOriginReport::Corp,
+        seceng::RuleOrigin::Runtime => debug_report::RuntimeSecurityRuleOriginReport::Runtime,
+    }
+}
+
+fn security_decision_action_report(
+    action: seceng::SecurityDecisionAction,
+) -> debug_report::RuntimeSecurityActionReport {
+    match action {
+        seceng::SecurityDecisionAction::Allow => debug_report::RuntimeSecurityActionReport::Allow,
+        seceng::SecurityDecisionAction::Ask => debug_report::RuntimeSecurityActionReport::Ask,
+        seceng::SecurityDecisionAction::Block => debug_report::RuntimeSecurityActionReport::Block,
+        seceng::SecurityDecisionAction::Rewrite => {
+            debug_report::RuntimeSecurityActionReport::Rewrite
+        }
+        seceng::SecurityDecisionAction::Throttle => {
+            debug_report::RuntimeSecurityActionReport::Throttle
+        }
+    }
+}
+
+fn severity_report(severity: seceng::Severity) -> debug_report::RuntimeSecuritySeverityReport {
+    match severity {
+        seceng::Severity::Info => debug_report::RuntimeSecuritySeverityReport::Info,
+        seceng::Severity::Low => debug_report::RuntimeSecuritySeverityReport::Low,
+        seceng::Severity::Medium => debug_report::RuntimeSecuritySeverityReport::Medium,
+        seceng::Severity::High => debug_report::RuntimeSecuritySeverityReport::High,
+        seceng::Severity::Critical => debug_report::RuntimeSecuritySeverityReport::Critical,
+    }
+}
+
+fn confidence_report(
+    confidence: seceng::Confidence,
+) -> debug_report::RuntimeSecurityConfidenceReport {
+    match confidence {
+        seceng::Confidence::Low => debug_report::RuntimeSecurityConfidenceReport::Low,
+        seceng::Confidence::Medium => debug_report::RuntimeSecurityConfidenceReport::Medium,
+        seceng::Confidence::High => debug_report::RuntimeSecurityConfidenceReport::High,
+    }
 }
 
 #[cfg(test)]

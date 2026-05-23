@@ -484,6 +484,11 @@ Implementation status as of the current service-route slices:
   now reject runtime `ask` decisions with an explicit S15 diagnostic instead of
   advertising approval while the Security Engine would default-deny unresolved
   asks.
+- Landed: `/debug/report` now exposes runtime Security Engine health. The
+  pasteable text and JSON include the persisted runtime-rule store path,
+  enforcement/detection registry counts, enabled/compiled/error totals, scope
+  counts, match totals, per-rule attribution, and the current confirm resolver
+  state.
 - Still open: interactive confirm UX, S12 telemetry/export projection, S08d
   performance proof, and remaining VM/runtime cutover breadth.
 

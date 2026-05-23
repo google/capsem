@@ -2011,6 +2011,23 @@ a valid claim -- mark it `[ ]` instead.
     **3** passed. Still missing after this slice: visible UI screens/editors,
     S15 interactive confirm resolver/queue/CLI/UI, S12 OTel/prometheus export,
     S08d performance proof, and final release gates.
+    Ninety-fifth S08b/S11 observability slice added runtime Security Engine
+    health to `/debug/report`. The report now carries the persisted runtime-rule
+    store path, enforcement/detection registry counts, enabled/compiled/error
+    totals, scope counts, match totals, per-rule pack/scope/origin/action or
+    severity, and the current confirm resolver state. Verification: `cargo
+    test -p capsem-service includes_runtime_security_registry_health --lib`
+    passed, `cargo test -p capsem-service debug_report::tests --lib` **9**
+    passed, `cargo test -p capsem-service
+    handle_debug_report_returns_pasteable_text --bin capsem-service` passed,
+    `cargo test -p capsem-service --lib` passed with **115** tests,
+    `cargo test -p capsem-service --bin capsem-service` passed with **212**
+    tests outside the sandbox for local socket fixtures, `cargo check -p
+    capsem-service` passed, `cargo fmt --check` passed, and `git diff
+    --check` passed. Still missing after this slice:
+    visible UI screens/editors, richer `capsem status`/`capsem logs` projection,
+    S15 interactive confirm resolver/queue/CLI/UI, S12 OTel/prometheus export,
+    S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

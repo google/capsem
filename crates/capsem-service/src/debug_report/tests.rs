@@ -48,6 +48,7 @@ fn attributes_profile_v2_asset_health() {
         install: None,
         process_pids: Vec::new(),
         settings_profiles: None,
+        runtime_security: None,
     })
     .unwrap();
 
@@ -154,6 +155,7 @@ fn json_report_captures_setup_runtime_assets_and_redacted_logs() {
             },
         ],
         settings_profiles: None,
+        runtime_security: None,
     })
     .unwrap();
 
@@ -252,6 +254,7 @@ fn reports_gateway_runtime_mismatches() {
             executable_path: None,
         }],
         settings_profiles: None,
+        runtime_security: None,
     })
     .unwrap();
 
@@ -313,6 +316,7 @@ fn updating_profile_assets_are_reported_without_panicking() {
         install: None,
         process_pids: Vec::new(),
         settings_profiles: None,
+        runtime_security: None,
     })
     .unwrap();
 
@@ -379,6 +383,7 @@ fn includes_settings_profiles_without_leaking_credentials() {
         install: None,
         process_pids: Vec::new(),
         settings_profiles: Some(snapshot),
+        runtime_security: None,
     })
     .unwrap();
 
@@ -435,6 +440,7 @@ fn includes_settings_profiles_load_error() {
         install: None,
         process_pids: Vec::new(),
         settings_profiles: Some(snapshot),
+        runtime_security: None,
     })
     .unwrap();
 
@@ -479,10 +485,119 @@ fn settings_profiles_section_includes_resolver_trace_summary_when_present() {
         install: None,
         process_pids: Vec::new(),
         settings_profiles: Some(snapshot),
+        runtime_security: None,
     })
     .unwrap();
 
     assert!(report.text.contains("resolver_trace_event_count:"));
     assert!(report.text.contains("resolver_trace_corp_event_count: 0"));
     assert!(report.text.contains("resolver_trace_event:"));
+}
+
+#[test]
+fn includes_runtime_security_registry_health() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join(".capsem/run");
+    let store_path = run_dir.join("runtime_security_rules.json");
+
+    let report = build_debug_report(DebugReportInput {
+        generated_at: "2026-05-12T12:00:00Z".into(),
+        version: "1.1.1778542197".into(),
+        build_hash: "1d95b80.1778545863".into(),
+        build_ts: "dev".into(),
+        platform: "macos/aarch64".into(),
+        capsem_home: dir.path().join(".capsem"),
+        run_dir,
+        assets_dir: dir.path().join("assets"),
+        asset_locations: None,
+        asset_health: None,
+        running_vm_count: 0,
+        total_vm_count: 0,
+        status_issues: Vec::new(),
+        defunct_sessions: Vec::new(),
+        install: None,
+        process_pids: Vec::new(),
+        settings_profiles: None,
+        runtime_security: Some(RuntimeSecurityReportInput {
+            runtime_rules_store_path: Some(store_path.clone()),
+            enforcement_rules: vec![RuntimeSecurityRuleReportInput {
+                id: "block-metadata".into(),
+                pack_id: Some("runtime-pack".into()),
+                scope: RuntimeSecurityRuleScopeReport::Runtime,
+                origin: RuntimeSecurityRuleOriginReport::Runtime,
+                priority: 100,
+                enabled: true,
+                compiled: true,
+                generation: 2,
+                action: Some(RuntimeSecurityActionReport::Block),
+                severity: None,
+                confidence: None,
+                match_count: 3,
+                last_matched_event: Some("evt-3".into()),
+                last_matched_unix_ms: Some(1_789),
+            }],
+            detection_rules: vec![RuntimeSecurityRuleReportInput {
+                id: "detect-secret".into(),
+                pack_id: Some("profile:coding".into()),
+                scope: RuntimeSecurityRuleScopeReport::Profile,
+                origin: RuntimeSecurityRuleOriginReport::Profile,
+                priority: 50,
+                enabled: false,
+                compiled: true,
+                generation: 1,
+                action: None,
+                severity: Some(RuntimeSecuritySeverityReport::High),
+                confidence: Some(RuntimeSecurityConfidenceReport::Medium),
+                match_count: 5,
+                last_matched_event: Some("evt-5".into()),
+                last_matched_unix_ms: Some(2_789),
+            }],
+            confirm_resolver_available: false,
+            confirm_owner: Some("S15-confirm-ux".into()),
+        }),
+    })
+    .unwrap();
+
+    assert!(report.text.contains("[security_engine]"));
+    assert!(report.text.contains("runtime_rules_store_enabled: true"));
+    assert!(report.text.contains(&format!(
+        "runtime_rules_store_path: {}",
+        redact_path_for_report(&store_path)
+    )));
+    assert!(report.text.contains("enforcement_rule_count: 1"));
+    assert!(report.text.contains("enforcement_enabled_count: 1"));
+    assert!(report.text.contains("enforcement_match_count_total: 3"));
+    assert!(report.text.contains("detection_rule_count: 1"));
+    assert!(report.text.contains("detection_enabled_count: 0"));
+    assert!(report.text.contains("detection_match_count_total: 5"));
+    assert!(report
+        .text
+        .contains("runtime_rule: enforcement id=block-metadata"));
+    assert!(report.text.contains("confirm_resolver_available: false"));
+    assert!(report.text.contains("confirm_owner: S15-confirm-ux"));
+
+    let json = serde_json::to_value(&report.json).unwrap();
+    assert_eq!(
+        json["security_engine"]["runtime_rules_store_path"],
+        redact_path_for_report(&store_path)
+    );
+    assert_eq!(json["security_engine"]["enforcement"]["rule_count"], 1);
+    assert_eq!(json["security_engine"]["enforcement"]["enabled_count"], 1);
+    assert_eq!(
+        json["security_engine"]["enforcement"]["match_count_total"],
+        3
+    );
+    assert_eq!(
+        json["security_engine"]["enforcement"]["rules"][0]["action"],
+        "block"
+    );
+    assert_eq!(json["security_engine"]["detection"]["enabled_count"], 0);
+    assert_eq!(
+        json["security_engine"]["detection"]["rules"][0]["severity"],
+        "high"
+    );
+    assert_eq!(
+        json["security_engine"]["confirm"]["resolver_available"],
+        false
+    );
 }

@@ -54,6 +54,10 @@ truth cannot lie or omit the core profile/security provenance.
   download endpoint, telemetry endpoint, remote decision endpoint, credential
   IDs, profiles and lock/source state, selected/effective profile, VM settings,
   MCP server IDs, skills state, and derived/raw rule counts.
+- `/debug/report` now includes `[security_engine]` with the persisted runtime
+  rule store path, enforcement/detection registry counts, enabled/compiled/error
+  totals, scope counts, match totals, per-rule pack/scope/origin/action or
+  severity, and the current confirm resolver state.
 - If settings/profile resolution fails, the debug report records the load error
   instead of silently dropping the section.
 
@@ -61,16 +65,23 @@ Focused test command:
 
 ```sh
 cargo test -p capsem-service debug_report::tests
+cargo test -p capsem-service handle_debug_report_returns_pasteable_text --bin capsem-service
 ```
 
-Result: 5 debug report tests passed, including credential redaction and
-settings/profile load-error rendering.
+Result: 9 debug report tests passed, including credential redaction,
+settings/profile load-error rendering, and runtime Security Engine registry
+health. The service route test installs runtime enforcement/detection rules,
+records a match, and confirms `/debug/report` renders the live registry state.
+The widened service gates also passed: `cargo test -p capsem-service --lib`
+with 115 tests and `cargo test -p capsem-service --bin capsem-service` with
+212 tests, the latter outside the sandbox for local socket fixtures.
 
 ## Coverage Ledger
 
 - Unit/contract: provenance summary rendering is partially covered; catalog,
   package/asset readiness, and VM pin rendering must add focused shape tests.
-- Functional: debug report rendering tests are present.
+- Functional: debug report rendering tests are present; service route coverage
+  verifies runtime Security Engine registry state reaches `/debug/report`.
 - Adversarial: credential value redaction is covered; missing profile roots, bad
   profile load errors are covered; missing profile roots and locked setting
   rendering remain; generated-rule ownership rendering is pending; revoked
@@ -79,6 +90,7 @@ settings/profile load-error rendering.
 - E2E/VM: debug report explains launched session profile revision and pinned
   verified assets.
 - Telemetry: report includes audit-relevant settings/profile/rule summaries at
-  model level plus profile catalog/update, VM pin state, and S12 live health
-  summaries for model/provider/cost/detection counters.
+  model level plus runtime Security Engine rule/match summaries. Profile
+  catalog/update, VM pin state, and S12 live health summaries for
+  model/provider/cost/detection counters remain pending.
 - Performance: report generation remains bounded.
