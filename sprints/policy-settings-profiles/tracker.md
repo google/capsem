@@ -1977,6 +1977,27 @@ a valid claim -- mark it `[ ]` instead.
     capsem-service` passed. Still missing after this slice: visible UI
     screens/editors, interactive confirm prompt UX in S15, S12
     OTel/prometheus export, S08d performance proof, and final release gates.
+    Ninety-third S08b runtime registry slice added typed persisted recovery for
+    operator-installed runtime overlays. Service create/update/delete for
+    runtime-scoped enforcement and detection rules now rewrites an atomic
+    `capsem.runtime-security-rules.v1` store under the service run directory;
+    profile-seeded rules remain rebuilt from profiles and are filtered out of
+    the store. Startup restores the saved runtime records after profile seeding
+    by recompiling them into the CEL registries, and invalid persisted CEL fails
+    closed before registry mutation. Verification: `cargo test -p
+    capsem-service runtime_security_rule --bin capsem-service` **2** passed,
+    `cargo test -p capsem-service runtime_routes --bin capsem-service` **3**
+    passed, `cargo test -p capsem-service
+    runtime_security_engine_evaluates_installed_rules_and_records_stats --bin
+    capsem-service` passed, and the two Unix-socket IPC focused tests
+    `handle_create_enforcement_rule_pushes_runtime_snapshot_to_running_vm` and
+    `handle_enforcement_stats_drains_process_runtime_rule_matches` passed
+    outside the sandbox because local socket bind is sandbox-blocked. Widened
+    `cargo test -p capsem-service --bin capsem-service` passed with **209**
+    tests, `cargo check -p capsem-service` passed, and `git diff --check`
+    passed. Still missing after this slice: visible UI screens/editors,
+    interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
+    performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

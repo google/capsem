@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Network Engine-owned model SecurityEvent projection, and switched
   session-backed detection hunt reconstruction to build model events through
   that boundary instead of constructing model subjects inside the service.
+- Added persisted runtime enforcement/detection overlay recovery: service
+  runtime rule mutations now atomically write a typed
+  `capsem.runtime-security-rules.v1` store, and startup recompiles the saved
+  overlays back into the CEL registries while failing closed on invalid rules.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

@@ -1083,6 +1083,8 @@ fn make_test_state() -> Arc<ServiceState> {
         detection_registry: Arc::new(Mutex::new(
             capsem_security_engine::RuntimeRuleRegistry::default(),
         )),
+        runtime_rules_store_path: None,
+        runtime_rules_store_lock: Mutex::new(()),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -2379,7 +2381,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(&run_dir),
-        run_dir,
+        run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
         enforcement_registry: Arc::new(Mutex::new(
@@ -2388,6 +2390,8 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         detection_registry: Arc::new(Mutex::new(
             capsem_security_engine::RuntimeRuleRegistry::default(),
         )),
+        runtime_rules_store_path: Some(run_dir.join("runtime_security_rules.json")),
+        runtime_rules_store_lock: Mutex::new(()),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -2944,6 +2948,8 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         detection_registry: Arc::new(Mutex::new(
             capsem_security_engine::RuntimeRuleRegistry::default(),
         )),
+        runtime_rules_store_path: Some(dir.path().join("runtime_security_rules.json")),
+        runtime_rules_store_lock: Mutex::new(()),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -3392,6 +3398,8 @@ fn make_test_state_with_profile_assets_and_process(
         detection_registry: Arc::new(Mutex::new(
             capsem_security_engine::RuntimeRuleRegistry::default(),
         )),
+        runtime_rules_store_path: Some(dir.path().join("runtime_security_rules.json")),
+        runtime_rules_store_lock: Mutex::new(()),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -7113,6 +7121,131 @@ async fn handle_create_enforcement_rule_pushes_runtime_snapshot_to_running_vm() 
 }
 
 #[tokio::test]
+async fn runtime_security_rule_overlays_persist_and_restore_compiled_plans() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("svc");
+    let state = make_state_in(run_dir.clone());
+
+    let _ = handle_create_enforcement_rule(
+        State(state.clone()),
+        Json(RuntimeEnforcementRuleRequest {
+            id: "block-persisted".into(),
+            pack_id: Some("runtime-pack".into()),
+            priority: 20,
+            condition: "http.request.host == 'persisted.test'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
+            reason: Some("persisted block".into()),
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+    let _ = handle_create_detection_rule(
+        State(state),
+        Json(RuntimeDetectionRuleRequest {
+            id: "detect-persisted".into(),
+            pack_id: "runtime-detection".into(),
+            priority: 30,
+            sigma_id: Some("sigma-persisted".into()),
+            title: "Persisted detection".into(),
+            condition: "http.request.host == 'persisted.test'".into(),
+            severity: capsem_security_engine::Severity::High,
+            confidence: capsem_security_engine::Confidence::Medium,
+            tags: vec!["persisted".into()],
+            enabled: true,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let store_path = run_dir.join("runtime_security_rules.json");
+    let persisted = std::fs::read_to_string(&store_path).unwrap();
+    assert!(persisted.contains("capsem.runtime-security-rules.v1"));
+    assert!(persisted.contains("block-persisted"));
+    assert!(persisted.contains("detect-persisted"));
+    assert!(!persisted.contains("compiled_plan"));
+
+    let restored = make_state_in(run_dir.clone());
+    let restored_count = restore_runtime_security_rule_overlays(&restored).unwrap();
+    assert_eq!(restored_count, 2);
+
+    let Json(enforcement) = handle_list_enforcement_rules(State(restored.clone()))
+        .await
+        .unwrap();
+    assert_eq!(enforcement["rules"][0]["id"], "block-persisted");
+    assert_eq!(enforcement["rules"][0]["scope"], "runtime");
+    assert_eq!(enforcement["rules"][0]["origin"], "runtime");
+    assert_eq!(
+        enforcement["rules"][0]["compiled_plan"],
+        runtime_rule_plan_id("http.request.host == 'persisted.test'")
+    );
+
+    let mut engine = runtime_security_engine_from_registries(&restored).unwrap();
+    let result = engine
+        .evaluate(runtime_http_event("evt-persisted", 11, "persisted.test"))
+        .unwrap();
+    assert!(matches!(
+        result.action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+    assert_eq!(
+        result
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .unwrap()
+            .rule
+            .as_deref(),
+        Some("block-persisted")
+    );
+    assert_eq!(
+        result.resolved_event.detection_findings[0].rule_id,
+        "detect-persisted"
+    );
+
+    let _ = handle_delete_enforcement_rule(Path("block-persisted".into()), State(restored))
+        .await
+        .unwrap();
+    let after_delete = std::fs::read_to_string(&store_path).unwrap();
+    assert!(!after_delete.contains("block-persisted"));
+    assert!(after_delete.contains("detect-persisted"));
+}
+
+#[tokio::test]
+async fn runtime_security_rule_overlay_restore_fails_closed_on_invalid_cel() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("svc");
+    let state = make_state_in(run_dir.clone());
+    let store = RuntimeSecurityRulesStore {
+        schema: RUNTIME_SECURITY_RULES_STORE_SCHEMA.into(),
+        enforcement: vec![capsem_security_engine::RuntimeRuleRecord {
+            metadata: capsem_security_engine::RuntimeRuleMetadata {
+                id: "bad-persisted".into(),
+                pack_id: Some("runtime-pack".into()),
+                scope: capsem_security_engine::RuleScope::Runtime,
+                origin: capsem_security_engine::RuleOrigin::Runtime,
+                priority: capsem_security_engine::DEFAULT_RUNTIME_RULE_PRIORITY,
+            },
+            definition: capsem_security_engine::RuntimeRuleDefinition::Enforcement {
+                decision: capsem_security_engine::SecurityDecisionAction::Block,
+                reason: Some("bad persisted rule".into()),
+            },
+            source: "event.subject.host == 'metadata.google.internal'".into(),
+            enabled: true,
+        }],
+        detection: Vec::new(),
+    };
+    write_runtime_security_rules_store(&run_dir.join("runtime_security_rules.json"), &store)
+        .unwrap();
+
+    let err = restore_runtime_security_rule_overlays(&state).unwrap_err();
+    assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(err.1.contains("event.*"));
+    assert!(state.enforcement_registry.lock().unwrap().list().is_empty());
+}
+
+#[tokio::test]
 async fn handle_enforcement_stats_drains_process_runtime_rule_matches() {
     let (state, dir) = make_test_state_with_tempdir();
     let sock_path = dir.path().join("runtime-match-drain.sock");
@@ -8745,7 +8878,7 @@ fn make_test_state_with_tempdir_at(
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(&run_dir),
-        run_dir,
+        run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
         enforcement_registry: Arc::new(Mutex::new(
@@ -8754,6 +8887,8 @@ fn make_test_state_with_tempdir_at(
         detection_registry: Arc::new(Mutex::new(
             capsem_security_engine::RuntimeRuleRegistry::default(),
         )),
+        runtime_rules_store_path: Some(run_dir.join("runtime_security_rules.json")),
+        runtime_rules_store_lock: Mutex::new(()),
         current_version: current_version.into(),
         magika: test_magika(),
         save_restore_lock: tokio::sync::Mutex::new(()),

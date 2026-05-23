@@ -101,6 +101,12 @@ struct ServiceState {
     enforcement_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
     /// Runtime CEL/Sigma-lowered detection rules installed through the service API.
     detection_registry: Arc<Mutex<seceng::RuntimeRuleRegistry>>,
+    /// Typed persisted runtime overlay store. Profile-seeded rules are rebuilt
+    /// from profiles and are never written here.
+    runtime_rules_store_path: Option<PathBuf>,
+    /// Serializes runtime overlay store rewrites so concurrent rule mutations
+    /// cannot collide on the atomic temp file.
+    runtime_rules_store_lock: Mutex<()>,
     current_version: String,
     /// Magika file-type detection session (thread-safe, shared)
     magika: Mutex<magika::Session>,
@@ -4530,6 +4536,28 @@ struct RuntimeDetectionRuleRequest {
     enabled: bool,
 }
 
+const RUNTIME_SECURITY_RULES_STORE_SCHEMA: &str = "capsem.runtime-security-rules.v1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSecurityRulesStore {
+    schema: String,
+    #[serde(default)]
+    enforcement: Vec<seceng::RuntimeRuleRecord>,
+    #[serde(default)]
+    detection: Vec<seceng::RuntimeRuleRecord>,
+}
+
+impl RuntimeSecurityRulesStore {
+    fn new() -> Self {
+        Self {
+            schema: RUNTIME_SECURITY_RULES_STORE_SCHEMA.to_owned(),
+            enforcement: Vec::new(),
+            detection: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeBacktestEvent {
@@ -5994,6 +6022,39 @@ fn compile_runtime_detection_rule(
     Ok(runtime_rule_plan_id(&request.condition))
 }
 
+fn compile_runtime_detection_record(
+    record: &seceng::RuntimeRuleRecord,
+) -> Result<String, seceng::SecurityEngineError> {
+    let seceng::RuntimeRuleDefinition::Detection {
+        sigma_id,
+        title,
+        severity,
+        confidence,
+        tags,
+    } = &record.definition
+    else {
+        return Err(seceng::SecurityEngineError::CelCompileFailed {
+            rule_id: record.metadata.id.clone(),
+            message: "expected detection rule definition".into(),
+        });
+    };
+    seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
+        id: record.metadata.id.clone(),
+        pack_id: record
+            .metadata
+            .pack_id
+            .clone()
+            .unwrap_or_else(|| "runtime".into()),
+        sigma_id: sigma_id.clone(),
+        title: title.clone(),
+        condition: record.source.clone(),
+        severity: *severity,
+        confidence: *confidence,
+        tags: tags.clone(),
+    }])?;
+    Ok(runtime_rule_plan_id(&record.source))
+}
+
 fn runtime_enforcement_record(
     request: &RuntimeEnforcementRuleRequest,
 ) -> seceng::RuntimeRuleRecord {
@@ -6181,6 +6242,244 @@ fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Resul
         "seeded profile enforcement rules into runtime registry"
     );
     Ok(seeded)
+}
+
+fn runtime_security_rule_overlays_store(
+    state: &Arc<ServiceState>,
+) -> Result<RuntimeSecurityRulesStore, AppError> {
+    let mut store = RuntimeSecurityRulesStore::new();
+    {
+        let registry = state.enforcement_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime enforcement registry lock poisoned: {error}"),
+            )
+        })?;
+        store.enforcement = registry
+            .list()
+            .into_iter()
+            .filter(|entry| {
+                entry.metadata.scope == seceng::RuleScope::Runtime
+                    && entry.metadata.origin == seceng::RuleOrigin::Runtime
+            })
+            .map(|entry| seceng::RuntimeRuleRecord {
+                metadata: entry.metadata.clone(),
+                definition: entry.definition.clone(),
+                source: entry.source.clone(),
+                enabled: entry.enabled,
+            })
+            .collect();
+    }
+    {
+        let registry = state.detection_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime detection registry lock poisoned: {error}"),
+            )
+        })?;
+        store.detection = registry
+            .list()
+            .into_iter()
+            .filter(|entry| {
+                entry.metadata.scope == seceng::RuleScope::Runtime
+                    && entry.metadata.origin == seceng::RuleOrigin::Runtime
+            })
+            .map(|entry| seceng::RuntimeRuleRecord {
+                metadata: entry.metadata.clone(),
+                definition: entry.definition.clone(),
+                source: entry.source.clone(),
+                enabled: entry.enabled,
+            })
+            .collect();
+    }
+    Ok(store)
+}
+
+fn write_runtime_security_rules_store(
+    path: &FsPath,
+    store: &RuntimeSecurityRulesStore,
+) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("create runtime rules store directory: {error}"),
+            )
+        })?;
+    }
+    let json = serde_json::to_vec_pretty(store).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("serialize runtime rules store: {error}"),
+        )
+    })?;
+    let tmp_path = path.with_extension("json.tmp");
+    let mut file = std::fs::File::create(&tmp_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("create runtime rules store temp file: {error}"),
+        )
+    })?;
+    std::io::Write::write_all(&mut file, &json).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write runtime rules store: {error}"),
+        )
+    })?;
+    file.sync_all().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("sync runtime rules store: {error}"),
+        )
+    })?;
+    std::fs::rename(&tmp_path, path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("install runtime rules store: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
+fn persist_runtime_security_rule_overlays(state: &Arc<ServiceState>) -> Result<(), AppError> {
+    let Some(path) = &state.runtime_rules_store_path else {
+        return Ok(());
+    };
+    let _store_guard = state.runtime_rules_store_lock.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime rules store lock poisoned: {error}"),
+        )
+    })?;
+    let store = runtime_security_rule_overlays_store(state)?;
+    write_runtime_security_rules_store(path, &store)
+}
+
+fn restore_runtime_security_rule_overlays(state: &Arc<ServiceState>) -> Result<usize, AppError> {
+    let Some(path) = &state.runtime_rules_store_path else {
+        return Ok(0);
+    };
+    let _store_guard = state.runtime_rules_store_lock.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("runtime rules store lock poisoned: {error}"),
+        )
+    })?;
+    if !path.exists() {
+        return Ok(0);
+    }
+    let bytes = std::fs::read(path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("read runtime rules store {}: {error}", path.display()),
+        )
+    })?;
+    let store: RuntimeSecurityRulesStore = serde_json::from_slice(&bytes).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("parse runtime rules store {}: {error}", path.display()),
+        )
+    })?;
+    if store.schema != RUNTIME_SECURITY_RULES_STORE_SCHEMA {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "unsupported runtime rules store schema '{}' in {}",
+                store.schema,
+                path.display()
+            ),
+        ));
+    }
+
+    let mut restored = 0usize;
+    {
+        let mut registry = state.enforcement_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime enforcement registry lock poisoned: {error}"),
+            )
+        })?;
+        for record in store.enforcement {
+            validate_persisted_runtime_rule_record(&record, "enforcement")?;
+            let compiled_plan = compile_runtime_enforcement_record(&record).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "compile persisted enforcement rule '{}': {error}",
+                        record.metadata.id
+                    ),
+                )
+            })?;
+            registry
+                .add_or_update(record, |_| Ok(compiled_plan.clone()))
+                .map_err(|error| {
+                    AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("restore persisted enforcement rule: {error}"),
+                    )
+                })?;
+            restored += 1;
+        }
+    }
+    {
+        let mut registry = state.detection_registry.lock().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime detection registry lock poisoned: {error}"),
+            )
+        })?;
+        for record in store.detection {
+            validate_persisted_runtime_rule_record(&record, "detection")?;
+            let compiled_plan = compile_runtime_detection_record(&record).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "compile persisted detection rule '{}': {error}",
+                        record.metadata.id
+                    ),
+                )
+            })?;
+            registry
+                .add_or_update(record, |_| Ok(compiled_plan.clone()))
+                .map_err(|error| {
+                    AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("restore persisted detection rule: {error}"),
+                    )
+                })?;
+            restored += 1;
+        }
+    }
+    Ok(restored)
+}
+
+fn validate_persisted_runtime_rule_record(
+    record: &seceng::RuntimeRuleRecord,
+    expected_kind: &str,
+) -> Result<(), AppError> {
+    validate_runtime_rule_id(&record.metadata.id)?;
+    if record.metadata.scope != seceng::RuleScope::Runtime
+        || record.metadata.origin != seceng::RuleOrigin::Runtime
+    {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "persisted {expected_kind} rule '{}' is not runtime scoped",
+                record.metadata.id
+            ),
+        ));
+    }
+    match (&record.definition, expected_kind) {
+        (seceng::RuntimeRuleDefinition::Enforcement { .. }, "enforcement")
+        | (seceng::RuntimeRuleDefinition::Detection { .. }, "detection") => Ok(()),
+        _ => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "persisted {expected_kind} rule '{}' has mismatched definition kind",
+                record.metadata.id
+            ),
+        )),
+    }
 }
 
 fn runtime_rule_entry_json(entry: &seceng::RuntimeRuleEntry) -> serde_json::Value {
@@ -8332,6 +8631,7 @@ async fn handle_create_enforcement_rule(
                 )
             })?
     };
+    persist_runtime_security_rule_overlays(&state)?;
     let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "enforcement",
@@ -8370,6 +8670,7 @@ async fn handle_delete_enforcement_rule(
             .delete(&id)
             .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
     }
+    persist_runtime_security_rule_overlays(&state)?;
     let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "enforcement",
@@ -8506,6 +8807,7 @@ async fn handle_create_detection_rule(
                 )
             })?
     };
+    persist_runtime_security_rule_overlays(&state)?;
     let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "detection",
@@ -8544,6 +8846,7 @@ async fn handle_delete_detection_rule(
             .delete(&id)
             .map_err(|error| AppError(StatusCode::NOT_FOUND, error.to_string()))?;
     }
+    persist_runtime_security_rule_overlays(&state)?;
     let propagation = broadcast_runtime_security_rules(&state).await?;
     Ok(Json(json!({
         "kind": "detection",
@@ -11440,6 +11743,8 @@ async fn main() -> Result<()> {
         asset_supervisor,
         enforcement_registry: Arc::new(Mutex::new(seceng::RuntimeRuleRegistry::default())),
         detection_registry: Arc::new(Mutex::new(seceng::RuntimeRuleRegistry::default())),
+        runtime_rules_store_path: Some(run_dir.join("runtime_security_rules.json")),
+        runtime_rules_store_lock: Mutex::new(()),
         current_version,
         magika: Mutex::new(magika_session),
         save_restore_lock: tokio::sync::Mutex::new(()),
@@ -11448,6 +11753,14 @@ async fn main() -> Result<()> {
 
     seed_runtime_security_rules_from_profiles(&state)
         .map_err(|error| anyhow!("seed profile runtime security rules: {}", error.1))?;
+    let restored_runtime_rules = restore_runtime_security_rule_overlays(&state)
+        .map_err(|error| anyhow!("restore runtime security rule overlays: {}", error.1))?;
+    if restored_runtime_rules > 0 {
+        info!(
+            rule_count = restored_runtime_rules,
+            "restored runtime security rule overlays"
+        );
+    }
 
     Arc::clone(&state.asset_supervisor).spawn();
     let _profile_catalog_reconcile_task =

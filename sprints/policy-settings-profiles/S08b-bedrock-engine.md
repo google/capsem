@@ -473,13 +473,18 @@ Implementation status as of the current service-route slices:
   state, and condition text, validate/install runtime overlay rules, and delete
   only runtime-scoped overlays while profile/user/corp-owned rows remain
   read-only.
-- Still open: persisted rule-plan recovery, interactive confirm UX, S12
-  telemetry/export projection, S08d performance proof, and remaining VM/runtime
-  cutover breadth.
+- Landed: persisted runtime overlay recovery. Runtime-scoped enforcement and
+  detection mutations atomically write a typed
+  `capsem.runtime-security-rules.v1` store under the service run directory;
+  startup recompiles those saved records into the CEL registries after
+  profile-seeded rules are rebuilt, and invalid persisted CEL fails closed
+  before registry mutation.
+- Still open: interactive confirm UX, S12 telemetry/export projection, S08d
+  performance proof, and remaining VM/runtime cutover breadth.
 
-For the bedrock release, persisted recovery and the shipped CLI/UI route
-contract are release-blocking if operators can mutate runtime overlays.
-Interactive confirm is release-blocking only for profiles/rules that expose
+For the bedrock release, the shipped CLI/UI route contract remains
+release-blocking now that runtime overlay recovery has landed. Interactive
+confirm is release-blocking only for profiles/rules that expose
 `decision = "ask"` as a user-facing capability; otherwise ask-capable rules must
 be disabled or documented as unavailable for the cut. S12 export polish remains
 post-bedrock, but status/log/debug truth for shipped event families is required.
