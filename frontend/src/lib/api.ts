@@ -25,6 +25,8 @@ import type {
   RuntimeSessionDetectionHuntRequest,
   RuntimeBacktestResult,
   DebugReport,
+  ProfileCatalogResponse,
+  ProfileRevisionsResponse,
 } from './types/gateway';
 import type {
   SettingsResponse,
@@ -227,6 +229,16 @@ export async function getStatus(): Promise<StatusResponse> {
     }
     throw err;
   }
+}
+
+export async function getProfileCatalog(): Promise<ProfileCatalogResponse> {
+  const resp = await _get('/profiles/catalog');
+  return await resp.json();
+}
+
+export async function getProfileRevisions(profileId: string): Promise<ProfileRevisionsResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/revisions`);
+  return await resp.json();
 }
 
 function emptyStatus(): StatusResponse {

@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a Settings -> Policy Security Engine health panel that renders typed
   `/debug/report` runtime enforcement/detection counts, match totals, runtime
   rule-store state, and confirm resolver availability.
+- Added a Settings -> Profiles catalog panel that renders typed profile
+  catalog revisions, current/installed drift, and the canonical
+  `active`/`deprecated`/`revoked` lifecycle states.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

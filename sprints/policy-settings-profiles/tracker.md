@@ -2490,6 +2490,20 @@ a valid claim -- mark it `[ ]` instead.
     a screenshot verification of the fallback state. Still missing in S16:
     profile catalog/selector/revision/asset/VM-create screens, VM profile-state
     display, runtime backtest/hunt UI, and final release UI usability replay.
+    Second S16 profile-catalog slice added typed frontend models and API
+    clients for `/profiles/catalog` and `/profiles/{id}/revisions`, plus a
+    Settings -> Profiles catalog panel that renders profile ids, current versus
+    installed revision drift, per-revision hashes, and only the canonical
+    `active`/`deprecated`/`revoked` lifecycle states. Verification: `pnpm --dir
+    frontend exec vitest run src/lib/__tests__/profile-catalog-section.test.ts
+    src/lib/__tests__/api.test.ts src/lib/__tests__/settings-debug-report.test.ts`
+    passed with **63** tests, `pnpm --dir frontend run check` passed, `pnpm
+    --dir frontend run build` passed, and Settings -> Profiles was opened in
+    the local Astro UI with screenshot verification of the gateway-error
+    fallback state. Still missing in S16: profile selector action/selection
+    persistence, package/asset readiness, profile-backed VM create, VM
+    profile-state display, runtime backtest/hunt UI, and final release UI
+    usability replay.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

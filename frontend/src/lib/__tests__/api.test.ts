@@ -318,6 +318,34 @@ describe('api', () => {
       expect(call[0]).toContain('/debug/report');
       expect(call[1].method).toBeUndefined();
     });
+
+    it('getProfileCatalog sends GET /profiles/catalog', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        mode: 'settings_profiles_v2',
+        manifest_present: true,
+        profiles: [],
+      }));
+      const result = await api.getProfileCatalog();
+      expect(result.mode).toBe('settings_profiles_v2');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/catalog');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('getProfileRevisions sends GET /profiles/{id}/revisions', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        mode: 'settings_profiles_v2',
+        profile_id: 'everyday-work',
+        current_revision: '2026.0520.2',
+        installed_revision: '2026.0520.1',
+        revisions: [],
+      }));
+      const result = await api.getProfileRevisions('everyday-work');
+      expect(result.profile_id).toBe('everyday-work');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/everyday-work/revisions');
+      expect(call[1].method).toBeUndefined();
+    });
   });
 
   // ---- MCP config (via settings) ----

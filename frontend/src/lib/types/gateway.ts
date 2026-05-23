@@ -78,6 +78,39 @@ export interface ResourceSummary {
   suspended_count: number;
 }
 
+export type ProfileRevisionStatus = 'active' | 'deprecated' | 'revoked';
+
+export interface ProfileCatalogRevision {
+  revision: string;
+  status: ProfileRevisionStatus;
+  min_binary?: string | null;
+  profile_hash?: string | null;
+  current: boolean;
+  installed: boolean;
+}
+
+export interface ProfileCatalogProfile {
+  profile_id: string;
+  current_revision?: string | null;
+  installed_revision?: string | null;
+  revisions: ProfileCatalogRevision[];
+}
+
+export interface ProfileCatalogResponse {
+  mode: 'settings_profiles_v2';
+  manifest_present: boolean;
+  catalog_source?: string | null;
+  profiles: ProfileCatalogProfile[];
+}
+
+export interface ProfileRevisionsResponse {
+  mode: 'settings_profiles_v2';
+  profile_id: string;
+  current_revision?: string | null;
+  installed_revision?: string | null;
+  revisions: ProfileCatalogRevision[];
+}
+
 // GET /list (proxied to service)
 export interface ListResponse {
   sandboxes: SandboxInfo[];

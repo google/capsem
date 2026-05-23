@@ -50,6 +50,10 @@ requests.
   enabled/compiled/error state, match/finding totals, runtime-rule store state,
   and confirm resolver availability. Missing or malformed debug-report security
   blocks fail closed with an explicit unavailable state instead of throwing.
+- Implemented slice: Settings -> Profiles now has a typed catalog panel backed
+  by `/profiles/catalog`. It renders profile ids, installed/current revision
+  drift, per-revision hashes, and only the canonical lifecycle statuses:
+  `active`, `deprecated`, and `revoked`.
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
   values, revisions, package/tool contracts, asset readiness, VM pin fields,
   enforcement-pack summaries, detection-pack summaries, and backtest result
@@ -57,6 +61,11 @@ requests.
 - Unit/contract completed: `security-engine-health-section.test.ts` covers the
   typed Security Engine health projection, manual refresh, and missing security
   block fallback. Existing runtime-rule panel and debug-copy tests were rerun.
+- Unit/contract completed: `profile-catalog-section.test.ts` covers profile
+  catalog rendering, update/not-installed states, the
+  `active`/`deprecated`/`revoked` enum display, the absence of `removed`, and
+  manual refresh. `api.test.ts` covers the typed profile catalog and revision
+  routes.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states; enforcement/detection
   runtime overlay list/validate/install/delete/stats/backtest/hunt flows through
@@ -76,3 +85,7 @@ requests.
   screenshot-checked; the live dev gateway returned a debug report without a
   security block, proving the explicit unavailable fallback path. Production
   frontend build passed.
+- Visual/build proof: Settings -> Profiles was opened in the local Astro UI and
+  screenshot-checked; the live dev gateway returned `404` for the catalog route,
+  proving the explicit gateway-error fallback path. Production frontend build
+  passed.
