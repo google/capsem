@@ -1,8 +1,8 @@
 use super::*;
 
 use crate::net::dns::server::DnsHandlerResult;
-use crate::net::parsers::dns_parser::DnsQuery;
 use capsem_logger::events::Decision;
+use capsem_network_engine::dns_parser::DnsQuery;
 use capsem_security_engine::{
     CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
 };

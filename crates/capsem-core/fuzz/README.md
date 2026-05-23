@@ -36,7 +36,7 @@ must survive 60s without a crash, panic, hang, or out-of-memory.
 ## Corpus seeds
 
 Each `corpus/<target>/` directory is pre-seeded with the T3.b
-fixtures (`crates/capsem-core/src/net/parsers/dns_parser/
+fixtures (`crates/capsem-network-engine/src/dns_parser/
 fixtures/*.bin`) so libFuzzer starts with structurally diverse
 inputs -- standard A/AAAA/TXT/MX/CAA/HTTPS queries, multi-question,
 truncated, header-only, lying-qdcount, compression-self-loop, and
@@ -47,7 +47,7 @@ on the first few hundred iterations.
 
 cargo-fuzz writes minimized reproducer files to `artifacts/<target>/`
 when a crash trips. Check those in alongside a regression test in
-`src/net/parsers/dns_parser/tests.rs` so the bug stays fixed:
+`crates/capsem-network-engine/src/dns_parser/tests.rs` so the bug stays fixed:
 
 ```sh
 xxd artifacts/parse_query/crash-<sha>          # inspect bytes

@@ -1854,6 +1854,21 @@ a valid claim -- mark it `[ ]` instead.
     model transport/security-event builders behind the Network Engine boundary,
     visible UI screens/editors, interactive confirm prompt UX in S15, S12
     OTel/prometheus export, S08d performance proof, and final release gates.
+    Eighty-fourth structural Network Engine parser slice moved the DNS wire
+    parser from `capsem-core::net::parsers` into `capsem-network-engine`.
+    DNS handler/telemetry, process DNS dispatch, the fixture generator, and the
+    cargo-fuzz targets now consume `capsem_network_engine::dns_parser`
+    directly; old `capsem_core::net::parsers::dns_parser` references are gone.
+    Verification: `cargo test -p capsem-network-engine dns_parser` **75**
+    passed, including fixtures and proptests; sandboxed `cargo test -p
+    capsem-core dns --lib` hit local UDP socket `Operation not permitted`, then
+    the same command passed outside the sandbox with **43** tests; `cargo check
+    -p capsem-core`, `cargo check -p capsem-process`, and `cargo check -p
+    capsem-mcp-builtin` passed. Still missing after this slice: moving DNS
+    SecurityEvent builders and MITM/MCP/model transport behind the Network
+    Engine boundary, visible UI screens/editors, interactive confirm prompt UX
+    in S15, S12 OTel/prometheus export, S08d performance proof, and final
+    release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

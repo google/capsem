@@ -29,7 +29,7 @@ The fixtures are checked in and committed. To regenerate after a
 hickory-proto upgrade or test data change:
 
 ```sh
-cargo test -p capsem-core --lib net::parsers::dns_parser::tests::regenerate_fixtures -- --ignored
+cargo test -p capsem-network-engine dns_parser::tests::regenerate_fixtures -- --ignored
 ```
 
 The regen test rebuilds each fixture from a deterministic seed

@@ -10,10 +10,11 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 capsem-core = { path = ".." }
+capsem-network-engine = { path = "../../capsem-network-engine" }
 
 # Pinned so a hickory-proto upgrade in the workspace flows through to
-# the fuzz harness automatically; capsem-core re-exports nothing from
-# hickory directly so the fuzz target only depends on our wrappers.
+# the fuzz harness automatically; capsem-network-engine re-exports nothing
+# from hickory directly so the fuzz target only depends on our wrappers.
 
 [[bin]]
 name = "parse_query"

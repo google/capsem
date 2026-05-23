@@ -1007,7 +1007,7 @@ async fn serve_dns_session(
     let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
     let mut runtime_resolved_event: Option<ResolvedSecurityEvent> = None;
     let result = if security_engine.has_engine() {
-        match capsem_core::net::parsers::dns_parser::parse_query(&req.raw) {
+        match capsem_network_engine::dns_parser::parse_query(&req.raw) {
             Ok(query) => {
                 let event = capsem_core::net::dns::build_dns_security_event_from_query(
                     &query,
@@ -1034,7 +1034,7 @@ async fn serve_dns_session(
                         let reason = format!("security engine error: {error}");
                         warn!(error = %error, "DNS runtime security engine failed closed");
                         capsem_core::net::dns::server::DnsHandlerResult {
-                            answer_bytes: capsem_core::net::parsers::dns_parser::build_nxdomain(
+                            answer_bytes: capsem_network_engine::dns_parser::build_nxdomain(
                                 &req.raw,
                             )
                             .unwrap_or_default(),

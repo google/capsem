@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the first `capsem-network-engine` crate and moved domain/HTTP network
   policy primitives out of `capsem-core`, with process runtime and builtin MCP
   tooling consuming the new boundary directly.
+- Moved the DNS wire parser and adversarial fixture/property tests into
+  `capsem-network-engine`, with DNS handler, process dispatch, examples, and
+  fuzz targets consuming the Network Engine parser directly.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

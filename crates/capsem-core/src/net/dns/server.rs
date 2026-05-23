@@ -21,7 +21,7 @@ use tracing::{debug, instrument, warn};
 use crate::net::dns::cache::DnsAnswerCache;
 use crate::net::dns::resolver::DnsResolver;
 use crate::net::mitm_proxy::metrics as m;
-use crate::net::parsers::dns_parser::{build_servfail, parse_query, DnsQuery};
+use capsem_network_engine::dns_parser::{build_servfail, parse_query, DnsQuery};
 
 /// Result of handling one DNS query. The answer bytes are always
 /// populated -- on every path we have something to send back to the

@@ -21,7 +21,7 @@ use capsem_security_engine::{
 };
 
 use crate::net::dns::server::DnsHandlerResult;
-use crate::net::parsers::dns_parser::{build_nxdomain, DnsQuery};
+use capsem_network_engine::dns_parser::{build_nxdomain, DnsQuery};
 
 /// Build a `DnsEvent` row for one query.
 ///

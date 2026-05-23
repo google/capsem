@@ -5,5 +5,6 @@
 //! heavier MITM/DNS transport modules can move behind this boundary in later
 //! structural slices without changing callers' vocabulary.
 
+pub mod dns_parser;
 pub mod domain_policy;
 pub mod http_policy;

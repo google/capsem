@@ -10,6 +10,11 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+hickory-proto.workspace = true
+
+[dev-dependencies]
+proptest = "1"
 
 [lints]
 workspace = true
