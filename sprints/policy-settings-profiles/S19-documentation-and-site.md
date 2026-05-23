@@ -227,7 +227,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       add/update/delete/stats API behavior, default 100-row evidence-dedup
       backtest result behavior, resolved-event evidence, and remote-enforcement
       boundary.
-- [ ] Write detection format security page:
+- [x] Write detection format security page:
       S08a-selected `capsem.detection-pack.v1` format, Sigma-compatible
       import/compile path, `capsem.detection.ir.v1`, canonical policy-context
       field mapping, finding schema, detection pack profile ownership,
@@ -331,34 +331,34 @@ Final paths should follow the actual docs tree present when this sprint starts.
       separate first-class pages and are linked from corporate admin docs.
 - [ ] Update configuration/troubleshooting pages to point to debug-report and
   provenance output.
-- [ ] Document `ask -> confirm()` behavior and `policy_confirm_events` telemetry
+- [x] Document `ask -> confirm()` behavior and `policy_confirm_events` telemetry
       query/debug workflows.
-- [ ] Document the rule priority tiers (corp `[-1000, -1]`,
+- [x] Document the rule priority tiers (corp `[-1000, -1]`,
       toggle-derived `0`, user `[1, 999]`, catch-all `1000`) and
       the corp-exclusive enforcement gate. See
       [S06b Decisions To Document](#s06b-decisions-to-document).
-- [ ] Document `corp_directives` priority window `[-1000, 0]`
+- [x] Document `corp_directives` priority window `[-1000, 0]`
       and the catch-all reservation, with worked TOML examples.
-- [ ] Document rule ownership metadata
+- [x] Document rule ownership metadata
       (`owner_setting_path`, `owner_setting_label`, `editable`),
       including the four ownership classes (hand-authored,
       capability-derived, toggle-derived, corp-directive).
-- [ ] Document nestable rules under setting hosts
+- [x] Document nestable rules under setting hosts
       (`ai.providers.<name>.rules.<type>.<name>`,
       `mcpServers.<name>.capsem.rules.<type>.<name>`), with a
       worked corp-profile TOML example and the
       "rules follow the file structure" provenance rule.
-- [ ] Document `http.read` / `http.write` callback split
+- [x] Document `http.read` / `http.write` callback split
       (read = GET/HEAD/OPTIONS; write = POST/PUT/PATCH/DELETE)
       with the catch-all worked example.
-- [ ] Document the per-type catch-all rules at priority `1000`
+- [x] Document the per-type catch-all rules at priority `1000`
       and their capability-derivation mapping
       (`network_egress` -> dns/http/model catch-alls;
       `mcp_tools` -> mcp catch-all).
-- [ ] Document the mutation gate error
+- [x] Document the mutation gate error
       (`Forbidden { owner_setting_path }`) and the
       "Why can't I edit this rule?" troubleshooting flow.
-- [ ] Document the two explicit non-migrations: the legacy
+- [x] Document the two explicit non-migrations: the legacy
       default allow/block lists (`domain_policy::default_*_list`,
       `NetworkPolicy::default_dev`) are NOT ported to rules;
       `NetworkPolicy::http_upstream_ports` exits with S06c.
@@ -417,6 +417,11 @@ listed revision that must not be installed or launched is `revoked`.
   Pydantic JSON I/O boundary; added the developer `capsem-admin` internals page
   covering package layout, model boundaries, schema fixtures, focused tests,
   adding commands, and release handoff.
+- 2026-05-23: Rule fine-print slice expanded public docs with ask/confirm
+  semantics, `policy_confirm_events`, detection runtime API/hunt behavior,
+  priority tiers, corp-directive priority window, rule ownership metadata,
+  nestable rules, HTTP read/write split, catch-all generation, mutation gate
+  errors, and explicit non-migrations from the old NetworkPolicy defaults.
 
 ## Coverage Ledger
 

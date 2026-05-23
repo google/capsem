@@ -84,6 +84,23 @@ capsem-admin detection backtest corp-detections.yml --events policy-contexts.jso
 Sigma YAML and the supported subset maps into Detection IR. `backtest` compiles
 the pack and evaluates typed policy-context JSONL fixtures.
 
+## Runtime API
+
+| Route | Purpose |
+|---|---|
+| `POST /detection/validate` | Validate a candidate detection pack. |
+| `POST /detection/compile` | Return Detection IR metadata. |
+| `POST /detection/backtest` | Replay a detection pack over supplied events. |
+| `GET /detection` | List live profile/user/corp/runtime detection rules. |
+| `POST /detection` | Add or update a runtime overlay. |
+| `DELETE /detection/{id}` | Delete a runtime overlay. |
+| `GET /detection/stats` | Inspect finding and match counters. |
+| `POST /sessions/{id}/detection/hunt` | Run a detection over one session timeline for forensic review. |
+
+Backtest and hunt return aggregate counts plus up to 100 evidence-diverse rows
+by default. Evidence rows include event refs and matched fields so a user with
+local access can debug the session without guessing which event matched.
+
 Example fixture line:
 
 ```json

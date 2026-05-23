@@ -2620,6 +2620,11 @@ a valid claim -- mark it `[ ]` instead.
     fixtures, and Pydantic JSON I/O boundary; added developer `capsem-admin`
     internals covering package layout, Pydantic boundaries, schema fixtures,
     focused tests, command-extension workflow, and release handoff.
+    Sixth S19 rule fine-print slice expanded public docs with ask/confirm and
+    `policy_confirm_events`, detection runtime API/hunt behavior, priority
+    tiers, corp-directive priority window, rule ownership metadata, nestable
+    rules, HTTP read/write split, catch-all generation, mutation-gate errors,
+    and explicit non-migrations from the removed NetworkPolicy defaults.
 33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate

@@ -107,6 +107,83 @@ allowlist fail closed before the transport body is changed.
 
 Rules are evaluated in ascending priority. Lower number means earlier decision.
 
+Corp directives that add or replace rule values must use the corp window
+`[-1000, 0]`. Catch-all priority `1000` is reserved for system-emitted defaults
+and is rejected for hand-authored rules.
+
+## Rule Ownership
+
+Resolved rules carry ownership metadata so UI, CLI, and audit logs can explain
+why a rule exists and whether it is editable:
+
+| Field | Meaning |
+|---|---|
+| `owner_setting_path` | Dotted setting path that produced the rule, such as `ai.providers.google.enabled`. |
+| `owner_setting_label` | Human-readable label for "managed by" UI copy. |
+| `editable` | `false` for setting-derived rules; direct mutations must target the owning setting. |
+
+Ownership classes:
+
+| Class | Editable | Example |
+|---|---:|---|
+| Hand-authored rule | yes | `security.rules.http.allow_corp` |
+| Capability-derived rule | no | `security.capabilities.network_egress` |
+| Toggle-derived rule | no | `ai.providers.google.enabled` |
+| Corp-directive replacement | yes | `corp_directives[0]` |
+
+If a caller edits a non-editable rule directly, the mutation gate returns
+`Forbidden { owner_setting_path }`. The fix is to edit the owning setting or
+profile directive.
+
+## Rules Under Settings
+
+Rules can live at top level or under the setting that owns them. Nesting keeps
+provenance close to the control it describes:
+
+```toml
+[ai.providers.google]
+enabled = true
+
+[ai.providers.google.rules.http.allow_gemini]
+on = "http.request"
+if = 'http.request.host == "generativelanguage.googleapis.com"'
+decision = "allow"
+priority = 0
+```
+
+The resolver tags the emitted rule with
+`owner_setting_path = "ai.providers.google"`.
+
+## HTTP Callback Split
+
+HTTP request rules can use broad `http.request` callbacks or the read/write
+split used by catch-all generation:
+
+| Callback | Methods |
+|---|---|
+| `http.read` | `GET`, `HEAD`, `OPTIONS` |
+| `http.write` | `POST`, `PUT`, `PATCH`, `DELETE` |
+
+For example, a read-only profile can emit an allow catch-all for `http.read`
+and a block catch-all for `http.write`.
+
+## Catch-All Rules
+
+The resolver emits one catch-all per rule type at priority `1000`. Catch-alls
+run only when no earlier rule matched.
+
+| Capability | Generated catch-alls |
+|---|---|
+| `security.capabilities.network_egress` | `dns.default`, `http.default_read`, `http.default_write`, `model.default` |
+| `security.capabilities.mcp_tools` | `mcp.default` |
+
+## Non-Migrations
+
+The old hardcoded default allow/block lists are not migrated into profile
+rules. Hosts that should be reachable must be represented by explicit corp or
+user rules. The old `http_upstream_ports` allowlist also exits with the removed
+NetworkPolicy runtime.
+
 ## Backtest And Evidence
 
 Both enforcement and detection support backtests. Backtests return aggregate

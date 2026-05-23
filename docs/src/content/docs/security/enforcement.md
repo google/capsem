@@ -62,6 +62,17 @@ capsem-admin enforcement backtest corp-enforcement.json --events policy-contexts
 | `ask` | Create an approval challenge and fail closed unless approved. |
 | `rewrite` | Mutate only the declared target, then continue. |
 
+## Ask And Confirm
+
+`ask` is an enforcement decision, not a warning. The Security Engine must emit
+the resolved event with the pending challenge before any transport dispatch
+continues. A later `confirm()` resolution records the approving actor, selected
+answer, rule id, reason, and trace/profile/VM attribution in
+`policy_confirm_events` and the resolved-event journal.
+
+Until a boundary has a verified approval UI, `ask` fails closed. It must never
+silently behave as `allow`.
+
 ## Engine Order
 
 ```mermaid
