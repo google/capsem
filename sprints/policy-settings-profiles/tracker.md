@@ -2028,6 +2028,18 @@ a valid claim -- mark it `[ ]` instead.
     visible UI screens/editors, richer `capsem status`/`capsem logs` projection,
     S15 interactive confirm resolver/queue/CLI/UI, S12 OTel/prometheus export,
     S08d performance proof, and final release gates.
+    Ninety-sixth S11 CLI observability slice wired the runtime Security Engine
+    health summary into `capsem status`. The CLI now fetches the typed
+    `security_engine` block from `/debug/report` when the service is running,
+    preserves enforcement/detection/confirm state in `capsem status --json`,
+    and prints compact rule/match counts in text status. Verification: `cargo
+    test -p capsem status::tests --bin capsem` **31** passed, `cargo check -p
+    capsem` passed, `cargo test -p capsem --bin capsem` passed with **267**
+    tests outside the sandbox for loopback/Unix-socket fixtures, `cargo fmt
+    --check` passed, and `git diff --check` passed.
+    Still missing after this slice: richer `capsem logs` projection, visible UI
+    screens/editors, S15 interactive confirm resolver/queue/CLI/UI, S12
+    OTel/prometheus export, S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

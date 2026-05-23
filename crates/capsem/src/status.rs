@@ -30,8 +30,122 @@ pub struct StatusReport {
     pub service: StatusServiceReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub asset_health: Option<client::AssetHealth>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security_engine: Option<StatusSecurityEngineReport>,
     pub checks: StatusChecksReport,
     pub issues: Vec<HealthIssueReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StatusSecurityEngineReport {
+    pub present: bool,
+    pub runtime_rules_store_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_rules_store_path: Option<String>,
+    pub enforcement: StatusSecurityRegistryReport,
+    pub detection: StatusSecurityRegistryReport,
+    pub confirm: StatusSecurityConfirmReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StatusSecurityRegistryReport {
+    pub rule_count: usize,
+    pub enabled_count: usize,
+    pub compiled_count: usize,
+    pub error_count: usize,
+    pub runtime_scope_count: usize,
+    pub profile_scope_count: usize,
+    #[serde(default)]
+    pub scope_counts: BTreeMap<String, usize>,
+    pub match_count_total: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_match_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub rules: Vec<StatusSecurityRuleReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StatusSecurityRuleReport {
+    pub kind: String,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_id: Option<String>,
+    pub scope: StatusSecurityRuleScope,
+    pub origin: StatusSecurityRuleOrigin,
+    pub priority: i32,
+    pub enabled: bool,
+    pub compiled: bool,
+    pub generation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<StatusSecurityAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<StatusSecuritySeverity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<StatusSecurityConfidence>,
+    pub match_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_matched_event: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_matched_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusSecurityRuleScope {
+    Profile,
+    User,
+    Corp,
+    Runtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusSecurityRuleOrigin {
+    Profile,
+    User,
+    Corp,
+    Runtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusSecurityAction {
+    Allow,
+    Ask,
+    Block,
+    Rewrite,
+    Throttle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusSecuritySeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatusSecurityConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StatusSecurityConfirmReport {
+    pub resolver_available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+struct DebugReportSecurityPayload {
+    #[serde(default)]
+    security_engine: Option<StatusSecurityEngineReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -497,21 +611,31 @@ impl fmt::Display for HealthIssue {
 pub async fn run(json: bool) -> Result<()> {
     let service = service_install::service_status().await?;
     let asset_health = fetch_service_asset_health(service.running).await;
+    let security_engine = fetch_security_engine_status(service.running).await;
     let mut issues = check_service_health_from_status(&service).await?;
     if let Some(asset_health) = &asset_health {
         issues.extend(service_asset_health_issues(asset_health));
     }
 
     if json {
-        let report = status_report_from_parts_with_assets(&service, &issues, asset_health.clone());
+        let report = status_report_from_parts_with_assets_and_security(
+            &service,
+            &issues,
+            asset_health.clone(),
+            security_engine.clone(),
+        );
         println!("{}", serde_json::to_string_pretty(&report)?);
         return status_result_from_report(&report, &issues);
     }
 
-    print_text_status(&service, asset_health.as_ref()).await;
+    print_text_status(&service, asset_health.as_ref(), security_engine.as_ref()).await;
     if let Some(report_asset_health) = asset_health {
-        let report =
-            status_report_from_parts_with_assets(&service, &issues, Some(report_asset_health));
+        let report = status_report_from_parts_with_assets_and_security(
+            &service,
+            &issues,
+            Some(report_asset_health),
+            security_engine,
+        );
         status_result_from_report(&report, &issues)
     } else {
         status_result_from_issues(&issues)
@@ -555,6 +679,15 @@ pub(crate) fn debug_report_payload(report: serde_json::Value) -> serde_json::Val
     report.get("json").cloned().unwrap_or(report)
 }
 
+pub(crate) fn security_engine_status_from_debug_report(
+    report: serde_json::Value,
+) -> Option<StatusSecurityEngineReport> {
+    let payload = debug_report_payload(report);
+    serde_json::from_value::<DebugReportSecurityPayload>(payload)
+        .ok()
+        .and_then(|payload| payload.security_engine)
+}
+
 pub(crate) fn doctor_preflight_from_issues(issues: &[HealthIssue]) -> Result<()> {
     if issues.is_empty() {
         return Ok(());
@@ -595,10 +728,20 @@ pub(crate) fn status_report_from_parts(
     status_report_from_parts_with_assets(service, issues, None)
 }
 
+#[cfg(test)]
 pub(crate) fn status_report_from_parts_with_assets(
     service: &service_install::ServiceStatus,
     issues: &[HealthIssue],
     asset_health: Option<client::AssetHealth>,
+) -> StatusReport {
+    status_report_from_parts_with_assets_and_security(service, issues, asset_health, None)
+}
+
+pub(crate) fn status_report_from_parts_with_assets_and_security(
+    service: &service_install::ServiceStatus,
+    issues: &[HealthIssue],
+    asset_health: Option<client::AssetHealth>,
+    security_engine: Option<StatusSecurityEngineReport>,
 ) -> StatusReport {
     let state = status_state(issues, asset_health.as_ref());
     StatusReport {
@@ -616,6 +759,7 @@ pub(crate) fn status_report_from_parts_with_assets(
                 .map(|path| path.display().to_string()),
         },
         asset_health,
+        security_engine,
         checks: checks_report_from_issues(service, issues),
         issues: issues.iter().map(HealthIssue::to_report).collect(),
     }
@@ -1100,6 +1244,7 @@ pub(crate) fn check_setup_state_path(path: &Path) -> Vec<HealthIssue> {
 async fn print_text_status(
     service: &service_install::ServiceStatus,
     asset_health: Option<&client::AssetHealth>,
+    security_engine: Option<&StatusSecurityEngineReport>,
 ) {
     println!("Version:   {}", env!("CARGO_PKG_VERSION"));
     println!("Installed: {}", service.installed);
@@ -1118,6 +1263,9 @@ async fn print_text_status(
         print_service_asset_status(asset_health);
     } else {
         print_offline_asset_status();
+    }
+    if let Some(security_engine) = security_engine {
+        print_security_engine_status(security_engine);
     }
     print_defunct_sessions(service.running).await;
 }
@@ -1173,6 +1321,32 @@ fn print_service_asset_status(asset_health: &client::AssetHealth) {
     }
 }
 
+fn print_security_engine_status(security_engine: &StatusSecurityEngineReport) {
+    println!(
+        "Security:  enforcement {} rules/{} enabled/{} matches; detection {} rules/{} enabled/{} matches",
+        security_engine.enforcement.rule_count,
+        security_engine.enforcement.enabled_count,
+        security_engine.enforcement.match_count_total,
+        security_engine.detection.rule_count,
+        security_engine.detection.enabled_count,
+        security_engine.detection.match_count_total,
+    );
+    println!(
+        "  runtime_rule_store: {}",
+        security_engine.runtime_rules_store_enabled
+    );
+    println!(
+        "  confirm_resolver: {}{}",
+        security_engine.confirm.resolver_available,
+        security_engine
+            .confirm
+            .owner
+            .as_deref()
+            .map(|owner| format!(" ({owner})"))
+            .unwrap_or_default()
+    );
+}
+
 async fn fetch_service_asset_health(service_running: bool) -> Option<client::AssetHealth> {
     if !service_running {
         return None;
@@ -1185,6 +1359,20 @@ async fn fetch_service_asset_health(service_running: bool) -> Option<client::Ass
         .await
         .ok()?;
     resp.into_result().ok()?.asset_health
+}
+
+async fn fetch_security_engine_status(service_running: bool) -> Option<StatusSecurityEngineReport> {
+    if !service_running {
+        return None;
+    }
+    let home = crate::paths::capsem_home().ok()?;
+    let sock = home.join("run/service.sock");
+    let list_client = UdsClient::new(sock, false);
+    let resp = list_client
+        .get::<client::ApiResponse<serde_json::Value>>("/debug/report")
+        .await
+        .ok()?;
+    security_engine_status_from_debug_report(resp.into_result().ok()?)
 }
 
 async fn print_service_and_gateway_status() {

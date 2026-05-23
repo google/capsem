@@ -58,6 +58,10 @@ truth cannot lie or omit the core profile/security provenance.
   rule store path, enforcement/detection registry counts, enabled/compiled/error
   totals, scope counts, match totals, per-rule pack/scope/origin/action or
   severity, and the current confirm resolver state.
+- `capsem status` now reads the typed Security Engine summary from
+  `/debug/report` when the service is running. `capsem status --json` includes
+  the same structured enforcement/detection/confirm summary, and text status
+  prints compact rule and match counts.
 - If settings/profile resolution fails, the debug report records the load error
   instead of silently dropping the section.
 
@@ -66,6 +70,7 @@ Focused test command:
 ```sh
 cargo test -p capsem-service debug_report::tests
 cargo test -p capsem-service handle_debug_report_returns_pasteable_text --bin capsem-service
+cargo test -p capsem status::tests --bin capsem
 ```
 
 Result: 9 debug report tests passed, including credential redaction,
@@ -75,6 +80,10 @@ records a match, and confirms `/debug/report` renders the live registry state.
 The widened service gates also passed: `cargo test -p capsem-service --lib`
 with 115 tests and `cargo test -p capsem-service --bin capsem-service` with
 212 tests, the latter outside the sandbox for local socket fixtures.
+The CLI status gate passed with 31 status tests, including typed
+Security Engine summary parsing and JSON projection.
+The full `capsem` bin test suite also passed with 267 tests outside the
+sandbox for loopback/Unix-socket fixtures.
 
 ## Coverage Ledger
 
@@ -82,6 +91,8 @@ with 115 tests and `cargo test -p capsem-service --bin capsem-service` with
   package/asset readiness, and VM pin rendering must add focused shape tests.
 - Functional: debug report rendering tests are present; service route coverage
   verifies runtime Security Engine registry state reaches `/debug/report`.
+  CLI status tests verify that the same typed summary is preserved in
+  `capsem status --json`.
 - Adversarial: credential value redaction is covered; missing profile roots, bad
   profile load errors are covered; missing profile roots and locked setting
   rendering remain; generated-rule ownership rendering is pending; revoked

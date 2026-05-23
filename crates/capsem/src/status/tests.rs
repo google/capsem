@@ -272,6 +272,150 @@ fn status_report_preserves_service_asset_updating_state() {
     );
 }
 
+fn sample_security_engine_report() -> super::StatusSecurityEngineReport {
+    super::StatusSecurityEngineReport {
+        present: true,
+        runtime_rules_store_enabled: true,
+        runtime_rules_store_path: Some("~/.capsem/run/runtime_security_rules.json".into()),
+        enforcement: super::StatusSecurityRegistryReport {
+            rule_count: 2,
+            enabled_count: 1,
+            compiled_count: 2,
+            error_count: 0,
+            runtime_scope_count: 1,
+            profile_scope_count: 1,
+            scope_counts: std::collections::BTreeMap::from([
+                ("profile".to_string(), 1),
+                ("runtime".to_string(), 1),
+            ]),
+            match_count_total: 7,
+            latest_match_unix_ms: Some(1_789),
+            rules: vec![super::StatusSecurityRuleReport {
+                kind: "enforcement".into(),
+                id: "block-metadata".into(),
+                pack_id: Some("runtime-pack".into()),
+                scope: super::StatusSecurityRuleScope::Runtime,
+                origin: super::StatusSecurityRuleOrigin::Runtime,
+                priority: 100,
+                enabled: true,
+                compiled: true,
+                generation: 2,
+                action: Some(super::StatusSecurityAction::Block),
+                severity: None,
+                confidence: None,
+                match_count: 7,
+                last_matched_event: Some("evt-7".into()),
+                last_matched_unix_ms: Some(1_789),
+            }],
+        },
+        detection: super::StatusSecurityRegistryReport {
+            rule_count: 1,
+            enabled_count: 1,
+            compiled_count: 1,
+            error_count: 0,
+            runtime_scope_count: 0,
+            profile_scope_count: 1,
+            scope_counts: std::collections::BTreeMap::from([("profile".to_string(), 1)]),
+            match_count_total: 3,
+            latest_match_unix_ms: Some(2_789),
+            rules: vec![super::StatusSecurityRuleReport {
+                kind: "detection".into(),
+                id: "detect-secret".into(),
+                pack_id: Some("profile:coding".into()),
+                scope: super::StatusSecurityRuleScope::Profile,
+                origin: super::StatusSecurityRuleOrigin::Profile,
+                priority: 50,
+                enabled: true,
+                compiled: true,
+                generation: 1,
+                action: None,
+                severity: Some(super::StatusSecuritySeverity::High),
+                confidence: Some(super::StatusSecurityConfidence::Medium),
+                match_count: 3,
+                last_matched_event: Some("evt-3".into()),
+                last_matched_unix_ms: Some(2_789),
+            }],
+        },
+        confirm: super::StatusSecurityConfirmReport {
+            resolver_available: false,
+            owner: Some("S15-confirm-ux".into()),
+        },
+    }
+}
+
+#[test]
+fn status_report_preserves_security_engine_summary() {
+    let service = crate::service_install::ServiceStatus {
+        installed: true,
+        running: true,
+        pid: Some(42),
+        unit_path: None,
+        service_unit_required: true,
+    };
+    let security_engine = sample_security_engine_report();
+
+    let report = super::status_report_from_parts_with_assets_and_security(
+        &service,
+        &[],
+        None,
+        Some(security_engine),
+    );
+
+    assert!(report.ok);
+    assert_eq!(
+        report
+            .security_engine
+            .as_ref()
+            .unwrap()
+            .enforcement
+            .match_count_total,
+        7
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["security_engine"]["present"], true);
+    assert_eq!(
+        json["security_engine"]["runtime_rules_store_path"],
+        "~/.capsem/run/runtime_security_rules.json"
+    );
+    assert_eq!(json["security_engine"]["enforcement"]["rule_count"], 2);
+    assert_eq!(json["security_engine"]["enforcement"]["enabled_count"], 1);
+    assert_eq!(
+        json["security_engine"]["enforcement"]["rules"][0]["action"],
+        "block"
+    );
+    assert_eq!(
+        json["security_engine"]["detection"]["rules"][0]["severity"],
+        "high"
+    );
+    assert_eq!(
+        json["security_engine"]["confirm"]["owner"],
+        "S15-confirm-ux"
+    );
+}
+
+#[test]
+fn security_engine_status_parses_debug_report_json_field() {
+    let report = serde_json::json!({
+        "text": "Capsem Debug Report",
+        "json": {
+            "schema": "capsem.debug.v2",
+            "security_engine": sample_security_engine_report()
+        }
+    });
+
+    let parsed = super::security_engine_status_from_debug_report(report).unwrap();
+
+    assert_eq!(parsed.enforcement.rule_count, 2);
+    assert_eq!(
+        parsed.enforcement.rules[0].action,
+        Some(super::StatusSecurityAction::Block)
+    );
+    assert_eq!(
+        parsed.detection.rules[0].confidence,
+        Some(super::StatusSecurityConfidence::Medium)
+    );
+}
+
 #[test]
 fn status_report_blocks_on_saved_vm_asset_dependencies() {
     let service = crate::service_install::ServiceStatus {
