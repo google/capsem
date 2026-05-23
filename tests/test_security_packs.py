@@ -344,6 +344,7 @@ def test_capsem_admin_enforcement_validate_and_schema(tmp_path: Path) -> None:
     schema = CliRunner().invoke(cli, ["enforcement", "schema"])
 
     assert validate.exit_code == 0, validate.output
+    assert '"schema": "capsem.enforcement-pack-validation.v1"' in validate.output
     assert '"ok": true' in validate.output
     assert '"pack_id": "corp-default-enforcement"' in validate.output
     assert schema.exit_code == 0, schema.output
@@ -369,6 +370,7 @@ def test_capsem_admin_detection_validate_and_schema(tmp_path: Path) -> None:
     schema = CliRunner().invoke(cli, ["detection", "schema"])
 
     assert validate.exit_code == 0, validate.output
+    assert '"schema": "capsem.detection-pack-validation.v1"' in validate.output
     assert '"ok": true' in validate.output
     assert '"pack_id": "corp-default-detections"' in validate.output
     assert schema.exit_code == 0, schema.output

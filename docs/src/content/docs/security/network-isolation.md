@@ -135,7 +135,7 @@ HTTP `rewrite` rules can strip request or response headers before they leave
 the boundary or appear in telemetry. DNS `rewrite` rules synthesize configured
 answers without upstream resolution.
 
-See [Rule Authoring](/security/policy/) for the full rule reference.
+See [Rule Authoring](/security/rules/) for the full rule reference.
 
 ## Telemetry
 

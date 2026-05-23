@@ -191,9 +191,21 @@ class ProfileValidationReport(StrictModel):
     revision: str | None = None
 
 
-class SecurityPackValidationReport(StrictModel):
-    schema_: Literal["capsem.security-pack-validation.v1"] = Field(
-        default="capsem.security-pack-validation.v1",
+class EnforcementPackValidationReport(StrictModel):
+    schema_: Literal["capsem.enforcement-pack-validation.v1"] = Field(
+        default="capsem.enforcement-pack-validation.v1",
+        alias="schema",
+    )
+    ok: bool
+    path: str
+    diagnostics: list[AdminDiagnostic] = Field(default_factory=list)
+    pack_id: str | None = None
+    version: str | None = None
+
+
+class DetectionPackValidationReport(StrictModel):
+    schema_: Literal["capsem.detection-pack-validation.v1"] = Field(
+        default="capsem.detection-pack-validation.v1",
         alias="schema",
     )
     ok: bool
@@ -273,16 +285,16 @@ def _profile_validation_report(path: Path) -> ProfileValidationReport:
     )
 
 
-def _enforcement_pack_validation_report(path: Path) -> SecurityPackValidationReport:
+def _enforcement_pack_validation_report(path: Path) -> EnforcementPackValidationReport:
     try:
         pack = _load_enforcement_pack(path)
     except Exception as error:
-        return SecurityPackValidationReport(
+        return EnforcementPackValidationReport(
             ok=False,
             path=str(path),
             diagnostics=_diagnostics_from_error(error),
         )
-    return SecurityPackValidationReport(
+    return EnforcementPackValidationReport(
         ok=True,
         path=str(path),
         pack_id=pack.id,
@@ -290,16 +302,16 @@ def _enforcement_pack_validation_report(path: Path) -> SecurityPackValidationRep
     )
 
 
-def _detection_pack_validation_report(path: Path) -> SecurityPackValidationReport:
+def _detection_pack_validation_report(path: Path) -> DetectionPackValidationReport:
     try:
         pack = _load_detection_pack(path)
     except Exception as error:
-        return SecurityPackValidationReport(
+        return DetectionPackValidationReport(
             ok=False,
             path=str(path),
             diagnostics=_diagnostics_from_error(error),
         )
-    return SecurityPackValidationReport(
+    return DetectionPackValidationReport(
         ok=True,
         path=str(path),
         pack_id=pack.id,

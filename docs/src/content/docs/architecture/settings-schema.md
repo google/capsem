@@ -200,7 +200,7 @@ profile-owned configuration that those APIs can validate and compile. The
 TypeScript model preserves profile rule objects during export/import and stages
 them without flattening them into setting leaves.
 
-See [Policy](/security/policy/) for the rule body schema and examples.
+See [Rule Authoring](/security/rules/) for the rule body schema and examples.
 
 ## JSON Schema Generation
 

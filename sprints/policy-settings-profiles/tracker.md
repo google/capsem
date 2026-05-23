@@ -2666,6 +2666,16 @@ a valid claim -- mark it `[ ]` instead.
     resolved Security Events, process decisions, enforcement/detection status,
     and log/debug breadcrumbs are inspectable through operator surfaces without
     raw SQL.
+    Fourth S18 admin install/package/operator replay slice passed developer
+    bootstrap, package assembly, Debian payload verification, release-workflow,
+    build-script, admin-hygiene, direct `capsem-admin --version`, profile
+    validate, settings validate, enforcement schema diff, enforcement validate/
+    compile/backtest, detection validate/backtest, and focused admin/security
+    pack gates. The slice also tightened public validation report schemas so
+    enforcement and detection validate commands report distinct
+    `capsem.enforcement-pack-validation.v1` and
+    `capsem.detection-pack-validation.v1` envelopes, and moved the public Rule
+    Authoring docs route from `/security/policy/` to `/security/rules/`.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

@@ -87,7 +87,7 @@ resolved events plus HTTP/DNS projections.
 - [Network Isolation](/security/network-isolation/) -- air-gapped networking and MITM proxy
 - [Virtualization Security](/security/virtualization/) -- VirtioFS sandboxing and hypervisor hardening
 - [Build Verification](/security/build-verification/) -- code signing, notarization, and supply chain
-- [Rule Authoring](/security/policy/) -- canonical CEL roots, priority tiers, ownership, and rewrites
+- [Rule Authoring](/security/rules/) -- canonical CEL roots, priority tiers, ownership, and rewrites
 - [Enforcement](/security/enforcement/) -- profile-owned enforcement packs and blocking decisions
 - [Detection Format](/security/detection/) -- Sigma-backed detection packs and Detection IR
 - [Telemetry And Remote Enforcement](/configuration/telemetry-remote-enforcement/) -- exported summaries, deferred remote plugins, S10/S22 boundaries

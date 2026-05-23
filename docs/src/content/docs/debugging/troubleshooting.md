@@ -99,4 +99,4 @@ For security-rule issues, prefer the typed surfaces first:
 - `capsem logs <id>` for decision/finding attribution;
 - Settings -> Policy for live enforcement/detection rules and backtests;
 - `/debug/report` or `capsem debug` for profile/catalog/runtime health;
-- [Rule Authoring](/security/policy/) for priority and ownership semantics.
+- [Rule Authoring](/security/rules/) for priority and ownership semantics.

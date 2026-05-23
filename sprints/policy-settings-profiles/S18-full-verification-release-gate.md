@@ -204,3 +204,22 @@ the shipped bedrock, not the historical implementation.
   - `cargo test -p capsem format_session_logs --bin capsem` passed with 2 CLI log-formatting tests, proving structured process security lines are preserved and resolved Security Event summaries are added.
   - `cargo test -p capsem logs_response_serde --bin capsem` passed, proving the typed log envelope still round-trips.
   Note: two attempted multi-filter cargo invocations were rejected by cargo syntax and rerun as valid package/test filters above.
+- 2026-05-23: Continued S18 with the admin install/package/operator replay slice.
+  Verification commands:
+  - `uv run python -m pytest tests/capsem-bootstrap/test_dev_setup.py -q` passed with 10 tests and 1 skipped test, proving developer bootstrap exposes and smokes the editable `capsem-admin` entrypoint.
+  - `uv run python -m pytest tests/test_package_scripts.py tests/test_repack_deb.py tests/test_verify_deb_payload.py -q` passed with 12 tests and 7 skipped tests, proving package assembly, Debian repack, and payload verification still include the admin CLI layout.
+  - `uv run python -m pytest tests/test_release_workflow_policy.py -q` passed with 26 tests, proving release workflow ordering still prepares packaged admin tooling before OS packages and keeps release checks wired.
+  - `uv run python -m pytest tests/test_build_assets_script.py tests/test_admin_hygiene.py -q` passed with 6 tests, proving image build scripts route through `uv run capsem-admin image build` and admin workflows keep their typed/Pydantic hygiene checks.
+  - `uv run capsem-admin --version` returned `capsem-admin, version 1.1.1778860037`.
+  - `uv run capsem-admin profile validate schemas/fixtures/profile-v2-valid.json --json` passed and reported `schema: capsem.profile.v2`, `profile_id: everyday-work`, and `revision: 2026.0520.1`.
+  - `uv run capsem-admin settings validate schemas/fixtures/service-settings-v2-complete.json --json` passed and reported `schema: capsem.service-settings.v2`.
+  - `uv run capsem-admin enforcement schema >/tmp/capsem-enforcement-schema-smoke.json && diff -u schemas/capsem.enforcement-pack.v1.schema.json /tmp/capsem-enforcement-schema-smoke.json` passed.
+  - `uv run capsem-admin enforcement validate data/enforcement/packs/http-google-secret-enforcement.toml --json` passed and reported `schema: capsem.enforcement-pack-validation.v1`.
+  - `uv run capsem-admin enforcement compile data/enforcement/packs/http-google-secret-enforcement.toml --json` passed and reported `schema: capsem.enforcement-compile.v1` with `rule_count: 1`.
+  - `uv run capsem-admin detection validate data/detection/sigma/google-secret-egress.yml --json` passed and reported `schema: capsem.detection-pack-validation.v1`.
+  - `uv run capsem-admin enforcement backtest data/enforcement/packs/http-google-secret-enforcement.toml --events data/policy-context/canonical-policy-contexts.jsonl --json` passed with 4 events, 1 rule, and 1 matched block decision.
+  - `uv run capsem-admin detection backtest data/detection/sigma/google-secret-egress.yml --events data/policy-context/canonical-policy-contexts.jsonl --json` passed with 4 events, 1 rule, and 2 findings.
+  - `uv run python -m pytest tests/test_security_packs.py tests/test_admin_cli.py -q` passed with 57 tests after tightening validation-report schema assertions.
+  - `pnpm --dir docs run build` passed again with 69 pages.
+  - `rg -n '/security/policy/|docs/security/policy|security/policy' docs/src/content/docs docs/src -S` returned no matches after the docs route cleanup.
+  Fixes applied during replay: split the remaining generic admin validation report into explicit `capsem.enforcement-pack-validation.v1` and `capsem.detection-pack-validation.v1` schemas so `capsem-admin enforcement validate` and `capsem-admin detection validate` expose distinct public contracts; moved the public Rule Authoring page from `/security/policy/` to `/security/rules/` and updated docs links so the public security surface says rules/enforcement/detection instead of policy.
