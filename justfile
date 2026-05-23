@@ -858,7 +858,7 @@ coverage:
     echo "Coverage report: target/llvm-cov/html/index.html"
     open target/llvm-cov/html/index.html 2>/dev/null || true
 
-# Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
+# Run in-VM benchmarks, host lifecycle/fork benchmarks, and Security Engine benchmarks
 bench: _ensure-setup _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
@@ -869,6 +869,10 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
     echo ""
     echo "=== Host-side benchmarks (lifecycle, fork) ==="
     uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
+
+    echo "=== Security Engine benchmarks ==="
+    cargo bench -p capsem-security-engine --bench security_engine_cel
+    uv run python -m pytest tests/capsem-serial/test_security_engine_benchmark.py -v --tb=short -m "serial or benchmark"
 
 # Build package, runtime-clean local install, use the install.sh native command,
 # then verify installed status, service, gateway, and guest DNS/HTTPS.

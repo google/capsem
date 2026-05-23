@@ -166,7 +166,7 @@ clearly not numerical and matches the sprint tracker.
 
 ## Tasks
 
-- [ ] Extend `capsem-bench` with `security-engine` mode or add an equivalent
+- [~] Extend `capsem-bench` with `security-engine` mode or add an equivalent
   VM-originated benchmark harness that is invoked by `just bench`.
 - [~] Add host-side serial pytest artifact capture for security-engine benchmark
   JSON under `benchmarks/security-engine/`.
@@ -228,6 +228,13 @@ clearly not numerical and matches the sprint tracker.
   enabled-rule projection at 7.453us. Remaining microbench debt: explicit
   Detection IR/Sigma lowering cost and atomic compiled-plan swap cost once the
   service-side swap path is factored into a stable benchmarkable boundary.
+- Slice 5 wired the equivalent host-side Security Engine benchmark harness into
+  `just bench`. The recipe now runs the Criterion Security Engine microbench
+  and the VM-originated process-enforcement serial benchmark after the existing
+  in-VM and lifecycle/fork benchmark stages. We are keeping a separate
+  `capsem-bench security-engine` guest mode open until HTTP/DNS/MCP/model
+  VM-originated scenarios can run from inside the VM with useful workload
+  controls.
 
 ## Coverage Ledger
 

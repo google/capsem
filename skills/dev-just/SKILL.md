@@ -28,7 +28,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just test-install` | Install e2e in Docker + systemd (real .deb, dpkg -i, pytest) |
 | `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |
 | `just cross-compile [arch]` | Full Linux build in container (agent + deb) |
-| `just bench` | In-VM benchmarks (disk I/O, rootfs, CLI startup, HTTP) + host lifecycle benchmarks |
+| `just bench` | In-VM benchmarks, host lifecycle/fork benchmarks, and Security Engine benchmarks |
 | `just inspect-session [args]` | Session DB integrity + event summary |
 | `just list-sessions` | Table of recent sessions with event counts |
 | `just query-session "SQL" [id]` | Run SQL against a session DB (latest with a DB by default) |

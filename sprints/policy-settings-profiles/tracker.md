@@ -2090,6 +2090,11 @@ a valid claim -- mark it `[ ]` instead.
     Still missing in S08d: Detection IR/Sigma lowering and atomic plan-swap
     microbench boundaries, HTTP/DNS/MCP/model/file VM-originated benchmarks,
     concurrency cases, and broader release gates.
+    Fifth S08d wiring slice updated `just bench` so it now runs the Security
+    Engine Criterion microbench and VM-originated process-enforcement serial
+    benchmark after the existing in-VM and lifecycle/fork benchmark stages.
+    The separate `capsem-bench security-engine` guest mode remains open until
+    HTTP/DNS/MCP/model VM-originated workloads have useful guest-side controls.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

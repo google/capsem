@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the Security Engine Criterion benchmark artifact with runtime
   detection evaluation, backtest evidence deduplication, and runtime rule
   registry operation timings.
+- Wired `just bench` to run the Security Engine Criterion microbenchmarks and
+  VM-originated process-enforcement benchmark alongside the existing in-VM and
+  lifecycle/fork benchmark stages.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.

@@ -8,7 +8,7 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 ## Quick start
 
 ```bash
-just bench                          # Run all benchmarks in VM (~2 min)
+just bench                          # Run in-VM, host lifecycle/fork, and Security Engine benchmarks
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
 just test                           # Full validation including benchmarks

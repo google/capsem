@@ -10,7 +10,7 @@ Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the 
 ## Running benchmarks
 
 ```bash
-just bench                          # All benchmarks in VM (~2 min)
+just bench                          # In-VM, lifecycle/fork, and Security Engine benchmarks
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
 just run "capsem-bench startup"     # CLI cold-start only
