@@ -8043,10 +8043,11 @@ fn session_security_event_from_row(
         }
         "model" => {
             if let Some(evidence) = session_model_evidence_from_row(reader, row)? {
-                return Ok(Some(seceng::SecurityEvent::model(
-                    common,
-                    seceng::ModelSecuritySubject::from_interaction_evidence(evidence),
-                )));
+                return Ok(Some(
+                    capsem_network_engine::model_security::build_model_security_event_from_evidence(
+                        common, evidence,
+                    ),
+                ));
             }
             let provider = match session_optional_string(row, SESSION_COL_MODEL_PROVIDER)? {
                 Some(provider) => provider,
@@ -8056,23 +8057,25 @@ fn session_security_event_from_row(
                 Some(model) => model,
                 None => return Ok(None),
             };
-            Ok(Some(seceng::SecurityEvent::model(
-                common,
-                seceng::ModelSecuritySubject {
-                    provider,
-                    model,
-                    estimated_input_tokens: session_optional_u64(
-                        row,
-                        SESSION_COL_MODEL_INPUT_TOKENS,
-                    )?,
-                    estimated_output_tokens: session_optional_u64(
-                        row,
-                        SESSION_COL_MODEL_OUTPUT_TOKENS,
-                    )?,
-                    estimated_cost_micros: None,
-                    evidence: None,
-                },
-            )))
+            Ok(Some(
+                capsem_network_engine::model_security::build_model_security_event(
+                    common,
+                    capsem_network_engine::model_security::ModelSecurityEventInput {
+                        provider,
+                        model,
+                        estimated_input_tokens: session_optional_u64(
+                            row,
+                            SESSION_COL_MODEL_INPUT_TOKENS,
+                        )?,
+                        estimated_output_tokens: session_optional_u64(
+                            row,
+                            SESSION_COL_MODEL_OUTPUT_TOKENS,
+                        )?,
+                        estimated_cost_micros: None,
+                        evidence: None,
+                    },
+                ),
+            ))
         }
         "file" => {
             let operation = session_optional_string(row, SESSION_COL_FILE_OPERATION)?

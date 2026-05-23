@@ -1965,6 +1965,18 @@ a valid claim -- mark it `[ ]` instead.
     behind the Network Engine boundary, visible UI screens/editors,
     interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
     performance proof, and final release gates.
+    Ninety-second structural Network Engine model-SecurityEvent slice added
+    `capsem_network_engine::model_security` as the model event projection
+    boundary. It builds model `SecurityEvent`s from canonical
+    `ModelInteractionEvidence` or from legacy provider/model/token projection
+    fields, and session-backed detection hunt now calls that builder instead
+    of constructing `ModelSecuritySubject` inside `capsem-service`. Verification:
+    `cargo test -p capsem-network-engine model_security` **2** passed, `cargo
+    check -p capsem-service` passed, and `cargo test -p capsem-service
+    handle_session_detection_hunt_reconstructs_core_projection_families --bin
+    capsem-service` passed. Still missing after this slice: visible UI
+    screens/editors, interactive confirm prompt UX in S15, S12
+    OTel/prometheus export, S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

@@ -96,6 +96,11 @@ projection into `capsem-network-engine`. Model request/response/tool-call/
 tool-result evidence is now derived from Network Engine-owned provider, request,
 and stream summaries; `capsem-core` only persists the result through the MITM
 telemetry path.
+The following model SecurityEvent slice added Network Engine-owned model
+SecurityEvent projection. Session-backed detection hunt now reconstructs model
+events through `capsem_network_engine::model_security`, including both
+canonical evidence-backed and legacy projection-only rows, so the service no
+longer constructs model subjects as local authority.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,
