@@ -479,6 +479,7 @@ class ModelRequestPolicyContextV1(StrictModel):
     estimated_output_tokens: Annotated[int, Field(ge=0)] | None = None
     estimated_cost_micros: Annotated[int, Field(ge=0)] | None = None
     body: BodyPolicyContextV1 = Field(default_factory=BodyPolicyContextV1)
+    tool_calls: list[ModelToolCallPolicyContextV1] = Field(default_factory=list)
 
 
 class ModelResponsePolicyContextV1(StrictModel):
@@ -489,6 +490,31 @@ class ModelResponsePolicyContextV1(StrictModel):
     stop_reason: NonEmptyStr | None = None
     estimated_output_tokens: Annotated[int, Field(ge=0)] | None = None
     body: BodyPolicyContextV1 = Field(default_factory=BodyPolicyContextV1)
+    tool_results: list[ModelToolResultPolicyContextV1] = Field(default_factory=list)
+
+
+class ModelToolCallPolicyContextV1(StrictModel):
+    tool_call_id: NonEmptyStr | None = None
+    provider_call_id: NonEmptyStr | None = None
+    raw_name: NonEmptyStr | None = None
+    name: NonEmptyStr | None = None
+    origin: NonEmptyStr | None = None
+    arguments_status: NonEmptyStr | None = None
+    status: NonEmptyStr | None = None
+    linked_mcp_call_id: NonEmptyStr | None = None
+    parse_confidence: NonEmptyStr | None = None
+
+
+class ModelToolResultPolicyContextV1(StrictModel):
+    tool_call_id: NonEmptyStr | None = None
+    linked_mcp_call_id: NonEmptyStr | None = None
+    content_kind: NonEmptyStr | None = None
+    content_preview: str | None = None
+    content_json: str | None = None
+    is_error: bool | None = None
+    result_status: NonEmptyStr | None = None
+    returned_to_model: bool | None = None
+    parse_confidence: NonEmptyStr | None = None
 
 
 class ModelPolicyContextV1(StrictModel):
@@ -704,12 +730,27 @@ def compile_detection_pack(pack: DetectionPackV1, *, base_dir: Path) -> Detectio
     )
 
 
+_INDEXED_PATH_PART_RE = re.compile(r"^(?P<name>[a-z][a-z0-9_]*)(?:\[(?P<index>[0-9]+)\])?$")
+
+
 def _event_value(context: PolicyContextV1, field_path: str) -> DetectionValue | None:
     current: Any = context.model_dump(mode="json")
     for part in field_path.split("."):
-        if not isinstance(current, dict) or part not in current:
+        part_match = _INDEXED_PATH_PART_RE.match(part)
+        if part_match is None:
             return None
-        current = current[part]
+        name = part_match.group("name")
+        if not isinstance(current, dict) or name not in current:
+            return None
+        current = current[name]
+        index = part_match.group("index")
+        if index is not None:
+            if not isinstance(current, list):
+                return None
+            item_index = int(index)
+            if item_index >= len(current):
+                return None
+            current = current[item_index]
     if isinstance(current, str | int | float | bool):
         return current
     return None
@@ -731,20 +772,17 @@ def _rule_matches(
 
 
 _STRING_LITERAL = r"(?P<quote>['\"])(?P<value>[^'\"]*)(?P=quote)"
-_CONTAINS_RE = re.compile(
-    rf"^(?P<path>[a-z][a-z0-9_.]*)\.contains\({_STRING_LITERAL}\)$"
-)
+_POLICY_PATH_RE = r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*(?:\[[0-9]+\])?)*"
+_CONTAINS_RE = re.compile(rf"^(?P<path>{_POLICY_PATH_RE})\.contains\({_STRING_LITERAL}\)$")
 _STARTS_WITH_RE = re.compile(
-    rf"^(?P<path>[a-z][a-z0-9_.]*)\.startsWith\({_STRING_LITERAL}\)$"
+    rf"^(?P<path>{_POLICY_PATH_RE})\.startsWith\({_STRING_LITERAL}\)$"
 )
-_EQUALS_RE = re.compile(
-    rf"^(?P<path>[a-z][a-z0-9_.]*)\s*==\s*{_STRING_LITERAL}$"
-)
+_EQUALS_RE = re.compile(rf"^(?P<path>{_POLICY_PATH_RE})\s*==\s*{_STRING_LITERAL}$")
 _BOOL_EQUALS_RE = re.compile(
-    r"^(?P<path>[a-z][a-z0-9_.]*)\s*==\s*(?P<value>true|false)$"
+    rf"^(?P<path>{_POLICY_PATH_RE})\s*==\s*(?P<value>true|false)$"
 )
 _NUMBER_EQUALS_RE = re.compile(
-    r"^(?P<path>[a-z][a-z0-9_.]*)\s*==\s*(?P<value>-?[0-9]+(?:\.[0-9]+)?)$"
+    rf"^(?P<path>{_POLICY_PATH_RE})\s*==\s*(?P<value>-?[0-9]+(?:\.[0-9]+)?)$"
 )
 _HEADER_EXISTS_RE = re.compile(
     r"^http\.request\.header\((?P<quote>['\"])(?P<header>[^'\"]+)(?P=quote)\)\.exists\(\)$",
@@ -817,6 +855,15 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
             "model.request.body.size",
             "model.request.body.truncated",
             "model.request.body.redaction_reason",
+            "model.request.tool_calls[*].tool_call_id",
+            "model.request.tool_calls[*].provider_call_id",
+            "model.request.tool_calls[*].raw_name",
+            "model.request.tool_calls[*].name",
+            "model.request.tool_calls[*].origin",
+            "model.request.tool_calls[*].arguments_status",
+            "model.request.tool_calls[*].status",
+            "model.request.tool_calls[*].linked_mcp_call_id",
+            "model.request.tool_calls[*].parse_confidence",
             "model.response.provider",
             "model.response.api_family",
             "model.response.model",
@@ -829,6 +876,15 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
             "model.response.body.size",
             "model.response.body.truncated",
             "model.response.body.redaction_reason",
+            "model.response.tool_results[*].tool_call_id",
+            "model.response.tool_results[*].linked_mcp_call_id",
+            "model.response.tool_results[*].content_kind",
+            "model.response.tool_results[*].content_preview",
+            "model.response.tool_results[*].content_json",
+            "model.response.tool_results[*].is_error",
+            "model.response.tool_results[*].result_status",
+            "model.response.tool_results[*].returned_to_model",
+            "model.response.tool_results[*].parse_confidence",
         }
     ),
     EventFamily.FILE: frozenset(
@@ -860,8 +916,9 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
 
 
 def _validate_policy_path(rule: PolicyRuleV1, path: str) -> None:
+    path_key = re.sub(r"\[[0-9]+\]", "[*]", path)
     family_paths = _SUPPORTED_POLICY_PATHS.get(rule.event_family, frozenset())
-    if path in family_paths:
+    if path_key in family_paths:
         return
     raise ValueError(
         f"rule {rule.id} uses unsupported policy path for "

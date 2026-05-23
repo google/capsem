@@ -171,6 +171,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the admin policy-context model and offline policy backtest subset
   beyond HTTP so DNS/MCP/model/file/process/profile scalar roots, boolean
   equality, and numeric equality can be tested through `capsem-admin`.
+- Added indexed model tool-call/tool-result policy paths to admin backtest so
+  rules can match roots such as `model.request.tool_calls[0].name` and
+  `model.response.tool_results[0].returned_to_model`.
 - Added rule-corpus workflow documentation tying policy-context fixtures,
   enforcement/detection expected artifacts, admin commands, and Rust parity
   tests together.

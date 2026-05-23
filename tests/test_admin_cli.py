@@ -988,3 +988,51 @@ decision = "block"
     assert '"rule_id": "file-workspace-write"' in result.output
     assert '"rule_id": "process-shell"' in result.output
     assert '"rule_id": "profile-coding"' in result.output
+
+
+def test_capsem_admin_policy_backtest_matches_model_tool_paths(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "model-tools-policy.toml"
+    policy_path.write_text(
+        """
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.model-tools"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+
+[[rules]]
+id = "model-tool-read"
+name = "Model tool read"
+event_family = "model"
+event_type = "model.request"
+condition = "model.request.tool_calls[0].name == 'filesystem.read_file' && model.response.tool_results[0].returned_to_model == true"
+decision = "block"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(
+        """
+{"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit-model","session_id":"session-1","event_id":"evt-model-tool","sequence":1,"timestamp_unix_ms":1},"context":{"schema_version":1,"common":{"event_type":"model.request"},"model":{"request":{"provider":"google_gemini","api_family":"google_gemini_content","model":"gemini-2.5-pro","stream":true,"tool_calls":[{"tool_call_id":"tool-call-1","name":"filesystem.read_file","origin":"mcp_tool","arguments_status":"valid_json","status":"executed","linked_mcp_call_id":"mcp-call-1","parse_confidence":"high"}]},"response":{"provider":"google_gemini","api_family":"google_gemini_content","model":"gemini-2.5-pro","tool_results":[{"tool_call_id":"tool-call-1","linked_mcp_call_id":"mcp-call-1","content_kind":"json","content_preview":"{\\"ok\\":true}","is_error":false,"result_status":"returned_to_model","returned_to_model":true,"parse_confidence":"high"}]}}}}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "backtest",
+            str(policy_path),
+            "--events",
+            str(events_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"match_count": 1' in result.output
+    assert '"model.request.tool_calls[0].name": "filesystem.read_file"' in result.output
+    assert '"model.response.tool_results[0].returned_to_model": true' in result.output

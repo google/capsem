@@ -1981,6 +1981,15 @@ a valid claim -- mark it `[ ]` instead.
     Still missing in S08c: committed live VM-generated fixture export from the
     resolved-event journal and runtime-CEL parity for array/tool-call paths
     beyond the admin subset.
+    Sixteenth admin-model-tool-path slice added indexed path support to the
+    Python policy-context evaluator and typed model tool-call/tool-result
+    blocks to the Pydantic context model. Verification: red `uv run pytest
+    tests/test_admin_cli.py -k "policy_backtest_matches_model_tool_paths" -q`
+    first failed on unsupported `model.request.tool_calls[0].name` and missing
+    tool evidence fields, then passed after indexed lookup and the allowlist
+    were added. Still missing in S08c: committed live VM-generated fixture
+    export from the resolved-event journal and full runtime-CEL parity for CEL
+    constructs outside the admin-supported subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

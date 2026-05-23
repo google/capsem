@@ -200,6 +200,12 @@ session-scoped enforcement replay, it should be named and designed separately.
   subset now supports boolean and numeric equality, and a fixture-level admin
   backtest proves MCP/model/file/process/profile rules all match through
   canonical roots.
+- Slice 16 added indexed model evidence paths to the admin subset. Python
+  policy contexts now carry typed model tool-call and tool-result blocks, path
+  lookup understands numeric list indexes, and admin backtest can match
+  `model.request.tool_calls[0].name` plus
+  `model.response.tool_results[0].returned_to_model`, mirroring the Rust CEL
+  policy surface used by AI/MCP rules.
 
 ## Coverage Ledger
 
@@ -211,8 +217,8 @@ session-scoped enforcement replay, it should be named and designed separately.
 - Functional: admin offline backtest and Rust runtime backtest produce the same
   matched event refs, decisions/findings, and counts. This is proven for the
   first synthetic enforcement and detection corpus; admin backtest now also
-  matches non-HTTP scalar policy contexts. Broader committed corpus diversity
-  and real-session rows remain open.
+  matches non-HTTP scalar policy contexts and indexed model tool evidence.
+  Broader committed corpus diversity and real-session rows remain open.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
   duplicate rule ids, mismatched expected labels, internal `event.*` /
   `subject.*` authoring, unknown canonical-looking admin policy paths,
