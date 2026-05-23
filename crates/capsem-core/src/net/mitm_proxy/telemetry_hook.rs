@@ -19,12 +19,15 @@ use bytes::Bytes;
 use capsem_logger::{
     DbWriter, Decision, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
+use capsem_network_engine::http_security::{
+    build_http_resolved_security_event as build_network_http_resolved_security_event,
+    build_http_response_security_event as build_network_http_response_security_event,
+    build_http_security_event as build_network_http_security_event, HttpIdentityContext,
+    HttpSecurityEventInput,
+};
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, BlockResponse, Enforceability, HttpBodySecuritySubject,
-    HttpSecuritySubject, RedactionState, ResolvedEventStep, ResolvedEventStepKind,
-    ResolvedSecurityEvent, SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError,
-    SecurityEvent, SecurityEventCommon, SecurityResult, SourceEngine, StepStatus,
-    RESOLVED_EVENT_SCHEMA_VERSION,
+    AiAttributionScope, AiOriginKind, ResolvedSecurityEvent, SecurityEvent, SecurityResult,
+    SourceEngine,
 };
 use tracing::{info, warn};
 
@@ -92,6 +95,18 @@ pub struct TelemetryIdentityContext {
     pub profile_id: Option<String>,
     pub profile_revision: Option<String>,
     pub user_id: Option<String>,
+}
+
+impl From<&TelemetryIdentityContext> for HttpIdentityContext {
+    fn from(identity: &TelemetryIdentityContext) -> Self {
+        Self {
+            vm_id: identity.vm_id.clone(),
+            session_id: identity.session_id.clone(),
+            profile_id: identity.profile_id.clone(),
+            profile_revision: identity.profile_revision.clone(),
+            user_id: identity.user_id.clone(),
+        }
+    }
 }
 
 impl TelemetryIdentityContext {
@@ -354,89 +369,16 @@ pub fn build_http_resolved_security_event(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    let rule_id = req_ctx
-        .policy_rule
-        .clone()
-        .or_else(|| req_ctx.matched_rule.clone());
-    let reason = req_ctx
-        .policy_reason
-        .clone()
-        .or_else(|| req_ctx.matched_rule.clone());
-    let mut event = build_http_security_event(
+    let input = http_security_input(
         req_ctx,
-        timestamp_unix_ms,
-        net_event.trace_id.clone(),
         Some(resp_stats.bytes),
         net_event.response_body_preview.clone(),
     );
-
-    let mut steps = Vec::new();
-    let final_action = match net_event.decision {
-        Decision::Allowed | Decision::Redirected => {
-            if let Some(rule_id) = rule_id.clone() {
-                event.decision = Some(SecurityDecision {
-                    action: SecurityDecisionAction::Allow,
-                    rule: Some(rule_id.clone()),
-                    pack_id: None,
-                    reason: reason.clone(),
-                    terminal: false,
-                });
-                steps.push(ResolvedEventStep {
-                    kind: ResolvedEventStepKind::EnforcementMatch,
-                    status: StepStatus::Matched,
-                    rule_id: Some(rule_id),
-                    pack_id: None,
-                    message: reason.clone(),
-                });
-            }
-            SecurityAction::Continue
-        }
-        Decision::Denied => {
-            event.decision = Some(SecurityDecision {
-                action: SecurityDecisionAction::Block,
-                rule: rule_id.clone(),
-                pack_id: None,
-                reason: reason.clone(),
-                terminal: true,
-            });
-            steps.push(ResolvedEventStep {
-                kind: ResolvedEventStepKind::EnforcementMatch,
-                status: StepStatus::Matched,
-                rule_id: rule_id.clone(),
-                pack_id: None,
-                message: reason.clone(),
-            });
-            SecurityAction::Block(BlockResponse {
-                reason_code: reason
-                    .clone()
-                    .unwrap_or_else(|| "network_request_denied".into()),
-                rule_id,
-            })
-        }
-        Decision::Error => {
-            steps.push(ResolvedEventStep {
-                kind: ResolvedEventStepKind::EnforcementMatch,
-                status: StepStatus::Error,
-                rule_id: rule_id.clone(),
-                pack_id: None,
-                message: reason.clone(),
-            });
-            SecurityAction::Error(SecurityError {
-                code: "network_error".into(),
-                message: reason.unwrap_or_else(|| "network request failed".into()),
-            })
-        }
-    };
-
-    ResolvedSecurityEvent {
-        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
-        event,
-        steps,
-        plugin_transforms: Vec::new(),
-        detection_findings: Vec::new(),
-        final_action,
-        emitter_results: Vec::new(),
-    }
+    build_network_http_resolved_security_event(
+        &input,
+        timestamp_unix_ms,
+        net_event.trace_id.clone(),
+    )
 }
 
 pub fn build_http_security_event(
@@ -446,8 +388,26 @@ pub fn build_http_security_event(
     response_bytes: Option<u64>,
     response_body_preview: Option<String>,
 ) -> SecurityEvent {
-    let event_id =
-        http_security_event_id_from_trace(req_ctx, trace_id.as_deref(), timestamp_unix_ms);
+    let input = http_security_input(req_ctx, response_bytes, response_body_preview);
+    build_network_http_security_event(&input, timestamp_unix_ms, trace_id)
+}
+
+pub fn build_http_response_security_event(
+    req_ctx: &TelemetryRequestContext,
+    timestamp_unix_ms: u64,
+    trace_id: Option<String>,
+    response_bytes: Option<u64>,
+    response_body_preview: Option<String>,
+) -> SecurityEvent {
+    let input = http_security_input(req_ctx, response_bytes, response_body_preview);
+    build_network_http_response_security_event(&input, timestamp_unix_ms, trace_id)
+}
+
+fn http_security_input(
+    req_ctx: &TelemetryRequestContext,
+    response_bytes: Option<u64>,
+    response_body_preview: Option<String>,
+) -> HttpSecurityEventInput {
     let (request_bytes, request_body_preview) = {
         let st = req_ctx
             .request_body_stats
@@ -460,164 +420,27 @@ pub fn build_http_security_event(
         };
         (st.bytes, preview)
     };
-    SecurityEvent::http(
-        SecurityEventCommon {
-            event_id,
-            parent_event_id: None,
-            stream_id: None,
-            activity_id: None,
-            sequence_no: None,
-            source_engine: SourceEngine::Network,
-            attribution_scope: AiAttributionScope::Vm,
-            origin_kind: AiOriginKind::GuestNetwork,
-            accounting_owner: None,
-            enforceability: Enforceability::InlineBlockable,
-            trace_id,
-            span_id: None,
-            timestamp_unix_ms,
-            vm_id: req_ctx.identity.vm_id.clone(),
-            session_id: req_ctx.identity.session_id.clone(),
-            profile_id: req_ctx.identity.profile_id.clone(),
-            profile_revision: req_ctx.identity.profile_revision.clone(),
-            profile_pack_ids: Vec::new(),
-            enforcement_packs: Vec::new(),
-            detection_packs: Vec::new(),
-            user_id: req_ctx.identity.user_id.clone(),
-            process_id: None,
-            parent_process_id: None,
-            exec_id: None,
-            turn_id: None,
-            message_id: None,
-            tool_call_id: None,
-            mcp_call_id: None,
-            event_type: "http.request".into(),
-            redaction_state: RedactionState::Raw,
-        },
-        HttpSecuritySubject {
-            method: req_ctx.method.clone(),
-            scheme: Some(http_scheme(req_ctx).into()),
-            host: req_ctx.domain.clone(),
-            port: Some(req_ctx.port),
-            path: Some(req_ctx.path.clone()),
-            query: req_ctx.query.clone(),
-            url: Some(http_url(req_ctx)),
-            path_class: http_path_class(&req_ctx.path),
-            request_bytes,
-            request_headers: parse_headers(req_ctx.request_headers.as_deref()),
-            request_body: request_body_preview.map(HttpBodySecuritySubject::text),
-            response_status: req_ctx.status_code,
-            response_headers: parse_headers(req_ctx.response_headers.as_deref()),
-            response_bytes,
-            response_body: response_body_preview.map(HttpBodySecuritySubject::text),
-        },
-    )
-}
-
-pub fn build_http_response_security_event(
-    req_ctx: &TelemetryRequestContext,
-    timestamp_unix_ms: u64,
-    trace_id: Option<String>,
-    response_bytes: Option<u64>,
-    response_body_preview: Option<String>,
-) -> SecurityEvent {
-    let mut event = build_http_security_event(
-        req_ctx,
-        timestamp_unix_ms,
-        trace_id,
+    HttpSecurityEventInput {
+        event_id_seed: req_ctx.event_id_seed.clone(),
+        domain: req_ctx.domain.clone(),
+        method: req_ctx.method.clone(),
+        path: req_ctx.path.clone(),
+        query: req_ctx.query.clone(),
+        status_code: req_ctx.status_code,
+        request_headers: req_ctx.request_headers.clone(),
+        response_headers: req_ctx.response_headers.clone(),
+        request_bytes,
+        request_body_preview,
         response_bytes,
         response_body_preview,
-    );
-    event.common.event_type = "http.response".into();
-    event
-}
-
-fn http_security_event_id(
-    req_ctx: &TelemetryRequestContext,
-    net_event: &NetEvent,
-    timestamp_unix_ms: u64,
-) -> String {
-    http_security_event_id_from_trace(req_ctx, net_event.trace_id.as_deref(), timestamp_unix_ms)
-}
-
-fn http_security_event_id_from_trace(
-    req_ctx: &TelemetryRequestContext,
-    trace_id: Option<&str>,
-    timestamp_unix_ms: u64,
-) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(req_ctx.event_id_seed.as_bytes());
-    hasher.update(trace_id.unwrap_or("").as_bytes());
-    hasher.update(req_ctx.domain.as_bytes());
-    hasher.update(req_ctx.method.as_bytes());
-    hasher.update(req_ctx.path.as_bytes());
-    if let Some(query) = &req_ctx.query {
-        hasher.update(query.as_bytes());
+        port: req_ctx.port,
+        conn_type: req_ctx.conn_type.to_string(),
+        identity: HttpIdentityContext::from(&req_ctx.identity),
+        decision: req_ctx.decision,
+        matched_rule: req_ctx.matched_rule.clone(),
+        policy_rule: req_ctx.policy_rule.clone(),
+        policy_reason: req_ctx.policy_reason.clone(),
     }
-    hasher.update(&timestamp_unix_ms.to_le_bytes());
-    let hash = hasher.finalize().to_hex().to_string();
-    format!("net-http-{}", &hash[..16])
-}
-
-fn http_scheme(req_ctx: &TelemetryRequestContext) -> &'static str {
-    if req_ctx.conn_type == "http-mitm" {
-        "http"
-    } else {
-        "https"
-    }
-}
-
-fn http_url(req_ctx: &TelemetryRequestContext) -> String {
-    match &req_ctx.query {
-        Some(query) if !query.is_empty() => {
-            format!(
-                "{}://{}{}?{}",
-                http_scheme(req_ctx),
-                req_ctx.domain,
-                req_ctx.path,
-                query
-            )
-        }
-        _ => format!(
-            "{}://{}{}",
-            http_scheme(req_ctx),
-            req_ctx.domain,
-            req_ctx.path
-        ),
-    }
-}
-
-fn http_path_class(path: &str) -> String {
-    if path == "/" {
-        "root".into()
-    } else {
-        path.trim_start_matches('/')
-            .split('/')
-            .next()
-            .filter(|segment| !segment.is_empty())
-            .unwrap_or("unknown")
-            .to_owned()
-    }
-}
-
-fn parse_headers(headers: Option<&str>) -> BTreeMap<String, Vec<String>> {
-    let mut parsed = BTreeMap::new();
-    let Some(headers) = headers else {
-        return parsed;
-    };
-    for line in headers.lines() {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let name = name.trim().to_ascii_lowercase();
-        if name.is_empty() {
-            continue;
-        }
-        parsed
-            .entry(name)
-            .or_insert_with(Vec::new)
-            .push(value.trim().to_string());
-    }
-    parsed
 }
 
 /// Pure builder: assembles a `ModelCall` for AI-provider traffic.

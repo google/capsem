@@ -2,6 +2,10 @@ use super::super::body::BodyStats;
 use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
 use capsem_logger::Decision;
+use capsem_security_engine::{
+    BlockResponse, ResolvedEventStep, ResolvedEventStepKind, SecurityAction, StepStatus,
+    RESOLVED_EVENT_SCHEMA_VERSION,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 

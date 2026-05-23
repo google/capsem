@@ -1884,6 +1884,18 @@ a valid claim -- mark it `[ ]` instead.
     Network Engine boundary, visible UI screens/editors, interactive confirm
     prompt UX in S15, S12 OTel/prometheus export, S08d performance proof, and
     final release gates.
+    Eighty-sixth structural Network Engine HTTP-projection slice added
+    `capsem_network_engine::http_security` and moved HTTP request/response
+    SecurityEvent plus resolved-event construction behind a typed
+    `HttpSecurityEventInput`. The MITM telemetry hook keeps its production
+    scheduling/body-stat responsibilities but now delegates HTTP subject
+    projection to the Network Engine crate. Verification: `cargo test -p
+    capsem-network-engine http_security` **4** passed, `cargo test -p
+    capsem-core telemetry_hook --lib` **15** passed, and `cargo check -p
+    capsem-process` passed. Still missing after this slice: moving MCP/model
+    transport/security-event builders behind the Network Engine boundary,
+    visible UI screens/editors, interactive confirm prompt UX in S15, S12
+    OTel/prometheus export, S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

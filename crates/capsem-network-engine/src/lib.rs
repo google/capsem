@@ -10,3 +10,4 @@ pub mod dns_security;
 pub mod dns_transport;
 pub mod domain_policy;
 pub mod http_policy;
+pub mod http_security;

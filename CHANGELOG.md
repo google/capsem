@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved DNS transport result and DNS SecurityEvent projection into
   `capsem-network-engine`, so DNS runtime blocks, resolved-event rows, and
   legacy `dns_events` projection share the Network Engine boundary.
+- Added Network Engine-owned HTTP SecurityEvent projection, with MITM telemetry
+  adapting request/response stats into a typed `HttpSecurityEventInput` instead
+  of constructing HTTP subjects directly inside `capsem-core`.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.
