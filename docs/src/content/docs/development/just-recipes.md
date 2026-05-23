@@ -43,7 +43,7 @@ and telemetry. Use this sequence for focused iteration:
 
 | Step | Command |
 |---|---|
-| Rust policy contracts | `cargo test -p capsem-core policy_config --lib` |
+| Rust Security Engine contracts | `cargo test -p capsem-security-engine` |
 | Framed MCP policy | `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib` |
 | Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
 | Frontend type/check gate | `pnpm -C frontend run check` |
@@ -91,9 +91,11 @@ LIMIT 20;"
 | `just build-rootfs <arch>` | Rootfs only | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + `.deb` package | ~15 min |
 
-You only need `just build-assets` on first setup or when `guest/config/`
-changes rootfs packages or image build inputs. Day-to-day, `just shell` and
-`just exec` repack the initrd without rebuilding rootfs images.
+You only need `just build-assets` on first setup or when profile-derived image
+inputs change rootfs packages, kernel inputs, or base image assets. Repo-local
+`guest/config/` edits matter for built-in profile development only.
+Day-to-day, `just shell` and `just exec` repack the initrd without rebuilding
+rootfs images.
 
 ## Session inspection
 

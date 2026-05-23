@@ -58,7 +58,11 @@ Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n
 just build-assets
 ```
 
-Builds the Linux kernel and rootfs via Docker (~10 min on first run). The kernel version is **not** pinned — `kernel_branch = "auto"` in `guest/config/build.toml` makes the resolver fetch the newest non-EOL longterm (LTS) branch from `kernel.org/releases.json` and pull its latest patch (e.g. `6.18.26`). To freeze a specific branch (CI reproducibility, security freeze), set `kernel_branch = "6.6"` (or any `X.Y`) in the same file. Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to retune Colima resources.
+Builds the Linux kernel and rootfs via Docker (~10 min on first run). Image
+inputs are derived from Profile V2 payloads; repo-local `guest/config/build.toml`
+is only the developer input used for built-in profile generation. Assets are
+gitignored and must be built locally. See [Life of a Build > Container
+runtime](./stack#container-runtime) if you need to retune Colima resources.
 
 ## Verify
 

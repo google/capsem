@@ -34,12 +34,14 @@ graph TB
 
     GUEST_AGENT -->|stdio| GUEST_MCP
     GUEST_MCP -->|"framed MCP<br/>vsock:5002"| GW
-    GW -->|"policy + telemetry"| AGG
+    GW -->|"SecurityEvent + telemetry"| AGG
     AGG -->|"stdio MCP"| BUILTIN
     AGG -->|"HTTP/SSE"| EXT
 ```
 
-The host MCP server manages VMs. The guest relay provides MCP tools to code running inside the VM while the host endpoint owns parsing, policy, telemetry, and dispatch.
+The host MCP server manages VMs. The guest relay provides MCP tools to code
+running inside the VM while the host endpoint owns parsing, Security Engine
+dispatch, telemetry, and routing.
 
 ## Host MCP server (capsem-mcp)
 
@@ -98,7 +100,9 @@ If the service is not running when the MCP server starts, it attempts to launch 
 
 ## Guest MCP relay (capsem-mcp-server)
 
-The guest MCP relay is a minimal stdio-to-framed-vsock bridge. It does not route or execute tools; the host MITM MCP endpoint owns parsing, policy, telemetry, and dispatch.
+The guest MCP relay is a minimal stdio-to-framed-vsock bridge. It does not
+route or execute tools; the host MITM MCP endpoint owns parsing, Security
+Engine dispatch, telemetry, and routing.
 
 ### Framed relay
 
@@ -132,7 +136,9 @@ Two threads handle the relay:
 
 ## Tool routing (host endpoint)
 
-The MITM MCP endpoint receives framed JSON-RPC over vsock:5002, applies MCP policy, records `mcp_calls`, and routes requests through the aggregator:
+The MITM MCP endpoint receives framed JSON-RPC over vsock:5002, builds a typed
+MCP `SecurityEvent`, records `mcp_calls`, and routes allowed requests through
+the aggregator:
 
 ```mermaid
 graph TD
@@ -154,23 +160,24 @@ graph TD
 
 External tool calls are routed through the [MCP Aggregator](/architecture/mcp-aggregator/) -- an isolated subprocess that manages all external MCP server connections with privilege separation.
 
-### Policy enforcement
+### Security Engine enforcement
 
 Every `tools/call` request is checked at the framed MITM boundary before the
-aggregator sees it. Named policy rules use `policy.mcp.<rule_name>` and can
-match request fields such as `method`, `server.name`, `tool.name`, and
-`arguments.*`, or response fields such as `response.text`.
+aggregator sees it. Profile-owned enforcement rules use canonical MCP policy
+roots such as `mcp.request.server_name`, `mcp.request.tool_name`,
+`mcp.request.arguments`, `mcp.response.result_status`, and
+`mcp.response.content`. Authored rules do not target internal `event.*` fields.
 
-| policy decision | Boundary behavior |
+| decision | Boundary behavior |
 |---|---|
 | `allow` | Tool call proceeds. |
 | `ask` | Fails closed until an approval UI exists. The request is not dispatched. |
-| `block` | Returns a policy JSON-RPC error. The request is not dispatched. |
-| `rewrite` | Mutates only the configured response target before returning to the guest. |
+| `block` | Returns an enforcement JSON-RPC error. The request is not dispatched. |
+| `rewrite` | Applies only validated declarative mutations before returning to the guest. |
 
-MCP default permissions still exist for fallback behavior, but new
-tool-specific UI controls save named policy rules. `warn` is historical
-terminology and is not a policy decision.
+The Security Engine writes the resolved event, final decision, rule id, reason,
+and allowed mutations before telemetry/audit/logging projections run. `warn` is
+historical terminology and is not an enforcement decision.
 
 ## MCP call logging
 
@@ -186,8 +193,8 @@ Every `tools/call` request is logged to the session database `mcp_calls` table:
 | `request_preview` | Truncated request body |
 | `response_preview` | Truncated response body |
 | `process_name` | Guest process from metadata line |
-| `policy_action` | policy decision: `allow`, `ask`, `deny`, or `rewrite` |
-| `policy_rule` | Matching rule key, for example `policy.mcp.block_prod_token` |
+| `policy_action` | Final enforcement decision: `allow`, `ask`, `block`, or `rewrite` |
+| `policy_rule` | Matching rule key, for example `security.rules.mcp.block_prod_token` |
 | `policy_reason` | Optional human-readable audit reason |
 | `trace_id` | Cross-table correlation ID |
 
@@ -199,27 +206,35 @@ See [Session Telemetry](/architecture/session-telemetry/) for the full `mcp_call
 |-------|------|---------|
 | `aggregator` | `AggregatorClient` | Client handle for the isolated MCP aggregator subprocess |
 | `db` | `Arc<DbWriter>` | Async telemetry writer |
-| `policy` | `RwLock<Arc<McpPolicy>>` | Local MCP transport policy until Security Engine enforcement is wired |
-| `domain_policy` | `RwLock<Arc<DomainPolicy>>` | Domain policy for builtin HTTP tools |
+The `AggregatorClient` is cloneable (`Arc`-wrapped mpsc channel) and shared
+across endpoint sessions for a given VM. New frames are lifted into the
+Security Engine so reloads affect already-open guest MCP connections through the
+same resolved-event path used by HTTP, model, file, and process activity.
 
-The `AggregatorClient` is cloneable (`Arc`-wrapped mpsc channel) and shared across endpoint sessions for a given VM. New frames read the current MCP transport policy, so reloads affect already-open guest MCP connections. Profile-owned enforcement/detection moves through the Security Engine, not the removed named `PolicyConfig` runtime.
+## Profile Configuration
 
-## Configuration files
-
-MCP server definitions live in TOML files under `guest/config/mcp/`:
+MCP server definitions live in Profile V2 payloads under `mcpServers` using the
+standard MCP server shape. The service resolves built-in, corp, and user
+profile layers, then passes the VM-effective connector list to the aggregator.
 
 ```toml
-# guest/config/mcp/capsem.toml
-[capsem]
-name = "Capsem"
-description = "Built-in Capsem MCP server for file and snapshot tools"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true
+[mcpServers.github]
+command = "github-mcp-server"
+args = ["stdio"]
+
+[mcpServers.github.capsem]
 enabled = true
+editable = true
+allowed_tools = ["search_repositories", "get_file_contents"]
 ```
 
-External MCP servers are auto-detected from AI CLI settings (`~/.claude/settings.json`, `~/.gemini/settings.json`), defined manually in `~/.capsem/user.toml`, or injected via corp policy. Definitions are merged by `build_server_list()` and passed to the [MCP Aggregator](/architecture/mcp-aggregator/) subprocess at spawn time.
+External MCP servers may be auto-detected from AI CLI settings
+(`~/.claude/settings.json`, `~/.gemini/settings.json`) and normalized into
+profile entries when the relevant profile section is editable. Corp profiles
+can lock the section so users may use approved tools without changing provider
+or rule configuration. The resolved connector list is passed to the [MCP
+Aggregator](/architecture/mcp-aggregator/) subprocess at spawn time and on
+reload.
 
 ## Key source files
 
@@ -233,10 +248,9 @@ External MCP servers are auto-detected from AI CLI settings (`~/.claude/settings
 | `capsem-core/src/mcp/builtin_tools.rs` | Builtin HTTP tools (fetch_http, grep_http, http_headers) |
 | `capsem-core/src/mcp/file_tools.rs` | File and snapshot tools (VirtioFS workspace) |
 | `capsem-core/src/mcp/server_manager.rs` | External MCP server lifecycle and tool catalog |
-| `capsem-core/src/mcp/policy.rs` | MCP fallback policy evaluation |
-| `capsem-core/src/net/policy_config/types.rs` | policy rule types, validation, and condition evaluation |
+| `crates/capsem-security-engine/` | MCP SecurityEvent projection and resolved-event evidence |
 | `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: NDJSON loop, server connections |
 | `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks |
-| `guest/config/mcp/` | MCP server TOML definitions |
+| `config/profiles/` | Built-in Profile V2 MCP server definitions |
 
 See [MCP Aggregator](/architecture/mcp-aggregator/) for the full subprocess architecture.

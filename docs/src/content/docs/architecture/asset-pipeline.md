@@ -192,7 +192,8 @@ Both use BLAKE3 with 64-character hex format. Both checks source their expected 
 ```mermaid
 flowchart LR
     subgraph Build
-        TOML[guest/config/*.toml] --> Builder[capsem-builder]
+        Profile[Profile V2 payload] --> Admin[capsem-admin image build]
+        Admin --> Builder[capsem-builder]
         Builder --> Assets[assets/arm64/]
         Builder --> Checksums[manifest.json]
     end

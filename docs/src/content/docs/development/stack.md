@@ -39,10 +39,11 @@ flowchart TD
     end
 
     subgraph stage0["0. VM images (first-time only)"]
-        TOML["guest/config/*.toml"]
-        BUILDER["capsem-builder\n(Python CLI)"]
+        PROFILE["Profile V2 payload"]
+        ADMIN["capsem-admin\nimage plan/build"]
+        BUILDER["capsem-builder\n(Python build engine)"]
         DOCKER["Docker (via Colima)"]
-        TOML --> BUILDER --> DOCKER
+        PROFILE --> ADMIN --> BUILDER --> DOCKER
         DOCKER --> VMLINUZ["vmlinuz"]
         DOCKER --> ROOTFS["rootfs.squashfs"]
         DOCKER --> INITRD_BASE["initrd.img (base)"]

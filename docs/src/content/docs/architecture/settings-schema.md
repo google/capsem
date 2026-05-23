@@ -21,8 +21,6 @@ Key files:
 | `src/capsem/admin/cli.py` | `capsem-admin settings schema/validate/doctor` |
 | `src/capsem/builder/schema.py` | Guest/UI descriptor Pydantic models |
 | `config/settings-schema.json` | Guest/UI descriptor JSON Schema |
-| `config/defaults.json` | Generated guest/UI descriptor defaults |
-| `crates/capsem-core/src/net/policy_config/types.rs` | Rust Policy serde contract for generated settings descriptors |
 | `frontend/src/lib/types/settings.ts` | TypeScript settings and Policy wire types |
 | `crates/capsem-core/tests/settings_spec.rs` | Rust conformance tests |
 | `frontend/src/lib/__tests__/settings_spec.test.ts` | TypeScript conformance tests |
@@ -206,24 +204,22 @@ See [Policy](/security/policy/) for the rule body schema and examples.
 
 ## JSON Schema Generation
 
-The schema generation pipeline runs from Pydantic models to two output files:
+The schema generation pipeline runs from Pydantic models to the guest/UI
+descriptor schema:
 
 ```mermaid
 flowchart LR
     PM["schema.py\nPydantic models"] --> MSJ["model_json_schema()"]
     MSJ --> SCH["config/settings-schema.json"]
-    GC["guest/config/*.toml"] --> GD["generate_defaults_json()"]
-    GD --> DEF["config/defaults.json"]
 ```
 
-`just schema` regenerates both files:
+`just schema` regenerates the descriptor schema:
 
 ```
 just schema
 # Runs: uv run python scripts/generate_schema.py
 # Outputs:
 #   config/settings-schema.json  (JSON Schema from Pydantic)
-#   config/defaults.json         (defaults from guest TOML configs)
 ```
 
 The JSON Schema is derived from `SettingsRoot.model_json_schema()`. It contains `$defs` for all model types (GroupNode, SettingNode, SettingMetadata, enums) and a `properties.settings` array at the root.
@@ -271,21 +267,32 @@ Any schema change requires updating the golden fixture, expected.json, and all t
 
 ## Data Flow
 
-Two parallel paths connect guest TOML configs to the running application:
+Three typed paths define settings/profile behavior. Service Settings V2 is the
+runtime control-plane contract, Profile V2 is the VM/session contract, and the
+guest/UI descriptor schema is a development-time rendering contract. The
+descriptor schema is not runtime authority and does not inject settings into
+VMs.
 
 ```mermaid
 flowchart TD
-    subgraph "Schema Path (dev time)"
+    subgraph "Service Settings Path"
+        SPM["service_settings.py\nPydantic model"] --> SSJ["model_json_schema()"]
+        SSJ --> SSS["schemas/capsem.service-settings.v2.schema.json"]
+        SPM --> SSA["capsem-admin settings validate"]
+        SSA --> SSR["Rust ServiceSettings validation"]
+    end
+
+    subgraph "Profile Path"
+        PPM["profile Pydantic models"] --> PSJ["model_json_schema()"]
+        PSJ --> PSS["schemas/capsem.profile.v2.schema.json"]
+        PPM --> PVA["capsem-admin profile validate"]
+        PVA --> PIN["VM profile/revision/asset pin"]
+    end
+
+    subgraph "Guest/UI Descriptor Path"
         PM["schema.py\nPydantic models"] --> JSG["model_json_schema()"]
         JSG --> SCHEMA["config/settings-schema.json"]
         SCHEMA --> TESTS["Conformance tests\n(Python + Rust + TypeScript)"]
-    end
-
-    subgraph "Data Path (build time)"
-        TOML["guest/config/*.toml\n(ai, mcp, security, vm)"] --> GEN["generate_defaults_json()"]
-        GEN --> DEF["config/defaults.json"]
-        DEF --> RUST["Rust include_str!()\nregistry.rs"]
-        RUST --> BOOT["Boot-time config\ninjection"]
     end
 
     subgraph "Golden Fixture Path (test time)"
@@ -295,9 +302,15 @@ flowchart TD
     end
 ```
 
-The data path: guest TOML configs are processed by `generate_defaults_json()` into `config/defaults.json`. Rust embeds this file at compile time via `include_str!()` in `registry.rs`. At boot, the registry resolves settings (corp > user > defaults) and injects the result into the VM.
+The service and profile paths use Pydantic for admin validation and JSON Schema
+publication, then Rust validates the same typed contract. JSON input and output
+must pass through Pydantic `model_validate_json()` /
+`TypeAdapter.validate_json()` and `model_dump_json()` boundaries. Raw JSON
+dictionaries are not an admin or runtime API.
 
-The schema path: Pydantic models generate JSON Schema for documentation and validation. The conformance tests ensure all three languages agree on parsing.
+The descriptor path remains useful for UI rendering and cross-language fixture
+tests. It does not resurrect v1 defaults, standalone MCP settings, or generated
+runtime authority.
 
 ## Design Decision: Two Node Types
 
@@ -325,4 +338,6 @@ The four-type design forced consumers to match on `kind` with four arms, even th
 
 Consumers match on `kind` (two arms: group vs. setting), then check `setting_type` when they need type-specific behavior. MCP servers are GroupNodes containing server config settings and MCP tool SettingNodes as children. Tool categories (snapshots, network) are nested sub-groups within the server GroupNode.
 
-The Rust conformance tests use local test-only structs with the two-node schema. The live app's `SettingsNode` in `capsem-core` still uses the old four-variant enum for backward compatibility -- migration is tracked separately.
+The Rust conformance tests use local test-only structs with the two-node
+schema. Runtime settings/profile authority is the typed Service Settings V2 and
+Profile V2 model, not a compatibility enum or generated defaults file.

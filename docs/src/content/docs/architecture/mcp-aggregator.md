@@ -79,7 +79,9 @@ Four layers handle the flow:
 
 ### Spawn
 
-capsem-process spawns the aggregator during VM startup, after loading MCP server definitions from user and corp config files.
+capsem-process spawns the aggregator during VM startup, after resolving the
+VM-effective Profile V2 `mcpServers` list from built-in, corp, and user profile
+layers.
 
 ```mermaid
 sequenceDiagram
@@ -203,11 +205,17 @@ The aggregator splits on the first `__` when routing, so tool names containing `
 
 ## Server definition sources
 
-Three layers combined with deduplication (first occurrence wins by name). The list is processed in trust order so the first-wins rule encodes the documented `corp > user > defaults` policy:
+MCP server definitions are resolved from profile layers with the same
+provenance and lock semantics as the rest of Profile V2. The effective list is
+processed in trust order so locked corp entries cannot be shadowed by user or
+auto-detected entries:
 
-1. **Corp-injected servers** from `/etc/capsem/corp.toml` (enterprise policy -- definitions and enable/disable overrides; cannot be shadowed by a same-name user or auto-detected entry)
-2. **Auto-detected** from host AI CLI configs (`~/.claude/settings.json`, `~/.gemini/settings.json`)
-3. **User manual servers** from `~/.capsem/user.toml` `[mcp]` section
+1. **Corp profile entries** from signed corp profile payloads. They can lock
+   providers, tool lists, and rule ownership.
+2. **User profile entries** when the profile marks the MCP section editable.
+3. **Auto-detected entries** from host AI CLI configs
+   (`~/.claude/settings.json`, `~/.gemini/settings.json`) when import into the
+   selected profile is permitted.
 
 Names containing `__` or matching `builtin` are rejected. Empty names are rejected.
 

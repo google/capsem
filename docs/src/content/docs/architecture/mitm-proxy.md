@@ -5,7 +5,11 @@ sidebar:
   order: 15
 ---
 
-The MITM proxy is Capsem's HTTPS inspection layer. It terminates TLS from the guest, checks each request against domain, HTTP, and model-policy rules, forwards allowed requests to the real upstream, and logs telemetry to the session database.
+The MITM proxy is Capsem's HTTPS inspection layer. The Network Engine
+terminates TLS from the guest, parses HTTP/DNS/model traffic, lifts it into
+typed Security Events, asks the Security Engine for a decision, applies
+validated rewrites or blocks, forwards allowed traffic to the real upstream,
+and records resolved telemetry to the session database.
 
 ## Connection pipeline
 
@@ -16,14 +20,16 @@ graph TD
     A["Guest connection<br/>vsock:5002"] --> B["Read metadata prefix<br/>(optional process name)"]
     B --> C["TLS handshake<br/>MitmCertResolver captures SNI"]
     C --> D["Read HTTP request<br/>method, path, headers, body"]
-    D --> E{"Domain policy"}
-    E -->|Denied| F["403 Forbidden<br/>+ log telemetry"]
-    E -->|Allowed| G{"Named HTTP policy<br/>method, path, query, headers"}
-    G -->|Denied| F
-    G -->|Allowed| H["Upstream TLS connection<br/>(cached per-connection)"]
+    D --> E["Build http.request SecurityEvent"]
+    E --> F{"Security Engine decision"}
+    F -->|block| X["403 Forbidden<br/>+ resolved event"]
+    F -->|ask| X
+    F -->|rewrite| R["Validate/apply mutations"]
+    F -->|allow| H["Upstream TLS connection<br/>(cached per-connection)"]
+    R --> H
     H --> I["Forward request"]
     I --> J["Stream response to guest<br/>(inline SSE parsing for AI traffic)"]
-    J --> K["Emit telemetry<br/>NetEvent + optional ModelCall"]
+    J --> K["Emit resolved telemetry<br/>SecurityEvent + projections"]
 ```
 
 The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock connection can carry multiple HTTP requests via keep-alive -- upstream connections are cached per-connection to avoid re-establishing TLS for each request.
@@ -33,14 +39,14 @@ The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock conne
 ```mermaid
 graph LR
     CA["CertAuthority<br/>(static CA keypair)"]
-    POL["NetworkPolicy<br/>(hot-swappable via RwLock)"]
+    SEC["Security Engine<br/>(rules + detections + ask)"]
     DB["DbWriter<br/>(async telemetry)"]
     TLS["Upstream TLS config<br/>(webpki roots)"]
     PRICE["PricingTable<br/>(embedded JSON)"]
     TRACE["TraceState<br/>(multi-turn linking)"]
 
     CA --> CFG["MitmProxyConfig"]
-    POL --> CFG
+    SEC --> CFG
     DB --> CFG
     TLS --> CFG
     PRICE --> CFG
@@ -101,41 +107,45 @@ The cache uses double-checked locking: read lock for hits, write lock only on mi
 
 The MITM proxy CA private key is committed to the repository. This is intentional -- the CA is only trusted inside Capsem's own air-gapped VMs and has zero trust outside them. A public key provides transparency: anyone can verify there is no hidden interception. Per-installation key generation would reduce auditability.
 
-## Domain policy engine
+## Security Engine boundary
 
-See [Network Isolation](/security/network-isolation/) for the full domain policy reference. Key properties:
+The Network Engine owns parsing and transmission. It does not own policy
+semantics. For each synchronous decision point it builds a typed SecurityEvent
+and expects one of four final actions from the Security Engine:
 
-| Property | Behavior |
-|----------|----------|
-| Evaluation order | Block list -> Allow list -> Default deny |
-| Pattern types | Exact (`github.com`) and wildcard (`*.github.com`) |
-| Case sensitivity | Case-insensitive |
-| Conflict resolution | Block always beats allow |
+| Action | Network behavior |
+|---|---|
+| `allow` | Forward the request or response unchanged. |
+| `ask` | Pause/fail closed until the confirm path resolves the decision. |
+| `block` | Stop transmission and return the protocol-appropriate denial. |
+| `rewrite` | Apply only validated declarative mutations to allowlisted fields. |
 
-The policy is hot-swappable via `RwLock`. Each HTTP request snapshots the `Arc<NetworkPolicy>`, so disabling a provider blocks the next request even on an existing keep-alive connection.
+The resolved event records the input, matched rule/finding ids, final decision,
+allowed mutations, and attribution before telemetry/log projections are written.
 
-## HTTP Policy
+## HTTP enforcement
 
-For domains that pass the domain check, named policy rules provide request
-and response control. Rules live under `policy.http.<rule_name>` and run on
-`http.request` or `http.response` callbacks.
+Profile-owned enforcement rules provide request and response control. Rules use
+canonical policy roots such as `http.request.host`, `http.request.url`,
+`http.request.path`, `http.request.header("authorization").exists()`, and
+`http.request.body.text.contains("secret")`. Authored rules do not target
+internal `event.*` fields.
 
 | Subject field | Example use |
 |---|---|
-| `request.host` | Block a specific host or suffix. |
-| `request.method` | Block write methods such as `POST` or `DELETE`. |
-| `request.path` | Match repository, API, or organization paths with regex. |
-| `request.query` | Detect sensitive query strings. |
-| `request.headers.*` | Match or strip request headers. |
-| `response.headers.*` | Strip response headers before the guest sees them. |
-| `response.status` | Match upstream status on response policy. |
+| `http.request.host` | Block a specific host or suffix. |
+| `http.request.method` | Block write methods such as `POST` or `DELETE`. |
+| `http.request.path` | Match repository, API, or organization paths. |
+| `http.request.url` | Match the full normalized URL. |
+| `http.request.header(name)` | Match, require, or strip request headers. |
+| `http.response.status` | Match upstream status on response policy. |
 
 Example:
 
 ```toml
-[policy.http.block_openai_github]
+[security.rules.http.block_openai_github]
 on = "http.request"
-if = 'request.host == "github.com" && request.path.matches("^/openai(/|$)")'
+if = 'http.request.host == "github.com" && http.request.path.startsWith("/openai")'
 decision = "block"
 priority = 10
 ```
@@ -144,9 +154,9 @@ Header stripping is a `rewrite` rule and runs before the stripped headers are
 forwarded or captured in telemetry:
 
 ```toml
-[policy.http.strip_auth]
+[security.rules.http.strip_auth]
 on = "http.request"
-if = 'request.host == "api.example.com"'
+if = 'http.request.host == "api.example.com"'
 decision = "rewrite"
 priority = 20
 strip_request_headers = ["authorization", "x-api-key"]
@@ -240,8 +250,9 @@ Telemetry is emitted asynchronously after the response body completes (not durin
 
 | Event type | When | Data |
 |-----------|------|------|
-| `NetEvent` | Every HTTP request | Domain, method, path, status, bytes, latency, decision, body previews |
-| `ModelCall` | AI provider requests only | Provider, model, tokens, cost, tool calls, text content, trace_id |
+| `SecurityEvent` | Every enforced HTTP/model decision | Event family/type, subject, context, findings, decision, mutations, attribution |
+| `NetEvent` projection | Every HTTP request | Domain, method, path, status, bytes, latency, final decision, body previews |
+| `ModelCall` projection | AI provider requests only | Provider, model, tokens, cost, tool calls, text content, trace_id |
 
 The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spawn(emitter.emit())` when the body stream reaches EOF.
 
@@ -254,7 +265,7 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 | Cert caching | Double-checked locking; each domain minted once |
 | Inline parsing | SSE parsing runs in `poll_frame()`, zero-copy passthrough |
 | Async telemetry | DB writes happen on a dedicated thread; never blocks the proxy |
-| Policy snapshots | `Arc` clone per request avoids holding the `RwLock` during I/O |
+| Compiled rule snapshots | `Arc` clone per request avoids holding registry locks during I/O |
 
 ## Key source files
 
@@ -262,9 +273,8 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 |------|---------|
 | `capsem-core/src/net/mitm_proxy.rs` | Connection handling, HTTP forwarding, telemetry emission |
 | `capsem-core/src/net/cert_authority.rs` | CA loading, leaf cert minting, cache |
-| `capsem-core/src/net/domain_policy.rs` | Domain allow/block evaluation |
-| `capsem-core/src/net/policy_config/` | Named policy rule parsing, validation, and condition evaluation |
-| `capsem-core/src/net/mitm_proxy/` | HTTP/model policy enforcement hooks and proxy pipeline |
+| `crates/capsem-security-engine/` | SecurityEvent decisions, CEL/Sigma matching, resolved-event evidence |
+| `capsem-core/src/net/mitm_proxy/` | HTTP/model SecurityEvent projection and proxy pipeline |
 | `capsem-core/src/net/ai_traffic/` | SSE parsing, provider parsers, events, pricing |
 | `capsem-core/src/net/ai_traffic/mod.rs` | TraceState for multi-turn linking |
 | `config/capsem-ca.key`, `config/capsem-ca.crt` | Static ECDSA P-256 CA keypair |

@@ -98,14 +98,19 @@ prefix = "/opt/ai-clis"
 packages = ["your-provider-cli"]
 ```
 
-### Change network policy
+### Change security controls
 
-Edit `guest/config/security/web.toml` to allow or block domains:
+For release profiles, change the Profile V2 enforcement or detection pack and
+rebuild/verify the profile-owned assets with `capsem-admin`. Repo-local
+`guest/config/security/web.toml` is only a developer input for built-in profile
+generation.
 
 ```toml
-[web]
-custom_allow = ["*.your-corp.com"]
-custom_block = ["*.banned-domain.com"]
+[security.rules.http.allow_corp]
+on = "http.request"
+if = 'http.request.host.endsWith(".your-corp.com")'
+decision = "allow"
+priority = 10
 ```
 
 ### Customize login tips
@@ -176,7 +181,9 @@ just run "capsem-doctor"
 | `guest/artifacts/capsem-bashrc` | `just build-rootfs` (baked into rootfs) |
 | `guest/artifacts/capsem-init` | `just run` (repacks initrd automatically) |
 
-Settings-only changes (security, resources, environment) take effect on the next `just run` without any rebuild -- capsem-builder generates `defaults.json` which the host reads at boot.
+Profile/settings-only changes take effect through the service/profile resolver
+on the next VM create or reload path. They do not rely on a generated
+`defaults.json` runtime authority.
 
 ## Builder CLI reference
 

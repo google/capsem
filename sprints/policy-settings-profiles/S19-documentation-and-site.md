@@ -206,7 +206,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
 
 ## Tasks
 
-- [~] Audit existing docs for v1 settings/policy language.
+- [x] Audit existing docs for v1 settings/policy language.
 - [x] Define final docs information architecture and sidebar placement.
 - [~] Add the chain-of-trust diagram above to the engine overview,
       profile-catalog reference, corporate deployment guide, and security
@@ -321,9 +321,9 @@ Final paths should follow the actual docs tree present when this sprint starts.
       that marketing numbers must cite recorded benchmark artifacts.
 - [ ] Write custom manifest/profile payload/assets/images/rootfs dependency
   guide or update the existing page.
-- [ ] Remove docs that tell admins to edit `guest/config` image settings by hand
+- [x] Remove docs that tell admins to edit `guest/config` image settings by hand
       for release images; replace with profile-derived `capsem-admin` flows.
-- [ ] Update architecture pages to reflect service/profile/VM-effective
+- [~] Update architecture pages to reflect service/profile/VM-effective
   settings.
 - [ ] Update security pages to reflect capabilities, credential brokerage,
   MCP/RAG/tools posture, and remote decisions.
@@ -392,6 +392,14 @@ listed revision that must not be installed or launched is `revoked`.
   Remaining S19 debt: rewrite stale existing pages that still mention
   `guest/config`, old MCP/user settings shapes, v1 defaults authority, and
   pre-bedrock policy terminology; add the final release-gate docs checklist.
+- 2026-05-23: Stale-doc cleanup slice rewrote the settings schema, build
+  system, asset pipeline, MCP gateway, MCP aggregator, MITM proxy, developer
+  custom image, getting-started, just-recipes, and build-stack pages so runtime
+  authority flows through Service Settings V2, Profile V2, the Security Engine,
+  and `capsem-admin` instead of `guest/config`, generated defaults JSON,
+  standalone MCP settings, `NetworkPolicy`, or `policy_config`. Remaining
+  matches are historical release notes or explicit developer-only caveats.
+  Verification: `pnpm --dir docs run build` passed and generated 64 pages.
 
 ## Coverage Ledger
 

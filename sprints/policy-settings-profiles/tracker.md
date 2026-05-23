@@ -2595,6 +2595,14 @@ a valid claim -- mark it `[ ]` instead.
     stale existing pages that still mention `guest/config`, old MCP/user
     settings shapes, v1 defaults authority, and pre-bedrock policy language;
     add the final docs review checklist to S18.
+    Second S19 stale-doc cleanup slice rewrote settings schema, build system,
+    asset pipeline, MCP gateway, MCP aggregator, MITM proxy, developer custom
+    image, getting-started, just-recipes, and build-stack pages so docs now
+    describe Service Settings V2, Profile V2, `capsem-admin`, Security Engine
+    decisions, and resolved-event telemetry as runtime authority. Verification:
+    `pnpm --dir docs run build` passed and generated **64** pages. Remaining
+    hits for `guest/config`, `defaults.json`, `policy_config`, and old security
+    presets are historical release notes or explicit developer-only caveats.
 33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate
