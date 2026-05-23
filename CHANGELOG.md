@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed Profile V2 HTTP write enforcement so derived `http.read` and
+  `http.write` rules compile into guarded runtime CEL, preserve rule priority,
+  let runtime overlays override profile defaults, and fail closed for writes
+  until confirm resolution is available.
+- Fixed in-guest doctor diagnostics to treat positive MCP network probes as
+  conditional on the selected profile while still requiring write requests to
+  be blocked when `CAPSEM_WEB_ALLOW_WRITE=0`.
+
 ### Added
 - Added the first `capsem-file-engine` crate so file activity normalization has
   a first-class Bedrock Engine boundary outside `capsem-core`.

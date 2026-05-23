@@ -403,6 +403,8 @@ def test_denied_domain_rejected():
 
 def test_post_to_random_domain_denied():
     """POST to a non-allow-listed domain must return 403."""
+    if os.environ.get("CAPSEM_WEB_ALLOW_WRITE") == "1":
+        pytest.skip("security.web.allow_write=true -- unknown write requests allowed by profile")
     result = run("curl -ski -X POST --connect-timeout 5 https://example.com 2>&1", timeout=15)
     assert "403" in result.stdout or result.returncode != 0, "POST to denied domain should return 403 or fail"
 

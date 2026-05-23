@@ -230,6 +230,7 @@ def test_mcp_fetch_http_allowed_domain():
     call_resp = [r for r in responses if r.get("id") == 3]
     assert len(call_resp) == 1
     result = call_resp[0]["result"]
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True
     content_text = result["content"][0]["text"]
     assert "URL: https://elie.net" in content_text
@@ -311,6 +312,20 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
     return resp["result"]
 
 
+def _is_policy_block(result):
+    """Return true when the selected profile intentionally blocked the call."""
+    if result.get("isError") is not True:
+        return False
+    text = result.get("content", [{}])[0].get("text", "")
+    return "blocked by policy" in text.lower()
+
+
+def _skip_if_profile_blocks_network(result, target):
+    """Positive network diagnostics are conditional on the active profile."""
+    if _is_policy_block(result):
+        pytest.skip(f"profile enforcement blocks network access to {target}")
+
+
 # ---------------------------------------------------------------------------
 # Content verification -- fetch_http must return real page text
 # ---------------------------------------------------------------------------
@@ -321,6 +336,7 @@ def test_mcp_fetch_http_returns_real_content():
         "fetch_http",
         {"url": "https://elie.net", "max_length": 5000},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
     # Must contain the domain echo
@@ -342,6 +358,7 @@ def test_mcp_grep_http_finds_matches():
         "grep_http",
         {"url": "https://elie.net", "pattern": "elie"},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Matches found: 0" not in text, (
@@ -386,6 +403,7 @@ def test_mcp_http_headers_allowed_domain():
         "http_headers",
         {"url": "https://elie.net"},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True, f"http_headers failed: {result}"
     text = result["content"][0]["text"]
     assert "Status:" in text, f"missing status line: {text[:300]}"
@@ -580,6 +598,7 @@ def test_mcp_fetch_http_subpath():
         "fetch_http",
         {"url": "https://elie.net/about", "max_length": 2000},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
     assert "Bursztein" in text, (
@@ -593,6 +612,7 @@ def test_mcp_fetch_http_raw_mode():
         "fetch_http",
         {"url": "https://elie.net/about", "format": "raw", "max_length": 10000},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"fetch raw failed: {result}"
     text = result["content"][0]["text"]
     assert "<div" in text or "<p" in text, (
@@ -606,6 +626,7 @@ def test_mcp_grep_http_with_pattern():
         "grep_http",
         {"url": "https://elie.net/about", "pattern": "Google"},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Match 1" in text, (
@@ -619,6 +640,7 @@ def test_mcp_fetch_http_pagination():
         "fetch_http",
         {"url": "https://elie.net/about", "max_length": 500},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
     assert "start_index" in text, (

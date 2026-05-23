@@ -397,6 +397,49 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
 }
 
 #[test]
+fn default_profile_runtime_engine_allows_reads_and_blocks_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+
+    let runtime = load_runtime_policy_state_from_effective(&session_dir);
+    let security_engine = runtime
+        .security_engine
+        .as_ref()
+        .expect("default read/write rules should install a runtime Security Engine");
+
+    let read = security_engine
+        .evaluate(http_event_with_method("GET", "example.com", "/"))
+        .expect("default HTTP read rule should evaluate");
+    assert!(
+        matches!(read.action, SecurityAction::Continue),
+        "default Profile V2 should allow HTTP reads until a stronger rule matches"
+    );
+
+    let write = security_engine
+        .evaluate(http_event_with_method("POST", "example.com", "/"))
+        .expect("default HTTP write rule should evaluate");
+    assert!(
+        matches!(write.action, SecurityAction::Block(_)),
+        "default Profile V2 network_egress=ask must fail closed until a confirm resolver is configured"
+    );
+    assert_eq!(
+        write
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("http.default_write")
+    );
+}
+
+#[test]
 fn load_runtime_policy_state_merges_service_runtime_rule_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("session");
@@ -571,7 +614,7 @@ fn runtime_rule_match_accumulator_drains_recorded_security_engine_matches() {
     assert_eq!(http.match_count, 2);
     assert_eq!(
         http.last_matched_event.as_deref(),
-        Some("test-http-live-policy.test-/second")
+        Some("test-http-GET-live-policy.test-/second")
     );
     let shell = drained.get("runtime.block-process-shell").unwrap();
     assert_eq!(shell.match_count, 1);
@@ -629,9 +672,13 @@ fn invalid_runtime_process_rule_fails_closed_with_generic_reason() {
 }
 
 fn http_event(host: &str, path: &str) -> SecurityEvent {
+    http_event_with_method("GET", host, path)
+}
+
+fn http_event_with_method(method: &str, host: &str, path: &str) -> SecurityEvent {
     SecurityEvent::http(
         SecurityEventCommon {
-            event_id: format!("test-http-{host}-{path}"),
+            event_id: format!("test-http-{method}-{host}-{path}"),
             parent_event_id: None,
             stream_id: None,
             activity_id: None,
@@ -663,7 +710,7 @@ fn http_event(host: &str, path: &str) -> SecurityEvent {
             redaction_state: RedactionState::Raw,
         },
         HttpSecuritySubject {
-            method: "GET".into(),
+            method: method.into(),
             scheme: Some("https".into()),
             host: host.into(),
             port: Some(443),

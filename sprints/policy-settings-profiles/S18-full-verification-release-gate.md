@@ -223,3 +223,21 @@ the shipped bedrock, not the historical implementation.
   - `pnpm --dir docs run build` passed again with 69 pages.
   - `rg -n '/security/policy/|docs/security/policy|security/policy' docs/src/content/docs docs/src -S` returned no matches after the docs route cleanup.
   Fixes applied during replay: split the remaining generic admin validation report into explicit `capsem.enforcement-pack-validation.v1` and `capsem.detection-pack-validation.v1` schemas so `capsem-admin enforcement validate` and `capsem-admin detection validate` expose distinct public contracts; moved the public Rule Authoring page from `/security/policy/` to `/security/rules/` and updated docs links so the public security surface says rules/enforcement/detection instead of policy.
+- 2026-05-23: Continued S18 with the profile-backed VM/doctor replay slice.
+  Verification commands:
+  - `uv run python -m pytest tests/test_profiles.py tests/test_manifest.py tests/test_manifest_check.py tests/test_image_plan.py tests/test_image_verify.py tests/test_doctor.py -q` passed with 127 tests.
+  - `cargo test -p capsem-service asset_supervisor --lib` passed with 10 tests.
+  - `cargo test -p capsem-service profile_asset --bin capsem-service` passed with 4 tests.
+  - `cargo test -p capsem-service vm_profile_pin --bin capsem-service` passed with 5 tests.
+  - `cargo test -p capsem-service handle_profile_catalog --bin capsem-service`, `handle_reconcile_profile_catalog`, and `revoked` passed with 2, 3, and 3 focused service tests; `deprecated` matched no focused service-bin tests after the VM list/profile-status coverage already proved deprecated state.
+  - `uv run python -m pytest tests/capsem-e2e/test_profile_asset_boot.py -q` passed with 1 test and 1 skipped test.
+  - `uv run python -m pytest tests/capsem-e2e/test_winterfell_fork_lineage.py -q` passed with 1 real-VM fork-lineage test.
+  - `cargo test -p capsem-process mcp_runtime` passed with 14 runtime tests after adding the Profile V2 HTTP read/write runtime projection regression.
+  - `cargo build -p capsem-process -p capsem-service -p capsem` passed so the E2E fixture launched rebuilt binaries.
+  - `uv run python -m pytest tests/capsem-e2e/test_e2e_lifecycle.py::TestStartExecDelete::test_start_exec_delete tests/capsem-e2e/test_e2e_lifecycle.py::TestDoctor::test_doctor_passes -q` passed with 2 real-VM tests.
+  - `uv run python -m py_compile guest/artifacts/diagnostics/test_mcp.py guest/artifacts/diagnostics/test_network.py && uv run python -m pytest tests/capsem-build-chain/test_pack_initrd.py -q` passed with 4 initrd-pack tests.
+  Discovery and fixes during replay:
+  - The doctor bundle initially failed because positive MCP probes still assumed `elie.net` was always allowed. The diagnostics now skip those positive probes only when the active profile intentionally blocks network access, while negative/blocking diagnostics still run.
+  - The remaining doctor failure was real: `POST https://example.com` reached upstream and returned `405` even with `CAPSEM_WEB_ALLOW_WRITE=0`. Root cause was that Profile V2 derived `http.read` and `http.write` rules existed in VM-effective settings but `capsem-process` only compiled `http.request` callbacks into the runtime Security Engine.
+  - The long-term fix compiles `http.read` and `http.write` into guarded CEL over `common.event_type == 'http.request'`, splits read methods from write methods, preserves profile rule priority before catch-all defaults, and places service runtime overlays before profile defaults so live operator blocks win. `ask` still fails closed to `block` until the S15 confirm resolver lands.
+  - Normal `just _pack-initrd` could not run locally because Docker/Colima was unavailable; the local release-gate VM proof repacked the initrd from existing `target/linux-agent/arm64` guest binaries plus updated diagnostics, verified the dev manifest signature, and then proved the booted VM used the refreshed diagnostics.

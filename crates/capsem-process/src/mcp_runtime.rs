@@ -157,10 +157,7 @@ fn load_runtime_policy_state_from_effective_with_runtime_rules(
             Action::Deny
         },
     );
-    let mut enforcement_rules = effective
-        .as_ref()
-        .map(http_runtime_enforcement_rules_from_effective)
-        .unwrap_or_default();
+    let mut enforcement_rules = Vec::new();
     let mut detection_rules = Vec::new();
     if let Some(runtime_rules) = runtime_rules {
         enforcement_rules.extend(
@@ -178,6 +175,12 @@ fn load_runtime_policy_state_from_effective_with_runtime_rules(
                 .map(cel_detection_rule_from_snapshot),
         );
     }
+    enforcement_rules.extend(
+        effective
+            .as_ref()
+            .map(http_runtime_enforcement_rules_from_effective)
+            .unwrap_or_default(),
+    );
     let security_engine = build_runtime_security_engine_from_rules(
         effective.as_ref(),
         enforcement_rules,
@@ -358,9 +361,14 @@ fn domain_policy_lists_from_effective(
 fn http_runtime_enforcement_rules_from_effective(
     effective: &settings_profiles::EffectiveVmSettings,
 ) -> Vec<CelEnforcementRule> {
-    effective
-        .rules
-        .iter()
+    let mut rules: Vec<&EffectiveRule> = effective.rules.iter().collect();
+    rules.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    rules
+        .into_iter()
         .filter_map(http_runtime_enforcement_rule)
         .collect()
 }
@@ -496,17 +504,29 @@ fn confidence_from_snapshot(
 }
 
 fn http_runtime_enforcement_rule(rule: &EffectiveRule) -> Option<CelEnforcementRule> {
-    if rule.callback != "http.request" {
-        return None;
-    }
+    let condition = match rule.callback.as_str() {
+        "http.request" => rule.condition.clone(),
+        "http.read" => format!("({HTTP_READ_METHOD_CONDITION}) && ({})", rule.condition),
+        "http.write" => format!("!({HTTP_READ_METHOD_CONDITION}) && ({})", rule.condition),
+        _ => return None,
+    };
+    let condition = format!("common.event_type == 'http.request' && ({condition})");
+    let decision = match (rule.callback.as_str(), rule.decision) {
+        ("http.read", RuleDecision::Ask) => SecurityDecisionAction::Allow,
+        (_, decision) => profile_decision_to_security_action(decision),
+    };
     Some(CelEnforcementRule {
         id: rule.id.clone(),
         pack_id: Some(rule.provenance.profile_id.clone()),
-        condition: rule.condition.clone(),
-        decision: profile_decision_to_security_action(rule.decision),
+        condition,
+        decision,
         reason: rule.reason.clone(),
     })
 }
+
+const HTTP_READ_METHOD_CONDITION: &str = "http.request.method == 'GET' \
+    || http.request.method == 'HEAD' \
+    || http.request.method == 'OPTIONS'";
 
 fn profile_decision_to_security_action(decision: RuleDecision) -> SecurityDecisionAction {
     match decision {

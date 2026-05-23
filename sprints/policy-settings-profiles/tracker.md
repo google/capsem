@@ -50,6 +50,20 @@ is updated with the concrete branch and worktree path, verified by
   tests/capsem-mcp/test_state_transitions.py::test_isolated_mcp_session_does_not_affect_shared_service
   tests/capsem-mcp/test_mcp_connectors.py -v --tb=short -m mcp` passed with
   4 tests.
+- **2026-05-23:** S18 VM/doctor replay passed after the runtime enforcement
+  repair: `cargo test -p capsem-process mcp_runtime` passed with 14 tests,
+  `cargo build -p capsem-process -p capsem-service -p capsem` passed, `uv run
+  python -m pytest tests/capsem-e2e/test_e2e_lifecycle.py::TestStartExecDelete::test_start_exec_delete
+  tests/capsem-e2e/test_e2e_lifecycle.py::TestDoctor::test_doctor_passes -q`
+  passed with 2 real-VM tests, and `uv run python -m py_compile
+  guest/artifacts/diagnostics/test_mcp.py guest/artifacts/diagnostics/test_network.py
+  && uv run python -m pytest tests/capsem-build-chain/test_pack_initrd.py -q`
+  passed with 4 initrd-pack tests. The fix compiles Profile V2
+  `http.read`/`http.write` derived rules into event-type-guarded runtime CEL,
+  preserves priority ordering, lets live runtime overlays win over profile
+  defaults, and keeps doctor positive MCP network probes conditional on the
+  selected profile while write blocking remains mandatory when
+  `CAPSEM_WEB_ALLOW_WRITE=0`.
 
 ## Operating Mode
 
