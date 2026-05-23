@@ -2540,6 +2540,15 @@ a valid claim -- mark it `[ ]` instead.
     `/status` fixture showing `current`, `needs_update`, and missing-pin
     `corrupted` states. Still missing in S16: richer package/asset readiness
     details, runtime backtest/hunt UI, and final release UI usability replay.
+    Sixth S16 asset-readiness slice added a ready profile asset panel to the
+    Sessions screen, rendering `/status` provenance for active profile
+    revision, architecture, asset version, profile payload hash, and each
+    profile-declared VM asset's source/hash/size. Verification: `pnpm --dir
+    frontend exec vitest run src/lib/__tests__/session-runtime-truth.test.ts`
+    passed with **12** tests, and the panel was screenshot-checked with a
+    browser-side `/status` fixture showing `coding@2026.0520.3`, payload hash,
+    `vmlinuz`, and `rootfs` rows. Still missing in S16: runtime backtest/hunt
+    UI and final release UI usability replay.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

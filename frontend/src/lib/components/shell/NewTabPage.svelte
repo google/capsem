@@ -5,7 +5,7 @@
   import * as api from '../../api';
   import type { VmProfileStatus, VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
-  import { formatUptime, formatTokens, formatCost } from '../../format';
+  import { formatUptime, formatTokens, formatCost, formatBytes } from '../../format';
   import Modal from './Modal.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Pause from 'phosphor-svelte/lib/Pause';
@@ -111,6 +111,11 @@
     return `${profileIdentity(vm)}:${resolvedProfileStatus(vm)}`;
   }
 
+  function shortHash(value: string | null | undefined): string {
+    if (!value) return 'none';
+    return value.length > 32 ? `${value.slice(0, 28)}...` : value;
+  }
+
   // --- Modal state ---
   type DashModalKind = 'stop' | 'destroy' | null;
   let dashModalKind = $state<DashModalKind>(null);
@@ -155,6 +160,9 @@
   let assetsReady = $derived(vmStore.assetHealth?.ready === true);
   let canCreateSessions = $derived(serviceReady && assetsReady);
   let startupBlocked = $derived(!initialLoading && !canCreateSessions);
+  let readyProfileAssets = $derived(
+    vmStore.assetHealth?.ready === true && vmStore.assetHealth.profile_id ? vmStore.assetHealth : null,
+  );
   let assetStatus = $derived.by(() => {
     if (!serviceReady) {
       return {
@@ -453,6 +461,58 @@
         {/if}
       </div>
     </div>
+  {/if}
+
+  {#if readyProfileAssets}
+    <section class="mb-4 rounded-lg border border-line-2 bg-layer p-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider">Profile Assets</h3>
+          <p class="mt-1 font-mono text-sm text-foreground">
+            {readyProfileAssets.profile_revision ? `${readyProfileAssets.profile_id}@${readyProfileAssets.profile_revision}` : readyProfileAssets.profile_id}
+          </p>
+        </div>
+        <span class="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">ready</span>
+      </div>
+      <dl class="mt-3 grid gap-3 text-xs sm:grid-cols-3">
+        <div>
+          <dt class="text-muted-foreground-1">Arch</dt>
+          <dd class="mt-1 font-mono text-foreground">{readyProfileAssets.arch ?? 'unknown'}</dd>
+        </div>
+        <div>
+          <dt class="text-muted-foreground-1">Asset version</dt>
+          <dd class="mt-1 font-mono text-foreground">{readyProfileAssets.version ?? 'unknown'}</dd>
+        </div>
+        <div>
+          <dt class="text-muted-foreground-1">Payload hash</dt>
+          <dd class="mt-1 font-mono text-foreground" title={readyProfileAssets.profile_payload_hash ?? undefined}>{shortHash(readyProfileAssets.profile_payload_hash)}</dd>
+        </div>
+      </dl>
+      {#if (readyProfileAssets.profile_assets ?? []).length > 0}
+        <div class="mt-3 overflow-x-auto">
+          <table class="min-w-full text-xs">
+            <thead class="border-b border-table-line text-muted-foreground-1">
+              <tr>
+                <th scope="col" class="py-1 pr-3 text-left font-normal">Asset</th>
+                <th scope="col" class="py-1 pr-3 text-left font-normal">Size</th>
+                <th scope="col" class="py-1 pr-3 text-left font-normal">Hash</th>
+                <th scope="col" class="py-1 text-left font-normal">Source</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-table-line">
+              {#each readyProfileAssets.profile_assets ?? [] as asset (asset.logical_name)}
+                <tr>
+                  <td class="py-1.5 pr-3 font-mono text-foreground">{asset.logical_name}</td>
+                  <td class="py-1.5 pr-3 font-mono text-muted-foreground-1">{formatBytes(asset.size)}</td>
+                  <td class="py-1.5 pr-3 font-mono text-muted-foreground-1" title={asset.hash}>{shortHash(asset.hash)}</td>
+                  <td class="py-1.5 font-mono text-muted-foreground-1 break-all">{asset.source_url}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </section>
   {/if}
 
   <!-- Action error banner -->

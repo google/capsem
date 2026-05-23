@@ -67,6 +67,10 @@ requests.
   revision, and typed status (`current`, `needs_update`, `deprecated`,
   `revoked`, `corrupted`, or `unknown`). VMs without a profile pin render as
   corrupted instead of looking valid.
+- Implemented slice: the Sessions screen now shows ready profile asset
+  provenance from `/status`: active profile revision, architecture, asset
+  version, profile payload hash, and each profile-declared VM asset's
+  source/hash/size.
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
   values, revisions, package/tool contracts, asset readiness, VM pin fields,
   enforcement-pack summaries, detection-pack summaries, and backtest result
@@ -89,6 +93,9 @@ requests.
   service-default mode.
 - Unit/contract completed: session runtime truth tests cover session-list
   profile identity/status rendering and the missing-profile corrupted marker.
+- Unit/contract completed: session runtime truth tests cover ready profile
+  asset provenance rendering, including profile payload hash and per-asset
+  source/hash/size rows.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states; enforcement/detection
   runtime overlay list/validate/install/delete/stats/backtest/hunt flows through
@@ -122,3 +129,6 @@ requests.
 - Visual/build proof: the session list was screenshot-checked with a
   browser-side `/status` fixture showing current, needs-update, and missing-pin
   corrupted profile states in the actual table layout.
+- Visual/build proof: the profile asset readiness panel was screenshot-checked
+  with a browser-side `/status` fixture showing the active profile revision,
+  payload hash, and profile asset rows in the actual Sessions layout.

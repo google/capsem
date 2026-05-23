@@ -133,6 +133,46 @@ describe('session runtime truth UI', () => {
     expect(screen.getByText('corrupted')).toBeTruthy();
   });
 
+  it('shows ready profile asset provenance before session creation', () => {
+    vmStore.assetHealth = assetHealth({
+      ready: true,
+      state: 'ready',
+      missing: [],
+      version: '2026.0520.2',
+      arch: 'arm64',
+      profile_id: 'coding',
+      profile_revision: '2026.0520.3',
+      profile_payload_hash: `blake3:${'e'.repeat(64)}`,
+      profile_assets: [
+        {
+          logical_name: 'vmlinuz',
+          hash: `blake3:${'a'.repeat(64)}`,
+          source_url: 'https://assets.example.test/coding/arm64/vmlinuz',
+          size: 12 * 1024,
+          content_type: 'application/octet-stream',
+        },
+        {
+          logical_name: 'rootfs',
+          hash: `blake3:${'b'.repeat(64)}`,
+          source_url: 'https://assets.example.test/coding/arm64/rootfs',
+          size: 5 * 1024 * 1024,
+          content_type: 'application/octet-stream',
+        },
+      ],
+    });
+
+    render(NewTabPage);
+
+    expect(screen.getByText('Profile Assets')).toBeTruthy();
+    expect(screen.getByText('coding@2026.0520.3')).toBeTruthy();
+    expect(screen.getByText('arm64')).toBeTruthy();
+    expect(screen.getByText('2026.0520.2')).toBeTruthy();
+    expect(screen.getByText('vmlinuz')).toBeTruthy();
+    expect(screen.getByText('rootfs')).toBeTruthy();
+    expect(screen.getByText('12.0 KB')).toBeTruthy();
+    expect(screen.getByText('5.0 MB')).toBeTruthy();
+  });
+
   it('shows missing asset details and keeps creation disabled', () => {
     vmStore.assetHealth = assetHealth({ state: 'updating', missing: ['rootfs', 'manifest.json'] });
     render(NewTabPage);

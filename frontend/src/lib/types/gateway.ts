@@ -21,12 +21,21 @@ export interface AssetHealth {
   profile_id?: string | null;
   profile_revision?: string | null;
   profile_payload_hash?: string | null;
+  profile_assets?: ProfileAssetProvenance[];
   missing: string[];
   progress?: AssetProgress;
   error?: string;
   retry_count: number;
   retryable: boolean;
   saved_vm_dependencies?: SavedVmAssetDependency[];
+}
+
+export interface ProfileAssetProvenance {
+  logical_name: string;
+  hash: string;
+  source_url: string;
+  size: number;
+  content_type: string;
 }
 
 export interface SavedVmAssetDependency {
