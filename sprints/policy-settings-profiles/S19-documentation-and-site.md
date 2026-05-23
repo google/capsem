@@ -235,7 +235,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       mapping, `/detection/*` validate/compile/backtest/list/add/update/delete/
       stats/hunt API behavior, default 100-row evidence-dedup result behavior,
       and why detections do not silently become enforcement.
-- [ ] Write service settings reference with TOML examples.
+- [x] Write service settings reference with TOML examples.
 - [x] Write profile reference with TOML examples, custom-profile workflow, the
       closed `capsem.profile.v2` field table, JSON Schema Draft 2020-12
       artifact, and validation failure examples for unknown fields, wrong
@@ -261,7 +261,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       how an operator gets from a custom image requirement to a signed profile
       catalog and a VM pinned to the resulting profile.
 - [x] Write profile package/tool contract and VM asset declaration reference.
-- [~] Write `capsem-admin` reference:
+- [x] Write `capsem-admin` reference:
       profile create/validate/schema, image plan/build/verify, manifest
       generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
       reports, omitted `--arch` defaulting to all supported release arches,
@@ -286,7 +286,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       hot-load or update through `/enforcement/*`, explain realtime
       allow/block/ask/rewrite behavior, and verify enforcement match counters,
       resolved-event evidence, audit logs, and VM health.
-- [ ] Write developer `capsem-admin` internals page:
+- [x] Write developer `capsem-admin` internals page:
       package/module layout, Pydantic model boundaries, JSON Schema artifact,
       profile/image/manifest/doctor modules, how Justfile/bootstrap integrate,
       how to run focused tests, how to add a new command, and how release
@@ -412,6 +412,11 @@ listed revision that must not be installed or launched is `revoked`.
   enforcement/detection language, and kept detection as the separate
   Sigma-compatible finding surface. Verification: `pnpm --dir docs run build`
   passed without warnings and generated 64 pages.
+- 2026-05-23: Settings/admin docs slice added the Service Settings V2 operator
+  reference with TOML example, schema artifact, validation rules, fixtures, and
+  Pydantic JSON I/O boundary; added the developer `capsem-admin` internals page
+  covering package layout, model boundaries, schema fixtures, focused tests,
+  adding commands, and release handoff.
 
 ## Coverage Ledger
 

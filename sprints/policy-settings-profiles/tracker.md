@@ -2615,6 +2615,11 @@ a valid claim -- mark it `[ ]` instead.
     detection as the separate Sigma-compatible finding surface. Verification:
     `pnpm --dir docs run build` passed without warnings and generated **64**
     pages.
+    Fifth S19 settings/admin-docs slice added the Service Settings V2 operator
+    reference with TOML examples, schema artifact, validation rules, shared
+    fixtures, and Pydantic JSON I/O boundary; added developer `capsem-admin`
+    internals covering package layout, Pydantic boundaries, schema fixtures,
+    focused tests, command-extension workflow, and release handoff.
 33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate
