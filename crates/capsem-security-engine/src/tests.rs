@@ -957,7 +957,7 @@ fn s08c_policy_context_corpus_uses_canonical_cel_roots() {
         })
         .collect();
 
-    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts.len(), 4);
     assert_eq!(contexts[0].common.profile_id.as_deref(), Some("coding"));
 
     let condition = include_str!("../../../data/enforcement/cel/http-google-secret.cel");

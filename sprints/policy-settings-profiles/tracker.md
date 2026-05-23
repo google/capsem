@@ -1891,6 +1891,20 @@ a valid claim -- mark it `[ ]` instead.
     full runtime-CEL parity for all CEL constructs beyond the admin subset,
     real-session fixtures from the resolved-event journal, and broader
     hunt/backtest diversity.
+    Eighth corpus-diversity slice expanded
+    `data/policy-context/canonical-policy-contexts.jsonl` from two to four
+    HTTP rows: one true positive, one clean non-Google request, one
+    detection-only Google secret request without an authorization header, and
+    one authorized Google request without the secret body. The expected
+    artifacts now prove enforcement still blocks only one row while detection
+    finds two rows. Verification: `uv run pytest tests/test_admin_cli.py
+    tests/test_security_packs.py -q` passed with **49** tests; `cargo test -p
+    capsem-security-engine s08c` passed with **2** tests; `cargo test -p
+    capsem-core --test security_packs
+    s08c_detection_expected_artifact_matches_rust_detection_ir` passed.
+    Still missing in S08c: full runtime-CEL parity for all CEL constructs
+    beyond the admin subset, real-session fixtures from the resolved-event
+    journal, and broader hunt/backtest coverage beyond the first HTTP corpus.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

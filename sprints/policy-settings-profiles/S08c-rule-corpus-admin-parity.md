@@ -155,6 +155,11 @@ session-scoped enforcement replay, it should be named and designed separately.
   required fixture layout, admin commands, expected artifact updates, and Rust
   parity gates. Detection docs now show canonical `http.request.*` IR paths
   rather than legacy `subject.*` examples.
+- Slice 8 expanded the synthetic policy-context corpus from two to four HTTP
+  rows: a true positive, a clean non-Google request, a detection-only
+  Google-secret request with no authorization header, and an authorized Google
+  request with no secret. Expected artifacts now prove enforcement remains one
+  block while detection produces two findings.
 
 ## Coverage Ledger
 

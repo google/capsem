@@ -159,6 +159,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added rule-corpus workflow documentation tying policy-context fixtures,
   enforcement/detection expected artifacts, admin commands, and Rust parity
   tests together.
+- Expanded the S08c policy-context corpus with detection-only and
+  auth-without-secret HTTP rows so enforcement and detection parity tests cover
+  divergent outcomes.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API
