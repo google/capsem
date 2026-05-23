@@ -3,10 +3,10 @@ use std::ffi::OsString;
 use std::sync::{Mutex, OnceLock};
 
 use capsem_core::mcp::policy::ToolDecision;
-use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_core::settings_profiles::{
     CapabilityMode, EffectiveRule, McpConnectorCapsemMetadata, McpConnectorConfig, RuleDecision,
 };
+use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, Enforceability, HttpSecuritySubject, ProcessSecuritySubject,
     RedactionState, SecurityAction, SecurityEvent, SecurityEventCommon, SourceEngine,

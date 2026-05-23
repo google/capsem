@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 
-use crate::net::domain_policy::{Action, DomainPolicy};
+use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 

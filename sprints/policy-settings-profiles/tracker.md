@@ -1835,6 +1835,25 @@ a valid claim -- mark it `[ ]` instead.
     passed. Still missing after this slice: Network Engine crate/module split,
     visible UI screens/editors, interactive confirm prompt UX in S15, S12
     OTel/prometheus export, S08d performance proof, and final release gates.
+    Eighty-third structural Network Engine foundation slice added
+    `capsem-network-engine` and moved pure domain/HTTP network policy
+    primitives out of `capsem-core`. `capsem-process` runtime profile loading,
+    `capsem-core` builtin MCP HTTP tools, and `capsem-mcp-builtin` now consume
+    `capsem_network_engine::domain_policy` directly; the old
+    `capsem_core::net::domain_policy` / `http_policy` modules were removed
+    instead of re-exported as an alternate path. Verification: `cargo test -p
+    capsem-network-engine` **47** passed; `cargo check -p capsem-core`,
+    `cargo check -p capsem-process`, and `cargo check -p capsem-mcp-builtin`
+    passed; `cargo test -p capsem-process
+    mcp_runtime::tests::builtin_domain_policy_env_carries_allow_and_block_lists`
+    passed; `cargo test -p capsem-process
+    load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults`
+    passed; `cargo test -p capsem-core check_domain_policy --lib` **8**
+    passed; and `cargo test -p capsem-mcp-builtin` built cleanly with no
+    crate-local tests. Still missing after this slice: moving MITM/DNS/MCP/
+    model transport/security-event builders behind the Network Engine boundary,
+    visible UI screens/editors, interactive confirm prompt UX in S15, S12
+    OTel/prometheus export, S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

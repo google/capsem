@@ -26,8 +26,8 @@ use tracing::info;
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
 use capsem_core::mcp::types::JsonRpcResponse;
 use capsem_core::mcp::{builtin_tools, file_tools};
-use capsem_core::net::domain_policy::{Action, DomainPolicy};
 use capsem_logger::DbWriter;
+use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 
 // -- Tool parameter types --
 

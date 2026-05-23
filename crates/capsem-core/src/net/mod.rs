@@ -1,8 +1,6 @@
 pub mod ai_traffic;
 pub mod cert_authority;
 pub mod dns;
-pub mod domain_policy;
-pub mod http_policy;
 pub mod interpreters;
 pub mod mitm_proxy;
 pub mod parsers;
