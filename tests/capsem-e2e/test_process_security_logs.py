@@ -5,6 +5,8 @@ each boundary in isolation, while this catches the full propagation path:
 runtime rule install -> capsem-process eval -> process.log -> /logs -> CLI.
 """
 
+from contextlib import closing
+import sqlite3
 import time
 import uuid
 
@@ -27,6 +29,51 @@ def _logs_until(service, vm: str, needles: list[str], *, timeout: float = 10.0) 
             return last_output
         time.sleep(0.25)
     return last_output
+
+
+def _session_security_step_until(
+    service,
+    vm: str,
+    rule_id: str,
+    *,
+    timeout: float = 10.0,
+) -> tuple[str, str, str, str, str]:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        candidates = [
+            service.tmp_dir / "sessions" / vm / "session.db",
+            service.tmp_dir / "persistent" / vm / "session.db",
+            *sorted((service.tmp_dir / "sessions").glob(f"{vm}*/session.db")),
+        ]
+        db_path = next((path for path in candidates if path.exists()), None)
+        if db_path is None:
+            last_error = f"session.db for {vm} does not exist yet"
+            time.sleep(0.25)
+            continue
+        try:
+            with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+                row = conn.execute(
+                    """
+                    SELECT se.event_type, se.final_action, se.vm_id,
+                           step.rule_id, step.message
+                      FROM security_events se
+                      JOIN security_event_steps step
+                        ON step.event_id = se.event_id
+                     WHERE se.event_type = 'process.exec'
+                       AND step.rule_id = ?
+                     ORDER BY se.timestamp_unix_ms DESC
+                     LIMIT 1
+                    """,
+                    (rule_id,),
+                ).fetchone()
+            if row is not None:
+                return row
+            last_error = f"no process security step for {rule_id}"
+        except sqlite3.Error as error:
+            last_error = str(error)
+        time.sleep(0.25)
+    raise AssertionError(last_error)
 
 
 def test_runtime_process_block_is_visible_in_capsem_logs(service):
@@ -83,6 +130,15 @@ def test_runtime_process_block_is_visible_in_capsem_logs(service):
         assert f'"reason":"{reason}"' in logs
         assert f'"vm_id":"{vm}"' in logs
         assert '"command_class":"shell"' in logs
+
+        row = _session_security_step_until(service, vm, rule_id)
+        assert row == (
+            "process.exec",
+            "block",
+            vm,
+            rule_id,
+            reason,
+        )
     finally:
         service.cli("enforcement", "delete", rule_id, timeout=60)
         service.cli("delete", vm, timeout=120)

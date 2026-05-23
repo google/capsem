@@ -187,6 +187,12 @@ session-scoped enforcement replay, it should be named and designed separately.
   expected backtest report. Enforcement parity is pinned by the shared
   `http-google-secret` expected artifact consumed by both admin and Rust CEL
   tests.
+- Slice 14 added live VM coverage for the resolved-event journal: the
+  process-enforcement E2E now boots a VM, installs a runtime block rule,
+  executes a blocked shell command, verifies `capsem logs`, and polls
+  `session.db.security_events` plus `security_event_steps` for the same
+  `process.exec` block/rule/reason tuple. This proves the live journal path
+  for process enforcement; committed live-session fixture export remains open.
 
 ## Coverage Ledger
 
@@ -204,9 +210,11 @@ session-scoped enforcement replay, it should be named and designed separately.
   `subject.*` authoring, unknown canonical-looking admin policy paths,
   cross-family policy roots, empty-corpus policy backtest compile failures,
   legacy Detection IR `subject.*` paths, and evidence-dedup behavior.
-- E2E/VM or integration: hand-built `session.db` hunt expected artifact now
-  covers the resolved-event journal read path; live VM-generated session
-  fixture capture remains open.
+- E2E/VM or integration: hand-built `session.db` hunt expected artifact covers
+  the resolved-event journal read path; a live VM process-enforcement E2E now
+  proves blocked exec decisions are written to both `capsem logs` and
+  `security_events` / `security_event_steps`. Live VM-generated fixture export
+  remains open.
 - Telemetry/observability: backtest reports include event refs and full local
   evidence; export redaction is tested separately when export exists.
 - Performance: corpus backtest has a basic timing budget and reports evaluated

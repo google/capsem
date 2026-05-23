@@ -1959,6 +1959,17 @@ a valid claim -- mark it `[ ]` instead.
     "s08c_detection_ir_artifact_matches_admin_compiler_output" -q` passed.
     Still missing in S08c: live VM-generated session fixtures from the
     resolved-event journal and full runtime-CEL parity beyond the admin subset.
+    Fourteenth live-VM journal slice extended the process-enforcement E2E to
+    prove a real blocked `process.exec` decision lands in both `capsem logs`
+    and `session.db.security_events` / `security_event_steps` with the same VM
+    id, rule id, final action, and reason. The red run first failed because the
+    test assumed non-persistent session layout; the fix now discovers both
+    `sessions/<vm>` and `persistent/<vm>` session DB locations. Verification:
+    `uv run pytest
+    tests/capsem-e2e/test_process_security_logs.py::test_runtime_process_block_is_visible_in_capsem_logs
+    -q` passed. Still missing in S08c: committed live VM-generated fixture
+    export from the resolved-event journal and full runtime-CEL parity beyond
+    the admin subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to
