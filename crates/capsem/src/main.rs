@@ -78,6 +78,8 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mstop\x1b[0m         Stop the background service
 
 \x1b[36;1;4mMCP:\x1b[0m
+  \x1b[32;1mmcp list\x1b[0m       List Profile V2 MCP servers
+  \x1b[32;1mmcp show\x1b[0m       Show one Profile V2 MCP server
   \x1b[32;1mmcp connectors\x1b[0m List Profile V2 MCP servers
   \x1b[32;1mmcp add\x1b[0m        Add a Profile V2 MCP server
   \x1b[32;1mmcp delete\x1b[0m     Delete a Profile V2 MCP server
@@ -171,6 +173,26 @@ enum Commands {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum McpCommands {
+    /// List Profile V2 MCP servers
+    List {
+        /// Profile id to inspect
+        #[arg(long)]
+        profile: Option<String>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one Profile V2 MCP server
+    Show {
+        /// MCP server id
+        id: String,
+        /// Profile id to inspect
+        #[arg(long)]
+        profile: Option<String>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// List Profile V2 MCP servers
     Connectors {
         /// Profile id to inspect
@@ -1496,6 +1518,72 @@ fn read_profile_document(path: &Path) -> Result<capsem_core::settings_profiles::
     }
     capsem_core::settings_profiles::Profile::from_toml_str(&text)
         .with_context(|| format!("parse Profile V2 TOML {}", path.display()))
+}
+
+fn mcp_connectors_path(profile: Option<&String>) -> String {
+    let mut path = "/mcp/connectors".to_string();
+    if let Some(profile) = profile {
+        path.push_str(&format!("?profile={}", urlencoding::encode(profile)));
+    }
+    path
+}
+
+fn format_mcp_connectors_summary(result: &serde_json::Value) -> String {
+    let mut output = String::new();
+    let servers = result["servers"].as_array().cloned().unwrap_or_default();
+    if servers.is_empty() {
+        output.push_str("No MCP servers configured.\n");
+        return output;
+    }
+    writeln!(
+        output,
+        "{:<24} {:<8} {:<8} {:<18} {:<10} ALLOWED_TOOLS",
+        "ID", "ENABLED", "TYPE", "TARGET", "SOURCE"
+    )
+    .expect("write to string");
+    for server in servers {
+        let config = &server["server"];
+        let allowed = config["capsem"]["allowed_tools"]
+            .as_array()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        let target = config["command"]
+            .as_str()
+            .or_else(|| config["url"].as_str())
+            .unwrap_or("-");
+        writeln!(
+            output,
+            "{:<24} {:<8} {:<8} {:<18} {:<10} {}",
+            server["id"].as_str().unwrap_or("-"),
+            if config["enabled"].as_bool().unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            },
+            config["type"].as_str().unwrap_or("-"),
+            target,
+            server["source_profile"].as_str().unwrap_or("-"),
+            allowed,
+        )
+        .expect("write to string");
+    }
+    output
+}
+
+fn mcp_server_matches(result: &serde_json::Value, id: &str) -> Vec<serde_json::Value> {
+    result["servers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|server| server["id"].as_str() == Some(id))
+        .cloned()
+        .collect()
 }
 
 fn print_runtime_rule_list_summary(kind: &str, result: &serde_json::Value) {
@@ -2889,58 +2977,34 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        Commands::Mcp(McpCommands::Connectors { profile, json }) => {
-            let mut path = "/mcp/connectors".to_string();
-            if let Some(profile) = profile {
-                path.push_str(&format!("?profile={}", urlencoding::encode(profile)));
-            }
+        Commands::Mcp(McpCommands::List { profile, json })
+        | Commands::Mcp(McpCommands::Connectors { profile, json }) => {
+            let path = mcp_connectors_path(profile.as_ref());
             let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
             let result = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                let servers = result["servers"].as_array().cloned().unwrap_or_default();
-                if servers.is_empty() {
-                    println!("No MCP servers configured.");
-                } else {
-                    #[allow(clippy::print_literal)]
-                    {
-                        println!(
-                            "{:<24} {:<8} {:<8} {:<18} {:<10} {}",
-                            "ID", "ENABLED", "TYPE", "TARGET", "SOURCE", "ALLOWED_TOOLS"
-                        );
-                    }
-                    for server in servers {
-                        let config = &server["server"];
-                        let allowed = config["capsem"]["allowed_tools"]
-                            .as_array()
-                            .map(|tools| {
-                                tools
-                                    .iter()
-                                    .filter_map(serde_json::Value::as_str)
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            })
-                            .unwrap_or_default();
-                        let target = config["command"]
-                            .as_str()
-                            .or_else(|| config["url"].as_str())
-                            .unwrap_or("-");
-                        println!(
-                            "{:<24} {:<8} {:<8} {:<18} {:<10} {}",
-                            server["id"].as_str().unwrap_or("-"),
-                            if config["enabled"].as_bool().unwrap_or(false) {
-                                "yes"
-                            } else {
-                                "no"
-                            },
-                            config["type"].as_str().unwrap_or("-"),
-                            target,
-                            server["source_profile"].as_str().unwrap_or("-"),
-                            allowed,
-                        );
-                    }
-                }
+                print!("{}", format_mcp_connectors_summary(&result));
+            }
+        }
+        Commands::Mcp(McpCommands::Show { id, profile, json }) => {
+            let path = mcp_connectors_path(profile.as_ref());
+            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
+            let result = resp.into_result()?;
+            let matches = mcp_server_matches(&result, id);
+            if matches.is_empty() {
+                anyhow::bail!("MCP server '{}' not found", id);
+            }
+            let result = serde_json::json!({
+                "mode": result["mode"].clone(),
+                "profile_id": result["profile_id"].clone(),
+                "servers": matches,
+            });
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", format_mcp_connectors_summary(&result));
             }
         }
         Commands::Mcp(McpCommands::Add {
@@ -4736,6 +4800,24 @@ mod tests {
 
     #[test]
     fn parse_mcp_connectors_add_delete() {
+        let cli = Cli::parse_from(["capsem", "mcp", "list", "--profile", "coding"]);
+        match cli.command.unwrap() {
+            Commands::Mcp(McpCommands::List { profile, json }) => {
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert!(!json);
+            }
+            _ => panic!("expected mcp list"),
+        }
+
+        let cli = Cli::parse_from(["capsem", "mcp", "show", "github", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Mcp(McpCommands::Show { id, json, .. }) => {
+                assert_eq!(id, "github");
+                assert!(json);
+            }
+            _ => panic!("expected mcp show"),
+        }
+
         let cli = Cli::parse_from([
             "capsem",
             "mcp",
@@ -5292,6 +5374,47 @@ mod tests {
         assert!(resolved.contains("rules=1"));
         assert!(resolved.contains("mcp_servers=1"));
         assert!(resolved.contains("skills=2"));
+    }
+
+    #[test]
+    fn mcp_path_summary_and_show_filter_preserve_server_identity() {
+        assert_eq!(
+            mcp_connectors_path(Some(&"coding profile".to_string())),
+            "/mcp/connectors?profile=coding%20profile"
+        );
+        let result = serde_json::json!({
+            "profile_id": "coding",
+            "servers": [
+                {
+                    "id": "github",
+                    "source_profile": "coding",
+                    "server": {
+                        "enabled": true,
+                        "type": "stdio",
+                        "command": "npx",
+                        "capsem": { "allowed_tools": ["repo.read"] }
+                    }
+                },
+                {
+                    "id": "browser",
+                    "source_profile": "corp-root",
+                    "server": {
+                        "enabled": false,
+                        "type": "http",
+                        "url": "https://mcp.example.test",
+                        "capsem": { "allowed_tools": [] }
+                    }
+                }
+            ]
+        });
+        let summary = format_mcp_connectors_summary(&result);
+        assert!(summary.contains("github"));
+        assert!(summary.contains("repo.read"));
+        assert!(summary.contains("corp-root"));
+
+        let matches = mcp_server_matches(&result, "github");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["id"], "github");
     }
 
     #[test]

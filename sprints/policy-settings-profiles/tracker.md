@@ -2520,6 +2520,14 @@ a valid claim -- mark it `[ ]` instead.
     test -p capsem read_profile_document_parses_toml_and_json_with_validation`,
     `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt, and
     `git diff --check` passed.
+    MCP CLI polish slice wired `capsem mcp list` and `capsem mcp show <id>` as
+    operator-friendly aliases over the Profile V2 connector inspection route;
+    `connectors` remains available as the explicit low-level spelling.
+    Verification: targeted `cargo test -p capsem
+    parse_mcp_connectors_add_delete`, targeted `cargo test -p capsem
+    mcp_path_summary_and_show_filter_preserve_server_identity`, `cargo test -p
+    capsem`, `cargo build -p capsem`, touched-file rustfmt, and `git diff
+    --check` passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

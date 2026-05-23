@@ -68,6 +68,9 @@ blocked.
   `capsem mcp delete`; the old `servers/tools/policy/refresh/call` verbs are
   removed instead of bridged. Remaining S09 work can refine naming/output if
   the product wants `list/show` aliases.
+- Latest MCP polish slice landed `capsem mcp list` and `capsem mcp show <id>`
+  as operator-friendly aliases over the Profile V2 connector route. `connectors`
+  remains available as the explicit low-level spelling.
 - Add `capsem skills list/add/delete/show`. Latest CLI slice landed
   `capsem skills list`, `show`, `add`, and `delete` over the service
   Profile V2 `/skills` routes, including profile selection, skill kind
