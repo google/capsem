@@ -47,7 +47,11 @@ blocked.
   `capsem mcp delete`; the old `servers/tools/policy/refresh/call` verbs are
   removed instead of bridged. Remaining S09 work can refine naming/output if
   the product wants `list/show` aliases.
-- Add `capsem skills list/add/delete/show`.
+- Add `capsem skills list/add/delete/show`. Latest CLI slice landed
+  `capsem skills list`, `show`, `add`, and `delete` over the service
+  Profile V2 `/skills` routes, including profile selection, skill kind
+  selection (`group`, `enabled`, `disabled`), ownership/editability summary
+  output, and JSON output for scripted callers.
 - Do not extend `capsem rules` for post-S08b behavior. If the legacy S07
   command family still exists when this sprint starts, either retire it or keep
   it explicitly documented as a compatibility shim for the closed S07 surface.

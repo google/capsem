@@ -2478,6 +2478,15 @@ a valid claim -- mark it `[ ]` instead.
     `git diff --check` passed. Full `cargo fmt --all -- --check` is still held
     by pre-existing formatting drift in `capsem-core` MCP frame and
     `capsem-network-engine` HTTP policy files, not this CLI slice.
+    Next release-closeout CLI slice wired `capsem skills list`, `show`, `add`,
+    and `delete` to the service `/skills` routes. The CLI supports profile
+    selection, skill kind selection (`group`, `enabled`, `disabled`), human
+    output with ownership/editability columns, and JSON output for automation.
+    Verification: targeted `cargo test -p capsem
+    parse_skills_list_show_add_delete`, targeted `cargo test -p capsem
+    skills_path_and_summary_preserve_profile_kind_and_ownership`,
+    `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt,
+    and `git diff --check` passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

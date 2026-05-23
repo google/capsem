@@ -95,6 +95,8 @@ const GROUPED_HELP: &str = "\
 
 \x1b[36;1;4mProfiles:\x1b[0m
   \x1b[32;1mprofile reconcile-catalog\x1b[0m Apply a signed profile catalog manifest
+  \x1b[32;1mskills list\x1b[0m       List resolved Profile V2 skills
+  \x1b[32;1mskills add\x1b[0m        Add a direct Profile V2 skill
 
 \x1b[36;1;4mMisc:\x1b[0m
   \x1b[32;1msetup\x1b[0m        Run the first-time setup wizard
@@ -146,6 +148,10 @@ enum Commands {
     /// Manage Profile V2 catalogs and installed revisions
     #[command(subcommand)]
     Profile(ProfileCommands),
+
+    /// Manage Profile V2 skills
+    #[command(subcommand)]
+    Skills(SkillsCommands),
 
     #[command(flatten)]
     Misc(MiscCommands),
@@ -269,6 +275,23 @@ impl CliConfidence {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliSkillKind {
+    Group,
+    Enabled,
+    Disabled,
+}
+
+impl CliSkillKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Group => "group",
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
         }
     }
 }
@@ -747,6 +770,64 @@ enum ProfileCommands {
         /// Minisign public key file used to verify profile payloads
         #[arg(long)]
         pubkey: PathBuf,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillsCommands {
+    /// List resolved Profile V2 skills
+    List {
+        /// Profile id to inspect; defaults to selected profile
+        #[arg(long)]
+        profile: Option<String>,
+        /// Restrict results to one skill list
+        #[arg(long, value_enum)]
+        kind: Option<CliSkillKind>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one resolved Profile V2 skill
+    Show {
+        /// Skill id
+        id: String,
+        /// Profile id to inspect; defaults to selected profile
+        #[arg(long)]
+        profile: Option<String>,
+        /// Restrict lookup to one skill list
+        #[arg(long, value_enum)]
+        kind: Option<CliSkillKind>,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add a direct Profile V2 skill entry to a user profile
+    Add {
+        /// Skill id
+        id: String,
+        /// Profile id to mutate; defaults to selected profile
+        #[arg(long)]
+        profile: Option<String>,
+        /// Skill list to mutate
+        #[arg(long, value_enum, default_value = "enabled")]
+        kind: CliSkillKind,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a direct Profile V2 skill entry from a user profile
+    Delete {
+        /// Skill id
+        id: String,
+        /// Profile id to mutate; defaults to selected profile
+        #[arg(long)]
+        profile: Option<String>,
+        /// Skill list to mutate; defaults to enabled
+        #[arg(long, value_enum)]
+        kind: Option<CliSkillKind>,
         /// Print the raw JSON response
         #[arg(long)]
         json: bool,
@@ -1460,6 +1541,72 @@ fn runtime_hunt_field_value_text(value: &serde_json::Value) -> String {
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| value.to_string())
+}
+
+fn skills_path(profile: Option<&String>, kind: Option<CliSkillKind>) -> String {
+    let mut params = Vec::new();
+    if let Some(profile) = profile {
+        params.push(format!("profile={}", urlencoding::encode(profile)));
+    }
+    if let Some(kind) = kind {
+        params.push(format!("kind={}", kind.as_str()));
+    }
+    if params.is_empty() {
+        "/skills".to_string()
+    } else {
+        format!("/skills?{}", params.join("&"))
+    }
+}
+
+fn format_skills_summary(result: &serde_json::Value) -> String {
+    let mut output = String::new();
+    let skills = result["skills"].as_array().cloned().unwrap_or_default();
+    if skills.is_empty() {
+        writeln!(
+            output,
+            "No skills configured for profile {}.",
+            result["profile_id"].as_str().unwrap_or("-")
+        )
+        .expect("write to string");
+        return output;
+    }
+    writeln!(
+        output,
+        "{:<32} {:<9} {:<18} {:<7} EDITABLE",
+        "ID", "KIND", "SOURCE_PROFILE", "DIRECT"
+    )
+    .expect("write to string");
+    for skill in skills {
+        writeln!(
+            output,
+            "{:<32} {:<9} {:<18} {:<7} {}",
+            skill["id"].as_str().unwrap_or("-"),
+            skill["kind"].as_str().unwrap_or("-"),
+            skill["source_profile"].as_str().unwrap_or("-"),
+            if skill["direct"].as_bool().unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            },
+            if skill["editable"].as_bool().unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            },
+        )
+        .expect("write to string");
+    }
+    output
+}
+
+fn skill_matches(result: &serde_json::Value, id: &str) -> Vec<serde_json::Value> {
+    result["skills"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|skill| skill["id"].as_str() == Some(id))
+        .cloned()
+        .collect()
 }
 
 fn print_session_info(info: &SessionInfo) {
@@ -2448,6 +2595,96 @@ async fn main() -> Result<()> {
                 .await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
+        }
+        Commands::Skills(SkillsCommands::List {
+            profile,
+            kind,
+            json,
+        }) => {
+            let path = skills_path(profile.as_ref(), *kind);
+            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", format_skills_summary(&result));
+            }
+        }
+        Commands::Skills(SkillsCommands::Show {
+            id,
+            profile,
+            kind,
+            json,
+        }) => {
+            let path = skills_path(profile.as_ref(), *kind);
+            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
+            let result = resp.into_result()?;
+            let matches = skill_matches(&result, id);
+            if matches.is_empty() {
+                anyhow::bail!("skill '{}' not found", id);
+            }
+            let result = serde_json::json!({
+                "mode": result["mode"].clone(),
+                "profile_id": result["profile_id"].clone(),
+                "skills": matches,
+            });
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", format_skills_summary(&result));
+            }
+        }
+        Commands::Skills(SkillsCommands::Add {
+            id,
+            profile,
+            kind,
+            json,
+        }) => {
+            let body = serde_json::json!({
+                "profile": profile,
+                "id": id,
+                "kind": kind.as_str(),
+            });
+            let resp: ApiResponse<serde_json::Value> = client.post("/skills", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!(
+                    "Skill added: {} ({})",
+                    result["id"].as_str().unwrap_or(id),
+                    result["kind"].as_str().unwrap_or(kind.as_str()),
+                );
+            }
+        }
+        Commands::Skills(SkillsCommands::Delete {
+            id,
+            profile,
+            kind,
+            json,
+        }) => {
+            let mut path = format!("/skills/{}", urlencoding::encode(id));
+            let mut params = Vec::new();
+            if let Some(profile) = profile {
+                params.push(format!("profile={}", urlencoding::encode(profile)));
+            }
+            if let Some(kind) = kind {
+                params.push(format!("kind={}", kind.as_str()));
+            }
+            if !params.is_empty() {
+                path.push_str(&format!("?{}", params.join("&")));
+            }
+            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!(
+                    "Skill deleted: {} ({})",
+                    result["skill_id"].as_str().unwrap_or(id),
+                    result["kind"].as_str().unwrap_or("-"),
+                );
+            }
         }
         Commands::Mcp(McpCommands::Connectors { profile, json }) => {
             let mut path = "/mcp/connectors".to_string();
@@ -4189,6 +4426,88 @@ mod tests {
     }
 
     #[test]
+    fn parse_skills_list_show_add_delete() {
+        let cli = Cli::parse_from([
+            "capsem",
+            "skills",
+            "list",
+            "--profile",
+            "coding",
+            "--kind",
+            "enabled",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Skills(SkillsCommands::List {
+                profile,
+                kind,
+                json,
+            }) => {
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert_eq!(kind, Some(CliSkillKind::Enabled));
+                assert!(json);
+            }
+            _ => panic!("expected skills list"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "skills",
+            "show",
+            "admin-profile",
+            "--kind",
+            "group",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Skills(SkillsCommands::Show { id, kind, .. }) => {
+                assert_eq!(id, "admin-profile");
+                assert_eq!(kind, Some(CliSkillKind::Group));
+            }
+            _ => panic!("expected skills show"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "skills",
+            "add",
+            "admin-image",
+            "--profile",
+            "coding",
+            "--kind",
+            "disabled",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Skills(SkillsCommands::Add {
+                id, profile, kind, ..
+            }) => {
+                assert_eq!(id, "admin-image");
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert_eq!(kind, CliSkillKind::Disabled);
+            }
+            _ => panic!("expected skills add"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "skills",
+            "delete",
+            "admin-image",
+            "--profile",
+            "coding",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Skills(SkillsCommands::Delete {
+                id, profile, kind, ..
+            }) => {
+                assert_eq!(id, "admin-image");
+                assert_eq!(profile.as_deref(), Some("coding"));
+                assert_eq!(kind, None);
+            }
+            _ => panic!("expected skills delete"),
+        }
+    }
+
+    #[test]
     fn parse_runtime_security_rule_commands() {
         let cli = Cli::parse_from(["capsem", "enforcement", "list", "--json"]);
         match cli.command.unwrap() {
@@ -4505,6 +4824,41 @@ mod tests {
 
         assert!(summary.contains("Enforcement backtest matched 1 event(s)"));
         assert!(summary.contains("(truncated)"));
+    }
+
+    #[test]
+    fn skills_path_and_summary_preserve_profile_kind_and_ownership() {
+        assert_eq!(
+            skills_path(
+                Some(&"coding profile".to_string()),
+                Some(CliSkillKind::Disabled)
+            ),
+            "/skills?profile=coding%20profile&kind=disabled"
+        );
+
+        let summary = format_skills_summary(&serde_json::json!({
+            "profile_id": "coding",
+            "skills": [
+                {
+                    "id": "admin-profile",
+                    "kind": "enabled",
+                    "source_profile": "coding",
+                    "direct": true,
+                    "editable": true
+                },
+                {
+                    "id": "corp-skill",
+                    "kind": "group",
+                    "source_profile": "corp-root",
+                    "direct": false,
+                    "editable": false
+                }
+            ]
+        }));
+
+        assert!(summary.contains("admin-profile"));
+        assert!(summary.contains("corp-skill"));
+        assert!(summary.contains("corp-root"));
     }
 
     #[test]
