@@ -97,6 +97,47 @@ logs/status/debug, and benchmark claims stand together.
   S22 quotas/rate limits, S13 remote plugins, S16a workbench polish, S19a
   marketing refresh, S20/S21 product expansions, and S19b reporting setup as
   later work unless they actually landed before this gate.
+- Run the S19 documentation review checklist below and paste the exact command
+  outputs, grep summaries, and any accepted historical/developer-only matches
+  into this gate before release.
+
+## S19 Documentation Review Checklist
+
+Release docs are part of the product contract. The gate must prove they match
+the shipped bedrock, not the historical implementation.
+
+- Build the docs site: `pnpm --dir docs run build`.
+- Search for stale runtime authority language:
+  `rg -n 'guest/config|defaults\.json|config/defaults|\[mcp\]|NetworkPolicy|domain_policy|policy_config|security preset' docs/src/content/docs -S`.
+  Every match must be one of:
+  historical release notes, explicit developer-only built-in-profile caveat, or
+  a statement saying the old path is not runtime/operator authority.
+- Confirm the Profile Status enum docs use only `active`, `deprecated`, and
+  `revoked`; `removed` must only appear in text explaining that it is not a
+  valid status.
+- Confirm docs describe signed manifests as profile catalogs with profile id,
+  revision, status, payload identity, asset identity, and VM pins.
+- Confirm docs describe Service Settings V2 separately from Profile V2 and do
+  not claim generated UI descriptor/default artifacts are runtime authority.
+- Confirm `capsem-admin` docs cover enterprise PyPI install, developer editable
+  install, Pydantic-only JSON I/O, profile validate/schema, image plan/build/
+  verify, manifest generate/check/sign, `--fast` HEAD checks, full download
+  checks, omitted `--arch` defaulting to all supported arches, and JSON reports.
+- Confirm detection and enforcement are documented as separate surfaces:
+  detection can validate/backtest/hunt and emit findings; enforcement can
+  allow, ask, block, or rewrite synchronously.
+- Confirm authored enforcement examples use canonical DSL roots such as
+  `http.request.host`, `http.request.url`, `http.request.path`,
+  `http.request.header("authorization").exists()`, and
+  `http.request.body.text`, not internal `event.*`.
+- Confirm docs name S10 credential brokerage, S22 quotas/rate limits, S13
+  remote plugins, S16a/S17 richer UI, S19a marketing, S20/S21 product
+  expansions, and S19b reporting setup as future lanes unless they have fully
+  passed this gate.
+- Confirm release pages link operators to profile, catalog, corporate
+  deployment, corporate security, VM health, telemetry extension,
+  add-enforcement, and add-detection pages without requiring raw SQL or curl to
+  understand the shipped path.
 
 ## Coverage Ledger
 

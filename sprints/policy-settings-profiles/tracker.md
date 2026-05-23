@@ -2603,6 +2603,11 @@ a valid claim -- mark it `[ ]` instead.
     `pnpm --dir docs run build` passed and generated **64** pages. Remaining
     hits for `guest/config`, `defaults.json`, `policy_config`, and old security
     presets are historical release notes or explicit developer-only caveats.
+    Third S19 release-gate slice added a concrete documentation review
+    checklist to S18: docs build, stale-language grep, profile status enum
+    audit, signed catalog/Profile V2/Service Settings V2 audit,
+    `capsem-admin` workflow audit, detection/enforcement split audit,
+    canonical DSL-root audit, and deferral-honesty audit.
 33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate

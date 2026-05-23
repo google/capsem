@@ -363,7 +363,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       `NetworkPolicy::default_dev`) are NOT ported to rules;
       `NetworkPolicy::http_upstream_ports` exits with S06c.
 - [x] Build docs site and fix broken links/sidebar issues.
-- [ ] Add docs review checklist to the release gate.
+- [x] Add docs review checklist to the release gate.
 
 ## Profile Status Enum To Document
 
@@ -400,6 +400,11 @@ listed revision that must not be installed or launched is `revoked`.
   standalone MCP settings, `NetworkPolicy`, or `policy_config`. Remaining
   matches are historical release notes or explicit developer-only caveats.
   Verification: `pnpm --dir docs run build` passed and generated 64 pages.
+- 2026-05-23: Added the S19 documentation review checklist to the S18 release
+  gate so the final cut must prove docs truth with a build, stale-language grep,
+  status enum audit, profile/catalog contract audit, `capsem-admin` audit,
+  detection/enforcement split audit, canonical DSL-root audit, and deferral
+  honesty audit.
 
 ## Coverage Ledger
 
