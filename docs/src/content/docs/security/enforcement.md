@@ -88,8 +88,11 @@ Offline policy backtests use the same policy-context fixture envelope as
 detection backtests. Conditions must target canonical roots such as
 `http.request.host`, `http.request.header(...)`, and `http.request.body.text`;
 internal `event.*` or raw `subject.*` authoring is rejected before install or
-replay. Runtime enforcement remains the CEL authority; the offline admin
-backtest is a fixture replay gate for committed policy-context corpora.
+replay. Canonical-looking paths are also checked against the admin-supported
+family contract, so `http.request.raw` and `dns.request.*` inside an HTTP rule
+fail closed at compile time instead of becoming silent no-matches. Runtime
+enforcement remains the CEL authority; the offline admin backtest is a fixture
+replay gate for committed policy-context corpora.
 
 See [Rule Corpus Workflow](/security/rule-corpus/) for the fixture and
 cross-language parity process.

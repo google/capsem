@@ -699,6 +699,87 @@ _HEADER_EXISTS_RE = re.compile(
     r"^http\.request\.header\((?P<quote>['\"])(?P<header>[^'\"]+)(?P=quote)\)\.exists\(\)$",
 )
 
+_SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
+    EventFamily.DNS: frozenset(
+        {
+            "dns.request.qname",
+            "dns.request.domain_class",
+        }
+    ),
+    EventFamily.HTTP: frozenset(
+        {
+            "http.request.method",
+            "http.request.scheme",
+            "http.request.host",
+            "http.request.port",
+            "http.request.path",
+            "http.request.query",
+            "http.request.url",
+            "http.request.path_class",
+            "http.request.bytes",
+            "http.request.body.state",
+            "http.request.body.text",
+            "http.request.body.content_type",
+            "http.request.body.size",
+            "http.request.body.truncated",
+            "http.request.body.redaction_reason",
+            "http.response.status",
+            "http.response.bytes",
+            "http.response.body.state",
+            "http.response.body.text",
+            "http.response.body.content_type",
+            "http.response.body.size",
+            "http.response.body.truncated",
+            "http.response.body.redaction_reason",
+        }
+    ),
+    EventFamily.MCP: frozenset(
+        {
+            "mcp.request.server_id",
+            "mcp.request.tool_name",
+            "mcp.request.namespaced_tool_name",
+        }
+    ),
+    EventFamily.MODEL: frozenset(
+        {
+            "model.request.provider",
+            "model.request.api_family",
+            "model.request.model",
+            "model.request.stream",
+        }
+    ),
+    EventFamily.FILE: frozenset(
+        {
+            "file.activity.operation",
+            "file.activity.path",
+            "file.activity.path_class",
+        }
+    ),
+    EventFamily.PROCESS: frozenset(
+        {
+            "process.activity.operation",
+            "process.activity.command_class",
+        }
+    ),
+    EventFamily.PROFILE: frozenset(
+        {
+            "profile.activity.operation",
+            "profile.activity.profile_id",
+            "profile.activity.profile_revision",
+        }
+    ),
+}
+
+
+def _validate_policy_path(rule: PolicyRuleV1, path: str) -> None:
+    family_paths = _SUPPORTED_POLICY_PATHS.get(rule.event_family, frozenset())
+    if path in family_paths:
+        return
+    raise ValueError(
+        f"rule {rule.id} uses unsupported policy path for "
+        f"{rule.event_family.value}: {path}"
+    )
+
 
 def _validate_policy_condition(rule: PolicyRuleV1) -> None:
     for clause in (part.strip() for part in rule.condition.split("&&")):
@@ -709,12 +790,23 @@ def _validate_policy_condition(rule: PolicyRuleV1) -> None:
         if clause in {"false", "true"}:
             continue
         if _HEADER_EXISTS_RE.match(clause) is not None:
+            if rule.event_family is not EventFamily.HTTP:
+                raise ValueError(
+                    f"rule {rule.id} uses unsupported policy path for "
+                    f"{rule.event_family.value}: http.request.header"
+                )
             continue
-        if _CONTAINS_RE.match(clause) is not None:
+        contains_match = _CONTAINS_RE.match(clause)
+        if contains_match is not None:
+            _validate_policy_path(rule, contains_match.group("path"))
             continue
-        if _STARTS_WITH_RE.match(clause) is not None:
+        starts_with_match = _STARTS_WITH_RE.match(clause)
+        if starts_with_match is not None:
+            _validate_policy_path(rule, starts_with_match.group("path"))
             continue
-        if _EQUALS_RE.match(clause) is not None:
+        equals_match = _EQUALS_RE.match(clause)
+        if equals_match is not None:
+            _validate_policy_path(rule, equals_match.group("path"))
             continue
         raise ValueError(f"rule {rule.id} uses unsupported CEL clause: {clause}")
 

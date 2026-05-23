@@ -1929,6 +1929,18 @@ a valid claim -- mark it `[ ]` instead.
     the service matched-field fix. Still missing in S08c: live VM-generated
     session fixtures from the resolved-event journal and full runtime-CEL
     parity beyond the admin subset.
+    Eleventh TDD admin-policy-path slice tightened `capsem-admin policy
+    compile` with a family-scoped allowlist for the admin-supported
+    policy-context object model. The red test proved `http.request.raw`
+    previously compiled despite having no typed replay meaning; the fix now
+    rejects unknown canonical-looking paths and cross-family roots before
+    backtest. Verification: red `uv run pytest
+    tests/test_admin_cli.py -k
+    "policy_compile_rejects_unknown_canonical_paths" -q` first failed with a
+    successful compile, then the focused policy compile path tests passed with
+    **3** tests. Still missing in S08c: live VM-generated session fixtures
+    from the resolved-event journal and full runtime-CEL parity beyond the
+    admin subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

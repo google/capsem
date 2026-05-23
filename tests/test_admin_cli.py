@@ -754,6 +754,72 @@ decision = "block"
     assert "unsupported internal event root" in result.output
 
 
+def test_capsem_admin_policy_compile_rejects_unknown_canonical_paths(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "bad-policy.toml"
+    policy_path.write_text(
+        """
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.bad-path"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+
+[[rules]]
+id = "bad-path"
+name = "Bad Path"
+event_family = "http"
+event_type = "http.request"
+condition = "http.request.raw.contains('secret')"
+decision = "block"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["policy", "compile", str(policy_path), "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert '"ok": false' in result.output
+    assert "unsupported policy path" in result.output
+
+
+def test_capsem_admin_policy_compile_rejects_cross_family_paths(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "bad-policy.toml"
+    policy_path.write_text(
+        """
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.bad-family"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+
+[[rules]]
+id = "bad-family"
+name = "Bad Family"
+event_family = "http"
+event_type = "http.request"
+condition = "dns.request.qname.contains('google')"
+decision = "block"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["policy", "compile", str(policy_path), "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert '"ok": false' in result.output
+    assert "unsupported policy path for http: dns.request.qname" in result.output
+
+
 def test_capsem_admin_policy_backtest_rejects_internal_event_roots(
     tmp_path: Path,
 ) -> None:

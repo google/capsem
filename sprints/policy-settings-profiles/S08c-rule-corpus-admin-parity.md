@@ -170,6 +170,12 @@ session-scoped enforcement replay, it should be named and designed separately.
   and fixed a matched-field gap where profile hunt output exposed
   `profile.id` / `profile.revision` but not the canonical
   `profile.activity.profile_id` / `profile.activity.profile_revision` paths.
+- Slice 11 tightened `capsem-admin policy compile` with an explicit
+  family-scoped allowlist for the admin-supported policy-context object model.
+  The red test proved `http.request.raw` previously compiled and could become
+  a quiet replay miss; the green path now rejects unknown canonical-looking
+  paths and cross-family roots such as `dns.request.qname` inside an HTTP rule
+  before offline replay.
 
 ## Coverage Ledger
 
@@ -182,7 +188,8 @@ session-scoped enforcement replay, it should be named and designed separately.
   and real-session rows remain open.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
   duplicate rule ids, mismatched expected labels, internal `event.*` /
-  `subject.*` authoring, legacy Detection IR `subject.*` paths, and
+  `subject.*` authoring, unknown canonical-looking admin policy paths,
+  cross-family policy roots, legacy Detection IR `subject.*` paths, and
   evidence-dedup behavior.
 - E2E/VM or integration: hand-built `session.db` hunt expected artifact now
   covers the resolved-event journal read path; live VM-generated session
