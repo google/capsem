@@ -94,6 +94,9 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mdetection hunt-session\x1b[0m Backtest one detection rule against a session
 
 \x1b[36;1;4mProfiles:\x1b[0m
+  \x1b[32;1mprofile list\x1b[0m      List typed Profile V2 profiles
+  \x1b[32;1mprofile show\x1b[0m      Show one typed Profile V2 profile
+  \x1b[32;1mprofile resolve\x1b[0m   Resolve one profile to effective settings
   \x1b[32;1mprofile reconcile-catalog\x1b[0m Apply a signed profile catalog manifest
   \x1b[32;1mskills list\x1b[0m       List resolved Profile V2 skills
   \x1b[32;1mskills add\x1b[0m        Add a direct Profile V2 skill
@@ -704,6 +707,28 @@ enum DetectionCommands {
 
 #[derive(Subcommand)]
 enum ProfileCommands {
+    /// List typed Profile V2 profiles
+    List {
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one typed Profile V2 profile
+    Show {
+        /// Profile id to inspect
+        profile_id: String,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve one profile to VM-effective settings
+    Resolve {
+        /// Profile id to resolve
+        profile_id: String,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// Show signed profile catalog and installed revision state
     Catalog {
         /// Print the raw JSON response
@@ -1949,6 +1974,104 @@ fn print_profile_revisions_summary(result: &serde_json::Value) {
 
 fn print_profile_revision_action_summary(result: &serde_json::Value) {
     println!("{}", profile_revision_action_summary_line(result));
+}
+
+fn format_profile_list_summary(result: &serde_json::Value) -> String {
+    let mut output = String::new();
+    let profiles = result["profiles"].as_array().cloned().unwrap_or_default();
+    if profiles.is_empty() {
+        writeln!(output, "No Profile V2 profiles discovered.").expect("write to string");
+        return output;
+    }
+    writeln!(
+        output,
+        "{:<24} {:<20} {:<8} {:<7} EXTENDS",
+        "ID", "NAME", "SOURCE", "LOCKED"
+    )
+    .expect("write to string");
+    for record in profiles {
+        let profile = &record["profile"];
+        writeln!(
+            output,
+            "{:<24} {:<20} {:<8} {:<7} {}",
+            profile["id"].as_str().unwrap_or("-"),
+            profile["name"].as_str().unwrap_or("-"),
+            record["source"].as_str().unwrap_or("-"),
+            if record["locked"].as_bool().unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            },
+            profile["extends_profile_id"].as_str().unwrap_or("-"),
+        )
+        .expect("write to string");
+    }
+    output
+}
+
+fn format_profile_record_summary(record: &serde_json::Value) -> String {
+    let profile = &record["profile"];
+    let mut output = String::new();
+    writeln!(
+        output,
+        "Profile: {} ({})",
+        profile["id"].as_str().unwrap_or("-"),
+        profile["name"].as_str().unwrap_or("-")
+    )
+    .expect("write to string");
+    writeln!(
+        output,
+        "Source: {} locked={}",
+        record["source"].as_str().unwrap_or("-"),
+        record["locked"].as_bool().unwrap_or(false)
+    )
+    .expect("write to string");
+    if let Some(parent) = profile["extends_profile_id"].as_str() {
+        writeln!(output, "Extends: {parent}").expect("write to string");
+    }
+    writeln!(
+        output,
+        "UI: {} type={}",
+        profile["ui"].as_str().unwrap_or("-"),
+        profile["profile_type"].as_str().unwrap_or("-")
+    )
+    .expect("write to string");
+    output
+}
+
+fn format_profile_resolve_summary(result: &serde_json::Value) -> String {
+    let effective = &result["effective"];
+    let rules = effective["rules"]
+        .as_array()
+        .map(|rules| rules.len())
+        .unwrap_or(0);
+    let mcp_servers = effective["mcp"]["value"]["servers"]
+        .as_object()
+        .map(|servers| servers.len())
+        .unwrap_or(0);
+    let skills = ["groups", "enabled", "disabled"]
+        .iter()
+        .map(|key| {
+            effective["skills"]["value"][*key]
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0)
+        })
+        .sum::<usize>();
+    let tools = effective["tools"]["value"]
+        .as_object()
+        .map(|tools| tools.len())
+        .unwrap_or(0);
+    format!(
+        "Profile resolved: profile={} name={} ui={} rules={} mcp_servers={} skills={} tools={}",
+        result["profile_id"].as_str().unwrap_or("-"),
+        effective["profile_name"].as_str().unwrap_or("-"),
+        effective["profile_ui"].as_str().unwrap_or("-"),
+        rules,
+        mcp_servers,
+        skills,
+        tools,
+    )
 }
 
 fn profile_revision_action_summary_line(result: &serde_json::Value) -> String {
@@ -3209,6 +3332,35 @@ async fn main() -> Result<()> {
                 result["id"].as_str().unwrap_or(id)
             );
         }
+        Commands::Profile(ProfileCommands::List { json }) => {
+            let resp: ApiResponse<serde_json::Value> = client.get("/profiles").await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", format_profile_list_summary(&result));
+            }
+        }
+        Commands::Profile(ProfileCommands::Show { profile_id, json }) => {
+            let path = format!("/profiles/{}", urlencoding::encode(profile_id));
+            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", format_profile_record_summary(&result));
+            }
+        }
+        Commands::Profile(ProfileCommands::Resolve { profile_id, json }) => {
+            let path = format!("/profiles/{}/effective", urlencoding::encode(profile_id));
+            let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("{}", format_profile_resolve_summary(&result));
+            }
+        }
         Commands::Profile(ProfileCommands::ReconcileCatalog {
             manifest,
             manifest_url,
@@ -4341,6 +4493,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_profile_list_show_resolve() {
+        let cli = Cli::parse_from(["capsem", "profile", "list", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::List { json }) => assert!(json),
+            _ => panic!("expected profile list"),
+        }
+
+        let cli = Cli::parse_from(["capsem", "profile", "show", "coding", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Show { profile_id, json }) => {
+                assert_eq!(profile_id, "coding");
+                assert!(json);
+            }
+            _ => panic!("expected profile show"),
+        }
+
+        let cli = Cli::parse_from(["capsem", "profile", "resolve", "coding"]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Resolve { profile_id, json }) => {
+                assert_eq!(profile_id, "coding");
+                assert!(!json);
+            }
+            _ => panic!("expected profile resolve"),
+        }
+    }
+
+    #[test]
     fn parse_mcp_connectors_add_delete() {
         let cli = Cli::parse_from([
             "capsem",
@@ -4824,6 +5003,59 @@ mod tests {
 
         assert!(summary.contains("Enforcement backtest matched 1 event(s)"));
         assert!(summary.contains("(truncated)"));
+    }
+
+    #[test]
+    fn profile_list_show_and_resolve_summaries_use_typed_fields() {
+        let list = format_profile_list_summary(&serde_json::json!({
+            "profiles": [
+                {
+                    "source": "built-in",
+                    "locked": true,
+                    "profile": {
+                        "id": "coding",
+                        "name": "Coding",
+                        "extends_profile_id": "root"
+                    }
+                }
+            ]
+        }));
+        assert!(list.contains("coding"));
+        assert!(list.contains("built-in"));
+        assert!(list.contains("root"));
+
+        let show = format_profile_record_summary(&serde_json::json!({
+            "source": "user",
+            "locked": false,
+            "profile": {
+                "id": "everyday",
+                "name": "Everyday",
+                "ui": "everyday",
+                "profile_type": "user"
+            }
+        }));
+        assert!(show.contains("Profile: everyday"));
+        assert!(show.contains("locked=false"));
+
+        let resolved = format_profile_resolve_summary(&serde_json::json!({
+            "profile_id": "coding",
+            "effective": {
+                "profile_name": "Coding",
+                "profile_ui": "coding",
+                "rules": [{ "id": "rule-1" }],
+                "mcp": { "value": { "servers": { "github": {} } } },
+                "skills": { "value": {
+                    "groups": ["admin"],
+                    "enabled": ["admin-profile"],
+                    "disabled": []
+                }},
+                "tools": { "value": { "python": {} } }
+            }
+        }));
+        assert!(resolved.contains("profile=coding"));
+        assert!(resolved.contains("rules=1"));
+        assert!(resolved.contains("mcp_servers=1"));
+        assert!(resolved.contains("skills=2"));
     }
 
     #[test]

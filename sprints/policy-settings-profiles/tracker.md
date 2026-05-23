@@ -2487,6 +2487,14 @@ a valid claim -- mark it `[ ]` instead.
     skills_path_and_summary_preserve_profile_kind_and_ownership`,
     `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt,
     and `git diff --check` passed.
+    Next read-only profile CLI slice wired `capsem profile list`, `show`, and
+    `resolve` to typed service routes. Human output now exposes profile source,
+    lock state, inheritance, UI/type, and effective rules/MCP/skills/tools
+    counts while keeping raw JSON available. Verification: targeted `cargo
+    test -p capsem parse_profile_list_show_resolve`, targeted `cargo test -p
+    capsem profile_list_show_and_resolve_summaries_use_typed_fields`,
+    `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt,
+    and `git diff --check` passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

@@ -32,6 +32,15 @@ blocked.
   revisions, `update` reconciles lifecycle state, and `remove` clears local
   launchable state while preserving archived payloads.
 - Add `capsem profile list/create/fork/update/delete/show/resolve`.
+- Latest read-only profile CLI slice landed `capsem profile list`,
+  `capsem profile show <id>`, and `capsem profile resolve <id>` over the
+  typed service `/profiles`, `/profiles/{id}`, and `/profiles/{id}/effective`
+  routes. Human output surfaces profile source, lock state, inheritance, UI
+  mode, and effective counts for rules/MCP/skills/tools; `--json` preserves
+  the raw service payload for scripted callers. Remaining mutating profile
+  verbs are `create`, `fork`, body `update`, and `delete`; the existing
+  revision lifecycle `profile update` command needs an explicit naming
+  decision before body update lands.
 - Add richer status output using the canonical `ProfileRevisionStatus` enum values:
   `active`, `deprecated`, and `revoked`. A missing revision is rendered as
   absent/unknown, not as `removed`.

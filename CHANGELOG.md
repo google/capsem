@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before reporting macOS Docker-backed asset builds as blocked.
 
 ### Added
+- Added read-only Profile V2 CLI inspection with `capsem profile list`,
+  `capsem profile show`, and `capsem profile resolve`.
 - Added `capsem skills list/show/add/delete` for Profile V2 skill inspection
   and direct user-profile skill mutations through the service `/skills` routes.
 - Added broader `capsem enforcement` and `capsem detection` CLI coverage for
