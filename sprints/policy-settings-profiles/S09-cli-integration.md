@@ -5,6 +5,12 @@
 Expose settings/profile/MCP/skills control and profile-backed VM creation
 through CLI command families.
 
+This is release-blocking for the Profile V2 bedrock release. The engine is not
+usable if operators need raw HTTP, raw UDS payloads, or direct database access
+to create profile-backed VMs, inspect profile state, install runtime
+enforcement/detection overlays, backtest/hunt rules, or debug why a request was
+blocked.
+
 ## Tasks
 
 - Initial S07a bridge landed: `capsem profile reconcile-catalog --manifest
@@ -62,6 +68,9 @@ through CLI command families.
   for the [S15 ask resolve path](S15-confirm-ux.md). Two operators
   on the same session must see the same pending queue; the CLI
   shares the gateway state with the UI.
+  If the bedrock release disables user-facing `ask`, the CLI must still render
+  the disabled/unavailable state clearly and tests must prove ask-enabled rules
+  cannot silently behave as allow.
 - Keep command shapes consistent.
 - Add parser, integration, error, and smoke tests.
 

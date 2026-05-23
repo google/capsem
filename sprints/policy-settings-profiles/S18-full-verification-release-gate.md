@@ -2,12 +2,25 @@
 
 ## Goal
 
-Prove the redesign is releaseable.
+Prove the Profile V2 bedrock release is releaseable.
+
+This gate is the Iron Bank. It does not certify a prototype, a partially usable
+backend, or a future promise. It certifies that the engine split, signed profile
+contract, runtime enforcement/detection, CLI, UI, docs, install path, VM path,
+logs/status/debug, and benchmark claims stand together.
 
 ## Tasks
 
 - Run backend tests for settings, profiles, assembly, APIs, CLI, enforcement.
-- Run frontend tests for settings, profiles, rules, security capabilities.
+- Run frontend tests for settings, profiles, runtime enforcement/detection
+  overlays, VM create, logs/status/debug links, and security capabilities.
+- Prove S08b engine split: Network/File/Process engines feed the Security
+  Engine and Resolved Event Emitter through typed contracts; no shipped event
+  family bypasses the canonical resolved-event journal or reintroduces the old
+  policy runtime.
+- Prove UDS/HTTP/CLI/UI contract alignment: profile, enforcement, detection,
+  status/log/debug, and VM-create surfaces use the same route names, typed
+  payloads, enum values, error semantics, and evidence fields.
 - Run E2E profile create/fork/delete/select/launch.
 - Run manifest/profile-catalog install/update/remove/revoke tests.
 - Run profile-backed VM create with missing assets to prove first-use download,
@@ -16,6 +29,12 @@ Prove the redesign is releaseable.
   profile revision and asset hashes.
 - Prove MCP, skills, AI providers, credential brokerage, PII, and canonical
   rules enforce through VM-effective settings.
+- If credential brokerage is not shipped in the bedrock cut, prove no shipped
+  profile or docs page advertises credential release as available; S10 owns the
+  later implementation.
+- If quotas/rate limits are not shipped in the bedrock cut, prove no shipped
+  profile or docs page advertises budget enforcement as available; S22 owns the
+  later implementation.
 - Prove fresh install still works after v1 removal.
 - Prove asset cleanup preserves files referenced by installed active/deprecated
   profile revisions and existing VM pins, and removes unreferenced revoked
@@ -73,6 +92,11 @@ Prove the redesign is releaseable.
   `json.dumps`. JSON input tests must go through `model_validate_json()` or
   `TypeAdapter.validate_json()`, and JSON output tests must go through
   `model_dump_json()`.
+- Prove release docs truth:
+  S19 pages document the bedrock contract and identify S10 credential brokerage,
+  S22 quotas/rate limits, S13 remote plugins, S16a workbench polish, S19a
+  marketing refresh, S20/S21 product expansions, and S19b reporting setup as
+  later work unless they actually landed before this gate.
 
 ## Coverage Ledger
 
@@ -84,7 +108,8 @@ Prove the redesign is releaseable.
   VM pin metadata, and API/CLI/UI shapes.
 - Functional: complete for manifest update, profile install/update/remove/
   revoke, first-use asset download, VM create/resume/fork/delete, cleanup
-  retention, explicit profile selection through UDS/HTTP/CLI/UI, and
+  retention, explicit profile selection through UDS/HTTP/CLI/UI,
+  enforcement/detection runtime registry and backtest/hunt surfaces, and
   `capsem-admin` profile/image/manifest workflows.
 - Adversarial: complete for malformed manifests/profiles, bad signatures,
   truncated hashes, unauthorized profile signing key, unsupported arch,

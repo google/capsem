@@ -1,4 +1,4 @@
-# S08b - Security Event Engine, Network Engine, File Engine, And Process Engine
+# S08b - Bedrock Engine
 
 ## Status
 
@@ -98,14 +98,18 @@ language.
 ## Placement
 
 Runs after [S08a - Rule Abstraction And Detection Architecture](S08a-rule-abstraction-detection-architecture.md)
-and before S09/S11/S12/S13/S14/S15/S16/S16a.
+and before the release usability lift in S09/S11/S16/S19/S18.
 
-S16a consumes this sprint's Conversation Engine and unified timeline API for
-the user-facing agent workbench.
+Reason: CLI, UI, status/debug, docs, and release verification must not freeze
+around the current mixed transport/enforcement/telemetry paths.
 
-Reason: CLI, status/debug, telemetry, plugins, rules UI, Confirm UX, Profile UI,
-and documentation must not freeze around the current mixed transport/enforcement/
-telemetry paths.
+This sprint is the bedrock contract freeze. The release is not allowed to move
+forward with "engine split later" as debt. S08b must leave behind typed,
+implemented, and tested boundaries for Network Engine, File Engine, Process
+Engine, Security Engine, and Resolved Event Emitter; runtime rule routes and
+policy roots must be stable enough that S09 CLI, S16 UI, S19 docs, S18 release
+verification, and later extension sprints can build on them
+without renaming the core terms.
 
 ## Goal
 
@@ -124,16 +128,18 @@ contracts:
   process identity, parent/child relationships, command lines, working
   directories, exit status, process-to-file/network attribution, and process
   activity normalization.
-- **Conversation Engine** owns user/agent conversation mechanics: SDK-backed
-  Codex/Claude session adapters, assistant/user/tool message capture, terminal
-  transcript correlation, conversation turns, artifacts, and conversation
-  timeline normalization.
 - **Security Engine** owns security meaning: normalized activity events,
   preprocessors, real-CEL enforcement rules, runtime detection rules,
   ask/confirm, Sigma-compatible detection import, backtest, detection hunt,
   postprocessors, final security actions, and the resolved-event journal.
 - **Resolved Event Emitter** owns fan-out to telemetry, audit/logging, detection
   export, and any future enterprise sink.
+
+Done means those contracts are usable, not just described. At closeout, every
+shipped runtime event family must either flow through the normalized Security
+Engine path and emitter-owned projections, or be explicitly disabled/not
+claimed. Direct subsystem authority writes, parallel policy engines, and raw
+`event.*` rule authoring are release blockers.
 
 ## Problem Statement
 
@@ -146,12 +152,6 @@ The current runtime grew around separate paths:
 - File writes/deletes, fs watcher events, snapshot/revert actions, auditd
   records, exec chains, and process attribution mostly write telemetry directly
   or live outside the enforcement/detection path.
-- User-facing agent work is not represented in a strong enough timeline. Today
-  we have raw PTY transcript files, model/tool telemetry, and a legacy timeline
-  union, but the timeline lacks first-class ids such as conversation id, turn id,
-  message id, process id, activity id, artifact id, finding id, and structured
-  event links.
-
 That makes it impossible to guarantee one complete resolved event containing:
 
 - preprocessor actions;
@@ -181,12 +181,10 @@ flowchart LR
   N["Network Engine"] --> SE["Security Engine"]
   F["File Engine"] --> SE
   P["Process Engine"] --> SE
-  C["Conversation Engine"] --> SE
   SE --> R["SecurityResult"]
   R --> N
   R --> F
   R --> P
-  R --> C
   SE --> E["Resolved Event Emitter"]
   E --> T["Telemetry Sink"]
   E --> A["Audit / Logging Sink"]
@@ -203,7 +201,6 @@ enum SecurityEvent {
     Model(ModelSecurityEvent),
     File(FileSecurityEvent),
     Process(ProcessSecurityEvent),
-    Conversation(ConversationSecurityEvent),
     Snapshot(SnapshotSecurityEvent),
     VmLifecycle(VmLifecycleSecurityEvent),
     Profile(ProfileSecurityEvent),
@@ -233,7 +230,7 @@ Model/MCP subjects are evidence-backed. The Network Engine may keep
 provider-specific wire parsing close to OpenAI/Anthropic/Google/Gemini code,
 but the Security Engine consumes the canonical `ModelInteractionEvidence`
 projection described in the side sprint. CEL, Sigma-derived detection,
-backtest, status, OTel, and timeline code must not depend on provider-specific
+backtest, status, OTel, and later timeline code must not depend on provider-specific
 raw JSON paths for normal policy fields.
 
 Policy rule authoring is also evidence-backed, but it is not authored against
@@ -261,8 +258,8 @@ Detection IR lowering onto the same canonical roots. Current code must reject
 authored `event.*` rules so `SecurityEvent` does not become a public policy ABI.
 
 Accounting ownership is separate from correlation. A host/service AI call can
-carry `vm_id`, `session_id`, `profile_id`, `conversation_id`, or `purpose` so
-timeline and forensics can explain why the call happened, but it must also carry
+carry `vm_id`, `session_id`, `profile_id`, or `purpose` so status/debug and
+forensics can explain why the call happened, but it must also carry
 an explicit attribution owner. Host-originated prompts such as VM naming,
 session summarization, support-bundle summaries, and workbench/admin helpers
 must resolve to host/service counters, host telemetry, and host quota
@@ -288,111 +285,21 @@ runtime additions/updates/deletes are service-owned overlays with provenance,
 scope, stats, and audit. It does not discover loose rules from telemetry or
 transport internals.
 
-## Plugin ABI Groundwork
+## Extension Seams
 
-S08b must shape `SecurityEvent` as the future deterministic plugin ABI:
+S08b reserves extension seams without implementing later products:
 
-```text
-SecurityEvent -> SecurityEvent
-```
+- `ask` is a Security Engine decision. S15 owns the production UI/CLI prompter
+  if shipped profiles expose ask.
+- `throttle` is a typed action placeholder. S22 owns quotas, rate limits, and
+  budgets.
+- Plugin transform records, event hashes, and declarative mutation slots are
+  kept in the event model. S13/S23 own remote/WASM plugin products and their
+  authoring APIs.
 
-Future WASM-authored plugins receive one fully described event, inspect only
-that event and its embedded trace/history snapshot, and return a modified event.
-Plugins must not depend on ambient filesystem, network, clock, process access,
-or hidden runtime state. If a plugin needs history, Capsem embeds the relevant
-bounded trace/history snapshot in the event before invoking the plugin.
-
-The event envelope carries:
-
-- identity: event id, trace id, parent event, stream/activity id, sequence,
-  VM/session/profile/user/process/turn/message/tool correlation;
-- `event_family`, `event_type`, and typed `subject`;
-- bounded `context` / `trace` snapshots and labels;
-- findings attached so far;
-- optional first-class `decision`;
-- declarative `mutations`;
-- redaction state.
-
-`decision.action` is first-class and includes at least:
-
-```text
-allow | ask | block | rewrite | throttle
-```
-
-`ask` remains owned by the Security Engine confirm lifecycle. `throttle` is
-reserved for S22. Neither one is exposed as a transport hook return value.
-
-Mutations are explicit patches, not hidden side effects. A TypeScript authoring
-API may feel fluent/mutable, but the compiled ABI returns event data with
-declarative mutations such as:
-
-```json
-{
-  "op": "replace_regex",
-  "path": "subject.output_text",
-  "pattern": "[0-9]{3}-[0-9]{2}-[0-9]{4}",
-  "replacement": "[REDACTED]"
-}
-```
-
-Critical rewrite rule:
-
-```text
-Plugin decides what rewrite should happen.
-Rust validates and applies the rewrite to the actual request/response/body.
-```
-
-`HookOutcome` remains an internal Rust dispatch/transport projection. The plugin
-ABI must not return `HookOutcome`; it returns a modified `SecurityEvent`. Rust
-then validates the final event decision plus mutations and maps them to the
-internal dispatch projection (`Continue`, `Rewrote`, or `Stop`) for the current
-transport/file/process engine.
-
-Plugins may add labels, findings, decisions, and mutations. They must not
-directly mutate immutable event identity, subject payload, context, or trace
-snapshot as authority. If a plugin wants to change real request/response/model/
-MCP content, it must return declarative mutations and let Rust validate and
-apply them. The runtime records input and output event hashes with plugin
-identity so replay can prove deterministic behavior.
-Those transform records are attached to `ResolvedSecurityEvent` alongside a
-`PluginCallback` step so audit, telemetry, timeline, backtest, and replay see
-the same plugin identity and input/output hashes.
-
-Legal mutation targets are allowlisted per event type. Initial targets:
-
-```text
-http.request
-  subject.headers.*
-  subject.url
-  subject.body.text
-
-http.response
-  subject.headers.*
-  subject.body.text
-
-model.request
-  subject.messages[*].content
-  subject.tool_results[*].content
-
-model.response
-  subject.output_text
-  subject.tool_calls[*].arguments
-
-mcp.request
-  subject.params.arguments
-
-mcp.response
-  subject.result.content
-```
-
-Target invariant:
-
-```text
-same plugin hash + same input event hash = same output event hash
-```
-
-This supports replay, auditability, deterministic tests, signed plugin bundles,
-and a clean path to TypeScript-authored callbacks compiled into WASM components.
+The bedrock rule is simple: extensions consume `SecurityEvent` and
+`ResolvedSecurityEvent`; they do not introduce a second transport hook,
+policy ABI, or persistence authority.
 
 ## Runtime Rule Registry And Backtest
 
@@ -495,10 +402,9 @@ Implementation status as of the current service-route slices:
 - Landed: historical resolved-event/session journal source selection for
   `/sessions/{id}/detection/hunt`, with hand-built `session.db`
   reconstruction across HTTP, DNS, MCP, model, file, process, snapshot, VM,
-  profile, and conversation events. Backtest/hunt evidence rows now expose
-  canonical common, HTTP, MCP, model tool-call/tool-result, file, process,
-  profile, conversation, and snapshot policy paths instead of opaque subject
-  blobs.
+  and profile events. Backtest/hunt evidence rows now expose canonical common,
+  HTTP, MCP, model tool-call/tool-result, file, process, profile, and snapshot
+  policy paths instead of opaque subject blobs.
 - Landed: HTTP gateway security-route proof for enforcement/detection compile,
   validate, backtest, live create/update/delete/list/stats, inline detection
   hunt, and `POST /sessions/{id}/detection/hunt` preserving forensic
@@ -512,6 +418,36 @@ Implementation status as of the current service-route slices:
 - Still open: persisted rule-plan recovery, interactive confirm UX, S12
   telemetry/export projection, S08d performance proof, and remaining VM/runtime
   cutover breadth.
+
+For the bedrock release, persisted recovery and the shipped CLI/UI route
+contract are release-blocking if operators can mutate runtime overlays.
+Interactive confirm is release-blocking only for profiles/rules that expose
+`decision = "ask"` as a user-facing capability; otherwise ask-capable rules must
+be disabled or documented as unavailable for the cut. S12 export polish remains
+post-bedrock, but status/log/debug truth for shipped event families is required.
+
+## Bedrock Release Gate
+
+S08b is complete only when:
+
+- Network Engine routes HTTP, DNS, MCP, and model traffic through typed
+  Security Engine requests/responses and applies only validated actions or
+  mutations.
+- File Engine owns file IPC, MCP file-tool mechanics, snapshots, restore/revert,
+  quarantine, and observe-only file behavior for shipped file paths, with file
+  and snapshot events normalized before policy/detection/logging.
+- Process Engine owns exec/audit/process attribution and emits normalized
+  process events with parent/child identity and process-to-file/network links.
+- Security Engine owns preprocessors, CEL enforcement, ask/confirm lifecycle,
+  detection before sinks, postprocessors, final decision projection, match
+  counters, backtest, hunt, and runtime registry mutation.
+- Resolved Event Emitter writes the canonical journal first and owns domain
+  projections/logging so no shipped event family bypasses resolved-event truth.
+- Canonical policy roots in `capsem-proto` and CEL injection in
+  `capsem-security-engine` cover shipped HTTP, DNS, MCP, model, file, process,
+  profile, and common fields; authored `event.*` remains rejected.
+- UDS/HTTP endpoints, S09 CLI, S16 UI, S19 docs, and S18 tests consume these
+  same contracts. No surface invents a second rule/profile/event vocabulary.
 
 ## Session Database Architecture
 
@@ -552,16 +488,6 @@ The canonical tables should represent normalized security truth:
   accounting owner used for counters/quotas. This is distinct from correlation
   ids so host-owned AI events can link to VM/session context without charging
   VM health.
-- `timeline_threads`: logical conversation/session/activity records, including
-  SDK/agent kind (`codex`, `claude`, terminal-only, MCP-driven), title, VM id,
-  profile id, user id, created/updated times, and retention/redaction policy.
-- `timeline_elements`: ordered structured JSON elements keyed by `event_id`,
-  `conversation_id`, `turn_id`, `message_id`, `process_id`, `activity_id`, and
-  other correlation ids where applicable. Elements carry role/kind, content/ref,
-  source adapter, timestamps, token/cost metadata, and redaction/classification
-  state.
-- `timeline_artifacts`: files, patches, snapshots, commands, links, and
-  generated outputs associated with timeline elements and/or security events.
 - `session_identity` remains one-row session identity unless S08b proves that
   duplicating VM/profile/user ids onto every canonical event is required for
   export or cold-query performance.
@@ -578,16 +504,15 @@ Projection rule: after cutover, these tables are written by the emitter from a
 may stay for UI, timeline, support bundle, and compatibility with existing
 reader queries, but they are no longer the source of security truth.
 
-Timeline tables are not just projections. They are the user-facing structured
-read model backed by canonical resolved events plus first-party conversation
-adapter input. A raw PTY transcript remains a forensic artifact; it is not the
-timeline by itself.
+Timeline/workbench tables are deferred to [S16a](S16a-unified-timeline-and-agent-workbench.md).
+S08b only has to leave enough event ids, links, and journal facts for that
+read model to be built without changing the engine contract.
 
 Migration must be staged:
 
 1. Add canonical journal tables and writer APIs.
 2. Dual-write canonical events plus existing projections from the emitter.
-3. Move timeline/debug/report readers to prefer canonical events.
+3. Move debug/report readers to prefer canonical events.
 4. Keep projection tables for fast domain-specific queries until replacement
    views or indexes are proven.
 5. Remove direct subsystem writes and test that migrated event families cannot
@@ -656,37 +581,6 @@ process mechanics, such as `Continue`, `Block`, `DropConnection`, or future
 kill/suspend actions if explicitly added. It does not own policy, detection, or
 telemetry persistence.
 
-## Conversation Engine Scope
-
-The Conversation Engine is first-class because everyday Capsem work happens
-through agents, not just through raw terminals.
-
-It owns mechanics for:
-
-- Codex SDK and Claude SDK session adapters, if those SDKs are adopted;
-- terminal-only fallback capture using `pty.log` plus command/process
-  attribution;
-- conversation/activity identity, turn ordering, message roles, and timeline
-  grouping keys;
-- tool-call/message/artifact correlation across model, MCP, file, process, and
-  network events;
-- redaction/classification of conversation content before durable storage;
-- search indexing inputs for the unified timeline UI;
-- conversation retention/export rules derived from profile/service settings.
-
-It feeds the Security Engine with:
-
-- `ConversationSecurityEvent` for user prompts, assistant responses, tool
-  proposals, tool results, generated files/patches, and user approvals;
-- correlation links to model/MCP/file/process/network events;
-- enforceability metadata. Most conversation timeline elements are
-  observe/enrich, while tool proposals or approvals may be inline if the SDK
-  integration offers a pre-apply hook.
-
-The Conversation Engine does not replace Network/Model/MCP telemetry. It
-provides the user-facing narrative that links those lower-level events into a
-reviewable session.
-
 ## Network Engine Scope
 
 The Network Engine owns:
@@ -713,7 +607,7 @@ The Security Engine owns:
 
 - normalized event schema and versioning;
 - stable event identity and idempotency keys;
-- preprocessor plugin order and mutation journal;
+- preprocessor order and mutation journal;
 - synchronous enforcement policy evaluated by a real CEL implementation;
 - ask/confirm lifecycle;
 - detection evaluation after preprocessors/enforcement/confirm and before
@@ -744,7 +638,7 @@ S08b implementation starts with typed contracts before engine rewiring:
 1. Add shared Rust model types for `SecurityEvent`, `ResolvedSecurityEvent`,
    `EnforcementResult`, `ConfirmResult`, `DetectionFinding`, and pack identity.
 2. Add event-family subject structs for DNS, HTTP, MCP, model, file, process,
-   credential, VM/profile, and conversation events.
+   credential, VM/profile, and snapshot events.
 3. Add real CEL compile/evaluate adapter behind a trait, with legacy evaluator
    retained only behind migration tests until removal.
 4. Add detection IR loader/evaluator behind a trait that can consume S08a's
@@ -771,9 +665,6 @@ Expected split:
   on the security-engine contract and owns file/snapshot mechanics.
 - `crates/capsem-process-engine`: process/audit activity layer that depends on
   the security-engine contract and provides process attribution to other engines.
-- `crates/capsem-conversation-engine`: SDK-backed and terminal-backed
-  conversation capture, timeline normalization, search input generation, and
-  conversation/security event correlation.
 - `crates/capsem-event-emitter` or a focused module under
   `capsem-security-engine`: resolved-event fan-out, sink traits, delivery
   journal, bounded queues, and sink failure semantics.
@@ -793,8 +684,6 @@ notify, audit-log tailing, MCP file tools, or SQLite writer internals.
   hash capture, and other blocking file calls.
 - Process/audit pool: audit parsing, process lineage reconstruction, and
   bounded correlation work.
-- Conversation pool: SDK event intake, transcript normalization, redaction, and
-  indexing work; never blocks network/file/process hot paths.
 - Security event pool: CPU-bound preprocessors, CEL/policy evaluation,
   detection/Sigma matching, postprocessors.
 - Confirm tasks: bounded async ask/confirm with timeout/default-deny semantics.
@@ -832,8 +721,7 @@ Each event carries at least:
 ### S08b.0 - Inventory And Boundary ADR
 
 - Inventory current HTTP, DNS, MCP, model, file IPC, fs monitor, snapshot, MCP
-  file-tool, auditd, exec, process attribution, PTY transcript, terminal
-  history, timeline, and model/tool conversation paths.
+  file-tool, auditd, exec, and process attribution paths.
 - Write an ADR that freezes engine responsibilities and allowed dependencies.
 - Identify direct telemetry writes that must move behind the emitter.
 
@@ -842,7 +730,7 @@ Each event carries at least:
 - Introduce the normalized security event/result/action types.
 - Add event identity helpers and schema-versioning hooks.
 - Add golden fixtures for network, DNS, MCP, model, file, process, snapshot,
-  conversation, VM lifecycle, and profile events.
+  VM lifecycle, and profile events.
 - Add profile-owned enforcement-pack and detection-pack identity types, including
   rule-pack ids, revisions, hashes/signatures, and VM-effective pins.
 
@@ -892,18 +780,7 @@ Each event carries at least:
 - Prove process attribution can enrich file/network/model events without
   creating circular dependencies between engines.
 
-### S08b.6 - Conversation Engine And Timeline Cutover
-
-- Define Codex SDK and Claude SDK adapter contracts, plus terminal-only fallback
-  capture.
-- Convert raw PTY transcript/model/tool events into ordered timeline elements
-  where SDK events are unavailable.
-- Add timeline thread, element, artifact, and search-index writer paths.
-- Link timeline elements to canonical security events through
-  `security_event_links`.
-- Prove redaction/retention policy is applied before durable timeline writes.
-
-### S08b.7 - Emitter And Sink Unification
+### S08b.6 - Emitter And Sink Unification
 
 - Move telemetry/audit/logging/detection export behind a resolved-event emitter.
 - Define required versus best-effort sinks.
@@ -913,50 +790,34 @@ Each event carries at least:
 - Start dual-writing canonical events plus existing domain projections from the
   emitter.
 
-### S08b.8 - Session DB Reader And Unified Timeline Migration
+### S08b.7 - Session DB Reader And Debug Migration
 
-- Move timeline/debug/report readers to prefer canonical `security_events`,
+- Move debug/report readers to prefer canonical `security_events`,
   `security_event_steps`, `detection_findings`, and `security_event_links`.
-- Replace the legacy `/timeline/{id}` union with one structured timeline API:
-  `/timeline/{id}` returns a paginated JSON envelope containing typed timeline
-  block elements.
-- Support stable pagination arguments such as `cursor`, `limit`, `direction`,
-  `anchor_event_id`, `since`, and `until`, and return pagination metadata such
-  as `next_cursor`, `prev_cursor`, `has_more`, and a read watermark.
-- The endpoint may support coarse indexed bounds such as `layers` or time range
-  when needed to avoid pathological reads, but arbitrary filtering and
-  presentation grouping are not the server's primary responsibility.
-- Keep `/timeline/{id}` as the single endpoint; conversation, forensic,
-  finding, and artifact views are client-side filters/rendering modes over the
-  same typed timeline block stream.
-- Define one stable JSON block shape per timeline element family so S16a can
-  render each block type without ad hoc string parsing.
 - Keep existing domain tables as projections for fast domain views until
   replacement indexes/views are proven.
 - Add regression tests proving direct network/file/process writes cannot bypass
   the emitter for migrated event families.
 
-### S08b.9 - Status, Debug, And Operator Proof
+### S08b.8 - Status, Debug, And Operator Proof
 
 - Make status/debug explain engine health, queue depth, last sink errors, rule
-  matches, detection results, file/snapshot remediation, and conversation
-  journal health.
+  matches, detection results, and file/snapshot remediation.
 - Add inspect-session/debug-report coverage for resolved events.
 
-### S08b.10 - Performance And VM Gate
+### S08b.9 - Performance And VM Gate
 
 - Benchmark hot-path event processing and streaming overhead.
 - Run chained VM tests covering network, DNS, MCP/model, file writes/deletes,
-  snapshot/revert, process/audit attribution, SDK/terminal conversation-grouped
-  timeline, detection annotation, telemetry, and audit/logging.
+  snapshot/revert, process/audit attribution, detection annotation, telemetry,
+  and audit/logging.
 
 ## Testing Matrix
 
 - Unit/contract: event schema fixtures; result/action enum behavior; dependency
   boundary tests; event identity/idempotency tests; real CEL parser/evaluator
   tests; Sigma validation/import/compile tests; profile-owned rule-pack identity
-  tests; canonical session DB schema and projection writer tests; timeline
-  thread/element/artifact schema tests.
+  tests; canonical session DB schema and projection writer tests.
 - Functional: Network Engine, File Engine, and Process Engine submit events to
   the Security Engine and apply returned actions correctly.
 - Adversarial: malformed events, bad paths, traversal attempts, sink failures,
@@ -964,17 +825,14 @@ Each event carries at least:
   emitted.
 - E2E/VM: boot VM, execute network/DNS/MCP/file/snapshot chains, verify final
   resolved events contain enforcement, confirm, detection, postprocessor, and
-  sink delivery facts; run Codex/Claude SDK or terminal fallback workflow and
-  verify `/timeline/{id}` paginates typed blocks and each block links back to
-  canonical events.
+  sink delivery facts.
 - Telemetry/audit: session DB rows are produced only through the emitter path
   for migrated event families; no direct hot-path SQLite writes remain;
   canonical events and domain projections agree; host-attributed AI events with
   VM/session correlation are present in the resolved-event journal but absent
   from VM-owned model/MCP/token/cost counters.
 - Performance: event-engine overhead budget, streaming chunk overhead, security
-  pool saturation, emitter backpressure, file snapshot/hash cost, timeline
-  ingestion cost, and search/index query latency.
+  pool saturation, emitter backpressure, and file snapshot/hash cost.
 
 ## Done Means
 
@@ -996,9 +854,33 @@ Each event carries at least:
   chains, and process/audit attribution are represented in the same security
   event model as network activity without collapsing file and process mechanics
   into one engine.
-- Codex/Claude SDK-backed work and terminal-only fallback work produce
-  structured timeline elements linked to canonical security events.
-- S09/S11/S12/S13/S14/S15/S16/S16a/S19 specs are updated to consume the new
-  engine contracts.
-- S16a has a stable structured `/timeline/{id}` API with cursor pagination and
-  typed block semantics for the everyday-work UI.
+- S09/S11/S16/S19/S18 specs consume the new engine contracts for the bedrock
+  release.
+
+## Next Sprints
+
+- [S09 - CLI Integration](S09-cli-integration.md): make the bedrock operable
+  from `capsem` without raw HTTP/UDS/SQL.
+- [S11 - Status, Debug, Provenance](S11-status-debug-provenance.md): make
+  logs/status/debug explain profile, rule, engine, and resolved-event truth.
+- [S16 - Profile UI](S16-profile-ui.md): make the profile and runtime rule
+  endpoint contract usable in the UI.
+- [S19 - Documentation And Site](S19-documentation-and-site.md): document the
+  shipped contract and its deliberate deferrals.
+- [S18 - Full Verification And Release Gate](S18-full-verification-release-gate.md):
+  prove install, VM, CLI, UI, docs, engine, logs/status/debug, and benchmarks
+  together.
+
+Deferred improvement sprints:
+
+- [S10 - Credential Brokerage](S10-credential-brokerage.md)
+- [S13 - Remote Enforcement Plugin](S13-remote-policy-plugin.md)
+- [S15 - Confirm UX](S15-confirm-ux.md), only release-blocking if ask ships
+- [S16a - Unified Timeline And Agent Workbench](S16a-unified-timeline-and-agent-workbench.md)
+- [S17 - Security Capabilities UI](S17-security-capabilities-ui.md)
+- [S19a - Marketing Site Refresh](S19a-marketing-site-refresh.md)
+- [S19b - Reporting Setup](S19b-reporting-setup.md)
+- [S20 - OpenAPI To MCP](S20-openapi-to-mcp.md)
+- [S21 - Local LLM](S21-local-llm.md)
+- [S22 - Rate Limits, Budgets, And Quotas](S22-rate-limits-budgets-and-quotas.md)
+- [S23 - Post-Bedrock Improvements](S23-post-bedrock-improvements.md)

@@ -11,6 +11,15 @@ This sprint is release-blocking. The redesign is not done if the architecture,
 security, and configuration pages still describe v1 settings, old security
 levels, standalone `[mcp]`, or `config/defaults.json`.
 
+For the bedrock release, docs must also explain the sharp split: the Network
+Engine, File Engine, Process Engine, Security Engine, Resolved Event Emitter,
+profile contract, runtime enforcement/detection routes, CLI, UI, and release
+gate are shipped contract. Credential brokerage (S10), quotas/rate limits
+(S22), remote plugins (S13), richer workbench/security UI polish (S16a/S17),
+marketing refresh (S19a), OpenAPI-to-MCP (S20), Local LLM (S21), and reporting
+setup (S19b) are later improvements unless their gates actually pass before
+release.
+
 ## Scope
 
 - Publish the chain of trust as the reference diagram for every profile/catalog
@@ -56,6 +65,10 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
     what can block/rewrite/ask, how `/enforcement/*` validate/compile/backtest/
     live registry/stats routes work, how ask/confirm is logged, and how the
     Security Engine emits the resolved event before telemetry/audit/logging.
+  - bedrock engine boundary: Network Engine parses/transmits, File Engine owns
+    file/snapshot mechanics, Process Engine owns exec/audit attribution,
+    Security Engine decides and explains, and Resolved Event Emitter writes the
+    canonical journal/projections.
   - detection architecture: what detection rules/finding formats are accepted
     after S08a/S08b, how `/detection/*` validate/compile/backtest/live
     registry/stats/hunt routes work, how they differ from enforcement policy,
@@ -67,8 +80,10 @@ levels, standalone `[mcp]`, or `config/defaults.json`.
     local/API evidence and exported telemetry/redaction.
   - `confirm()` semantics for `ask` decisions, including telemetry
     (`policy_confirm_events`) and current placeholder behavior.
-  - how MCP, skills, credentials, telemetry, remote enforcement, and VM settings fit
-    into the model.
+  - how MCP, skills, telemetry, and VM settings fit into the model.
+  - how credentials, quotas, remote plugins, richer workbench polish, and
+    marketing/reporting are later extension lanes that must consume the
+    bedrock contract rather than reshape it.
 - Write corporate system docs:
   - deploying base and corp profile directories.
   - installing `capsem-admin` from PyPI for enterprise/corp administration and
@@ -197,6 +212,10 @@ Final paths should follow the actual docs tree present when this sprint starts.
       profile-catalog reference, corporate deployment guide, and security
       overview, using the same vocabulary in every page.
 - [ ] Write engine overview with resolution/provenance diagrams.
+- [ ] Write bedrock contract page:
+      Network/File/Process/Security/Emitter boundaries, canonical event
+      journal, profile-owned policy/detection, runtime route groups, CLI/UI
+      contract, and the explicit extension split for S10/S13/S22/S23.
 - [ ] Write rule-engine grammar reference:
       callbacks, canonical policy context roots/fields/functions, decisions,
       rewrite rules, priority defaults, and the explicit `event.*` rejection
@@ -292,6 +311,9 @@ Final paths should follow the actual docs tree present when this sprint starts.
 - [ ] Add future rate-limit/budget note that points to S22:
       S08b/S12 expose quota dimensions and usage counters, but release docs do
       not claim budget enforcement until the later full sprint lands.
+- [ ] Add future credential-brokerage note that points to S10:
+      service settings/profile contracts reserve the shape, but release docs do
+      not claim credential release until S10 lands.
 - [ ] Write security-engine benchmark page:
       explain S08d methodology, `capsem-bench security-engine`, host serial
       artifact capture, VM-originated event paths, CEL/Sigma rule-pack scale,

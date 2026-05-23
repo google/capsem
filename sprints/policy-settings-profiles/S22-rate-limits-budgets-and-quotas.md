@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed standalone sprint. Not part of the S08/S13 ship path.
+Proposed standalone sprint. Not part of the S08/S13 ship path and not part of
+the bedrock release.
 
 ## Goal
 
@@ -13,6 +14,12 @@ Capsem needs to govern request rates and spend across HTTP, MCP, model calls,
 tokens, estimated cost, tools, profiles, users, VMs, and sessions. This is a
 serious product/security design sprint, not a small plugin task and not an S08
 requirement.
+
+The bedrock release must reserve the attachment points, but S22 owns quota
+semantics. S22 may add a local engine, plugin-backed provider, or hybrid
+coordinator behind the existing Security Engine action/result model. It must
+not rename event identities, policy roots, profile pinning, route families, or
+resolved-event journal semantics.
 
 ## Product Contract
 

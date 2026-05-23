@@ -5,9 +5,18 @@
 Make wrong settings, profile resolution, profile catalog state, and VM asset
 binding visible.
 
+This is release-blocking for the Profile V2 bedrock. Operators must be able to
+answer "what profile/rule/engine decision caused this?" through supported
+status/debug/log surfaces, not by inspecting raw SQLite tables or test-only
+fixtures. Full S12 OpenTelemetry export can follow, but shipped status/debug
+truth cannot lie or omit the core profile/security provenance.
+
 ## Tasks
 
 - Harden `capsem status`.
+- Harden `capsem logs` and debug/report projections for canonical
+  resolved-event identity, event family, profile id/revision, VM id, user id,
+  rule id/pack id, final action, detection finding ids, and engine provenance.
 - [x] Add debug report sections for service settings, profile roots, selected
   profiles, VM-effective settings, derived rules, locks, MCP/tools/skills, and
   policy assembly.

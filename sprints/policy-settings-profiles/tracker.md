@@ -73,6 +73,10 @@ claims.
 The tracker is now an implementation board for the post-S07 engine work. Work
 proceeds in this order:
 
+The current release contract is pinned in
+[BEDROCK-RELEASE-CONTRACT.md](BEDROCK-RELEASE-CONTRACT.md). If this tracker and
+that contract disagree, update both before writing code.
+
 1. S08b cuts the Network Engine, File Engine, Process Engine, Security Engine,
    Conversation Engine, and Resolved Event Emitter boundaries before public
    surfaces consume the event model.
@@ -85,13 +89,18 @@ proceeds in this order:
    host/service AI calls can link to a VM/session/profile for explanation, but
    they require host attribution and must not increment VM health/model/MCP/
    token/cost counters.
-2. S08d records VM-originated security-engine performance before speed claims;
-   S09/S11/S12/S13/S14/S15/S16/S16a/S17 then lift CLI, status/debug,
-   telemetry, plugins, rule UI, Confirm UX, profile UI, timeline/workbench, and
-   security controls onto those contracts.
-3. S19/S19a document and market only the behavior proven by those contracts.
-4. S18 performs final release replay, doctor/VM/install verification, and any
-   remaining cross-process/per-asset lock or upgrade hardening.
+2. S08d records VM-originated security-engine performance before speed claims.
+3. S09 CLI and S16 UI are part of the bedrock release, not optional polish:
+   operators must be able to use the new profile, enforcement, detection,
+   status/logging, and VM-create endpoint contract without raw SQL or curl.
+4. S19 documents the shipped bedrock and names deferrals honestly.
+5. S18 performs final release replay, doctor/VM/install verification, UI/CLI
+   usability proof, and any remaining cross-process/per-asset lock or upgrade
+   hardening.
+6. S10 credential brokerage and S22 rate limits/quotas are split standalone
+   sprints. S13 plugins, S16a/S17 workbench/security polish, S19a marketing,
+   S20/S21 product expansions, and S19b reporting become post-bedrock
+   improvement work. They extend the frozen contract; they do not redefine it.
 
 Winter readiness rules:
 
@@ -115,7 +124,8 @@ Winter readiness rules:
 - Network transport, file/snapshot mechanics, process/audit mechanics, security
   decisions, and resolved-event emission must be separate contracts before
   public surfaces or enterprise plugin contracts harden around today's mixed
-  paths.
+  paths. This is release-blocking for the bedrock sprint; it is not later
+  improvement work.
 - `session.db` must stop growing as independent authority tables. S08b must
   introduce a canonical resolved-event journal, then keep existing domain tables
   only as projections/read models unless a table is explicitly retired.
@@ -129,6 +139,11 @@ Winter readiness rules:
   must fail closed; there is no pre-S07a compatibility lane.
 - The release gate is the wall: every claim needs tests, status/debug
   explanation, and tracker evidence before it crosses.
+- Bedrock means the terms stand. Future sprints may add credential brokerage,
+  quotas, remote plugins, richer workbench views, marketing polish, OpenAPI
+  import, local LLM support, and reporting setup, but they must build on the
+  S08b/S09/S16/S19/S18 contract instead of changing event identity, policy
+  roots, engine boundaries, profile pinning, route names, or CLI/UI semantics.
 
 ## Linear path
 
@@ -602,7 +617,7 @@ a valid claim -- mark it `[ ]` instead.
     families, kept detection hunt forensic/detection-only, and clarified that
     `capsem-admin` must work offline while S08b service routes own runtime
     validation/compile/live registry/stats/backtest/hunt.
-21. [~] [S08b - Security event engine, Network Engine, File Engine, and Process Engine](S08b-security-event-engine-and-file-engine.md)
+21. [~] [S08b - Bedrock Engine](S08b-bedrock-engine.md)
     -- inserted during the 2026-05-19 engine-boundary regroup. Split runtime
     activity handling into Network Engine, File Engine, Process Engine, Security
     Engine, and Resolved Event Emitter contracts/crates. File writes, deletes,
@@ -2166,11 +2181,21 @@ a valid claim -- mark it `[ ]` instead.
     benchmarks, concurrency cases, backtest/hunt scan-rate artifacts, and
     broader release gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
+    -- release-blocking bedrock surface. The release is not usable if profile
+    catalog/revision, profile-backed VM create, enforcement/detection
+    validate/compile/backtest/live registry/stats/hunt, logs/status/debug, and
+    shipped ask/confirm behavior can only be operated through raw HTTP or test
+    fixtures.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
+    -- standalone extension split. It must use the frozen profile/security/
+    resolved-event contracts and cannot block the bedrock release unless a
+    shipped profile explicitly promises credential release.
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
-    -- includes live VM health rendering from S12 snapshots: model call count,
-    providers, models, token totals, estimated cost, detection findings, latest
-    detection/latest block, and stale/partial metrics state.
+    -- release-blocking for bedrock truth. Status/debug/logs must explain
+    active settings, profile catalog/revision/asset state, VM pins,
+    enforcement/detection matches, engine provenance, and live-health fields
+    that actually exist. Full S12 OTel polish can follow, but shipped UI/CLI
+    cannot require raw database inspection to explain behavior.
 27. [ ] [S12 - OpenTelemetry metrics architecture](S12-observability-plugin.md)
     -- typed live accumulator and OTel/status metrics for model/provider/token/
     cost, MCP, enforcement, detection, and host/service AI accounting. VM
@@ -2191,18 +2216,27 @@ a valid claim -- mark it `[ ]` instead.
     -- enforcement-rule editor component is consumed by S15; detection
     rule/finding/backtest UX consumes S08b/S08c.
 30. [ ] [S15 - Confirm UX (Ask)](S15-confirm-ux.md)
+    -- conditional release blocker. Required before any shipped profile/rule
+    exposes `decision = "ask"` as user-facing behavior; otherwise ask must be
+    disabled or explicitly unavailable and must never silently behave as allow.
 31. [ ] [S16 - Profile UI](S16-profile-ui.md)
+    -- release-blocking usable UI surface for the bedrock endpoint contract:
+    profile catalog/selector/revisions, package/asset readiness, profile-backed
+    VM create, VM profile state, runtime enforcement/detection overlay list/
+    validate/install/delete/stats/backtest/hunt entry points, and clear
+    read-only handling for profile/corp-owned rules.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
-    sessions, backed by S08b's structured `/timeline/{id}` API. Users must be
-    able to review/search prompts, assistant responses, tools, files, network,
-    processes, findings, asks/confirms, snapshots, artifacts, and profile/rule
-    provenance from one coherent timeline. The API provides stable pagination
-    over typed blocks; the UI provides conversation/turn/process/activity/trace/
-    finding/artifact filtering and formatting with one renderer per block type.
+    sessions. S16a owns the Conversation Engine and structured
+    `/timeline/{id}` API, consuming S08b's canonical resolved-event journal.
+    Users must be able to review/search prompts, assistant responses, tools,
+    files, network, processes, findings, asks/confirms, snapshots, artifacts,
+    and profile/rule provenance from one coherent timeline.
 33. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
 34. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+    -- table-stakes release work, not an improvement sprint. The release does
+    not ship without docs that explain the shipped contract and deferrals.
     -- adds first-class enforcement and detection-format pages, corporate admin
     security links, `capsem-admin` enforcement/detection validation/backtest
     docs, add-detection/add-enforcement admin guides, telemetry extension guide,
@@ -2219,7 +2253,11 @@ a valid claim -- mark it `[ ]` instead.
     `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`; refreshed
     pillar screenshots remain part of S19a's final gate.
 36. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
-    -- core Profile V2 release replay and verification gate.
+    -- table-stakes release work, not an improvement sprint.
+    -- core Profile V2 bedrock release replay and verification gate. This gate
+    must prove the engine split, CLI, UI, docs, install, VM boot, profile pins,
+    enforcement/detection runtime, logs/status/debug, and benchmark artifact
+    claims together.
 37. [ ] [S20 - OpenAPI to MCP](S20-openapi-to-mcp.md)
     -- proposed standalone product sprint. Convert reviewed OpenAPI-described
     HTTP services into profile-owned MCP tools with provenance, diagnostics,
@@ -2236,6 +2274,12 @@ a valid claim -- mark it `[ ]` instead.
     plugin-backed provider vs hybrid centralized quota design, then implement
     HTTP/MCP/model/token/cost/request limits using S08b normalized event
     dimensions and the reserved `Throttle` action.
+41. [ ] [S23 - Post-bedrock improvements](S23-post-bedrock-improvements.md)
+    -- proposed later improvement track. This is where richer plugins,
+    workbench polish, marketing/site polish, OpenAPI-to-MCP, local LLM,
+    reporting setup, and other product expansion work lands after the bedrock
+    release. It is not rescue work and must not mutate the engine/profile/API
+    terms.
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 

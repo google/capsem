@@ -12,8 +12,10 @@ Runs after:
 
 - S08a decides real CEL, Sigma-compatible detection packs, detection IR,
   finding shape, and profile-owned policy/detection pack pins.
-- S08b defines the Security Engine, Conversation Engine, canonical
-  resolved-event store, and structured `/timeline/{id}` API.
+- S08b defines the Security Engine and canonical resolved-event store with
+  enough event ids, links, and journal facts for this sprint to build on.
+- S16a owns the Conversation Engine, structured `/timeline/{id}` API, SDK
+  adapters, timeline tables, and agent workbench UI.
 - S15 lands production ask/confirm semantics.
 
 Runs before final docs/release gate. It may run near S16/S17, but it is not
@@ -86,7 +88,8 @@ elements backed by:
 - domain projections only as compatibility/read-model helpers.
 
 The UI must not run arbitrary direct SQL against legacy domain tables as its
-primary data model once S08b has migrated `/timeline/{id}`.
+primary data model. S16a owns the structured `/timeline/{id}` endpoint and
+builds it from the canonical resolved-event journal produced by S08b.
 
 Each timeline element family needs a dedicated block renderer. Rendering must
 consume typed fields from the JSON block, not parse prose labels. The client may
@@ -163,8 +166,9 @@ SDK adapters must support:
 ## Done Means
 
 - Users have a friendly review/search UI for the full session narrative.
-- The UI is backed by the S08b paginated structured `/timeline/{id}` API, not
-  ad hoc direct SQL or a separate conversation endpoint.
+- The UI is backed by the S16a paginated structured `/timeline/{id}` API built
+  from the S08b canonical resolved-event journal, not ad hoc direct SQL or a
+  separate conversation endpoint.
 - Filtering and formatting are client-side over typed timeline blocks, with one
   renderer per block family.
 - Codex/Claude SDK adapters are either implemented or explicitly gated with a
