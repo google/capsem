@@ -41,7 +41,7 @@ build/corp-dev-image/
         mcp/
             capsem.toml         MCP server definitions
         security/
-            web.toml            Domain allow/block policy
+            controls.toml       Developer seed controls for built-in profiles
         vm/
             resources.toml      CPU, RAM, disk, session limits
             environment.toml    Shell, bashrc, TLS config
@@ -138,35 +138,24 @@ builtin = true
 enabled = true
 ```
 
-### Security Policy
+### Security Controls
 
-`config/security/web.toml` controls network access inside the VM.
+Profile V2 enforcement and detection packs control network access and findings
+inside the VM. Developer image TOML can still seed built-in profile generation,
+but corp/operator releases should author controls in the profile.
 
 ```toml
-[web]
-allow_read = false      # GET/HEAD for unknown domains
-allow_write = false     # POST/PUT for unknown domains
-custom_allow = []       # additional allowed domain patterns
-custom_block = []       # blocked patterns (override allow)
+[security.rules.http.allow_github]
+on = "http.request"
+if = 'http.request.host == "github.com" || http.request.host.endsWith(".githubusercontent.com")'
+decision = "allow"
+priority = 10
 
-[web.search.google]
-name = "Google"
-enabled = true
-domains = ["www.google.com", "google.com"]
-allow_get = true
-
-[web.registry.npm]
-name = "npm"
-enabled = true
-domains = ["registry.npmjs.org", "*.npmjs.org"]
-allow_get = true
-
-[web.repository.github]
-name = "GitHub"
-enabled = true
-domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
-allow_get = true
-allow_post = true
+[security.rules.http.block_unknown_writes]
+on = "http.request"
+if = 'http.request.method in ["POST", "PUT", "PATCH", "DELETE"]'
+decision = "block"
+priority = 1000
 ```
 
 ### Build Configuration
@@ -246,7 +235,7 @@ The `PATH` is set by the host at boot via the settings registry -- do not set PA
 | `capsem-admin image sbom <profile> --assets-dir assets/ --out-dir sboms/` | Emit guest-image SPDX SBOMs |
 | `capsem-admin manifest generate --profiles profiles/ --out manifest.json` | Build a profile catalog manifest |
 | `capsem-admin manifest check manifest.json --download --pubkey profile-sign.pub --json` | Download and verify profile/assets/signatures |
-| `capsem-admin policy validate <policy-pack> --json` | Validate enforcement policy packs |
+| `capsem-admin enforcement validate <enforcement-pack> --json` | Validate enforcement packs |
 | `capsem-admin detection compile <detection-pack> --out detection.ir.json --json` | Validate Sigma with pySigma and compile Detection IR |
 
 ## Manifest
@@ -293,7 +282,7 @@ The runtime boots only when the asset hashes match. `min_binary`/`min_assets` ga
 ### Workflow
 
 1. `capsem-admin profile init corp-image --out profiles/corp-image.profile.toml` -- create a typed draft.
-2. Remove unwanted providers, MCP servers, packages, policy packs, or detection packs from the profile.
+2. Remove unwanted providers, MCP servers, packages, enforcement packs, or detection packs from the profile.
 3. Add internal providers and package/tool requirements to the profile.
 4. Validate: `capsem-admin profile validate profiles/corp-image.profile.toml --json`.
 5. Build: `capsem-admin image build profiles/corp-image.profile.toml --arch all --json`.
@@ -308,28 +297,24 @@ packs:
 ```bash
 capsem-admin profile init corp-image --out profiles/corp-image.profile.toml
 capsem-admin profile validate profiles/corp-image.profile.toml --json
-capsem-admin policy validate corp-policy.toml --json
+capsem-admin enforcement validate corp-enforcement.toml --json
 capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
 ```
 
-Policy packs carry blocking rules:
+Enforcement packs carry blocking rules:
 
 ```toml
-[web]
-allow_read = false
-allow_write = false
-custom_allow = ["*.internal.corp.com"]
-custom_block = []
+[security.rules.http.allow_internal]
+on = "http.request"
+if = 'http.request.host.endsWith(".internal.corp.com")'
+decision = "allow"
+priority = -100
 
-[web.search.google]
-name = "Google"
-enabled = false
-
-[web.registry.npm]
-name = "Internal npm"
-enabled = true
-domains = ["npm.internal.corp.com"]
-allow_get = true
+[security.rules.http.block_google]
+on = "http.request"
+if = 'http.request.host.contains("google")'
+decision = "block"
+priority = -90
 ```
 
 ## Install Methods
@@ -367,8 +352,8 @@ Anything installed under `/root/` during the Docker build is hidden at runtime b
 |-----------|-------|-----|
 | `error[E001] missing required field` | TOML config missing a schema field | Check file:line in error, compare against examples above |
 | `error[E304] defconfig missing` | Kernel config for declared arch doesn't exist | Add `config/kernel/defconfig.{arch}` |
-| `warn[W001] no npm registry` | npm packages declared but no registry in web.toml | Add npm registry entry to security policy |
-| `warn[W005] API key in config` | Hardcoded key in TOML | Use `~/.capsem/user.toml` for personal keys |
+| `warn[W001] no npm registry` | npm packages declared but no profile rule permits registry access | Add an enforcement rule or package contract entry for the registry |
+| `warn[W005] API key in config` | Hardcoded key in TOML | Use credential references in Service Settings V2/Profile V2 |
 | Build fails: "container runtime not found" | No Docker | Install Docker (`brew install colima docker` on macOS, `sudo apt install docker.io` on Linux) |
 | Build fails: exit 137 (OOM) or exit 143 (SIGTERM mid-build) | Container runtime VM out of memory -- Tauri install-test cold build needs >12GB | Bump Colima to 16GB: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |

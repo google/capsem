@@ -216,11 +216,11 @@ Final paths should follow the actual docs tree present when this sprint starts.
       journal, profile-owned policy/detection, runtime route groups, CLI/UI
       contract, and the explicit extension split for S10/S13/S22/S23.
 - [~] Write engine overview with resolution/provenance diagrams.
-- [ ] Write rule-engine grammar reference:
+- [x] Write rule-engine grammar reference:
       callbacks, canonical policy context roots/fields/functions, decisions,
       rewrite rules, priority defaults, and the explicit `event.*` rejection
       rule.
-- [ ] Write enforcement security page:
+- [x] Write enforcement security page:
       Security Engine pipeline, inline enforcement evaluation, real CEL function
       set, allow/block/ask/rewrite semantics, ask/confirm logging, enforcement pack
       profile ownership, `/enforcement/*` validate/compile/backtest/list/
@@ -325,7 +325,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       for release images; replace with profile-derived `capsem-admin` flows.
 - [~] Update architecture pages to reflect service/profile/VM-effective
   settings.
-- [ ] Update security pages to reflect capabilities, credential brokerage,
+- [~] Update security pages to reflect capabilities, credential brokerage,
   MCP/RAG/tools posture, and remote decisions.
 - [ ] Update security navigation so enforcement and detection format are
       separate first-class pages and are linked from corporate admin docs.
@@ -405,6 +405,13 @@ listed revision that must not be installed or launched is `revoked`.
   status enum audit, profile/catalog contract audit, `capsem-admin` audit,
   detection/enforcement split audit, canonical DSL-root audit, and deferral
   honesty audit.
+- 2026-05-23: Security docs alignment slice rewrote the old Policy page into
+  the canonical rule-authoring reference, switched public examples and
+  `capsem-admin` commands from generic `policy` to `enforcement`, updated
+  network isolation/custom-image/security corpus docs to Profile V2
+  enforcement/detection language, and kept detection as the separate
+  Sigma-compatible finding surface. Verification: `pnpm --dir docs run build`
+  passed without warnings and generated 64 pages.
 
 ## Coverage Ledger
 

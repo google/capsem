@@ -87,7 +87,7 @@ not an operator-facing configuration surface.
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
 | `mcp/*.toml` | `McpServerConfig` | MCP server definitions | `transport`, `command`, `url`, `args`, `env` |
-| `security/web.toml` | `WebSecurityConfig` | Domain allow/block policy | `allow_read`, `allow_write`, `custom_allow`, `search`, `registry`, `repository` |
+| `security/*.toml` | Security control models | Developer seed inputs for built-in enforcement/detection profile packs | canonical rule roots, pack ids, fixtures |
 | `vm/resources.toml` | `VmResourcesConfig` | CPU, RAM, disk limits | `cpu_count`, `ram_gb`, `scratch_disk_size_gb` |
 | `vm/environment.toml` | `VmEnvironmentConfig` | Shell, PATH, TLS | `shell.term`, `shell.home`, `shell.path`, `tls.ca_bundle` |
 | `kernel/defconfig.*` | (raw) | Kernel configs per arch | Linux kernel defconfig files |

@@ -99,10 +99,10 @@ capsem-admin manifest check manifest.json --fast --json
 capsem-admin manifest check manifest.json --download --download-dir downloaded/ --pubkey profile-sign.pub --json
 capsem-admin manifest sign manifest.json --key manifest-sign.key --out manifest.json.minisig
 capsem-admin manifest verify-signature manifest.json --signature manifest.json.minisig --pubkey manifest-sign.pub --json
-capsem-admin policy schema
-capsem-admin policy validate corp-policy.toml --json
-capsem-admin policy compile corp-policy.toml --json
-capsem-admin policy backtest corp-policy.toml --events policy-contexts.jsonl --json
+capsem-admin enforcement schema
+capsem-admin enforcement validate corp-enforcement.toml --json
+capsem-admin enforcement compile corp-enforcement.toml --json
+capsem-admin enforcement backtest corp-enforcement.toml --events policy-contexts.jsonl --json
 capsem-admin detection schema
 capsem-admin detection validate corp-detections.yml --json
 capsem-admin detection compile corp-detections.yml --out detection.ir.json --json

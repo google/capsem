@@ -16,7 +16,7 @@ expected backtest output from drifting apart.
 | `data/policy-context/canonical-policy-contexts.jsonl` | Typed policy-context event fixtures. |
 | `data/policy-context/session-*.jsonl` | Stable session-export fixtures captured from the installed-service policy-context export shape. |
 | `data/enforcement/cel/` | CEL conditions consumed by Rust runtime tests. |
-| `data/enforcement/policy/` | Policy pack fixtures consumed by `capsem-admin`. |
+| `data/enforcement/packs/` | Enforcement pack fixtures consumed by `capsem-admin`. |
 | `data/enforcement/backtest-expected/` | Expected enforcement backtest reports without timing fields. |
 | `data/detection/sigma/` | Sigma-backed detection pack fixtures. |
 | `data/detection/ir/` | Compiled `capsem.detection.ir.v1` fixtures. |
@@ -34,11 +34,11 @@ allowlist, so a typo like `http.request.raw` must fail before replay.
 
 1. Add or edit policy-context rows in
    `data/policy-context/canonical-policy-contexts.jsonl`.
-2. Update enforcement CEL and policy packs together:
+2. Update enforcement CEL and enforcement packs together:
 
    ```bash
-   uv run capsem-admin policy compile data/enforcement/policy/http-google-secret-policy.toml --json
-   uv run capsem-admin policy backtest data/enforcement/policy/http-google-secret-policy.toml --events data/policy-context/canonical-policy-contexts.jsonl --json
+   uv run capsem-admin enforcement compile data/enforcement/packs/http-google-secret-enforcement.toml --json
+   uv run capsem-admin enforcement backtest data/enforcement/packs/http-google-secret-enforcement.toml --events data/policy-context/canonical-policy-contexts.jsonl --json
    ```
 
 3. Update detection Sigma and Detection IR together:

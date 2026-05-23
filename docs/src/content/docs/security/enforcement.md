@@ -10,12 +10,12 @@ Detection decides which findings should be attached to the event. The two
 formats are separate because blocking and alerting have different failure
 modes.
 
-## Policy Pack
+## Enforcement Pack
 
 ```json
 {
-  "schema": "capsem.policy-pack.v1",
-  "id": "corp-default-policy",
+  "schema": "capsem.enforcement-pack.v1",
+  "id": "corp-default-enforcement",
   "version": "2026.0521.1",
   "status": "active",
   "owner": "corp",
@@ -37,15 +37,15 @@ modes.
 Validate and export the schema:
 
 ```bash
-capsem-admin policy schema
-capsem-admin policy validate corp-policy.json --json
-capsem-admin policy compile corp-policy.json --json
-capsem-admin policy backtest corp-policy.json --events policy-contexts.jsonl --json
+capsem-admin enforcement schema
+capsem-admin enforcement validate corp-enforcement.json --json
+capsem-admin enforcement compile corp-enforcement.json --json
+capsem-admin enforcement backtest corp-enforcement.json --events policy-contexts.jsonl --json
 ```
 
 | Field | Meaning |
 |---|---|
-| `schema` | Must be `capsem.policy-pack.v1`. |
+| `schema` | Must be `capsem.enforcement-pack.v1`. |
 | `id` / `version` | Pack identity pinned by the profile. |
 | `status` | `active`, `deprecated`, or `revoked`. Revoked packs must not install or launch. |
 | `event_family` / `event_type` | Normalized event boundary where the rule applies. |

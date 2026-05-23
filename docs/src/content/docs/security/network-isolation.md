@@ -130,32 +130,41 @@ Matching is case-insensitive. Wildcard patterns require at least one subdomain l
 
 ### User configuration
 
-Users can customize policy in `~/.capsem/user.toml`:
+Users customize network behavior through Profile V2 capabilities and
+profile-owned enforcement rules, not standalone network allow/block files:
 
 ```toml
-[network]
-custom_allow = ["internal.corp.com", "*.example.org"]
-custom_block = ["malware.bad.com"]
+[security.rules.http.allow_internal]
+on = "http.request"
+if = 'http.request.host.endsWith(".internal.corp.com")'
+decision = "allow"
+priority = 10
+
+[security.rules.http.block_bad]
+on = "http.request"
+if = 'http.request.host == "malware.bad.com"'
+decision = "block"
+priority = 10
 ```
 
-Corporate policy in `/etc/capsem/corp.toml` overrides user settings entirely per field.
+Corporate profiles can lock the relevant profile sections so user profile forks
+cannot weaken network enforcement.
 
-## HTTP and DNS Policy
+## HTTP and DNS Enforcement
 
-For allowed domains, named policy rules add method, path, query, header,
-and response controls. DNS policy uses the same named-rule model for query and
-response decisions.
+The Network Engine lifts HTTP and DNS activity into Security Events. The
+Security Engine evaluates profile-owned enforcement rules over canonical roots.
 
 ```toml
-[policy.http.block_repo_writes]
+[security.rules.http.block_repo_writes]
 on = "http.request"
-if = 'request.host == "github.com" && request.method == "POST" && request.path.matches("^/openai/")'
+if = 'http.request.host == "github.com" && http.request.method == "POST" && http.request.path.startsWith("/openai/")'
 decision = "block"
 priority = 10
 
-[policy.dns.block_ai_provider]
-on = "dns.query"
-if = 'qname == "api.openai.com" && qtype == "A"'
+[security.rules.dns.block_ai_provider]
+on = "dns.request"
+if = 'dns.request.qname == "api.openai.com" && dns.request.qtype == "A"'
 decision = "block"
 priority = 10
 ```

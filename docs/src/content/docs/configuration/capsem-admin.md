@@ -44,8 +44,8 @@ Do not test development changes against the released PyPI package.
 | `capsem-admin manifest generate --profiles profiles/ --out manifest.json` | Generate a signed-catalog candidate. |
 | `capsem-admin manifest check manifest.json --fast` | Use HTTP HEAD checks for profile/assets. |
 | `capsem-admin manifest check manifest.json --download` | Download and verify full bytes. |
-| `capsem-admin policy validate <policy-pack>` | Validate enforcement packs. |
-| `capsem-admin policy backtest <policy-pack> --events contexts.jsonl` | Backtest enforcement fixtures. |
+| `capsem-admin enforcement validate <enforcement-pack>` | Validate enforcement packs. |
+| `capsem-admin enforcement backtest <enforcement-pack> --events contexts.jsonl` | Backtest enforcement fixtures. |
 | `capsem-admin detection validate <detection-pack>` | Validate detection-pack envelopes. |
 | `capsem-admin detection compile <detection-pack>` | Validate Sigma and emit Detection IR. |
 | `capsem-admin detection backtest <detection-pack> --events contexts.jsonl` | Backtest detection fixtures. |
@@ -63,4 +63,3 @@ crosses a boundary:
 
 This keeps validation errors stable and debuggable across profiles, service
 settings, image plans, manifests, enforcement packs, and detection packs.
-

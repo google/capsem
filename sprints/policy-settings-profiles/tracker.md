@@ -2608,6 +2608,13 @@ a valid claim -- mark it `[ ]` instead.
     audit, signed catalog/Profile V2/Service Settings V2 audit,
     `capsem-admin` workflow audit, detection/enforcement split audit,
     canonical DSL-root audit, and deferral-honesty audit.
+    Fourth S19 security-docs slice rewrote the old Policy page as canonical
+    rule authoring, converted public examples and `capsem-admin` commands from
+    generic `policy` to `enforcement`, updated network isolation/custom image/
+    rule-corpus docs to Profile V2 enforcement/detection language, and kept
+    detection as the separate Sigma-compatible finding surface. Verification:
+    `pnpm --dir docs run build` passed without warnings and generated **64**
+    pages.
 33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate
