@@ -58,9 +58,17 @@ blocked.
   blocking-capable CEL enforcement rules. `backtest` prints summary counts plus
   event-level rows; default output includes up to 100 matched events, deduped
   by simple evidence signature for diversity.
+- Latest CLI breadth slice landed `compile`, `update`, and `backtest` for
+  enforcement rules. `install` keeps a visible `add` alias. Backtest accepts a
+  JSON array, `{ "events": [...] }` envelope, single event object, or JSONL
+  file of runtime backtest events, then calls the service `/enforcement/backtest`
+  route and renders event/evidence rows in human output.
 - Add `capsem detection validate|compile|backtest|list|add|update|delete|stats|hunt`
   mirroring the S08b service routes. Detection `hunt` is forensic over
   historical resolved-event journals; enforcement does not use the word hunt.
+- Latest CLI breadth slice landed `compile`, `update`, `backtest`, and
+  file-backed `hunt` for detection rules. `install` keeps a visible `add`
+  alias, while `hunt-session` remains the session-db forensic shortcut.
 - CLI backtest/hunt output includes event refs (`session_id`, `event_id`,
   `sequence`) and full matched field evidence by default. Redacted output is an
   explicit export/support-bundle mode, not the local debugging default.

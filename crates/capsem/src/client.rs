@@ -634,6 +634,14 @@ impl UdsClient {
         self.request("POST", path, Some(body)).await
     }
 
+    pub async fn put<T: Serialize, R: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        body: T,
+    ) -> Result<R> {
+        self.request("PUT", path, Some(body)).await
+    }
+
     pub async fn get<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
         self.request::<(), R>("GET", path, None).await
     }

@@ -2459,6 +2459,25 @@ a valid claim -- mark it `[ ]` instead.
     validate/compile/backtest/live registry/stats/hunt, logs/status/debug, and
     shipped ask/confirm behavior can only be operated through raw HTTP or test
     fixtures.
+    First release-closeout CLI breadth slice added the missing runtime rule
+    verbs that already existed in the service: `capsem enforcement compile`,
+    `capsem enforcement update`, `capsem enforcement backtest`,
+    `capsem detection compile`, `capsem detection update`,
+    `capsem detection backtest`, and file-backed `capsem detection hunt`.
+    `install` keeps `add` as a visible alias for both rule families. Backtest
+    input accepts a JSON event array, `{ "events": [...] }` envelope, single
+    event object, or JSONL event file, then renders matched event refs and
+    evidence fields in human output. Verification: targeted `cargo test -p
+    capsem parse_runtime_security_rule_commands`, `cargo test -p capsem
+    read_runtime_backtest_events_accepts_envelope_array_and_jsonl`, and `cargo
+    test -p capsem format_runtime_backtest_summary_uses_requested_label`
+    passed before widening; `cargo test -p capsem`,
+    `cargo test -p capsem-service handle_enforcement_backtest --bin
+    capsem-service`, `cargo test -p capsem-service handle_detection_backtest
+    --bin capsem-service`, `cargo build -p capsem`, touched-file rustfmt, and
+    `git diff --check` passed. Full `cargo fmt --all -- --check` is still held
+    by pre-existing formatting drift in `capsem-core` MCP frame and
+    `capsem-network-engine` HTTP policy files, not this CLI slice.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

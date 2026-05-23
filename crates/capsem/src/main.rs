@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use client::{
@@ -84,8 +84,13 @@ const GROUPED_HELP: &str = "\
 
 \x1b[36;1;4mSecurity Rules:\x1b[0m
   \x1b[32;1menforcement list\x1b[0m    List runtime enforcement rules
+  \x1b[32;1menforcement compile\x1b[0m Compile a runtime enforcement rule
   \x1b[32;1menforcement install\x1b[0m Install a runtime enforcement rule
+  \x1b[32;1menforcement backtest\x1b[0m Backtest one enforcement rule against events
   \x1b[32;1mdetection list\x1b[0m      List runtime detection rules
+  \x1b[32;1mdetection compile\x1b[0m   Compile a runtime detection rule
+  \x1b[32;1mdetection backtest\x1b[0m  Backtest one detection rule against events
+  \x1b[32;1mdetection hunt\x1b[0m      Hunt detection rules against events
   \x1b[32;1mdetection hunt-session\x1b[0m Backtest one detection rule against a session
 
 \x1b[36;1;4mProfiles:\x1b[0m
@@ -305,7 +310,31 @@ enum EnforcementCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Compile an enforcement rule without installing it
+    Compile {
+        /// Runtime rule id
+        id: String,
+        /// CEL condition using policy-context roots
+        #[arg(long)]
+        condition: String,
+        /// Enforcement decision to return when the rule matches
+        #[arg(long, value_enum)]
+        decision: CliSecurityDecision,
+        /// Optional pack id
+        #[arg(long = "pack-id")]
+        pack_id: Option<String>,
+        /// Optional operator-facing reason
+        #[arg(long)]
+        reason: Option<String>,
+        /// Store the rule disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// Install or replace a runtime enforcement rule
+    #[command(visible_alias = "add")]
     Install {
         /// Runtime rule id
         id: String,
@@ -321,6 +350,58 @@ enum EnforcementCommands {
         /// Optional operator-facing reason
         #[arg(long)]
         reason: Option<String>,
+        /// Store the rule disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update an installed runtime enforcement rule
+    Update {
+        /// Runtime rule id
+        id: String,
+        /// CEL condition using policy-context roots
+        #[arg(long)]
+        condition: String,
+        /// Enforcement decision to return when the rule matches
+        #[arg(long, value_enum)]
+        decision: CliSecurityDecision,
+        /// Optional pack id
+        #[arg(long = "pack-id")]
+        pack_id: Option<String>,
+        /// Optional operator-facing reason
+        #[arg(long)]
+        reason: Option<String>,
+        /// Store the rule disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Backtest one enforcement rule against a JSON/JSONL event file
+    Backtest {
+        /// Runtime rule id
+        id: String,
+        /// JSON or JSONL file containing backtest events
+        #[arg(long)]
+        events: PathBuf,
+        /// CEL condition using policy-context roots
+        #[arg(long)]
+        condition: String,
+        /// Enforcement decision to return when the rule matches
+        #[arg(long, value_enum)]
+        decision: CliSecurityDecision,
+        /// Optional pack id
+        #[arg(long = "pack-id")]
+        pack_id: Option<String>,
+        /// Optional operator-facing reason
+        #[arg(long)]
+        reason: Option<String>,
+        /// Maximum diverse matches to return
+        #[arg(long)]
+        limit: Option<usize>,
         /// Store the rule disabled
         #[arg(long)]
         disabled: bool,
@@ -381,7 +462,40 @@ enum DetectionCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Compile a detection rule without installing it
+    Compile {
+        /// Runtime rule id
+        id: String,
+        /// Runtime pack id
+        #[arg(long = "pack-id")]
+        pack_id: String,
+        /// Detection title
+        #[arg(long)]
+        title: String,
+        /// CEL condition using policy-context roots
+        #[arg(long)]
+        condition: String,
+        /// Severity for emitted findings
+        #[arg(long, value_enum)]
+        severity: CliSeverity,
+        /// Confidence for emitted findings
+        #[arg(long, value_enum)]
+        confidence: CliConfidence,
+        /// Optional Sigma rule id
+        #[arg(long = "sigma-id")]
+        sigma_id: Option<String>,
+        /// Finding tag; repeat for multiple tags
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Store the rule disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// Install or replace a runtime detection rule
+    #[command(visible_alias = "add")]
     Install {
         /// Runtime rule id
         id: String,
@@ -406,6 +520,114 @@ enum DetectionCommands {
         /// Finding tag; repeat for multiple tags
         #[arg(long = "tag")]
         tags: Vec<String>,
+        /// Store the rule disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update an installed runtime detection rule
+    Update {
+        /// Runtime rule id
+        id: String,
+        /// Runtime pack id
+        #[arg(long = "pack-id")]
+        pack_id: String,
+        /// Detection title
+        #[arg(long)]
+        title: String,
+        /// CEL condition using policy-context roots
+        #[arg(long)]
+        condition: String,
+        /// Severity for emitted findings
+        #[arg(long, value_enum)]
+        severity: CliSeverity,
+        /// Confidence for emitted findings
+        #[arg(long, value_enum)]
+        confidence: CliConfidence,
+        /// Optional Sigma rule id
+        #[arg(long = "sigma-id")]
+        sigma_id: Option<String>,
+        /// Finding tag; repeat for multiple tags
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Store the rule disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Backtest one detection rule against a JSON/JSONL event file
+    Backtest {
+        /// Runtime rule id
+        id: String,
+        /// JSON or JSONL file containing backtest events
+        #[arg(long)]
+        events: PathBuf,
+        /// Runtime pack id
+        #[arg(long = "pack-id")]
+        pack_id: String,
+        /// Detection title
+        #[arg(long)]
+        title: String,
+        /// CEL condition using policy-context roots
+        #[arg(long)]
+        condition: String,
+        /// Severity for emitted findings
+        #[arg(long, value_enum)]
+        severity: CliSeverity,
+        /// Confidence for emitted findings
+        #[arg(long, value_enum)]
+        confidence: CliConfidence,
+        /// Optional Sigma rule id
+        #[arg(long = "sigma-id")]
+        sigma_id: Option<String>,
+        /// Finding tag; repeat for multiple tags
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Maximum diverse matches to return
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Store the rule disabled
+        #[arg(long)]
+        disabled: bool,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Hunt detection rules against a JSON/JSONL event file
+    Hunt {
+        /// Runtime rule id
+        id: String,
+        /// JSON or JSONL file containing backtest events
+        #[arg(long)]
+        events: PathBuf,
+        /// Runtime pack id
+        #[arg(long = "pack-id")]
+        pack_id: String,
+        /// Detection title
+        #[arg(long)]
+        title: String,
+        /// CEL condition using policy-context roots
+        #[arg(long)]
+        condition: String,
+        /// Severity for emitted findings
+        #[arg(long, value_enum)]
+        severity: CliSeverity,
+        /// Confidence for emitted findings
+        #[arg(long, value_enum)]
+        confidence: CliConfidence,
+        /// Optional Sigma rule id
+        #[arg(long = "sigma-id")]
+        sigma_id: Option<String>,
+        /// Finding tag; repeat for multiple tags
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Maximum diverse matches to return
+        #[arg(long)]
+        limit: Option<usize>,
         /// Store the rule disabled
         #[arg(long)]
         disabled: bool,
@@ -1056,6 +1278,52 @@ fn detection_rule_body(
     })
 }
 
+fn read_runtime_backtest_events(path: &Path) -> Result<Vec<serde_json::Value>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read runtime backtest events {}", path.display()))?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("runtime backtest events file is empty: {}", path.display());
+    }
+
+    if trimmed.starts_with('[') {
+        return serde_json::from_str(trimmed)
+            .with_context(|| format!("parse runtime backtest events array {}", path.display()));
+    }
+
+    if trimmed.starts_with('{') {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(events) = value.get("events").and_then(serde_json::Value::as_array) {
+                return Ok(events.clone());
+            }
+            return Ok(vec![value]);
+        }
+    }
+
+    let mut events = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line).with_context(|| {
+            format!(
+                "parse runtime backtest JSONL event {} in {}",
+                index + 1,
+                path.display()
+            )
+        })?;
+        events.push(value);
+    }
+    if events.is_empty() {
+        anyhow::bail!(
+            "runtime backtest events file had no JSON events: {}",
+            path.display()
+        );
+    }
+    Ok(events)
+}
+
 fn print_runtime_rule_list_summary(kind: &str, result: &serde_json::Value) {
     let rules = result["rules"].as_array().cloned().unwrap_or_default();
     if rules.is_empty() {
@@ -1110,6 +1378,14 @@ fn print_runtime_hunt_summary(result: &serde_json::Value) {
 }
 
 fn format_runtime_hunt_summary(result: &serde_json::Value) -> String {
+    format_runtime_match_summary("Detection hunt", result)
+}
+
+fn print_runtime_backtest_summary(kind: &str, result: &serde_json::Value) {
+    print!("{}", format_runtime_match_summary(kind, result));
+}
+
+fn format_runtime_match_summary(kind: &str, result: &serde_json::Value) -> String {
     let mut output = String::new();
     let truncated = if result["truncated"].as_bool().unwrap_or(false) {
         " (truncated)"
@@ -1118,7 +1394,8 @@ fn format_runtime_hunt_summary(result: &serde_json::Value) -> String {
     };
     writeln!(
         output,
-        "Detection hunt matched {} event(s), {} unique evidence signature(s){}.",
+        "{} matched {} event(s), {} unique evidence signature(s){}.",
+        kind,
         result["total_matches"].as_u64().unwrap_or(0),
         result["unique_evidence_matches"].as_u64().unwrap_or(0),
         truncated
@@ -2331,6 +2608,25 @@ async fn main() -> Result<()> {
                 print_runtime_compile_summary("Enforcement", &result);
             }
         }
+        Commands::Enforcement(EnforcementCommands::Compile {
+            id,
+            condition,
+            decision,
+            pack_id,
+            reason,
+            disabled,
+            json,
+        }) => {
+            let body = enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled);
+            let resp: ApiResponse<serde_json::Value> =
+                client.post("/enforcement/compile", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_runtime_compile_summary("Enforcement", &result);
+            }
+        }
         Commands::Enforcement(EnforcementCommands::Install {
             id,
             condition,
@@ -2347,6 +2643,50 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 print_runtime_install_summary("Enforcement", &result);
+            }
+        }
+        Commands::Enforcement(EnforcementCommands::Update {
+            id,
+            condition,
+            decision,
+            pack_id,
+            reason,
+            disabled,
+            json,
+        }) => {
+            let body = enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled);
+            let path = format!("/enforcement/{}", urlencoding::encode(id));
+            let resp: ApiResponse<serde_json::Value> = client.put(&path, &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_runtime_install_summary("Enforcement", &result);
+            }
+        }
+        Commands::Enforcement(EnforcementCommands::Backtest {
+            id,
+            events,
+            condition,
+            decision,
+            pack_id,
+            reason,
+            limit,
+            disabled,
+            json,
+        }) => {
+            let body = serde_json::json!({
+                "rule": enforcement_rule_body(id, condition, *decision, pack_id, reason, *disabled),
+                "events": read_runtime_backtest_events(events)?,
+                "limit": limit,
+            });
+            let resp: ApiResponse<serde_json::Value> =
+                client.post("/enforcement/backtest", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_runtime_backtest_summary("Enforcement backtest", &result);
             }
         }
         Commands::Enforcement(EnforcementCommands::Delete { id }) => {
@@ -2408,6 +2748,38 @@ async fn main() -> Result<()> {
                 print_runtime_compile_summary("Detection", &result);
             }
         }
+        Commands::Detection(DetectionCommands::Compile {
+            id,
+            pack_id,
+            title,
+            condition,
+            severity,
+            confidence,
+            sigma_id,
+            tags,
+            disabled,
+            json,
+        }) => {
+            let body = detection_rule_body(
+                id,
+                pack_id,
+                title,
+                condition,
+                *severity,
+                *confidence,
+                sigma_id,
+                tags,
+                *disabled,
+            );
+            let resp: ApiResponse<serde_json::Value> =
+                client.post("/detection/compile", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_runtime_compile_summary("Detection", &result);
+            }
+        }
         Commands::Detection(DetectionCommands::Install {
             id,
             pack_id,
@@ -2437,6 +2809,115 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 print_runtime_install_summary("Detection", &result);
+            }
+        }
+        Commands::Detection(DetectionCommands::Update {
+            id,
+            pack_id,
+            title,
+            condition,
+            severity,
+            confidence,
+            sigma_id,
+            tags,
+            disabled,
+            json,
+        }) => {
+            let body = detection_rule_body(
+                id,
+                pack_id,
+                title,
+                condition,
+                *severity,
+                *confidence,
+                sigma_id,
+                tags,
+                *disabled,
+            );
+            let path = format!("/detection/{}", urlencoding::encode(id));
+            let resp: ApiResponse<serde_json::Value> = client.put(&path, &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_runtime_install_summary("Detection", &result);
+            }
+        }
+        Commands::Detection(DetectionCommands::Backtest {
+            id,
+            events,
+            pack_id,
+            title,
+            condition,
+            severity,
+            confidence,
+            sigma_id,
+            tags,
+            limit,
+            disabled,
+            json,
+        }) => {
+            let body = serde_json::json!({
+                "rule": detection_rule_body(
+                    id,
+                    pack_id,
+                    title,
+                    condition,
+                    *severity,
+                    *confidence,
+                    sigma_id,
+                    tags,
+                    *disabled,
+                ),
+                "events": read_runtime_backtest_events(events)?,
+                "limit": limit,
+            });
+            let resp: ApiResponse<serde_json::Value> =
+                client.post("/detection/backtest", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_runtime_backtest_summary("Detection backtest", &result);
+            }
+        }
+        Commands::Detection(DetectionCommands::Hunt {
+            id,
+            events,
+            pack_id,
+            title,
+            condition,
+            severity,
+            confidence,
+            sigma_id,
+            tags,
+            limit,
+            disabled,
+            json,
+        }) => {
+            let rule = detection_rule_body(
+                id,
+                pack_id,
+                title,
+                condition,
+                *severity,
+                *confidence,
+                sigma_id,
+                tags,
+                *disabled,
+            );
+            let body = serde_json::json!({
+                "rules": [rule],
+                "events": read_runtime_backtest_events(events)?,
+                "limit": limit,
+            });
+            let resp: ApiResponse<serde_json::Value> =
+                client.post("/detection/hunt", &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print_runtime_hunt_summary(&result);
             }
         }
         Commands::Detection(DetectionCommands::HuntSession {
@@ -3718,6 +4199,33 @@ mod tests {
         let cli = Cli::parse_from([
             "capsem",
             "enforcement",
+            "compile",
+            "block-admin",
+            "--condition",
+            "http.request.path.startsWith('/admin')",
+            "--decision",
+            "block",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Enforcement(EnforcementCommands::Compile {
+                id,
+                condition,
+                decision,
+                json,
+                ..
+            }) => {
+                assert_eq!(id, "block-admin");
+                assert_eq!(condition, "http.request.path.startsWith('/admin')");
+                assert_eq!(decision, CliSecurityDecision::Block);
+                assert!(json);
+            }
+            _ => panic!("expected enforcement compile"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "enforcement",
             "install",
             "block-admin",
             "--condition",
@@ -3750,6 +4258,154 @@ mod tests {
                 assert!(json);
             }
             _ => panic!("expected enforcement install"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "enforcement",
+            "update",
+            "block-admin",
+            "--condition",
+            "http.request.path.startsWith('/admin')",
+            "--decision",
+            "block",
+            "--pack-id",
+            "runtime",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Enforcement(EnforcementCommands::Update {
+                id,
+                condition,
+                decision,
+                pack_id,
+                ..
+            }) => {
+                assert_eq!(id, "block-admin");
+                assert_eq!(condition, "http.request.path.startsWith('/admin')");
+                assert_eq!(decision, CliSecurityDecision::Block);
+                assert_eq!(pack_id.as_deref(), Some("runtime"));
+            }
+            _ => panic!("expected enforcement update"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "enforcement",
+            "backtest",
+            "block-admin",
+            "--events",
+            "events.jsonl",
+            "--condition",
+            "http.request.path.startsWith('/admin')",
+            "--decision",
+            "block",
+            "--limit",
+            "25",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Enforcement(EnforcementCommands::Backtest {
+                id,
+                events,
+                limit,
+                json,
+                ..
+            }) => {
+                assert_eq!(id, "block-admin");
+                assert_eq!(events, PathBuf::from("events.jsonl"));
+                assert_eq!(limit, Some(25));
+                assert!(json);
+            }
+            _ => panic!("expected enforcement backtest"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "detection",
+            "compile",
+            "detect-tool-result",
+            "--pack-id",
+            "runtime-detection",
+            "--title",
+            "Tool result",
+            "--condition",
+            "model.response.tool_results[0].returned_to_model == true",
+            "--severity",
+            "medium",
+            "--confidence",
+            "high",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Detection(DetectionCommands::Compile {
+                id,
+                pack_id,
+                severity,
+                confidence,
+                ..
+            }) => {
+                assert_eq!(id, "detect-tool-result");
+                assert_eq!(pack_id, "runtime-detection");
+                assert_eq!(severity, CliSeverity::Medium);
+                assert_eq!(confidence, CliConfidence::High);
+            }
+            _ => panic!("expected detection compile"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "detection",
+            "backtest",
+            "detect-tool-result",
+            "--events",
+            "events.json",
+            "--pack-id",
+            "runtime-detection",
+            "--title",
+            "Tool result",
+            "--condition",
+            "model.response.tool_results[0].returned_to_model == true",
+            "--severity",
+            "medium",
+            "--confidence",
+            "high",
+            "--limit",
+            "50",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Detection(DetectionCommands::Backtest {
+                id, events, limit, ..
+            }) => {
+                assert_eq!(id, "detect-tool-result");
+                assert_eq!(events, PathBuf::from("events.json"));
+                assert_eq!(limit, Some(50));
+            }
+            _ => panic!("expected detection backtest"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "detection",
+            "hunt",
+            "detect-tool-result",
+            "--events",
+            "events.json",
+            "--pack-id",
+            "runtime-detection",
+            "--title",
+            "Tool result",
+            "--condition",
+            "model.response.tool_results[0].returned_to_model == true",
+            "--severity",
+            "medium",
+            "--confidence",
+            "high",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Detection(DetectionCommands::Hunt { id, events, .. }) => {
+                assert_eq!(id, "detect-tool-result");
+                assert_eq!(events, PathBuf::from("events.json"));
+            }
+            _ => panic!("expected detection hunt"),
         }
 
         let cli = Cli::parse_from([
@@ -3833,6 +4489,50 @@ mod tests {
         assert!(summary.contains("detect-google"));
         assert!(summary.contains("evt-1"));
         assert!(summary.contains("http.request.host=google.example.test"));
+    }
+
+    #[test]
+    fn format_runtime_backtest_summary_uses_requested_label() {
+        let summary = format_runtime_match_summary(
+            "Enforcement backtest",
+            &serde_json::json!({
+                "total_matches": 1,
+                "unique_evidence_matches": 1,
+                "truncated": true,
+                "rows": []
+            }),
+        );
+
+        assert!(summary.contains("Enforcement backtest matched 1 event(s)"));
+        assert!(summary.contains("(truncated)"));
+    }
+
+    #[test]
+    fn read_runtime_backtest_events_accepts_envelope_array_and_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let envelope = dir.path().join("events-envelope.json");
+        std::fs::write(
+            &envelope,
+            r#"{"events":[{"event":{"event_id":"evt-1"}},{"event":{"event_id":"evt-2"}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(read_runtime_backtest_events(&envelope).unwrap().len(), 2);
+
+        let array = dir.path().join("events-array.json");
+        std::fs::write(
+            &array,
+            r#"[{"event":{"event_id":"evt-1"}},{"event":{"event_id":"evt-2"}}]"#,
+        )
+        .unwrap();
+        assert_eq!(read_runtime_backtest_events(&array).unwrap().len(), 2);
+
+        let jsonl = dir.path().join("events.jsonl");
+        std::fs::write(
+            &jsonl,
+            "{\"event\":{\"event_id\":\"evt-1\"}}\n{\"event\":{\"event_id\":\"evt-2\"}}\n",
+        )
+        .unwrap();
+        assert_eq!(read_runtime_backtest_events(&jsonl).unwrap().len(), 2);
     }
 
     #[test]
