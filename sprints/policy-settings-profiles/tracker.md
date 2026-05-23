@@ -2470,12 +2470,26 @@ a valid claim -- mark it `[ ]` instead.
     -- conditional release blocker. Required before any shipped profile/rule
     exposes `decision = "ask"` as user-facing behavior; otherwise ask must be
     disabled or explicitly unavailable and must never silently behave as allow.
-31. [ ] [S16 - Profile UI](S16-profile-ui.md)
+31. [~] [S16 - Profile UI](S16-profile-ui.md)
     -- release-blocking usable UI surface for the bedrock endpoint contract:
     profile catalog/selector/revisions, package/asset readiness, profile-backed
     VM create, VM profile state, runtime enforcement/detection overlay list/
     validate/install/delete/stats/backtest/hunt entry points, and clear
     read-only handling for profile/corp-owned rules.
+    First S16 debug-provenance slice added a typed Settings -> Policy Security
+    Engine health panel backed by `/debug/report`. The UI now surfaces
+    enforcement/detection rule counts, enabled/compiled/error state, match and
+    finding totals, runtime-rule store state, and confirm resolver availability,
+    with an explicit unavailable fallback when the report lacks the security
+    block. Verification: `pnpm --dir frontend exec vitest run
+    src/lib/__tests__/security-engine-health-section.test.ts
+    src/lib/__tests__/settings-debug-report.test.ts
+    src/lib/__tests__/runtime-security-rules-section.test.ts` passed with **7**
+    tests, `pnpm --dir frontend run check` passed, `pnpm --dir frontend run
+    build` passed, and Settings -> Policy was opened in the local Astro UI with
+    a screenshot verification of the fallback state. Still missing in S16:
+    profile catalog/selector/revision/asset/VM-create screens, VM profile-state
+    display, runtime backtest/hunt UI, and final release UI usability replay.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

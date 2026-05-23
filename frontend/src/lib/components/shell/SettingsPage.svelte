@@ -9,6 +9,7 @@
   import McpSection from '../settings/McpSection.svelte';
   import PolicyRulesSection from '../settings/PolicyRulesSection.svelte';
   import RuntimeSecurityRulesSection from '../settings/RuntimeSecurityRulesSection.svelte';
+  import SecurityEngineHealthSection from '../settings/SecurityEngineHealthSection.svelte';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
   import Brain from 'phosphor-svelte/lib/Brain';
@@ -381,6 +382,7 @@
       {:else if activeSection === 'policy'}
         <!-- ===== Policy ===== -->
         <div class="space-y-8">
+          <SecurityEngineHealthSection />
           <PolicyRulesSection />
           <RuntimeSecurityRulesSection />
         </div>

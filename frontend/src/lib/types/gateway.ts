@@ -279,6 +279,62 @@ export interface RuntimeRuleEntry {
   last_matched_unix_ms?: number | null;
 }
 
+export interface DebugReport {
+  text: string;
+  json?: DebugReportJson | null;
+}
+
+export interface DebugReportJson {
+  schema: string;
+  redacted: boolean;
+  security_engine: RuntimeSecurityEngineReport;
+}
+
+export interface RuntimeSecurityEngineReport {
+  present: boolean;
+  runtime_rules_store_enabled: boolean;
+  runtime_rules_store_path?: string | null;
+  enforcement: RuntimeSecurityRegistryReport;
+  detection: RuntimeSecurityRegistryReport;
+  confirm: RuntimeSecurityConfirmReport;
+}
+
+export interface RuntimeSecurityRegistryReport {
+  rule_count: number;
+  enabled_count: number;
+  compiled_count: number;
+  error_count: number;
+  runtime_scope_count: number;
+  profile_scope_count: number;
+  scope_counts: Record<string, number>;
+  match_count_total: number;
+  latest_match_unix_ms?: number | null;
+  rules: RuntimeSecurityRuleReport[];
+}
+
+export interface RuntimeSecurityRuleReport {
+  kind: RuntimeRuleKind;
+  id: string;
+  pack_id?: string | null;
+  scope: RuntimeRuleScope;
+  origin: RuntimeRuleOrigin;
+  priority: number;
+  enabled: boolean;
+  compiled: boolean;
+  generation: number;
+  action?: RuntimeSecurityDecision | null;
+  severity?: RuntimeSeverity | null;
+  confidence?: RuntimeConfidence | null;
+  match_count: number;
+  last_matched_event?: string | null;
+  last_matched_unix_ms?: number | null;
+}
+
+export interface RuntimeSecurityConfirmReport {
+  resolver_available: boolean;
+  owner?: string | null;
+}
+
 export interface RuntimeRuleListResponse {
   kind: RuntimeRuleKind;
   rules: RuntimeRuleEntry[];

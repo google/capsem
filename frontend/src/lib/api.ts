@@ -24,6 +24,7 @@ import type {
   RuntimeDetectionHuntRequest,
   RuntimeSessionDetectionHuntRequest,
   RuntimeBacktestResult,
+  DebugReport,
 } from './types/gateway';
 import type {
   SettingsResponse,
@@ -684,11 +685,6 @@ export async function lintConfig(): Promise<ConfigIssue[]> {
   const resp = await _post('/settings/lint');
   return await resp.json();
 }
-
-export type DebugReport = {
-  text: string;
-  json: unknown;
-};
 
 /** Build a redacted pasteable debug report for bug reports. */
 export async function getDebugReport(): Promise<DebugReport> {

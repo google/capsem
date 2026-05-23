@@ -45,10 +45,18 @@ requests.
 
 ## Coverage Ledger
 
+- Implemented slice: Settings -> Policy now has a typed Security Engine health
+  panel backed by `/debug/report`. It shows enforcement/detection rule counts,
+  enabled/compiled/error state, match/finding totals, runtime-rule store state,
+  and confirm resolver availability. Missing or malformed debug-report security
+  blocks fail closed with an explicit unavailable state instead of throwing.
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
   values, revisions, package/tool contracts, asset readiness, VM pin fields,
   enforcement-pack summaries, detection-pack summaries, and backtest result
   rows.
+- Unit/contract completed: `security-engine-health-section.test.ts` covers the
+  typed Security Engine health projection, manual refresh, and missing security
+  block fallback. Existing runtime-rule panel and debug-copy tests were rerun.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states; enforcement/detection
   runtime overlay list/validate/install/delete/stats/backtest/hunt flows through
@@ -60,5 +68,11 @@ requests.
 - Telemetry: UI links to status/debug provenance for profile revision, asset
   verification failures, enforcement matches, detection findings, and rule
   stats.
+- Telemetry completed: the first debug provenance surface now renders
+  `/debug/report` runtime Security Engine counters in the Policy UI.
 - Performance: profile switching remains responsive and does not trigger network
   fetches or hash scans on every selection change.
+- Visual/build proof: Settings -> Policy was opened in the local Astro UI and
+  screenshot-checked; the live dev gateway returned a debug report without a
+  security block, proving the explicit unavailable fallback path. Production
+  frontend build passed.

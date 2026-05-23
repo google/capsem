@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a resolved Security Event summary to `capsem logs`, so session logs show
   event, block, detection, family, and rule counts before the raw structured
   security-event JSON lines.
+- Added a Settings -> Policy Security Engine health panel that renders typed
+  `/debug/report` runtime enforcement/detection counts, match totals, runtime
+  rule-store state, and confirm resolver availability.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.
