@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a profile asset readiness panel to the frontend Sessions screen,
   showing the active profile revision, architecture, payload hash, and
   per-asset source/hash/size provenance from `/status`.
+- Added runtime rule backtesting to the Settings -> Policy Live Rules editor,
+  posting draft enforcement/detection rules with a JSON event corpus and
+  rendering deduplicated evidence rows from the service backtest result.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

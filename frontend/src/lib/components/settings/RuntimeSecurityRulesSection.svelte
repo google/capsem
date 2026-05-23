@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
+    backtestRuntimeDetectionRule,
+    backtestRuntimeEnforcementRule,
     deleteRuntimeDetectionRule,
     deleteRuntimeEnforcementRule,
     getRuntimeDetectionRules,
@@ -12,6 +14,8 @@
   } from '../../api';
   import type {
     RuntimeConfidence,
+    RuntimeBacktestEvent,
+    RuntimeBacktestResult,
     RuntimeDetectionRuleRequest,
     RuntimeEnforcementRuleRequest,
     RuntimeRuleEntry,
@@ -51,6 +55,8 @@
   let error = $state<string | null>(null);
   let statusMessage = $state<string | null>(null);
   let draft = $state<Draft>(emptyDraft());
+  let backtestEventsJson = $state(defaultBacktestEventsJson());
+  let backtestResult = $state<RuntimeBacktestResult | null>(null);
 
   let activeRules = $derived(activeKind === 'enforcement' ? enforcementRules : detectionRules);
   let draftValid = $derived(draft.id.trim().length > 0 && draft.condition.trim().length > 0);
@@ -70,6 +76,27 @@
       confidence: 'high',
       tags: '',
     };
+  }
+
+  function defaultBacktestEventsJson(): string {
+    return JSON.stringify(
+      [
+        {
+          event_ref: { event_id: 'sample-http-request' },
+          event: {
+            event_family: 'http',
+            event_type: 'http.request',
+            subject: {
+              host: 'google.com',
+              path: '/admin',
+              body: { text: 'secret token' },
+            },
+          },
+        },
+      ],
+      null,
+      2,
+    );
   }
 
   function tagsFromDraft(): string[] {
@@ -159,6 +186,29 @@
     }
   }
 
+  async function backtestDraft() {
+    if (!draftValid) return;
+    busy = true;
+    error = null;
+    statusMessage = null;
+    backtestResult = null;
+    try {
+      const parsed = JSON.parse(backtestEventsJson) as unknown;
+      if (!Array.isArray(parsed)) {
+        throw new Error('Backtest events must be a JSON array.');
+      }
+      const events = parsed as RuntimeBacktestEvent[];
+      backtestResult = activeKind === 'enforcement'
+        ? await backtestRuntimeEnforcementRule({ rule: enforcementRequest(), events, limit: 100 })
+        : await backtestRuntimeDetectionRule({ rule: detectionRequest(), events, limit: 100 });
+      statusMessage = `${backtestResult.total_matches} match${backtestResult.total_matches === 1 ? '' : 'es'} across ${backtestResult.unique_evidence_matches} unique evidence row${backtestResult.unique_evidence_matches === 1 ? '' : 's'}.`;
+    } catch (err) {
+      error = String(err instanceof Error ? err.message : err);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function deleteRule(rule: RuntimeRuleEntry) {
     if (rule.scope !== 'runtime') return;
     busy = true;
@@ -186,6 +236,10 @@
   function ruleTitle(rule: RuntimeRuleEntry): string | null {
     if (rule.definition.kind === 'detection') return rule.definition.title;
     return rule.definition.reason ?? null;
+  }
+
+  function jsonText(value: unknown): string {
+    return JSON.stringify(value);
   }
 
   onMount(() => {
@@ -389,6 +443,70 @@
             Install
           </button>
         </div>
+      </div>
+
+      <div class="p-4">
+        <div class="flex items-center justify-between gap-x-4">
+          <label class="block flex-1">
+            <span class="text-xs font-medium text-foreground">Backtest events JSON</span>
+            <textarea
+              class="mt-1 min-h-32 w-full py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
+              value={backtestEventsJson}
+              oninput={(e) => backtestEventsJson = (e.target as HTMLTextAreaElement).value}
+            ></textarea>
+          </label>
+          <button
+            type="button"
+            class="self-end py-2 px-4 inline-flex items-center gap-x-1.5 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-50"
+            disabled={!draftValid || busy}
+            onclick={backtestDraft}
+          >
+            <CheckCircle size={16} />
+            Backtest
+          </button>
+        </div>
+        {#if backtestResult}
+          <div class="mt-3 rounded-lg border border-line-2 bg-layer p-3">
+            <div class="grid gap-2 text-xs sm:grid-cols-3">
+              <div>
+                <span class="text-muted-foreground-1">Matches</span>
+                <p class="mt-1 font-mono text-foreground">{backtestResult.total_matches}</p>
+              </div>
+              <div>
+                <span class="text-muted-foreground-1">Unique evidence</span>
+                <p class="mt-1 font-mono text-foreground">{backtestResult.unique_evidence_matches}</p>
+              </div>
+              <div>
+                <span class="text-muted-foreground-1">Truncated</span>
+                <p class="mt-1 font-mono text-foreground">{backtestResult.truncated ? 'yes' : 'no'}</p>
+              </div>
+            </div>
+            {#if backtestResult.rows.length > 0}
+              <div class="mt-3 space-y-2">
+                {#each backtestResult.rows as row (row.evidence_signature)}
+                  <div class="rounded-md border border-line-2 bg-card p-2">
+                    <div class="flex flex-wrap items-center gap-2 text-xs">
+                      <span class="font-mono text-foreground">{row.rule_id}</span>
+                      <span class="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground-1">{row.pack_id}</span>
+                      <span class="font-mono text-muted-foreground-1">{row.evidence_signature}</span>
+                    </div>
+                    <p class="mt-1 break-all font-mono text-xs text-muted-foreground-1">{jsonText(row.event_ref)}</p>
+                    {#if row.matched_fields.length > 0}
+                      <dl class="mt-2 space-y-1">
+                        {#each row.matched_fields as field (`${row.evidence_signature}:${field.path}`)}
+                          <div class="grid gap-1 text-xs sm:grid-cols-[12rem_1fr]">
+                            <dt class="font-mono text-foreground">{field.path}</dt>
+                            <dd class="break-all font-mono text-muted-foreground-1">{jsonText(field.value)}</dd>
+                          </div>
+                        {/each}
+                      </dl>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
     </div>
     {#if error}

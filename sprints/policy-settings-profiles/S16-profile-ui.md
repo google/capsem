@@ -71,6 +71,10 @@ requests.
   provenance from `/status`: active profile revision, architecture, asset
   version, profile payload hash, and each profile-declared VM asset's
   source/hash/size.
+- Implemented slice: Settings -> Policy Live Rules now backtests draft
+  enforcement and detection rules against a JSON event corpus through the
+  service backtest routes, then renders total matches, unique evidence,
+  truncation, event refs, matched fields, and evidence signatures.
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
   values, revisions, package/tool contracts, asset readiness, VM pin fields,
   enforcement-pack summaries, detection-pack summaries, and backtest result
@@ -96,6 +100,8 @@ requests.
 - Unit/contract completed: session runtime truth tests cover ready profile
   asset provenance rendering, including profile payload hash and per-asset
   source/hash/size rows.
+- Unit/contract completed: runtime security rule tests cover the enforcement
+  backtest request body and rendered evidence rows.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states; enforcement/detection
   runtime overlay list/validate/install/delete/stats/backtest/hunt flows through
@@ -132,3 +138,6 @@ requests.
 - Visual/build proof: the profile asset readiness panel was screenshot-checked
   with a browser-side `/status` fixture showing the active profile revision,
   payload hash, and profile asset rows in the actual Sessions layout.
+- Visual/build proof: Settings -> Policy Live Rules was screenshot-checked
+  with browser-side enforcement/detection/backtest fixtures showing the
+  backtest summary and evidence rows in the actual layout.

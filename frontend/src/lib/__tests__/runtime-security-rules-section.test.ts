@@ -97,6 +97,36 @@ const apiMock = {
     kind: 'detection',
     rule: detectionRows[0],
   })),
+  backtestRuntimeEnforcementRule: vi.fn(async () => ({
+    total_matches: 1,
+    unique_evidence_matches: 1,
+    truncated: false,
+    rows: [
+      {
+        event_ref: { event_id: 'sample-http-request' },
+        rule_id: 'runtime-block-google',
+        pack_id: 'runtime',
+        evidence_signature: 'http.request.host=google.com',
+        matched_fields: [{ path: 'http.request.host', value: 'google.com' }],
+        outcome: { action: 'block' },
+      },
+    ],
+  })),
+  backtestRuntimeDetectionRule: vi.fn(async () => ({
+    total_matches: 1,
+    unique_evidence_matches: 1,
+    truncated: false,
+    rows: [
+      {
+        event_ref: { event_id: 'sample-http-request' },
+        rule_id: 'runtime-detect-google',
+        pack_id: 'runtime-detection',
+        evidence_signature: 'http.request.body.text=secret',
+        matched_fields: [{ path: 'http.request.body.text', value: 'secret token' }],
+        outcome: { severity: 'high' },
+      },
+    ],
+  })),
   deleteRuntimeEnforcementRule: vi.fn(async () => ({
     kind: 'enforcement',
     id: 'runtime-ask-token',
@@ -182,6 +212,49 @@ describe('RuntimeSecurityRulesSection', () => {
     });
     expect(apiMock.getRuntimeEnforcementRules).toHaveBeenCalledTimes(2);
     expect(apiMock.getRuntimeDetectionRules).toHaveBeenCalledTimes(2);
+  });
+
+  it('backtests enforcement drafts against a JSON event corpus', async () => {
+    render(RuntimeSecurityRulesSection);
+
+    await screen.findByText('profile-block-admin');
+    await fireEvent.input(screen.getByLabelText('Rule id'), {
+      target: { value: 'runtime-block-google' },
+    });
+    await fireEvent.input(screen.getByLabelText('Condition'), {
+      target: { value: "http.request.host.contains('google')" },
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: /backtest/i }));
+
+    expect(apiMock.backtestRuntimeEnforcementRule).toHaveBeenCalledWith({
+      rule: {
+        id: 'runtime-block-google',
+        pack_id: 'runtime',
+        priority: 100,
+        condition: "http.request.host.contains('google')",
+        decision: 'block',
+        reason: null,
+        enabled: true,
+      },
+      events: [
+        {
+          event_ref: { event_id: 'sample-http-request' },
+          event: {
+            event_family: 'http',
+            event_type: 'http.request',
+            subject: {
+              host: 'google.com',
+              path: '/admin',
+              body: { text: 'secret token' },
+            },
+          },
+        },
+      ],
+      limit: 100,
+    });
+    expect(await screen.findByText('http.request.host=google.com')).toBeTruthy();
+    expect(screen.getByText('http.request.host')).toBeTruthy();
   });
 
   it('protects profile-owned rows and deletes runtime overlays', async () => {
