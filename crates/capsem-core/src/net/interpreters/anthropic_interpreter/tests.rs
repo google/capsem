@@ -1,5 +1,5 @@
 use super::*;
-use crate::net::ai_traffic::events::collect_summary;
+use capsem_network_engine::model_stream::collect_summary;
 use capsem_network_engine::sse_parser::SseParser;
 
 #[test]

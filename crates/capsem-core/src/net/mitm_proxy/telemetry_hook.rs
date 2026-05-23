@@ -35,11 +35,11 @@ use super::body::BodyStats;
 use super::hooks::{ChunkCtx, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::util::is_llm_api_path;
-use crate::net::ai_traffic::events::{collect_summary, parse_non_streaming_usage, StopReason};
 use crate::net::ai_traffic::evidence::{build_model_interaction_evidence, ModelEvidenceInput};
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
 use crate::net::ai_traffic::{request_parser, TraceState};
+use capsem_network_engine::model_stream::{collect_summary, parse_non_streaming_usage, StopReason};
 
 /// Per-request snapshot of the request-side fields that the response
 /// completion handler needs in order to build a `NetEvent` /
@@ -255,7 +255,7 @@ fn emit_completed_http_request_with_llm_events(
     deps: &TelemetryDeps,
     req_ctx: TelemetryRequestContext,
     resp_stats: TelemetryResponseStats,
-    llm_events: &[crate::net::ai_traffic::events::LlmEvent],
+    llm_events: &[capsem_network_engine::model_stream::LlmEvent],
 ) {
     let (net_event, resolved_events, model_call) =
         completed_http_records(deps, &req_ctx, &resp_stats, llm_events);
@@ -279,7 +279,7 @@ fn completed_http_records(
     deps: &TelemetryDeps,
     req_ctx: &TelemetryRequestContext,
     resp_stats: &TelemetryResponseStats,
-    llm_events: &[crate::net::ai_traffic::events::LlmEvent],
+    llm_events: &[capsem_network_engine::model_stream::LlmEvent],
 ) -> (NetEvent, Vec<ResolvedSecurityEvent>, Option<ModelCall>) {
     let net_event = build_net_event(&req_ctx, &resp_stats);
     let resolved_events = if req_ctx.runtime_security_results.is_empty() {
@@ -450,7 +450,7 @@ fn http_security_input(
 pub fn maybe_build_model_call(
     req_ctx: &TelemetryRequestContext,
     resp_stats: &TelemetryResponseStats,
-    llm_events: &[crate::net::ai_traffic::events::LlmEvent],
+    llm_events: &[capsem_network_engine::model_stream::LlmEvent],
     pricing: &PricingTable,
     trace_state: &Arc<Mutex<TraceState>>,
 ) -> Option<ModelCall> {

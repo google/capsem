@@ -23,11 +23,11 @@ use bytes::Bytes;
 
 use super::hooks::{ChunkCtx, ChunkHook, ConnMeta};
 use super::sse_parser_hook::SseEventStream;
-use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState;
 use crate::net::interpreters::google_interpreter::GoogleStreamParser;
 use crate::net::interpreters::openai_interpreter::OpenAiStreamParser;
+use capsem_network_engine::model_stream::{LlmEvent, ProviderStreamParser};
 
 /// Per-request shared accumulator of provider-agnostic `LlmEvent`s.
 /// All three interpreter hooks write to the same slot (only one

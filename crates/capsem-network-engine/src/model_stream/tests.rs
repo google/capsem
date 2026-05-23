@@ -355,7 +355,7 @@ fn summary_tool_calls_sorted_by_index() {
 
 // ── parse_non_streaming_usage ────────────────────────────────────
 
-use super::super::provider::ProviderKind;
+use crate::ai_provider::ProviderKind;
 
 #[test]
 fn non_streaming_google_usage() {

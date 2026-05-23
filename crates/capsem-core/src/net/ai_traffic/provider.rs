@@ -1,35 +1,7 @@
 //! Provider trait and routing: maps inbound request paths to upstream AI
 //! providers and handles provider-specific key injection.
 
-use super::events::ProviderStreamParser;
-
-/// Which AI provider handles this request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderKind {
-    Anthropic,
-    OpenAi,
-    Google,
-}
-
-impl ProviderKind {
-    /// Short name for audit logging.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ProviderKind::Anthropic => "anthropic",
-            ProviderKind::OpenAi => "openai",
-            ProviderKind::Google => "google",
-        }
-    }
-
-    /// Create a new SSE stream parser for this provider.
-    pub fn create_parser(&self) -> Box<dyn ProviderStreamParser + Send> {
-        match self {
-            ProviderKind::Anthropic => Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState::new()),
-            ProviderKind::OpenAi => Box::new(crate::net::interpreters::openai_interpreter::OpenAiStreamParser::new()),
-            ProviderKind::Google => Box::new(crate::net::interpreters::google_interpreter::GoogleStreamParser::new()),
-        }
-    }
-}
+pub use capsem_network_engine::ai_provider::{extract_model_from_path, ProviderKind};
 
 /// A provider knows how to build the upstream URL and inject API keys.
 pub trait Provider: Send + Sync {
@@ -77,19 +49,6 @@ pub fn route_provider(path: &str) -> Option<(ProviderKind, Box<dyn Provider>)> {
     } else {
         None
     }
-}
-
-/// Extract model name from a Gemini-style URL path.
-/// E.g. `/v1beta/models/gemini-2.5-flash-lite:generateContent` -> `gemini-2.5-flash-lite`
-pub fn extract_model_from_path(path: &str) -> Option<String> {
-    // Match pattern: /v.../models/{model}:{action}
-    let models_idx = path.find("/models/")?;
-    let after = &path[models_idx + 8..]; // skip "/models/"
-    let model = after.split(':').next()?;
-    if model.is_empty() {
-        return None;
-    }
-    Some(model.to_string())
 }
 
 /// Classify a tool call's origin from its name (heuristic).

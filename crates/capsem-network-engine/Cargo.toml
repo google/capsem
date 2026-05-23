@@ -14,7 +14,9 @@ anyhow.workspace = true
 blake3 = "1"
 capsem-logger = { path = "../capsem-logger" }
 capsem-security-engine = { path = "../capsem-security-engine" }
+flate2 = "1"
 hickory-proto.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 proptest = "1"

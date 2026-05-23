@@ -81,6 +81,11 @@ provider interpreters, and parser benchmarks now consume
 `capsem_network_engine::sse_parser` directly; the old
 `capsem-core::net::parsers` module is removed rather than left as a shadow
 authority.
+The following model-stream event slice moved provider-neutral `ProviderKind`,
+`LlmEvent`, `StreamSummary`, `ProviderStreamParser`, and non-streaming usage
+parsing into `capsem-network-engine`. `capsem-core` keeps provider routing and
+API-key injection beside the MITM interpreters, but no longer owns the common
+LLM event/summary contract.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

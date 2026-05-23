@@ -3,8 +3,8 @@
 //! tool-use response (the most expensive shape -- text + tool_use +
 //! input_json_delta accumulation).
 
-use capsem_core::net::ai_traffic::events::{collect_summary, ProviderStreamParser};
 use capsem_core::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState;
+use capsem_network_engine::model_stream::{collect_summary, ProviderStreamParser};
 use capsem_network_engine::sse_parser::SseParser;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 

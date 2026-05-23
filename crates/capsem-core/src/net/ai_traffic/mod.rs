@@ -1,4 +1,3 @@
-pub mod events;
 /// AI traffic parsing and telemetry: SSE stream parsing, request metadata
 /// extraction, and provider-agnostic event normalization for AI provider
 /// traffic flowing through the MITM proxy (vsock:5002).

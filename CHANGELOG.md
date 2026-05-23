@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved the SSE wire parser and parser tests into `capsem-network-engine`, so
   AI/model stream parsing now starts at the Network Engine boundary instead of
   the old `capsem-core::net::parsers` path.
+- Moved provider-neutral AI stream events, summaries, provider identity, and
+  non-streaming usage parsing into `capsem-network-engine`, leaving
+  `capsem-core` to own only MITM provider routing and key injection.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

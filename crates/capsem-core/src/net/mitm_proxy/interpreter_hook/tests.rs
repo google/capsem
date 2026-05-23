@@ -98,7 +98,7 @@ fn anthropic_pipeline_produces_llm_events_with_provider_tag() {
     );
 
     // Sanity: collect_summary works against the accumulated events.
-    let summary = crate::net::ai_traffic::events::collect_summary(&llm.events);
+    let summary = capsem_network_engine::model_stream::collect_summary(&llm.events);
     assert_eq!(summary.message_id.as_deref(), Some("msg_1"));
     assert_eq!(summary.model.as_deref(), Some("claude-test"));
     assert_eq!(summary.text, "hello");

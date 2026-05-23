@@ -359,7 +359,7 @@ fn non_ai_provider_is_not_a_model_call() {
 /// `text_content` / `tool_calls` / `stop_reason`.
 #[test]
 fn llm_events_flow_into_model_call() {
-    use crate::net::ai_traffic::events::{LlmEvent, StopReason};
+    use capsem_network_engine::model_stream::{LlmEvent, StopReason};
 
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.identity = TelemetryIdentityContext {
@@ -419,7 +419,7 @@ fn llm_events_flow_into_model_call() {
 /// trace_id.
 #[test]
 fn tool_use_chains_traces_across_requests() {
-    use crate::net::ai_traffic::events::{LlmEvent, StopReason};
+    use capsem_network_engine::model_stream::{LlmEvent, StopReason};
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
 

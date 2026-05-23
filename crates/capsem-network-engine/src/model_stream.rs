@@ -6,7 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use capsem_network_engine::sse_parser::SseEvent;
+use crate::ai_provider::ProviderKind;
+use crate::sse_parser::SseEvent;
 
 /// Why the model stopped generating.
 #[derive(Debug, Clone, PartialEq)]
@@ -218,7 +219,7 @@ pub fn collect_summary(events: &[LlmEvent]) -> StreamSummary {
 /// Content-Encoding: gzip through the MITM proxy).
 /// Returns (model, input_tokens, output_tokens, usage_details).
 pub fn parse_non_streaming_usage(
-    kind: super::provider::ProviderKind,
+    kind: ProviderKind,
     body: &[u8],
 ) -> (
     Option<String>,
@@ -247,7 +248,7 @@ pub fn parse_non_streaming_usage(
     };
 
     match kind {
-        super::provider::ProviderKind::Google => {
+        ProviderKind::Google => {
             let model = json
                 .get("modelVersion")
                 .and_then(|v| v.as_str())
@@ -274,7 +275,7 @@ pub fn parse_non_streaming_usage(
             }
             (model, input, output, details)
         }
-        super::provider::ProviderKind::Anthropic => {
+        ProviderKind::Anthropic => {
             let model = json
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -295,7 +296,7 @@ pub fn parse_non_streaming_usage(
             }
             (model, input, output, details)
         }
-        super::provider::ProviderKind::OpenAi => {
+        ProviderKind::OpenAi => {
             let model = json
                 .get("model")
                 .and_then(|v| v.as_str())

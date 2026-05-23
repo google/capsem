@@ -8,9 +8,9 @@ use capsem_security_engine::{
     ModelToolResultEvidence, ParseStatus, SourceEngine, ToolCallStatus, ToolOrigin,
 };
 
-use super::events::{StopReason, StreamSummary};
 use super::provider::{extract_model_from_path, tool_origin, ProviderKind};
 use super::request_parser::RequestMeta;
+use capsem_network_engine::model_stream::{StopReason, StreamSummary};
 
 #[derive(Debug, Clone)]
 pub struct ModelEvidenceInput<'a> {
@@ -339,8 +339,8 @@ mod tests {
     use capsem_security_engine::{AiAttributionScope, AiOriginKind, SourceEngine};
 
     use super::*;
-    use crate::net::ai_traffic::events::{StopReason, StreamSummary, ToolCall};
     use crate::net::ai_traffic::request_parser::ToolResultMeta;
+    use capsem_network_engine::model_stream::{StopReason, StreamSummary, ToolCall};
 
     #[test]
     fn openai_stream_summary_projects_tool_call_evidence() {
