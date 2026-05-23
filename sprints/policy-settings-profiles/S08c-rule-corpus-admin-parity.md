@@ -176,6 +176,10 @@ session-scoped enforcement replay, it should be named and designed separately.
   a quiet replay miss; the green path now rejects unknown canonical-looking
   paths and cross-family roots such as `dns.request.qname` inside an HTTP rule
   before offline replay.
+- Slice 12 made `capsem-admin policy backtest` compile-check before fixture
+  replay. The red test proved an empty policy-context corpus could previously
+  report success for an invalid rule because validation happened only inside
+  the fixture loop; backtest now fails closed even when there are no rows.
 
 ## Coverage Ledger
 
@@ -189,8 +193,8 @@ session-scoped enforcement replay, it should be named and designed separately.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
   duplicate rule ids, mismatched expected labels, internal `event.*` /
   `subject.*` authoring, unknown canonical-looking admin policy paths,
-  cross-family policy roots, legacy Detection IR `subject.*` paths, and
-  evidence-dedup behavior.
+  cross-family policy roots, empty-corpus policy backtest compile failures,
+  legacy Detection IR `subject.*` paths, and evidence-dedup behavior.
 - E2E/VM or integration: hand-built `session.db` hunt expected artifact now
   covers the resolved-event journal read path; live VM-generated session
   fixture capture remains open.

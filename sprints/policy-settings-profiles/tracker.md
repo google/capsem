@@ -1941,6 +1941,14 @@ a valid claim -- mark it `[ ]` instead.
     **3** tests. Still missing in S08c: live VM-generated session fixtures
     from the resolved-event journal and full runtime-CEL parity beyond the
     admin subset.
+    Twelfth TDD admin-backtest-compile-first slice fixed a quiet empty-corpus
+    risk: `capsem-admin policy backtest` now compile-checks policy packs before
+    replaying fixtures, so invalid paths fail even when the events file has no
+    rows. Verification: red `uv run pytest tests/test_admin_cli.py -k
+    "policy_backtest_compile_checks_empty_corpus" -q` first failed with exit
+    code 0, then focused policy backtest tests passed with **3** tests. Still
+    missing in S08c: live VM-generated session fixtures from the
+    resolved-event journal and full runtime-CEL parity beyond the admin subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

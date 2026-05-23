@@ -858,3 +858,45 @@ decision = "block"
     assert result.exit_code == 1
     assert '"ok": false' in result.output
     assert "unsupported internal event root" in result.output
+
+
+def test_capsem_admin_policy_backtest_compile_checks_empty_corpus(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "bad-policy.toml"
+    policy_path.write_text(
+        """
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.bad-path"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+
+[[rules]]
+id = "bad-path"
+name = "Bad Path"
+event_family = "http"
+event_type = "http.request"
+condition = "http.request.raw.contains('secret')"
+decision = "block"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text("", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "backtest",
+            str(policy_path),
+            "--events",
+            str(events_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert '"ok": false' in result.output
+    assert "unsupported policy path" in result.output

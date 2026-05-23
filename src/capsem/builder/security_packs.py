@@ -951,34 +951,36 @@ def run_policy_backtest(
     events_path: Path,
 ) -> PolicyBacktestReportV1:
     started = time.perf_counter()
-    diagnostics: list[str] = []
+    compile_report = compile_policy_pack(pack)
+    diagnostics: list[str] = list(compile_report.diagnostics)
     rows: list[PolicyBacktestMatchV1] = []
     try:
         fixtures = load_policy_context_fixture_jsonl(events_path)
     except Exception as error:
         fixtures = []
         diagnostics.append(str(error))
-    for fixture in fixtures:
-        for rule in sorted(pack.rules, key=lambda item: (item.priority, item.id)):
-            if not rule.enabled:
-                continue
-            try:
-                matched, matched_fields = _policy_rule_matches(rule, fixture)
-            except Exception as error:
-                diagnostics.append(str(error))
-                continue
-            if matched:
-                rows.append(
-                    PolicyBacktestMatchV1(
-                        event_ref=fixture.event_ref,
-                        rule_id=rule.id,
-                        pack_id=pack.id,
-                        decision=rule.decision,
-                        reason=rule.reason,
-                        matched_fields=matched_fields,
+    if compile_report.ok:
+        for fixture in fixtures:
+            for rule in sorted(pack.rules, key=lambda item: (item.priority, item.id)):
+                if not rule.enabled:
+                    continue
+                try:
+                    matched, matched_fields = _policy_rule_matches(rule, fixture)
+                except Exception as error:
+                    diagnostics.append(str(error))
+                    continue
+                if matched:
+                    rows.append(
+                        PolicyBacktestMatchV1(
+                            event_ref=fixture.event_ref,
+                            rule_id=rule.id,
+                            pack_id=pack.id,
+                            decision=rule.decision,
+                            reason=rule.reason,
+                            matched_fields=matched_fields,
+                        )
                     )
-                )
-                break
+                    break
     return PolicyBacktestReportV1(
         ok=not diagnostics,
         pack_id=pack.id,

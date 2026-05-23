@@ -159,6 +159,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an explicit admin policy path allowlist so `capsem-admin policy compile`
   rejects unknown canonical-looking paths and cross-family policy roots before
   offline replay.
+- Fixed `capsem-admin policy backtest` to compile-check policy packs before
+  fixture replay, so an empty corpus cannot report success for invalid policy
+  paths.
 - Added rule-corpus workflow documentation tying policy-context fixtures,
   enforcement/detection expected artifacts, admin commands, and Rust parity
   tests together.
