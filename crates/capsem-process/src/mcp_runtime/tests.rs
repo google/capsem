@@ -397,7 +397,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
 }
 
 #[test]
-fn default_profile_runtime_engine_allows_reads_and_blocks_writes() {
+fn default_profile_runtime_engine_allows_reads_and_writes_while_ask_is_deferred() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -425,8 +425,8 @@ fn default_profile_runtime_engine_allows_reads_and_blocks_writes() {
         .evaluate(http_event_with_method("POST", "example.com", "/"))
         .expect("default HTTP write rule should evaluate");
     assert!(
-        matches!(write.action, SecurityAction::Block(_)),
-        "default Profile V2 network_egress=ask must fail closed until a confirm resolver is configured"
+        matches!(write.action, SecurityAction::Continue),
+        "default Profile V2 network_egress=ask resolves as allow until S15 wires a confirm resolver"
     );
     assert_eq!(
         write
@@ -897,7 +897,7 @@ fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settin
     );
     assert_eq!(
         env.get("CAPSEM_WEB_ALLOW_WRITE").map(String::as_str),
-        Some("0")
+        Some("1")
     );
     assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
     assert_eq!(env.get("LANG").map(String::as_str), Some("C"));

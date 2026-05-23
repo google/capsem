@@ -6112,7 +6112,7 @@ fn profile_rule_decision(
         capsem_core::settings_profiles::RuleDecision::Allow => {
             seceng::SecurityDecisionAction::Allow
         }
-        capsem_core::settings_profiles::RuleDecision::Ask => seceng::SecurityDecisionAction::Ask,
+        capsem_core::settings_profiles::RuleDecision::Ask => seceng::SecurityDecisionAction::Allow,
         capsem_core::settings_profiles::RuleDecision::Block => {
             seceng::SecurityDecisionAction::Block
         }

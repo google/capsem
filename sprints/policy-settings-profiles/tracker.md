@@ -62,8 +62,10 @@ is updated with the concrete branch and worktree path, verified by
   `http.read`/`http.write` derived rules into event-type-guarded runtime CEL,
   preserves priority ordering, lets live runtime overlays win over profile
   defaults, and keeps doctor positive MCP network probes conditional on the
-  selected profile while write blocking remains mandatory when
-  `CAPSEM_WEB_ALLOW_WRITE=0`.
+  selected profile. Follow-up release-scope clarification: S15 owns real
+  ask/confirm UX, so shipped Profile V2 `ask` decisions now resolve as
+  allow/pass instead of blocking writes or pretending an interactive prompter
+  exists.
 
 ## Operating Mode
 

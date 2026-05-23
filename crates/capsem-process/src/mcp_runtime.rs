@@ -229,7 +229,7 @@ fn network_defaults_from_effective(
         .unwrap_or(CapabilityMode::Ask)
     {
         CapabilityMode::Allow | CapabilityMode::Audit => (true, true),
-        CapabilityMode::Ask => (true, false),
+        CapabilityMode::Ask => (true, true),
         CapabilityMode::Block => (false, false),
     }
 }
@@ -350,8 +350,8 @@ fn domain_policy_lists_from_effective(
             continue;
         };
         match rule.decision {
-            RuleDecision::Allow => push_unique(&mut allow, domain),
-            RuleDecision::Ask | RuleDecision::Block => push_unique(&mut block, domain),
+            RuleDecision::Allow | RuleDecision::Ask => push_unique(&mut allow, domain),
+            RuleDecision::Block => push_unique(&mut block, domain),
             RuleDecision::Rewrite => {}
         }
     }
@@ -511,10 +511,7 @@ fn http_runtime_enforcement_rule(rule: &EffectiveRule) -> Option<CelEnforcementR
         _ => return None,
     };
     let condition = format!("common.event_type == 'http.request' && ({condition})");
-    let decision = match (rule.callback.as_str(), rule.decision) {
-        ("http.read", RuleDecision::Ask) => SecurityDecisionAction::Allow,
-        (_, decision) => profile_decision_to_security_action(decision),
-    };
+    let decision = profile_decision_to_security_action(rule.decision);
     Some(CelEnforcementRule {
         id: rule.id.clone(),
         pack_id: Some(rule.provenance.profile_id.clone()),
@@ -531,7 +528,7 @@ const HTTP_READ_METHOD_CONDITION: &str = "http.request.method == 'GET' \
 fn profile_decision_to_security_action(decision: RuleDecision) -> SecurityDecisionAction {
     match decision {
         RuleDecision::Allow => SecurityDecisionAction::Allow,
-        RuleDecision::Ask => SecurityDecisionAction::Ask,
+        RuleDecision::Ask => SecurityDecisionAction::Allow,
         RuleDecision::Block => SecurityDecisionAction::Block,
         RuleDecision::Rewrite => SecurityDecisionAction::Rewrite,
     }
