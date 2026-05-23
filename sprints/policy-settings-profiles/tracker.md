@@ -2534,6 +2534,19 @@ a valid claim -- mark it `[ ]` instead.
     capsem profile_list_show_and_resolve_summaries_use_typed_fields`, `cargo
     test -p capsem`, `cargo build -p capsem`, touched-file rustfmt, and `git
     diff --check` passed.
+    Provision-output slice expanded the CLI-side `ProvisionResponse` to match
+    the typed service payload and renders profile id/revision/status, profile
+    payload hash, package contract hash, pinned kernel/initrd/rootfs hashes,
+    asset-health state, per-asset hashes, missing assets, errors, and
+    response-time download progress for `capsem create`, `capsem resume`, and
+    `capsem restart`. The VM id remains the first stdout line; provenance is
+    emitted on stderr for human/debug visibility without breaking simple id
+    capture. Verification: targeted `cargo test -p capsem
+    provision_response_preserves_profile_provenance` and targeted `cargo test
+    -p capsem
+    format_provision_profile_summary_prints_profile_pin_and_asset_hashes`
+    passed, then `cargo test -p capsem`, `cargo build -p capsem`, touched-file
+    rustfmt check, and `git diff --check` passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

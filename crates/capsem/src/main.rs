@@ -1288,6 +1288,123 @@ fn format_session_profile_for_list(session: &client::SessionInfo) -> String {
     }
 }
 
+fn format_provision_profile_summary(info: &ProvisionResponse) -> Option<String> {
+    if info.profile_id.is_none() && info.profile_pin.is_none() && info.asset_health.is_none() {
+        return None;
+    }
+
+    let mut output = String::new();
+    let profile_id = info
+        .profile_id
+        .as_deref()
+        .or_else(|| info.profile_pin.as_ref().map(|pin| pin.profile_id.as_str()));
+    let profile_revision = info.profile_revision.as_deref().or_else(|| {
+        info.profile_pin
+            .as_ref()
+            .and_then(|pin| pin.profile_revision.as_deref())
+    });
+    if let Some(profile_id) = profile_id {
+        match (profile_revision, info.profile_status) {
+            (Some(revision), Some(status)) => {
+                writeln!(
+                    output,
+                    "  profile: {profile_id}@{revision} status={}",
+                    status.as_str()
+                )
+                .expect("write to string");
+            }
+            (Some(revision), None) => {
+                writeln!(output, "  profile: {profile_id}@{revision}").expect("write to string");
+            }
+            (None, Some(status)) => {
+                writeln!(output, "  profile: {profile_id} status={}", status.as_str())
+                    .expect("write to string");
+            }
+            (None, None) => {
+                writeln!(output, "  profile: {profile_id}").expect("write to string");
+            }
+        }
+    }
+
+    if let Some(pin) = &info.profile_pin {
+        if let Some(hash) = &pin.profile_payload_hash {
+            writeln!(output, "  profile_payload_hash: {hash}").expect("write to string");
+        }
+        writeln!(
+            output,
+            "  package_contract_hash: {}",
+            pin.package_contract_hash
+        )
+        .expect("write to string");
+        if let Some(base) = &pin.base_assets {
+            writeln!(
+                output,
+                "  pinned_assets: version={} arch={} guest_abi={}",
+                base.asset_version,
+                base.arch,
+                base.guest_abi.as_deref().unwrap_or("-")
+            )
+            .expect("write to string");
+            writeln!(output, "    kernel: {}", base.kernel_hash).expect("write to string");
+            writeln!(output, "    initrd: {}", base.initrd_hash).expect("write to string");
+            writeln!(output, "    rootfs: {}", base.rootfs_hash).expect("write to string");
+        }
+    }
+
+    if let Some(health) = &info.asset_health {
+        writeln!(
+            output,
+            "  assets: state={} ready={} version={} arch={}",
+            health.state,
+            health.ready,
+            health.version.as_deref().unwrap_or("unknown"),
+            health.arch.as_deref().unwrap_or("unknown")
+        )
+        .expect("write to string");
+        if let Some(hash) = &health.profile_payload_hash {
+            writeln!(output, "  installed_profile_payload_hash: {hash}").expect("write to string");
+        }
+        for asset in &health.profile_assets {
+            writeln!(
+                output,
+                "    {}: hash={} size={} content_type={} source={}",
+                asset.logical_name, asset.hash, asset.size, asset.content_type, asset.source_url
+            )
+            .expect("write to string");
+        }
+        if let Some(progress) = &health.progress {
+            match progress.bytes_total {
+                Some(total) => writeln!(
+                    output,
+                    "  asset_progress: {} {}/{} done={}",
+                    progress.logical_name, progress.bytes_done, total, progress.done
+                ),
+                None => writeln!(
+                    output,
+                    "  asset_progress: {} {} bytes done={}",
+                    progress.logical_name, progress.bytes_done, progress.done
+                ),
+            }
+            .expect("write to string");
+        }
+        if !health.missing.is_empty() {
+            writeln!(output, "  missing_assets: {}", health.missing.join(", "))
+                .expect("write to string");
+        }
+        if let Some(error) = &health.error {
+            writeln!(output, "  asset_error: {error}").expect("write to string");
+        }
+    }
+
+    (!output.is_empty()).then_some(output)
+}
+
+fn print_provision_profile_summary(info: &ProvisionResponse) {
+    if let Some(summary) = format_provision_profile_summary(info) {
+        eprint!("{summary}");
+    }
+}
+
 fn tail_log_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() <= n {
@@ -2580,6 +2697,7 @@ async fn main() -> Result<()> {
             } else {
                 println!("{}", info.id);
             }
+            print_provision_profile_summary(&info);
         }
         Commands::Session(SessionCommands::Fork {
             session,
@@ -2607,6 +2725,7 @@ async fn main() -> Result<()> {
                 .await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
+            print_provision_profile_summary(&info);
         }
         Commands::Session(SessionCommands::Suspend { session }) => {
             client::validate_id(session)?;
@@ -2979,6 +3098,7 @@ async fn main() -> Result<()> {
                 .await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
+            print_provision_profile_summary(&resumed);
         }
         Commands::Skills(SkillsCommands::List {
             profile,
@@ -5870,6 +5990,67 @@ best_for = "Testing typed profile TOML parsing."
         session.profile_revision = None;
         session.profile_status = Some(SessionProfileStatus::Corrupted);
         assert_eq!(format_session_profile_for_list(&session), "corrupted");
+    }
+
+    #[test]
+    fn format_provision_profile_summary_prints_profile_pin_and_asset_hashes() {
+        let response = ProvisionResponse {
+            id: "vm-1".into(),
+            uds_path: Some(std::path::PathBuf::from("/tmp/capsem/vm-1.sock")),
+            profile_id: Some("coding".into()),
+            profile_revision: Some("2026.0520.1".into()),
+            profile_status: Some(SessionProfileStatus::Current),
+            profile_pin: Some(client::SavedVmProfilePin {
+                profile_id: "coding".into(),
+                profile_revision: Some("2026.0520.1".into()),
+                profile_payload_hash: Some("blake3:profile".into()),
+                package_contract_hash: "blake3:packages".into(),
+                base_assets: Some(client::SavedVmBaseAssets {
+                    asset_version: "2026.0520.1".into(),
+                    arch: "arm64".into(),
+                    kernel_hash: "blake3:kernel".into(),
+                    initrd_hash: "blake3:initrd".into(),
+                    rootfs_hash: "blake3:rootfs".into(),
+                    guest_abi: Some("capsem-guest-v1".into()),
+                }),
+            }),
+            asset_health: Some(client::AssetHealth {
+                ready: true,
+                state: "ready".into(),
+                profile_id: Some("coding".into()),
+                profile_revision: Some("2026.0520.1".into()),
+                profile_payload_hash: Some("blake3:profile".into()),
+                profile_assets: vec![client::ProfileAssetProvenance {
+                    logical_name: "rootfs.squashfs".into(),
+                    hash: "blake3:rootfs".into(),
+                    source_url: "https://assets.example/rootfs.squashfs".into(),
+                    size: 123,
+                    content_type: "application/octet-stream".into(),
+                }],
+                version: Some("2026.0520.1".into()),
+                arch: Some("arm64".into()),
+                missing: Vec::new(),
+                progress: Some(client::AssetProgress {
+                    logical_name: "rootfs.squashfs".into(),
+                    bytes_done: 123,
+                    bytes_total: Some(123),
+                    done: true,
+                }),
+                error: None,
+                retry_count: 0,
+                retryable: false,
+                saved_vm_dependencies: Vec::new(),
+                checked_at_unix_secs: None,
+            }),
+        };
+
+        let summary = format_provision_profile_summary(&response).unwrap();
+        assert!(summary.contains("profile: coding@2026.0520.1 status=current"));
+        assert!(summary.contains("profile_payload_hash: blake3:profile"));
+        assert!(summary.contains("package_contract_hash: blake3:packages"));
+        assert!(summary.contains("kernel: blake3:kernel"));
+        assert!(summary.contains("rootfs.squashfs: hash=blake3:rootfs"));
+        assert!(summary.contains("asset_progress: rootfs.squashfs 123/123 done=true"));
     }
 
     #[test]

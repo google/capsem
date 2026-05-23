@@ -117,6 +117,66 @@ fn api_response_ok_variant() {
 }
 
 #[test]
+fn provision_response_preserves_profile_provenance() {
+    let json = r#"{
+      "id": "vm-1",
+      "uds_path": "/tmp/capsem/vm-1.sock",
+      "profile_id": "coding",
+      "profile_revision": "2026.0520.1",
+      "profile_status": "current",
+      "profile_pin": {
+        "profile_id": "coding",
+        "profile_revision": "2026.0520.1",
+        "profile_payload_hash": "blake3:profile",
+        "package_contract_hash": "blake3:packages",
+        "base_assets": {
+          "asset_version": "2026.0520.1",
+          "arch": "arm64",
+          "kernel_hash": "blake3:kernel",
+          "initrd_hash": "blake3:initrd",
+          "rootfs_hash": "blake3:rootfs",
+          "guest_abi": "capsem-guest-v1"
+        }
+      },
+      "asset_health": {
+        "ready": true,
+        "state": "ready",
+        "profile_id": "coding",
+        "profile_revision": "2026.0520.1",
+        "profile_payload_hash": "blake3:profile",
+        "profile_assets": [
+          {
+            "logical_name": "rootfs.squashfs",
+            "hash": "blake3:rootfs",
+            "source_url": "https://assets.example/rootfs.squashfs",
+            "size": 123,
+            "content_type": "application/octet-stream"
+          }
+        ],
+        "version": "2026.0520.1",
+        "arch": "arm64",
+        "missing": [],
+        "retry_count": 0,
+        "retryable": false,
+        "saved_vm_dependencies": []
+      }
+    }"#;
+    let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
+    let result = resp.into_result().unwrap();
+
+    assert_eq!(result.profile_id.as_deref(), Some("coding"));
+    assert_eq!(result.profile_revision.as_deref(), Some("2026.0520.1"));
+    assert_eq!(result.profile_status, Some(SessionProfileStatus::Current));
+    let pin = result.profile_pin.unwrap();
+    assert_eq!(pin.profile_payload_hash.as_deref(), Some("blake3:profile"));
+    assert_eq!(pin.package_contract_hash, "blake3:packages");
+    assert_eq!(pin.base_assets.unwrap().rootfs_hash, "blake3:rootfs");
+    let health = result.asset_health.unwrap();
+    assert_eq!(health.profile_assets[0].logical_name, "rootfs.squashfs");
+    assert_eq!(health.profile_assets[0].hash, "blake3:rootfs");
+}
+
+#[test]
 fn api_response_err_variant() {
     let json = r#"{"error":"sandbox not found"}"#;
     let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();

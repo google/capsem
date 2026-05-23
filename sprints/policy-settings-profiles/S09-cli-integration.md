@@ -64,9 +64,12 @@ blocked.
   revoke/deprecation warnings remain tied to catalog/status views.
 - Extend VM create/start commands to accept `--profile <id>` and optional
   `--profile-revision <rev>`. Initial `capsem create --profile
-  --profile-revision` parsing and request forwarding have landed; remaining
-  CLI work must show first-use asset download progress and print the resolved
-  profile id/revision and asset hashes.
+  --profile-revision` parsing and request forwarding have landed. Latest
+  provision-output slice teaches the CLI client the full typed service
+  `ProvisionResponse` and prints resolved profile id/revision/status, package
+  contract hashes, pinned asset hashes, asset health, and response-time
+  download progress for `create`, `resume`, and `restart` while preserving the
+  first-line VM id output for scripts.
 - Add `capsem mcp list/add/delete/show`. Initial Profile V2 connector CLI
   replacement has landed as `capsem mcp connectors`, `capsem mcp add`, and
   `capsem mcp delete`; the old `servers/tools/policy/refresh/call` verbs are

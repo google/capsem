@@ -46,6 +46,16 @@ pub struct ProvisionResponse {
     /// when talking to an older service that pre-dates this field.
     #[serde(default)]
     pub uds_path: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_status: Option<SessionProfileStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_pin: Option<SavedVmProfilePin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_health: Option<AssetHealth>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -198,6 +208,29 @@ pub struct ProfileAssetProvenance {
     pub source_url: String,
     pub size: u64,
     pub content_type: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmBaseAssets {
+    pub asset_version: String,
+    pub arch: String,
+    pub kernel_hash: String,
+    pub initrd_hash: String,
+    pub rootfs_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_abi: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmProfilePin {
+    pub profile_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_payload_hash: Option<String>,
+    pub package_contract_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_assets: Option<SavedVmBaseAssets>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

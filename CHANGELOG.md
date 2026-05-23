@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Expanded human `capsem profile show` and `capsem profile resolve` output with
   package, tool, MCP, VM sizing, and VM asset contract summaries.
+- Changed `capsem create`, `capsem resume`, and `capsem restart` to preserve
+  typed Profile V2 provision metadata and print profile id/revision/status,
+  package contract hashes, pinned VM asset hashes, and asset-health progress
+  without changing the first-line VM id output.
 
 ### Added
 - Added `capsem mcp list` and `capsem mcp show` aliases for the Profile V2 MCP
