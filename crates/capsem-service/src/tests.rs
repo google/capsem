@@ -8249,6 +8249,40 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
     assert_eq!(matched_rule_ids, expected_rule_ids);
     assert_eq!(result.total_matches, 9);
 
+    let expected_paths: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../data/detection/hunt-expected/session-core-projection-paths.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        expected_paths["total_matches"].as_u64(),
+        Some(result.total_matches as u64)
+    );
+    let expected_paths_by_rule = expected_paths["required_paths_by_rule"]
+        .as_object()
+        .expect("expected paths artifact must contain a rule map");
+    for (rule_id, paths) in expected_paths_by_rule {
+        let row = result
+            .rows
+            .iter()
+            .find(|row| row.rule_id == *rule_id)
+            .unwrap_or_else(|| panic!("expected hunt row for {rule_id}"));
+        let actual_paths = row
+            .matched_fields
+            .iter()
+            .map(|field| field.path.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        for path in paths
+            .as_array()
+            .expect("expected path list must be an array")
+        {
+            let path = path.as_str().expect("expected path must be a string");
+            assert!(
+                actual_paths.contains(path),
+                "expected {rule_id} to expose matched field path {path}"
+            );
+        }
+    }
+
     let mcp_row = result
         .rows
         .iter()

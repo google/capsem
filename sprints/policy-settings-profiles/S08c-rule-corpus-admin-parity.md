@@ -165,6 +165,11 @@ session-scoped enforcement replay, it should be named and designed separately.
   resolved-event corpus. This proves the service hunt path preserves event
   refs, evidence signatures, common attribution, HTTP matched fields, and
   response projection. Live VM-generated session fixture capture remains open.
+- Slice 10 added a session-hunt projection-path artifact covering DNS, MCP,
+  model, file, process, snapshot, VM, profile, and conversation rows. It caught
+  and fixed a matched-field gap where profile hunt output exposed
+  `profile.id` / `profile.revision` but not the canonical
+  `profile.activity.profile_id` / `profile.activity.profile_revision` paths.
 
 ## Coverage Ledger
 

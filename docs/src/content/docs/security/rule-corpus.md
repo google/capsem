@@ -20,7 +20,7 @@ expected backtest output from drifting apart.
 | `data/detection/sigma/` | Sigma-backed detection pack fixtures. |
 | `data/detection/ir/` | Compiled `capsem.detection.ir.v1` fixtures. |
 | `data/detection/backtest-expected/` | Expected detection backtest reports without timing fields. |
-| `data/detection/hunt-expected/` | Expected session-backed detection hunt reports. |
+| `data/detection/hunt-expected/` | Expected session-backed detection hunt reports and projection-path summaries. |
 
 Policy-context fixtures must use canonical roots such as
 `http.request.host`, `http.request.header("authorization").exists()`, and

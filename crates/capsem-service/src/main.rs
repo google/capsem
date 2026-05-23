@@ -6927,6 +6927,16 @@ fn backtest_matched_fields(
                 "profile.activity.operation",
                 &subject.operation,
             )?;
+            push_matched_field(
+                &mut fields,
+                "profile.activity.profile_id",
+                &subject.profile_id,
+            )?;
+            push_matched_field(
+                &mut fields,
+                "profile.activity.profile_revision",
+                &subject.profile_revision,
+            )?;
             push_matched_field(&mut fields, "profile.id", &subject.profile_id)?;
             push_matched_field(&mut fields, "profile.revision", &subject.profile_revision)?;
         }

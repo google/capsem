@@ -1916,6 +1916,19 @@ a valid claim -- mark it `[ ]` instead.
     the exact service shape; after pinning it, the focused test passed. Still
     missing in S08c: live VM-generated session fixtures from the resolved-event
     journal and full runtime-CEL parity beyond the admin subset.
+    Tenth session-projection-path slice added
+    `data/detection/hunt-expected/session-core-projection-paths.json` to pin
+    canonical matched-field paths across DNS, MCP, model, file, process,
+    snapshot, VM, profile, and conversation session hunt rows. The artifact
+    caught that profile hunt output did not expose
+    `profile.activity.profile_id`; the fix now emits canonical profile
+    activity id/revision paths alongside the older profile shorthand fields.
+    Verification: red `cargo test -p capsem-service
+    handle_session_detection_hunt_reconstructs_core_projection_families`
+    first failed on the missing profile matched-field path, then passed after
+    the service matched-field fix. Still missing in S08c: live VM-generated
+    session fixtures from the resolved-event journal and full runtime-CEL
+    parity beyond the admin subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

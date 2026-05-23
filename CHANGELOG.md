@@ -165,6 +165,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a session-backed detection hunt expected artifact for the hand-built
   `session.db` corpus, pinning matched fields and evidence signatures from the
   resolved-event journal path.
+- Added session-backed detection hunt projection coverage for DNS, MCP, model,
+  file, process, snapshot, VM, profile, and conversation rows, including
+  canonical profile activity matched fields.
 - Added CLI runtime security commands for enforcement and detection rule
   list/stats/validate/install/delete plus session-backed detection hunt.
 - Added typed runtime rule definitions to the rule registry and service/API
