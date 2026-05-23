@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added runtime Security Engine health to `capsem status`: JSON status now
   carries the typed security summary from `/debug/report`, and text status
   shows compact enforcement/detection rule and match counts.
+- Added a resolved Security Event summary to `capsem logs`, so session logs show
+  event, block, detection, family, and rule counts before the raw structured
+  security-event JSON lines.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

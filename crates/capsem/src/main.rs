@@ -895,11 +895,89 @@ fn tail_log_lines(text: &str, n: usize) -> String {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SecurityLogSummary {
+    event_count: usize,
+    blocked_count: usize,
+    detection_count: u64,
+    families: std::collections::BTreeMap<String, usize>,
+    rules: std::collections::BTreeMap<String, usize>,
+}
+
+fn security_log_summary(security_logs: &str) -> SecurityLogSummary {
+    let mut summary = SecurityLogSummary::default();
+    for line in security_logs.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(fields) = value.get("fields").and_then(|fields| fields.as_object()) else {
+            continue;
+        };
+        if fields.get("message").and_then(|value| value.as_str()) != Some("resolved_security_event")
+        {
+            continue;
+        }
+        summary.event_count += 1;
+        if let Some(family) = fields.get("event_family").and_then(|value| value.as_str()) {
+            *summary.families.entry(family.to_string()).or_default() += 1;
+        }
+        if fields.get("final_action").and_then(|value| value.as_str()) == Some("block") {
+            summary.blocked_count += 1;
+        }
+        if let Some(finding_count) = fields.get("finding_count").and_then(|value| value.as_u64()) {
+            summary.detection_count += finding_count;
+        }
+        if let Some(rule_id) = fields.get("rule_id").and_then(|value| value.as_str()) {
+            *summary.rules.entry(rule_id.to_string()).or_default() += 1;
+        }
+        if let Some(rule_ids) = fields
+            .get("detection_rule_ids")
+            .and_then(|value| value.as_str())
+        {
+            for rule_id in rule_ids.split(',').filter(|rule_id| !rule_id.is_empty()) {
+                *summary.rules.entry(rule_id.to_string()).or_default() += 1;
+            }
+        }
+    }
+    summary
+}
+
+fn format_security_log_summary(summary: &SecurityLogSummary) -> Option<String> {
+    if summary.event_count == 0 {
+        return None;
+    }
+    let families = summary
+        .families
+        .iter()
+        .map(|(family, count)| format!("{family}={count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let rules = summary
+        .rules
+        .iter()
+        .take(5)
+        .map(|(rule_id, count)| format!("{rule_id}={count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    Some(format!(
+        "summary: events={} blocked={} detections={} families={} rules={}",
+        summary.event_count,
+        summary.blocked_count,
+        summary.detection_count,
+        if families.is_empty() { "-" } else { &families },
+        if rules.is_empty() { "-" } else { &rules },
+    ))
+}
+
 fn format_session_logs(session: &str, logs: LogsResponse, tail: Option<usize>) -> String {
     let mut output = String::new();
 
     if let Some(security_logs) = logs.security_logs {
         output.push_str(&format!("--- Security Events ({session}) ---\n"));
+        if let Some(summary) = format_security_log_summary(&security_log_summary(&security_logs)) {
+            output.push_str(&summary);
+            output.push('\n');
+        }
         output.push_str(&match tail {
             Some(n) => tail_log_lines(&security_logs, n),
             None => security_logs,
@@ -3359,6 +3437,56 @@ mod tests {
         assert!(!output.contains("old line"));
         assert!(output.contains("--- Serial Logs (vm-cli-logs) ---"));
         assert!(output.contains("serial booted"));
+    }
+
+    #[test]
+    fn format_session_logs_adds_resolved_security_summary() {
+        let process_event = serde_json::json!({
+            "target": "security.event",
+            "fields": {
+                "message": "resolved_security_event",
+                "event_family": "process",
+                "event_type": "process.exec",
+                "final_action": "block",
+                "rule_id": "runtime.block-shell",
+                "finding_count": 1,
+                "detection_rule_ids": "detect.shell"
+            }
+        })
+        .to_string();
+        let dns_event = serde_json::json!({
+            "target": "security.event",
+            "fields": {
+                "message": "resolved_security_event",
+                "event_family": "dns",
+                "event_type": "dns.request",
+                "final_action": "allow",
+                "rule_id": "runtime.allow-dns",
+                "finding_count": 0
+            }
+        })
+        .to_string();
+
+        let output = format_session_logs(
+            "vm-cli-logs",
+            LogsResponse {
+                logs: String::new(),
+                serial_logs: None,
+                process_logs: None,
+                security_logs: Some(format!("{process_event}\n{dns_event}\n")),
+            },
+            None,
+        );
+
+        assert!(output.contains("--- Security Events (vm-cli-logs) ---"));
+        assert!(
+            output.contains("summary: events=2 blocked=1 detections=1 families=dns=1,process=1")
+        );
+        assert!(output.contains("detect.shell=1"));
+        assert!(output.contains("runtime.block-shell=1"));
+        assert!(output.contains("runtime.allow-dns=1"));
+        assert!(output.contains(r#""event_type":"process.exec""#));
+        assert!(output.contains(r#""event_type":"dns.request""#));
     }
 
     #[test]

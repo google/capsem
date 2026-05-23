@@ -62,6 +62,9 @@ truth cannot lie or omit the core profile/security provenance.
   `/debug/report` when the service is running. `capsem status --json` includes
   the same structured enforcement/detection/confirm summary, and text status
   prints compact rule and match counts.
+- `capsem logs` now keeps the raw structured resolved security-event JSON lines
+  intact while adding a summary line with event, block, detection, family, and
+  rule counts for quick triage.
 - If settings/profile resolution fails, the debug report records the load error
   instead of silently dropping the section.
 
@@ -71,6 +74,7 @@ Focused test command:
 cargo test -p capsem-service debug_report::tests
 cargo test -p capsem-service handle_debug_report_returns_pasteable_text --bin capsem-service
 cargo test -p capsem status::tests --bin capsem
+cargo test -p capsem format_session_logs --bin capsem
 ```
 
 Result: 9 debug report tests passed, including credential redaction,
@@ -82,6 +86,8 @@ with 115 tests and `cargo test -p capsem-service --bin capsem-service` with
 212 tests, the latter outside the sandbox for local socket fixtures.
 The CLI status gate passed with 31 status tests, including typed
 Security Engine summary parsing and JSON projection.
+The CLI logs formatter tests passed, including resolved security-event summary
+rendering and raw structured-line preservation.
 The full `capsem` bin test suite also passed with 267 tests outside the
 sandbox for loopback/Unix-socket fixtures.
 
@@ -92,7 +98,8 @@ sandbox for loopback/Unix-socket fixtures.
 - Functional: debug report rendering tests are present; service route coverage
   verifies runtime Security Engine registry state reaches `/debug/report`.
   CLI status tests verify that the same typed summary is preserved in
-  `capsem status --json`.
+  `capsem status --json`. CLI logs formatter tests verify summary rendering
+  and raw resolved-event line preservation.
 - Adversarial: credential value redaction is covered; missing profile roots, bad
   profile load errors are covered; missing profile roots and locked setting
   rendering remain; generated-rule ownership rendering is pending; revoked

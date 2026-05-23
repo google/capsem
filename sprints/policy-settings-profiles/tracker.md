@@ -2040,6 +2040,16 @@ a valid claim -- mark it `[ ]` instead.
     Still missing after this slice: richer `capsem logs` projection, visible UI
     screens/editors, S15 interactive confirm resolver/queue/CLI/UI, S12
     OTel/prometheus export, S08d performance proof, and final release gates.
+    Ninety-seventh S11 logs observability slice made `capsem logs` scannable
+    without weakening the structured security-event payload. The CLI now
+    summarizes resolved security logs with event, block, detection, event-family,
+    and rule counts before printing the raw JSON lines unchanged. Verification:
+    `cargo test -p capsem format_session_logs_adds_resolved_security_summary
+    --bin capsem` passed, `cargo test -p capsem
+    format_session_logs_preserves_structured_process_security_line --bin capsem`
+    passed, and `cargo check -p capsem` passed. Still missing after this slice:
+    visible UI screens/editors, S15 interactive confirm resolver/queue/CLI/UI,
+    S12 OTel/prometheus export, S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,
