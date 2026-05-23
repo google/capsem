@@ -168,6 +168,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended the real process-enforcement E2E so a VM-originated blocked exec is
   verified in both `capsem logs` and the resolved-event `session.db`
   `security_events` / `security_event_steps` journal.
+- Expanded the admin policy-context model and offline policy backtest subset
+  beyond HTTP so DNS/MCP/model/file/process/profile scalar roots, boolean
+  equality, and numeric equality can be tested through `capsem-admin`.
 - Added rule-corpus workflow documentation tying policy-context fixtures,
   enforcement/detection expected artifacts, admin commands, and Rust parity
   tests together.

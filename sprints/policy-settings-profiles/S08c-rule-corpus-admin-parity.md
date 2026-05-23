@@ -193,6 +193,13 @@ session-scoped enforcement replay, it should be named and designed separately.
   `session.db.security_events` plus `security_event_steps` for the same
   `process.exec` block/rule/reason tuple. This proves the live journal path
   for process enforcement; committed live-session fixture export remains open.
+- Slice 15 expanded the admin policy-context scalar surface beyond HTTP. The
+  Python Pydantic model now accepts MCP response status, model request/response
+  scalar evidence, file byte counts, process executable/command/cwd, profile
+  names, DNS qtype/transport, and common process identity. The offline policy
+  subset now supports boolean and numeric equality, and a fixture-level admin
+  backtest proves MCP/model/file/process/profile rules all match through
+  canonical roots.
 
 ## Coverage Ledger
 
@@ -203,7 +210,8 @@ session-scoped enforcement replay, it should be named and designed separately.
   Rust.
 - Functional: admin offline backtest and Rust runtime backtest produce the same
   matched event refs, decisions/findings, and counts. This is proven for the
-  first synthetic enforcement and detection corpus; broader corpus diversity
+  first synthetic enforcement and detection corpus; admin backtest now also
+  matches non-HTTP scalar policy contexts. Broader committed corpus diversity
   and real-session rows remain open.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
   duplicate rule ids, mismatched expected labels, internal `event.*` /

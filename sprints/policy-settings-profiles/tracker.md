@@ -1970,6 +1970,17 @@ a valid claim -- mark it `[ ]` instead.
     -q` passed. Still missing in S08c: committed live VM-generated fixture
     export from the resolved-event journal and full runtime-CEL parity beyond
     the admin subset.
+    Fifteenth admin-policy-context-parity slice expanded the Python
+    policy-context model to track the scalar Rust `capsem-proto` roots used by
+    MCP, model, file, process, profile, and DNS events, and added boolean plus
+    numeric equality to the offline admin policy subset. Verification: red
+    `uv run pytest tests/test_admin_cli.py -k
+    "policy_backtest_matches_core_non_http_contexts" -q` first failed on
+    missing MCP/model/file/process/profile roots and unsupported bool/numeric
+    comparisons, then passed after the typed model and evaluator changes.
+    Still missing in S08c: committed live VM-generated fixture export from the
+    resolved-event journal and runtime-CEL parity for array/tool-call paths
+    beyond the admin subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

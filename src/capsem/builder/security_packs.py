@@ -386,7 +386,16 @@ class CommonPolicyContextV1(StrictModel):
     event_type: NonEmptyStr | None = None
     enforceability: NonEmptyStr | None = None
     actor: NonEmptyStr | None = None
+    process: ProcessIdentityPolicyContextV1 | None = None
     labels: dict[NonEmptyStr, NonEmptyStr] = Field(default_factory=dict)
+
+
+class ProcessIdentityPolicyContextV1(StrictModel):
+    pid: Annotated[int, Field(ge=0)] | None = None
+    ppid: Annotated[int, Field(ge=0)] | None = None
+    executable: NonEmptyStr | None = None
+    command: NonEmptyStr | None = None
+    cwd: NonEmptyStr | None = None
 
 
 class HttpRequestPolicyContextV1(StrictModel):
@@ -429,7 +438,9 @@ class HttpPolicyContextV1(StrictModel):
 
 class DnsRequestPolicyContextV1(StrictModel):
     qname: NonEmptyStr | None = None
+    qtype: NonEmptyStr | None = None
     domain_class: NonEmptyStr | None = None
+    transport: NonEmptyStr | None = None
 
 
 class DnsPolicyContextV1(StrictModel):
@@ -437,13 +448,25 @@ class DnsPolicyContextV1(StrictModel):
 
 
 class McpRequestPolicyContextV1(StrictModel):
+    method: NonEmptyStr | None = None
     server_id: NonEmptyStr | None = None
     tool_name: NonEmptyStr | None = None
+    server_name: NonEmptyStr | None = None
     namespaced_tool_name: NonEmptyStr | None = None
+    arguments_status: NonEmptyStr | None = None
+
+
+class McpResponsePolicyContextV1(StrictModel):
+    method: NonEmptyStr | None = None
+    server_id: NonEmptyStr | None = None
+    tool_name: NonEmptyStr | None = None
+    is_error: bool | None = None
+    result_status: NonEmptyStr | None = None
 
 
 class McpPolicyContextV1(StrictModel):
     request: McpRequestPolicyContextV1 | None = None
+    response: McpResponsePolicyContextV1 | None = None
 
 
 class ModelRequestPolicyContextV1(StrictModel):
@@ -451,16 +474,33 @@ class ModelRequestPolicyContextV1(StrictModel):
     api_family: NonEmptyStr | None = None
     model: NonEmptyStr | None = None
     stream: bool | None = None
+    operation: NonEmptyStr | None = None
+    estimated_input_tokens: Annotated[int, Field(ge=0)] | None = None
+    estimated_output_tokens: Annotated[int, Field(ge=0)] | None = None
+    estimated_cost_micros: Annotated[int, Field(ge=0)] | None = None
+    body: BodyPolicyContextV1 = Field(default_factory=BodyPolicyContextV1)
+
+
+class ModelResponsePolicyContextV1(StrictModel):
+    provider: NonEmptyStr | None = None
+    api_family: NonEmptyStr | None = None
+    model: NonEmptyStr | None = None
+    status: Annotated[int, Field(ge=100, le=599)] | None = None
+    stop_reason: NonEmptyStr | None = None
+    estimated_output_tokens: Annotated[int, Field(ge=0)] | None = None
+    body: BodyPolicyContextV1 = Field(default_factory=BodyPolicyContextV1)
 
 
 class ModelPolicyContextV1(StrictModel):
     request: ModelRequestPolicyContextV1 | None = None
+    response: ModelResponsePolicyContextV1 | None = None
 
 
 class FileActivityPolicyContextV1(StrictModel):
     operation: NonEmptyStr | None = None
     path: NonEmptyStr | None = None
     path_class: NonEmptyStr | None = None
+    byte_count: Annotated[int, Field(ge=0)] | None = None
 
 
 class FilePolicyContextV1(StrictModel):
@@ -469,7 +509,11 @@ class FilePolicyContextV1(StrictModel):
 
 class ProcessActivityPolicyContextV1(StrictModel):
     operation: NonEmptyStr | None = None
+    executable: NonEmptyStr | None = None
+    command: NonEmptyStr | None = None
     command_class: NonEmptyStr | None = None
+    argv: list[NonEmptyStr] = Field(default_factory=list)
+    cwd: NonEmptyStr | None = None
 
 
 class ProcessPolicyContextV1(StrictModel):
@@ -480,6 +524,7 @@ class ProfileActivityPolicyContextV1(StrictModel):
     operation: NonEmptyStr | None = None
     profile_id: NonEmptyStr | None = None
     profile_revision: NonEmptyStr | None = None
+    profile_name: NonEmptyStr | None = None
 
 
 class ProfilePolicyContextV1(StrictModel):
@@ -695,6 +740,12 @@ _STARTS_WITH_RE = re.compile(
 _EQUALS_RE = re.compile(
     rf"^(?P<path>[a-z][a-z0-9_.]*)\s*==\s*{_STRING_LITERAL}$"
 )
+_BOOL_EQUALS_RE = re.compile(
+    r"^(?P<path>[a-z][a-z0-9_.]*)\s*==\s*(?P<value>true|false)$"
+)
+_NUMBER_EQUALS_RE = re.compile(
+    r"^(?P<path>[a-z][a-z0-9_.]*)\s*==\s*(?P<value>-?[0-9]+(?:\.[0-9]+)?)$"
+)
 _HEADER_EXISTS_RE = re.compile(
     r"^http\.request\.header\((?P<quote>['\"])(?P<header>[^'\"]+)(?P=quote)\)\.exists\(\)$",
 )
@@ -703,7 +754,9 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
     EventFamily.DNS: frozenset(
         {
             "dns.request.qname",
+            "dns.request.qtype",
             "dns.request.domain_class",
+            "dns.request.transport",
         }
     ),
     EventFamily.HTTP: frozenset(
@@ -735,9 +788,17 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
     ),
     EventFamily.MCP: frozenset(
         {
+            "mcp.request.method",
             "mcp.request.server_id",
             "mcp.request.tool_name",
+            "mcp.request.server_name",
             "mcp.request.namespaced_tool_name",
+            "mcp.request.arguments_status",
+            "mcp.response.method",
+            "mcp.response.server_id",
+            "mcp.response.tool_name",
+            "mcp.response.is_error",
+            "mcp.response.result_status",
         }
     ),
     EventFamily.MODEL: frozenset(
@@ -746,6 +807,28 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
             "model.request.api_family",
             "model.request.model",
             "model.request.stream",
+            "model.request.operation",
+            "model.request.estimated_input_tokens",
+            "model.request.estimated_output_tokens",
+            "model.request.estimated_cost_micros",
+            "model.request.body.state",
+            "model.request.body.text",
+            "model.request.body.content_type",
+            "model.request.body.size",
+            "model.request.body.truncated",
+            "model.request.body.redaction_reason",
+            "model.response.provider",
+            "model.response.api_family",
+            "model.response.model",
+            "model.response.status",
+            "model.response.stop_reason",
+            "model.response.estimated_output_tokens",
+            "model.response.body.state",
+            "model.response.body.text",
+            "model.response.body.content_type",
+            "model.response.body.size",
+            "model.response.body.truncated",
+            "model.response.body.redaction_reason",
         }
     ),
     EventFamily.FILE: frozenset(
@@ -753,12 +836,16 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
             "file.activity.operation",
             "file.activity.path",
             "file.activity.path_class",
+            "file.activity.byte_count",
         }
     ),
     EventFamily.PROCESS: frozenset(
         {
             "process.activity.operation",
+            "process.activity.executable",
+            "process.activity.command",
             "process.activity.command_class",
+            "process.activity.cwd",
         }
     ),
     EventFamily.PROFILE: frozenset(
@@ -766,6 +853,7 @@ _SUPPORTED_POLICY_PATHS: dict[EventFamily, frozenset[str]] = {
             "profile.activity.operation",
             "profile.activity.profile_id",
             "profile.activity.profile_revision",
+            "profile.activity.profile_name",
         }
     ),
 }
@@ -807,6 +895,14 @@ def _validate_policy_condition(rule: PolicyRuleV1) -> None:
         equals_match = _EQUALS_RE.match(clause)
         if equals_match is not None:
             _validate_policy_path(rule, equals_match.group("path"))
+            continue
+        bool_equals_match = _BOOL_EQUALS_RE.match(clause)
+        if bool_equals_match is not None:
+            _validate_policy_path(rule, bool_equals_match.group("path"))
+            continue
+        number_equals_match = _NUMBER_EQUALS_RE.match(clause)
+        if number_equals_match is not None:
+            _validate_policy_path(rule, number_equals_match.group("path"))
             continue
         raise ValueError(f"rule {rule.id} uses unsupported CEL clause: {clause}")
 
@@ -863,6 +959,29 @@ def _policy_rule_matches(
             value = _event_value(fixture.context, path)
             expected = equals_match.group("value")
             if value != expected:
+                return False, {}
+            matched[path] = value
+            continue
+        bool_equals_match = _BOOL_EQUALS_RE.match(clause)
+        if bool_equals_match is not None:
+            path = bool_equals_match.group("path")
+            value = _event_value(fixture.context, path)
+            expected = bool_equals_match.group("value") == "true"
+            if value is not expected:
+                return False, {}
+            matched[path] = value
+            continue
+        number_equals_match = _NUMBER_EQUALS_RE.match(clause)
+        if number_equals_match is not None:
+            path = number_equals_match.group("path")
+            value = _event_value(fixture.context, path)
+            expected_raw = number_equals_match.group("value")
+            expected: int | float
+            if "." in expected_raw:
+                expected = float(expected_raw)
+            else:
+                expected = int(expected_raw)
+            if isinstance(value, bool) or value != expected:
                 return False, {}
             matched[path] = value
             continue

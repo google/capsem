@@ -900,3 +900,91 @@ decision = "block"
     assert result.exit_code == 1
     assert '"ok": false' in result.output
     assert "unsupported policy path" in result.output
+
+
+def test_capsem_admin_policy_backtest_matches_core_non_http_contexts(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "core-policy.toml"
+    policy_path.write_text(
+        """
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.core-contexts"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+
+[[rules]]
+id = "mcp-valid-read"
+name = "MCP valid read"
+event_family = "mcp"
+event_type = "mcp.request"
+condition = "mcp.request.arguments_status == 'valid_json' && mcp.response.is_error == false"
+decision = "block"
+
+[[rules]]
+id = "model-gemini-stream"
+name = "Gemini stream"
+event_family = "model"
+event_type = "model.request"
+condition = "model.request.provider == 'google_gemini' && model.request.stream == true"
+decision = "block"
+
+[[rules]]
+id = "file-workspace-write"
+name = "Workspace write"
+event_family = "file"
+event_type = "file.write"
+condition = "file.activity.operation == 'write' && file.activity.byte_count == 64"
+decision = "block"
+
+[[rules]]
+id = "process-shell"
+name = "Shell process"
+event_family = "process"
+event_type = "process.exec"
+condition = "process.activity.operation == 'exec' && process.activity.executable == 'bash'"
+decision = "block"
+
+[[rules]]
+id = "profile-coding"
+name = "Coding profile"
+event_family = "profile"
+event_type = "profile.update"
+condition = "profile.activity.profile_name == 'Coding'"
+decision = "block"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(
+        """
+{"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit-core","session_id":"session-1","event_id":"evt-mcp","sequence":1,"timestamp_unix_ms":1},"context":{"schema_version":1,"common":{"event_type":"mcp.request"},"mcp":{"request":{"server_id":"filesystem","tool_name":"read_file","arguments_status":"valid_json"},"response":{"is_error":false,"result_status":"ok"}}}}
+{"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit-core","session_id":"session-1","event_id":"evt-model","sequence":2,"timestamp_unix_ms":2},"context":{"schema_version":1,"common":{"event_type":"model.request"},"model":{"request":{"provider":"google_gemini","api_family":"google_gemini_content","model":"gemini-2.5-pro","stream":true,"estimated_cost_micros":12}}}}
+{"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit-core","session_id":"session-1","event_id":"evt-file","sequence":3,"timestamp_unix_ms":3},"context":{"schema_version":1,"common":{"event_type":"file.write"},"file":{"activity":{"operation":"write","path":"/workspace/secret.txt","path_class":"workspace","byte_count":64}}}}
+{"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit-core","session_id":"session-1","event_id":"evt-process","sequence":4,"timestamp_unix_ms":4},"context":{"schema_version":1,"common":{"event_type":"process.exec"},"process":{"activity":{"operation":"exec","executable":"bash","command":"bash -lc echo ok","command_class":"shell","argv":["bash","-lc","echo ok"],"cwd":"/workspace"}}}}
+{"schema":"capsem.policy-context-fixture.v1","event_ref":{"corpus":"unit-core","session_id":"session-1","event_id":"evt-profile","sequence":5,"timestamp_unix_ms":5},"context":{"schema_version":1,"common":{"event_type":"profile.update"},"profile":{"activity":{"operation":"update","profile_id":"coding","profile_revision":"rev-a","profile_name":"Coding"}}}}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "backtest",
+            str(policy_path),
+            "--events",
+            str(events_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"event_count": 5' in result.output
+    assert '"match_count": 5' in result.output
+    assert '"rule_id": "mcp-valid-read"' in result.output
+    assert '"rule_id": "model-gemini-stream"' in result.output
+    assert '"rule_id": "file-workspace-write"' in result.output
+    assert '"rule_id": "process-shell"' in result.output
+    assert '"rule_id": "profile-coding"' in result.output
