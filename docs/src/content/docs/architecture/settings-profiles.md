@@ -36,6 +36,25 @@ or fork only when the profile section permits it. Editable-section booleans
 control whether users may change skills, MCP servers, AI providers, rules, VM
 settings, and other profile sections.
 
+## Chain Of Trust
+
+```mermaid
+flowchart TD
+    A["Capsem binary<br/>manifest signing public key"] --> B["signed manifest"]
+    B --> C["profile id + revision + lifecycle status"]
+    C --> D["signed/hashed profile payload"]
+    D --> E["package/tool contract"]
+    D --> F["VM asset declarations"]
+    F --> G["downloaded assets verified by signature/hash"]
+    G --> H["VM pinned to profile revision + asset hashes"]
+    H --> I["boot with pinned verified assets"]
+```
+
+This is the same trust chain documented in the bedrock release contract and the
+profile catalog reference. A profile is not just UI preference; it is the
+signed contract that ties package assumptions, MCP tools, security controls,
+and VM assets together.
+
 ## Profile Status
 
 Use the `ProfileRevisionStatus` enum everywhere:
@@ -75,4 +94,3 @@ Priority is ascending: lower numbers run first.
 
 See [Enforcement](/security/enforcement/) and
 [Detection Format](/security/detection/) for runtime behavior.
-

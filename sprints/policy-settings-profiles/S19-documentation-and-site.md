@@ -208,14 +208,14 @@ Final paths should follow the actual docs tree present when this sprint starts.
 
 - [x] Audit existing docs for v1 settings/policy language.
 - [x] Define final docs information architecture and sidebar placement.
-- [~] Add the chain-of-trust diagram above to the engine overview,
+- [x] Add the chain-of-trust diagram above to the engine overview,
       profile-catalog reference, corporate deployment guide, and security
       overview, using the same vocabulary in every page.
 - [x] Write bedrock contract page:
       Network/File/Process/Security/Emitter boundaries, canonical event
       journal, profile-owned policy/detection, runtime route groups, CLI/UI
       contract, and the explicit extension split for S10/S13/S22/S23.
-- [~] Write engine overview with resolution/provenance diagrams.
+- [x] Write engine overview with resolution/provenance diagrams.
 - [x] Write rule-engine grammar reference:
       callbacks, canonical policy context roots/fields/functions, decisions,
       rewrite rules, priority defaults, and the explicit `event.*` rejection
@@ -323,13 +323,13 @@ Final paths should follow the actual docs tree present when this sprint starts.
   guide or update the existing page.
 - [x] Remove docs that tell admins to edit `guest/config` image settings by hand
       for release images; replace with profile-derived `capsem-admin` flows.
-- [~] Update architecture pages to reflect service/profile/VM-effective
+- [x] Update architecture pages to reflect service/profile/VM-effective
   settings.
-- [~] Update security pages to reflect capabilities, credential brokerage,
+- [x] Update security pages to reflect capabilities, credential brokerage,
   MCP/RAG/tools posture, and remote decisions.
-- [ ] Update security navigation so enforcement and detection format are
+- [x] Update security navigation so enforcement and detection format are
       separate first-class pages and are linked from corporate admin docs.
-- [ ] Update configuration/troubleshooting pages to point to debug-report and
+- [x] Update configuration/troubleshooting pages to point to debug-report and
   provenance output.
 - [x] Document `ask -> confirm()` behavior and `policy_confirm_events` telemetry
       query/debug workflows.
@@ -426,6 +426,11 @@ listed revision that must not be installed or launched is `revoked`.
   enforcement configuration, explicit S22 quota and S10 credential-brokerage
   deferral notes, Security Engine benchmark methodology, and profile
   assets/manifests/rootfs dependency guidance.
+- 2026-05-23: Final navigation/troubleshooting sweep added the shared
+  profile-chain-of-trust diagram to the security overview and settings/profile
+  engine page, rewrote network isolation away from domain-policy/allow-list
+  language, and updated troubleshooting to point to profile provenance,
+  Settings -> Policy, `capsem logs`, and debug reports.
 
 ## Coverage Ledger
 

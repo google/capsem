@@ -28,7 +28,7 @@ sidebar:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `curl: (60) SSL certificate problem` | CA bundle not injected | Check `capsem-doctor -k "ca_env"` |
-| Domain blocked unexpectedly | Not in allow list | Check `~/.capsem/user.toml` domain policy |
+| Domain blocked unexpectedly | No matching Profile V2 enforcement allow rule, or a higher-priority block matched | Check Settings -> Policy, `capsem logs`, and the profile rule provenance |
 | All HTTPS fails | MITM proxy not running | Check `capsem-doctor -k "net_proxy"` for L2 status |
 | Slow downloads | Expected for air-gapped proxy | All traffic routes through the MITM proxy by design |
 
@@ -37,8 +37,8 @@ sidebar:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `claude: command not found` | Not in PATH | Check `/opt/ai-clis/bin` is in PATH: `echo $PATH` |
-| `disabled by policy` at boot | API key not configured | Add key to `~/.capsem/user.toml` |
-| CLI hangs on first run | Waiting for network it can't reach | Check provider is in the domain allow list |
+| `disabled by policy` at boot | Provider, credential reference, or profile section is disabled/locked | Check the selected profile and Service Settings V2 credential references |
+| CLI hangs on first run | Waiting for network it cannot reach | Check provider/package rules and profile asset/package contract |
 
 ## Disk full / Colima eating all disk space
 
@@ -77,7 +77,11 @@ When reporting an installed-release issue, include a debug report first:
 capsem debug
 ```
 
-The same report is available in Settings -> About as **Copy debug report**. It includes the binary version, build hash, setup-state flags, VM asset hashes, and redacted service/gateway log tails needed to map the report back to a specific release payload.
+The same report is available in Settings -> About as **Copy debug report**. It
+includes the binary version, build hash, setup-state flags, profile catalog
+state, selected profile id/revision, VM asset hashes, Security Engine health,
+runtime rule counters, and redacted service/gateway log tails needed to map the
+report back to a specific release payload.
 
 ## Inspecting session data
 
@@ -89,3 +93,10 @@ just inspect-session <id>         # Specific session
 ```
 
 This shows MCP tool usage, network requests, boot timing, and snapshot operations. Useful for diagnosing slow operations or missing telemetry.
+
+For security-rule issues, prefer the typed surfaces first:
+
+- `capsem logs <id>` for decision/finding attribution;
+- Settings -> Policy for live enforcement/detection rules and backtests;
+- `/debug/report` or `capsem debug` for profile/catalog/runtime health;
+- [Rule Authoring](/security/policy/) for priority and ownership semantics.

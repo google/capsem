@@ -2577,7 +2577,7 @@ a valid claim -- mark it `[ ]` instead.
     frontend run check` passed, and `pnpm --dir frontend run build` passed.
     S16 is closed for the bedrock release; richer workbench composition moves
     to S16a/S17 instead of reopening the profile UI contract.
-32. [~] [S19 - Documentation and site](S19-documentation-and-site.md)
+32. [x] [S19 - Documentation and site](S19-documentation-and-site.md)
     -- table-stakes release work, not an improvement sprint. The release does
     not ship without docs that explain the shipped contract and deferrals.
     -- adds first-class enforcement and detection-format pages, corporate admin
@@ -2629,6 +2629,12 @@ a valid claim -- mark it `[ ]` instead.
     configuration, explicit S22 quota and S10 credential-brokerage deferral
     notes, Security Engine benchmark methodology, and profile assets/manifests/
     rootfs dependency guidance.
+    Final S19 navigation/troubleshooting sweep added the chain-of-trust diagram
+    to the security overview and settings/profile engine page, rewrote network
+    isolation away from domain-policy/allow-list authority, and pointed
+    troubleshooting at profile provenance, Settings -> Policy, `capsem logs`,
+    debug reports, and typed rule references. S19 is closed for the bedrock
+    release; S18 owns final docs-review replay.
 33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate

@@ -5,7 +5,10 @@ sidebar:
   order: 20
 ---
 
-The guest VM has no real network interface. DNS and HTTPS are redirected to guest-side proxy binaries, forwarded to host handlers over vsock, checked against policy, and logged to the session database.
+The guest VM has no real network interface. DNS and HTTPS are redirected to
+guest-side proxy binaries, forwarded to host handlers over vsock, lifted into
+typed Security Events, checked by the Security Engine, and logged through the
+resolved-event path.
 
 ## Air-gapped architecture
 
@@ -19,8 +22,8 @@ graph LR
     end
 
     subgraph "Host"
-        HDNS["DNS Proxy<br/>policy + upstream resolver"]
-        MITM["MITM Proxy<br/>TLS termination + policy"]
+        HDNS["DNS Proxy<br/>SecurityEvent + upstream resolver"]
+        MITM["MITM Proxy<br/>TLS termination + SecurityEvent"]
         UP["Upstream server"]
     end
 
@@ -59,15 +62,16 @@ The host MITM proxy receives each connection on vsock:5002 and runs a full inspe
 ```mermaid
 graph TD
     A["vsock:5002 connection"] --> B["TLS ClientHello<br/>extract SNI domain"]
-    B --> C{"Domain policy<br/>check"}
-    C -->|Denied| D["Return 403<br/>log to session.db"]
-    C -->|Allowed| E["Complete TLS handshake<br/>mint leaf cert for domain"]
-    E --> F["Parse HTTP request<br/>method + path + headers"]
-    F --> G{"HTTP policy<br/>check"}
-    G -->|Denied| H["Return 403<br/>log to session.db"]
-    G -->|Allowed| I["Forward to upstream<br/>real TLS connection"]
+    B --> C["Complete TLS handshake<br/>mint leaf cert for domain"]
+    C --> D["Parse HTTP request<br/>method + path + headers"]
+    D --> E["Build http.request SecurityEvent"]
+    E --> F{"Security Engine decision"}
+    F -->|block/ask| G["Return denial<br/>emit resolved event"]
+    F -->|rewrite| H["Validate/apply mutation"]
+    F -->|allow| I["Forward to upstream<br/>real TLS connection"]
+    H --> I
     I --> J["Stream response<br/>to guest"]
-    J --> K["Log telemetry<br/>domain, method, path, status, bytes, latency"]
+    J --> K["Emit resolved event<br/>and telemetry projections"]
 ```
 
 The proxy mints per-domain TLS certificates signed by a static Capsem CA (ECDSA P-256, 24-hour validity). The CA is baked into the guest rootfs and trusted by the system certificate store, Python certifi, and Node.js. See [MITM Proxy Architecture](/architecture/mitm-proxy/) for implementation details.
@@ -82,53 +86,7 @@ The proxy mints per-domain TLS certificates signed by a static Capsem CA (ECDSA 
 | curl/wget | `SSL_CERT_FILE` env var |
 | pip/requests | `REQUESTS_CA_BUNDLE` env var |
 
-## Domain policy
-
-The domain policy engine uses block-before-allow semantics with a default-deny fallback.
-
-### Evaluation order
-
-```mermaid
-graph TD
-    A["Domain received"] --> B{"In block list?"}
-    B -->|Yes| C["DENY<br/>'domain in block-list'"]
-    B -->|No| D{"In allow list?"}
-    D -->|Yes| E["ALLOW<br/>'domain in allow-list'"]
-    D -->|No| F["DENY<br/>'domain not in allow-list'"]
-```
-
-Block list is checked first. If a domain appears in both lists, block wins.
-
-### Pattern matching
-
-| Pattern | Example | Matches | Does not match |
-|---------|---------|---------|----------------|
-| Exact | `github.com` | `github.com` | `api.github.com` |
-| Wildcard | `*.github.com` | `api.github.com`, `raw.github.com` | `github.com` (base domain) |
-
-Matching is case-insensitive. Wildcard patterns require at least one subdomain label before the suffix.
-
-### Default allow list
-
-| Domain | Purpose |
-|--------|---------|
-| `github.com`, `*.github.com` | Git hosting, API |
-| `*.githubusercontent.com` | GitHub raw content |
-| `registry.npmjs.org`, `*.npmjs.org` | npm packages |
-| `pypi.org`, `files.pythonhosted.org` | Python packages |
-| `crates.io`, `static.crates.io` | Rust packages |
-| `deb.debian.org`, `security.debian.org` | Debian packages |
-| `*.googleapis.com` | Google APIs |
-| `en.wikipedia.org`, `*.wikipedia.org` | Reference |
-
-### Default block list
-
-| Domain | Reason |
-|--------|--------|
-| `api.anthropic.com` | AI provider -- forced through audit gateway |
-| `api.openai.com` | AI provider -- forced through audit gateway |
-
-### User configuration
+## Profile-Owned Enforcement
 
 Users customize network behavior through Profile V2 capabilities and
 profile-owned enforcement rules, not standalone network allow/block files:
@@ -149,6 +107,10 @@ priority = 10
 
 Corporate profiles can lock the relevant profile sections so user profile forks
 cannot weaken network enforcement.
+
+There is no migrated default allow/block list. Hosts that should be reachable
+must be represented by explicit profile rules, generated package/provider
+rules, or system catch-alls derived from profile capabilities.
 
 ## HTTP and DNS Enforcement
 
@@ -173,7 +135,7 @@ HTTP `rewrite` rules can strip request or response headers before they leave
 the boundary or appear in telemetry. DNS `rewrite` rules synthesize configured
 answers without upstream resolution.
 
-See [Policy](/security/policy/) for the full rule reference.
+See [Rule Authoring](/security/policy/) for the full rule reference.
 
 ## Telemetry
 
@@ -191,7 +153,7 @@ Every proxied request is logged to the per-VM `session.db`:
 | `duration_ms` | End-to-end latency |
 | `request_body_preview` | First 4 KB of request body |
 | `response_body_preview` | First 4 KB of response body |
-| `matched_rule` | Which domain, HTTP, or policy rule matched |
+| `matched_rule` | Which Security Engine rule matched |
 
 For AI provider traffic (Anthropic, OpenAI, Google), the proxy also parses SSE streams to extract model calls, token usage, tool calls, and estimated cost. See [Session Telemetry](/architecture/session-telemetry/) for the full schema.
 
@@ -202,12 +164,12 @@ DNS queries are logged separately in `dns_events` with `qname`, `qtype`,
 
 | Scenario | Outcome | Why |
 |----------|---------|-----|
-| HTTPS to unlisted domain (`example.com`) | 403 Forbidden | Default deny; domain not in allow list |
-| HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Explicit block list |
+| HTTPS to a domain with no allowing rule (`example.com`) | 403 Forbidden | Profile catch-all denies the event |
+| HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Profile enforcement rule blocks |
 | HTTP port 80 (`http://google.com`) | Connection refused | Only port 443 is redirected |
 | Non-standard port (`https://google.com:8443`) | Connection refused | Only port 443 is redirected |
 | Direct IP (`https://1.1.1.1`) | Connection refused | No real NIC; dummy0 has no real route |
-| POST to allowed domain with block rule | 403 Forbidden | HTTP-level rule blocks the method |
+| POST to allowed domain with block rule | 403 Forbidden | Security Engine rule blocks the method |
 
 ## capsem-doctor validation
 
@@ -220,7 +182,7 @@ Network isolation is validated by `test_network.py` across 7 layers. Tests are o
 | **L3: TLS handshake** | `test_tls_handshake_completes`, `test_tls_cert_from_capsem_ca` | Full TLS to allowed domain succeeds, MITM proxy presents Capsem CA cert |
 | **L4: HTTP over MITM** | `test_curl_https_with_skip_verify`, `test_curl_verbose_diagnostics` | curl -k gets HTTP response, full handshake trace captured |
 | **L5: CA trust** | `test_mitm_ca_cert_file_exists`, `test_mitm_ca_in_system_bundle`, `test_certifi_includes_capsem_ca`, `test_curl_allowed_domain_ca_trusted`, `test_python_urllib_https_trusted`, `test_ca_env_var_set` | CA cert file exists, in system bundle, in Python certifi, curl works without -k, Python TLS works, `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS` set |
-| **L6: Policy enforcement** | `test_denied_domain_rejected`, `test_post_to_random_domain_denied`, `test_ai_provider_domain_blocked`, `test_http_port_80_not_proxied`, `test_non_standard_port_fails`, `test_direct_ip_no_route` | Denied domains get 403, port 80 fails, non-443 ports fail, direct IP fails |
+| **L6: Enforcement** | `test_denied_domain_rejected`, `test_post_to_random_domain_denied`, `test_ai_provider_domain_blocked`, `test_http_port_80_not_proxied`, `test_non_standard_port_fails`, `test_direct_ip_no_route` | Denied domains get 403, port 80 fails, non-443 ports fail, direct IP fails |
 | **L7: Throughput** | `test_proxy_download_throughput` | 100 MB download through MITM meets minimum speed threshold |
 
 Additional network tests in `test_sandbox.py`:
