@@ -15,20 +15,29 @@ static MCP_TIMEOUT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn same_millisecond_mcp_events_keep_distinct_security_ids() {
-    let first = mcp_security_event_id(
-        Some("trace_mcp"),
-        "filesystem",
-        "read_file",
-        None,
-        (Duration::from_millis(42)).as_nanos(),
-    );
-    let second = mcp_security_event_id(
-        Some("trace_mcp"),
-        "filesystem",
-        "read_file",
-        None,
-        (Duration::from_millis(42) + Duration::from_nanos(1)).as_nanos(),
-    );
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"filesystem__read_file","arguments":{"path":"README.md"}}}"#,
+    )
+    .unwrap();
+    let summary = interpret_mcp_method(&req);
+    let first = build_mcp_security_event_from_request(
+        "codex",
+        &req,
+        &summary,
+        Some("trace_mcp".into()),
+        std::time::UNIX_EPOCH + Duration::from_millis(42),
+    )
+    .common
+    .event_id;
+    let second = build_mcp_security_event_from_request(
+        "codex",
+        &req,
+        &summary,
+        Some("trace_mcp".into()),
+        std::time::UNIX_EPOCH + Duration::from_millis(42) + Duration::from_nanos(1),
+    )
+    .common
+    .event_id;
 
     assert_ne!(first, second);
 }

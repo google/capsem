@@ -70,6 +70,11 @@ The latest HTTP projection slice added Network Engine-owned HTTP SecurityEvent
 construction. MITM telemetry now adapts local request/response body stats into
 a typed `HttpSecurityEventInput`, then delegates HTTP request/response
 SecurityEvent and resolved-event construction to `capsem-network-engine`.
+The following MCP projection slice added Network Engine-owned MCP SecurityEvent
+construction. Framed MCP dispatch still owns JSON-RPC parsing/local policy and
+aggregator transmission, but it now adapts method summaries into
+`McpSecurityEventInput` before runtime CEL evaluation and resolved-event
+journaling.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,
@@ -693,7 +698,8 @@ Expected split:
   The DNS wire parser, transport result, and DNS SecurityEvent projection are
   now also owned by this crate. HTTP SecurityEvent projection is also owned by
   this crate; MITM still owns chunking, upstream transmission, and telemetry
-  hook scheduling.
+  hook scheduling. MCP SecurityEvent projection is also owned by this crate;
+  the framed endpoint still owns JSON-RPC I/O and aggregator dispatch.
 - `crates/capsem-file-engine`: file/snapshot/process activity layer that depends
   on the security-engine contract and owns file/snapshot mechanics.
 - `crates/capsem-process-engine`: process/audit activity layer that depends on

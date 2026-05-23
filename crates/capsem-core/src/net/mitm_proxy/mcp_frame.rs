@@ -12,11 +12,14 @@ use std::time::{Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
+use capsem_network_engine::mcp_security::{
+    build_mcp_resolved_security_event as build_network_mcp_resolved_security_event,
+    build_mcp_security_event as build_network_mcp_security_event,
+    mcp_security_result_allows_dispatch as network_mcp_security_result_allows_dispatch,
+    McpPolicyFields as NetworkMcpPolicyFields, McpSecurityEventInput,
+};
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, BlockResponse, Enforceability, McpSecuritySubject,
-    RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
-    SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError, SecurityEvent,
-    SecurityEventCommon, SecurityResult, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    ResolvedSecurityEvent, SecurityAction, SecurityEvent, SecurityResult,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -600,11 +603,20 @@ fn build_mcp_security_event_from_request(
     trace_id: Option<String>,
     timestamp: SystemTime,
 ) -> SecurityEvent {
-    let timestamp_duration = timestamp
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let timestamp_unix_ms = timestamp_duration.as_millis() as u64;
-    let timestamp_unix_nanos = timestamp_duration.as_nanos();
+    build_network_mcp_security_event(
+        &mcp_security_input_from_summary(req, summary, None, None, None),
+        trace_id,
+        timestamp,
+    )
+}
+
+fn mcp_security_input_from_summary(
+    req: &JsonRpcRequest,
+    summary: &McpMethodSummary,
+    policy_fields: Option<NetworkMcpPolicyFields>,
+    decision: Option<String>,
+    response_error_message: Option<String>,
+) -> McpSecurityEventInput {
     let server_name = summary
         .server_name
         .clone()
@@ -618,60 +630,18 @@ fn build_mcp_security_event_from_request(
         .or_else(|| summary.resource_uri.clone())
         .or_else(|| summary.prompt_name.clone())
         .unwrap_or_else(|| summary.method.clone());
-    let event_id = mcp_security_event_id(
-        trace_id.as_deref(),
-        &server_name,
-        &subject_tool_name,
-        req.id.as_ref(),
-        timestamp_unix_nanos,
-    );
-
-    SecurityEvent::mcp(
-        SecurityEventCommon {
-            event_id,
-            parent_event_id: None,
-            stream_id: None,
-            activity_id: None,
-            sequence_no: None,
-            source_engine: SourceEngine::Network,
-            attribution_scope: AiAttributionScope::Vm,
-            origin_kind: AiOriginKind::GuestNetwork,
-            accounting_owner: None,
-            enforceability: Enforceability::InlineBlockable,
-            trace_id,
-            span_id: None,
-            timestamp_unix_ms,
-            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
-            profile_pack_ids: Vec::new(),
-            enforcement_packs: Vec::new(),
-            detection_packs: Vec::new(),
-            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
-            process_id: None,
-            parent_process_id: None,
-            exec_id: None,
-            turn_id: None,
-            message_id: None,
-            tool_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
-            mcp_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
-            event_type: "mcp.request".into(),
-            redaction_state: RedactionState::Raw,
-        },
-        McpSecuritySubject {
-            server_id: server_name,
-            tool_name: subject_tool_name,
-            evidence: None,
-        },
-    )
+    McpSecurityEventInput {
+        server_name,
+        tool_name: subject_tool_name,
+        request_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
+        policy_fields: policy_fields.unwrap_or_default(),
+        decision,
+        response_error_message,
+    }
 }
 
 fn mcp_security_result_allows_dispatch(result: &SecurityResult) -> bool {
-    matches!(
-        result.action,
-        SecurityAction::Continue | SecurityAction::ObserveOnly
-    )
+    network_mcp_security_result_allows_dispatch(result)
 }
 
 fn mcp_policy_decision_from_security_result(
@@ -838,155 +808,24 @@ fn build_mcp_resolved_security_event(
     timestamp: SystemTime,
     trace_id: Option<String>,
 ) -> ResolvedSecurityEvent {
-    let timestamp_duration = timestamp
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let timestamp_unix_ms = timestamp_duration.as_millis() as u64;
-    let timestamp_unix_nanos = timestamp_duration.as_nanos();
     let subject_tool_name = tool_name
         .and_then(parse_namespaced)
         .map(|(_, tool)| tool.to_string())
         .or_else(|| tool_name.map(str::to_string))
         .unwrap_or_else(|| req.method.clone());
-    let event_id = mcp_security_event_id(
-        trace_id.as_deref(),
-        server_name,
-        &subject_tool_name,
-        req.id.as_ref(),
-        timestamp_unix_nanos,
-    );
-    let mut event = SecurityEvent::mcp(
-        SecurityEventCommon {
-            event_id,
-            parent_event_id: None,
-            stream_id: None,
-            activity_id: None,
-            sequence_no: None,
-            source_engine: SourceEngine::Network,
-            attribution_scope: AiAttributionScope::Vm,
-            origin_kind: AiOriginKind::GuestNetwork,
-            accounting_owner: None,
-            enforceability: Enforceability::InlineBlockable,
-            trace_id,
-            span_id: None,
-            timestamp_unix_ms,
-            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
-            profile_pack_ids: Vec::new(),
-            enforcement_packs: Vec::new(),
-            detection_packs: Vec::new(),
-            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
-            process_id: None,
-            parent_process_id: None,
-            exec_id: None,
-            turn_id: None,
-            message_id: None,
-            tool_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
-            mcp_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
-            event_type: "mcp.request".into(),
-            redaction_state: RedactionState::Raw,
+    let input = McpSecurityEventInput {
+        server_name: server_name.to_string(),
+        tool_name: subject_tool_name,
+        request_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
+        policy_fields: NetworkMcpPolicyFields {
+            policy_action: policy_fields.policy_action.clone(),
+            policy_rule: policy_fields.policy_rule.clone(),
+            policy_reason: policy_fields.policy_reason.clone(),
         },
-        McpSecuritySubject {
-            server_id: server_name.to_string(),
-            tool_name: subject_tool_name,
-            evidence: None,
-        },
-    );
-
-    let mut steps = Vec::new();
-    if let Some(action) = policy_fields
-        .policy_action
-        .as_deref()
-        .and_then(mcp_security_decision_action)
-    {
-        event.decision = Some(SecurityDecision {
-            action,
-            rule: policy_fields.policy_rule.clone(),
-            pack_id: None,
-            reason: policy_fields.policy_reason.clone(),
-            terminal: matches!(
-                action,
-                SecurityDecisionAction::Ask
-                    | SecurityDecisionAction::Block
-                    | SecurityDecisionAction::Rewrite
-                    | SecurityDecisionAction::Throttle
-            ),
-        });
-        steps.push(ResolvedEventStep {
-            kind: ResolvedEventStepKind::EnforcementMatch,
-            status: StepStatus::Matched,
-            rule_id: policy_fields.policy_rule.clone(),
-            pack_id: None,
-            message: policy_fields.policy_reason.clone(),
-        });
-    }
-
-    let final_action = match decision {
-        "denied" => SecurityAction::Block(BlockResponse {
-            reason_code: policy_fields
-                .policy_reason
-                .clone()
-                .unwrap_or_else(|| "mcp_call_denied".into()),
-            rule_id: policy_fields.policy_rule.clone(),
-        }),
-        "error" => SecurityAction::Error(SecurityError {
-            code: "mcp_error".into(),
-            message: resp
-                .error
-                .as_ref()
-                .map(|error| error.message.clone())
-                .unwrap_or_else(|| "MCP call failed".into()),
-        }),
-        _ => SecurityAction::Continue,
+        decision: Some(decision.to_string()),
+        response_error_message: resp.error.as_ref().map(|error| error.message.clone()),
     };
-
-    ResolvedSecurityEvent {
-        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
-        event,
-        steps,
-        plugin_transforms: Vec::new(),
-        detection_findings: Vec::new(),
-        final_action,
-        emitter_results: Vec::new(),
-    }
-}
-
-fn non_empty_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn mcp_security_decision_action(action: &str) -> Option<SecurityDecisionAction> {
-    match action {
-        "allow" => Some(SecurityDecisionAction::Allow),
-        "ask" => Some(SecurityDecisionAction::Ask),
-        "block" => Some(SecurityDecisionAction::Block),
-        "rewrite" => Some(SecurityDecisionAction::Rewrite),
-        _ => None,
-    }
-}
-
-fn mcp_security_event_id(
-    trace_id: Option<&str>,
-    server_name: &str,
-    tool_name: &str,
-    request_id: Option<&serde_json::Value>,
-    timestamp_unix_nanos: u128,
-) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(trace_id.unwrap_or("").as_bytes());
-    hasher.update(server_name.as_bytes());
-    hasher.update(tool_name.as_bytes());
-    if let Some(request_id) = request_id {
-        hasher.update(request_id.to_string().as_bytes());
-    }
-    hasher.update(&timestamp_unix_nanos.to_le_bytes());
-    let hash = hasher.finalize().to_hex().to_string();
-    format!("mcp-{}", &hash[..16])
+    build_network_mcp_resolved_security_event(&input, trace_id, timestamp)
 }
 
 #[derive(Clone)]

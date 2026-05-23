@@ -1896,6 +1896,20 @@ a valid claim -- mark it `[ ]` instead.
     transport/security-event builders behind the Network Engine boundary,
     visible UI screens/editors, interactive confirm prompt UX in S15, S12
     OTel/prometheus export, S08d performance proof, and final release gates.
+    Eighty-seventh structural Network Engine MCP-projection slice added
+    `capsem_network_engine::mcp_security` and moved MCP request
+    SecurityEvent/resolved-event construction behind a typed
+    `McpSecurityEventInput`. Framed MCP dispatch still owns JSON-RPC parsing,
+    local policy, timeout handling, and aggregator transmission, but runtime
+    CEL evaluation and journaling now use Network Engine projection. The old
+    local hash helper was removed; the regression now proves distinct event ids
+    through the real builder. Verification: `cargo test -p
+    capsem-network-engine mcp_security` **3** passed, `cargo test -p
+    capsem-core mcp_frame --lib` **10** passed, and `cargo check -p
+    capsem-core` passed. Still missing after this slice: moving model
+    transport/security-event builders behind the Network Engine boundary,
+    visible UI screens/editors, interactive confirm prompt UX in S15, S12
+    OTel/prometheus export, S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

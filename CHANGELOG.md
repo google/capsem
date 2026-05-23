@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Network Engine-owned HTTP SecurityEvent projection, with MITM telemetry
   adapting request/response stats into a typed `HttpSecurityEventInput` instead
   of constructing HTTP subjects directly inside `capsem-core`.
+- Added Network Engine-owned MCP SecurityEvent projection, with framed MCP
+  dispatch adapting JSON-RPC summaries into a typed `McpSecurityEventInput`
+  before runtime CEL evaluation and resolved-event journaling.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.
