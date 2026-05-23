@@ -43,6 +43,10 @@ inside the Security Engine: an `ask` decision now records an applied confirm
 step and becomes a terminal block with the original rule/pack attribution. The
 process exec path now observes that resolved block instead of leaking an
 unresolved ask into job completion or logs.
+The latest structural slice extracted file activity normalization into the
+first `capsem-file-engine` crate. Current file monitor and MCP file restore/
+delete producers now call that crate directly, while the old
+`capsem-core::file_security_events` module is removed.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

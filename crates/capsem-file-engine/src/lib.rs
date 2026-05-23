@@ -1,4 +1,8 @@
-//! Canonical Security Engine projection for file activity rows.
+//! File Engine security-event projection.
+//!
+//! This crate owns file/snapshot event normalization for the bedrock engine
+//! split. File mechanics stay outside the Security Engine; this crate produces
+//! the typed events that the Security Engine and resolved-event journal consume.
 
 use std::path::Path;
 
@@ -9,8 +13,21 @@ use capsem_security_engine::{
     RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
+/// Ambient identity values captured by the host/runtime around file activity.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileEngineIdentity {
+    pub vm_id: Option<String>,
+    pub session_id: Option<String>,
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<String>,
+    pub user_id: Option<String>,
+}
+
 /// Build the normalized Security Engine journal row for a file activity event.
-pub fn build_file_resolved_security_event(event: &FileEvent) -> ResolvedSecurityEvent {
+pub fn build_file_resolved_security_event(
+    event: &FileEvent,
+    identity: &FileEngineIdentity,
+) -> ResolvedSecurityEvent {
     let timestamp_duration = event
         .timestamp
         .duration_since(std::time::UNIX_EPOCH)
@@ -37,14 +54,14 @@ pub fn build_file_resolved_security_event(event: &FileEvent) -> ResolvedSecurity
             trace_id: event.trace_id.clone(),
             span_id: None,
             timestamp_unix_ms,
-            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            vm_id: identity.vm_id.clone(),
+            session_id: identity.session_id.clone(),
+            profile_id: identity.profile_id.clone(),
+            profile_revision: identity.profile_revision.clone(),
             profile_pack_ids: Vec::new(),
             enforcement_packs: Vec::new(),
             detection_packs: Vec::new(),
-            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            user_id: identity.user_id.clone(),
             process_id: None,
             parent_process_id: None,
             exec_id: None,
@@ -74,14 +91,7 @@ pub fn build_file_resolved_security_event(event: &FileEvent) -> ResolvedSecurity
     }
 }
 
-fn non_empty_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn file_path_class(path: &str) -> &'static str {
+pub fn file_path_class(path: &str) -> &'static str {
     let path = path.split_once(" (from ").map_or(path, |(path, _)| path);
     let parsed = Path::new(path);
     if path.contains("/workspace/")

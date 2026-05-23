@@ -266,8 +266,16 @@ impl FsMonitor {
             size,
             trace_id: crate::telemetry::ambient_capsem_trace_id(),
         };
-        let resolved_event =
-            crate::file_security_events::build_file_resolved_security_event(&event);
+        let resolved_event = capsem_file_engine::build_file_resolved_security_event(
+            &event,
+            &capsem_file_engine::FileEngineIdentity {
+                vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
+                session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
+                profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
+                profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+                user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            },
+        );
         db.write(WriteOp::FileEvent(event)).await;
         db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
             .await;
@@ -277,6 +285,13 @@ impl FsMonitor {
     pub async fn stop(&self) {
         let _ = self.shutdown_tx.send(()).await;
     }
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]

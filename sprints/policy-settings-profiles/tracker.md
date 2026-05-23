@@ -1799,6 +1799,20 @@ a valid claim -- mark it `[ ]` instead.
     gateway's `404` for missing runtime routes. Still missing after this slice:
     interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
     performance proof, and VM/runtime cutover breadth.
+    Eighty-first structural File Engine slice extracted file activity
+    normalization from `capsem-core` into the new `capsem-file-engine` crate.
+    The crate owns `FileEngineIdentity`, deterministic `file.activity` event
+    projection, and path classification tests. File monitor flushes and MCP
+    file restore/delete now call the File Engine crate directly; the old
+    `capsem-core::file_security_events` module and tests were removed instead
+    of left as a second authority. Verification: `cargo test -p
+    capsem-file-engine` **4** passed, `cargo check -p capsem-core` passed,
+    `cargo test -p capsem-core fs_monitor --lib` **14** passed, `cargo test
+    -p capsem-core file_tools --lib` **44** passed, and `cargo fmt --all
+    -- --check` passed. Still missing after this slice: Process Engine crate
+    extraction, Network Engine crate/module split, visible UI screens/editors,
+    interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
+    performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

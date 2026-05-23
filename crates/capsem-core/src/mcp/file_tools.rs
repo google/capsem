@@ -838,8 +838,16 @@ pub fn handle_revert_file(
             size,
             trace_id: crate::telemetry::ambient_capsem_trace_id(),
         };
-        let resolved_event =
-            crate::file_security_events::build_file_resolved_security_event(&event);
+        let resolved_event = capsem_file_engine::build_file_resolved_security_event(
+            &event,
+            &capsem_file_engine::FileEngineIdentity {
+                vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
+                session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
+                profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
+                profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+                user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            },
+        );
         db.try_write(capsem_logger::WriteOp::FileEvent(event));
         db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
             resolved_event,
@@ -857,6 +865,13 @@ pub fn handle_revert_file(
             }).to_string()}]
         }),
     )
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// Summarize changes as compact "+N, ~N, -N" string.

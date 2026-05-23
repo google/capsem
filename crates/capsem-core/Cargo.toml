@@ -21,6 +21,7 @@ tracing-appender = { workspace = true }
 serde = { workspace = true }
 rmp-serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
+capsem-file-engine = { path = "../capsem-file-engine" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-security-engine = { path = "../capsem-security-engine" }
 libc = "0.2"
