@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   half-running Colima VM and proving `just _pack-initrd` with Docker
   cross-compilation, initrd repack, hash-named assets, and manifest signature
   verification.
+- Updated developer skills to require a Colima stop/start recovery attempt
+  before reporting macOS Docker-backed asset builds as blocked.
 
 ### Added
 - Added the first `capsem-file-engine` crate so file activity normalization has
