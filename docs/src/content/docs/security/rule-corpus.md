@@ -51,7 +51,17 @@ allowlist, so a typo like `http.request.raw` must fail before replay.
    `data/enforcement/backtest-expected/` and
    `data/detection/backtest-expected/`. If the change affects session-backed
    forensic search, refresh `data/detection/hunt-expected/` as well.
-5. Run both language gates:
+5. When a real VM/session behavior should graduate into the corpus, export the
+   installed service's typed policy contexts:
+
+   ```bash
+   capsem export-policy-contexts <session-id> > data/policy-context/<name>.jsonl
+   capsem export-policy-contexts <session-id> --json
+   ```
+
+   The JSONL form is for committed fixture rows. The `--json` form keeps the
+   export envelope with `fixture_count` for local inspection.
+6. Run both language gates:
 
    ```bash
    uv run pytest tests/test_admin_cli.py tests/test_security_packs.py tests/test_admin_docs.py tests/test_admin_hygiene.py -q

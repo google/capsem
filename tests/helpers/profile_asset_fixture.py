@@ -163,7 +163,7 @@ content_type = {toml_string(declarations["rootfs.squashfs"]["content_type"])}
 
 [security.rules.dns.block_mitm_telemetry]
 on = "dns.request"
-if = "qname == 'blocked-mitm-policy.invalid'"
+if = "dns.request.qname == 'blocked-mitm-policy.invalid'"
 decision = "block"
 priority = 1
 reason = "gateway telemetry denial fixture"
@@ -223,7 +223,7 @@ reason = "gateway telemetry denial fixture"
                 "dns": {
                     "block_mitm_telemetry": {
                         "on": "dns.request",
-                        "if": "qname == 'blocked-mitm-policy.invalid'",
+                        "if": "dns.request.qname == 'blocked-mitm-policy.invalid'",
                         "decision": "block",
                         "priority": 1,
                         "reason": "gateway telemetry denial fixture",

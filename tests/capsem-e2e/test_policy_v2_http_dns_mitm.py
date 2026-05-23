@@ -32,14 +32,14 @@ def _example_com_allow_rules() -> dict:
     return {
         "policy.dns.allow_e2e_example_com": {
             "on": "dns.request",
-            "if": 'qname == "example.com"',
+            "if": 'dns.request.qname == "example.com"',
             "decision": "allow",
             "priority": 900,
             "reason": "E2E allow example.com DNS",
         },
         "policy.http.allow_e2e_example_com": {
             "on": "http.request",
-            "if": 'request.host == "example.com"',
+            "if": 'http.request.host == "example.com"',
             "decision": "allow",
             "priority": 900,
             "reason": "E2E allow example.com HTTP",
@@ -104,10 +104,10 @@ def test_guest_http_policy_v2_block_and_header_strip_records_session_db():
                 "policy.http.block_e2e_path_query_header": {
                     "on": "http.request",
                     "if": (
-                        'request.host == "example.com" && request.method == "GET" '
-                        '&& request.path == "/policy-v2-block" '
-                        '&& request.query == "token=secret" '
-                        '&& request.headers.authorization == "Bearer http-block-secret"'
+                        'http.request.host == "example.com" && http.request.method == "GET" '
+                        '&& http.request.path == "/policy-v2-block" '
+                        '&& http.request.query == "token=secret" '
+                        '&& http.request.header("authorization").exists()'
                     ),
                     "decision": "block",
                     "priority": 10,
@@ -116,9 +116,9 @@ def test_guest_http_policy_v2_block_and_header_strip_records_session_db():
                 "policy.http.rewrite_e2e_strip_authorization": {
                     "on": "http.request",
                     "if": (
-                        'request.host == "example.com" '
-                        '&& request.path == "/policy-v2-strip" '
-                        "&& has(request.headers.authorization)"
+                        'http.request.host == "example.com" '
+                        '&& http.request.path == "/policy-v2-strip" '
+                        '&& http.request.header("authorization").exists()'
                     ),
                     "decision": "rewrite",
                     "priority": 20,
@@ -130,9 +130,9 @@ def test_guest_http_policy_v2_block_and_header_strip_records_session_db():
                 "policy.http.rewrite_e2e_strip_response_server": {
                     "on": "http.response",
                     "if": (
-                        'request.host == "example.com" '
-                        '&& request.path == "/response-strip-e2e" '
-                        "&& has(response.headers.server)"
+                        'http.request.host == "example.com" '
+                        '&& http.request.path == "/response-strip-e2e" '
+                        '&& http.response.header("server").exists()'
                     ),
                     "decision": "rewrite",
                     "priority": 30,
@@ -344,14 +344,14 @@ def test_guest_dns_policy_v2_block_and_rewrite_records_session_db():
             {
                 "policy.dns.block_e2e_dns": {
                     "on": "dns.request",
-                    "if": 'qname == "block-dns-e2e.capsem.test" && qtype == "A"',
+                    "if": 'dns.request.qname == "block-dns-e2e.capsem.test"',
                     "decision": "block",
                     "priority": 10,
                     "reason": "E2E DNS block",
                 },
                 "policy.dns.rewrite_e2e_dns": {
                     "on": "dns.request",
-                    "if": 'qname == "rewrite-dns-e2e.capsem.test" && qtype == "A"',
+                    "if": 'dns.request.qname == "rewrite-dns-e2e.capsem.test"',
                     "decision": "rewrite",
                     "priority": 20,
                     "reason": "E2E DNS rewrite",

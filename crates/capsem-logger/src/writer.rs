@@ -1237,6 +1237,13 @@ fn insert_resolved_security_event(
     )?;
 
     let timestamp = timestamp_from_unix_ms(common.timestamp_unix_ms);
+    let (process_operation, process_command_class) = match &event.event.subject {
+        SecurityEventSubject::Process(subject) => (
+            Some(subject.operation.as_str()),
+            subject.command_class.as_deref(),
+        ),
+        _ => (None, None),
+    };
     conn.execute(
         "INSERT INTO security_events (
             event_id, timestamp, timestamp_unix_ms, event_family, event_type,
@@ -1245,12 +1252,13 @@ fn insert_resolved_security_event(
             stream_id, activity_id, sequence_no, vm_id, session_id, profile_id,
             profile_revision, user_id, process_id, parent_process_id, exec_id,
             turn_id, message_id, tool_call_id, mcp_call_id, redaction_state,
-            label_count, mutation_count, finding_count
+            process_operation, process_command_class, label_count, mutation_count,
+            finding_count
          )
          VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
             ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
-            ?29, ?30, ?31, ?32, ?33
+            ?29, ?30, ?31, ?32, ?33, ?34, ?35
          )
          ON CONFLICT(event_id) DO UPDATE SET
             timestamp = excluded.timestamp,
@@ -1282,6 +1290,8 @@ fn insert_resolved_security_event(
             tool_call_id = excluded.tool_call_id,
             mcp_call_id = excluded.mcp_call_id,
             redaction_state = excluded.redaction_state,
+            process_operation = excluded.process_operation,
+            process_command_class = excluded.process_command_class,
             label_count = excluded.label_count,
             mutation_count = excluded.mutation_count,
             finding_count = excluded.finding_count",
@@ -1316,6 +1326,8 @@ fn insert_resolved_security_event(
             common.tool_call_id.as_deref(),
             common.mcp_call_id.as_deref(),
             common.redaction_state.sql_text(),
+            process_operation,
+            process_command_class,
             event.event.labels.len() as i64,
             event.event.mutations.len() as i64,
             (event.event.findings.len() + event.detection_findings.len()) as i64,

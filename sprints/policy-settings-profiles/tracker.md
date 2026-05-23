@@ -1990,6 +1990,28 @@ a valid claim -- mark it `[ ]` instead.
     were added. Still missing in S08c: committed live VM-generated fixture
     export from the resolved-event journal and full runtime-CEL parity for CEL
     constructs outside the admin-supported subset.
+    Seventeenth session-policy-context-export slice added the installed
+    service export path that turns session journals into corpus-ready
+    policy-context fixtures. Red `cargo test -p capsem-service
+    handle_session_detection_hunt_reads_hand_built_security_db_corpus` first
+    failed because `/sessions/{id}/policy-contexts` did not exist; the green
+    path added `GET /sessions/{id}/policy-contexts`, `capsem
+    export-policy-contexts <session> [--json]`, and JSONL fixture output
+    using the same typed reconstruction path as session hunt. The live VM red
+    proof then exposed legacy profile fixture `qname` roots and a real
+    evidence-loss gap for blocked process decisions; the fix canonicalized
+    setup/profile DNS/HTTP policy roots and added typed
+    `security_events.process_operation` / `process_command_class` columns.
+    Verification: `cargo test -p capsem-service
+    handle_session_detection_hunt_reads_hand_built_security_db_corpus`,
+    `cargo test -p capsem --bin capsem parse_export_policy_contexts`, `cargo
+    test -p capsem-logger resolved_process_event_persists_typed_policy_fields`,
+    `cargo test -p capsem-logger migration`, and live `uv run pytest
+    tests/capsem-e2e/test_process_security_logs.py::test_runtime_process_block_is_visible_in_capsem_logs
+    -q` passed after rebuilding `capsem`, `capsem-service`, and
+    `capsem-process`. Still missing in S08c: committed stable live-session
+    fixture rows and full runtime-CEL parity for constructs outside the
+    admin-supported subset.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to

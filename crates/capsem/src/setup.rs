@@ -408,28 +408,28 @@ fn install_local_profile_revision_from_asset_root(
                 "dns": {
                     "allow_elie_net": {
                         "on": "dns.request",
-                        "if": "qname == 'elie.net'",
+                        "if": "dns.request.qname == 'elie.net'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
                     },
                     "allow_wildcard_elie_net": {
                         "on": "dns.request",
-                        "if": "qname == '*.elie.net'",
+                        "if": "dns.request.qname == '*.elie.net'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
                     },
                     "allow_en_wikipedia_org": {
                         "on": "dns.request",
-                        "if": "qname == 'en.wikipedia.org'",
+                        "if": "dns.request.qname == 'en.wikipedia.org'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
                     },
                     "allow_wildcard_wikipedia_org": {
                         "on": "dns.request",
-                        "if": "qname == '*.wikipedia.org'",
+                        "if": "dns.request.qname == '*.wikipedia.org'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
@@ -438,35 +438,35 @@ fn install_local_profile_revision_from_asset_root(
                 "http": {
                     "block_example_post": {
                         "on": "http.request",
-                        "if": "request.host == 'example.com' && request.method == 'POST'",
+                        "if": "http.request.host == 'example.com' && http.request.method == 'POST'",
                         "decision": "block",
                         "priority": 0,
                         "reason": "Doctor write-deny fixture."
                     },
                     "allow_elie_net": {
                         "on": "http.request",
-                        "if": "request.host == 'elie.net'",
+                        "if": "http.request.host == 'elie.net'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
                     },
                     "allow_wildcard_elie_net": {
                         "on": "http.request",
-                        "if": "request.host == '*.elie.net'",
+                        "if": "http.request.host == '*.elie.net'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
                     },
                     "allow_en_wikipedia_org": {
                         "on": "http.request",
-                        "if": "request.host == 'en.wikipedia.org'",
+                        "if": "http.request.host == 'en.wikipedia.org'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
                     },
                     "allow_wildcard_wikipedia_org": {
                         "on": "http.request",
-                        "if": "request.host == '*.wikipedia.org'",
+                        "if": "http.request.host == '*.wikipedia.org'",
                         "decision": "allow",
                         "priority": 1,
                         "reason": "Local development read allowlist."
@@ -890,7 +890,7 @@ profile_type = "coding"
 
 [security.rules.http.allow_example_docs]
 on = "http.request"
-if = 'request.host == "example.com"'
+if = 'http.request.host == "example.com"'
 decision = "allow"
 "#;
         let corp_path = d.path().join("corp-profile.toml");
@@ -1023,7 +1023,7 @@ decision = "allow"
         assert!(profile.security.rules.dns.contains_key("allow_elie_net"));
         assert_eq!(
             profile.security.rules.http["block_example_post"].condition,
-            "request.host == 'example.com' && request.method == 'POST'"
+            "http.request.host == 'example.com' && http.request.method == 'POST'"
         );
     }
 

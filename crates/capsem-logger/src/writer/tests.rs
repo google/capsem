@@ -429,6 +429,43 @@ fn resolved_process_event(
     )
 }
 
+#[test]
+fn resolved_process_event_persists_typed_policy_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("process-security.db");
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer
+                .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                    "evt-process-policy-fields",
+                    "exec",
+                    SecurityAction::Block(BlockResponse {
+                        reason_code: "blocked shell".into(),
+                        rule_id: Some("process.block_shell".into()),
+                    }),
+                )))
+                .await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (String, String) = conn
+        .query_row(
+            "SELECT process_operation, process_command_class
+             FROM security_events
+             WHERE event_id = 'evt-process-policy-fields'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, ("exec".to_owned(), "shell".to_owned()));
+}
+
 fn seed_time() -> std::time::SystemTime {
     std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_123)
 }

@@ -663,6 +663,15 @@ enum SessionCommands {
         #[arg(long)]
         tail: Option<usize>,
     },
+    /// Export session security events as policy-context fixture JSONL
+    ExportPolicyContexts {
+        /// Name or ID of the session
+        #[arg(value_name = "SESSION")]
+        session: String,
+        /// Output the full JSON export envelope instead of JSONL fixtures
+        #[arg(long)]
+        json: bool,
+    },
     /// Delete a session and all its state
     Delete {
         /// Name or ID of the session
@@ -1953,6 +1962,26 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", session)).await?;
             let logs = resp.into_result()?;
             print!("{}", format_session_logs(session, logs, *tail));
+        }
+        Commands::Session(SessionCommands::ExportPolicyContexts { session, json }) => {
+            client::validate_id(session)?;
+            let resp: ApiResponse<serde_json::Value> = client
+                .get(&format!(
+                    "/sessions/{}/policy-contexts",
+                    urlencoding::encode(session)
+                ))
+                .await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let fixtures = result["fixtures"]
+                    .as_array()
+                    .context("policy-context export response did not contain fixtures")?;
+                for fixture in fixtures {
+                    println!("{}", serde_json::to_string(fixture)?);
+                }
+            }
         }
         Commands::Session(SessionCommands::History {
             session,
@@ -3259,6 +3288,18 @@ mod tests {
                 assert_eq!(tail, None);
             }
             _ => panic!("expected Logs"),
+        }
+    }
+
+    #[test]
+    fn parse_export_policy_contexts() {
+        let cli = Cli::parse_from(["capsem", "export-policy-contexts", "vm-1", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::ExportPolicyContexts { session, json }) => {
+                assert_eq!(session, "vm-1");
+                assert!(json);
+            }
+            _ => panic!("expected export-policy-contexts"),
         }
     }
 

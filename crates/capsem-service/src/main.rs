@@ -7118,7 +7118,8 @@ fn security_events_query_rows(
                 ame.result_kind, ame.result_preview, ame.result_json,
                 ame.is_error, ame.latency_ms,
                 ame.linked_model_interaction_id,
-                ame.linked_model_tool_call_id, ame.link_status
+                ame.linked_model_tool_call_id, ame.link_status,
+                se.process_operation, se.process_command_class
              FROM security_events se
              LEFT JOIN net_events n
                 ON n.trace_id = se.trace_id
@@ -7437,6 +7438,8 @@ const SESSION_COL_MCP_EVIDENCE_LATENCY_MS: usize = 94;
 const SESSION_COL_MCP_EVIDENCE_LINKED_INTERACTION: usize = 95;
 const SESSION_COL_MCP_EVIDENCE_LINKED_TOOL_CALL: usize = 96;
 const SESSION_COL_MCP_EVIDENCE_LINK_STATUS: usize = 97;
+const SESSION_COL_SECURITY_PROCESS_OPERATION: usize = 98;
+const SESSION_COL_SECURITY_PROCESS_COMMAND_CLASS: usize = 99;
 
 fn session_ai_usage_from_row(row: &serde_json::Value) -> Result<seceng::AiUsageEvidence, AppError> {
     Ok(seceng::AiUsageEvidence {
@@ -8012,18 +8015,24 @@ fn session_security_event_from_row(
             )))
         }
         "process" => {
-            let operation = session_event_operation(&common.event_type, "activity");
+            let operation = session_optional_string(row, SESSION_COL_SECURITY_PROCESS_OPERATION)?
+                .unwrap_or_else(|| session_event_operation(&common.event_type, "activity"));
             let command = session_optional_string(row, SESSION_COL_PROCESS_COMMAND)?;
             let process_name = session_optional_string(row, SESSION_COL_PROCESS_NAME)?;
-            let command_class = command
-                .as_deref()
-                .and_then(capsem_core::process_security_events::classify_command_class)
-                .or_else(|| {
-                    process_name
-                        .as_deref()
-                        .and_then(capsem_core::process_security_events::classify_command_class)
-                })
-                .map(str::to_owned);
+            let command_class =
+                session_optional_string(row, SESSION_COL_SECURITY_PROCESS_COMMAND_CLASS)?
+                    .or_else(|| {
+                        command
+                            .as_deref()
+                            .and_then(capsem_core::process_security_events::classify_command_class)
+                            .map(str::to_owned)
+                    })
+                    .or_else(|| {
+                        process_name
+                            .as_deref()
+                            .and_then(capsem_core::process_security_events::classify_command_class)
+                            .map(str::to_owned)
+                    });
             Ok(Some(seceng::SecurityEvent::process(
                 common,
                 seceng::ProcessSecuritySubject {
@@ -8113,6 +8122,53 @@ fn session_backtest_events(
         }
     }
     Ok(events)
+}
+
+fn policy_context_fixture_json(
+    session_id: &str,
+    event: &RuntimeBacktestEvent,
+) -> Result<serde_json::Value, AppError> {
+    let fallback_ref = inline_backtest_event_ref(event);
+    let event_ref = event.event_ref.as_ref().unwrap_or(&fallback_ref);
+    let context = seceng::policy_context_from_event(&event.event);
+    let context_json = serde_json::to_value(context).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("serialize policy context fixture: {error}"),
+        )
+    })?;
+    Ok(json!({
+        "schema": "capsem.policy-context-fixture.v1",
+        "event_ref": {
+            "corpus": event_ref.corpus,
+            "session_id": event_ref
+                .session_id
+                .clone()
+                .unwrap_or_else(|| session_id.to_owned()),
+            "event_id": event_ref.event_id,
+            "sequence": event_ref.sequence_no.unwrap_or(0),
+            "timestamp_unix_ms": event_ref.timestamp_unix_ms,
+        },
+        "expected_labels": [],
+        "context": context_json,
+    }))
+}
+
+fn session_policy_context_export_json(
+    session_id: &str,
+    reader: &capsem_logger::DbReader,
+) -> Result<serde_json::Value, AppError> {
+    let events = session_backtest_events(session_id, reader)?;
+    let fixtures = events
+        .iter()
+        .map(|event| policy_context_fixture_json(session_id, event))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({
+        "schema": "capsem.policy-context-export.v1",
+        "session_id": session_id,
+        "fixture_count": fixtures.len(),
+        "fixtures": fixtures,
+    }))
 }
 
 fn security_decision_action_text(
@@ -8576,6 +8632,20 @@ async fn handle_session_detection_hunt(
         &events,
         request.limit,
     )?))
+}
+
+async fn handle_session_policy_contexts(
+    Path(id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let db_path = resolve_session_dir(&state, &id)?.join("session.db");
+    let reader = capsem_logger::DbReader::open(&db_path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to open session DB for policy-context export: {error}"),
+        )
+    })?;
+    Ok(Json(session_policy_context_export_json(&id, &reader)?))
 }
 
 /// GET /confirm/pending -- list pending S15 confirmation prompts.
@@ -11462,6 +11532,10 @@ async fn main() -> Result<()> {
         .route(
             "/sessions/{id}/detection/hunt",
             post(handle_session_detection_hunt),
+        )
+        .route(
+            "/sessions/{id}/policy-contexts",
+            get(handle_session_policy_contexts),
         )
         .route("/detection/stats", get(handle_detection_stats))
         .route(

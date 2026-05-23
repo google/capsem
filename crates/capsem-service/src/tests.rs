@@ -7696,6 +7696,31 @@ async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
     assert_eq!(response.status, Some(200));
     assert_eq!(response.bytes, Some(34));
 
+    let Json(export) = handle_session_policy_contexts(Path(vm_id.into()), State(state.clone()))
+        .await
+        .unwrap();
+    assert_eq!(export["schema"], "capsem.policy-context-export.v1");
+    assert_eq!(export["session_id"], vm_id);
+    assert_eq!(export["fixture_count"], 3);
+    assert_eq!(
+        export["fixtures"][0]["schema"],
+        "capsem.policy-context-fixture.v1"
+    );
+    assert_eq!(export["fixtures"][0]["event_ref"]["corpus"], "session_db");
+    assert_eq!(
+        export["fixtures"][0]["event_ref"]["event_id"],
+        "evt-admin-google"
+    );
+    assert_eq!(export["fixtures"][0]["event_ref"]["sequence"], 0);
+    assert_eq!(
+        export["fixtures"][0]["context"]["http"]["request"]["host"],
+        "google.example.test"
+    );
+    assert_eq!(
+        export["fixtures"][0]["context"]["common"]["profile_id"],
+        "coding"
+    );
+
     let Json(result) = handle_session_detection_hunt(
         Path(vm_id.into()),
         State(state),

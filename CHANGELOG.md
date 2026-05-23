@@ -135,6 +135,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status, returned-to-model state, linked MCP call id, and parse confidence,
   with session-backed detection hunt reconstruction from
   `ai_model_tool_results`.
+- Added a session policy-context export path:
+  `GET /sessions/{id}/policy-contexts` and
+  `capsem export-policy-contexts <session>` emit JSONL fixtures from
+  `session.db` for admin/runtime corpus work, with live VM proof for blocked
+  process enforcement.
+- Added typed process operation and command-class columns to the canonical
+  `security_events` ledger so blocked process decisions preserve policy
+  evidence even when no downstream exec projection exists.
 - Added a typed frontend API client surface for runtime enforcement and
   detection routes, including validate/compile/install/delete/list/stats,
   backtest, live hunt, and session-backed detection hunt calls.
@@ -769,6 +777,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the split between JSON status surfaces and `/metrics`.
 
 ### Changed
+- Changed setup/profile fixture policy roots from legacy `qname` /
+  `request.*` conditions to canonical `dns.request.*` and `http.request.*`
+  CEL paths.
 - Closed the Profile V2 S07/Post-S06 sprint ledger after reconciling later
   S07c/S07b/S08 proof: remaining confirm, event-journal, UI, debug, telemetry,
   docs, and release-replay work is now assigned to later sprints instead of

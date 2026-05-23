@@ -336,6 +336,8 @@ pub const CREATE_SCHEMA: &str = "
         tool_call_id TEXT,
         mcp_call_id TEXT,
         redaction_state TEXT NOT NULL CHECK (redaction_state IN ('raw', 'redacted', 'summary-only')),
+        process_operation TEXT,
+        process_command_class TEXT,
         label_count INTEGER NOT NULL DEFAULT 0,
         mutation_count INTEGER NOT NULL DEFAULT 0,
         finding_count INTEGER NOT NULL DEFAULT 0
@@ -816,6 +818,8 @@ pub fn migrate(conn: &Connection) {
             tool_call_id TEXT,
             mcp_call_id TEXT,
             redaction_state TEXT NOT NULL CHECK (redaction_state IN ('raw', 'redacted', 'summary-only')),
+            process_operation TEXT,
+            process_command_class TEXT,
             label_count INTEGER NOT NULL DEFAULT 0,
             mutation_count INTEGER NOT NULL DEFAULT 0,
             finding_count INTEGER NOT NULL DEFAULT 0
@@ -910,6 +914,14 @@ pub fn migrate(conn: &Connection) {
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_action TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_rule TEXT", []);
     let _ = conn.execute("ALTER TABLE dns_events ADD COLUMN policy_reason TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE security_events ADD COLUMN process_operation TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE security_events ADD COLUMN process_command_class TEXT",
+        [],
+    );
     let _ = conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_dns_events_policy_rule ON dns_events(policy_rule)",
         [],
@@ -1343,6 +1355,8 @@ mod tests {
             ("net_events", "policy_action"),
             ("mcp_calls", "policy_reason"),
             ("dns_events", "policy_rule"),
+            ("security_events", "process_operation"),
+            ("security_events", "process_command_class"),
             ("tool_calls", "mcp_call_id"),
             ("tool_responses", "trace_id"),
             ("fs_events", "trace_id"),

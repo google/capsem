@@ -206,6 +206,17 @@ session-scoped enforcement replay, it should be named and designed separately.
   `model.request.tool_calls[0].name` plus
   `model.response.tool_results[0].returned_to_model`, mirroring the Rust CEL
   policy surface used by AI/MCP rules.
+- Slice 17 added the first installed-service policy-context export path.
+  `GET /sessions/{id}/policy-contexts` reads `session.db`, reconstructs typed
+  `SecurityEvent`s through the same session-backed path as hunt/backtest, and
+  emits `capsem.policy-context-fixture.v1` rows. `capsem
+  export-policy-contexts <session>` prints JSONL for corpus capture while
+  `--json` preserves the export envelope. The red live proof exposed two real
+  debts: profile fixtures still carried legacy bare `qname`, and blocked
+  process events lost `command_class` when no exec projection existed. The
+  green path canonicalized fixture/setup DNS/HTTP roots and added typed
+  `process_operation` / `process_command_class` columns to the canonical
+  `security_events` ledger.
 
 ## Coverage Ledger
 
@@ -226,9 +237,10 @@ session-scoped enforcement replay, it should be named and designed separately.
   legacy Detection IR `subject.*` paths, and evidence-dedup behavior.
 - E2E/VM or integration: hand-built `session.db` hunt expected artifact covers
   the resolved-event journal read path; a live VM process-enforcement E2E now
-  proves blocked exec decisions are written to both `capsem logs` and
-  `security_events` / `security_event_steps`. Live VM-generated fixture export
-  remains open.
+  proves blocked exec decisions are written to `capsem logs`,
+  `security_events` / `security_event_steps`, and exported policy-context JSONL
+  with canonical `process.activity.command_class`. Committing stable
+  live-session fixture rows remains open.
 - Telemetry/observability: backtest reports include event refs and full local
   evidence; export redaction is tested separately when export exists.
 - Performance: corpus backtest has a basic timing budget and reports evaluated

@@ -6,6 +6,7 @@ runtime rule install -> capsem-process eval -> process.log -> /logs -> CLI.
 """
 
 from contextlib import closing
+import json
 import sqlite3
 import time
 import uuid
@@ -139,6 +140,26 @@ def test_runtime_process_block_is_visible_in_capsem_logs(service):
             rule_id,
             reason,
         )
+
+        export = service.cli_ok("export-policy-contexts", vm, timeout=60)
+        fixtures = [
+            json.loads(line)
+            for line in export.stdout.splitlines()
+            if line.strip()
+        ]
+        process_fixtures = [
+            fixture
+            for fixture in fixtures
+            if fixture["context"]["common"]["event_type"] == "process.exec"
+        ]
+        assert process_fixtures, export.stdout
+        process_fixture = process_fixtures[-1]
+        assert process_fixture["schema"] == "capsem.policy-context-fixture.v1"
+        assert process_fixture["event_ref"]["corpus"] == "session_db"
+        assert process_fixture["event_ref"]["session_id"] == vm
+        assert process_fixture["context"]["common"]["vm_id"] == vm
+        assert process_fixture["context"]["process"]["activity"]["operation"] == "exec"
+        assert process_fixture["context"]["process"]["activity"]["command_class"] == "shell"
     finally:
         service.cli("enforcement", "delete", rule_id, timeout=60)
         service.cli("delete", vm, timeout=120)
