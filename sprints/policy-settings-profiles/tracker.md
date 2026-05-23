@@ -1937,6 +1937,20 @@ a valid claim -- mark it `[ ]` instead.
     builders behind the Network Engine boundary, visible UI screens/editors,
     interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
     performance proof, and final release gates.
+    Ninetieth structural Network Engine model-request parser slice moved the
+    typed Anthropic/OpenAI/Google request body parser and its 41-test suite
+    into `capsem-network-engine`. The parser continues to extract model,
+    stream mode, system prompt preview, message/tool counts, and tool-result
+    evidence through provider-specific serde structs with malformed/truncated
+    fallback coverage. `capsem-core` telemetry and canonical evidence adapters
+    now consume `capsem_network_engine::model_request`. Verification: `cargo
+    test -p capsem-network-engine model_request` **41** passed, `cargo test -p
+    capsem-core ai_traffic::evidence --lib` **6** passed, and `cargo test -p
+    capsem-core telemetry_hook --lib` **15** passed. Still missing after this
+    slice: moving canonical model evidence and model SecurityEvent builders
+    behind the Network Engine boundary, visible UI screens/editors,
+    interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
+    performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

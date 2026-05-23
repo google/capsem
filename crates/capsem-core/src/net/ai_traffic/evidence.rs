@@ -9,7 +9,7 @@ use capsem_security_engine::{
 };
 
 use super::provider::{extract_model_from_path, tool_origin, ProviderKind};
-use super::request_parser::RequestMeta;
+use capsem_network_engine::model_request::RequestMeta;
 use capsem_network_engine::model_stream::{StopReason, StreamSummary};
 
 #[derive(Debug, Clone)]
@@ -339,7 +339,7 @@ mod tests {
     use capsem_security_engine::{AiAttributionScope, AiOriginKind, SourceEngine};
 
     use super::*;
-    use crate::net::ai_traffic::request_parser::ToolResultMeta;
+    use capsem_network_engine::model_request::ToolResultMeta;
     use capsem_network_engine::model_stream::{StopReason, StreamSummary, ToolCall};
 
     #[test]

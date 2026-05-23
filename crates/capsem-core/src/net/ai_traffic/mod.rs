@@ -35,7 +35,6 @@
 pub mod evidence;
 pub mod pricing;
 pub mod provider;
-pub mod request_parser;
 
 use std::collections::HashMap;
 

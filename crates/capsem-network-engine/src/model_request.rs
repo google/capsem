@@ -6,7 +6,7 @@
 //! and tool_result entries from subsequent requests (for linking tool call
 //! lifecycle).
 
-use capsem_network_engine::ai_provider::ProviderKind;
+use crate::ai_provider::ProviderKind;
 
 /// Fallback for truncated JSON: search for "model":"..." in the first few KB
 /// using a simple byte scan.

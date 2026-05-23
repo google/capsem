@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved provider-neutral AI stream events, summaries, provider identity, and
   non-streaming usage parsing into `capsem-network-engine`, leaving
   `capsem-core` to own only MITM provider routing and key injection.
+- Moved typed AI request parsing for Anthropic, OpenAI, and Google/Gemini into
+  `capsem-network-engine`, including tool-result extraction and malformed-body
+  fallback tests.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

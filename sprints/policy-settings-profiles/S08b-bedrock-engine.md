@@ -86,6 +86,11 @@ The following model-stream event slice moved provider-neutral `ProviderKind`,
 parsing into `capsem-network-engine`. `capsem-core` keeps provider routing and
 API-key injection beside the MITM interpreters, but no longer owns the common
 LLM event/summary contract.
+The next model request slice moved typed Anthropic/OpenAI/Google request body
+parsing into `capsem-network-engine`. The parser extracts model, stream mode,
+system prompt preview, message/tool counts, and tool-result evidence through
+provider-specific serde structs, with malformed/truncated body fallback tests
+kept beside the Network Engine parser.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

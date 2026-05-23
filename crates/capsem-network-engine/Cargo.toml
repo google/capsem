@@ -16,6 +16,8 @@ capsem-logger = { path = "../capsem-logger" }
 capsem-security-engine = { path = "../capsem-security-engine" }
 flate2 = "1"
 hickory-proto.workspace = true
+regex.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
