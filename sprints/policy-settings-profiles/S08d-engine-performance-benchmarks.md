@@ -2,7 +2,7 @@
 
 ## Status
 
-Not started. Inserted on 2026-05-21 as the S08 exit benchmark sprint.
+In progress. Inserted on 2026-05-21 as the S08 exit benchmark sprint.
 
 ## Goal
 
@@ -166,27 +166,41 @@ clearly not numerical and matches the sprint tracker.
 
 ## Tasks
 
-- Extend `capsem-bench` with `security-engine` mode or add an equivalent
+- [ ] Extend `capsem-bench` with `security-engine` mode or add an equivalent
   VM-originated benchmark harness that is invoked by `just bench`.
-- Add host-side serial pytest artifact capture for security-engine benchmark
+- [ ] Add host-side serial pytest artifact capture for security-engine benchmark
   JSON under `benchmarks/security-engine/`.
-- Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
+- [~] Add Rust evaluator microbenchmarks for CEL, detection lowering/evaluation,
   evidence dedup, and registry plan swaps.
-- Adapt the Howard John-style CEL benchmark methodology into a Capsem local
+- [ ] Adapt the Howard John-style CEL benchmark methodology into a Capsem local
   baseline artifact, using the Agentgateway `benches.rs` families/cases as the
   source model where they map, before drawing optimization conclusions.
-- Add correctness assertions for every benchmark scenario: expected final
+- [ ] Add correctness assertions for every benchmark scenario: expected final
   action, expected detection finding, and persisted resolved-event evidence.
-- Add rule-pack and event fixtures for low/medium/high rule-count cases.
-- Add concurrency/load cases that prove engine work remains bounded under burst
+- [ ] Add rule-pack and event fixtures for low/medium/high rule-count cases.
+- [ ] Add concurrency/load cases that prove engine work remains bounded under burst
   VM activity.
-- Update `docs/src/content/docs/development/benchmarking.md` and
+- [~] Update `docs/src/content/docs/development/benchmarking.md` and
   `docs/src/content/docs/benchmarks/results.md` with the new benchmark mode and
   latest recorded results.
-- Feed measured results into S19a marketing copy only after benchmark artifacts
+- [ ] Feed measured results into S19a marketing copy only after benchmark artifacts
   exist.
-- Add regression gates for gross latency regressions once the first stable
+- [ ] Add regression gates for gross latency regressions once the first stable
   baseline is recorded.
+
+## Implementation Notes
+
+- Slice 1 added `crates/capsem-security-engine/benches/security_engine_cel.rs`
+  as the first Criterion microbench harness. It measures canonical CEL compile
+  time, warm enforcement evaluation for `http.request.host`,
+  `http.request.url`, `http.request.path`, `http.request.header(...)`, and
+  `http.request.body.text`, a combined canonical HTTP policy, a 100-rule
+  last-match path, policy-context projection/materialization, and a native
+  Rust comparator over the same HTTP evidence. Verification: red `cargo bench
+  -p capsem-security-engine --bench security_engine_cel --no-run` first failed
+  on the missing bench file; after adding the harness, `--no-run` passed and
+  the full `cargo bench -p capsem-security-engine --bench security_engine_cel`
+  executed successfully. This is not yet a release benchmark artifact.
 
 ## Coverage Ledger
 

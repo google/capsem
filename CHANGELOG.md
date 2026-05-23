@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the first S08d Security Engine Criterion benchmark harness for
+  canonical CEL compile/evaluate, policy-context materialization, 100-rule
+  last-match evaluation, and native HTTP lookup comparison.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.

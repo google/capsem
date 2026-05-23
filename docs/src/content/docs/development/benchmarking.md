@@ -20,6 +20,7 @@ just run "capsem-bench snapshot"    # Snapshot operations only
 just run "capsem-bench mitm-load"   # MITM proxy concurrency/load test
 just run "capsem-bench mcp-load"    # Guest MCP endpoint concurrency/load test
 just run "capsem-bench dns-load"    # DNS proxy concurrency/load test
+cargo bench -p capsem-security-engine --bench security_engine_cel
 just full-test                      # Full validation including benchmarks
 ```
 
@@ -107,6 +108,20 @@ These modes are opt-in because they stress hot paths more aggressively than the 
 | `mitm-load` | Concurrent HTTPS requests through the MITM proxy |
 | `mcp-load` | Guest MCP framed transport and host endpoint dispatch |
 | `dns-load` | DNS redirect, capsem-dns-proxy, host DNS policy, and resolver path |
+
+### Security Engine CEL microbenchmarks
+
+The host-side Rust Criterion harness measures canonical Security Engine CEL
+paths without booting a VM:
+
+```bash
+cargo bench -p capsem-security-engine --bench security_engine_cel
+```
+
+The first S08d harness covers CEL compile time, warm enforcement evaluation,
+policy-context projection/materialization, 100-rule last-match evaluation, and
+a native Rust lookup comparator for the same HTTP policy. These numbers explain
+runtime hot-path costs; they do not replace VM-originated benchmark artifacts.
 
 ### Snapshot operations (`snapshot`)
 

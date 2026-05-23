@@ -2032,7 +2032,7 @@ a valid claim -- mark it `[ ]` instead.
     fixtures. `capsem-admin detection hunt` remains intentionally unimplemented
     offline; installed Capsem owns session-backed detection hunt through the
     service/CLI runtime path.
-23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
+23. [~] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to
     prove VM-originated allow/block/ask/detect latency, rule-count scaling,
@@ -2048,6 +2048,16 @@ a valid claim -- mark it `[ ]` instead.
     `2f9ffa89c25a45f3eca34ba39bb6241a1e6d8a4b`: compile, execute-ref,
     execute-snapshot, lookup, and the `simple_access`, `header`, `bbr`, `jwt`,
     `cidr`, and `regex` cases mapped onto Capsem equivalents.
+    First S08d CEL microbench slice added
+    `crates/capsem-security-engine/benches/security_engine_cel.rs`. Red
+    `cargo bench -p capsem-security-engine --bench security_engine_cel
+    --no-run` first failed on the missing bench target; after implementation,
+    `--no-run` passed and full `cargo bench -p capsem-security-engine --bench
+    security_engine_cel` executed. The harness covers canonical HTTP CEL
+    compile/evaluate, 100-rule last-match, policy-context materialization, and
+    native lookup comparison. Still missing in S08d: committed JSON benchmark
+    artifacts, VM-originated security-engine benchmarks, detection/dedup/
+    registry microbenches, concurrency cases, and regression gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
