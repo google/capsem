@@ -2133,6 +2133,22 @@ a valid claim -- mark it `[ ]` instead.
     lanes. Still missing in S08d: DNS/MCP/model/file VM-originated benchmarks,
     concurrency cases, backtest/hunt scan-rate artifacts, and broader release
     gates.
+    Eighth S08d VM-originated slice wired DNS proxy requests through the
+    runtime Security Engine before upstream resolution and added
+    `test_dns_request_enforcement_benchmark_records_vm_originated_path`.
+    The benchmark installs a runtime CEL `dns.request.qname` block rule,
+    triggers guest resolver lookups, verifies runtime match counters, asserts
+    canonical `security_events` plus legacy `dns_events` policy rows, confirms
+    `capsem logs` includes DNS qname/rule attribution, and archives
+    `benchmarks/security-engine/data_1.1.1778860037_arm64_dns_request_enforcement.json`.
+    Latest local result: 1.109ms mean / 0.830ms median / 3.508ms p95 blocked
+    DNS lookup timing for eight guest calls, with sixteen blocked DNS rows
+    because the guest resolver asks multiple record families. This slice also
+    fixed the security-log projection gap by adding family-specific fields
+    (`dns_qname`, HTTP host/path, MCP server/tool, model provider/name, file
+    path, process operation/class). Still missing in S08d: MCP/model/file
+    VM-originated benchmarks, concurrency cases, backtest/hunt scan-rate
+    artifacts, and broader release gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

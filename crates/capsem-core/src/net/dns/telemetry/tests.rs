@@ -3,6 +3,9 @@ use super::*;
 use crate::net::dns::server::DnsHandlerResult;
 use crate::net::parsers::dns_parser::DnsQuery;
 use capsem_logger::events::Decision;
+use capsem_security_engine::{
+    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+};
 use std::time::{Duration, SystemTime};
 
 fn allowed_result() -> DnsHandlerResult {
@@ -44,6 +47,16 @@ fn denied_result() -> DnsHandlerResult {
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
+    }
+}
+
+fn dns_query() -> DnsQuery {
+    DnsQuery {
+        id: 0x1234,
+        qname: "blocked.example.com".into(),
+        qtype: 1,
+        qclass: 1,
+        extra_questions: 0,
     }
 }
 
@@ -201,6 +214,53 @@ fn build_resolved_security_event_for_denied_query() {
         }
         other => panic!("expected DNS subject, got {other:?}"),
     }
+}
+
+#[test]
+fn build_dns_security_event_from_query_uses_canonical_dns_policy_root() {
+    let event = build_dns_security_event_from_query(&dns_query(), Some("trace_dns".into()));
+
+    assert_eq!(event.common.event_type, "dns.request");
+    assert_eq!(event.common.trace_id.as_deref(), Some("trace_dns"));
+    match event.subject {
+        capsem_security_engine::SecurityEventSubject::Dns(subject) => {
+            assert_eq!(subject.qname, "blocked.example.com");
+            assert_eq!(subject.domain_class, "external");
+        }
+        other => panic!("expected DNS subject, got {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_dns_block_projects_to_denied_dns_result_without_upstream() {
+    let query = dns_query();
+    let event = build_dns_security_event_from_query(&query, Some("trace_dns".into()));
+    let evaluator = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "runtime.block-dns".into(),
+        pack_id: Some("runtime-benchmark".into()),
+        condition: "dns.request.qname == 'blocked.example.com'".into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("blocked DNS benchmark domain".into()),
+    }])
+    .unwrap();
+
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(evaluator));
+
+    let result = engine.evaluate(event).unwrap();
+    assert!(!dns_security_result_allows_transport(&result));
+    let dns_result = build_dns_runtime_denied_result(&[], query, &result);
+
+    assert_eq!(dns_result.decision, Decision::Denied);
+    assert_eq!(dns_result.upstream_resolver_ms, 0);
+    assert_eq!(dns_result.rcode, 3);
+    assert_eq!(dns_result.policy_mode.as_deref(), Some("runtime"));
+    assert_eq!(dns_result.policy_action.as_deref(), Some("block"));
+    assert_eq!(dns_result.policy_rule.as_deref(), Some("runtime.block-dns"));
+    assert_eq!(
+        dns_result.policy_reason.as_deref(),
+        Some("blocked DNS benchmark domain")
+    );
 }
 
 #[test]

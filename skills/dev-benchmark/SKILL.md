@@ -199,11 +199,13 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 | blocked_process_exec | Service API exec request -> capsem-process IPC -> process `SecurityEvent` projection -> CEL enforcement block -> response |
 | blocked_http_request | Guest curl -> network transport/MITM -> HTTP `SecurityEvent` projection -> CEL enforcement block -> response |
 | keepalive_blocked_http_request | Guest Python TLS client -> one persistent MITM TLS connection -> repeated HTTP `SecurityEvent` projection -> CEL enforcement block -> response |
+| blocked_dns_request | Guest resolver -> capsem DNS proxy -> DNS `SecurityEvent` projection -> CEL enforcement block -> NXDOMAIN response |
 
 ### Output
 
 - Per-run blocked exec latencies
 - Per-run blocked HTTP request latencies
+- Per-run blocked DNS request latencies
 - JSON saved to
   `benchmarks/security-engine/data_{version}_{arch}_{workload}.json`
   with command, commit, host, rule, assertion, and latency metadata
@@ -218,13 +220,15 @@ curl phase timing/deltas, and a persistent keep-alive lane. Use the
 post-pretransfer first-byte delta and keep-alive first-byte timing to reason
 about MITM/Security Engine response cost instead of raw guest curl wall time.
 The keep-alive lane also guards against bursty same-millisecond logging
-collapsing `security_events` rows.
+collapsing `security_events` rows. DNS artifacts additionally verify
+`dns_events` policy fields and security-log qname projection.
 
 ### When to run
 
 - After changes to `capsem-security-engine`
 - After changes to Detection IR parsing/lowering in `capsem-core`
 - After changes to process security event projection or exec dispatch
+- After changes to DNS proxy runtime enforcement or `dns_events` logging
 - After changes to runtime enforcement rule propagation/counters
 - After changes to `security_events` logging or `capsem logs`
 - Before making release or marketing claims about Security Engine latency

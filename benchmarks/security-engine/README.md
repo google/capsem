@@ -9,8 +9,8 @@ Artifacts currently cover three lanes:
 - host-side Rust Criterion microbenchmarks for Detection IR parse/lowering in
   `capsem-core`;
 - host-side serial pytest runs that exercise VM-originated Security Engine
-  events through the real service/process IPC and network transport paths and
-  verify session DB, runtime counters, and log projection.
+  events through the real service/process IPC, DNS, and network transport paths
+  and verify session DB, runtime counters, and log projection.
 
 The Criterion numbers explain evaluator, detection, Detection IR lowering,
 backtest dedupe, runtime registry, compiled-plan rebuild, policy-context

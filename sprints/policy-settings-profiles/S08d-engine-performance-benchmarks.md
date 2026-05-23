@@ -271,6 +271,18 @@ clearly not numerical and matches the sprint tracker.
   single-rule fixture, 96.620us to lower 100 Detection IR rules, and 2.762ms
   to lower plus compile 100 Detection IR rules. `just bench` now runs both
   Criterion harnesses.
+- Slice 8 wired DNS requests into the runtime Security Engine before upstream
+  resolution and added the first VM-originated DNS enforcement benchmark. The
+  benchmark installs a runtime CEL rule for a unique qname, triggers guest
+  resolver lookups, asserts the lookup fails through a synthetic DNS denial,
+  verifies runtime match counters, checks both canonical `security_events` and
+  legacy `dns_events` policy rows, and confirms `capsem logs` exposes the DNS
+  qname and rule attribution. Latest local result: eight guest resolver calls
+  produced sixteen blocked DNS security events/`dns_events` rows at 1.109ms
+  mean, 0.830ms median, 3.508ms p95/max against a 1,000ms gross-regression
+  gate. This slice also expanded security-log projection with family-specific
+  subject fields so DNS qname, HTTP host/path, MCP server/tool, model provider/
+  name, file path, and process operation/class are visible in logs.
 
 ## Coverage Ledger
 
@@ -278,28 +290,30 @@ clearly not numerical and matches the sprint tracker.
   scale fixture generation, evaluator microbench setup, same-millisecond
   event-ID regression coverage for HTTP, DNS, MCP, and file security events,
   Detection IR parse/lowering fixture coverage.
-- Functional: VM-originated process and HTTP request enforcement benchmarks
-  assert correct block actions through the real service/process and
-  guest-network/MITM paths. DNS/MCP/model/file detection and allow scenarios
-  remain open.
+- Functional: VM-originated process, HTTP request, and DNS request enforcement
+  benchmarks assert correct block actions through the real service/process,
+  guest-network/MITM, and guest DNS proxy paths. MCP/model/file detection and
+  allow scenarios remain open.
 - Adversarial: invalid rules, unsupported Sigma constructs, missing event
   fields, high-cardinality evidence, oversized packs, slow emitter/journal path.
-- E2E/VM: real VM process exec and HTTP request events now verify action
-  latency visible to the caller plus resolved-event evidence in session
-  storage. DNS/MCP/model/file VM-originated benchmarks remain open.
+- E2E/VM: real VM process exec, HTTP request, and DNS request events now verify
+  action latency visible to the caller plus resolved-event evidence in session
+  storage. MCP/model/file VM-originated benchmarks remain open.
 - Telemetry: the first VM-originated benchmark confirms runtime enforcement
   match counters and security-log projection. The HTTP benchmark now proves
   fast synthetic block responses produce both `net_events` and
-  `security_events` for every request in bursty keep-alive traffic. VM
-  status/OTel counters for enforcement evaluations, detection evaluations,
-  findings, errors, and forward-plugin metrics remain open.
+  `security_events` for every request in bursty keep-alive traffic. The DNS
+  benchmark proves `dns_events`, `security_events`, runtime counters, and
+  security logs all carry DNS qname/rule attribution. VM status/OTel counters
+  for enforcement evaluations, detection evaluations, findings, errors, and
+  forward-plugin metrics remain open.
 - Performance: adapted CEL rig numbers, Capsem canonical-root microbench
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,
   detection evaluation, backtest evidence dedupe, runtime registry projection,
   runtime compiled-plan rebuild cost, Detection IR parse/lowering/compile cost,
-  first process and HTTP request block latency artifacts, concurrency scaling,
-  backtest/hunt scan rates.
+  first process, HTTP request, and DNS request block latency artifacts,
+  concurrency scaling, backtest/hunt scan rates.
 - Missing/deferred: exact threshold gates are chosen after the first stable
   S08d baseline; until then, marketing uses artifact-backed qualitative claims
   or explicit measured numbers with context.

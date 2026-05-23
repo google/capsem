@@ -3271,7 +3271,73 @@ fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<Str
                     SELECT group_concat(df.rule_id, ',')
                     FROM detection_findings df
                     WHERE df.event_id = se.event_id
-                ) AS detection_rule_ids
+                ) AS detection_rule_ids,
+                (
+                    SELECT d.qname
+                    FROM dns_events d
+                    WHERE d.trace_id = se.trace_id
+                      AND se.event_family = 'dns'
+                    ORDER BY d.id ASC
+                    LIMIT 1
+                ) AS dns_qname,
+                (
+                    SELECT n.domain
+                    FROM net_events n
+                    WHERE n.trace_id = se.trace_id
+                      AND se.event_family = 'http'
+                    ORDER BY n.id ASC
+                    LIMIT 1
+                ) AS http_host,
+                (
+                    SELECT n.path
+                    FROM net_events n
+                    WHERE n.trace_id = se.trace_id
+                      AND se.event_family = 'http'
+                    ORDER BY n.id ASC
+                    LIMIT 1
+                ) AS http_path,
+                (
+                    SELECT m.server_name
+                    FROM mcp_calls m
+                    WHERE m.trace_id = se.trace_id
+                      AND se.event_family = 'mcp'
+                    ORDER BY m.id ASC
+                    LIMIT 1
+                ) AS mcp_server_id,
+                (
+                    SELECT m.tool_name
+                    FROM mcp_calls m
+                    WHERE m.trace_id = se.trace_id
+                      AND se.event_family = 'mcp'
+                    ORDER BY m.id ASC
+                    LIMIT 1
+                ) AS mcp_tool_name,
+                (
+                    SELECT mc.provider
+                    FROM model_calls mc
+                    WHERE mc.trace_id = se.trace_id
+                      AND se.event_family = 'model'
+                    ORDER BY mc.id ASC
+                    LIMIT 1
+                ) AS model_provider,
+                (
+                    SELECT mc.model
+                    FROM model_calls mc
+                    WHERE mc.trace_id = se.trace_id
+                      AND se.event_family = 'model'
+                    ORDER BY mc.id ASC
+                    LIMIT 1
+                ) AS model_name,
+                (
+                    SELECT f.path
+                    FROM fs_events f
+                    WHERE f.trace_id = se.trace_id
+                      AND se.event_family = 'file'
+                    ORDER BY f.id ASC
+                    LIMIT 1
+                ) AS file_path,
+                se.process_operation,
+                se.process_command_class
              FROM security_events se
              WHERE se.id IN (
                 SELECT latest.id
@@ -3401,6 +3467,16 @@ fn security_log_line_from_row(row: &serde_json::Value) -> Result<String, AppErro
         ("pack_id", 33),
         ("reason", 34),
         ("detection_rule_ids", 35),
+        ("dns_qname", 36),
+        ("http_host", 37),
+        ("http_path", 38),
+        ("mcp_server_id", 39),
+        ("mcp_tool_name", 40),
+        ("model_provider", 41),
+        ("model_name", 42),
+        ("file_path", 43),
+        ("process_operation", 44),
+        ("process_command_class", 45),
     ] {
         insert_security_log_value(&mut fields, key, row, index)?;
     }

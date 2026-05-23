@@ -17,10 +17,11 @@ use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, BlockResponse, DnsSecuritySubject, Enforceability,
     RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
     SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError, SecurityEvent,
-    SecurityEventCommon, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    SecurityEventCommon, SecurityResult, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
 use crate::net::dns::server::DnsHandlerResult;
+use crate::net::parsers::dns_parser::{build_nxdomain, DnsQuery};
 
 /// Build a `DnsEvent` row for one query.
 ///
@@ -56,6 +57,97 @@ pub fn build_dns_event(
         policy_action: result.policy_action.clone(),
         policy_rule: result.policy_rule.clone(),
         policy_reason: result.policy_reason.clone(),
+    }
+}
+
+/// Build the pre-upstream Security Engine event for a parsed DNS query.
+///
+/// The DNS transport evaluates this before forwarding to an upstream resolver
+/// so runtime block/ask/throttle decisions can short-circuit without leaking
+/// the lookup outside the VM boundary.
+pub fn build_dns_security_event_from_query(
+    query: &DnsQuery,
+    trace_id: Option<String>,
+) -> SecurityEvent {
+    let timestamp_duration = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let timestamp_unix_ms = timestamp_duration.as_millis() as u64;
+    let timestamp_unix_nanos = timestamp_duration.as_nanos();
+
+    SecurityEvent::dns(
+        SecurityEventCommon {
+            event_id: dns_security_event_id(
+                trace_id.as_deref(),
+                &query.qname,
+                query.qtype,
+                query.qclass,
+                timestamp_unix_nanos,
+            ),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: None,
+            enforceability: Enforceability::InlineBlockable,
+            trace_id,
+            span_id: None,
+            timestamp_unix_ms,
+            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
+            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
+            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
+            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "dns.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        DnsSecuritySubject {
+            qname: query.qname.clone(),
+            domain_class: dns_domain_class(&query.qname).into(),
+        },
+    )
+}
+
+pub fn dns_security_result_allows_transport(result: &SecurityResult) -> bool {
+    matches!(
+        result.action,
+        SecurityAction::Continue | SecurityAction::ObserveOnly
+    )
+}
+
+/// Project a terminal runtime Security Engine decision back to DNS transport
+/// bytes plus the legacy `dns_events` fields.
+pub fn build_dns_runtime_denied_result(
+    query_bytes: &[u8],
+    query: DnsQuery,
+    result: &SecurityResult,
+) -> DnsHandlerResult {
+    let policy_rule = dns_security_result_rule_id(result);
+    let policy_reason = dns_security_result_reason(result);
+    DnsHandlerResult {
+        answer_bytes: build_nxdomain(query_bytes).unwrap_or_default(),
+        query: Some(query),
+        decision: capsem_logger::events::Decision::Denied,
+        matched_rule: policy_rule.clone(),
+        upstream_resolver_ms: 0,
+        rcode: 3,
+        policy_mode: Some("runtime".into()),
+        policy_action: Some(dns_security_action_label(&result.action).into()),
+        policy_rule,
+        policy_reason: Some(policy_reason),
     }
 }
 
@@ -212,6 +304,55 @@ fn dns_security_decision_from_event_decision(
         "allowed" if has_rule => Some(SecurityDecisionAction::Allow),
         "denied" => Some(SecurityDecisionAction::Block),
         _ => None,
+    }
+}
+
+fn dns_security_result_rule_id(result: &SecurityResult) -> Option<String> {
+    result
+        .resolved_event
+        .event
+        .decision
+        .as_ref()
+        .and_then(|decision| decision.rule.clone())
+        .or_else(|| match &result.action {
+            SecurityAction::Block(block) => block.rule_id.clone(),
+            _ => None,
+        })
+}
+
+fn dns_security_result_reason(result: &SecurityResult) -> String {
+    result
+        .resolved_event
+        .event
+        .decision
+        .as_ref()
+        .and_then(|decision| decision.reason.clone())
+        .or_else(|| match &result.action {
+            SecurityAction::Ask(plan) => Some(plan.reason_code.clone()),
+            SecurityAction::Block(block) => Some(block.reason_code.clone()),
+            SecurityAction::Throttle(plan) => Some(plan.reason_code.clone()),
+            SecurityAction::Error(error) => Some(error.message.clone()),
+            SecurityAction::DropConnection(reason) => Some(reason.reason_code.clone()),
+            SecurityAction::Rewrite(patch) => Some(patch.replacement_ref.clone()),
+            SecurityAction::Quarantine(plan) => Some(plan.quarantine_id.clone()),
+            SecurityAction::Restore(plan) => Some(plan.reason_code.clone()),
+            SecurityAction::Continue | SecurityAction::ObserveOnly => None,
+        })
+        .unwrap_or_else(|| "dns request blocked by security engine".into())
+}
+
+fn dns_security_action_label(action: &SecurityAction) -> &'static str {
+    match action {
+        SecurityAction::Continue => "allow",
+        SecurityAction::Ask(_) => "ask",
+        SecurityAction::Rewrite(_) => "rewrite",
+        SecurityAction::Block(_) => "block",
+        SecurityAction::Throttle(_) => "throttle",
+        SecurityAction::Quarantine(_) => "quarantine",
+        SecurityAction::Restore(_) => "restore",
+        SecurityAction::DropConnection(_) => "drop_connection",
+        SecurityAction::ObserveOnly => "observe_only",
+        SecurityAction::Error(_) => "error",
     }
 }
 

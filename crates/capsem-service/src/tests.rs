@@ -3108,6 +3108,89 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
             },
         ))
         .await;
+    writer
+        .write(capsem_logger::WriteOp::DnsEvent(
+            capsem_logger::events::DnsEvent {
+                timestamp: std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_millis(1_700_000_000_100),
+                qname: "blocked.example.com".into(),
+                qtype: 1,
+                qclass: 1,
+                rcode: 3,
+                decision: capsem_logger::events::Decision::Denied.as_str().into(),
+                matched_rule: Some("runtime.block-dns".into()),
+                source_proto: Some("udp".into()),
+                process_name: None,
+                upstream_resolver_ms: 0,
+                trace_id: Some("trace-dns-log".into()),
+                policy_mode: Some("runtime".into()),
+                policy_action: Some("block".into()),
+                policy_rule: Some("runtime.block-dns".into()),
+                policy_reason: Some("dns blocked".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+            capsem_security_engine::ResolvedSecurityEvent {
+                schema_version: capsem_security_engine::RESOLVED_EVENT_SCHEMA_VERSION,
+                event: capsem_security_engine::SecurityEvent::dns(
+                    capsem_security_engine::SecurityEventCommon {
+                        event_id: "evt-dns-db-log".into(),
+                        parent_event_id: None,
+                        stream_id: None,
+                        activity_id: None,
+                        sequence_no: Some(10),
+                        source_engine: capsem_security_engine::SourceEngine::Network,
+                        attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+                        origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+                        accounting_owner: Some("vm:vm-security-logs".into()),
+                        enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+                        trace_id: Some("trace-dns-log".into()),
+                        span_id: None,
+                        timestamp_unix_ms: 1_700_000_000_100,
+                        vm_id: Some(vm_id.into()),
+                        session_id: Some(vm_id.into()),
+                        profile_id: Some("coding".into()),
+                        profile_revision: Some("2026.0522.1".into()),
+                        profile_pack_ids: Vec::new(),
+                        enforcement_packs: Vec::new(),
+                        detection_packs: Vec::new(),
+                        user_id: Some("elie".into()),
+                        process_id: None,
+                        parent_process_id: None,
+                        exec_id: None,
+                        turn_id: None,
+                        message_id: None,
+                        tool_call_id: None,
+                        mcp_call_id: None,
+                        event_type: "dns.request".into(),
+                        redaction_state: capsem_security_engine::RedactionState::Raw,
+                    },
+                    capsem_security_engine::DnsSecuritySubject {
+                        qname: "blocked.example.com".into(),
+                        domain_class: "external".into(),
+                    },
+                ),
+                steps: vec![capsem_security_engine::ResolvedEventStep {
+                    kind: capsem_security_engine::ResolvedEventStepKind::EnforcementMatch,
+                    status: capsem_security_engine::StepStatus::Matched,
+                    rule_id: Some("runtime.block-dns".into()),
+                    pack_id: Some("runtime-pack".into()),
+                    message: Some("dns blocked".into()),
+                }],
+                plugin_transforms: Vec::new(),
+                detection_findings: Vec::new(),
+                final_action: capsem_security_engine::SecurityAction::Block(
+                    capsem_security_engine::BlockResponse {
+                        reason_code: "dns blocked".into(),
+                        rule_id: Some("runtime.block-dns".into()),
+                    },
+                ),
+                emitter_results: Vec::new(),
+            },
+        ))
+        .await;
     drop(writer);
 
     state.instances.lock().unwrap().insert(
@@ -3150,8 +3233,14 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
     assert!(security_logs.contains(r#""rule_id":"runtime.block-shell""#));
     assert!(security_logs.contains(r#""pack_id":"runtime-pack""#));
     assert!(security_logs.contains(r#""reason":"shell exec blocked""#));
+    assert!(security_logs.contains(r#""process_operation":"exec""#));
+    assert!(security_logs.contains(r#""process_command_class":"shell""#));
     assert!(security_logs.contains(r#""finding_count":1"#));
     assert!(security_logs.contains(r#""detection_rule_ids":"detect.shell""#));
+    assert!(security_logs.contains(r#""event_id":"evt-dns-db-log""#));
+    assert!(security_logs.contains(r#""event_type":"dns.request""#));
+    assert!(security_logs.contains(r#""dns_qname":"blocked.example.com""#));
+    assert!(security_logs.contains(r#""rule_id":"runtime.block-dns""#));
 }
 
 fn make_test_state_with_profile_assets(base_url: &str) -> (Arc<ServiceState>, tempfile::TempDir) {

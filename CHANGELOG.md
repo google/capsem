@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Security Engine benchmark coverage for runtime compiled-plan rebuilds
   and Detection IR parse/lowering/compile costs, with committed artifacts and
   `just bench` wiring for the `capsem-core` security-pack Criterion harness.
+- Added runtime CEL enforcement on the DNS proxy path plus a VM-originated DNS
+  request benchmark that blocks guest resolver lookups before upstream
+  resolution, verifies `dns_events`, `security_events`, runtime counters, and
+  `capsem logs` qname attribution, and archives a dedicated benchmark artifact.
+- Expanded `capsem logs` security-event projection with family-specific debug
+  fields such as DNS qname, HTTP host/path, MCP server/tool, model provider/
+  name, file path, and process operation/class.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.

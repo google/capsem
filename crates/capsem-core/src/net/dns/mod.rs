@@ -47,4 +47,7 @@ mod tests;
 pub use cache::{DnsAnswerCache, DEFAULT_CAPACITY, DEFAULT_MAX_TTL_SECS, MIN_TTL_SECS};
 pub use resolver::{DnsResolver, DEFAULT_UPSTREAMS};
 pub use server::{DnsHandler, DnsHandlerResult};
-pub use telemetry::{build_dns_event, build_dns_resolved_security_event};
+pub use telemetry::{
+    build_dns_event, build_dns_resolved_security_event, build_dns_runtime_denied_result,
+    build_dns_security_event_from_query, dns_security_result_allows_transport,
+};

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use capsem_core::net::mitm_proxy::RuntimeSecurityEngine as _;
 use capsem_core::vm::guest_config::GuestConfig;
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
@@ -795,8 +796,9 @@ fn dispatch_aux_connection(
             // and `net_events`.
             let handler = Arc::clone(dns_handler);
             let db_for_dns = Arc::clone(db);
+            let security_engine = Arc::clone(&mitm_config.security_engine);
             tokio::spawn(async move {
-                serve_dns_session(conn, handler, db_for_dns).await;
+                serve_dns_session(conn, handler, db_for_dns, security_engine).await;
             });
         }
         capsem_core::VSOCK_PORT_EXEC => {
@@ -957,6 +959,7 @@ async fn serve_dns_session(
     conn: VsockConnection,
     handler: Arc<capsem_core::net::dns::DnsHandler>,
     db: Arc<capsem_logger::DbWriter>,
+    security_engine: Arc<capsem_core::net::mitm_proxy::RuntimeSecurityEngineSlot>,
 ) {
     use std::io::{Read as _, Write as _};
 
@@ -1004,7 +1007,58 @@ async fn serve_dns_session(
         }
     };
 
-    let result = handler.handle(&req.raw).await;
+    let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
+    let mut runtime_resolved_event: Option<ResolvedSecurityEvent> = None;
+    let result = if security_engine.has_engine() {
+        match capsem_core::net::parsers::dns_parser::parse_query(&req.raw) {
+            Ok(query) => {
+                let event = capsem_core::net::dns::build_dns_security_event_from_query(
+                    &query,
+                    trace_id.clone(),
+                );
+                match security_engine.evaluate(event) {
+                    Ok(runtime_result) => {
+                        if capsem_core::net::dns::dns_security_result_allows_transport(
+                            &runtime_result,
+                        ) {
+                            runtime_resolved_event = Some(runtime_result.resolved_event);
+                            handler.handle(&req.raw).await
+                        } else {
+                            let denied = capsem_core::net::dns::build_dns_runtime_denied_result(
+                                &req.raw,
+                                query,
+                                &runtime_result,
+                            );
+                            runtime_resolved_event = Some(runtime_result.resolved_event);
+                            denied
+                        }
+                    }
+                    Err(error) => {
+                        let reason = format!("security engine error: {error}");
+                        warn!(error = %error, "DNS runtime security engine failed closed");
+                        capsem_core::net::dns::server::DnsHandlerResult {
+                            answer_bytes: capsem_core::net::parsers::dns_parser::build_nxdomain(
+                                &req.raw,
+                            )
+                            .unwrap_or_default(),
+                            query: Some(query),
+                            decision: capsem_logger::events::Decision::Denied,
+                            matched_rule: Some(reason.clone()),
+                            upstream_resolver_ms: 0,
+                            rcode: 3,
+                            policy_mode: Some("runtime".into()),
+                            policy_action: Some("error".into()),
+                            policy_rule: None,
+                            policy_reason: Some(reason),
+                        }
+                    }
+                }
+            }
+            Err(_) => handler.handle(&req.raw).await,
+        }
+    } else {
+        handler.handle(&req.raw).await
+    };
 
     // T3.3 -- record one `dns_events` row per query. trace_id ties it
     // back to the agent action; source_proto distinguishes UDP from
@@ -1015,9 +1069,10 @@ async fn serve_dns_session(
         &result,
         Some(req.proto.as_str()),
         req.process_name.clone(),
-        capsem_core::telemetry::ambient_capsem_trace_id(),
+        trace_id,
     );
-    let resolved_event = capsem_core::net::dns::build_dns_resolved_security_event(&event);
+    let resolved_event = runtime_resolved_event
+        .unwrap_or_else(|| capsem_core::net::dns::build_dns_resolved_security_event(&event));
     db.try_write(capsem_logger::WriteOp::DnsEvent(event));
     db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
         resolved_event,

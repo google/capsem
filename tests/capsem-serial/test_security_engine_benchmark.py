@@ -8,6 +8,9 @@ This profiles real VM-originated enforcement paths:
 - HTTP request: guest curl -> network transport/MITM -> SecurityEvent
   projection -> CEL rule evaluation -> block response -> session DB/log
   projection -> runtime counters.
+- DNS request: guest resolver -> capsem DNS proxy -> SecurityEvent projection
+  -> CEL rule evaluation -> NXDOMAIN response -> session DB/log projection ->
+  runtime counters.
 
 The Criterion benchmark in capsem-security-engine measures raw evaluator cost.
 This file records the product path cost from a VM-originated security event.
@@ -39,6 +42,7 @@ RUNS = int(os.environ.get("CAPSEM_SECURITY_ENGINE_BENCH_RUNS", "8"))
 HTTP_WARMUP_RUNS = int(os.environ.get("CAPSEM_SECURITY_ENGINE_HTTP_WARMUP_RUNS", "1"))
 BLOCKED_EXEC_GATE_MS = 750
 BLOCKED_HTTP_GATE_MS = 1000
+BLOCKED_DNS_GATE_MS = 1000
 
 
 def _project_version():
@@ -183,6 +187,54 @@ def _wait_for_security_event_count(
         last_error = f"only {count}/{expected} {event_type} security events for {rule_id}"
         if all_rows:
             last_error += f"; rows={all_rows}"
+        time.sleep(0.25)
+
+    raise AssertionError(last_error)
+
+
+def _wait_for_dns_event_count(service, vm, qname, expected, timeout=10.0):
+    deadline = time.time() + timeout
+    last_error = "dns event count was never queried"
+    while time.time() < deadline:
+        db_path = _session_db_path(service, vm)
+        if db_path is None:
+            last_error = f"session.db for {vm} does not exist yet"
+            time.sleep(0.25)
+            continue
+
+        try:
+            with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*),
+                           SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END),
+                           MIN(qname),
+                           MIN(policy_mode),
+                           MIN(policy_action),
+                           MIN(policy_rule),
+                           MIN(policy_reason)
+                      FROM dns_events
+                     WHERE qname = ?
+                    """,
+                    (qname,),
+                ).fetchone()
+        except sqlite3.Error as error:
+            last_error = str(error)
+            time.sleep(0.25)
+            continue
+
+        count = int(row[0] or 0)
+        if count >= expected:
+            return {
+                "row_count": count,
+                "denied_count": int(row[1] or 0),
+                "qname": row[2],
+                "policy_mode": row[3],
+                "policy_action": row[4],
+                "policy_rule": row[5],
+                "policy_reason": row[6],
+            }
+        last_error = f"only {count}/{expected} dns_events rows for {qname}"
         time.sleep(0.25)
 
     raise AssertionError(last_error)
@@ -705,6 +757,183 @@ print(json.dumps({{
         assert mean_ms < BLOCKED_HTTP_GATE_MS, (
             f"blocked HTTP request time-starttransfer mean {mean_ms:.0f}ms exceeds "
             f"{BLOCKED_HTTP_GATE_MS}ms gate"
+        )
+    finally:
+        try:
+            client.delete(f"/enforcement/{rule_id}", timeout=60)
+        except Exception:
+            pass
+        try:
+            client.delete(f"/delete/{vm}", timeout=120)
+        except Exception:
+            pass
+        svc.stop()
+
+
+def test_dns_request_enforcement_benchmark_records_vm_originated_path():
+    svc = ServiceInstance()
+    svc.start()
+    client = svc.client()
+    vm = f"secdns-{uuid.uuid4().hex[:8]}"
+    rule_id = f"runtime.block-dns-bench.{uuid.uuid4().hex[:8]}"
+    reason = "DNS request blocked by security benchmark"
+    qname = f"security-engine-bench-{uuid.uuid4().hex[:8]}.example.com"
+
+    try:
+        client.post(
+            "/provision",
+            {"name": vm, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            timeout=180,
+        )
+        assert wait_exec_ready(client, vm, timeout=EXEC_READY_TIMEOUT), (
+            f"{vm} never became exec-ready"
+        )
+
+        install = client.post(
+            "/enforcement",
+            {
+                "id": rule_id,
+                "pack_id": "runtime-benchmark",
+                "condition": f"dns.request.qname == '{qname}'",
+                "decision": "block",
+                "reason": reason,
+                "enabled": True,
+            },
+            timeout=60,
+        )
+        assert install["rule"]["id"] == rule_id
+        assert install["rule"]["compiled"] is True
+
+        script = f"""
+import json
+import socket
+import time
+
+runs = {RUNS}
+qname = {qname!r}
+durations_ms = []
+results = []
+
+for index in range(runs):
+    started = time.perf_counter()
+    try:
+        socket.getaddrinfo(qname, 443, type=socket.SOCK_STREAM)
+        ok = True
+        error = None
+    except OSError as exc:
+        ok = False
+        error = str(exc)
+    durations_ms.append((time.perf_counter() - started) * 1000)
+    results.append({{"ok": ok, "error": error}})
+
+print(json.dumps({{
+    "durations_ms": durations_ms,
+    "results": results,
+}}))
+"""
+        response = client.post(
+            f"/exec/{vm}",
+            {"command": _guest_python(script), "timeout_secs": 120},
+            timeout=135,
+        )
+        assert response is not None and response.get("exit_code") == 0, response
+        payload = json.loads(response["stdout"].strip().splitlines()[-1])
+        durations_ms = payload["durations_ms"]
+        assert len(durations_ms) == RUNS
+        for result in payload["results"]:
+            assert result["ok"] is False, result
+            assert result["error"], result
+
+        db_summary = _wait_for_security_event_count(
+            svc,
+            vm,
+            rule_id,
+            RUNS,
+            event_type="dns.request",
+            timeout=20.0,
+        )
+        assert db_summary["row_count"] >= RUNS
+        assert db_summary["distinct_event_ids"] >= RUNS
+        assert db_summary["blocked_count"] >= RUNS
+        assert db_summary["vm_id"] == vm
+        assert db_summary["profile_id"]
+        assert db_summary["user_id"]
+        assert db_summary["rule_id"] == rule_id
+        assert db_summary["reason"] == reason
+
+        dns_summary = _wait_for_dns_event_count(svc, vm, qname, RUNS, timeout=20.0)
+        assert dns_summary["row_count"] >= RUNS
+        assert dns_summary["denied_count"] >= RUNS
+        assert dns_summary["qname"] == qname
+        assert dns_summary["policy_mode"] == "runtime"
+        assert dns_summary["policy_action"] == "block"
+        assert dns_summary["policy_rule"] == rule_id
+        assert dns_summary["policy_reason"] == reason
+
+        rule_stats = _runtime_rule_stats(client, rule_id)
+        assert rule_stats["match_count"] >= RUNS
+        last_matched_event = rule_stats["last_matched_event"]
+        assert isinstance(last_matched_event, str)
+        assert last_matched_event.startswith("dns-")
+
+        logs = client.get(f"/logs/{vm}")
+        security_logs = logs.get("security_logs") or ""
+        dns_logs = logs.get("dns_logs") or ""
+        combined_logs = security_logs + "\n" + dns_logs
+        assert f'"rule_id":"{rule_id}"' in combined_logs
+        assert f'"vm_id":"{vm}"' in combined_logs
+        assert '"event_type":"dns.request"' in combined_logs
+        assert '"final_action":"block"' in combined_logs
+        assert qname in combined_logs
+
+        summary = {
+            "schema": "capsem.security-engine-benchmark.v1",
+            "kind": "vm_originated_dns_request_enforcement",
+            "version": _project_version(),
+            "source_commit": _source_commit(),
+            "timestamp": time.time(),
+            "arch": os.uname().machine,
+            "host": {
+                "sysname": os.uname().sysname,
+                "release": os.uname().release,
+                "machine": os.uname().machine,
+            },
+            "command": (
+                "uv run pytest tests/capsem-serial/"
+                "test_security_engine_benchmark.py::"
+                "test_dns_request_enforcement_benchmark_records_vm_originated_path -xvs"
+            ),
+            "workload": {
+                "event_family": "dns",
+                "event_type": "dns.request",
+                "source": "vm_originated",
+                "path": "guest_resolver_to_dns_proxy_to_security_engine",
+            },
+            "runs": RUNS,
+            "gate_ms": BLOCKED_DNS_GATE_MS,
+            "rule": {
+                "id": rule_id,
+                "pack_id": "runtime-benchmark",
+                "condition": install["rule"]["condition"],
+                "decision": "block",
+            },
+            "operations": {
+                "blocked_dns_request_ms": _series_summary(durations_ms),
+            },
+            "assertions": {
+                "session_db_security_events": db_summary,
+                "session_db_dns_events": dns_summary,
+                "runtime_match_count": rule_stats["match_count"],
+                "runtime_last_event_id": last_matched_event,
+                "logs_exposed_security_decision": True,
+            },
+        }
+        _save_security_engine_benchmark(summary, "dns_request_enforcement")
+
+        mean_ms = summary["operations"]["blocked_dns_request_ms"]["mean"]
+        assert mean_ms < BLOCKED_DNS_GATE_MS, (
+            f"blocked DNS request mean {mean_ms:.0f}ms exceeds "
+            f"{BLOCKED_DNS_GATE_MS}ms gate"
         )
     finally:
         try:

@@ -294,6 +294,37 @@ Run:
 uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_http_request_enforcement_benchmark_records_vm_originated_path -xvs
 ```
 
+## Security Engine DNS request enforcement (VM-originated)
+
+First S08d DNS-transport benchmark artifact:
+`benchmarks/security-engine/data_1.1.1778860037_arm64_dns_request_enforcement.json`.
+
+This host-side serial benchmark runs a live service and VM, installs a runtime
+CEL rule that blocks one DNS qname, triggers repeated guest resolver lookups,
+and verifies NXDOMAIN-style failure, runtime match counters, canonical
+`session.db` security events, `dns_events` policy fields, and `logs` qname
+attribution.
+
+| Metric | Value |
+|--------|-------|
+| Runs | 8 |
+| Gate | 1,000ms mean |
+| Min blocked DNS lookup | 0.611ms |
+| Mean blocked DNS lookup | 1.109ms |
+| Median blocked DNS lookup | 0.830ms |
+| p95 blocked DNS lookup | 3.508ms |
+| p99 blocked DNS lookup | 3.508ms |
+| Max blocked DNS lookup | 3.508ms |
+| Runtime matches | 16 |
+| Session DB security events | 16 |
+| Session DB DNS events | 16 |
+
+Run:
+
+```bash
+uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_dns_request_enforcement_benchmark_records_vm_originated_path -xvs
+```
+
 ## Test environment
 
 | Component | Version |
