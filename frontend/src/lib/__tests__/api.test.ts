@@ -346,6 +346,20 @@ describe('api', () => {
       expect(call[0]).toContain('/profiles/everyday-work/revisions');
       expect(call[1].method).toBeUndefined();
     });
+
+    it('selectProfile sends POST /profiles/{id}/select', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        mode: 'settings_profiles_v2',
+        manifest_present: true,
+        default_profile: 'everyday-work',
+        profiles: [],
+      }));
+      const result = await api.selectProfile('everyday-work');
+      expect(result.default_profile).toBe('everyday-work');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/everyday-work/select');
+      expect(call[1].method).toBe('POST');
+    });
   });
 
   // ---- MCP config (via settings) ----

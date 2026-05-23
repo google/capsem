@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getProfileCatalog } from '../../api';
+  import { getProfileCatalog, selectProfile } from '../../api';
   import type {
     ProfileCatalogProfile,
     ProfileCatalogResponse,
@@ -10,12 +10,15 @@
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
 
   let loading = $state(false);
+  let selectingProfileId = $state<string | null>(null);
   let error = $state<string | null>(null);
+  let statusMessage = $state<string | null>(null);
   let catalog = $state<ProfileCatalogResponse | null>(null);
 
   async function refreshCatalog() {
     loading = true;
     error = null;
+    statusMessage = null;
     try {
       catalog = await getProfileCatalog();
     } catch (err) {
@@ -23,6 +26,21 @@
       catalog = null;
     } finally {
       loading = false;
+    }
+  }
+
+  async function selectDefaultProfile(profile: ProfileCatalogProfile) {
+    if (isSelected(profile) || profileSelectionBlocked(profile)) return;
+    selectingProfileId = profile.profile_id;
+    error = null;
+    statusMessage = null;
+    try {
+      catalog = await selectProfile(profile.profile_id);
+      statusMessage = `${profile.profile_id} selected.`;
+    } catch (err) {
+      error = String(err instanceof Error ? err.message : err);
+    } finally {
+      selectingProfileId = null;
     }
   }
 
@@ -45,6 +63,18 @@
     if (state === 'current') return 'bg-primary/10 text-primary';
     if (state === 'update available') return 'bg-warning/10 text-warning';
     return 'bg-muted text-muted-foreground-1';
+  }
+
+  function isSelected(profile: ProfileCatalogProfile): boolean {
+    return catalog?.default_profile === profile.profile_id;
+  }
+
+  function currentRevision(profile: ProfileCatalogProfile) {
+    return profile.revisions.find((revision) => revision.current) ?? null;
+  }
+
+  function profileSelectionBlocked(profile: ProfileCatalogProfile): boolean {
+    return currentRevision(profile)?.status === 'revoked';
   }
 
   onMount(() => {
@@ -74,7 +104,7 @@
     <div class="bg-card border border-card-line rounded-xl p-6 text-center">
       <p class="text-sm text-muted-foreground-1">Loading profiles...</p>
     </div>
-  {:else if error}
+  {:else if error && !catalog}
     <div class="bg-card border border-card-line rounded-xl p-4 flex items-start gap-x-3">
       <WarningCircle class="shrink-0 text-destructive" size={18} />
       <p class="text-sm text-destructive">{error}</p>
@@ -94,6 +124,9 @@
                 <span class="text-[10px] px-1.5 py-0.5 rounded-full {profileStateClasses(profile)}">
                   {profileState(profile)}
                 </span>
+                {#if isSelected(profile)}
+                  <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">selected</span>
+                {/if}
               </div>
               <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-3 text-xs">
                 <dt class="text-muted-foreground-1">Installed revision</dt>
@@ -102,6 +135,21 @@
                 <dd class="text-foreground font-mono break-all">{profile.current_revision ?? 'none'}</dd>
               </dl>
             </div>
+            <button
+              type="button"
+              class="shrink-0 py-2 px-3 text-xs font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isSelected(profile) || profileSelectionBlocked(profile) || selectingProfileId !== null}
+              title={profileSelectionBlocked(profile) ? 'Revoked profiles cannot be selected' : 'Select default profile'}
+              onclick={() => selectDefaultProfile(profile)}
+            >
+              {#if selectingProfileId === profile.profile_id}
+                Selecting...
+              {:else if isSelected(profile)}
+                Selected
+              {:else}
+                Select
+              {/if}
+            </button>
           </div>
 
           <div class="mt-4 border-t border-card-divider pt-3">
@@ -134,5 +182,10 @@
         </article>
       {/each}
     </div>
+    {#if error}
+      <p class="text-xs text-destructive">{error}</p>
+    {:else if statusMessage}
+      <p class="text-xs text-primary">{statusMessage}</p>
+    {/if}
   {/if}
 </div>

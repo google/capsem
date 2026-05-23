@@ -54,6 +54,10 @@ requests.
   by `/profiles/catalog`. It renders profile ids, installed/current revision
   drift, per-revision hashes, and only the canonical lifecycle statuses:
   `active`, `deprecated`, and `revoked`.
+- Implemented slice: profile selection now uses a profile-native
+  `POST /profiles/{id}/select` service route. `/profiles/catalog` returns the
+  selected `default_profile`, and Settings -> Profiles shows the selected
+  profile, can select non-revoked profiles, and disables revoked selections.
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
   values, revisions, package/tool contracts, asset readiness, VM pin fields,
   enforcement-pack summaries, detection-pack summaries, and backtest result
@@ -66,6 +70,10 @@ requests.
   `active`/`deprecated`/`revoked` enum display, the absence of `removed`, and
   manual refresh. `api.test.ts` covers the typed profile catalog and revision
   routes.
+- Unit/contract completed: service tests cover profile-native selection and
+  catalog `default_profile` reporting; frontend tests cover `selectProfile`,
+  selected badges, successful selection, and disabled revoked profile
+  selection.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states; enforcement/detection
   runtime overlay list/validate/install/delete/stats/backtest/hunt flows through
@@ -89,3 +97,7 @@ requests.
   screenshot-checked; the live dev gateway returned `404` for the catalog route,
   proving the explicit gateway-error fallback path. Production frontend build
   passed.
+- Visual/build proof: Settings -> Profiles was also screenshot-checked with a
+  browser-side catalog fixture so selected, update-available, active,
+  deprecated, revoked, installed, and disabled-selection states were visible in
+  the actual UI layout.

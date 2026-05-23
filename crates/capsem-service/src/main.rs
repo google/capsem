@@ -4788,6 +4788,7 @@ fn profile_catalog_status_json(
     Ok(json!({
         "mode": "settings_profiles_v2",
         "configured": settings.profile_catalog.is_configured(),
+        "default_profile": settings.profiles.default_profile.clone(),
         "manifest_url": settings.profile_catalog.manifest_url.clone(),
         "check_interval_secs": settings.profile_catalog.check_interval_secs,
         "manifest_path": manifest_path.map(|path| path.display().to_string()),
@@ -9531,6 +9532,20 @@ async fn handle_get_presets() -> Json<serde_json::Value> {
 async fn handle_select_profile_preset(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    select_default_profile(id)?;
+    Ok(Json(settings_response_json()))
+}
+
+/// POST /profiles/{id}/select -- select a default profile and return refreshed catalog state.
+async fn handle_select_profile(
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    select_default_profile(id)?;
+    let settings = load_service_settings_for_profiles()?;
+    Ok(Json(profile_catalog_status_json(&settings)?))
+}
+
+fn select_default_profile(id: String) -> Result<(), AppError> {
     let settings_path = service_settings_path();
     let mut settings = capsem_core::settings_profiles::load_service_settings_or_default(
         &settings_path,
@@ -9558,7 +9573,7 @@ async fn handle_select_profile_preset(
             )
         },
     )?;
-    Ok(Json(settings_response_json()))
+    Ok(())
 }
 
 /// POST /settings/lint -- validate config and return issues.
@@ -12034,6 +12049,7 @@ async fn main() -> Result<()> {
             "/profiles/{id}/revisions/remove",
             post(handle_remove_profile_revision),
         )
+        .route("/profiles/{id}/select", post(handle_select_profile))
         .route("/profiles/{id}/revisions", get(handle_profile_revisions))
         .route(
             "/profiles/{id}",

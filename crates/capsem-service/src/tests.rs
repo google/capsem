@@ -5063,6 +5063,26 @@ async fn handle_list_profiles_returns_catalog_with_default_profile() {
 }
 
 #[tokio::test]
+async fn handle_select_profile_updates_default_profile_without_preset_language() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, settings_path, _) = install_settings_profiles_env(&dir);
+
+    let _ = handle_create_profile(Json(custom_profile("custom", "Custom")))
+        .await
+        .unwrap();
+    let Json(val) = handle_select_profile(Path("custom".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(val["default_profile"], serde_json::json!("custom"));
+    let settings =
+        capsem_core::settings_profiles::load_service_settings_or_default(settings_path).unwrap();
+    assert_eq!(settings.profiles.default_profile, "custom");
+}
+
+#[tokio::test]
 async fn handle_profile_catalog_reports_manifest_and_installed_revisions() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -5112,6 +5132,10 @@ async fn handle_profile_catalog_reports_manifest_and_installed_revisions() {
     let Json(val) = handle_profile_catalog().await.unwrap();
 
     assert_eq!(val["mode"], serde_json::json!("settings_profiles_v2"));
+    assert_eq!(
+        val["default_profile"],
+        serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+    );
     assert_eq!(val["manifest_present"], serde_json::json!(true));
     assert_eq!(
         val["profiles"][0]["profile_id"],

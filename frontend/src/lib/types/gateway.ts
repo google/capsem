@@ -99,6 +99,7 @@ export interface ProfileCatalogProfile {
 export interface ProfileCatalogResponse {
   mode: 'settings_profiles_v2';
   manifest_present: boolean;
+  default_profile?: string | null;
   catalog_source?: string | null;
   profiles: ProfileCatalogProfile[];
 }

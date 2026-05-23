@@ -8,6 +8,13 @@ let catalog: ProfileCatalogResponse;
 
 const apiMock = {
   getProfileCatalog: vi.fn(async () => catalog),
+  selectProfile: vi.fn(async (profileId: string) => {
+    catalog = {
+      ...catalog,
+      default_profile: profileId,
+    };
+    return catalog;
+  }),
 };
 
 vi.mock('../api', () => apiMock);
@@ -18,6 +25,7 @@ function buildCatalog(): ProfileCatalogResponse {
   return {
     mode: 'settings_profiles_v2',
     manifest_present: true,
+    default_profile: 'everyday-work',
     catalog_source: 'file:///profiles/profile-manifest.json',
     profiles: [
       {
@@ -74,6 +82,7 @@ describe('ProfileCatalogSection', () => {
     await screen.findByText('everyday-work');
 
     expect(screen.getByText('locked-corp')).toBeTruthy();
+    expect(screen.getByText('selected')).toBeTruthy();
     expect(screen.getByText('update available')).toBeTruthy();
     expect(screen.getByText('not installed')).toBeTruthy();
     expect(screen.getAllByText('2026.0520.1').length).toBeGreaterThan(0);
@@ -84,6 +93,30 @@ describe('ProfileCatalogSection', () => {
     expect(screen.queryByText('removed')).toBeNull();
   });
 
+  it('selects a non-revoked profile through the profile route', async () => {
+    catalog = buildCatalog();
+    catalog.profiles[1].revisions[0].status = 'active';
+    render(ProfileCatalogSection);
+
+    await screen.findByText('locked-corp');
+    const buttons = screen.getAllByRole('button', { name: 'Select' });
+    await fireEvent.click(buttons[0]);
+
+    expect(apiMock.selectProfile).toHaveBeenCalledWith('locked-corp');
+    await waitFor(() => {
+      expect(screen.getByText('locked-corp selected.')).toBeTruthy();
+    });
+  });
+
+  it('does not allow revoked profiles to be selected', async () => {
+    render(ProfileCatalogSection);
+
+    await screen.findByText('locked-corp');
+    const selectButtons = screen.getAllByRole<HTMLButtonElement>('button', { name: 'Select' });
+    expect(selectButtons[0].disabled).toBe(true);
+    expect(apiMock.selectProfile).not.toHaveBeenCalled();
+  });
+
   it('refreshes the catalog on demand', async () => {
     render(ProfileCatalogSection);
 
@@ -91,6 +124,7 @@ describe('ProfileCatalogSection', () => {
     catalog = {
       mode: 'settings_profiles_v2',
       manifest_present: true,
+      default_profile: null,
       profiles: [],
     };
 

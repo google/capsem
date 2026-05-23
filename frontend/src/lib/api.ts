@@ -241,6 +241,11 @@ export async function getProfileRevisions(profileId: string): Promise<ProfileRev
   return await resp.json();
 }
 
+export async function selectProfile(profileId: string): Promise<ProfileCatalogResponse> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/select`);
+  return await resp.json();
+}
+
 function emptyStatus(): StatusResponse {
   return {
     service: 'offline',

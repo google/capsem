@@ -2504,6 +2504,23 @@ a valid claim -- mark it `[ ]` instead.
     persistence, package/asset readiness, profile-backed VM create, VM
     profile-state display, runtime backtest/hunt UI, and final release UI
     usability replay.
+    Third S16 profile-selection slice added the profile-native
+    `POST /profiles/{id}/select` service route, kept `/settings/presets/{id}`
+    as an internal compatibility caller, added `default_profile` to
+    `/profiles/catalog`, and wired Settings -> Profiles to show selected state,
+    select non-revoked profiles, and disable revoked selections. Verification:
+    `cargo test -p capsem-service handle_select_profile --bin capsem-service`
+    passed, `cargo test -p capsem-service handle_profile_catalog --bin
+    capsem-service` passed with **2** tests, `pnpm --dir frontend exec vitest
+    run src/lib/__tests__/profile-catalog-section.test.ts
+    src/lib/__tests__/api.test.ts` passed with **65** tests, `cargo check -p
+    capsem-service` passed, `pnpm --dir frontend run check` passed, `pnpm
+    --dir frontend run build` passed, and Settings -> Profiles was
+    screenshot-checked with a browser-side catalog fixture showing selected,
+    update-available, active, deprecated, revoked, installed, and disabled
+    selection states. Still missing in S16: package/asset readiness,
+    profile-backed VM create, VM profile-state display, runtime backtest/hunt
+    UI, and final release UI usability replay.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

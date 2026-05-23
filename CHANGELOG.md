@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a Settings -> Profiles catalog panel that renders typed profile
   catalog revisions, current/installed drift, and the canonical
   `active`/`deprecated`/`revoked` lifecycle states.
+- Added profile selection through `POST /profiles/{id}/select` and surfaced the
+  selected/default profile in the Settings -> Profiles UI.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.
