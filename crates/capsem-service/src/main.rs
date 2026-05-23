@@ -5996,6 +5996,12 @@ fn runtime_rule_plan_id(condition: &str) -> String {
 fn compile_runtime_enforcement_rule(
     request: &RuntimeEnforcementRuleRequest,
 ) -> Result<String, seceng::SecurityEngineError> {
+    validate_runtime_enforcement_decision_supported(request.decision).map_err(|message| {
+        seceng::SecurityEngineError::CelCompileFailed {
+            rule_id: request.id.clone(),
+            message,
+        }
+    })?;
     seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
         id: request.id.clone(),
         pack_id: request.pack_id.clone(),
@@ -6189,6 +6195,14 @@ fn compile_runtime_enforcement_record(
             message: "expected enforcement rule definition".into(),
         });
     };
+    if record.metadata.scope == seceng::RuleScope::Runtime {
+        validate_runtime_enforcement_decision_supported(*decision).map_err(|message| {
+            seceng::SecurityEngineError::CelCompileFailed {
+                rule_id: record.metadata.id.clone(),
+                message,
+            }
+        })?;
+    }
     seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
         id: record.metadata.id.clone(),
         pack_id: record.metadata.pack_id.clone(),
@@ -6197,6 +6211,18 @@ fn compile_runtime_enforcement_record(
         reason: reason.clone(),
     }])?;
     Ok(runtime_rule_plan_id(&record.source))
+}
+
+fn validate_runtime_enforcement_decision_supported(
+    decision: seceng::SecurityDecisionAction,
+) -> Result<(), String> {
+    if decision == seceng::SecurityDecisionAction::Ask {
+        return Err(
+            "ask decisions require S15-confirm-ux; runtime ask overlays are disabled until the confirm resolver is wired"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Result<usize, AppError> {
@@ -8704,6 +8730,12 @@ async fn handle_enforcement_backtest(
     Json(request): Json<RuntimeEnforcementBacktestRequest>,
 ) -> Result<Json<seceng::BacktestResult>, AppError> {
     validate_runtime_rule_id(&request.rule.id)?;
+    validate_runtime_enforcement_decision_supported(request.rule.decision).map_err(|message| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("backtest enforcement rule: {message}"),
+        )
+    })?;
     let mut evaluator =
         seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
             id: request.rule.id.clone(),

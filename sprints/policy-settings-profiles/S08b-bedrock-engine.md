@@ -479,15 +479,20 @@ Implementation status as of the current service-route slices:
   startup recompiles those saved records into the CEL registries after
   profile-seeded rules are rebuilt, and invalid persisted CEL fails closed
   before registry mutation.
+- Landed: runtime `ask` overlays are disabled until S15 wires the real confirm
+  resolver. Enforcement validate/compile/install/backtest and persisted restore
+  now reject runtime `ask` decisions with an explicit S15 diagnostic instead of
+  advertising approval while the Security Engine would default-deny unresolved
+  asks.
 - Still open: interactive confirm UX, S12 telemetry/export projection, S08d
   performance proof, and remaining VM/runtime cutover breadth.
 
 For the bedrock release, the shipped CLI/UI route contract remains
 release-blocking now that runtime overlay recovery has landed. Interactive
-confirm is release-blocking only for profiles/rules that expose
-`decision = "ask"` as a user-facing capability; otherwise ask-capable rules must
-be disabled or documented as unavailable for the cut. S12 export polish remains
-post-bedrock, but status/log/debug truth for shipped event families is required.
+confirm stays assigned to S15; until that prompter lands, service runtime
+overlays cannot install `decision = "ask"`, and any persisted runtime ask rule
+fails closed during restore. S12 export polish remains post-bedrock, but
+status/log/debug truth for shipped event families is required.
 
 ## Bedrock Release Gate
 

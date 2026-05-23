@@ -1998,6 +1998,19 @@ a valid claim -- mark it `[ ]` instead.
     passed. Still missing after this slice: visible UI screens/editors,
     interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
     performance proof, and final release gates.
+    Ninety-fourth S08b ask guardrail slice disabled service-owned runtime
+    `ask` overlays until S15 wires the real confirm resolver. The Security
+    Engine still models ask and default-denies unresolved asks, but runtime
+    enforcement validate/compile/install/backtest now reject `decision = "ask"`
+    with an explicit S15 diagnostic, and persisted runtime ask overlays fail
+    closed during startup restore before registry mutation. Verification:
+    `cargo test -p capsem-service handle_enforcement_runtime_routes --bin
+    capsem-service` **2** passed, `cargo test -p capsem-service
+    handle_enforcement_backtest --bin capsem-service` **2** passed, and
+    `cargo test -p capsem-service runtime_security_rule --bin capsem-service`
+    **3** passed. Still missing after this slice: visible UI screens/editors,
+    S15 interactive confirm resolver/queue/CLI/UI, S12 OTel/prometheus export,
+    S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

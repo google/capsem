@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime rule mutations now atomically write a typed
   `capsem.runtime-security-rules.v1` store, and startup recompiles the saved
   overlays back into the CEL registries while failing closed on invalid rules.
+- Disabled runtime `ask` overlays until the S15 confirm prompter lands, so
+  enforcement validate/compile/install/backtest and persisted restore fail
+  closed instead of exposing an approval workflow with no resolver.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

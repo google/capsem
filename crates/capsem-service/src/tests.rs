@@ -7005,11 +7005,11 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     let _ = handle_create_enforcement_rule(
         State(state.clone()),
         Json(RuntimeEnforcementRuleRequest {
-            id: "ask-sensitive".into(),
+            id: "block-sensitive".into(),
             pack_id: Some("runtime-pack".into()),
             priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "common.event_type == 'model.request'".into(),
-            decision: capsem_security_engine::SecurityDecisionAction::Ask,
+            decision: capsem_security_engine::SecurityDecisionAction::Block,
             reason: Some("sensitive model request".into()),
             enabled: true,
         }),
@@ -7018,10 +7018,10 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     .unwrap();
 
     let Json(updated) = handle_update_enforcement_rule(
-        Path("ask-sensitive".into()),
+        Path("block-sensitive".into()),
         State(state.clone()),
         Json(RuntimeEnforcementRuleRequest {
-            id: "ask-sensitive".into(),
+            id: "block-sensitive".into(),
             pack_id: Some("runtime-pack".into()),
             priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
             condition: "common.event_type == 'model.response'".into(),
@@ -7036,12 +7036,41 @@ async fn handle_enforcement_runtime_routes_compile_install_and_report_stats() {
     assert_eq!(updated["rule"]["enabled"], false);
 
     let Json(deleted) =
-        handle_delete_enforcement_rule(Path("ask-sensitive".into()), State(state.clone()))
+        handle_delete_enforcement_rule(Path("block-sensitive".into()), State(state.clone()))
             .await
             .unwrap();
     assert_eq!(deleted["removed"], true);
     let Json(listed_after_delete) = handle_list_enforcement_rules(State(state)).await.unwrap();
     assert!(listed_after_delete["rules"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn handle_enforcement_runtime_routes_reject_ask_until_confirm_ux_lands() {
+    let state = make_test_state();
+    let request = RuntimeEnforcementRuleRequest {
+        id: "ask-sensitive".into(),
+        pack_id: Some("runtime-pack".into()),
+        priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
+        condition: "common.event_type == 'model.request'".into(),
+        decision: capsem_security_engine::SecurityDecisionAction::Ask,
+        reason: Some("sensitive model request".into()),
+        enabled: true,
+    };
+
+    let compile_err = handle_compile_enforcement_rule(Json(request.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(compile_err.0, StatusCode::BAD_REQUEST);
+    assert!(compile_err.1.contains("S15-confirm-ux"));
+
+    let install_err = handle_create_enforcement_rule(State(state.clone()), Json(request))
+        .await
+        .unwrap_err();
+    assert_eq!(install_err.0, StatusCode::BAD_REQUEST);
+    assert!(install_err
+        .1
+        .contains("ask decisions require S15-confirm-ux"));
+    assert!(state.enforcement_registry.lock().unwrap().list().is_empty());
 }
 
 #[tokio::test]
@@ -7242,6 +7271,39 @@ async fn runtime_security_rule_overlay_restore_fails_closed_on_invalid_cel() {
     let err = restore_runtime_security_rule_overlays(&state).unwrap_err();
     assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(err.1.contains("event.*"));
+    assert!(state.enforcement_registry.lock().unwrap().list().is_empty());
+}
+
+#[tokio::test]
+async fn runtime_security_rule_overlay_restore_fails_closed_on_ask_without_confirm_ux() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("svc");
+    let state = make_state_in(run_dir.clone());
+    let store = RuntimeSecurityRulesStore {
+        schema: RUNTIME_SECURITY_RULES_STORE_SCHEMA.into(),
+        enforcement: vec![capsem_security_engine::RuntimeRuleRecord {
+            metadata: capsem_security_engine::RuntimeRuleMetadata {
+                id: "ask-persisted".into(),
+                pack_id: Some("runtime-pack".into()),
+                scope: capsem_security_engine::RuleScope::Runtime,
+                origin: capsem_security_engine::RuleOrigin::Runtime,
+                priority: capsem_security_engine::DEFAULT_RUNTIME_RULE_PRIORITY,
+            },
+            definition: capsem_security_engine::RuntimeRuleDefinition::Enforcement {
+                decision: capsem_security_engine::SecurityDecisionAction::Ask,
+                reason: Some("needs a real prompter".into()),
+            },
+            source: "http.request.host == 'ask.test'".into(),
+            enabled: true,
+        }],
+        detection: Vec::new(),
+    };
+    write_runtime_security_rules_store(&run_dir.join("runtime_security_rules.json"), &store)
+        .unwrap();
+
+    let err = restore_runtime_security_rule_overlays(&state).unwrap_err();
+    assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(err.1.contains("ask decisions require S15-confirm-ux"));
     assert!(state.enforcement_registry.lock().unwrap().list().is_empty());
 }
 
@@ -7736,6 +7798,32 @@ async fn handle_enforcement_backtest_matches_and_dedupes_inline_events() {
         .matched_fields
         .iter()
         .any(|field| field.path == "subject"));
+}
+
+#[tokio::test]
+async fn handle_enforcement_backtest_rejects_ask_until_confirm_ux_lands() {
+    let err = handle_enforcement_backtest(Json(RuntimeEnforcementBacktestRequest {
+        rule: RuntimeEnforcementRuleRequest {
+            id: "ask-backtest".into(),
+            pack_id: Some("runtime-pack".into()),
+            priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
+            condition: "http.request.host == 'metadata.google.internal'".into(),
+            decision: capsem_security_engine::SecurityDecisionAction::Ask,
+            reason: Some("needs a prompter".into()),
+            enabled: true,
+        },
+        events: vec![RuntimeBacktestEvent {
+            event_ref: None,
+            event: runtime_http_event("evt-ask-backtest", 1, "metadata.google.internal"),
+            expected: None,
+        }],
+        limit: None,
+    }))
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("ask decisions require S15-confirm-ux"));
 }
 
 #[tokio::test]

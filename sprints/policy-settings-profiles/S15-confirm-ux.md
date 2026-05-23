@@ -1,6 +1,6 @@
 # S15 - Confirm UX (Ask)
 
-Last updated: 2026-05-15
+Last updated: 2026-05-23
 
 ## Why this exists
 
@@ -29,9 +29,13 @@ S15 delivers the real production answer path:
 - `policy_confirm_events` integration so every decision is durable and
   attributable, including forward-rule-created (yes/no, new rule id).
 
-The placeholder confirmer remains as a fallback (e.g. for headless
-benchmarks and dev VMs where no operator is available) but ceases to
-be the production answer path the moment S15 lands.
+Current bedrock behavior before S15: S08b keeps `ask` as a first-class
+Security Engine decision and default-denies unresolved asks inside the resolved
+event. Service-owned runtime overlays do **not** accept `decision = "ask"` yet:
+validate/compile/install/backtest reject it, and persisted runtime ask overlays
+fail closed during startup restore with an S15 diagnostic. This prevents a
+public approval workflow from silently behaving as block. S15 re-enables
+runtime ask by installing the real confirm resolver and queue described below.
 
 ## Dependency On S08a
 
