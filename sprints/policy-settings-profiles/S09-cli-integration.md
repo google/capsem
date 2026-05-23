@@ -58,6 +58,10 @@ blocked.
   absent/unknown, not as `removed`.
 - Extend `capsem profile show/resolve` to print package/tool contracts, resolved
   VM asset identity, asset readiness, and revoke/deprecation warnings.
+  Latest profile output slice now includes package counts, tool counts, MCP
+  server counts, VM sizing, network mode, and per-arch VM asset hash summaries
+  in human `show`/`resolve` output. Asset readiness and signed revision
+  revoke/deprecation warnings remain tied to catalog/status views.
 - Extend VM create/start commands to accept `--profile <id>` and optional
   `--profile-revision <rev>`. Initial `capsem create --profile
   --profile-revision` parsing and request forwarding have landed; remaining

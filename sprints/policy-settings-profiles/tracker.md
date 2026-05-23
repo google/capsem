@@ -2528,6 +2528,12 @@ a valid claim -- mark it `[ ]` instead.
     mcp_path_summary_and_show_filter_preserve_server_identity`, `cargo test -p
     capsem`, `cargo build -p capsem`, touched-file rustfmt, and `git diff
     --check` passed.
+    Profile output slice expanded human `capsem profile show` and `resolve`
+    summaries with package/tool/MCP counts, VM sizing, network mode, and
+    per-arch VM asset hash summaries. Verification: targeted `cargo test -p
+    capsem profile_list_show_and_resolve_summaries_use_typed_fields`, `cargo
+    test -p capsem`, `cargo build -p capsem`, touched-file rustfmt, and `git
+    diff --check` passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

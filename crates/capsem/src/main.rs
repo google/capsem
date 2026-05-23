@@ -2204,6 +2204,17 @@ fn format_profile_record_summary(record: &serde_json::Value) -> String {
         profile["profile_type"].as_str().unwrap_or("-")
     )
     .expect("write to string");
+    write_profile_contract_summary(&mut output, &profile["packages"], &profile["tools"]);
+    writeln!(
+        output,
+        "MCP: servers={}",
+        profile["mcpServers"]
+            .as_object()
+            .map(|items| items.len())
+            .unwrap_or(0)
+    )
+    .expect("write to string");
+    write_profile_vm_summary(&mut output, &profile["vm"]);
     output
 }
 
@@ -2213,7 +2224,7 @@ fn format_profile_resolve_summary(result: &serde_json::Value) -> String {
         .as_array()
         .map(|rules| rules.len())
         .unwrap_or(0);
-    let mcp_servers = effective["mcp"]["value"]["servers"]
+    let mcp_servers = effective["mcp"]["value"]
         .as_object()
         .map(|servers| servers.len())
         .unwrap_or(0);
@@ -2226,11 +2237,7 @@ fn format_profile_resolve_summary(result: &serde_json::Value) -> String {
                 .unwrap_or(0)
         })
         .sum::<usize>();
-    let tools = effective["tools"]["value"]
-        .as_object()
-        .map(|tools| tools.len())
-        .unwrap_or(0);
-    format!(
+    let mut output = format!(
         "Profile resolved: profile={} name={} ui={} rules={} mcp_servers={} skills={} tools={}",
         result["profile_id"].as_str().unwrap_or("-"),
         effective["profile_name"].as_str().unwrap_or("-"),
@@ -2238,8 +2245,94 @@ fn format_profile_resolve_summary(result: &serde_json::Value) -> String {
         rules,
         mcp_servers,
         skills,
-        tools,
+        effective["tools"]["value"]
+            .as_object()
+            .map(|tools| tools.len())
+            .unwrap_or(0),
+    );
+    output.push('\n');
+    write_profile_contract_summary(
+        &mut output,
+        &effective["packages"]["value"],
+        &effective["tools"]["value"],
+    );
+    write_profile_vm_summary(&mut output, &effective["vm"]["value"]);
+    output
+}
+
+fn write_profile_contract_summary(
+    output: &mut String,
+    packages: &serde_json::Value,
+    tools: &serde_json::Value,
+) {
+    let system = &packages["system"];
+    let distro = system["distro"].as_str().unwrap_or("-");
+    let release = system["release"].as_str().unwrap_or("-");
+    writeln!(
+        output,
+        "Packages: runtimes={} python={} node={} apt={} distro={} release={}",
+        packages["runtimes"]
+            .as_object()
+            .map(|items| items.len())
+            .unwrap_or(0),
+        packages["python_modules"]
+            .as_object()
+            .map(|items| items.len())
+            .unwrap_or(0),
+        packages["node_packages"]
+            .as_object()
+            .map(|items| items.len())
+            .unwrap_or(0),
+        system["apt"]
+            .as_object()
+            .map(|items| items.len())
+            .unwrap_or(0),
+        if distro.is_empty() { "-" } else { distro },
+        if release.is_empty() { "-" } else { release },
     )
+    .expect("write to string");
+    writeln!(
+        output,
+        "Tools: {}",
+        tools.as_object().map(|items| items.len()).unwrap_or(0)
+    )
+    .expect("write to string");
+}
+
+fn write_profile_vm_summary(output: &mut String, vm: &serde_json::Value) {
+    let assets = &vm["assets"];
+    writeln!(
+        output,
+        "VM: memory_mib={} cpus={} network={} asset_arches={}",
+        vm["memory_mib"].as_u64().unwrap_or(0),
+        vm["cpus"].as_u64().unwrap_or(0),
+        vm["network"].as_str().unwrap_or("-"),
+        assets.as_object().map(|items| items.len()).unwrap_or(0),
+    )
+    .expect("write to string");
+    if let Some(assets) = assets.as_object() {
+        for (arch, asset_set) in assets.iter().take(4) {
+            writeln!(
+                output,
+                "  assets.{arch}: kernel={} initrd={} rootfs={}",
+                short_hash(asset_set["kernel"]["hash"].as_str().unwrap_or("-")),
+                short_hash(asset_set["initrd"]["hash"].as_str().unwrap_or("-")),
+                short_hash(asset_set["rootfs"]["hash"].as_str().unwrap_or("-")),
+            )
+            .expect("write to string");
+        }
+        if assets.len() > 4 {
+            writeln!(output, "  ... {} more asset arch(es)", assets.len() - 4)
+                .expect("write to string");
+        }
+    }
+}
+
+fn short_hash(hash: &str) -> String {
+    if hash.len() <= 18 {
+        return hash.to_string();
+    }
+    format!("{}...", &hash[..18])
 }
 
 fn profile_revision_action_summary_line(result: &serde_json::Value) -> String {
@@ -5349,11 +5442,44 @@ mod tests {
                 "id": "everyday",
                 "name": "Everyday",
                 "ui": "everyday",
-                "profile_type": "user"
+                "profile_type": "user",
+                "packages": {
+                    "runtimes": { "python": "3.12" },
+                    "python_modules": { "requests": "2" },
+                    "node_packages": {},
+                    "system": {
+                        "distro": "debian",
+                        "release": "bookworm",
+                        "apt": { "curl": "latest" }
+                    }
+                },
+                "tools": {
+                    "python": { "version": "3.12", "required": true, "source": "guest" }
+                },
+                "mcpServers": {
+                    "github": { "enabled": true }
+                },
+                "vm": {
+                    "memory_mib": 4096,
+                    "cpus": 4,
+                    "network": "proxied",
+                    "assets": {
+                        "arm64": {
+                            "kernel": { "hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+                            "initrd": { "hash": "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+                            "rootfs": { "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+                        }
+                    }
+                }
             }
         }));
         assert!(show.contains("Profile: everyday"));
         assert!(show.contains("locked=false"));
+        assert!(show.contains("Packages: runtimes=1 python=1 node=0 apt=1"));
+        assert!(show.contains("Tools: 1"));
+        assert!(show.contains("MCP: servers=1"));
+        assert!(show.contains("asset_arches=1"));
+        assert!(show.contains("assets.arm64"));
 
         let resolved = format_profile_resolve_summary(&serde_json::json!({
             "profile_id": "coding",
@@ -5361,19 +5487,33 @@ mod tests {
                 "profile_name": "Coding",
                 "profile_ui": "coding",
                 "rules": [{ "id": "rule-1" }],
-                "mcp": { "value": { "servers": { "github": {} } } },
+                "mcp": { "value": { "github": {} } },
                 "skills": { "value": {
                     "groups": ["admin"],
                     "enabled": ["admin-profile"],
                     "disabled": []
                 }},
-                "tools": { "value": { "python": {} } }
+                "packages": { "value": {
+                    "runtimes": { "node": "22" },
+                    "python_modules": {},
+                    "node_packages": { "typescript": "latest" },
+                    "system": { "distro": "", "release": "", "apt": {} }
+                }},
+                "tools": { "value": { "python": {} } },
+                "vm": { "value": {
+                    "memory_mib": 8192,
+                    "cpus": 6,
+                    "network": "proxied",
+                    "assets": {}
+                }}
             }
         }));
         assert!(resolved.contains("profile=coding"));
         assert!(resolved.contains("rules=1"));
         assert!(resolved.contains("mcp_servers=1"));
         assert!(resolved.contains("skills=2"));
+        assert!(resolved.contains("Packages: runtimes=1 python=0 node=1 apt=0"));
+        assert!(resolved.contains("VM: memory_mib=8192 cpus=6"));
     }
 
     #[test]

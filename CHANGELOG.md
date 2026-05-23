@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated developer skills to require a Colima stop/start recovery attempt
   before reporting macOS Docker-backed asset builds as blocked.
 
+### Changed
+- Expanded human `capsem profile show` and `capsem profile resolve` output with
+  package, tool, MCP, VM sizing, and VM asset contract summaries.
+
 ### Added
 - Added `capsem mcp list` and `capsem mcp show` aliases for the Profile V2 MCP
   connector inspection path.
