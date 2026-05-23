@@ -7,6 +7,7 @@
     deleteRuntimeEnforcementRule,
     getRuntimeDetectionRules,
     getRuntimeEnforcementRules,
+    huntSessionRuntimeDetectionRules,
     installRuntimeDetectionRule,
     installRuntimeEnforcementRule,
     validateRuntimeDetectionRule,
@@ -57,6 +58,7 @@
   let draft = $state<Draft>(emptyDraft());
   let backtestEventsJson = $state(defaultBacktestEventsJson());
   let backtestResult = $state<RuntimeBacktestResult | null>(null);
+  let huntSessionId = $state('');
 
   let activeRules = $derived(activeKind === 'enforcement' ? enforcementRules : detectionRules);
   let draftValid = $derived(draft.id.trim().length > 0 && draft.condition.trim().length > 0);
@@ -202,6 +204,25 @@
         ? await backtestRuntimeEnforcementRule({ rule: enforcementRequest(), events, limit: 100 })
         : await backtestRuntimeDetectionRule({ rule: detectionRequest(), events, limit: 100 });
       statusMessage = `${backtestResult.total_matches} match${backtestResult.total_matches === 1 ? '' : 'es'} across ${backtestResult.unique_evidence_matches} unique evidence row${backtestResult.unique_evidence_matches === 1 ? '' : 's'}.`;
+    } catch (err) {
+      error = String(err instanceof Error ? err.message : err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function huntSessionDraft() {
+    if (activeKind !== 'detection' || !draftValid || !huntSessionId.trim()) return;
+    busy = true;
+    error = null;
+    statusMessage = null;
+    backtestResult = null;
+    try {
+      backtestResult = await huntSessionRuntimeDetectionRules(huntSessionId.trim(), {
+        rules: [detectionRequest()],
+        limit: 100,
+      });
+      statusMessage = `${backtestResult.total_matches} session match${backtestResult.total_matches === 1 ? '' : 'es'} across ${backtestResult.unique_evidence_matches} unique evidence row${backtestResult.unique_evidence_matches === 1 ? '' : 's'}.`;
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
     } finally {
@@ -505,6 +526,28 @@
                 {/each}
               </div>
             {/if}
+          </div>
+        {/if}
+        {#if activeKind === 'detection'}
+          <div class="mt-3 flex flex-col gap-3 border-t border-card-divider pt-3 sm:flex-row sm:items-end">
+            <label class="block flex-1">
+              <span class="text-xs font-medium text-foreground">Session id</span>
+              <input
+                class="mt-1 w-full py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
+                value={huntSessionId}
+                oninput={(e) => huntSessionId = (e.target as HTMLInputElement).value}
+                placeholder="vm-or-session-id"
+              />
+            </label>
+            <button
+              type="button"
+              class="py-2 px-4 inline-flex items-center gap-x-1.5 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-50"
+              disabled={!draftValid || !huntSessionId.trim() || busy}
+              onclick={huntSessionDraft}
+            >
+              <CheckCircle size={16} />
+              Hunt session
+            </button>
           </div>
         {/if}
       </div>

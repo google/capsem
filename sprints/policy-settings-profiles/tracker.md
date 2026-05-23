@@ -2559,6 +2559,15 @@ a valid claim -- mark it `[ ]` instead.
     was screenshot-checked with browser-side enforcement/detection/backtest
     fixtures showing the evidence result rows. Still missing in S16: session
     detection hunt UI and final release UI usability replay.
+    Eighth S16 session-hunt slice added a detection-mode session hunt control
+    to Settings -> Policy Live Rules. Operators can enter a session id and run
+    the current draft detection rule through `/sessions/{id}/detection/hunt`,
+    reusing the same deduped evidence renderer. Verification: `pnpm --dir
+    frontend exec vitest run src/lib/__tests__/runtime-security-rules-section.test.ts`
+    passed with **5** tests, `pnpm --dir frontend run check` passed, and
+    Settings -> Policy was screenshot-checked with browser-side session hunt
+    fixtures showing the session id control and result rows. Still missing in
+    S16: final release UI usability replay.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

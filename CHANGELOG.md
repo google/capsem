@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added runtime rule backtesting to the Settings -> Policy Live Rules editor,
   posting draft enforcement/detection rules with a JSON event corpus and
   rendering deduplicated evidence rows from the service backtest result.
+- Added session detection hunting to the Settings -> Policy Live Rules editor,
+  letting operators run a draft detection rule against a specific session via
+  `/sessions/{id}/detection/hunt` and inspect the returned evidence rows.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.
