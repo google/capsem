@@ -47,6 +47,12 @@ blocked.
   instead of asking operators to hand-author a full profile document. Remaining
   mutating verbs are full-profile `create` and body `update`; both need the
   formal profile schema/admin tooling path rather than raw JSON shortcuts.
+- Latest typed document slice landed `capsem profile create --file <profile>`
+  and `capsem profile update <id> --file <profile>`. Files are parsed as the
+  Rust `Profile` model from TOML or JSON and validated before calling the
+  service. The existing revision lifecycle `profile update <id> --revision`
+  remains available, but full-profile update now requires `--file` so operators
+  cannot accidentally confuse revision reconciliation with profile body writes.
 - Add richer status output using the canonical `ProfileRevisionStatus` enum values:
   `active`, `deprecated`, and `revoked`. A missing revision is rendered as
   absent/unknown, not as `removed`.

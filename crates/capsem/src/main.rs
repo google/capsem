@@ -96,6 +96,7 @@ const GROUPED_HELP: &str = "\
 
 \x1b[36;1;4mProfiles:\x1b[0m
   \x1b[32;1mprofile list\x1b[0m      List typed Profile V2 profiles
+  \x1b[32;1mprofile create\x1b[0m    Create a user Profile V2 profile from a typed file
   \x1b[32;1mprofile show\x1b[0m      Show one typed Profile V2 profile
   \x1b[32;1mprofile resolve\x1b[0m   Resolve one profile to effective settings
   \x1b[32;1mprofile fork\x1b[0m      Fork a profile into a user profile
@@ -730,6 +731,15 @@ enum ProfileCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Create a user-owned Profile V2 profile from a typed TOML or JSON file
+    Create {
+        /// Profile document to parse and validate
+        #[arg(long)]
+        file: PathBuf,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
     /// Show one typed Profile V2 profile
     Show {
         /// Profile id to inspect
@@ -797,6 +807,9 @@ enum ProfileCommands {
     Update {
         /// Profile id to update
         profile_id: String,
+        /// Profile document to parse, validate, and write through PUT /profiles/{id}
+        #[arg(long, conflicts_with = "revision")]
+        file: Option<PathBuf>,
         /// Specific revision to reconcile; defaults to catalog current_revision
         #[arg(long)]
         revision: Option<String>,
@@ -1467,6 +1480,22 @@ fn read_runtime_backtest_events(path: &Path) -> Result<Vec<serde_json::Value>> {
         );
     }
     Ok(events)
+}
+
+fn read_profile_document(path: &Path) -> Result<capsem_core::settings_profiles::Profile> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read Profile V2 document {}", path.display()))?;
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('{') {
+        let profile = serde_json::from_str::<capsem_core::settings_profiles::Profile>(&text)
+            .with_context(|| format!("parse Profile V2 JSON {}", path.display()))?;
+        profile
+            .validate()
+            .with_context(|| format!("validate Profile V2 JSON {}", path.display()))?;
+        return Ok(profile);
+    }
+    capsem_core::settings_profiles::Profile::from_toml_str(&text)
+        .with_context(|| format!("parse Profile V2 TOML {}", path.display()))
 }
 
 fn print_runtime_rule_list_summary(kind: &str, result: &serde_json::Value) {
@@ -3401,6 +3430,16 @@ async fn main() -> Result<()> {
                 print!("{}", format_profile_list_summary(&result));
             }
         }
+        Commands::Profile(ProfileCommands::Create { file, json }) => {
+            let profile = read_profile_document(file)?;
+            let resp: ApiResponse<serde_json::Value> = client.post("/profiles", &profile).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", format_profile_record_summary(&result));
+            }
+        }
         Commands::Profile(ProfileCommands::Show { profile_id, json }) => {
             let path = format!("/profiles/{}", urlencoding::encode(profile_id));
             let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
@@ -3514,9 +3553,22 @@ async fn main() -> Result<()> {
         }
         Commands::Profile(ProfileCommands::Update {
             profile_id,
+            file,
             revision,
             json,
         }) => {
+            if let Some(file) = file {
+                let profile = read_profile_document(file)?;
+                let path = format!("/profiles/{}", urlencoding::encode(profile_id));
+                let resp: ApiResponse<serde_json::Value> = client.put(&path, &profile).await?;
+                let result = resp.into_result()?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    print!("{}", format_profile_record_summary(&result));
+                }
+                return Ok(());
+            }
             let body = serde_json::json!({ "revision": revision });
             let resp: ApiResponse<serde_json::Value> = client
                 .post(&format!("/profiles/{profile_id}/revisions/update"), &body)
@@ -4592,6 +4644,15 @@ mod tests {
             _ => panic!("expected profile list"),
         }
 
+        let cli = Cli::parse_from(["capsem", "profile", "create", "--file", "profile.toml"]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Create { file, json }) => {
+                assert_eq!(file, PathBuf::from("profile.toml"));
+                assert!(!json);
+            }
+            _ => panic!("expected profile create"),
+        }
+
         let cli = Cli::parse_from(["capsem", "profile", "show", "coding", "--json"]);
         match cli.command.unwrap() {
             Commands::Profile(ProfileCommands::Show { profile_id, json }) => {
@@ -4608,6 +4669,30 @@ mod tests {
                 assert!(!json);
             }
             _ => panic!("expected profile resolve"),
+        }
+
+        let cli = Cli::parse_from([
+            "capsem",
+            "profile",
+            "update",
+            "coding",
+            "--file",
+            "profile.json",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Update {
+                profile_id,
+                file,
+                revision,
+                json,
+            }) => {
+                assert_eq!(profile_id, "coding");
+                assert_eq!(file, Some(PathBuf::from("profile.json")));
+                assert!(revision.is_none());
+                assert!(json);
+            }
+            _ => panic!("expected profile update --file"),
         }
     }
 
@@ -5273,6 +5358,37 @@ mod tests {
     }
 
     #[test]
+    fn read_profile_document_parses_toml_and_json_with_validation() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let toml_path = dir.path().join("profile.toml");
+        std::fs::write(
+            &toml_path,
+            r#"
+id = "typed-toml"
+name = "Typed TOML"
+best_for = "Testing typed profile TOML parsing."
+"#,
+        )
+        .unwrap();
+        let profile = read_profile_document(&toml_path).unwrap();
+        assert_eq!(profile.id, "typed-toml");
+
+        let json_path = dir.path().join("profile.json");
+        std::fs::write(
+            &json_path,
+            r#"{"id":"typed-json","name":"Typed JSON","best_for":"Testing typed profile JSON parsing."}"#,
+        )
+        .unwrap();
+        let profile = read_profile_document(&json_path).unwrap();
+        assert_eq!(profile.id, "typed-json");
+
+        let bad_path = dir.path().join("bad.json");
+        std::fs::write(&bad_path, r#"{"id":"bad","name":"","best_for":"nope"}"#).unwrap();
+        assert!(read_profile_document(&bad_path).is_err());
+    }
+
+    #[test]
     fn parse_profile_install_update_remove() {
         for (verb, expected_revision) in [
             ("install", Some("2026.0520.2")),
@@ -5293,16 +5409,26 @@ mod tests {
                         revision,
                         json,
                     }),
-                )
-                | (
+                ) => {
+                    assert_eq!(profile_id, "everyday-work");
+                    assert_eq!(revision.as_deref(), expected_revision);
+                    assert!(json);
+                }
+                (
                     "update",
                     Commands::Profile(ProfileCommands::Update {
                         profile_id,
+                        file,
                         revision,
                         json,
                     }),
-                )
-                | (
+                ) => {
+                    assert_eq!(profile_id, "everyday-work");
+                    assert!(file.is_none());
+                    assert_eq!(revision.as_deref(), expected_revision);
+                    assert!(json);
+                }
+                (
                     "remove",
                     Commands::Profile(ProfileCommands::Remove {
                         profile_id,

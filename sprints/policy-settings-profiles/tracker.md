@@ -2510,6 +2510,16 @@ a valid claim -- mark it `[ ]` instead.
     confirm_summary_renders_disabled_resolver_state`, `cargo test -p capsem`,
     `cargo build -p capsem`, touched-file rustfmt, and `git diff --check`
     passed.
+    Typed profile document CLI slice wired `capsem profile create --file
+    <profile>` and `capsem profile update <id> --file <profile>`. The CLI
+    parses TOML or JSON into the Rust `Profile` model and validates it before
+    sending it to the typed service routes, avoiding raw JSON string
+    manipulation. The existing revision lifecycle `profile update --revision`
+    remains available for signed catalog reconciliation. Verification: targeted
+    `cargo test -p capsem parse_profile_list_show_resolve`, targeted `cargo
+    test -p capsem read_profile_document_parses_toml_and_json_with_validation`,
+    `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt, and
+    `git diff --check` passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a
