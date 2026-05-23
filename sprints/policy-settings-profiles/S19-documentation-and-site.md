@@ -206,16 +206,16 @@ Final paths should follow the actual docs tree present when this sprint starts.
 
 ## Tasks
 
-- [ ] Audit existing docs for v1 settings/policy language.
-- [ ] Define final docs information architecture and sidebar placement.
-- [ ] Add the chain-of-trust diagram above to the engine overview,
+- [~] Audit existing docs for v1 settings/policy language.
+- [x] Define final docs information architecture and sidebar placement.
+- [~] Add the chain-of-trust diagram above to the engine overview,
       profile-catalog reference, corporate deployment guide, and security
       overview, using the same vocabulary in every page.
-- [ ] Write engine overview with resolution/provenance diagrams.
-- [ ] Write bedrock contract page:
+- [x] Write bedrock contract page:
       Network/File/Process/Security/Emitter boundaries, canonical event
       journal, profile-owned policy/detection, runtime route groups, CLI/UI
       contract, and the explicit extension split for S10/S13/S22/S23.
+- [~] Write engine overview with resolution/provenance diagrams.
 - [ ] Write rule-engine grammar reference:
       callbacks, canonical policy context roots/fields/functions, decisions,
       rewrite rules, priority defaults, and the explicit `event.*` rejection
@@ -236,32 +236,32 @@ Final paths should follow the actual docs tree present when this sprint starts.
       stats/hunt API behavior, default 100-row evidence-dedup result behavior,
       and why detections do not silently become enforcement.
 - [ ] Write service settings reference with TOML examples.
-- [ ] Write profile reference with TOML examples, custom-profile workflow, the
+- [x] Write profile reference with TOML examples, custom-profile workflow, the
       closed `capsem.profile.v2` field table, JSON Schema Draft 2020-12
       artifact, and validation failure examples for unknown fields, wrong
       schema version, bad package versions, and incomplete per-arch asset
       declarations.
-- [ ] Write signed profile catalog reference with manifest examples for
+- [x] Write signed profile catalog reference with manifest examples for
       profile ids, revisions, the `ProfileRevisionStatus` enum
       (`active`, `deprecated`, `revoked`), payload hashes/signatures,
       and compatibility.
-- [ ] Write enterprise profile-format page under the corporate deployment docs:
+- [x] Write enterprise profile-format page under the corporate deployment docs:
       explain the profile TOML/JSON Schema contract, package/tool contracts,
       per-arch VM assets, status enum semantics, VM pinning, and how
       `capsem-admin` validates and publishes the profile.
-- [ ] Write corporate security/admin page that links enforcement packs,
+- [x] Write corporate security/admin page that links enforcement packs,
       detection packs, profile governance, remote enforcement, VM health, telemetry,
       and `capsem-admin` validation workflows from the corp admin section.
-- [ ] Write "build a profile" guide with a complete worked example:
+- [x] Write "build a profile" guide with a complete worked example:
       draft profile, add controls, declare package/tool contract, declare or
       build assets, run `capsem-admin profile validate`, derive/build/verify
       image assets, generate/check/sign manifest, and create a profile-backed
       VM.
-- [ ] Write getting-started guide for custom images/controls via profiles:
+- [x] Write getting-started guide for custom images/controls via profiles:
       how an operator gets from a custom image requirement to a signed profile
       catalog and a VM pinned to the resulting profile.
-- [ ] Write profile package/tool contract and VM asset declaration reference.
-- [ ] Write `capsem-admin` reference:
+- [x] Write profile package/tool contract and VM asset declaration reference.
+- [~] Write `capsem-admin` reference:
       profile create/validate/schema, image plan/build/verify, manifest
       generate/check/sign, fast HTTP HEAD checks, full download checks, JSON
       reports, omitted `--arch` defaulting to all supported release arches,
@@ -271,7 +271,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       and the Pydantic model layer that backs
       validation/errors/reports through `model_validate_json()` /
       `TypeAdapter.validate_json()` and `model_dump_json()`.
-- [ ] Write "add detection" admin guide:
+- [x] Write "add detection" admin guide:
       choose the target canonical event families, author Sigma-compatible
       rules, validate with pySigma-backed `capsem-admin`, compile/check against
       fixtures, backtest against a shared corpus or selected session timeline,
@@ -279,7 +279,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       profile, and verify findings in timeline, VM status, OTel summaries, and
       detection stats. Include forensic use of Sigma against one timeline or
       session journal without installing the detection pack live.
-- [ ] Write "add enforcement" admin guide:
+- [x] Write "add enforcement" admin guide:
       choose the synchronous enforcement point, author CEL rules over canonical
       policy roots rather than `event.*`, validate and
       backtest offline with `capsem-admin`, publish through signed profiles,
@@ -291,19 +291,19 @@ Final paths should follow the actual docs tree present when this sprint starts.
       profile/image/manifest/doctor modules, how Justfile/bootstrap integrate,
       how to run focused tests, how to add a new command, and how release
       packaging consumes the package.
-- [ ] Document profile-backed VM create semantics:
+- [x] Document profile-backed VM create semantics:
       profile id/revision selection, first-use download, verification,
       persistent VM pins, and no implicit migration on profile update.
-- [ ] Write corporate deployment guide.
+- [x] Write corporate deployment guide.
 - [ ] Write telemetry and remote enforcement configuration guide.
-- [ ] Write VM health/metrics guide covering live status values, boot-time
+- [x] Write VM health/metrics guide covering live status values, boot-time
       recompute/seed from `session.db`, no hot-path SQL reads, OTel labels,
       redaction/cardinality rules, model call count, provider/model summaries,
       token counts, estimated cost, enforcement/detection match stats, and how
       those values appear in status, `/info`, `/metrics/json`, `/metrics`,
       gateway status, and UI panels. Make clear that full local evidence appears
       in backtest/hunt/timeline APIs, not as OTel labels.
-- [ ] Write "extend telemetry" guide:
+- [x] Write "extend telemetry" guide:
       how engine authors, detection/enforcement pack authors, and plugins add
       new fields safely: normalized event field first, resolved-event evidence
       second, VM accumulator summary third, OTel labels only when bounded, and
@@ -362,7 +362,7 @@ Final paths should follow the actual docs tree present when this sprint starts.
       default allow/block lists (`domain_policy::default_*_list`,
       `NetworkPolicy::default_dev`) are NOT ported to rules;
       `NetworkPolicy::http_upstream_ports` exits with S06c.
-- [ ] Build docs site and fix broken links/sidebar issues.
+- [x] Build docs site and fix broken links/sidebar issues.
 - [ ] Add docs review checklist to the release gate.
 
 ## Profile Status Enum To Document
@@ -379,6 +379,19 @@ tables:
 
 There is no `removed` status. A revision missing from the manifest is absent; a
 listed revision that must not be installed or launched is `revoked`.
+
+## Progress Journal
+
+- 2026-05-23: First S19 docs slice landed the final release-docs information
+  architecture in Starlight with new `Configuration` and `Observability`
+  sidebars. Added bedrock contract, settings/profile overview, profile format,
+  signed profile catalog, `capsem-admin`, corporate deployment, corporate
+  security, build-profile, custom profiles/images getting-started, VM health,
+  telemetry extension, add-enforcement, and add-detection pages.
+  Verification: `pnpm --dir docs run build` passed and generated 64 pages.
+  Remaining S19 debt: rewrite stale existing pages that still mention
+  `guest/config`, old MCP/user settings shapes, v1 defaults authority, and
+  pre-bedrock policy terminology; add the final release-gate docs checklist.
 
 ## Coverage Ledger
 

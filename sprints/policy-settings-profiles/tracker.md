@@ -2577,16 +2577,7 @@ a valid claim -- mark it `[ ]` instead.
     frontend run check` passed, and `pnpm --dir frontend run build` passed.
     S16 is closed for the bedrock release; richer workbench composition moves
     to S16a/S17 instead of reopening the profile UI contract.
-32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
-    -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
-    everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
-    sessions. S16a owns the Conversation Engine and structured
-    `/timeline/{id}` API, consuming S08b's canonical resolved-event journal.
-    Users must be able to review/search prompts, assistant responses, tools,
-    files, network, processes, findings, asks/confirms, snapshots, artifacts,
-    and profile/rule provenance from one coherent timeline.
-33. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-34. [ ] [S19 - Documentation and site](S19-documentation-and-site.md)
+32. [~] [S19 - Documentation and site](S19-documentation-and-site.md)
     -- table-stakes release work, not an improvement sprint. The release does
     not ship without docs that explain the shipped contract and deferrals.
     -- adds first-class enforcement and detection-format pages, corporate admin
@@ -2594,22 +2585,43 @@ a valid claim -- mark it `[ ]` instead.
     docs, add-detection/add-enforcement admin guides, telemetry extension guide,
     and VM health/OTel docs for model/provider/token/cost, enforcement counters,
     detection metrics, future quota inputs, and unified event evidence.
-35. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
-    -- refresh the landing page around four pillars: Ship Fast With AI, Ship
-    Safely, Scale Your Productivity Without Drag, and Enterprise Ready. Include
-    realtime CEL enforcement, Sigma-compatible detection with backtest and
-    forensic timeline/session analysis, fast matching over unified events,
-    and S08d artifact-backed engine performance claims without overclaiming
-    beyond the sprint tracker. Current-site
-    baseline screenshots were captured in
-    `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`; refreshed
-    pillar screenshots remain part of S19a's final gate.
-36. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+    First S19 docs slice added the release docs information architecture with
+    new Configuration and Observability sidebars plus bedrock contract,
+    settings/profile overview, profile format, signed profile catalog,
+    `capsem-admin`, corporate deployment/security, build-profile, custom
+    profiles/images getting-started, VM health, telemetry extension,
+    add-enforcement, and add-detection pages. Verification: `pnpm --dir docs
+    run build` passed and generated **64** pages. Remaining S19 debt: rewrite
+    stale existing pages that still mention `guest/config`, old MCP/user
+    settings shapes, v1 defaults authority, and pre-bedrock policy language;
+    add the final docs review checklist to S18.
+33. [ ] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate
     must prove the engine split, CLI, UI, docs, install, VM boot, profile pins,
     enforcement/detection runtime, logs/status/debug, and benchmark artifact
     claims together.
+34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
+    -- post-bedrock improvement split by the release contract. Build a friendly
+    everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
+    sessions. S16a owns the Conversation Engine and structured
+    `/timeline/{id}` API, consuming S08b's canonical resolved-event journal.
+    Users must be able to review/search prompts, assistant responses, tools,
+    files, network, processes, findings, asks/confirms, snapshots, artifacts,
+    and profile/rule provenance from one coherent timeline.
+35. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
+    -- post-bedrock security UI polish. It may deepen capability editors and
+    explainers but must consume, not reshape, the S08/S16 contract.
+36. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
+    -- post-bedrock marketing improvement. Refresh the landing page around four
+    pillars: Ship Fast With AI, Ship Safely, Scale Your Productivity Without
+    Drag, and Enterprise Ready. Include realtime CEL enforcement,
+    Sigma-compatible detection with backtest and forensic timeline/session
+    analysis, fast matching over unified events, and S08d artifact-backed
+    engine performance claims without overclaiming beyond the sprint tracker.
+    Current-site baseline screenshots were captured in
+    `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`; refreshed
+    pillar screenshots remain part of S19a's final gate.
 37. [ ] [S20 - OpenAPI to MCP](S20-openapi-to-mcp.md)
     -- proposed standalone product sprint. Convert reviewed OpenAPI-described
     HTTP services into profile-owned MCP tools with provenance, diagnostics,
