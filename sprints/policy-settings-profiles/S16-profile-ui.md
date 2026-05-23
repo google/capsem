@@ -58,6 +58,11 @@ requests.
   `POST /profiles/{id}/select` service route. `/profiles/catalog` returns the
   selected `default_profile`, and Settings -> Profiles shows the selected
   profile, can select non-revoked profiles, and disables revoked selections.
+- Implemented slice: quick-session and customize-session VM create now include
+  the service-reported profile id and resolved revision when asset health
+  exposes them. The customize dialog also displays the active
+  `profile@revision` so operators can see which profile will back the VM
+  before launch.
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
   values, revisions, package/tool contracts, asset readiness, VM pin fields,
   enforcement-pack summaries, detection-pack summaries, and backtest result
@@ -74,6 +79,10 @@ requests.
   catalog `default_profile` reporting; frontend tests cover `selectProfile`,
   selected badges, successful selection, and disabled revoked profile
   selection.
+- Unit/contract completed: session runtime truth tests cover quick-session and
+  customize-session create requests carrying `profile_id` and
+  `profile_revision` from asset health, while still omitting CPU/RAM in
+  service-default mode.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states; enforcement/detection
   runtime overlay list/validate/install/delete/stats/backtest/hunt flows through
@@ -101,3 +110,6 @@ requests.
   browser-side catalog fixture so selected, update-available, active,
   deprecated, revoked, installed, and disabled-selection states were visible in
   the actual UI layout.
+- Visual/build proof: Customize Session was screenshot-checked with a
+  browser-side ready asset-health fixture so the profile badge and create flow
+  layout were visible in the actual UI.

@@ -18,6 +18,9 @@ export interface AssetHealth {
   state: 'checking' | 'updating' | 'ready' | 'error' | 'unknown';
   version?: string;
   arch?: string;
+  profile_id?: string | null;
+  profile_revision?: string | null;
+  profile_payload_hash?: string | null;
   missing: string[];
   progress?: AssetProgress;
   error?: string;
@@ -151,6 +154,8 @@ export interface ProvisionRequest {
   persistent: boolean;
   env?: Record<string, string>;
   from?: string;
+  profile_id?: string;
+  profile_revision?: string;
 }
 
 export interface ProvisionResponse {

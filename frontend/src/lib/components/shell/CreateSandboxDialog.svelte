@@ -27,6 +27,7 @@
     const request: ProvisionRequest = {
       name: hasName ? name.trim() : undefined,
       persistent: hasName,
+      ...profileProvisionFields(),
     };
     if (resourceMode === 'custom') {
       request.ram_mb = ramMb;
@@ -41,6 +42,15 @@
     } finally {
       creating = false;
     }
+  }
+
+  function profileProvisionFields(): { profile_id?: string; profile_revision?: string } {
+    const profileId = vmStore.assetHealth?.profile_id;
+    if (!profileId) return {};
+    return {
+      profile_id: profileId,
+      ...(vmStore.assetHealth?.profile_revision ? { profile_revision: vmStore.assetHealth.profile_revision } : {}),
+    };
   }
 </script>
 
@@ -73,6 +83,15 @@
     </div>
 
     <div class="space-y-2">
+      {#if vmStore.assetHealth?.profile_id}
+        <div class="rounded-lg border border-line-2 bg-layer px-3 py-2">
+          <p class="text-xs font-semibold text-foreground uppercase tracking-wider">Profile</p>
+          <p class="mt-1 text-sm font-mono text-foreground">
+            {vmStore.assetHealth.profile_id}{vmStore.assetHealth.profile_revision ? `@${vmStore.assetHealth.profile_revision}` : ''}
+          </p>
+        </div>
+      {/if}
+
       <span class="text-sm font-medium text-foreground">Resources</span>
       <div class="inline-flex rounded-lg border border-line-2 bg-layer p-0.5">
         <button

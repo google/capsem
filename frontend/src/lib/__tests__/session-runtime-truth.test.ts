@@ -145,7 +145,13 @@ describe('session runtime truth UI', () => {
 
   it('quick session lets the service choose resource defaults', async () => {
     const requests: ProvisionRequest[] = [];
-    vmStore.assetHealth = assetHealth({ ready: true, state: 'ready', missing: [] });
+    vmStore.assetHealth = assetHealth({
+      ready: true,
+      state: 'ready',
+      missing: [],
+      profile_id: 'everyday-work',
+      profile_revision: '2026.0520.2',
+    });
     vmStore.provision = vi.fn(async (request: ProvisionRequest) => {
       requests.push(request);
       return { id: 'vm-1', name: 'vm-1' };
@@ -156,13 +162,24 @@ describe('session runtime truth UI', () => {
     await fireEvent.click(screen.getByRole('button', { name: /quick session/i }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0]).toEqual({ persistent: false });
+    expect(requests[0]).toEqual({
+      persistent: false,
+      profile_id: 'everyday-work',
+      profile_revision: '2026.0520.2',
+    });
     expect(tabStore.openVM).toHaveBeenCalledWith('vm-1', 'vm-1');
   });
 
   it('customize dialog omits CPU and RAM in service-default mode', async () => {
     const requests: ProvisionRequest[] = [];
     vmStore.showCreateModal = true;
+    vmStore.assetHealth = assetHealth({
+      ready: true,
+      state: 'ready',
+      missing: [],
+      profile_id: 'coding',
+      profile_revision: '2026.0520.3',
+    });
     vmStore.provision = vi.fn(async (request: ProvisionRequest) => {
       requests.push(request);
       return { id: 'vm-2', name: 'work' };
@@ -170,11 +187,17 @@ describe('session runtime truth UI', () => {
     tabStore.openVM = vi.fn();
 
     render(CreateSandboxDialog);
+    expect(screen.getByText('coding@2026.0520.3')).toBeTruthy();
     await fireEvent.input(screen.getByLabelText(/name/i), { target: { value: 'work' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0]).toEqual({ name: 'work', persistent: true });
+    expect(requests[0]).toEqual({
+      name: 'work',
+      persistent: true,
+      profile_id: 'coding',
+      profile_revision: '2026.0520.3',
+    });
     expect(tabStore.openVM).toHaveBeenCalledWith('vm-2', 'work');
   });
 

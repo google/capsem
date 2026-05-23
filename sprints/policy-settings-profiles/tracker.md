@@ -2521,6 +2521,17 @@ a valid claim -- mark it `[ ]` instead.
     selection states. Still missing in S16: package/asset readiness,
     profile-backed VM create, VM profile-state display, runtime backtest/hunt
     UI, and final release UI usability replay.
+    Fourth S16 profile-backed-create slice wired frontend quick-session and
+    customize-session VM creation to include the service-reported
+    `profile_id` and resolved `profile_revision` from asset health, and added
+    an active profile badge to the customize dialog. Verification: `pnpm --dir
+    frontend exec vitest run src/lib/__tests__/session-runtime-truth.test.ts`
+    passed with **10** tests, `pnpm --dir frontend run check` passed, `pnpm
+    --dir frontend run build` passed, and Customize Session was
+    screenshot-checked with a browser-side ready asset-health fixture showing
+    `coding@2026.0520.3`. Still missing in S16: richer package/asset readiness
+    details, VM profile-state display, runtime backtest/hunt UI, and final
+    release UI usability replay.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

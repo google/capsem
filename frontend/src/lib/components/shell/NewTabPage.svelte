@@ -221,7 +221,11 @@
     creatingTemp = true;
     try {
       console.log('[NewTabPage] calling vmStore.provision()');
-      const { id, name } = await vmStore.provision({ persistent: false });
+      const request = {
+        persistent: false,
+        ...profileProvisionFields(),
+      };
+      const { id, name } = await vmStore.provision(request);
       console.log('[NewTabPage] provision OK id=%s name=%s', id, name);
       tabStore.openVM(id, name);
     } catch (e) {
@@ -230,6 +234,15 @@
     } finally {
       creatingTemp = false;
     }
+  }
+
+  function profileProvisionFields(): { profile_id?: string; profile_revision?: string } {
+    const profileId = vmStore.assetHealth?.profile_id;
+    if (!profileId) return {};
+    return {
+      profile_id: profileId,
+      ...(vmStore.assetHealth?.profile_revision ? { profile_revision: vmStore.assetHealth.profile_revision } : {}),
+    };
   }
 
   async function retrySetup(): Promise<void> {
