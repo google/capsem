@@ -283,6 +283,19 @@ clearly not numerical and matches the sprint tracker.
   gate. This slice also expanded security-log projection with family-specific
   subject fields so DNS qname, HTTP host/path, MCP server/tool, model provider/
   name, file path, and process operation/class are visible in logs.
+- Slice 9 wired framed MCP `tools/call` requests into the runtime Security
+  Engine before aggregator dispatch and added the first VM-originated MCP
+  enforcement benchmark. The benchmark installs a runtime CEL rule for
+  `mcp.request.server_id == 'local' && mcp.request.tool_name == 'echo'`, sends
+  repeated guest `/run/capsem-mcp-server` `local__echo` calls, asserts JSON-RPC
+  denial, verifies runtime match counters, checks canonical `security_events`
+  plus legacy `mcp_calls` policy rows, and confirms `capsem logs` exposes the
+  MCP server/tool and rule attribution. Latest local result: eight guest MCP
+  calls produced eight blocked MCP security events/`mcp_calls` rows at 0.312ms
+  mean, 0.264ms median, 0.543ms p95/max against a 1,000ms gross-regression
+  gate. This slice also fixed a security-log projection bug where MCP subject
+  fields joined only by trace id and could pick the earlier gateway
+  `initialize` row instead of the request-id-matched tool call.
 
 ## Coverage Ledger
 
@@ -290,29 +303,31 @@ clearly not numerical and matches the sprint tracker.
   scale fixture generation, evaluator microbench setup, same-millisecond
   event-ID regression coverage for HTTP, DNS, MCP, and file security events,
   Detection IR parse/lowering fixture coverage.
-- Functional: VM-originated process, HTTP request, and DNS request enforcement
-  benchmarks assert correct block actions through the real service/process,
-  guest-network/MITM, and guest DNS proxy paths. MCP/model/file detection and
-  allow scenarios remain open.
+- Functional: VM-originated process, HTTP request, DNS request, and MCP request
+  enforcement benchmarks assert correct block actions through the real service/
+  process, guest-network/MITM, guest DNS proxy, and framed MCP paths. Model/file
+  detection and allow scenarios remain open.
 - Adversarial: invalid rules, unsupported Sigma constructs, missing event
   fields, high-cardinality evidence, oversized packs, slow emitter/journal path.
-- E2E/VM: real VM process exec, HTTP request, and DNS request events now verify
-  action latency visible to the caller plus resolved-event evidence in session
-  storage. MCP/model/file VM-originated benchmarks remain open.
+- E2E/VM: real VM process exec, HTTP request, DNS request, and MCP request
+  events now verify action latency visible to the caller plus resolved-event
+  evidence in session storage. Model/file VM-originated benchmarks remain open.
 - Telemetry: the first VM-originated benchmark confirms runtime enforcement
   match counters and security-log projection. The HTTP benchmark now proves
   fast synthetic block responses produce both `net_events` and
   `security_events` for every request in bursty keep-alive traffic. The DNS
   benchmark proves `dns_events`, `security_events`, runtime counters, and
-  security logs all carry DNS qname/rule attribution. VM status/OTel counters
-  for enforcement evaluations, detection evaluations, findings, errors, and
-  forward-plugin metrics remain open.
+  security logs all carry DNS qname/rule attribution. The MCP benchmark proves
+  `mcp_calls`, `security_events`, runtime counters, and request-id-matched
+  security logs all carry MCP server/tool/rule attribution. VM status/OTel
+  counters for enforcement evaluations, detection evaluations, findings,
+  errors, and forward-plugin metrics remain open.
 - Performance: adapted CEL rig numbers, Capsem canonical-root microbench
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,
   detection evaluation, backtest evidence dedupe, runtime registry projection,
   runtime compiled-plan rebuild cost, Detection IR parse/lowering/compile cost,
-  first process, HTTP request, and DNS request block latency artifacts,
+  first process, HTTP request, DNS request, and MCP request block latency artifacts,
   concurrency scaling, backtest/hunt scan rates.
 - Missing/deferred: exact threshold gates are chosen after the first stable
   S08d baseline; until then, marketing uses artifact-backed qualitative claims

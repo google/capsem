@@ -63,6 +63,7 @@ fn env_duration_secs(key: &str, default_secs: u64) -> Duration {
 pub struct McpEndpointState {
     pub aggregator: AggregatorClient,
     pub policy: Arc<RwLock<Arc<McpPolicy>>>,
+    pub security_engine: Arc<super::RuntimeSecurityEngineSlot>,
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub timeouts: McpTimeouts,
     tool_timeout_overrides: RwLock<HashMap<String, Duration>>,
@@ -72,12 +73,14 @@ impl McpEndpointState {
     pub fn new(
         aggregator: AggregatorClient,
         policy: Arc<RwLock<Arc<McpPolicy>>>,
+        security_engine: Arc<super::RuntimeSecurityEngineSlot>,
         inflight: Arc<tokio::sync::Semaphore>,
         timeouts: McpTimeouts,
     ) -> Self {
         Self {
             aggregator,
             policy,
+            security_engine,
             inflight,
             timeouts,
             tool_timeout_overrides: RwLock::new(HashMap::new()),

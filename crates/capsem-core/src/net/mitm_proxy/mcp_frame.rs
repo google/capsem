@@ -16,7 +16,7 @@ use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, BlockResponse, Enforceability, McpSecuritySubject,
     RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
     SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError, SecurityEvent,
-    SecurityEventCommon, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    SecurityEventCommon, SecurityResult, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 
 use super::fd_stream::{AsyncFdStream, ReplayReader};
 use super::metrics;
-use super::McpEndpointState;
+use super::{McpEndpointState, RuntimeSecurityEngine as _};
 use crate::mcp::policy::{
     McpDecisionRule, McpDecisionRuleAction, McpDecisionRuleMatch, McpPolicy, ToolDecision,
 };
@@ -143,7 +143,39 @@ where
                 McpDecisionRequest::from_request(&process_name, &request, &summary);
             let policy = endpoint.policy.read().await.clone();
             let decision_provider = LocalMcpDecisionProvider::audit_only_arc(Arc::clone(&policy));
-            let request_decision = decision_provider.decide(&decision_request);
+            let mut request_decision = decision_provider.decide(&decision_request);
+            let mut runtime_block_event = None;
+            if endpoint.security_engine.has_engine() {
+                let runtime_event = build_mcp_security_event_from_request(
+                    &process_name,
+                    &request,
+                    &summary,
+                    crate::telemetry::ambient_capsem_trace_id(),
+                    SystemTime::now(),
+                );
+                match endpoint.security_engine.evaluate(runtime_event) {
+                    Ok(runtime_result) => {
+                        if !mcp_security_result_allows_dispatch(&runtime_result) {
+                            request_decision = mcp_policy_decision_from_security_result(
+                                &runtime_result,
+                                "mcp.runtime.blocked",
+                            );
+                            runtime_block_event = Some(runtime_result.resolved_event);
+                        }
+                    }
+                    Err(error) => {
+                        request_decision = McpPolicyDecision {
+                            mode: McpPolicyMode::Enforce,
+                            action: McpPolicyAction::Block,
+                            rule: "mcp.runtime.error".into(),
+                            reason: format!("security engine error: {error}"),
+                            rewrite_target: None,
+                            rewrite_value: None,
+                            policy_rule_name: None,
+                        };
+                    }
+                }
+            }
 
             ::metrics::counter!(
                 metrics::PARSER_EVENTS_TOTAL,
@@ -169,6 +201,7 @@ where
                         &process_name,
                         0,
                         McpCallPolicyFields::from(&decision),
+                        None,
                     )
                     .await;
                 }
@@ -199,6 +232,7 @@ where
                             &process_name,
                             0,
                             McpCallPolicyFields::from(&failed_decision),
+                            None,
                         )
                         .await;
                         streams
@@ -225,6 +259,7 @@ where
                     &process_name,
                     0,
                     McpCallPolicyFields::from(&request_decision),
+                    runtime_block_event,
                 )
                 .await;
                 streams
@@ -300,6 +335,7 @@ where
                     &process_name,
                     duration_ms,
                     policy_fields,
+                    None,
                 )
                 .await;
                 if let Err(e) = send_response(&tx_h, frame.stream_id, &process_name, &response).await {
@@ -557,6 +593,147 @@ impl From<&McpPolicyDecision> for McpCallPolicyFields {
     }
 }
 
+fn build_mcp_security_event_from_request(
+    _process_name: &str,
+    req: &JsonRpcRequest,
+    summary: &McpMethodSummary,
+    trace_id: Option<String>,
+    timestamp: SystemTime,
+) -> SecurityEvent {
+    let timestamp_duration = timestamp
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let timestamp_unix_ms = timestamp_duration.as_millis() as u64;
+    let timestamp_unix_nanos = timestamp_duration.as_nanos();
+    let server_name = summary
+        .server_name
+        .clone()
+        .unwrap_or_else(|| "gateway".to_string());
+    let subject_tool_name = summary
+        .tool_name
+        .as_deref()
+        .and_then(parse_namespaced)
+        .map(|(_, tool)| tool.to_string())
+        .or_else(|| summary.tool_name.clone())
+        .or_else(|| summary.resource_uri.clone())
+        .or_else(|| summary.prompt_name.clone())
+        .unwrap_or_else(|| summary.method.clone());
+    let event_id = mcp_security_event_id(
+        trace_id.as_deref(),
+        &server_name,
+        &subject_tool_name,
+        req.id.as_ref(),
+        timestamp_unix_nanos,
+    );
+
+    SecurityEvent::mcp(
+        SecurityEventCommon {
+            event_id,
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: None,
+            enforceability: Enforceability::InlineBlockable,
+            trace_id,
+            span_id: None,
+            timestamp_unix_ms,
+            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
+            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
+            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
+            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
+            mcp_call_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
+            event_type: "mcp.request".into(),
+            redaction_state: RedactionState::Raw,
+        },
+        McpSecuritySubject {
+            server_id: server_name,
+            tool_name: subject_tool_name,
+            evidence: None,
+        },
+    )
+}
+
+fn mcp_security_result_allows_dispatch(result: &SecurityResult) -> bool {
+    matches!(
+        result.action,
+        SecurityAction::Continue | SecurityAction::ObserveOnly
+    )
+}
+
+fn mcp_policy_decision_from_security_result(
+    result: &SecurityResult,
+    fallback_rule: &str,
+) -> McpPolicyDecision {
+    let action = match result.action {
+        SecurityAction::Continue | SecurityAction::ObserveOnly => McpPolicyAction::Allow,
+        SecurityAction::Ask(_) => McpPolicyAction::Ask,
+        SecurityAction::Rewrite(_) => McpPolicyAction::Block,
+        SecurityAction::Block(_)
+        | SecurityAction::Throttle(_)
+        | SecurityAction::Quarantine(_)
+        | SecurityAction::Restore(_)
+        | SecurityAction::DropConnection(_)
+        | SecurityAction::Error(_) => McpPolicyAction::Block,
+    };
+    McpPolicyDecision {
+        mode: McpPolicyMode::Enforce,
+        action,
+        rule: mcp_security_result_rule_id(result).unwrap_or_else(|| fallback_rule.to_string()),
+        reason: mcp_security_result_reason(result),
+        rewrite_target: None,
+        rewrite_value: None,
+        policy_rule_name: None,
+    }
+}
+
+fn mcp_security_result_rule_id(result: &SecurityResult) -> Option<String> {
+    result
+        .resolved_event
+        .event
+        .decision
+        .as_ref()
+        .and_then(|decision| decision.rule.clone())
+        .or_else(|| match &result.action {
+            SecurityAction::Block(block) => block.rule_id.clone(),
+            _ => None,
+        })
+}
+
+fn mcp_security_result_reason(result: &SecurityResult) -> String {
+    result
+        .resolved_event
+        .event
+        .decision
+        .as_ref()
+        .and_then(|decision| decision.reason.clone())
+        .or_else(|| match &result.action {
+            SecurityAction::Ask(plan) => Some(plan.reason_code.clone()),
+            SecurityAction::Block(block) => Some(block.reason_code.clone()),
+            SecurityAction::Throttle(plan) => Some(plan.reason_code.clone()),
+            SecurityAction::Error(error) => Some(error.message.clone()),
+            SecurityAction::DropConnection(reason) => Some(reason.reason_code.clone()),
+            SecurityAction::Rewrite(patch) => Some(patch.replacement_ref.clone()),
+            SecurityAction::Quarantine(plan) => Some(plan.quarantine_id.clone()),
+            SecurityAction::Restore(plan) => Some(plan.reason_code.clone()),
+            SecurityAction::Continue | SecurityAction::ObserveOnly => None,
+        })
+        .unwrap_or_else(|| "MCP request blocked by security engine".into())
+}
+
 async fn log_mcp_call_with_policy(
     db: &DbWriter,
     req: &JsonRpcRequest,
@@ -564,6 +741,7 @@ async fn log_mcp_call_with_policy(
     process_name: &str,
     duration_ms: u64,
     policy_fields: McpCallPolicyFields,
+    resolved_event: Option<ResolvedSecurityEvent>,
 ) {
     let tool_name = req
         .params
@@ -633,7 +811,7 @@ async fn log_mcp_call_with_policy(
         trace_id: trace_id.clone(),
     }))
     .await;
-    db.write(WriteOp::ResolvedSecurityEvent(
+    let resolved_event = resolved_event.unwrap_or_else(|| {
         build_mcp_resolved_security_event(
             req,
             resp,
@@ -643,9 +821,10 @@ async fn log_mcp_call_with_policy(
             &policy_fields,
             timestamp,
             trace_id,
-        ),
-    ))
-    .await;
+        )
+    });
+    db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
+        .await;
 }
 
 #[allow(clippy::too_many_arguments)]

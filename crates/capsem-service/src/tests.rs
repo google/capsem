@@ -3131,6 +3131,118 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
         ))
         .await;
     writer
+        .write(capsem_logger::WriteOp::McpCall(
+            capsem_logger::events::McpCall {
+                timestamp: std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_millis(1_700_000_000_200),
+                server_name: "gateway".into(),
+                method: "initialize".into(),
+                tool_name: None,
+                request_id: Some("1".into()),
+                request_preview: Some("{}".into()),
+                response_preview: Some("{}".into()),
+                decision: "allowed".into(),
+                duration_ms: 1,
+                error_message: None,
+                process_name: Some("codex".into()),
+                bytes_sent: 2,
+                bytes_received: 2,
+                policy_mode: Some("enforce".into()),
+                policy_action: Some("allow".into()),
+                policy_rule: Some("runtime.allow-init".into()),
+                policy_reason: Some("init allowed".into()),
+                trace_id: Some("trace-mcp-log".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::McpCall(
+            capsem_logger::events::McpCall {
+                timestamp: std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_millis(1_700_000_000_201),
+                server_name: "local".into(),
+                method: "tools/call".into(),
+                tool_name: Some("local__echo".into()),
+                request_id: Some("2".into()),
+                request_preview: Some(r#"{"name":"local__echo"}"#.into()),
+                response_preview: None,
+                decision: "denied".into(),
+                duration_ms: 0,
+                error_message: Some("blocked by policy".into()),
+                process_name: Some("codex".into()),
+                bytes_sent: 23,
+                bytes_received: 0,
+                policy_mode: Some("enforce".into()),
+                policy_action: Some("block".into()),
+                policy_rule: Some("runtime.block-mcp".into()),
+                policy_reason: Some("mcp blocked".into()),
+                trace_id: Some("trace-mcp-log".into()),
+            },
+        ))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ResolvedSecurityEvent(
+            capsem_security_engine::ResolvedSecurityEvent {
+                schema_version: capsem_security_engine::RESOLVED_EVENT_SCHEMA_VERSION,
+                event: capsem_security_engine::SecurityEvent::mcp(
+                    capsem_security_engine::SecurityEventCommon {
+                        event_id: "evt-mcp-db-log".into(),
+                        parent_event_id: None,
+                        stream_id: None,
+                        activity_id: None,
+                        sequence_no: Some(11),
+                        source_engine: capsem_security_engine::SourceEngine::Network,
+                        attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+                        origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+                        accounting_owner: Some("vm:vm-security-logs".into()),
+                        enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+                        trace_id: Some("trace-mcp-log".into()),
+                        span_id: None,
+                        timestamp_unix_ms: 1_700_000_000_201,
+                        vm_id: Some(vm_id.into()),
+                        session_id: Some(vm_id.into()),
+                        profile_id: Some("coding".into()),
+                        profile_revision: Some("2026.0522.1".into()),
+                        profile_pack_ids: Vec::new(),
+                        enforcement_packs: Vec::new(),
+                        detection_packs: Vec::new(),
+                        user_id: Some("elie".into()),
+                        process_id: None,
+                        parent_process_id: None,
+                        exec_id: None,
+                        turn_id: None,
+                        message_id: None,
+                        tool_call_id: Some("2".into()),
+                        mcp_call_id: Some("2".into()),
+                        event_type: "mcp.request".into(),
+                        redaction_state: capsem_security_engine::RedactionState::Raw,
+                    },
+                    capsem_security_engine::McpSecuritySubject {
+                        server_id: "local".into(),
+                        tool_name: "echo".into(),
+                        evidence: None,
+                    },
+                ),
+                steps: vec![capsem_security_engine::ResolvedEventStep {
+                    kind: capsem_security_engine::ResolvedEventStepKind::EnforcementMatch,
+                    status: capsem_security_engine::StepStatus::Matched,
+                    rule_id: Some("runtime.block-mcp".into()),
+                    pack_id: Some("runtime-pack".into()),
+                    message: Some("mcp blocked".into()),
+                }],
+                plugin_transforms: Vec::new(),
+                detection_findings: Vec::new(),
+                final_action: capsem_security_engine::SecurityAction::Block(
+                    capsem_security_engine::BlockResponse {
+                        reason_code: "mcp blocked".into(),
+                        rule_id: Some("runtime.block-mcp".into()),
+                    },
+                ),
+                emitter_results: Vec::new(),
+            },
+        ))
+        .await;
+    writer
         .write(capsem_logger::WriteOp::ResolvedSecurityEvent(
             capsem_security_engine::ResolvedSecurityEvent {
                 schema_version: capsem_security_engine::RESOLVED_EVENT_SCHEMA_VERSION,
@@ -3241,6 +3353,12 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
     assert!(security_logs.contains(r#""event_type":"dns.request""#));
     assert!(security_logs.contains(r#""dns_qname":"blocked.example.com""#));
     assert!(security_logs.contains(r#""rule_id":"runtime.block-dns""#));
+    assert!(security_logs.contains(r#""event_id":"evt-mcp-db-log""#));
+    assert!(security_logs.contains(r#""event_type":"mcp.request""#));
+    assert!(security_logs.contains(r#""mcp_call_id":"2""#));
+    assert!(security_logs.contains(r#""mcp_server_id":"local""#));
+    assert!(security_logs.contains(r#""mcp_tool_name":"local__echo""#));
+    assert!(security_logs.contains(r#""rule_id":"runtime.block-mcp""#));
 }
 
 fn make_test_state_with_profile_assets(base_url: &str) -> (Arc<ServiceState>, tempfile::TempDir) {

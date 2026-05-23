@@ -56,6 +56,7 @@ where
         Arc::new(McpEndpointState::new(
             aggregator,
             Arc::new(RwLock::new(Arc::new(McpPolicy::new()))),
+            Arc::new(super::super::RuntimeSecurityEngineSlot::new(None)),
             Arc::new(tokio::sync::Semaphore::new(
                 crate::mcp::default_inflight_cap(),
             )),

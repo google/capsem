@@ -1,6 +1,10 @@
 use std::time::Duration;
 
 use capsem_logger::DbWriter;
+use capsem_security_engine::{
+    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+    SecurityEventSubject,
+};
 
 use crate::mcp::policy::{McpPolicy, ToolDecision};
 use crate::net::mitm_proxy::McpTimeouts;
@@ -121,6 +125,68 @@ fn mcp_decision_request_captures_tool_call_shape_without_arguments() {
     assert_eq!(decision_request.request_hash, summary.request_hash);
 }
 
+#[test]
+fn build_mcp_security_event_from_request_uses_canonical_mcp_subject() {
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#,
+    )
+    .unwrap();
+    let summary = interpret_mcp_method(&req);
+    let event = build_mcp_security_event_from_request(
+        "codex",
+        &req,
+        &summary,
+        Some("trace_mcp_runtime".into()),
+        std::time::UNIX_EPOCH + Duration::from_nanos(42),
+    );
+
+    assert_eq!(event.common.event_type, "mcp.request");
+    assert_eq!(event.common.trace_id.as_deref(), Some("trace_mcp_runtime"));
+    assert_eq!(event.common.tool_call_id.as_deref(), Some("8"));
+    match event.subject {
+        SecurityEventSubject::Mcp(subject) => {
+            assert_eq!(subject.server_id, "local");
+            assert_eq!(subject.tool_name, "echo");
+        }
+        other => panic!("expected MCP subject, got {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_mcp_block_projects_to_pre_dispatch_policy_decision() {
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#,
+    )
+    .unwrap();
+    let summary = interpret_mcp_method(&req);
+    let event = build_mcp_security_event_from_request(
+        "codex",
+        &req,
+        &summary,
+        Some("trace_mcp_runtime".into()),
+        std::time::UNIX_EPOCH + Duration::from_nanos(43),
+    );
+    let evaluator = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "runtime.block-mcp".into(),
+        pack_id: Some("runtime-benchmark".into()),
+        condition: "mcp.request.server_id == 'local' && mcp.request.tool_name == 'echo'".into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("blocked MCP benchmark tool".into()),
+    }])
+    .unwrap();
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(evaluator));
+
+    let result = engine.evaluate(event).unwrap();
+    assert!(!mcp_security_result_allows_dispatch(&result));
+
+    let decision = mcp_policy_decision_from_security_result(&result, "fallback");
+    assert_eq!(decision.mode, McpPolicyMode::Enforce);
+    assert_eq!(decision.action, McpPolicyAction::Block);
+    assert_eq!(decision.rule, "runtime.block-mcp");
+    assert_eq!(decision.reason, "blocked MCP benchmark tool");
+}
+
 #[tokio::test]
 async fn log_mcp_call_writes_canonical_security_event() {
     let dir = tempfile::tempdir().unwrap();
@@ -150,6 +216,7 @@ async fn log_mcp_call_writes_canonical_security_event() {
         "codex",
         12,
         McpCallPolicyFields::from(&decision),
+        None,
     )
     .await;
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -194,6 +261,7 @@ async fn log_mcp_call_writes_blocked_security_event() {
         "codex",
         0,
         McpCallPolicyFields::from(&decision),
+        None,
     )
     .await;
     tokio::time::sleep(Duration::from_millis(50)).await;

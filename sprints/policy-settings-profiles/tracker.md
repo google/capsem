@@ -2149,6 +2149,22 @@ a valid claim -- mark it `[ ]` instead.
     path, process operation/class). Still missing in S08d: MCP/model/file
     VM-originated benchmarks, concurrency cases, backtest/hunt scan-rate
     artifacts, and broader release gates.
+    Ninth S08d VM-originated slice wired the framed MCP endpoint through the
+    runtime Security Engine before aggregator dispatch and added
+    `test_mcp_request_enforcement_benchmark_records_vm_originated_path`.
+    The benchmark installs a runtime CEL rule on `mcp.request.server_id` and
+    `mcp.request.tool_name`, triggers guest `/run/capsem-mcp-server`
+    `local__echo` calls, verifies runtime match counters, asserts canonical
+    `security_events` plus legacy `mcp_calls` policy rows, confirms `capsem
+    logs` includes request-id-matched MCP server/tool attribution, and archives
+    `benchmarks/security-engine/data_1.1.1778860037_arm64_mcp_request_enforcement.json`.
+    Latest local result: 0.312ms mean / 0.264ms median / 0.543ms p95 blocked
+    MCP request timing for eight guest calls, with eight blocked MCP rows. This
+    slice also fixed the MCP log projection bug where trace-only joins could
+    choose the earlier gateway `initialize` row instead of the blocked
+    `tools/call` row. Still missing in S08d: model/file VM-originated
+    benchmarks, concurrency cases, backtest/hunt scan-rate artifacts, and
+    broader release gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

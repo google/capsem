@@ -325,6 +325,37 @@ Run:
 uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_dns_request_enforcement_benchmark_records_vm_originated_path -xvs
 ```
 
+## Security Engine MCP request enforcement (VM-originated)
+
+First S08d framed-MCP benchmark artifact:
+`benchmarks/security-engine/data_1.1.1778860037_arm64_mcp_request_enforcement.json`.
+
+This host-side serial benchmark runs a live service and VM, installs a runtime
+CEL rule that blocks the guest `local__echo` MCP tool, sends repeated
+`tools/call` requests through `/run/capsem-mcp-server`, and verifies JSON-RPC
+denial, runtime match counters, canonical `session.db` security events,
+`mcp_calls` policy fields, and `logs` server/tool attribution.
+
+| Metric | Value |
+|--------|-------|
+| Runs | 8 |
+| Gate | 1,000ms mean |
+| Min blocked MCP request | 0.222ms |
+| Mean blocked MCP request | 0.312ms |
+| Median blocked MCP request | 0.264ms |
+| p95 blocked MCP request | 0.543ms |
+| p99 blocked MCP request | 0.543ms |
+| Max blocked MCP request | 0.543ms |
+| Runtime matches | 8 |
+| Session DB security events | 8 |
+| Session DB MCP calls | 8 |
+
+Run:
+
+```bash
+uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_mcp_request_enforcement_benchmark_records_vm_originated_path -xvs
+```
+
 ## Test environment
 
 | Component | Version |

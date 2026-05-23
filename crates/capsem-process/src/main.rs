@@ -501,6 +501,7 @@ async fn run_async_main_loop(
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
         Arc::clone(&mcp_policy),
+        Arc::clone(&runtime_security_engine),
         Arc::clone(&mcp_inflight),
         capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
     ));

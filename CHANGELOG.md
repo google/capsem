@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request benchmark that blocks guest resolver lookups before upstream
   resolution, verifies `dns_events`, `security_events`, runtime counters, and
   `capsem logs` qname attribution, and archives a dedicated benchmark artifact.
+- Added runtime CEL enforcement on the framed MCP endpoint plus a VM-originated
+  MCP request benchmark that blocks guest `local__echo` tool calls, verifies
+  `mcp_calls`, canonical `security_events`, runtime counters, and `capsem logs`
+  server/tool attribution, and archives a dedicated benchmark artifact.
 - Expanded `capsem logs` security-event projection with family-specific debug
   fields such as DNS qname, HTTP host/path, MCP server/tool, model provider/
   name, file path, and process operation/class.

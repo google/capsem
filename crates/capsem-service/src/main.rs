@@ -3301,6 +3301,7 @@ fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<Str
                     FROM mcp_calls m
                     WHERE m.trace_id = se.trace_id
                       AND se.event_family = 'mcp'
+                      AND (se.mcp_call_id IS NULL OR m.request_id = se.mcp_call_id)
                     ORDER BY m.id ASC
                     LIMIT 1
                 ) AS mcp_server_id,
@@ -3309,6 +3310,7 @@ fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<Str
                     FROM mcp_calls m
                     WHERE m.trace_id = se.trace_id
                       AND se.event_family = 'mcp'
+                      AND (se.mcp_call_id IS NULL OR m.request_id = se.mcp_call_id)
                     ORDER BY m.id ASC
                     LIMIT 1
                 ) AS mcp_tool_name,

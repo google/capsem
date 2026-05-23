@@ -140,12 +140,14 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 ```
 
 The first S08d paths install runtime CEL enforcement rules, send repeated
-blocked process exec, blocked HTTPS request, and blocked DNS lookup workloads
-through live VMs, assert the expected block results, check runtime match
-counters, verify canonical `security_events` rows in `session.db`, and confirm
-`logs` exposes the Security Engine decision with VM/profile/user/rule
-attribution. DNS artifacts also verify the legacy `dns_events` row carries the
-runtime policy action and qname. Committed artifacts are written to
+blocked process exec, blocked HTTPS request, blocked DNS lookup, and blocked
+MCP `tools/call` workloads through live VMs, assert the expected block results,
+check runtime match counters, verify canonical `security_events` rows in
+`session.db`, and confirm `logs` exposes the Security Engine decision with
+VM/profile/user/rule attribution. DNS artifacts also verify the legacy
+`dns_events` row carries the runtime policy action and qname. MCP artifacts
+verify `mcp_calls` policy fields and request-id-matched server/tool log
+projection. Committed artifacts are written to
 `benchmarks/security-engine/`.
 
 ### Snapshot operations (`snapshot`)

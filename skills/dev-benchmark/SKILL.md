@@ -200,12 +200,14 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 | blocked_http_request | Guest curl -> network transport/MITM -> HTTP `SecurityEvent` projection -> CEL enforcement block -> response |
 | keepalive_blocked_http_request | Guest Python TLS client -> one persistent MITM TLS connection -> repeated HTTP `SecurityEvent` projection -> CEL enforcement block -> response |
 | blocked_dns_request | Guest resolver -> capsem DNS proxy -> DNS `SecurityEvent` projection -> CEL enforcement block -> NXDOMAIN response |
+| blocked_mcp_request | Guest `/run/capsem-mcp-server` -> framed vsock MCP endpoint -> MCP `SecurityEvent` projection -> CEL enforcement block -> JSON-RPC denial |
 
 ### Output
 
 - Per-run blocked exec latencies
 - Per-run blocked HTTP request latencies
 - Per-run blocked DNS request latencies
+- Per-run blocked MCP request latencies
 - JSON saved to
   `benchmarks/security-engine/data_{version}_{arch}_{workload}.json`
   with command, commit, host, rule, assertion, and latency metadata
@@ -221,7 +223,9 @@ post-pretransfer first-byte delta and keep-alive first-byte timing to reason
 about MITM/Security Engine response cost instead of raw guest curl wall time.
 The keep-alive lane also guards against bursty same-millisecond logging
 collapsing `security_events` rows. DNS artifacts additionally verify
-`dns_events` policy fields and security-log qname projection.
+`dns_events` policy fields and security-log qname projection. MCP artifacts
+verify `mcp_calls` policy fields and request-id-matched server/tool log
+projection.
 
 ### When to run
 
