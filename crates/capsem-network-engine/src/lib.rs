@@ -6,5 +6,7 @@
 //! structural slices without changing callers' vocabulary.
 
 pub mod dns_parser;
+pub mod dns_security;
+pub mod dns_transport;
 pub mod domain_policy;
 pub mod http_policy;

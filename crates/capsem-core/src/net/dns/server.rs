@@ -15,97 +15,13 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use capsem_logger::events::Decision;
 use tracing::{debug, instrument, warn};
 
 use crate::net::dns::cache::DnsAnswerCache;
 use crate::net::dns::resolver::DnsResolver;
 use crate::net::mitm_proxy::metrics as m;
-use capsem_network_engine::dns_parser::{build_servfail, parse_query, DnsQuery};
-
-/// Result of handling one DNS query. The answer bytes are always
-/// populated -- on every path we have something to send back to the
-/// guest, even if it's a synthetic SERVFAIL covering an upstream
-/// failure. The caller writes `answer_bytes` over the vsock envelope
-/// and uses the structured fields to emit a `dns_events` row + a
-/// `mitm.dns_queries_total{decision=...}` counter increment.
-#[derive(Debug, Clone)]
-pub struct DnsHandlerResult {
-    /// Wire-format DNS response, ready to ship over the vsock envelope.
-    pub answer_bytes: Vec<u8>,
-    /// Parsed query metadata. `None` on a malformed input where the
-    /// raw bytes didn't decode (in which case `decision` is Error and
-    /// `answer_bytes` is empty -- the agent should drop the request).
-    pub query: Option<DnsQuery>,
-    /// Resolver outcome.
-    pub decision: Decision,
-    /// Matched policy rule. Always `None` until DNS is wired through the
-    /// canonical Security Engine.
-    pub matched_rule: Option<String>,
-    /// Wall time of the upstream resolve attempt, in milliseconds.
-    /// 0 when input parsing fails (Error).
-    pub upstream_resolver_ms: u64,
-    /// DNS rcode for the answer (0 = NoError, 2 = ServFail,
-    /// 3 = NXDomain). Surfaced for telemetry; the wire-format response
-    /// already carries it.
-    pub rcode: u16,
-    /// Policy engine mode that produced this decision, if any.
-    pub policy_mode: Option<String>,
-    /// Typed policy action (`allow`, `ask`, `block`, `rewrite`) when
-    /// Policy matched.
-    pub policy_action: Option<String>,
-    /// Fully qualified policy rule id, e.g. `policy.dns.block_openai`.
-    pub policy_rule: Option<String>,
-    /// Human-readable policy reason or fail-closed detail.
-    pub policy_reason: Option<String>,
-}
-
-impl DnsHandlerResult {
-    fn allowed(answer_bytes: Vec<u8>, query: DnsQuery, upstream_ms: u64, rcode: u16) -> Self {
-        Self {
-            answer_bytes,
-            query: Some(query),
-            decision: Decision::Allowed,
-            matched_rule: None,
-            upstream_resolver_ms: upstream_ms,
-            rcode,
-            policy_mode: None,
-            policy_action: None,
-            policy_rule: None,
-            policy_reason: None,
-        }
-    }
-
-    fn upstream_failed(answer_bytes: Vec<u8>, query: DnsQuery, upstream_ms: u64) -> Self {
-        Self {
-            answer_bytes,
-            query: Some(query),
-            decision: Decision::Error,
-            matched_rule: None,
-            upstream_resolver_ms: upstream_ms,
-            rcode: 2, // ServFail
-            policy_mode: None,
-            policy_action: None,
-            policy_rule: None,
-            policy_reason: None,
-        }
-    }
-
-    fn parse_failed() -> Self {
-        Self {
-            answer_bytes: Vec::new(),
-            query: None,
-            decision: Decision::Error,
-            matched_rule: None,
-            upstream_resolver_ms: 0,
-            rcode: 1, // FormErr -- closest to "we couldn't even decode the question"
-            policy_mode: None,
-            policy_action: None,
-            policy_rule: None,
-            policy_reason: None,
-        }
-    }
-}
+use capsem_network_engine::dns_parser::{build_servfail, parse_query};
+use capsem_network_engine::dns_transport::DnsHandlerResult;
 
 /// Async DNS handler shared across vsock connections.
 ///

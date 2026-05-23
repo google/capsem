@@ -1009,19 +1009,20 @@ async fn serve_dns_session(
     let result = if security_engine.has_engine() {
         match capsem_network_engine::dns_parser::parse_query(&req.raw) {
             Ok(query) => {
-                let event = capsem_core::net::dns::build_dns_security_event_from_query(
-                    &query,
-                    trace_id.clone(),
-                );
+                let event =
+                    capsem_network_engine::dns_security::build_dns_security_event_from_query(
+                        &query,
+                        trace_id.clone(),
+                    );
                 match security_engine.evaluate(event) {
                     Ok(runtime_result) => {
-                        if capsem_core::net::dns::dns_security_result_allows_transport(
+                        if capsem_network_engine::dns_security::dns_security_result_allows_transport(
                             &runtime_result,
                         ) {
                             runtime_resolved_event = Some(runtime_result.resolved_event);
                             handler.handle(&req.raw).await
                         } else {
-                            let denied = capsem_core::net::dns::build_dns_runtime_denied_result(
+                            let denied = capsem_network_engine::dns_security::build_dns_runtime_denied_result(
                                 &req.raw,
                                 query,
                                 &runtime_result,
@@ -1033,7 +1034,7 @@ async fn serve_dns_session(
                     Err(error) => {
                         let reason = format!("security engine error: {error}");
                         warn!(error = %error, "DNS runtime security engine failed closed");
-                        capsem_core::net::dns::server::DnsHandlerResult {
+                        capsem_network_engine::dns_transport::DnsHandlerResult {
                             answer_bytes: capsem_network_engine::dns_parser::build_nxdomain(
                                 &req.raw,
                             )
@@ -1062,14 +1063,15 @@ async fn serve_dns_session(
     // TCP DNS at the source side. Don't await the channel send to
     // keep the DNS path non-blocking under back-pressure on the
     // writer queue (matches the audit-event try_write pattern).
-    let event = capsem_core::net::dns::build_dns_event(
+    let event = capsem_network_engine::dns_security::build_dns_event(
         &result,
         Some(req.proto.as_str()),
         req.process_name.clone(),
         trace_id,
     );
-    let resolved_event = runtime_resolved_event
-        .unwrap_or_else(|| capsem_core::net::dns::build_dns_resolved_security_event(&event));
+    let resolved_event = runtime_resolved_event.unwrap_or_else(|| {
+        capsem_network_engine::dns_security::build_dns_resolved_security_event(&event)
+    });
     db.try_write(capsem_logger::WriteOp::DnsEvent(event));
     db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
         resolved_event,

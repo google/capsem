@@ -11,6 +11,9 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+blake3 = "1"
+capsem-logger = { path = "../capsem-logger" }
+capsem-security-engine = { path = "../capsem-security-engine" }
 hickory-proto.workspace = true
 
 [dev-dependencies]

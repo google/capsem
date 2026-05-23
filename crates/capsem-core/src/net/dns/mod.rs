@@ -17,7 +17,7 @@
 //!   processor. Decodes the query (via `parsers::dns_parser`), checks
 //!   the shared Policy DNS rules for the qname, and
 //!   either synthesizes an NXDOMAIN response or forwards to the upstream
-//!   resolver. Returns a [`server::DnsHandlerResult`] carrying the
+//!   resolver. Returns a [`DnsHandlerResult`] carrying the
 //!   answer bytes plus structured metadata for telemetry (decision,
 //!   matched_rule, upstream_resolver_ms, rcode).
 //! - `resolver`: the [`DnsResolver`] -- a UDP-based forwarder that
@@ -39,15 +39,11 @@
 pub mod cache;
 pub mod resolver;
 pub mod server;
-pub mod telemetry;
 
 #[cfg(test)]
 mod tests;
 
 pub use cache::{DnsAnswerCache, DEFAULT_CAPACITY, DEFAULT_MAX_TTL_SECS, MIN_TTL_SECS};
+pub use capsem_network_engine::dns_transport::DnsHandlerResult;
 pub use resolver::{DnsResolver, DEFAULT_UPSTREAMS};
-pub use server::{DnsHandler, DnsHandlerResult};
-pub use telemetry::{
-    build_dns_event, build_dns_resolved_security_event, build_dns_runtime_denied_result,
-    build_dns_security_event_from_query, dns_security_result_allows_transport,
-};
+pub use server::DnsHandler;

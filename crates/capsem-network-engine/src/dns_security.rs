@@ -20,8 +20,14 @@ use capsem_security_engine::{
     SecurityEventCommon, SecurityResult, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
-use crate::net::dns::server::DnsHandlerResult;
-use capsem_network_engine::dns_parser::{build_nxdomain, DnsQuery};
+use crate::dns_parser::{build_nxdomain, DnsQuery};
+use crate::dns_transport::DnsHandlerResult;
+
+const CAPSEM_VM_ID_ENV: &str = "CAPSEM_VM_ID";
+const CAPSEM_SESSION_ID_ENV: &str = "CAPSEM_SESSION_ID";
+const CAPSEM_PROFILE_ID_ENV: &str = "CAPSEM_PROFILE_ID";
+const CAPSEM_PROFILE_REVISION_ENV: &str = "CAPSEM_PROFILE_REVISION";
+const CAPSEM_USER_ID_ENV: &str = "CAPSEM_USER_ID";
 
 /// Build a `DnsEvent` row for one query.
 ///
@@ -96,14 +102,14 @@ pub fn build_dns_security_event_from_query(
             trace_id,
             span_id: None,
             timestamp_unix_ms,
-            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            vm_id: non_empty_env(CAPSEM_VM_ID_ENV),
+            session_id: non_empty_env(CAPSEM_SESSION_ID_ENV),
+            profile_id: non_empty_env(CAPSEM_PROFILE_ID_ENV),
+            profile_revision: non_empty_env(CAPSEM_PROFILE_REVISION_ENV),
             profile_pack_ids: Vec::new(),
             enforcement_packs: Vec::new(),
             detection_packs: Vec::new(),
-            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            user_id: non_empty_env(CAPSEM_USER_ID_ENV),
             process_id: None,
             parent_process_id: None,
             exec_id: None,
@@ -192,14 +198,14 @@ pub fn build_dns_resolved_security_event(event: &DnsEvent) -> ResolvedSecurityEv
             trace_id: event.trace_id.clone(),
             span_id: None,
             timestamp_unix_ms,
-            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            vm_id: non_empty_env(CAPSEM_VM_ID_ENV),
+            session_id: non_empty_env(CAPSEM_SESSION_ID_ENV),
+            profile_id: non_empty_env(CAPSEM_PROFILE_ID_ENV),
+            profile_revision: non_empty_env(CAPSEM_PROFILE_REVISION_ENV),
             profile_pack_ids: Vec::new(),
             enforcement_packs: Vec::new(),
             detection_packs: Vec::new(),
-            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            user_id: non_empty_env(CAPSEM_USER_ID_ENV),
             process_id: None,
             parent_process_id: None,
             exec_id: None,

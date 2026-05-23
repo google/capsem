@@ -61,6 +61,11 @@ The next Network Engine parser slice moved the DNS wire parser, fixtures, and
 property tests into `capsem-network-engine`. DNS handler code, process dispatch,
 the fixture generator, and fuzz targets now consume
 `capsem_network_engine::dns_parser` directly.
+The following DNS event slice moved the DNS transport result and DNS
+SecurityEvent projection into `capsem-network-engine`. DNS runtime block
+projection, canonical resolved-event construction, and legacy `dns_events`
+projection now share the Network Engine boundary, while `capsem-core` keeps
+only resolver/cache/server transport mechanics.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,
@@ -681,7 +686,8 @@ Expected split:
   that depends on the security-engine contract but not on logger schema details.
   The first committed slice owns domain/HTTP network policy primitives; later
   structural slices move MITM/DNS/MCP/model transport behind the same boundary.
-  The DNS wire parser is now also owned by this crate.
+  The DNS wire parser, transport result, and DNS SecurityEvent projection are
+  now also owned by this crate.
 - `crates/capsem-file-engine`: file/snapshot/process activity layer that depends
   on the security-engine contract and owns file/snapshot mechanics.
 - `crates/capsem-process-engine`: process/audit activity layer that depends on

@@ -1869,6 +1869,21 @@ a valid claim -- mark it `[ ]` instead.
     Engine boundary, visible UI screens/editors, interactive confirm prompt UX
     in S15, S12 OTel/prometheus export, S08d performance proof, and final
     release gates.
+    Eighty-fifth structural Network Engine DNS-event slice moved
+    `DnsHandlerResult` plus DNS runtime/security projection into
+    `capsem-network-engine`. DNS runtime blocks, NXDOMAIN fail-closed
+    projection, canonical resolved-event construction, and legacy `dns_events`
+    rows now share `capsem_network_engine::dns_security` /
+    `dns_transport`; `capsem-core` retains resolver/cache/server mechanics
+    only. Verification: `cargo test -p capsem-network-engine dns_security`
+    **11** passed, `cargo test -p capsem-network-engine dns_parser` **75**
+    passed, full `cargo test -p capsem-network-engine` **133** passed,
+    escalated `cargo test -p capsem-core dns --lib` **32** passed, and
+    `cargo check -p capsem-process` passed. Still missing after this slice:
+    moving HTTP/MITM/MCP/model transport/security-event builders behind the
+    Network Engine boundary, visible UI screens/editors, interactive confirm
+    prompt UX in S15, S12 OTel/prometheus export, S08d performance proof, and
+    final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

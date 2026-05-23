@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved the DNS wire parser and adversarial fixture/property tests into
   `capsem-network-engine`, with DNS handler, process dispatch, examples, and
   fuzz targets consuming the Network Engine parser directly.
+- Moved DNS transport result and DNS SecurityEvent projection into
+  `capsem-network-engine`, so DNS runtime blocks, resolved-event rows, and
+  legacy `dns_events` projection share the Network Engine boundary.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.
