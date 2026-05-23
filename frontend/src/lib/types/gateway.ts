@@ -59,6 +59,9 @@ export interface VmSummary {
   name: string | null;
   status: string; // "Running" | "Stopped" | "Suspended" | "Error" | "Booting"
   persistent: boolean;
+  profile_id?: string | null;
+  profile_revision?: string | null;
+  profile_status?: VmProfileStatus | null;
   // Telemetry (present for running VMs, absent for stopped)
   uptime_secs?: number;
   total_input_tokens?: number;
@@ -72,6 +75,8 @@ export interface VmSummary {
   total_file_events?: number;
   model_call_count?: number;
 }
+
+export type VmProfileStatus = 'current' | 'needs_update' | 'deprecated' | 'revoked' | 'corrupted' | 'unknown';
 
 export interface ResourceSummary {
   total_ram_mb: number;

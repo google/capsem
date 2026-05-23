@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added profile-backed VM create requests in the frontend quick-session and
   customize-session flows, forwarding service-reported profile id/revision and
   showing the active profile in the create dialog.
+- Added VM profile identity and lifecycle status to the frontend session list,
+  including a corrupted marker when a VM lacks an explicit profile pin.
 - Added the first S08d Security Engine Criterion benchmark harness for
   canonical CEL compile/evaluate, policy-context materialization, 100-rule
   last-match evaluation, and native HTTP lookup comparison.

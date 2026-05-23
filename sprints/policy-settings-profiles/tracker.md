@@ -2532,6 +2532,14 @@ a valid claim -- mark it `[ ]` instead.
     `coding@2026.0520.3`. Still missing in S16: richer package/asset readiness
     details, VM profile-state display, runtime backtest/hunt UI, and final
     release UI usability replay.
+    Fifth S16 VM-profile-state slice added profile identity and typed profile
+    status to the session list, with missing profile pins rendered as
+    corrupted. Verification: `pnpm --dir frontend exec vitest run
+    src/lib/__tests__/session-runtime-truth.test.ts` passed with **11** tests,
+    and the Sessions table was screenshot-checked with a browser-side
+    `/status` fixture showing `current`, `needs_update`, and missing-pin
+    `corrupted` states. Still missing in S16: richer package/asset readiness
+    details, runtime backtest/hunt UI, and final release UI usability replay.
 32. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- inserted during the 2026-05-19 timeline/UI regroup. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

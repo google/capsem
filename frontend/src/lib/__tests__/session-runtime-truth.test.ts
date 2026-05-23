@@ -94,6 +94,45 @@ describe('session runtime truth UI', () => {
     expect(screen.queryByText('No persistent sessions')).toBeNull();
   });
 
+  it('renders VM profile identity and marks missing profile pins as corrupted', () => {
+    vmStore.assetHealth = assetHealth({ ready: true, state: 'ready', missing: [] });
+    vmStore.vms = [
+      {
+        id: 'vm-current',
+        name: 'Current VM',
+        status: 'Running',
+        persistent: false,
+        profile_id: 'coding',
+        profile_revision: '2026.0520.3',
+        profile_status: 'current',
+      },
+      {
+        id: 'vm-drift',
+        name: 'Needs Update VM',
+        status: 'Stopped',
+        persistent: false,
+        profile_id: 'everyday-work',
+        profile_revision: '2026.0520.1',
+        profile_status: 'needs_update',
+      },
+      {
+        id: 'vm-missing',
+        name: 'Missing Profile VM',
+        status: 'Stopped',
+        persistent: false,
+      },
+    ];
+
+    render(NewTabPage);
+
+    expect(screen.getByText('coding@2026.0520.3')).toBeTruthy();
+    expect(screen.getByText('everyday-work@2026.0520.1')).toBeTruthy();
+    expect(screen.getByText('missing profile')).toBeTruthy();
+    expect(screen.getByText('current')).toBeTruthy();
+    expect(screen.getByText('needs update')).toBeTruthy();
+    expect(screen.getByText('corrupted')).toBeTruthy();
+  });
+
   it('shows missing asset details and keeps creation disabled', () => {
     vmStore.assetHealth = assetHealth({ state: 'updating', missing: ['rootfs', 'manifest.json'] });
     render(NewTabPage);

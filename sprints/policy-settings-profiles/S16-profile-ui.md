@@ -63,6 +63,10 @@ requests.
   exposes them. The customize dialog also displays the active
   `profile@revision` so operators can see which profile will back the VM
   before launch.
+- Implemented slice: the session list now shows each VM's profile id,
+  revision, and typed status (`current`, `needs_update`, `deprecated`,
+  `revoked`, `corrupted`, or `unknown`). VMs without a profile pin render as
+  corrupted instead of looking valid.
 - Unit/contract: profile UI model tests for all `ProfileRevisionStatus` enum
   values, revisions, package/tool contracts, asset readiness, VM pin fields,
   enforcement-pack summaries, detection-pack summaries, and backtest result
@@ -83,6 +87,8 @@ requests.
   customize-session create requests carrying `profile_id` and
   `profile_revision` from asset health, while still omitting CPU/RAM in
   service-default mode.
+- Unit/contract completed: session runtime truth tests cover session-list
+  profile identity/status rendering and the missing-profile corrupted marker.
 - Functional: create/fork/delete/select tests; update/install catalog revision;
   profile-backed VM create with asset readiness states; enforcement/detection
   runtime overlay list/validate/install/delete/stats/backtest/hunt flows through
@@ -113,3 +119,6 @@ requests.
 - Visual/build proof: Customize Session was screenshot-checked with a
   browser-side ready asset-health fixture so the profile badge and create flow
   layout were visible in the actual UI.
+- Visual/build proof: the session list was screenshot-checked with a
+  browser-side `/status` fixture showing current, needs-update, and missing-pin
+  corrupted profile states in the actual table layout.

@@ -3,7 +3,7 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import * as api from '../../api';
-  import type { VmSummary } from '../../types/gateway';
+  import type { VmProfileStatus, VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
   import Modal from './Modal.svelte';
@@ -19,7 +19,7 @@
   import GitFork from 'phosphor-svelte/lib/GitFork';
   import FloppyDisk from 'phosphor-svelte/lib/FloppyDisk';
 
-  type SortKey = 'name' | 'status' | 'uptime';
+  type SortKey = 'name' | 'status' | 'profile' | 'uptime' | 'tokens' | 'cost';
   type SortDir = 'asc' | 'desc';
 
   let globalStats = $state<GlobalStats | null>(null);
@@ -56,7 +56,10 @@
       switch (sortKey) {
         case 'name': cmp = (a.name ?? a.id).localeCompare(b.name ?? b.id); break;
         case 'status': cmp = a.status.localeCompare(b.status); break;
+        case 'profile': cmp = profileSortValue(a).localeCompare(profileSortValue(b)); break;
         case 'uptime': cmp = (a.uptime_secs ?? 0) - (b.uptime_secs ?? 0); break;
+        case 'tokens': cmp = ((a.total_input_tokens ?? 0) + (a.total_output_tokens ?? 0)) - ((b.total_input_tokens ?? 0) + (b.total_output_tokens ?? 0)); break;
+        case 'cost': cmp = (a.total_estimated_cost ?? 0) - (b.total_estimated_cost ?? 0); break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
@@ -75,6 +78,37 @@
 
   function statusBadge(status: string): string {
     return statusColor[status] ?? 'bg-muted text-muted-foreground-1';
+  }
+
+  const profileStatusColor: Record<VmProfileStatus, string> = {
+    current: 'bg-primary text-primary-foreground',
+    needs_update: 'border border-warning/40 bg-warning/10 text-warning',
+    deprecated: 'border border-warning/40 bg-warning/10 text-warning',
+    revoked: 'border border-destructive/40 bg-destructive/10 text-destructive',
+    corrupted: 'border border-destructive/40 bg-destructive/10 text-destructive',
+    unknown: 'border border-line-2 bg-muted text-muted-foreground-1',
+  };
+
+  function resolvedProfileStatus(vm: VmSummary): VmProfileStatus {
+    if (!vm.profile_id) return 'corrupted';
+    return vm.profile_status ?? 'unknown';
+  }
+
+  function profileStatusBadge(vm: VmSummary): string {
+    return profileStatusColor[resolvedProfileStatus(vm)];
+  }
+
+  function profileStatusLabel(vm: VmSummary): string {
+    return resolvedProfileStatus(vm).replace('_', ' ');
+  }
+
+  function profileIdentity(vm: VmSummary): string {
+    if (!vm.profile_id) return 'missing profile';
+    return vm.profile_revision ? `${vm.profile_id}@${vm.profile_revision}` : vm.profile_id;
+  }
+
+  function profileSortValue(vm: VmSummary): string {
+    return `${profileIdentity(vm)}:${resolvedProfileStatus(vm)}`;
   }
 
   // --- Modal state ---
@@ -269,6 +303,7 @@
             {#each [
               { key: 'name', label: 'Name' },
               { key: 'status', label: 'Status' },
+              { key: 'profile', label: 'Profile' },
               { key: 'uptime', label: 'Uptime' },
               { key: 'tokens', label: 'Tokens' },
               { key: 'cost', label: 'Cost' },
@@ -297,6 +332,14 @@
               <td class="p-3 whitespace-nowrap text-sm font-medium text-foreground">{vm.name ?? vm.id}</td>
               <td class="p-3 whitespace-nowrap text-sm">
                 <span class="text-xs px-2 py-0.5 rounded-full {statusBadge(vm.status)}">{vm.status}</span>
+              </td>
+              <td class="p-3 whitespace-nowrap text-sm">
+                <div class="flex flex-col gap-y-1">
+                  <span class="font-mono text-xs text-foreground">{profileIdentity(vm)}</span>
+                  <span class="w-fit text-[10px] px-1.5 py-0.5 rounded-full {profileStatusBadge(vm)}">
+                    {profileStatusLabel(vm)}
+                  </span>
+                </div>
               </td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.uptime_secs != null ? formatUptime(vm.uptime_secs) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_input_tokens != null ? formatTokens((vm.total_input_tokens ?? 0) + (vm.total_output_tokens ?? 0)) : '--'}</td>
