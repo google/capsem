@@ -9,6 +9,26 @@ use super::*;
 
 static MCP_TIMEOUT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[test]
+fn same_millisecond_mcp_events_keep_distinct_security_ids() {
+    let first = mcp_security_event_id(
+        Some("trace_mcp"),
+        "filesystem",
+        "read_file",
+        None,
+        (Duration::from_millis(42)).as_nanos(),
+    );
+    let second = mcp_security_event_id(
+        Some("trace_mcp"),
+        "filesystem",
+        "read_file",
+        None,
+        (Duration::from_millis(42) + Duration::from_nanos(1)).as_nanos(),
+    );
+
+    assert_ne!(first, second);
+}
+
 fn restore_env(key: &str, value: Option<String>) {
     // SAFETY: callers hold MCP_TIMEOUT_ENV_LOCK because environment variables
     // are process-global and Rust tests run concurrently.

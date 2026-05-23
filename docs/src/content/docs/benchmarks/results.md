@@ -5,7 +5,10 @@ sidebar:
   order: 1
 ---
 
-Reference results from the latest local benchmark artifacts recorded on 2026-05-03. Guest measurements come from `capsem-bench` 0.3.0; lifecycle and fork measurements are host-side benchmark runs. Numbers vary with host load, network path, and cache state.
+Reference results from local benchmark artifacts. Guest measurements come from
+`capsem-bench` 0.3.0; lifecycle and fork measurements are host-side benchmark
+runs. Security Engine artifacts were refreshed on 2026-05-23. Numbers vary
+with host load, network path, and cache state.
 
 ## Boot time
 
@@ -214,12 +217,12 @@ events, and `logs` exposure.
 |--------|-------|
 | Runs | 8 |
 | Gate | 750ms mean |
-| Min blocked exec latency | 9.615ms |
-| Mean blocked exec latency | 9.807ms |
-| Median blocked exec latency | 9.750ms |
-| p95 blocked exec latency | 10.145ms |
-| p99 blocked exec latency | 10.145ms |
-| Max blocked exec latency | 10.145ms |
+| Min blocked exec latency | 8.925ms |
+| Mean blocked exec latency | 9.356ms |
+| Median blocked exec latency | 9.265ms |
+| p95 blocked exec latency | 9.992ms |
+| p99 blocked exec latency | 9.992ms |
+| Max blocked exec latency | 9.992ms |
 | Runtime matches | 8 |
 | Session DB security events | 8 |
 
@@ -238,7 +241,9 @@ This host-side serial benchmark runs a live service and VM, installs a runtime
 CEL rule that blocks a specific HTTPS request before upstream dispatch, warms
 the path once, then runs a guest curl loop and verifies the block responses,
 runtime match counters, canonical `session.db` security events, and `logs`
-exposure.
+exposure. It also runs a persistent TLS keep-alive client over the same
+connection to prove repeated block decisions stay logged and avoid per-request
+TLS setup in the hot path.
 
 The wall-clock metric includes spawning curl in the guest. The
 `time_starttransfer` metric is curl's first-byte timing for the blocked
@@ -253,19 +258,24 @@ is below 1ms on this run.
 | Runs | 8 |
 | Warmup runs | 1 |
 | Gate | 1,000ms mean |
-| Mean wall-clock blocked request | 7.915ms |
-| Median wall-clock blocked request | 6.798ms |
-| p95 wall-clock blocked request | 10.619ms |
-| Mean `time_starttransfer` | 3.508ms |
-| Median `time_starttransfer` | 3.516ms |
-| p95 `time_starttransfer` | 3.834ms |
-| Mean DNS | 0.810ms |
-| Mean TCP connect after DNS | 0.117ms |
-| Mean TLS appconnect | 1.965ms |
-| Mean server first byte after pretransfer | 0.597ms |
-| Mean response tail after first byte | 0.014ms |
-| Runtime matches | 9 |
-| Session DB security events | 9 |
+| Mean wall-clock blocked request | 9.091ms |
+| Median wall-clock blocked request | 8.149ms |
+| p95 wall-clock blocked request | 12.672ms |
+| Mean `time_starttransfer` | 3.997ms |
+| Median `time_starttransfer` | 3.939ms |
+| p95 `time_starttransfer` | 4.525ms |
+| Mean DNS | 0.911ms |
+| Mean TCP connect after DNS | 0.238ms |
+| Mean TLS appconnect | 2.145ms |
+| Mean server first byte after pretransfer | 0.683ms |
+| Mean response tail after first byte | 0.015ms |
+| Mean keep-alive first byte | 0.549ms |
+| Median keep-alive first byte | 0.462ms |
+| p95 keep-alive first byte | 1.041ms |
+| Mean keep-alive total response | 0.556ms |
+| Keep-alive TLS handshake | 1.560ms |
+| Runtime matches | 17 |
+| Session DB security events | 17 |
 
 Run:
 

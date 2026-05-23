@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added curl phase timing deltas to the HTTP request enforcement benchmark so
   DNS, TCP connect, TLS appconnect, post-pretransfer first byte, and response
   tail costs are visible in the committed artifact.
+- Added a persistent TLS keep-alive lane to the VM-originated HTTP enforcement
+  benchmark so repeated in-connection block decisions prove sub-millisecond
+  MITM/Security Engine response timing and one security log row per request.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.
@@ -725,6 +728,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `service.toml` and profile roots.
 
 ### Fixed
+- Fixed same-millisecond Security Event ID collisions across HTTP, DNS, MCP,
+  and file logging. HTTP now carries a per-request event seed, and DNS/MCP/file
+  event IDs use nanosecond timestamps so bursty decisions no longer collapse
+  rows in `security_events`.
+- Fixed synthetic HTTP block/error telemetry to enqueue Security Engine
+  `net_events` and resolved `security_events` at the decision point instead of
+  relying on response-body finalization, preserving fast denied keep-alive
+  requests in `session.db` and `capsem logs`.
 - Fixed settings policy-rule saves to reject unsupported `.match(` condition
   terms before writing a user profile override.
 - Fixed HTTP gzip handling so comma-separated `Content-Encoding` token lists are

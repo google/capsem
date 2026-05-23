@@ -65,11 +65,12 @@ pub fn build_dns_event(
 /// makes that handler result visible through the canonical security event
 /// ledger beside the legacy `dns_events` row.
 pub fn build_dns_resolved_security_event(event: &DnsEvent) -> ResolvedSecurityEvent {
-    let timestamp_unix_ms = event
+    let timestamp_duration = event
         .timestamp
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+        .unwrap_or_default();
+    let timestamp_unix_ms = timestamp_duration.as_millis() as u64;
+    let timestamp_unix_nanos = timestamp_duration.as_nanos();
     let rule_id = event
         .policy_rule
         .clone()
@@ -85,7 +86,7 @@ pub fn build_dns_resolved_security_event(event: &DnsEvent) -> ResolvedSecurityEv
                 &event.qname,
                 event.qtype,
                 event.qclass,
-                timestamp_unix_ms,
+                timestamp_unix_nanos,
             ),
             parent_event_id: None,
             stream_id: None,
@@ -233,14 +234,14 @@ fn dns_security_event_id(
     qname: &str,
     qtype: u16,
     qclass: u16,
-    timestamp_unix_ms: u64,
+    timestamp_unix_nanos: u128,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(trace_id.unwrap_or("").as_bytes());
     hasher.update(qname.as_bytes());
     hasher.update(&qtype.to_be_bytes());
     hasher.update(&qclass.to_be_bytes());
-    hasher.update(&timestamp_unix_ms.to_be_bytes());
+    hasher.update(&timestamp_unix_nanos.to_be_bytes());
     format!("dns-{}", hasher.finalize().to_hex()[..16].to_string())
 }
 

@@ -33,6 +33,7 @@ fn any_conn() -> ConnMeta {
 /// Returns a generic request context for an allowed Anthropic POST.
 fn anthropic_req_ctx() -> TelemetryRequestContext {
     TelemetryRequestContext {
+        event_id_seed: "test-request-seed".into(),
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),
         ai_provider: Some(ProviderKind::Anthropic),
@@ -60,6 +61,121 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
 
 fn empty_resp_stats() -> TelemetryResponseStats {
     TelemetryResponseStats::default()
+}
+
+#[test]
+fn http_event_id_seed_prevents_same_millisecond_collisions() {
+    let timestamp_unix_ms = 1779544024000;
+    let mut first = anthropic_req_ctx();
+    let mut second = anthropic_req_ctx();
+    first.event_id_seed = "same-ms-request-1".into();
+    second.event_id_seed = "same-ms-request-2".into();
+
+    let first_event = build_http_security_event(
+        &first,
+        timestamp_unix_ms,
+        Some("trace-winterfell".into()),
+        None,
+        None,
+    );
+    let second_event = build_http_security_event(
+        &second,
+        timestamp_unix_ms,
+        Some("trace-winterfell".into()),
+        None,
+        None,
+    );
+
+    assert_ne!(first_event.common.event_id, second_event.common.event_id);
+}
+
+#[tokio::test]
+async fn same_millisecond_http_events_are_not_collapsed_in_session_db() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = DbWriter::open(&db_path, 64).expect("db writer");
+    let timestamp_unix_ms = 1779544024000;
+
+    let mut first = anthropic_req_ctx();
+    first.event_id_seed = "same-ms-request-1".into();
+    first.decision = Decision::Denied;
+    first.status_code = Some(403);
+    first.policy_rule = Some("runtime.block_same_ms".into());
+    first.policy_reason = Some("same millisecond regression".into());
+
+    let mut second = first.clone();
+    second.event_id_seed = "same-ms-request-2".into();
+
+    for req_ctx in [&first, &second] {
+        let event = build_http_security_event(
+            req_ctx,
+            timestamp_unix_ms,
+            Some("trace-winterfell".into()),
+            Some(0),
+            None,
+        );
+        let event_id = event.common.event_id.clone();
+        db.write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+            schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+            event,
+            steps: vec![ResolvedEventStep {
+                kind: ResolvedEventStepKind::EnforcementMatch,
+                status: StepStatus::Matched,
+                rule_id: Some("runtime.block_same_ms".into()),
+                pack_id: None,
+                message: Some("same millisecond regression".into()),
+            }],
+            plugin_transforms: Vec::new(),
+            detection_findings: Vec::new(),
+            final_action: SecurityAction::Block(BlockResponse {
+                reason_code: "same millisecond regression".into(),
+                rule_id: Some("runtime.block_same_ms".into()),
+            }),
+            emitter_results: Vec::new(),
+        }))
+        .await;
+        assert!(event_id.starts_with("net-http-"));
+    }
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT event_id) FROM security_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, (2, 2));
+}
+
+#[tokio::test]
+async fn synthetic_http_response_emits_without_body_finalization() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("db writer"));
+    let deps = deps_with_db(Arc::clone(&db));
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.event_id_seed = "synthetic-deny".into();
+    req_ctx.decision = Decision::Denied;
+    req_ctx.status_code = Some(403);
+    req_ctx.policy_rule = Some("runtime.block_synthetic".into());
+    req_ctx.policy_reason = Some("synthetic response regression".into());
+
+    emit_synthetic_http_response(&deps, req_ctx, b"blocked").await;
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(*) FROM security_events se \
+             JOIN security_event_steps steps ON steps.event_id = se.event_id \
+             WHERE steps.rule_id = 'runtime.block_synthetic'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, (1, 1));
 }
 
 /// `build_net_event` populates the basic fields straight from the

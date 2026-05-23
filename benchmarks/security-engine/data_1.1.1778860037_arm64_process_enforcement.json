@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "vm_originated_process_enforcement",
   "version": "1.1.1778860037",
-  "source_commit": "9a628bf1",
-  "timestamp": 1779544194.158717,
+  "source_commit": "91186d80",
+  "timestamp": 1779546133.7641048,
   "arch": "arm64",
   "host": {
     "sysname": "Darwin",
@@ -20,28 +20,28 @@
   "runs": 8,
   "gate_ms": 750,
   "rule": {
-    "id": "runtime.block-shell-bench.549328eb",
+    "id": "runtime.block-shell-bench.43e37bcb",
     "pack_id": "runtime-benchmark",
     "condition": "process.activity.operation == 'exec' && process.activity.command_class == 'shell'",
     "decision": "block"
   },
   "operations": {
     "blocked_process_exec_ms": {
-      "min": 9.615,
-      "mean": 9.807,
-      "median": 9.75,
-      "p95": 10.145,
-      "p99": 10.145,
-      "max": 10.145,
+      "min": 8.925,
+      "mean": 9.356,
+      "median": 9.265,
+      "p95": 9.992,
+      "p99": 9.992,
+      "max": 9.992,
       "values": [
-        9.689,
-        9.759,
-        9.741,
-        9.915,
-        9.927,
-        9.668,
-        9.615,
-        10.145
+        9.516,
+        9.992,
+        9.678,
+        9.269,
+        9.152,
+        9.261,
+        9.058,
+        8.925
       ]
     }
   },
@@ -50,16 +50,16 @@
       "row_count": 8,
       "distinct_event_ids": 8,
       "blocked_count": 8,
-      "vm_id": "secbench-34d2320f",
+      "vm_id": "secbench-9022568c",
       "profile_id": "profile-asset-boot",
       "user_id": "elie",
       "process_operation": "exec",
       "process_command_class": "shell",
-      "rule_id": "runtime.block-shell-bench.549328eb",
+      "rule_id": "runtime.block-shell-bench.43e37bcb",
       "reason": "shell exec blocked by security benchmark"
     },
     "runtime_match_count": 8,
-    "runtime_last_event_id": "process-6941a98b62b34aa5",
+    "runtime_last_event_id": "process-9b8279df8ac91260",
     "logs_exposed_security_decision": true
   }
 }

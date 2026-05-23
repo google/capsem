@@ -11,18 +11,19 @@ use capsem_security_engine::{
 
 /// Build the normalized Security Engine journal row for a file activity event.
 pub fn build_file_resolved_security_event(event: &FileEvent) -> ResolvedSecurityEvent {
-    let timestamp_unix_ms = event
+    let timestamp_duration = event
         .timestamp
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+        .unwrap_or_default();
+    let timestamp_unix_ms = timestamp_duration.as_millis() as u64;
+    let timestamp_unix_nanos = timestamp_duration.as_nanos();
     let security_event = SecurityEvent::file(
         SecurityEventCommon {
             event_id: file_security_event_id(
                 event.trace_id.as_deref(),
                 event.action.as_str(),
                 &event.path,
-                timestamp_unix_ms,
+                timestamp_unix_nanos,
             ),
             parent_event_id: None,
             stream_id: None,
@@ -105,13 +106,13 @@ fn file_security_event_id(
     trace_id: Option<&str>,
     operation: &str,
     path: &str,
-    timestamp_unix_ms: u64,
+    timestamp_unix_nanos: u128,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(trace_id.unwrap_or("").as_bytes());
     hasher.update(operation.as_bytes());
     hasher.update(path.as_bytes());
-    hasher.update(&timestamp_unix_ms.to_be_bytes());
+    hasher.update(&timestamp_unix_nanos.to_be_bytes());
     format!("file-{}", hasher.finalize().to_hex()[..16].to_string())
 }
 

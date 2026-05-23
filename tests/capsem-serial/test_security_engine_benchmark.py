@@ -147,6 +147,20 @@ def _wait_for_security_event_count(
                     """,
                     (event_type, rule_id),
                 ).fetchone()
+                all_rows = conn.execute(
+                    """
+                    SELECT se.event_id,
+                           se.final_action,
+                           COALESCE(step.rule_id, ''),
+                           COALESCE(step.message, '')
+                      FROM security_events se
+                      LEFT JOIN security_event_steps step
+                        ON step.event_id = se.event_id
+                     WHERE se.event_type = ?
+                     ORDER BY se.rowid
+                    """,
+                    (event_type,),
+                ).fetchall()
         except sqlite3.Error as error:
             last_error = str(error)
             time.sleep(0.25)
@@ -167,6 +181,8 @@ def _wait_for_security_event_count(
                 "reason": row[9],
             }
         last_error = f"only {count}/{expected} {event_type} security events for {rule_id}"
+        if all_rows:
+            last_error += f"; rows={all_rows}"
         time.sleep(0.25)
 
     raise AssertionError(last_error)
@@ -374,6 +390,8 @@ def test_http_request_enforcement_benchmark_records_vm_originated_path():
 
         script = f"""
 import json
+import socket
+import ssl
 import subprocess
 import time
 
@@ -398,6 +416,10 @@ curl_phase_delta_ms = {{
     "server_first_byte_after_pretransfer": [],
     "response_tail_after_first_byte": [],
 }}
+keepalive_starttransfer_ms = []
+keepalive_total_ms = []
+keepalive_results = []
+keepalive_connection = {{}}
 results = []
 
 def run_once():
@@ -451,6 +473,65 @@ def run_once():
         "curl_phase_delta_ms": deltas,
     }}
 
+def run_keepalive():
+    connect_started = time.perf_counter()
+    raw = socket.create_connection(("example.com", 443), timeout=15)
+    connect_ms = (time.perf_counter() - connect_started) * 1000
+    context = ssl._create_unverified_context()
+    tls_started = time.perf_counter()
+    conn = context.wrap_socket(raw, server_hostname="example.com")
+    tls_ms = (time.perf_counter() - tls_started) * 1000
+    transfers = []
+    try:
+        for index in range(runs):
+            request = (
+                f"GET {path} HTTP/1.1\\r\\n"
+                "Host: example.com\\r\\n"
+                "User-Agent: capsem-security-bench\\r\\n"
+                "Accept: */*\\r\\n"
+                f"Connection: {{'close' if index == runs - 1 else 'keep-alive'}}\\r\\n"
+                "\\r\\n"
+            ).encode()
+            started = time.perf_counter()
+            conn.sendall(request)
+            buffer = b""
+            first_byte_ms = None
+            while b"\\r\\n\\r\\n" not in buffer:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    raise RuntimeError("connection closed before response headers")
+                if first_byte_ms is None:
+                    first_byte_ms = (time.perf_counter() - started) * 1000
+                buffer += chunk
+            header_bytes, body = buffer.split(b"\\r\\n\\r\\n", 1)
+            headers_text = header_bytes.decode("iso-8859-1")
+            status_line = headers_text.split("\\r\\n", 1)[0]
+            content_length = 0
+            for line in headers_text.split("\\r\\n")[1:]:
+                name, _, value = line.partition(":")
+                if name.lower() == "content-length":
+                    content_length = int(value.strip())
+            while len(body) < content_length:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    raise RuntimeError("connection closed before response body")
+                body += chunk
+            total_ms = (time.perf_counter() - started) * 1000
+            transfers.append({{
+                "http_status": status_line.split()[1],
+                "starttransfer": first_byte_ms,
+                "total": total_ms,
+                "body": body[:content_length].decode("utf-8", "replace"),
+            }})
+    finally:
+        conn.close()
+    return {{
+        "returncode": 0,
+        "connect_ms": connect_ms,
+        "tls_handshake_ms": tls_ms,
+        "transfers": transfers,
+    }}
+
 for _ in range(warmup_runs):
     run_once()
 
@@ -464,12 +545,27 @@ for index in range(runs):
         curl_phase_delta_ms[name].append(value)
     results.append(result)
 
+keepalive_payload = run_keepalive()
+keepalive_connection = {{
+    "connect_ms": keepalive_payload["connect_ms"],
+    "tls_handshake_ms": keepalive_payload["tls_handshake_ms"],
+}}
+for transfer in keepalive_payload["transfers"]:
+    keepalive_results.append(transfer)
+    keepalive_starttransfer_ms.append(transfer["starttransfer"])
+    keepalive_total_ms.append(transfer["total"])
+
 print(json.dumps({{
     "warmup_runs": warmup_runs,
     "durations_ms": durations_ms,
     "starttransfer_ms": starttransfer_ms,
     "curl_phase_ms": curl_phase_ms,
     "curl_phase_delta_ms": curl_phase_delta_ms,
+    "keepalive_starttransfer_ms": keepalive_starttransfer_ms,
+    "keepalive_total_ms": keepalive_total_ms,
+    "keepalive_connection": keepalive_connection,
+    "keepalive_result": keepalive_payload,
+    "keepalive_results": keepalive_results,
     "results": results,
 }}))
 """
@@ -484,27 +580,44 @@ print(json.dumps({{
         starttransfer_ms = payload["starttransfer_ms"]
         curl_phase_ms = payload["curl_phase_ms"]
         curl_phase_delta_ms = payload["curl_phase_delta_ms"]
+        keepalive_starttransfer_ms = payload["keepalive_starttransfer_ms"]
+        keepalive_total_ms = payload["keepalive_total_ms"]
+        keepalive_connection = payload["keepalive_connection"]
+        keepalive_result = payload["keepalive_result"]
         assert len(durations_ms) == RUNS
         assert len(starttransfer_ms) == RUNS
         assert all(len(values) == RUNS for values in curl_phase_ms.values())
         assert all(len(values) == RUNS for values in curl_phase_delta_ms.values())
+        assert keepalive_result["returncode"] == 0, keepalive_result
+        assert len(keepalive_starttransfer_ms) == RUNS, keepalive_result
+        assert len(keepalive_total_ms) == RUNS, keepalive_result
+        assert keepalive_connection["connect_ms"] >= 0, keepalive_result
+        assert keepalive_connection["tls_handshake_ms"] >= 0, keepalive_result
+        assert all(
+            result["http_status"] == "403"
+            for result in keepalive_result["transfers"]
+        ), keepalive_result
+        assert all(
+            reason in result["body"] for result in keepalive_result["transfers"]
+        ), keepalive_result
         for result in payload["results"]:
             assert result["returncode"] == 0, result
             assert result["http_status"] == "403", result
             assert result["curl_phase_ms"]["starttransfer"] is not None, result
             assert reason in result["stdout"], result
 
+        expected_security_events = HTTP_WARMUP_RUNS + RUNS + RUNS
         db_summary = _wait_for_security_event_count(
             svc,
             vm,
             rule_id,
-            RUNS,
+            expected_security_events,
             event_type="http.request",
             timeout=20.0,
         )
-        assert db_summary["row_count"] >= RUNS
-        assert db_summary["distinct_event_ids"] >= RUNS
-        assert db_summary["blocked_count"] >= RUNS
+        assert db_summary["row_count"] >= expected_security_events
+        assert db_summary["distinct_event_ids"] >= expected_security_events
+        assert db_summary["blocked_count"] >= expected_security_events
         assert db_summary["vm_id"] == vm
         assert db_summary["profile_id"]
         assert db_summary["user_id"]
@@ -549,6 +662,7 @@ print(json.dumps({{
             },
             "runs": RUNS,
             "warmup_runs": payload["warmup_runs"],
+            "keepalive_runs": RUNS,
             "gate_ms": BLOCKED_HTTP_GATE_MS,
             "rule": {
                 "id": rule_id,
@@ -568,6 +682,14 @@ print(json.dumps({{
                 "curl_phase_delta_ms": {
                     name: _series_summary(values)
                     for name, values in sorted(curl_phase_delta_ms.items())
+                },
+                "keepalive_http_request_starttransfer_ms": _series_summary(
+                    keepalive_starttransfer_ms
+                ),
+                "keepalive_http_request_total_ms": _series_summary(keepalive_total_ms),
+                "keepalive_connection_ms": {
+                    name: round(value, 3)
+                    for name, value in sorted(keepalive_connection.items())
                 },
             },
             "assertions": {

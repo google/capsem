@@ -659,10 +659,11 @@ fn build_mcp_resolved_security_event(
     timestamp: SystemTime,
     trace_id: Option<String>,
 ) -> ResolvedSecurityEvent {
-    let timestamp_unix_ms = timestamp
+    let timestamp_duration = timestamp
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+        .unwrap_or_default();
+    let timestamp_unix_ms = timestamp_duration.as_millis() as u64;
+    let timestamp_unix_nanos = timestamp_duration.as_nanos();
     let subject_tool_name = tool_name
         .and_then(parse_namespaced)
         .map(|(_, tool)| tool.to_string())
@@ -673,7 +674,7 @@ fn build_mcp_resolved_security_event(
         server_name,
         &subject_tool_name,
         req.id.as_ref(),
-        timestamp_unix_ms,
+        timestamp_unix_nanos,
     );
     let mut event = SecurityEvent::mcp(
         SecurityEventCommon {
@@ -795,7 +796,7 @@ fn mcp_security_event_id(
     server_name: &str,
     tool_name: &str,
     request_id: Option<&serde_json::Value>,
-    timestamp_unix_ms: u64,
+    timestamp_unix_nanos: u128,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(trace_id.unwrap_or("").as_bytes());
@@ -804,7 +805,7 @@ fn mcp_security_event_id(
     if let Some(request_id) = request_id {
         hasher.update(request_id.to_string().as_bytes());
     }
-    hasher.update(&timestamp_unix_ms.to_le_bytes());
+    hasher.update(&timestamp_unix_nanos.to_le_bytes());
     let hash = hasher.finalize().to_hex().to_string();
     format!("mcp-{}", &hash[..16])
 }

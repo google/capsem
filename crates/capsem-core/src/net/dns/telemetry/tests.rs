@@ -3,6 +3,7 @@ use super::*;
 use crate::net::dns::server::DnsHandlerResult;
 use crate::net::parsers::dns_parser::DnsQuery;
 use capsem_logger::events::Decision;
+use std::time::{Duration, SystemTime};
 
 fn allowed_result() -> DnsHandlerResult {
     DnsHandlerResult {
@@ -200,4 +201,26 @@ fn build_resolved_security_event_for_denied_query() {
         }
         other => panic!("expected DNS subject, got {other:?}"),
     }
+}
+
+#[test]
+fn same_millisecond_dns_events_keep_distinct_security_ids() {
+    let evt = build_dns_event(
+        &allowed_result(),
+        Some("udp"),
+        Some("agent".into()),
+        Some("trace_dns".into()),
+    );
+    let mut first = evt.clone();
+    first.timestamp = SystemTime::UNIX_EPOCH + Duration::from_millis(42);
+    let mut second = evt;
+    second.timestamp = SystemTime::UNIX_EPOCH + Duration::from_millis(42) + Duration::from_nanos(1);
+
+    let first_resolved = build_dns_resolved_security_event(&first);
+    let second_resolved = build_dns_resolved_security_event(&second);
+
+    assert_ne!(
+        first_resolved.event.common.event_id,
+        second_resolved.event.common.event_id
+    );
 }

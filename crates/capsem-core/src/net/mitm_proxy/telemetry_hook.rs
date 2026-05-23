@@ -45,6 +45,7 @@ use crate::net::ai_traffic::{request_parser, TraceState};
 /// before the body wrapper begins iterating chunks.
 #[derive(Clone)]
 pub struct TelemetryRequestContext {
+    pub event_id_seed: String,
     pub domain: String,
     pub process_name: Option<String>,
     pub ai_provider: Option<ProviderKind>,
@@ -78,6 +79,10 @@ pub struct TelemetryRequestContext {
     pub policy_rule: Option<String>,
     pub policy_reason: Option<String>,
     pub runtime_security_results: Vec<SecurityResult>,
+}
+
+pub fn new_http_event_id_seed() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -196,45 +201,94 @@ impl ChunkHook for TelemetryHook {
             .events
             .clone();
 
-        let net_event = build_net_event(&req_ctx, &resp_stats);
-        let resolved_events = if req_ctx.runtime_security_results.is_empty() {
-            vec![build_http_resolved_security_event(
-                &req_ctx,
-                &resp_stats,
-                &net_event,
-            )]
-        } else {
-            req_ctx
-                .runtime_security_results
-                .iter()
-                .cloned()
-                .map(|result| result.resolved_event)
-                .collect()
-        };
-        let model_call = maybe_build_model_call(
+        emit_completed_http_request_with_llm_events(&self.deps, req_ctx, resp_stats, &llm_events);
+    }
+}
+
+pub async fn emit_synthetic_http_response(
+    deps: &TelemetryDeps,
+    req_ctx: TelemetryRequestContext,
+    response_body: &[u8],
+) {
+    let mut resp_stats = TelemetryResponseStats {
+        bytes: response_body.len() as u64,
+        preview: Vec::new(),
+        max_preview: req_ctx.max_response_preview,
+    };
+    let preview_len = resp_stats.max_preview.min(response_body.len());
+    if preview_len > 0 {
+        resp_stats
+            .preview
+            .extend_from_slice(&response_body[..preview_len]);
+    }
+    let (net_event, resolved_events, model_call) =
+        completed_http_records(deps, &req_ctx, &resp_stats, &[]);
+    log_outcome(&req_ctx);
+
+    deps.db.write(WriteOp::NetEvent(net_event)).await;
+    for resolved_event in resolved_events {
+        deps.db
+            .write(WriteOp::ResolvedSecurityEvent(resolved_event))
+            .await;
+    }
+    if let Some(mc) = model_call {
+        deps.db.write(WriteOp::ModelCall(mc)).await;
+    }
+}
+
+fn emit_completed_http_request_with_llm_events(
+    deps: &TelemetryDeps,
+    req_ctx: TelemetryRequestContext,
+    resp_stats: TelemetryResponseStats,
+    llm_events: &[crate::net::ai_traffic::events::LlmEvent],
+) {
+    let (net_event, resolved_events, model_call) =
+        completed_http_records(deps, &req_ctx, &resp_stats, llm_events);
+    log_outcome(&req_ctx);
+
+    // Spawn DB writes so the response path doesn't block on backpressure.
+    let db = Arc::clone(&deps.db);
+    tokio::spawn(async move {
+        db.write(WriteOp::NetEvent(net_event)).await;
+        for resolved_event in resolved_events {
+            db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
+                .await;
+        }
+        if let Some(mc) = model_call {
+            db.write(WriteOp::ModelCall(mc)).await;
+        }
+    });
+}
+
+fn completed_http_records(
+    deps: &TelemetryDeps,
+    req_ctx: &TelemetryRequestContext,
+    resp_stats: &TelemetryResponseStats,
+    llm_events: &[crate::net::ai_traffic::events::LlmEvent],
+) -> (NetEvent, Vec<ResolvedSecurityEvent>, Option<ModelCall>) {
+    let net_event = build_net_event(&req_ctx, &resp_stats);
+    let resolved_events = if req_ctx.runtime_security_results.is_empty() {
+        vec![build_http_resolved_security_event(
             &req_ctx,
             &resp_stats,
-            &llm_events,
-            &self.deps.pricing,
-            &self.deps.trace_state,
-        );
-
-        log_outcome(&req_ctx);
-
-        // Spawn DB writes so the body completion path doesn't block
-        // on backpressure.
-        let db = Arc::clone(&self.deps.db);
-        tokio::spawn(async move {
-            db.write(WriteOp::NetEvent(net_event)).await;
-            for resolved_event in resolved_events {
-                db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
-                    .await;
-            }
-            if let Some(mc) = model_call {
-                db.write(WriteOp::ModelCall(mc)).await;
-            }
-        });
-    }
+            &net_event,
+        )]
+    } else {
+        req_ctx
+            .runtime_security_results
+            .iter()
+            .cloned()
+            .map(|result| result.resolved_event)
+            .collect()
+    };
+    let model_call = maybe_build_model_call(
+        &req_ctx,
+        &resp_stats,
+        llm_events,
+        &deps.pricing,
+        &deps.trace_state,
+    );
+    (net_event, resolved_events, model_call)
 }
 
 /// Pure builder: assembles a `NetEvent` from the context and stats.
@@ -491,6 +545,7 @@ fn http_security_event_id_from_trace(
     timestamp_unix_ms: u64,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
+    hasher.update(req_ctx.event_id_seed.as_bytes());
     hasher.update(trace_id.unwrap_or("").as_bytes());
     hasher.update(req_ctx.domain.as_bytes());
     hasher.update(req_ctx.method.as_bytes());

@@ -2104,13 +2104,19 @@ a valid claim -- mark it `[ ]` instead.
     `security_events` + `security_event_steps` rows for `http.request`, and
     confirms `logs` exposes the decision. The first cold measurement looked
     suspiciously slow, so the benchmark now records both guest wall-clock and
-    curl `time_starttransfer`. Latest local result: 7.915ms mean wall-clock,
-    3.508ms mean first-byte timing, and 0.597ms mean server-first-byte after
-    pretransfer against a 1,000ms gross-regression gate. The phase breakdown
-    shows TLS appconnect dominates at 1.965ms mean, so the slow-looking local
-    HTTP number is connection/TLS/proxy setup rather than CEL evaluation. The
-    same combined run refreshed the process artifact to 9.807ms mean and
-    10.145ms max.
+    curl `time_starttransfer`. The benchmark now also sends eight blocked
+    requests over one persistent TLS keep-alive connection, proving 17/17
+    resolved HTTP security rows across warmup, curl, and keep-alive traffic.
+    That regression caught same-millisecond Security Event ID collapse and a
+    fast synthetic block logging race; HTTP now carries a per-request event
+    seed, DNS/MCP/file use nanosecond event-ID timestamps, and synthetic
+    responses enqueue telemetry at the decision point. Latest local result:
+    9.091ms mean wall-clock, 3.997ms mean first-byte timing, 0.683ms mean
+    server-first-byte after pretransfer, and 0.549ms mean keep-alive first
+    byte against a 1,000ms gross-regression gate. The phase breakdown shows TLS
+    appconnect dominates at 2.145ms mean, so the slow-looking local HTTP number
+    is connection/TLS/proxy setup rather than CEL evaluation. The same combined
+    run refreshed the process artifact to 9.356ms mean and 9.992ms max.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

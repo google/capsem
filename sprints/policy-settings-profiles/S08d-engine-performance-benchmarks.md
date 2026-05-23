@@ -243,18 +243,24 @@ clearly not numerical and matches the sprint tracker.
   `security_event_steps` rows for `http.request`, confirms `logs` exposes the
   canonical decision, and archives
   `benchmarks/security-engine/data_1.1.1778860037_arm64_http_request_enforcement.json`.
-  After separating guest wall-clock from curl first-byte timing, latest local
-  results are eight measured blocked HTTP requests at 7.915ms mean wall-clock
-  and 3.508ms mean `time_starttransfer` against a conservative 1,000ms
-  gross-regression gate. The curl phase deltas show the Security Engine/MITM
-  post-pretransfer first-byte slice at 0.597ms mean, with TLS appconnect
-  dominating at 1.965ms mean. The process benchmark refreshed at 9.807ms mean
-  and 10.145ms max.
+  The benchmark now also opens one persistent TLS keep-alive connection and
+  sends eight sequential blocked requests over it, asserting 17/17 HTTP
+  resolved security events when combined with warmup and curl runs. That
+  caught same-millisecond Security Event ID collapse in bursty logging; HTTP
+  now carries a per-request event seed, DNS/MCP/file IDs use nanosecond
+  timestamps, and synthetic block/error telemetry is enqueued at the decision
+  point instead of response-body finalization. Latest local results are eight
+  measured blocked HTTP curl requests at 9.091ms mean wall-clock and 3.997ms
+  mean `time_starttransfer`, with a 0.683ms mean post-pretransfer first-byte
+  slice and 2.145ms mean TLS appconnect. The keep-alive lane is 0.549ms mean
+  first-byte / 0.556ms mean total response after the connection is established.
+  The process benchmark refreshed at 9.356ms mean and 9.992ms max.
 
 ## Coverage Ledger
 
 - Unit/contract: benchmark JSON schema, benchmark fixture parsing, rule-pack
-  scale fixture generation, evaluator microbench setup.
+  scale fixture generation, evaluator microbench setup, same-millisecond
+  event-ID regression coverage for HTTP, DNS, MCP, and file security events.
 - Functional: VM-originated process and HTTP request enforcement benchmarks
   assert correct block actions through the real service/process and
   guest-network/MITM paths. DNS/MCP/model/file detection and allow scenarios
@@ -265,9 +271,11 @@ clearly not numerical and matches the sprint tracker.
   latency visible to the caller plus resolved-event evidence in session
   storage. DNS/MCP/model/file VM-originated benchmarks remain open.
 - Telemetry: the first VM-originated benchmark confirms runtime enforcement
-  match counters and security-log projection. VM status/OTel counters for
-  enforcement evaluations, detection evaluations, findings, errors, and
-  forward-plugin metrics remain open.
+  match counters and security-log projection. The HTTP benchmark now proves
+  fast synthetic block responses produce both `net_events` and
+  `security_events` for every request in bursty keep-alive traffic. VM
+  status/OTel counters for enforcement evaluations, detection evaluations,
+  findings, errors, and forward-plugin metrics remain open.
 - Performance: adapted CEL rig numbers, Capsem canonical-root microbench
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,

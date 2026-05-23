@@ -36,7 +36,7 @@ use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 use capsem_security_engine::{
     SecurityAction, SecurityDecisionAction, SecurityEngineError, SecurityEvent, SecurityResult,
 };
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
 use rustls::ServerConfig;
@@ -201,6 +201,7 @@ fn evaluate_runtime_http_request_inner(
     input: RuntimeHttpRequestInput,
 ) -> Result<RuntimeHttpDecision, SecurityEngineError> {
     let req_ctx = TelemetryRequestContext {
+        event_id_seed: telemetry_hook::new_http_event_id_seed(),
         domain: input.domain,
         process_name: input.process_name,
         ai_provider: input.ai_provider,
@@ -822,6 +823,23 @@ async fn serve_pipeline<IO>(
 /// Reads the live Policy config per-request so settings changes (e.g.
 /// disabling a provider) take effect immediately, even for in-flight keep-alive
 /// connections.
+async fn synthetic_body_with_telemetry(
+    config: &MitmProxyConfig,
+    body_text: String,
+    req_ctx: TelemetryRequestContext,
+) -> ProxyBoxBody {
+    telemetry_hook::emit_synthetic_http_response(
+        config.telemetry.as_ref(),
+        req_ctx,
+        body_text.as_bytes(),
+    )
+    .await;
+
+    Full::new(Bytes::from(body_text))
+        .map_err(|never| match never {})
+        .boxed()
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     skip_all,
@@ -899,30 +917,6 @@ async fn handle_request(
         "protocol" => protocol.label(), "decision" => req_decision_label)
     .increment(1);
 
-    // Helper: wrap an already-built response body in
-    // `ChunkDispatchBody` seeded with the per-request
-    // `TelemetryRequestContext`, so the registered `TelemetryHook`
-    // fires `NetEvent` (+ `ModelCall`) on body completion. Used by
-    // every response path that doesn't reach upstream (deny,
-    // websocket-deny, 502).
-    let seal_with_telemetry =
-        |inner: ProxyBoxBody, req_ctx: TelemetryRequestContext| -> ProxyBoxBody {
-            let dispatched = body::ChunkDispatchBody::new(
-                inner,
-                Arc::clone(&config.pipeline),
-                hooks::ConnMeta {
-                    domain: domain.to_string(),
-                    process_name: process_name.clone(),
-                    port: upstream_port,
-                    protocol,
-                    ai_provider,
-                },
-                crate::telemetry::ambient_capsem_trace_id(),
-            )
-            .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
-            dispatched.boxed()
-        };
-
     // Reject WebSocket upgrades (not supported through MITM proxy).
     if is_upgrade {
         let body_text = format!(
@@ -931,6 +925,7 @@ async fn handle_request(
         );
 
         let req_ctx = TelemetryRequestContext {
+            event_id_seed: telemetry_hook::new_http_event_id_seed(),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -955,13 +950,9 @@ async fn handle_request(
             runtime_security_results: Vec::new(),
         };
 
-        let deny_body = Full::new(Bytes::from(body_text))
-            .map_err(|never| match never {})
-            .boxed();
-
         return Ok(hyper::Response::builder()
             .status(400)
-            .body(seal_with_telemetry(deny_body, req_ctx))
+            .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
             .unwrap());
     }
 
@@ -976,41 +967,50 @@ async fn handle_request(
                     path: &str,
                     query: &Option<String>,
                     req_hdrs: &str,
-                    start: Instant|
-     -> hyper::Response<ProxyBoxBody> {
-        warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
-        let body_text = format!("Capsem: upstream error ({error})\n");
-        let req_ctx = TelemetryRequestContext {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            ai_provider,
-            method: method.to_string(),
-            path: path.to_string(),
-            query: query.clone(),
-            status_code: Some(502),
-            decision: Decision::Error,
-            matched_rule: Some(error.to_string()),
-            request_headers: Some(req_hdrs.to_string()),
-            response_headers: None,
-            start_time: start,
-            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_preview: 0,
-            port: upstream_port,
-            conn_type,
-            identity: telemetry_identity.clone(),
-            policy_mode: None,
-            policy_action: None,
-            policy_rule: None,
-            policy_reason: None,
-            runtime_security_results: Vec::new(),
-        };
-        let deny_body = Full::new(Bytes::from(body_text))
-            .map_err(|never| match never {})
-            .boxed();
-        hyper::Response::builder()
-            .status(502)
-            .body(seal_with_telemetry(deny_body, req_ctx))
-            .unwrap()
+                    start: Instant| {
+        let config = Arc::clone(config);
+        let domain = domain.to_string();
+        let process_name = process_name.clone();
+        let telemetry_identity = telemetry_identity.clone();
+        let error_text = error.to_string();
+        let method = method.to_string();
+        let path = path.to_string();
+        let query = query.clone();
+        let req_hdrs = req_hdrs.to_string();
+
+        async move {
+            warn!(domain, method, path, error = %error_text, "MITM proxy: upstream error");
+            let body_text = format!("Capsem: upstream error ({error_text})\n");
+            let req_ctx = TelemetryRequestContext {
+                event_id_seed: telemetry_hook::new_http_event_id_seed(),
+                domain,
+                process_name,
+                ai_provider,
+                method,
+                path,
+                query,
+                status_code: Some(502),
+                decision: Decision::Error,
+                matched_rule: Some(error_text),
+                request_headers: Some(req_hdrs),
+                response_headers: None,
+                start_time: start,
+                request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+                max_response_preview: 0,
+                port: upstream_port,
+                conn_type,
+                identity: telemetry_identity,
+                policy_mode: None,
+                policy_action: None,
+                policy_rule: None,
+                policy_reason: None,
+                runtime_security_results: Vec::new(),
+            };
+            hyper::Response::builder()
+                .status(502)
+                .body(synthetic_body_with_telemetry(config.as_ref(), body_text, req_ctx).await)
+                .unwrap()
+        }
     };
 
     // Track request body (boxed for consistent sender type across requests).
@@ -1069,17 +1069,15 @@ async fn handle_request(
                 }
             }
             Ok(RuntimeHttpDecision::Reject(req_ctx, body_text)) => {
-                let deny_body = Full::new(Bytes::from(body_text))
-                    .map_err(|never| match never {})
-                    .boxed();
                 return Ok(hyper::Response::builder()
                     .status(SECURITY_BLOCK_STATUS)
-                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
                     .unwrap());
             }
             Err(error) => {
                 let reason = format!("security engine error: {error}");
                 let req_ctx = TelemetryRequestContext {
+                    event_id_seed: telemetry_hook::new_http_event_id_seed(),
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
                     ai_provider,
@@ -1103,12 +1101,10 @@ async fn handle_request(
                     policy_reason: Some(reason.clone()),
                     runtime_security_results: Vec::new(),
                 };
-                let deny_body = Full::new(Bytes::from(format!("Capsem: {reason}\n")))
-                    .map_err(|never| match never {})
-                    .boxed();
+                let body_text = format!("Capsem: {reason}\n");
                 return Ok(hyper::Response::builder()
                     .status(SECURITY_BLOCK_STATUS)
-                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
                     .unwrap());
             }
         }
@@ -1179,7 +1175,7 @@ async fn handle_request(
                     ::metrics::counter!(metrics::REQUESTS_TOTAL,
                     "protocol" => protocol.label(), "decision" => "upstream_error")
                     .increment(1);
-                    return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                    return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time).await);
                 }
             };
         tcp_us = tcp_start.elapsed().as_micros() as u64;
@@ -1199,7 +1195,9 @@ async fn handle_request(
                         ::metrics::counter!(metrics::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
-                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                        return Ok(
+                            make_502(&e, &method, &path, &query, &req_hdrs, start_time).await
+                        );
                     }
                 };
                 let hs = handshake_start.elapsed().as_micros() as u64;
@@ -1214,7 +1212,9 @@ async fn handle_request(
                 {
                     Ok(sn) => sn,
                     Err(e) => {
-                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                        return Ok(
+                            make_502(&e, &method, &path, &query, &req_hdrs, start_time).await
+                        );
                     }
                 };
                 let tls_start = Instant::now();
@@ -1230,7 +1230,9 @@ async fn handle_request(
                         ::metrics::counter!(metrics::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
-                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                        return Ok(
+                            make_502(&e, &method, &path, &query, &req_hdrs, start_time).await
+                        );
                     }
                 };
                 tls_us = tls_start.elapsed().as_micros() as u64;
@@ -1240,7 +1242,9 @@ async fn handle_request(
                 {
                     Ok(pair) => pair,
                     Err(e) => {
-                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                        return Ok(
+                            make_502(&e, &method, &path, &query, &req_hdrs, start_time).await
+                        );
                     }
                 };
                 let hs = handshake_start.elapsed().as_micros() as u64;
@@ -1261,7 +1265,9 @@ async fn handle_request(
                         ::metrics::counter!(metrics::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
-                        return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+                        return Ok(
+                            make_502(&e, &method, &path, &query, &req_hdrs, start_time).await
+                        );
                     }
                 };
                 let hs = handshake_start.elapsed().as_micros() as u64;
@@ -1315,7 +1321,7 @@ async fn handle_request(
     let resp = match sender.send_request(upstream_req).await {
         Ok(r) => r,
         Err(e) => {
-            return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time));
+            return Ok(make_502(&e, &method, &path, &query, &req_hdrs, start_time).await);
         }
     };
 
@@ -1358,6 +1364,7 @@ async fn handle_request(
     };
 
     let mut req_ctx = TelemetryRequestContext {
+        event_id_seed: telemetry_hook::new_http_event_id_seed(),
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider,
@@ -1395,12 +1402,10 @@ async fn handle_request(
                     req_ctx.policy_mode = Some("runtime".into());
                     req_ctx.policy_action = Some("error".into());
                     req_ctx.policy_reason = Some(reason.clone());
-                    let deny_body = Full::new(Bytes::from(format!("Capsem: {reason}\n")))
-                        .map_err(|never| match never {})
-                        .boxed();
+                    let body_text = format!("Capsem: {reason}\n");
                     return Ok(hyper::Response::builder()
                         .status(SECURITY_BLOCK_STATUS)
-                        .body(seal_with_telemetry(deny_body, req_ctx))
+                        .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
                         .unwrap());
                 }
             };
@@ -1422,12 +1427,9 @@ async fn handle_request(
                     }
                 }
                 Ok(RuntimeHttpDecision::Reject(denied_ctx, body_text)) => {
-                    let deny_body = Full::new(Bytes::from(body_text))
-                        .map_err(|never| match never {})
-                        .boxed();
                     return Ok(hyper::Response::builder()
                         .status(SECURITY_BLOCK_STATUS)
-                        .body(seal_with_telemetry(deny_body, denied_ctx))
+                        .body(synthetic_body_with_telemetry(config, body_text, denied_ctx).await)
                         .unwrap());
                 }
                 Err(error) => {
@@ -1438,12 +1440,10 @@ async fn handle_request(
                     req_ctx.policy_mode = Some("runtime".into());
                     req_ctx.policy_action = Some("error".into());
                     req_ctx.policy_reason = Some(reason.clone());
-                    let deny_body = Full::new(Bytes::from(format!("Capsem: {reason}\n")))
-                        .map_err(|never| match never {})
-                        .boxed();
+                    let body_text = format!("Capsem: {reason}\n");
                     return Ok(hyper::Response::builder()
                         .status(SECURITY_BLOCK_STATUS)
-                        .body(seal_with_telemetry(deny_body, req_ctx))
+                        .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
                         .unwrap());
                 }
             }
