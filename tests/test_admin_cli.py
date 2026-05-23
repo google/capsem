@@ -703,6 +703,46 @@ def test_capsem_admin_policy_backtest_uses_policy_context_corpus() -> None:
     assert actual == expected
 
 
+def test_capsem_admin_policy_backtest_uses_session_process_export_corpus() -> None:
+    fixtures = load_policy_context_fixture_jsonl(
+        Path("data/policy-context/session-process-exec-block.jsonl")
+    )
+    assert [fixture.event_ref.event_id for fixture in fixtures] == [
+        "evt-live-process-shell-block"
+    ]
+    fixture = fixtures[0]
+    assert fixture.event_ref.corpus == "session_db"
+    assert fixture.context.common.vm_id == "vm-live-process-fixture"
+    assert fixture.context.process.activity is not None
+    assert fixture.context.process.activity.operation == "exec"
+    assert fixture.context.process.activity.command_class == "shell"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "policy",
+            "backtest",
+            "data/enforcement/policy/process-shell-block-policy.toml",
+            "--events",
+            "data/policy-context/session-process-exec-block.jsonl",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"event_count": 1' in result.output
+    assert '"match_count": 1' in result.output
+    assert '"event_id": "evt-live-process-shell-block"' in result.output
+    assert '"process.activity.command_class": "shell"' in result.output
+
+    actual = _JsonObject.validate_json(result.output)
+    actual.pop("timing")
+    expected = _JsonObject.validate_json(
+        Path("data/enforcement/backtest-expected/process-shell-block.json").read_bytes()
+    )
+    assert actual == expected
+
+
 def test_capsem_admin_policy_compile_checks_canonical_roots() -> None:
     result = CliRunner().invoke(
         cli,

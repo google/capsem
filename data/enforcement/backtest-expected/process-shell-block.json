@@ -1,0 +1,29 @@
+{
+  "schema": "capsem.policy-backtest.v1",
+  "ok": true,
+  "pack_id": "corp.enforcement.process-shell",
+  "pack_version": "2026.0522.1",
+  "event_count": 1,
+  "rule_count": 1,
+  "match_count": 1,
+  "rows": [
+    {
+      "event_ref": {
+        "corpus": "session_db",
+        "session_id": "session-live-process-fixture",
+        "event_id": "evt-live-process-shell-block",
+        "sequence": 1,
+        "timestamp_unix_ms": 1789003001
+      },
+      "rule_id": "block-shell-exec",
+      "pack_id": "corp.enforcement.process-shell",
+      "decision": "block",
+      "reason": "Shell exec blocked by corpus fixture",
+      "matched_fields": {
+        "process.activity.operation": "exec",
+        "process.activity.command_class": "shell"
+      }
+    }
+  ],
+  "diagnostics": []
+}

@@ -1,0 +1,17 @@
+schema = "capsem.policy-pack.v1"
+id = "corp.enforcement.process-shell"
+version = "2026.0522.1"
+status = "active"
+owner = "corp"
+description = "Block shell process execution from a session-exported process fixture."
+
+[[rules]]
+id = "block-shell-exec"
+name = "Block Shell Exec"
+event_family = "process"
+event_type = "process.exec"
+priority = 10
+condition = "process.activity.operation == \"exec\" && process.activity.command_class == \"shell\""
+decision = "block"
+reason = "Shell exec blocked by corpus fixture"
+tags = ["capsem.fixture", "session-export"]

@@ -140,6 +140,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem export-policy-contexts <session>` emit JSONL fixtures from
   `session.db` for admin/runtime corpus work, with live VM proof for blocked
   process enforcement.
+- Added the first committed session-export policy-context fixture and matching
+  process enforcement pack/expected report so admin offline backtest and Rust
+  CEL parity both cover a real `process.exec` block shape.
 - Added typed process operation and command-class columns to the canonical
   `security_events` ledger so blocked process decisions preserve policy
   evidence even when no downstream exec projection exists.

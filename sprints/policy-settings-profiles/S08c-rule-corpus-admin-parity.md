@@ -99,7 +99,7 @@ session-scoped enforcement replay, it should be named and designed separately.
 - [x] Add cross-language drift tests proving Python-generated enforcement/detection
   artifacts use canonical policy roots, are accepted by Rust, and produce
   identical backtest outcomes.
-- [ ] Generate initial real-session normalized event fixtures from S08b's
+- [x] Generate initial real-session normalized event fixtures from S08b's
   resolved-event journal and add them to the corpus once stable.
 - [x] Document the corpus update workflow so future rule-language changes must
   update Python, Rust, and expected-result fixtures together.
@@ -217,6 +217,12 @@ session-scoped enforcement replay, it should be named and designed separately.
   green path canonicalized fixture/setup DNS/HTTP roots and added typed
   `process_operation` / `process_command_class` columns to the canonical
   `security_events` ledger.
+- Slice 18 committed the first stable session-export corpus row:
+  `data/policy-context/session-process-exec-block.jsonl`. It mirrors the
+  installed-service export shape proven in Slice 17 for a blocked
+  `process.exec` decision and adds a matching process enforcement pack, CEL
+  condition, and expected backtest artifact. Admin offline backtest and Rust
+  CEL now both consume the same fixture and expected report.
 
 ## Coverage Ledger
 
@@ -228,8 +234,9 @@ session-scoped enforcement replay, it should be named and designed separately.
 - Functional: admin offline backtest and Rust runtime backtest produce the same
   matched event refs, decisions/findings, and counts. This is proven for the
   first synthetic enforcement and detection corpus; admin backtest now also
-  matches non-HTTP scalar policy contexts and indexed model tool evidence.
-  Broader committed corpus diversity and real-session rows remain open.
+  matches non-HTTP scalar policy contexts, indexed model tool evidence, and a
+  committed session-export process row. Broader committed corpus diversity
+  remains open.
 - Adversarial: unsupported Sigma constructs, invalid CEL, missing event fields,
   duplicate rule ids, mismatched expected labels, internal `event.*` /
   `subject.*` authoring, unknown canonical-looking admin policy paths,
@@ -239,8 +246,8 @@ session-scoped enforcement replay, it should be named and designed separately.
   the resolved-event journal read path; a live VM process-enforcement E2E now
   proves blocked exec decisions are written to `capsem logs`,
   `security_events` / `security_event_steps`, and exported policy-context JSONL
-  with canonical `process.activity.command_class`. Committing stable
-  live-session fixture rows remains open.
+  with canonical `process.activity.command_class`. A stable session-export
+  process fixture is now committed and covered by admin plus Rust parity tests.
 - Telemetry/observability: backtest reports include event refs and full local
   evidence; export redaction is tested separately when export exists.
 - Performance: corpus backtest has a basic timing budget and reports evaluated

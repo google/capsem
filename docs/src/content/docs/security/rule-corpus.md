@@ -14,6 +14,7 @@ expected backtest output from drifting apart.
 | Path | Purpose |
 |---|---|
 | `data/policy-context/canonical-policy-contexts.jsonl` | Typed policy-context event fixtures. |
+| `data/policy-context/session-*.jsonl` | Stable session-export fixtures captured from the installed-service policy-context export shape. |
 | `data/enforcement/cel/` | CEL conditions consumed by Rust runtime tests. |
 | `data/enforcement/policy/` | Policy pack fixtures consumed by `capsem-admin`. |
 | `data/enforcement/backtest-expected/` | Expected enforcement backtest reports without timing fields. |

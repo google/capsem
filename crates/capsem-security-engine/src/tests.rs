@@ -1023,6 +1023,58 @@ fn s08c_enforcement_expected_artifact_matches_rust_cel() {
 }
 
 #[test]
+fn s08c_session_process_export_artifact_matches_rust_cel() {
+    let fixtures = include_str!("../../../data/policy-context/session-process-exec-block.jsonl");
+    let fixture_values: Vec<serde_json::Value> = fixtures
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let condition = include_str!("../../../data/enforcement/cel/process-shell-block.cel");
+    let program = compile_policy_cel("block-shell-exec", condition).unwrap();
+    let mut rows = Vec::new();
+
+    for fixture in &fixture_values {
+        let context: capsem_proto::PolicyContext =
+            serde_json::from_value(fixture["context"].clone()).unwrap();
+        if !evaluate_policy_cel_bool("block-shell-exec", &program, &context).unwrap() {
+            continue;
+        }
+        rows.push(serde_json::json!({
+            "event_ref": fixture["event_ref"],
+            "rule_id": "block-shell-exec",
+            "pack_id": "corp.enforcement.process-shell",
+            "decision": "block",
+            "reason": "Shell exec blocked by corpus fixture",
+            "matched_fields": {
+                "process.activity.operation":
+                    fixture["context"]["process"]["activity"]["operation"],
+                "process.activity.command_class":
+                    fixture["context"]["process"]["activity"]["command_class"],
+            },
+        }));
+    }
+
+    let actual = serde_json::json!({
+        "schema": "capsem.policy-backtest.v1",
+        "ok": true,
+        "pack_id": "corp.enforcement.process-shell",
+        "pack_version": "2026.0522.1",
+        "event_count": fixture_values.len(),
+        "rule_count": 1,
+        "match_count": rows.len(),
+        "rows": rows,
+        "diagnostics": [],
+    });
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../data/enforcement/backtest-expected/process-shell-block.json"
+    ))
+    .unwrap();
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
     fn assert_match_and_pass(event: SecurityEvent, matched: &str, passed: &str) {
         let context = policy_context_from_event(&event);

@@ -2012,6 +2012,19 @@ a valid claim -- mark it `[ ]` instead.
     `capsem-process`. Still missing in S08c: committed stable live-session
     fixture rows and full runtime-CEL parity for constructs outside the
     admin-supported subset.
+    Eighteenth session-export-corpus slice committed the first stable
+    session-export policy-context row under
+    `data/policy-context/session-process-exec-block.jsonl`, plus matching
+    process enforcement policy/CEL/expected backtest artifacts. Red `uv run
+    pytest
+    tests/test_admin_cli.py::test_capsem_admin_policy_backtest_uses_session_process_export_corpus
+    -q` first failed because the fixture did not exist; the green path now
+    proves Pydantic loading, admin offline backtest, and expected-report
+    parity. Rust `cargo test -p capsem-security-engine
+    s08c_session_process_export_artifact_matches_rust_cel` proves the same
+    fixture and expected report match the real CEL evaluator. Still missing in
+    S08c: full runtime-CEL parity for constructs outside the admin-supported
+    subset and broader session-export corpus diversity.
 23. [ ] [S08d - Security engine performance benchmarks](S08d-engine-performance-benchmarks.md)
     -- inserted during the 2026-05-21 performance/marketing regroup. Extend
     `capsem-bench`, host serial benchmark capture, and Rust microbenchmarks to
