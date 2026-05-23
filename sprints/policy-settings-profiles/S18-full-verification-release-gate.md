@@ -194,3 +194,13 @@ the shipped bedrock, not the historical implementation.
   - `rg -n 'capsem-admin policy|@policy|def policy\(|\[\s*"policy"|capsem\.policy-pack|capsem\.policy-compile|capsem\.policy-backtest|PolicyPackV1|PolicyRuleV1|PolicyDecision|dump_policy_pack|validate_policy_pack|compile_policy_pack|run_policy_backtest|data/enforcement/policy|schemas/capsem.policy-pack|unsupported policy path|policy pack|policy rule|policy packs|policy rules' src tests docs data schemas -S` returned no matches.
   - `cargo test -p capsem-network-engine http_policy --lib`, `cargo test -p capsem-core mcp_frame --lib`, and `cargo test -p capsem-security-engine --lib` passed after narrow internal decision-type renames removed stale `HttpPolicyDecision` / `McpPolicyDecision` names from the transport/security boundary.
   Fix applied during replay: renamed the public admin enforcement-pack surface from `capsem-admin policy` / `capsem.policy-pack.v1` to `capsem-admin enforcement` / `capsem.enforcement-pack.v1`, moved enforcement fixtures under `data/enforcement/packs/`, regenerated the schema artifact, updated docs/tests, and added a negative test proving `policy` is not kept as a public alias.
+- 2026-05-23: Continued S18 with the operator observability replay slice.
+  Verification commands:
+  - `cargo test -p capsem-service handle_logs --bin capsem-service` passed with 2 focused tests, proving structured process Security Engine decisions and canonical resolved Security Events are exposed through `/logs`.
+  - `cargo test -p capsem-service handle_debug_report --bin capsem-service` passed, proving `/debug/report` remains pasteable and structured.
+  - `cargo test -p capsem-service handle_list_reports_profile_status_for_each_vm --bin capsem-service` passed, proving VM list reports current, needs-update, deprecated, revoked, and corrupted profile states.
+  - `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service` passed, proving live metrics snapshots project enforcement/detection/security status fields.
+  - `cargo test -p capsem status --bin capsem` passed with 35 CLI/status tests, including security-engine debug-report parsing and profile-status list formatting.
+  - `cargo test -p capsem format_session_logs --bin capsem` passed with 2 CLI log-formatting tests, proving structured process security lines are preserved and resolved Security Event summaries are added.
+  - `cargo test -p capsem logs_response_serde --bin capsem` passed, proving the typed log envelope still round-trips.
+  Note: two attempted multi-filter cargo invocations were rejected by cargo syntax and rerun as valid package/test filters above.

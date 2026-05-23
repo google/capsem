@@ -2659,6 +2659,13 @@ a valid claim -- mark it `[ ]` instead.
     and `schemas` returns no matches, and narrow internal Rust decision-type
     names in the HTTP/MCP transport boundary now say enforcement instead of
     policy.
+    Third S18 operator-observability replay slice passed service `/logs`,
+    `/debug/report`, VM list profile-status, metrics security-status
+    projection, CLI `status`, CLI structured log formatting, and typed log
+    envelope serde gates. This proves profile state, security-engine health,
+    resolved Security Events, process decisions, enforcement/detection status,
+    and log/debug breadcrumbs are inspectable through operator surfaces without
+    raw SQL.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
