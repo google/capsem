@@ -92,6 +92,7 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mdetection backtest\x1b[0m  Backtest one detection rule against events
   \x1b[32;1mdetection hunt\x1b[0m      Hunt detection rules against events
   \x1b[32;1mdetection hunt-session\x1b[0m Backtest one detection rule against a session
+  \x1b[32;1mconfirm list\x1b[0m       Show ask/confirm resolver state
 
 \x1b[36;1;4mProfiles:\x1b[0m
   \x1b[32;1mprofile list\x1b[0m      List typed Profile V2 profiles
@@ -149,6 +150,10 @@ enum Commands {
     /// Manage runtime detection rules
     #[command(subcommand)]
     Detection(DetectionCommands),
+
+    /// Manage ask/confirm prompts
+    #[command(subcommand)]
+    Confirm(ConfirmCommands),
 
     /// Manage Profile V2 catalogs and installed revisions
     #[command(subcommand)]
@@ -704,6 +709,16 @@ enum DetectionCommands {
     Delete {
         /// Runtime rule id
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfirmCommands {
+    /// Show pending ask/confirm prompts or the disabled resolver state
+    List {
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1656,6 +1671,18 @@ fn skill_matches(result: &serde_json::Value, id: &str) -> Vec<serde_json::Value>
         .filter(|skill| skill["id"].as_str() == Some(id))
         .cloned()
         .collect()
+}
+
+fn format_confirm_list_summary(result: &serde_json::Value) -> String {
+    let resolve_available = result["resolve_available"].as_bool().unwrap_or(false);
+    let pending_count = result["pending_count"].as_u64().unwrap_or(0);
+    if !resolve_available {
+        return format!(
+            "Ask/confirm resolver unavailable; owner={} pending={pending_count}",
+            result["resolve_owner"].as_str().unwrap_or("-")
+        );
+    }
+    format!("Pending confirmations: {pending_count}")
 }
 
 fn print_session_info(info: &SessionInfo) {
@@ -3356,6 +3383,15 @@ async fn main() -> Result<()> {
                 result["id"].as_str().unwrap_or(id)
             );
         }
+        Commands::Confirm(ConfirmCommands::List { json }) => {
+            let resp: ApiResponse<serde_json::Value> = client.get("/confirm/pending").await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("{}", format_confirm_list_summary(&result));
+            }
+        }
         Commands::Profile(ProfileCommands::List { json }) => {
             let resp: ApiResponse<serde_json::Value> = client.get("/profiles").await?;
             let result = resp.into_result()?;
@@ -5055,6 +5091,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_confirm_list() {
+        let cli = Cli::parse_from(["capsem", "confirm", "list", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Confirm(ConfirmCommands::List { json }) => assert!(json),
+            _ => panic!("expected confirm list"),
+        }
+    }
+
+    #[test]
     fn format_runtime_hunt_summary_includes_event_and_evidence_rows() {
         let summary = format_runtime_hunt_summary(&serde_json::json!({
             "total_matches": 1,
@@ -5097,6 +5142,18 @@ mod tests {
 
         assert!(summary.contains("Enforcement backtest matched 1 event(s)"));
         assert!(summary.contains("(truncated)"));
+    }
+
+    #[test]
+    fn confirm_summary_renders_disabled_resolver_state() {
+        let summary = format_confirm_list_summary(&serde_json::json!({
+            "pending_count": 0,
+            "resolve_available": false,
+            "resolve_owner": "S15-confirm-ux"
+        }));
+        assert!(summary.contains("unavailable"));
+        assert!(summary.contains("S15-confirm-ux"));
+        assert!(summary.contains("pending=0"));
     }
 
     #[test]

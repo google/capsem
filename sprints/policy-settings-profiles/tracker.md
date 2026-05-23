@@ -2502,6 +2502,14 @@ a valid claim -- mark it `[ ]` instead.
     Verification: targeted `cargo test -p capsem parse_profile_fork_delete`,
     `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt, and
     `git diff --check` passed.
+    Confirm CLI slice wired `capsem confirm list` to `/confirm/pending` and
+    renders the S15-disabled resolver state clearly. Accept/deny/promote verbs
+    remain deferred to S15 because shipping them now would imply a resolver that
+    does not exist. Verification: targeted `cargo test -p capsem
+    parse_confirm_list`, targeted `cargo test -p capsem
+    confirm_summary_renders_disabled_resolver_state`, `cargo test -p capsem`,
+    `cargo build -p capsem`, touched-file rustfmt, and `git diff --check`
+    passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

@@ -98,6 +98,10 @@ blocked.
   If the bedrock release disables user-facing `ask`, the CLI must still render
   the disabled/unavailable state clearly and tests must prove ask-enabled rules
   cannot silently behave as allow.
+- Bedrock release slice landed `capsem confirm list` only. It calls
+  `/confirm/pending` and renders the disabled resolver state with
+  `resolve_owner=S15-confirm-ux`; accept/deny/promote verbs stay in S15 and
+  must not be exposed until real ask resolution exists.
 - Keep command shapes consistent.
 - Add parser, integration, error, and smoke tests.
 

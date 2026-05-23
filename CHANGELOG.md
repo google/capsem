@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before reporting macOS Docker-backed asset builds as blocked.
 
 ### Added
+- Added `capsem confirm list` to expose the current disabled S15 ask/confirm
+  resolver state through the CLI.
 - Added typed Profile V2 mutation CLI coverage for `capsem profile fork` and
   `capsem profile delete`.
 - Added read-only Profile V2 CLI inspection with `capsem profile list`,
