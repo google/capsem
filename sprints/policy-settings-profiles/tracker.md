@@ -2495,6 +2495,13 @@ a valid claim -- mark it `[ ]` instead.
     capsem profile_list_show_and_resolve_summaries_use_typed_fields`,
     `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt,
     and `git diff --check` passed.
+    Next mutating profile CLI slice wired `capsem profile fork <source> --id
+    <new-id> --name <name>` and `capsem profile delete <id>` to the typed
+    service routes. This intentionally avoids full-profile raw JSON create/
+    update until the formal profile schema/admin tooling path is available.
+    Verification: targeted `cargo test -p capsem parse_profile_fork_delete`,
+    `cargo test -p capsem`, `cargo build -p capsem`, touched-file rustfmt, and
+    `git diff --check` passed.
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a

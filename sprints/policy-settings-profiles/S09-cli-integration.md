@@ -41,6 +41,12 @@ blocked.
   verbs are `create`, `fork`, body `update`, and `delete`; the existing
   revision lifecycle `profile update` command needs an explicit naming
   decision before body update lands.
+- Latest mutating profile CLI slice landed `capsem profile fork <source>
+  --id <new-id> --name <name>` and `capsem profile delete <id>` over the typed
+  service routes. `fork` uses the service's schema-aware profile fork path
+  instead of asking operators to hand-author a full profile document. Remaining
+  mutating verbs are full-profile `create` and body `update`; both need the
+  formal profile schema/admin tooling path rather than raw JSON shortcuts.
 - Add richer status output using the canonical `ProfileRevisionStatus` enum values:
   `active`, `deprecated`, and `revoked`. A missing revision is rendered as
   absent/unknown, not as `removed`.

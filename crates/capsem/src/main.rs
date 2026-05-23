@@ -97,6 +97,8 @@ const GROUPED_HELP: &str = "\
   \x1b[32;1mprofile list\x1b[0m      List typed Profile V2 profiles
   \x1b[32;1mprofile show\x1b[0m      Show one typed Profile V2 profile
   \x1b[32;1mprofile resolve\x1b[0m   Resolve one profile to effective settings
+  \x1b[32;1mprofile fork\x1b[0m      Fork a profile into a user profile
+  \x1b[32;1mprofile delete\x1b[0m    Delete a user Profile V2 profile
   \x1b[32;1mprofile reconcile-catalog\x1b[0m Apply a signed profile catalog manifest
   \x1b[32;1mskills list\x1b[0m       List resolved Profile V2 skills
   \x1b[32;1mskills add\x1b[0m        Add a direct Profile V2 skill
@@ -724,6 +726,28 @@ enum ProfileCommands {
     /// Resolve one profile to VM-effective settings
     Resolve {
         /// Profile id to resolve
+        profile_id: String,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Fork a profile into a user-owned Profile V2 profile
+    Fork {
+        /// Source profile id
+        source_profile_id: String,
+        /// New profile id
+        #[arg(long)]
+        id: String,
+        /// New profile display name
+        #[arg(long)]
+        name: String,
+        /// Print the raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a user-owned Profile V2 profile
+    Delete {
+        /// Profile id to delete
         profile_id: String,
         /// Print the raw JSON response
         #[arg(long)]
@@ -3361,6 +3385,38 @@ async fn main() -> Result<()> {
                 println!("{}", format_profile_resolve_summary(&result));
             }
         }
+        Commands::Profile(ProfileCommands::Fork {
+            source_profile_id,
+            id,
+            name,
+            json,
+        }) => {
+            let path = format!("/profiles/{}/fork", urlencoding::encode(source_profile_id));
+            let body = serde_json::json!({
+                "id": id,
+                "name": name,
+            });
+            let resp: ApiResponse<serde_json::Value> = client.post(&path, &body).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                print!("{}", format_profile_record_summary(&result));
+            }
+        }
+        Commands::Profile(ProfileCommands::Delete { profile_id, json }) => {
+            let path = format!("/profiles/{}", urlencoding::encode(profile_id));
+            let resp: ApiResponse<serde_json::Value> = client.delete(&path).await?;
+            let result = resp.into_result()?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!(
+                    "Profile deleted: {}",
+                    result["deleted"].as_str().unwrap_or(profile_id)
+                );
+            }
+        }
         Commands::Profile(ProfileCommands::ReconcileCatalog {
             manifest,
             manifest_url,
@@ -4516,6 +4572,44 @@ mod tests {
                 assert!(!json);
             }
             _ => panic!("expected profile resolve"),
+        }
+    }
+
+    #[test]
+    fn parse_profile_fork_delete() {
+        let cli = Cli::parse_from([
+            "capsem",
+            "profile",
+            "fork",
+            "coding",
+            "--id",
+            "my-coding",
+            "--name",
+            "My Coding",
+            "--json",
+        ]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Fork {
+                source_profile_id,
+                id,
+                name,
+                json,
+            }) => {
+                assert_eq!(source_profile_id, "coding");
+                assert_eq!(id, "my-coding");
+                assert_eq!(name, "My Coding");
+                assert!(json);
+            }
+            _ => panic!("expected profile fork"),
+        }
+
+        let cli = Cli::parse_from(["capsem", "profile", "delete", "my-coding", "--json"]);
+        match cli.command.unwrap() {
+            Commands::Profile(ProfileCommands::Delete { profile_id, json }) => {
+                assert_eq!(profile_id, "my-coding");
+                assert!(json);
+            }
+            _ => panic!("expected profile delete"),
         }
     }
 
