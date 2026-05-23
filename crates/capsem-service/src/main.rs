@@ -8102,13 +8102,13 @@ fn session_security_event_from_row(
                     .or_else(|| {
                         command
                             .as_deref()
-                            .and_then(capsem_core::process_security_events::classify_command_class)
+                            .and_then(capsem_process_engine::classify_command_class)
                             .map(str::to_owned)
                     })
                     .or_else(|| {
                         process_name
                             .as_deref()
-                            .and_then(capsem_core::process_security_events::classify_command_class)
+                            .and_then(capsem_process_engine::classify_command_class)
                             .map(str::to_owned)
                     });
             Ok(Some(seceng::SecurityEvent::process(

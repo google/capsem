@@ -240,8 +240,7 @@ async fn blocked_exec_resolves_job_without_guest_dispatch_state() {
     }
 }
 
-fn blocked_process_exec_evaluation(
-) -> capsem_core::process_security_events::ProcessExecSecurityEvaluation {
+fn blocked_process_exec_evaluation() -> capsem_process_engine::ProcessExecSecurityEvaluation {
     use capsem_logger::ExecEvent;
     use capsem_security_engine::{
         CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
@@ -272,7 +271,7 @@ fn blocked_process_exec_evaluation(
     ));
     let engine = std::sync::Mutex::new(engine);
 
-    capsem_core::process_security_events::evaluate_exec_security_event(&event, Some(&engine))
+    capsem_process_engine::evaluate_exec_security_event(&event, Some(&engine))
 }
 
 #[test]

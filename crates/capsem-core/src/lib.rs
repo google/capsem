@@ -13,7 +13,6 @@ pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
 pub mod paths;
-pub mod process_security_events;
 pub mod profile_manifest;
 pub mod profile_payload_schema;
 pub mod security_packs;

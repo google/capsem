@@ -47,6 +47,11 @@ The latest structural slice extracted file activity normalization into the
 first `capsem-file-engine` crate. Current file monitor and MCP file restore/
 delete producers now call that crate directly, while the old
 `capsem-core::file_security_events` module is removed.
+The following structural slice extracted process exec normalization and inline
+evaluation into the first `capsem-process-engine` crate. `capsem-process` and
+session reconstruction now call that crate directly, while MITM re-exports the
+same runtime Security Engine trait for existing runtime-rule wiring and the old
+`capsem-core::process_security_events` module is removed.
 
 The next required runtime slice is canonical policy context injection. The
 shared `capsem-proto` policy context schema now defines the typed object model,

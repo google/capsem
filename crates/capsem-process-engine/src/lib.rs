@@ -1,4 +1,9 @@
-//! Canonical Security Engine projection for process activity rows.
+//! Process Engine security-event projection and inline exec evaluation.
+//!
+//! This crate owns process/audit event normalization for the bedrock engine
+//! split. Process mechanics stay outside the Security Engine; this crate
+//! produces typed events and applies typed Security Engine decisions to
+//! process exec requests.
 
 use std::path::Path;
 
@@ -10,7 +15,27 @@ use capsem_security_engine::{
     StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
-use crate::net::mitm_proxy::RuntimeSecurityEngine;
+pub trait RuntimeSecurityEngine: Send + Sync {
+    fn evaluate(
+        &self,
+        event: SecurityEvent,
+    ) -> Result<capsem_security_engine::SecurityResult, SecurityEngineError>;
+}
+
+impl RuntimeSecurityEngine for std::sync::Mutex<capsem_security_engine::SecurityEngine> {
+    fn evaluate(
+        &self,
+        event: SecurityEvent,
+    ) -> Result<capsem_security_engine::SecurityResult, SecurityEngineError> {
+        let mut engine = self
+            .lock()
+            .map_err(|error| SecurityEngineError::PhaseFailed {
+                phase: capsem_security_engine::SecurityEnginePhase::Enforcement,
+                message: format!("runtime security engine lock poisoned: {error}"),
+            })?;
+        engine.evaluate(event)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessExecSecurityEvaluation {
@@ -86,14 +111,14 @@ fn build_exec_security_event(event: &ExecEvent) -> SecurityEvent {
             trace_id: event.trace_id.clone(),
             span_id: None,
             timestamp_unix_ms,
-            vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-            session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-            profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-            profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
+            vm_id: non_empty_env("CAPSEM_VM_ID"),
+            session_id: non_empty_env("CAPSEM_SESSION_ID"),
+            profile_id: non_empty_env("CAPSEM_PROFILE_ID"),
+            profile_revision: non_empty_env("CAPSEM_PROFILE_REVISION"),
             profile_pack_ids: Vec::new(),
             enforcement_packs: Vec::new(),
             detection_packs: Vec::new(),
-            user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
+            user_id: non_empty_env("CAPSEM_USER_ID"),
             process_id: None,
             parent_process_id: None,
             exec_id: Some(event.exec_id.to_string()),

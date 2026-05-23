@@ -440,10 +440,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         None
                     };
                     let evaluation =
-                        capsem_core::process_security_events::evaluate_exec_security_event(
-                            &event,
-                            runtime_engine,
-                        );
+                        capsem_process_engine::evaluate_exec_security_event(&event, runtime_engine);
                     log_process_exec_security_decision(&evaluation.resolved_event);
                     db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(event));
                     db_for_cmd.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(

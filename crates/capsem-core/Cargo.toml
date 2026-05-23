@@ -23,6 +23,7 @@ rmp-serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
 capsem-file-engine = { path = "../capsem-file-engine" }
 capsem-logger = { path = "../capsem-logger" }
+capsem-process-engine = { path = "../capsem-process-engine" }
 capsem-security-engine = { path = "../capsem-security-engine" }
 libc = "0.2"
 blake3 = "1"

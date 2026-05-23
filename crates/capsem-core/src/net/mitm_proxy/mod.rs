@@ -51,6 +51,7 @@ use protocol::Protocol;
 use telemetry_hook::{TelemetryIdentityContext, TelemetryRequestContext};
 use util::{format_headers, parse_http_host_target, split_path_query};
 
+pub use capsem_process_engine::RuntimeSecurityEngine;
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts};
 pub use pipeline_factory::{make_default_pipeline, make_production_pipeline};
 use response::response_uses_gzip_content_encoding;
@@ -96,10 +97,6 @@ pub struct MitmProxyConfig {
     pub mcp_endpoint: Option<Arc<McpEndpointState>>,
 }
 
-pub trait RuntimeSecurityEngine: Send + Sync {
-    fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError>;
-}
-
 #[derive(Default)]
 pub struct RuntimeSecurityEngineSlot {
     inner: RwLock<Option<Arc<dyn RuntimeSecurityEngine>>>,
@@ -140,18 +137,6 @@ impl RuntimeSecurityEngine for RuntimeSecurityEngineSlot {
             .ok_or_else(|| SecurityEngineError::PhaseFailed {
                 phase: capsem_security_engine::SecurityEnginePhase::Enforcement,
                 message: "runtime security engine is not installed".into(),
-            })?;
-        engine.evaluate(event)
-    }
-}
-
-impl RuntimeSecurityEngine for std::sync::Mutex<capsem_security_engine::SecurityEngine> {
-    fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError> {
-        let mut engine = self
-            .lock()
-            .map_err(|error| SecurityEngineError::PhaseFailed {
-                phase: capsem_security_engine::SecurityEnginePhase::Enforcement,
-                message: format!("runtime security engine lock poisoned: {error}"),
             })?;
         engine.evaluate(event)
     }

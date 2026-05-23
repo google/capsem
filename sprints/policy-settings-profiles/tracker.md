@@ -1813,6 +1813,28 @@ a valid claim -- mark it `[ ]` instead.
     extraction, Network Engine crate/module split, visible UI screens/editors,
     interactive confirm prompt UX in S15, S12 OTel/prometheus export, S08d
     performance proof, and final release gates.
+    Eighty-second structural Process Engine slice extracted process exec
+    normalization and inline evaluation from `capsem-core` into the new
+    `capsem-process-engine` crate. The crate owns deterministic `process.exec`
+    event projection, command classification, fail-closed engine-error
+    resolution, ask-default-deny behavior, and process denial messages.
+    `capsem-process` now calls the Process Engine crate directly before guest
+    exec dispatch, service session reconstruction uses the same command
+    classifier, MITM re-exports the shared runtime Security Engine trait for
+    existing runtime-rule wiring, and the old
+    `capsem-core::process_security_events` module/tests were removed instead
+    of left as a second authority. Verification: `cargo test -p
+    capsem-process-engine` **5** passed; `cargo check -p capsem-core`,
+    `cargo check -p capsem-process`, and `cargo check -p capsem-service`
+    passed; focused process/log tests
+    `blocked_exec_resolves_job_without_guest_dispatch_state`,
+    `process_exec_security_log_record_carries_attribution_rule_and_reason`,
+    and `process_exec_security_decision_tracing_line_serializes_debug_fields`
+    passed; and service session hunt reconstruction
+    `handle_session_detection_hunt_reconstructs_core_projection_families`
+    passed. Still missing after this slice: Network Engine crate/module split,
+    visible UI screens/editors, interactive confirm prompt UX in S15, S12
+    OTel/prometheus export, S08d performance proof, and final release gates.
 22. [x] [S08c - Rule corpus, backtest, and admin parity](S08c-rule-corpus-admin-parity.md)
     -- inserted during the 2026-05-21 rule-runtime regroup. Build the shared
     enforcement/detection/event corpus, offline `capsem-admin` backtest parity,

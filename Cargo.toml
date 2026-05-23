@@ -8,6 +8,7 @@ members = [
     "crates/capsem-logger",
     "crates/capsem-security-engine",
     "crates/capsem-file-engine",
+    "crates/capsem-process-engine",
     "crates/capsem-process",
     "crates/capsem-service",
     "crates/capsem",
