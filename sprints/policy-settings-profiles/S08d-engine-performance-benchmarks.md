@@ -218,6 +218,16 @@ clearly not numerical and matches the sprint tracker.
   `benchmarks/security-engine/data_1.1.1778860037_arm64_process_enforcement.json`.
   The latest local run measured eight blocked exec decisions at 9.438ms mean
   and 9.801ms max against a conservative 750ms gross-regression gate.
+- Slice 4 extended `crates/capsem-security-engine/benches/security_engine_cel.rs`
+  beyond enforcement CEL into detection evaluation, backtest evidence dedupe,
+  and runtime registry operations. The refreshed
+  `benchmarks/security-engine/data_1.1.1778860037_arm64_cel_microbench.json`
+  now records single-rule detection at 23.247us, 100-rule last-match detection
+  at 1.292ms, 100-row evidence dedupe at 19.417us, 1,000-row/100-unique dedupe
+  at 167.09us, single-rule registry install/update at 145ns, and 100-rule
+  enabled-rule projection at 7.453us. Remaining microbench debt: explicit
+  Detection IR/Sigma lowering cost and atomic compiled-plan swap cost once the
+  service-side swap path is factored into a stable benchmarkable boundary.
 
 ## Coverage Ledger
 
@@ -238,6 +248,7 @@ clearly not numerical and matches the sprint tracker.
 - Performance: adapted CEL rig numbers, Capsem canonical-root microbench
   numbers, p50/p95/p99, throughput, rule-count scaling, cold/warm compiled plan
   behavior, context/materialization cost, allocations where measurable,
+  detection evaluation, backtest evidence dedupe, runtime registry projection,
   first process block latency artifact, concurrency scaling, backtest/hunt scan
   rates.
 - Missing/deferred: exact threshold gates are chosen after the first stable

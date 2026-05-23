@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measures repeated blocked exec decisions, verifies runtime match counters,
   `session.db` resolved-event rows, and `logs` attribution, and archives the
   result under `benchmarks/security-engine/`.
+- Expanded the Security Engine Criterion benchmark artifact with runtime
+  detection evaluation, backtest evidence deduplication, and runtime rule
+  registry operation timings.
 - Added the internal "Ledger of the Realm" engineering-quality reference and
   linked the active S08b/canonical-AI-evidence sprint docs to its Lannister,
   Winterfell, Baratheon, and Iron-Bank standards.

@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
 use capsem_security_engine::{
-    policy_context_from_event, AiAttributionScope, AiOriginKind, CelEnforcementEvaluator,
-    CelEnforcementRule, Enforceability, EnforcementEvaluator, HttpBodySecuritySubject,
-    HttpSecuritySubject, RedactionState, SecurityDecisionAction, SecurityEvent,
-    SecurityEventCommon, SecurityEventSubject, SourceEngine,
+    dedupe_backtest_matches, policy_context_from_event, AiAttributionScope, AiOriginKind,
+    BacktestEventRef, BacktestMatchRow, BacktestOutcome, CelDetectionEvaluator, CelDetectionRule,
+    CelEnforcementEvaluator, CelEnforcementRule, Confidence, DetectionEvaluator, Enforceability,
+    EnforcementEvaluator, HttpBodySecuritySubject, HttpSecuritySubject, MatchedField,
+    RedactionState, RuleOrigin, RuleRegistryError, RuleScope, RuntimeRuleDefinition,
+    RuntimeRuleMetadata, RuntimeRuleRecord, RuntimeRuleRegistry, SecurityDecisionAction,
+    SecurityEvent, SecurityEventCommon, SecurityEventSubject, Severity, SourceEngine,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
@@ -92,6 +95,40 @@ fn rule(id: impl Into<String>, condition: impl Into<String>) -> CelEnforcementRu
     }
 }
 
+fn detection_rule(id: impl Into<String>, condition: impl Into<String>) -> CelDetectionRule {
+    CelDetectionRule {
+        id: id.into(),
+        pack_id: "bench.detection".into(),
+        sigma_id: Some("sigma-bench".into()),
+        title: "Benchmark detection".into(),
+        condition: condition.into(),
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        tags: vec!["benchmark".into(), "http".into()],
+    }
+}
+
+fn registry_enforcement_record(
+    id: impl Into<String>,
+    condition: impl Into<String>,
+) -> RuntimeRuleRecord {
+    RuntimeRuleRecord {
+        metadata: RuntimeRuleMetadata {
+            id: id.into(),
+            pack_id: Some("bench.registry".into()),
+            scope: RuleScope::Runtime,
+            origin: RuleOrigin::Runtime,
+            priority: 100,
+        },
+        definition: RuntimeRuleDefinition::Enforcement {
+            decision: SecurityDecisionAction::Block,
+            reason: Some("benchmark registry update".into()),
+        },
+        source: condition.into(),
+        enabled: true,
+    }
+}
+
 fn evaluator(condition: &str) -> CelEnforcementEvaluator {
     CelEnforcementEvaluator::compile(vec![rule("bench-rule", condition)]).unwrap()
 }
@@ -103,6 +140,47 @@ fn last_match_evaluator(rule_count: usize) -> CelEnforcementEvaluator {
     }
     rules.push(rule("bench-last-match", CANONICAL_HTTP_POLICY));
     CelEnforcementEvaluator::compile(rules).unwrap()
+}
+
+fn detection_evaluator(condition: &str) -> CelDetectionEvaluator {
+    CelDetectionEvaluator::compile(vec![detection_rule("bench-detection", condition)]).unwrap()
+}
+
+fn last_match_detection_evaluator(rule_count: usize) -> CelDetectionEvaluator {
+    let mut rules = Vec::with_capacity(rule_count);
+    for index in 0..rule_count.saturating_sub(1) {
+        rules.push(detection_rule(
+            format!("bench-detect-no-match-{index}"),
+            "false",
+        ));
+    }
+    rules.push(detection_rule(
+        "bench-detect-last-match",
+        CANONICAL_HTTP_POLICY,
+    ));
+    CelDetectionEvaluator::compile(rules).unwrap()
+}
+
+fn backtest_rows(row_count: usize, unique_signatures: usize) -> Vec<BacktestMatchRow> {
+    (0..row_count)
+        .map(|index| BacktestMatchRow {
+            event_ref: BacktestEventRef {
+                corpus: "criterion".into(),
+                session_id: Some("bench-session".into()),
+                event_id: format!("evt-backtest-{index}"),
+                sequence_no: Some(index as u64),
+                timestamp_unix_ms: 1_789_003_001 + index as u64,
+            },
+            rule_id: "bench-detect".into(),
+            pack_id: "bench.pack".into(),
+            evidence_signature: format!("evidence-{}", index % unique_signatures),
+            matched_fields: vec![MatchedField {
+                path: "http.request.host".into(),
+                value: serde_json::json!("googleapis.com"),
+            }],
+            outcome: BacktestOutcome::Matched,
+        })
+        .collect()
 }
 
 fn native_http_policy(event: &SecurityEvent) -> bool {
@@ -180,6 +258,88 @@ fn bench_evaluate(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_detection(c: &mut Criterion) {
+    let event = http_event();
+    let mut group = c.benchmark_group("security_engine_detection_evaluate");
+
+    let mut single_rule = detection_evaluator(CANONICAL_HTTP_POLICY);
+    group.bench_function("canonical_http_policy_single_rule", |b| {
+        b.iter(|| {
+            let findings = single_rule.evaluate(black_box(&event)).unwrap();
+            black_box(findings.len())
+        });
+    });
+
+    let mut hundred_rules = last_match_detection_evaluator(100);
+    group.bench_function("canonical_http_policy_last_match_100_rules", |b| {
+        b.iter(|| {
+            let findings = hundred_rules.evaluate(black_box(&event)).unwrap();
+            black_box(findings.len())
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_backtest_dedupe(c: &mut Criterion) {
+    let rows_100 = backtest_rows(100, 100);
+    let rows_1000 = backtest_rows(1_000, 100);
+    let mut group = c.benchmark_group("security_engine_backtest_dedupe");
+
+    group.bench_function("dedupe_100_unique_limit_100", |b| {
+        b.iter(|| {
+            let result = dedupe_backtest_matches(black_box(rows_100.clone()), 100);
+            black_box(result.rows.len())
+        });
+    });
+
+    group.bench_function("dedupe_1000_rows_100_unique_limit_100", |b| {
+        b.iter(|| {
+            let result = dedupe_backtest_matches(black_box(rows_1000.clone()), 100);
+            black_box(result.rows.len())
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_runtime_registry(c: &mut Criterion) {
+    let mut group = c.benchmark_group("security_engine_runtime_registry");
+
+    group.bench_function("add_or_update_single_rule", |b| {
+        let mut generation = 0_u64;
+        b.iter(|| {
+            generation += 1;
+            let mut registry = RuntimeRuleRegistry::default();
+            registry
+                .add_or_update(
+                    registry_enforcement_record(
+                        format!("bench-runtime-{generation}"),
+                        CANONICAL_HTTP_POLICY,
+                    ),
+                    |_| Ok::<_, RuleRegistryError>("compiled-plan".into()),
+                )
+                .unwrap();
+            black_box(registry.list().len())
+        });
+    });
+
+    group.bench_function("enabled_enforcement_rules_100_rules", |b| {
+        let mut registry = RuntimeRuleRegistry::default();
+        for index in 0..100 {
+            registry
+                .add_or_update(
+                    registry_enforcement_record(format!("bench-runtime-{index:03}"), "false"),
+                    |_| Ok::<_, RuleRegistryError>("compiled-plan".into()),
+                )
+                .unwrap();
+        }
+        b.iter(|| black_box(registry.enabled_enforcement_rules().len()));
+    });
+
+    group.finish();
+}
+
 fn bench_materialization(c: &mut Criterion) {
     let event = http_event();
     let mut group = c.benchmark_group("security_engine_policy_context");
@@ -206,6 +366,9 @@ criterion_group!(
     benches,
     bench_compile,
     bench_evaluate,
+    bench_detection,
+    bench_backtest_dedupe,
+    bench_runtime_registry,
     bench_materialization,
     bench_native_lookup
 );

@@ -10,10 +10,11 @@ Artifacts currently cover two lanes:
   events through the real service/process IPC path and verify session DB,
   runtime counters, and log projection.
 
-The Criterion numbers explain evaluator, policy-context materialization,
-rule-count, and native lookup costs across commits. The serial pytest numbers
-are the first product-path latency artifacts and are appropriate for
-engineering regression tracking when quoted with their workload and host.
+The Criterion numbers explain evaluator, detection, backtest dedupe, runtime
+registry, policy-context materialization, rule-count, and native lookup costs
+across commits. The serial pytest numbers are the first product-path latency
+artifacts and are appropriate for engineering regression tracking when quoted
+with their workload and host.
 
 ## Run
 

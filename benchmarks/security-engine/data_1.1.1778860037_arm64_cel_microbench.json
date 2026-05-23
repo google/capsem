@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "criterion_cel_microbench",
   "capsem_version": "1.1.1778860037",
-  "source_commit": "e2f6d4c5",
-  "recorded_at": "2026-05-23T13:16:17Z",
+  "source_commit": "365065c2",
+  "recorded_at": "2026-05-23T13:31:56Z",
   "host": {
     "os": "macOS",
     "kernel": "Darwin 25.5.0",
@@ -21,7 +21,7 @@
     "vm_originated": false,
     "notes": [
       "Host-side microbenchmark only.",
-      "Measures canonical policy-context CEL paths and native lookup comparators.",
+      "Measures canonical policy-context CEL paths, detection evaluation, backtest dedupe, runtime registry operations, and native lookup comparators.",
       "Does not include guest transport, service IPC, Security Engine emitter, or session.db journal write latency."
     ]
   },
@@ -29,67 +29,97 @@
     {
       "group": "security_engine_cel_compile",
       "name": "host_contains_google",
-      "slope_ns": 8702.771460337706
+      "slope_ns": 8792.8
     },
     {
       "group": "security_engine_cel_compile",
       "name": "header_authorization_exists",
-      "slope_ns": 8532.555258594988
+      "slope_ns": 8631.5
     },
     {
       "group": "security_engine_cel_compile",
       "name": "canonical_http_policy",
-      "slope_ns": 44023.01148290232
+      "slope_ns": 40137.0
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "host_contains_google",
-      "slope_ns": 14564.451249897991
+      "slope_ns": 14258.0
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "url_contains_google",
-      "slope_ns": 14410.383959910805
+      "slope_ns": 14370.0
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "path_starts_admin",
-      "slope_ns": 14858.913713957874
+      "slope_ns": 14337.0
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "header_authorization_exists",
-      "slope_ns": 16964.36918082853
+      "slope_ns": 16117.0
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "body_contains_secret",
-      "slope_ns": 15062.534161966876
+      "slope_ns": 14860.0
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "canonical_http_policy",
-      "slope_ns": 23672.70479976356
+      "slope_ns": 22858.0
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "canonical_http_policy_last_match_100_rules",
-      "slope_ns": 1290088.9994561845
+      "slope_ns": 1272400.0
+    },
+    {
+      "group": "security_engine_detection_evaluate",
+      "name": "canonical_http_policy_single_rule",
+      "slope_ns": 23247.0
+    },
+    {
+      "group": "security_engine_detection_evaluate",
+      "name": "canonical_http_policy_last_match_100_rules",
+      "slope_ns": 1291600.0
+    },
+    {
+      "group": "security_engine_backtest_dedupe",
+      "name": "dedupe_100_unique_limit_100",
+      "slope_ns": 19417.0
+    },
+    {
+      "group": "security_engine_backtest_dedupe",
+      "name": "dedupe_1000_rows_100_unique_limit_100",
+      "slope_ns": 167090.0
+    },
+    {
+      "group": "security_engine_runtime_registry",
+      "name": "add_or_update_single_rule",
+      "slope_ns": 145.07
+    },
+    {
+      "group": "security_engine_runtime_registry",
+      "name": "enabled_enforcement_rules_100_rules",
+      "slope_ns": 7453.3
     },
     {
       "group": "security_engine_policy_context",
       "name": "project_security_event_to_policy_context",
-      "slope_ns": 543.3238426798242
+      "slope_ns": 534.66
     },
     {
       "group": "security_engine_policy_context",
       "name": "project_and_serialize_policy_context",
-      "slope_ns": 2599.182549853058
+      "slope_ns": 2613.7
     },
     {
       "group": "security_engine_native_lookup",
       "name": "canonical_http_policy",
-      "slope_ns": 12.030648056893162
+      "slope_ns": 12.384
     }
   ]
 }

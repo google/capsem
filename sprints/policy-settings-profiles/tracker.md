@@ -2078,6 +2078,18 @@ a valid claim -- mark it `[ ]` instead.
     conservative 750ms gross-regression gate. Still missing in S08d: HTTP/DNS/
     MCP/model/file VM-originated benchmarks, detection/dedup/registry
     microbenches, concurrency cases, and broader release gates.
+    Fourth S08d microbench slice extended
+    `crates/capsem-security-engine/benches/security_engine_cel.rs` to cover
+    detection evaluation, backtest evidence dedupe, and runtime registry
+    operations, then refreshed
+    `benchmarks/security-engine/data_1.1.1778860037_arm64_cel_microbench.json`.
+    Latest local results include 23.247us single-rule detection, 1.292ms
+    100-rule last-match detection, 19.417us dedupe over 100 unique rows,
+    167.09us dedupe over 1,000 rows/100 unique signatures, 145ns single-rule
+    registry install/update, and 7.453us projection of 100 enabled rules.
+    Still missing in S08d: Detection IR/Sigma lowering and atomic plan-swap
+    microbench boundaries, HTTP/DNS/MCP/model/file VM-originated benchmarks,
+    concurrency cases, and broader release gates.
 24. [ ] [S09 - CLI integration](S09-cli-integration.md)
 25. [ ] [S10 - Credential brokerage](S10-credential-brokerage.md)
 26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)

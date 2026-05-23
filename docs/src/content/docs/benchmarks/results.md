@@ -178,13 +178,19 @@ latency claim.
 
 | Benchmark | Slope |
 |-----------|-------|
-| Compile `http.request.host.contains("google")` | 8.7us |
-| Compile full HTTP policy | 44.0us |
-| Evaluate `http.request.host.contains("google")` | 14.6us |
-| Evaluate `http.request.header("authorization").exists()` | 17.0us |
-| Evaluate full HTTP policy | 23.7us |
-| Evaluate full HTTP policy as last match across 100 rules | 1.29ms |
-| Project `SecurityEvent` to `PolicyContext` | 543ns |
+| Compile `http.request.host.contains("google")` | 8.8us |
+| Compile full HTTP policy | 40.1us |
+| Evaluate `http.request.host.contains("google")` | 14.3us |
+| Evaluate `http.request.header("authorization").exists()` | 16.1us |
+| Evaluate full HTTP policy | 22.9us |
+| Evaluate full HTTP policy as last match across 100 rules | 1.27ms |
+| Detection finding for full HTTP policy | 23.2us |
+| Detection finding as last match across 100 rules | 1.29ms |
+| Dedupe 100 backtest rows / 100 unique signatures | 19.4us |
+| Dedupe 1,000 backtest rows / 100 unique signatures | 167.1us |
+| Runtime registry install/update of one rule | 145ns |
+| Runtime registry projection of 100 enabled rules | 7.5us |
+| Project `SecurityEvent` to `PolicyContext` | 535ns |
 | Project and serialize `PolicyContext` | 2.6us |
 | Native Rust lookup for equivalent HTTP policy | 12ns |
 
