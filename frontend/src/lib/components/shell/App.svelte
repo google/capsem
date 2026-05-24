@@ -38,11 +38,38 @@
     if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
       e.preventDefault();
       try {
-        const { id, name } = await vmStore.provision({ persistent: false });
+        await vmStore.refresh();
+        if (vmStore.serviceStatus !== 'running' || vmStore.assetHealth?.ready !== true) {
+          openDashboard();
+          vmStore.showAssetReadinessModal = true;
+          return;
+        }
+        const { id, name } = await vmStore.provision({
+          persistent: false,
+          ...profileProvisionFields(),
+        });
         tabStore.openVM(id, name);
       } catch {
         // Error handled by vmStore.error
       }
+    }
+  }
+
+  function profileProvisionFields(): { profile_id?: string; profile_revision?: string } {
+    const profileId = vmStore.assetHealth?.profile_id;
+    if (!profileId) return {};
+    return {
+      profile_id: profileId,
+      ...(vmStore.assetHealth?.profile_revision ? { profile_revision: vmStore.assetHealth.profile_revision } : {}),
+    };
+  }
+
+  function openDashboard(): void {
+    const existing = tabStore.tabs.find(tab => tab.view === 'new-tab' && !tab.vmId);
+    if (existing) {
+      tabStore.activate(existing.id);
+    } else {
+      tabStore.add('new-tab', 'Dashboard');
     }
   }
 

@@ -7,6 +7,7 @@
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost, formatBytes } from '../../format';
   import Modal from './Modal.svelte';
+  import AssetReadinessPanel from './AssetReadinessPanel.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
@@ -158,80 +159,11 @@
 
   let serviceReady = $derived(vmStore.serviceStatus === 'running');
   let assetsReady = $derived(vmStore.assetHealth?.ready === true);
-  let canCreateSessions = $derived(serviceReady && assetsReady);
-  let startupBlocked = $derived(!initialLoading && !canCreateSessions);
+  let createButtonsDisabled = $derived(creatingTemp || initialLoading || !serviceReady);
+  let startupBlocked = $derived(!initialLoading && (!serviceReady || !assetsReady));
   let readyProfileAssets = $derived(
     vmStore.assetHealth?.ready === true && vmStore.assetHealth.profile_id ? vmStore.assetHealth : null,
   );
-  let assetStatus = $derived.by(() => {
-    if (!serviceReady) {
-      return {
-        title: 'Capsem service is offline',
-        message: 'Start or recover the service before creating sessions.',
-        details: [] as string[],
-        showRetry: false,
-        severity: 'error' as const,
-      };
-    }
-
-    if (!vmStore.assetHealth) {
-      return {
-        title: 'VM asset status is unknown',
-        message: 'Waiting for the service to report rootfs and manifest readiness.',
-        details: [] as string[],
-        showRetry: false,
-        severity: 'warning' as const,
-      };
-    }
-
-    const savedVmDependencyDetails = (vmStore.assetHealth.saved_vm_dependencies ?? []).map(dep =>
-      `${dep.vm} missing ${dep.missing.join(', ')} (${dep.recovery_hint})`,
-    );
-
-    if (!vmStore.assetHealth.ready) {
-      if (vmStore.assetHealth.state === 'checking') {
-        return {
-          title: 'VM assets are being checked',
-          message: 'Waiting for the service to verify rootfs and manifest readiness.',
-          details: savedVmDependencyDetails,
-          showRetry: false,
-          severity: 'warning' as const,
-        };
-      }
-      if (vmStore.assetHealth.state === 'updating') {
-        const progress = vmStore.assetHealth.progress
-          ? `Updating ${vmStore.assetHealth.progress.logical_name}.`
-          : 'Required VM assets are updating.';
-        return {
-          title: 'VM assets are updating',
-          message: progress,
-          details: savedVmDependencyDetails,
-          showRetry: false,
-          severity: 'warning' as const,
-        };
-      }
-      if (vmStore.assetHealth.state === 'error') {
-        return {
-          title: 'VM assets need attention',
-          message: vmStore.assetHealth.error ?? 'The service could not prepare required VM assets.',
-          details: savedVmDependencyDetails,
-          showRetry: vmStore.assetHealth.retryable,
-          severity: 'error' as const,
-        };
-      }
-      const missing = vmStore.assetHealth.missing.length > 0
-        ? `Missing: ${vmStore.assetHealth.missing.join(', ')}.`
-        : 'Required VM assets are not ready.';
-      return {
-        title: 'VM assets are missing',
-        message: `${missing} The service will keep trying in the background.`,
-        details: savedVmDependencyDetails,
-        showRetry: false,
-        severity: 'warning' as const,
-      };
-    }
-    return null;
-  });
 
   function emptySessionText(kind: 'ephemeral' | 'persistent'): string {
     if (startupBlocked) {
@@ -260,6 +192,7 @@
     console.log('[NewTabPage] createTemporary() creatingTemp=%s', creatingTemp);
     if (creatingTemp) return;
     actionError = null;
+    if (!(await ensureLaunchAssetsReady())) return;
     creatingTemp = true;
     try {
       console.log('[NewTabPage] calling vmStore.provision()');
@@ -299,6 +232,35 @@
     } finally {
       setupRetrying = false;
     }
+  }
+
+  async function ensureLaunchAssetsReady(): Promise<boolean> {
+    setupRetryError = null;
+    await vmStore.refresh();
+    if (vmStore.serviceStatus === 'running' && vmStore.assetHealth?.ready === true) {
+      return true;
+    }
+    vmStore.showAssetReadinessModal = true;
+    return false;
+  }
+
+  function closeAssetLaunchModal(): void {
+    vmStore.showAssetReadinessModal = false;
+  }
+
+  async function refreshAssetLaunchModal(): Promise<void> {
+    await vmStore.refresh();
+    if (vmStore.serviceStatus === 'running' && vmStore.assetHealth?.ready === true) {
+      vmStore.showAssetReadinessModal = false;
+    }
+  }
+
+  function openCustomizeSession(): void {
+    if (!assetsReady) {
+      vmStore.showAssetReadinessModal = true;
+      return;
+    }
+    vmStore.showCreateModal = true;
   }
 </script>
 
@@ -403,8 +365,8 @@
       <button
         type="button"
         class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
-        onclick={() => vmStore.showCreateModal = true}
-        disabled={creatingTemp || !canCreateSessions}
+        onclick={openCustomizeSession}
+        disabled={createButtonsDisabled}
       >
         <Plus size={16} weight="bold" />
         Customize Session...
@@ -413,7 +375,7 @@
         type="button"
         class="inline-flex items-center gap-x-2 bg-primary text-primary-foreground hover:bg-primary-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
         onclick={createTemporary}
-        disabled={creatingTemp || !canCreateSessions}
+        disabled={createButtonsDisabled}
       >
         <BracketsAngle size={16} weight="bold" />
         {creatingTemp ? 'Creating...' : 'Quick Session'}
@@ -422,44 +384,16 @@
   </div>
 
   <!-- Asset health warning -->
-  {#if assetStatus}
-    <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg text-sm border {assetStatus.severity === 'error' ? 'border-destructive/30 bg-destructive/10' : 'border-warning/30 bg-warning/10'}">
-      <Warning size={18} class="{assetStatus.severity === 'error' ? 'text-destructive' : 'text-warning'} mt-0.5 shrink-0" />
-      <div>
-        <p class="font-medium text-foreground">{assetStatus.title}</p>
-        <p class="text-muted-foreground-1 mt-0.5">
-          {assetStatus.message}
-        </p>
-        {#if assetStatus.details.length > 0}
-          <ul class="mt-2 space-y-1">
-            {#each assetStatus.details as detail}
-              <li class="text-xs text-muted-foreground">{detail}</li>
-            {/each}
-          </ul>
-        {/if}
-        <div class="mt-3 flex items-center gap-2">
-          {#if assetStatus.showRetry}
-            <button
-              type="button"
-              class="py-1 px-3 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={setupRetrying}
-              onclick={retrySetup}
-            >
-              {setupRetrying ? 'Retrying...' : 'Retry setup'}
-            </button>
-          {/if}
-          <button
-            type="button"
-            class="py-1 px-3 text-xs font-medium rounded-lg bg-layer border border-layer-line text-layer-foreground hover:bg-layer-hover transition-colors"
-            onclick={() => vmStore.refresh()}
-          >
-            Refresh status
-          </button>
-        </div>
-        {#if setupRetryError}
-          <p class="mt-2 text-xs text-destructive">{setupRetryError}</p>
-        {/if}
-      </div>
+  {#if !serviceReady || !assetsReady}
+    <div class="mb-4">
+      <AssetReadinessPanel
+        health={vmStore.assetHealth}
+        {serviceReady}
+        retrying={setupRetrying}
+        retryError={setupRetryError}
+        onretry={retrySetup}
+        onrefresh={() => vmStore.refresh()}
+      />
     </div>
   {/if}
 
@@ -616,4 +550,27 @@
   oncancel={closeDashModal}
 >
   <p class="text-sm text-foreground">Destroy <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>? This cannot be undone.</p>
+</Modal>
+
+<Modal
+  open={vmStore.showAssetReadinessModal}
+  title="Preparing Profile Assets"
+  confirmLabel="Refresh status"
+  cancelLabel="Close"
+  onconfirm={refreshAssetLaunchModal}
+  oncancel={closeAssetLaunchModal}
+>
+  <div class="space-y-3">
+    <p class="text-sm text-muted-foreground-1">
+      Capsem checks the selected profile assets before launching a VM. Creation will be available once required assets are installed and verified.
+    </p>
+    <AssetReadinessPanel
+      health={vmStore.assetHealth}
+      {serviceReady}
+      retrying={setupRetrying}
+      retryError={setupRetryError}
+      onretry={retrySetup}
+      onrefresh={refreshAssetLaunchModal}
+    />
+  </div>
 </Modal>

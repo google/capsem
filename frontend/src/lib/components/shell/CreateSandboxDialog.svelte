@@ -3,6 +3,7 @@
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import type { ProvisionRequest } from '../../types/gateway';
   import Modal from './Modal.svelte';
+  import AssetReadinessPanel from './AssetReadinessPanel.svelte';
 
   let name = $state('');
   let resourceMode = $state<'service' | 'custom'>('service');
@@ -10,6 +11,9 @@
   let cpus = $state(4);
   let error = $state<string | null>(null);
   let creating = $state(false);
+  let serviceReady = $derived(vmStore.serviceStatus === 'running');
+  let assetsReady = $derived(vmStore.assetHealth?.ready === true);
+  let createDisabled = $derived(creating || !serviceReady || !assetsReady);
 
   function close() {
     vmStore.showCreateModal = false;
@@ -21,19 +25,25 @@
   }
 
   async function handleSubmit() {
+    if (creating) return;
     error = null;
     creating = true;
-    const hasName = name.trim().length > 0;
-    const request: ProvisionRequest = {
-      name: hasName ? name.trim() : undefined,
-      persistent: hasName,
-      ...profileProvisionFields(),
-    };
-    if (resourceMode === 'custom') {
-      request.ram_mb = ramMb;
-      request.cpus = cpus;
-    }
     try {
+      await vmStore.refresh();
+      if (vmStore.serviceStatus !== 'running' || vmStore.assetHealth?.ready !== true) {
+        error = 'Profile assets are not ready yet.';
+        return;
+      }
+      const hasName = name.trim().length > 0;
+      const request: ProvisionRequest = {
+        name: hasName ? name.trim() : undefined,
+        persistent: hasName,
+        ...profileProvisionFields(),
+      };
+      if (resourceMode === 'custom') {
+        request.ram_mb = ramMb;
+        request.cpus = cpus;
+      }
       const { id, name: finalName } = await vmStore.provision(request);
       tabStore.openVM(id, finalName);
       close();
@@ -60,7 +70,7 @@
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
-  disabled={creating}
+  disabled={createDisabled}
 >
   <div class="space-y-4 py-2">
     {#if error}
@@ -83,6 +93,14 @@
     </div>
 
     <div class="space-y-2">
+      {#if !serviceReady || !assetsReady}
+        <AssetReadinessPanel
+          health={vmStore.assetHealth}
+          {serviceReady}
+          showActions={false}
+        />
+      {/if}
+
       {#if vmStore.assetHealth?.profile_id}
         <div class="rounded-lg border border-line-2 bg-layer px-3 py-2">
           <p class="text-xs font-semibold text-foreground uppercase tracking-wider">Profile</p>

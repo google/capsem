@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed the onboarding wizard to select Profile V2 profiles through the
   profile catalog/select routes and to show profile identity in the ready
   summary instead of the old security-preset wording.
+- Changed frontend VM launch to refresh selected-profile asset status at first
+  launch and show a modal download/progress state instead of silently blocking
+  creation while assets are checking or downloading.
 
 ### Added
 - Added `capsem mcp list` and `capsem mcp show` aliases for the Profile V2 MCP

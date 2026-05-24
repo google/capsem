@@ -274,3 +274,20 @@ the shipped bedrock, not the historical implementation.
   - `pnpm --dir frontend run check` passed with 0 errors, 0 warnings, and
     0 hints.
   - `pnpm --dir frontend run build` passed.
+- 2026-05-24: Follow-up first-launch asset readiness replay closed the UI
+  dead-click gap for profile-backed VM creation. Quick launch now refreshes
+  `/status` before provisioning and opens a `Preparing Profile Assets` modal
+  with selected-profile download progress when assets are not ready; the
+  customize dialog uses the same readiness component and disables Create until
+  the latest status is ready. Verification commands:
+  - `pnpm --dir frontend exec vitest run src/lib/__tests__/session-runtime-truth.test.ts`
+    passed with 14 tests.
+  - `pnpm --dir frontend run check` passed with 0 errors, 0 warnings, and
+    0 hints.
+  - `pnpm --dir frontend run build` passed.
+  - `pnpm --dir frontend exec vitest run src/lib/__tests__/onboarding-preferences-step.test.ts src/lib/__tests__/session-runtime-truth.test.ts src/lib/__tests__/runtime-security-rules-section.test.ts src/lib/__tests__/profile-catalog-section.test.ts src/lib/__tests__/security-engine-health-section.test.ts src/lib/__tests__/api.test.ts`
+    passed with 89 tests.
+  - Chrome DevTools visual verification opened the local frontend, injected a
+    selected-profile updating asset fixture, clicked Quick Session, and
+    confirmed the `Preparing Profile Assets` modal rendered the profile
+    identity, progress bar, byte count, and missing-asset state.

@@ -12,6 +12,7 @@ class VmStore {
   acting = $state(false);
   polled = $state(false);
   showCreateModal = $state(false);
+  showAssetReadinessModal = $state(false);
 
   get loading(): boolean {
     return !this.polled || this.acting;

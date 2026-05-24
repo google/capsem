@@ -75,6 +75,12 @@ requests.
   provenance from `/status`: active profile revision, architecture, asset
   version, profile payload hash, and each profile-declared VM asset's
   source/hash/size.
+- Implemented slice: VM launch now refreshes `/status` before first create and
+  opens a Profile Asset preparation modal with download progress instead of
+  calling provision while selected-profile assets are still checking,
+  downloading, missing, or errored. The customize dialog uses the same
+  readiness component and keeps Create unavailable until the latest asset
+  status is ready.
 - Implemented slice: Settings -> Policy Live Rules now backtests draft
   enforcement and detection rules against a JSON event corpus through the
   service backtest routes, then renders total matches, unique evidence,
@@ -110,6 +116,9 @@ requests.
 - Unit/contract completed: session runtime truth tests cover ready profile
   asset provenance rendering, including profile payload hash and per-asset
   source/hash/size rows.
+- Unit/contract completed: session runtime truth tests cover first-launch asset
+  status refresh, progress-bar rendering, modal display, no premature
+  provisioning while assets are updating, and customize-dialog create gating.
 - Unit/contract completed: runtime security rule tests cover the enforcement
   backtest request body and rendered evidence rows.
 - Unit/contract completed: runtime security rule tests cover session detection
@@ -164,3 +173,8 @@ requests.
   `onboarding-preferences-step.test.ts`; the focused profile UI suite including
   onboarding passed with **87** tests, followed by frontend check and
   production build.
+- Follow-up S16 first-launch usability replay: added the shared asset-readiness
+  component and launch modal coverage; `session-runtime-truth.test.ts` passed
+  with **14** tests, followed by frontend check, production build, and Chrome
+  DevTools visual verification of the first-launch asset modal. The focused
+  profile UI suite was rerun after this slice and passed with **89** tests.

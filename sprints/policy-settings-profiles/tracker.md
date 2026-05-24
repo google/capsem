@@ -2707,6 +2707,20 @@ a valid claim -- mark it `[ ]` instead.
     src/lib/__tests__/security-engine-health-section.test.ts
     src/lib/__tests__/api.test.ts` passed with **87** tests, `pnpm --dir
     frontend run check` passed, and `pnpm --dir frontend run build` passed.
+    Follow-up first-launch asset-readiness slice removed the VM launch
+    dead-click state: quick launch now refreshes `/status` before provisioning
+    and opens a `Preparing Profile Assets` modal with profile download progress
+    when selected-profile assets are still checking/downloading/missing/errored.
+    The customize dialog uses the same readiness component and keeps Create
+    disabled until the latest asset status is ready. Verification: `pnpm --dir
+    frontend exec vitest run src/lib/__tests__/session-runtime-truth.test.ts`
+    passed with **14** tests, `pnpm --dir frontend run check` passed, and
+    `pnpm --dir frontend run build` passed. Chrome DevTools visual
+    verification opened the local frontend, injected a selected-profile
+    updating asset fixture, clicked Quick Session, and confirmed the modal
+    rendered profile identity, download progress, byte count, and missing asset
+    state. The focused profile UI suite was rerun after this slice and passed
+    with **89** tests.
     S16 is closed for the bedrock release; richer workbench composition moves
     to S16a/S17 instead of reopening the profile UI contract.
 32. [x] [S19 - Documentation and site](S19-documentation-and-site.md)
@@ -2819,6 +2833,13 @@ a valid claim -- mark it `[ ]` instead.
     -q` (**2** passed in 45.09s). This proves the current branch can build the
     operator CLI/frontend/docs, boot a VM, execute, delete, and pass doctor
     with rebuilt binaries. Remaining before release: run the broader
+    `just smoke`/release packaging gate or explicitly accept the narrower S18
+    replay matrix as the cut gate.
+    Follow-up S18 first-launch UI replay passed
+    `pnpm --dir frontend exec vitest run src/lib/__tests__/session-runtime-truth.test.ts`
+    (**14** tests), `pnpm --dir frontend run check`, and `pnpm --dir frontend
+    run build` after adding the asset-preparation modal and customize-dialog
+    readiness gate. Remaining before release is unchanged: run the broader
     `just smoke`/release packaging gate or explicitly accept the narrower S18
     replay matrix as the cut gate.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
