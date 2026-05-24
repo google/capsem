@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1779665197] - 2026-05-24
+
+### Fixed
+- Fixed release metadata stamping so the Python lockfile records the same
+  package version as the workspace, Tauri app, and Python project metadata.
+
 ## [1.2.1779665141] - 2026-05-24
 
 ### Fixed

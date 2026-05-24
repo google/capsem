@@ -1,7 +1,5 @@
-version: 1.2.1779665141
+version: 1.2.1779665197
 ---
 ### Fixed
-- Fixed the Linux install test harness clean-state path to stop the systemd
-  user unit before killing scoped Capsem processes, preventing `Restart=always`
-  from racing tests that intentionally replace `capsem-service` with a broken
-  binary.
+- Fixed release metadata stamping so the Python lockfile records the same
+  package version as the workspace, Tauri app, and Python project metadata.
