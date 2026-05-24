@@ -334,9 +334,6 @@ fn install_local_profile_revision_from_asset_root(
 ) -> Result<()> {
     const LOCAL_PROFILE_REVISION: &str = "2026.0520.1";
 
-    let kernel = local_asset_path(assets_root, arch, "vmlinuz")?;
-    let initrd = local_asset_path(assets_root, arch, "initrd.img")?;
-    let rootfs = local_asset_path(assets_root, arch, "rootfs.squashfs")?;
     let (profile_type, ui, profile_name) = if profile_id == "coding" {
         ("coding", "coding", "Coding")
     } else {
@@ -360,6 +357,10 @@ fn install_local_profile_revision_from_asset_root(
     if install_packaged_profile_sidecar(&service_settings.profiles, profile_id)? {
         return Ok(());
     }
+
+    let kernel = local_asset_path(assets_root, arch, "vmlinuz")?;
+    let initrd = local_asset_path(assets_root, arch, "initrd.img")?;
+    let rootfs = local_asset_path(assets_root, arch, "rootfs.squashfs")?;
 
     let payload = json!({
         "schema": "capsem.profile.v2",
@@ -1211,6 +1212,51 @@ decision = "allow"
         );
         capsem_core::settings_profiles::discover_profiles(&settings.profiles)
             .expect("package sidecar must not create duplicate profile ids");
+    }
+
+    #[test]
+    fn package_profile_revision_installs_sidecar_without_local_heavy_assets() {
+        let d = tmp_dir();
+        let assets_root = d.path().join("assets");
+        let base_dir = d.path().join("profiles/base");
+        std::fs::create_dir_all(&assets_root).unwrap();
+        std::fs::create_dir_all(&base_dir).unwrap();
+        std::fs::write(assets_root.join("manifest.json"), r#"{"format":2}"#).unwrap();
+        std::fs::write(
+            base_dir.join("everyday-work.profile.toml"),
+            include_str!("../../../config/profiles/base/everyday-work.profile.toml"),
+        )
+        .unwrap();
+        let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+        settings.profiles.base_dirs = vec![base_dir.clone()];
+        capsem_core::settings_profiles::write_service_settings(
+            d.path().join("service.toml"),
+            &settings,
+        )
+        .unwrap();
+
+        install_local_profile_revision_from_asset_root(
+            d.path(),
+            capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+            &assets_root,
+            "arm64",
+        )
+        .unwrap();
+
+        let settings = capsem_core::settings_profiles::load_service_settings_or_default(
+            d.path().join("service.toml"),
+        )
+        .unwrap();
+        let installed = capsem_core::settings_profiles::load_complete_installed_profile_revision(
+            &settings.profiles,
+            capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+        )
+        .unwrap()
+        .expect("package profile sidecar should install without bundled heavy assets");
+        assert_eq!(
+            installed.runtime_profile_path,
+            base_dir.join("everyday-work.profile.toml")
+        );
     }
 
     // ---- --force-onboarding fast path ---------------------------------

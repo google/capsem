@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1779662531] - 2026-05-24
+
+### Fixed
+- Fixed package setup for manifest-only installs so packaged Profile V2
+  sidecars install before local heavy VM asset fallback, allowing `.deb`
+  postinstall to complete from signed packaged profiles without bundled
+  kernel/initrd/rootfs files.
+
 ## [1.2.1779658398] - 2026-05-24
 
 ### Fixed
