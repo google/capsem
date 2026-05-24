@@ -16,6 +16,15 @@
     if (onboardingStore.assetsState === 'error') return 'Error';
     return 'Unknown';
   }
+
+  function profileSummaryLabel(): string | null {
+    if (onboardingStore.assetsProfileId) {
+      return onboardingStore.assetsProfileRevision
+        ? `${onboardingStore.assetsProfileId}@${onboardingStore.assetsProfileRevision}`
+        : onboardingStore.assetsProfileId;
+    }
+    return onboardingStore.setupState?.security_preset ?? null;
+  }
 </script>
 
 <div class="text-center space-y-6">
@@ -55,11 +64,11 @@
       </div>
     {/if}
 
-    <!-- Setup state -->
-    {#if onboardingStore.setupState?.security_preset}
+    <!-- Profile state -->
+    {#if profileSummaryLabel()}
       <div class="flex items-center justify-between text-sm">
-        <span class="text-muted-foreground-1">Security Preset</span>
-        <span class="text-foreground capitalize">{onboardingStore.setupState.security_preset}</span>
+        <span class="text-muted-foreground-1">Profile</span>
+        <span class="text-foreground font-mono">{profileSummaryLabel()}</span>
       </div>
     {/if}
   </div>

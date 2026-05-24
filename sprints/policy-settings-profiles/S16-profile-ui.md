@@ -58,6 +58,10 @@ requests.
   `POST /profiles/{id}/select` service route. `/profiles/catalog` returns the
   selected `default_profile`, and Settings -> Profiles shows the selected
   profile, can select non-revoked profiles, and disables revoked selections.
+- Implemented slice: the onboarding wizard now uses the same Profile V2 catalog
+  and select routes for profile choice, disables revoked profiles, and renders
+  profile identity in the ready summary instead of the old security-preset
+  wording.
 - Implemented slice: quick-session and customize-session VM create now include
   the service-reported profile id and resolved revision when asset health
   exposes them. The customize dialog also displays the active
@@ -94,6 +98,9 @@ requests.
   catalog `default_profile` reporting; frontend tests cover `selectProfile`,
   selected badges, successful selection, and disabled revoked profile
   selection.
+- Unit/contract completed: onboarding preferences tests cover wizard profile
+  selection through the Profile V2 catalog/select route and revoked-profile
+  disablement.
 - Unit/contract completed: session runtime truth tests cover quick-session and
   customize-session create requests carrying `profile_id` and
   `profile_revision` from asset health, while still omitting CPU/RAM in
@@ -153,3 +160,7 @@ requests.
   `session-runtime-truth`, `runtime-security-rules-section`,
   `profile-catalog-section`, `security-engine-health-section`, and `api`
   (**85** tests), followed by frontend check and production build.
+- Follow-up S16 release usability replay: added
+  `onboarding-preferences-step.test.ts`; the focused profile UI suite including
+  onboarding passed with **87** tests, followed by frontend check and
+  production build.

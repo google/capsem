@@ -2695,6 +2695,18 @@ a valid claim -- mark it `[ ]` instead.
     src/lib/__tests__/security-engine-health-section.test.ts
     src/lib/__tests__/api.test.ts` passed with **85** tests, `pnpm --dir
     frontend run check` passed, and `pnpm --dir frontend run build` passed.
+    Follow-up onboarding slice removed the remaining wizard ambiguity: the
+    Preferences step now loads `/profiles/catalog`, writes selection through
+    `/profiles/{id}/select`, disables revoked profile choices, and the Ready
+    step renders profile identity from asset health. Verification:
+    `pnpm --dir frontend exec vitest run
+    src/lib/__tests__/onboarding-preferences-step.test.ts
+    src/lib/__tests__/session-runtime-truth.test.ts
+    src/lib/__tests__/runtime-security-rules-section.test.ts
+    src/lib/__tests__/profile-catalog-section.test.ts
+    src/lib/__tests__/security-engine-health-section.test.ts
+    src/lib/__tests__/api.test.ts` passed with **87** tests, `pnpm --dir
+    frontend run check` passed, and `pnpm --dir frontend run build` passed.
     S16 is closed for the bedrock release; richer workbench composition moves
     to S16a/S17 instead of reopening the profile UI contract.
 32. [x] [S19 - Documentation and site](S19-documentation-and-site.md)

@@ -37,6 +37,8 @@ class OnboardingStore {
   assetsState = $state<AssetHealth['state']>('unknown');
   assetsMissing = $state<string[]>([]);
   assetsVersion = $state<string | null>(null);
+  assetsProfileId = $state<string | null>(null);
+  assetsProfileRevision = $state<string | null>(null);
   assetsError = $state<string | null>(null);
   assetsRetryable = $state(false);
   assetsRetryCount = $state(0);
@@ -87,6 +89,8 @@ class OnboardingStore {
         this.assetsState = status.assets.state;
         this.assetsMissing = status.assets.missing;
         this.assetsVersion = status.assets.version ?? null;
+        this.assetsProfileId = status.assets.profile_id ?? null;
+        this.assetsProfileRevision = status.assets.profile_revision ?? null;
         this.assetsError = status.assets.error ?? null;
         this.assetsRetryable = status.assets.retryable;
         this.assetsRetryCount = status.assets.retry_count;
@@ -98,6 +102,8 @@ class OnboardingStore {
       this.assetsState = 'unknown';
       this.assetsMissing = [];
       this.assetsVersion = null;
+      this.assetsProfileId = null;
+      this.assetsProfileRevision = null;
       this.assetsError = null;
       this.assetsRetryable = false;
       this.assetsRetryCount = 0;
@@ -109,6 +115,8 @@ class OnboardingStore {
       this.assetsState = 'unknown';
       this.assetsMissing = [];
       this.assetsVersion = null;
+      this.assetsProfileId = null;
+      this.assetsProfileRevision = null;
       this.assetsError = null;
       this.assetsRetryable = false;
       this.assetsRetryCount = 0;

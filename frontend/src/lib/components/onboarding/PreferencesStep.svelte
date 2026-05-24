@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import * as api from '../../api';
-  import type { SecurityPreset } from '../../types/settings';
+  import type { ProfileCatalogProfile } from '../../types/gateway';
   import { themeStore, PRELINE_THEMES } from '../../stores/theme.svelte.ts';
   import { THEME_FAMILIES } from '../../terminal/themes';
 
-  // -- Security presets --
-  let presets = $state<SecurityPreset[]>([]);
-  let selectedPreset = $state<string>('medium');
+  // -- Profiles --
+  let profiles = $state<ProfileCatalogProfile[]>([]);
+  let selectedProfile = $state<string>('');
+  let profileLoadError = $state<string | null>(null);
 
   // -- VM defaults --
   let cpuCores = $state(4);
@@ -16,9 +17,11 @@
 
   onMount(async () => {
     try {
-      presets = await api.getPresets();
-    } catch {
-      // Presets unavailable
+      const catalog = await api.getProfileCatalog();
+      profiles = catalog.profiles;
+      selectedProfile = catalog.default_profile ?? '';
+    } catch (error) {
+      profileLoadError = error instanceof Error ? error.message : String(error);
     }
     // Load current VM resource settings
     try {
@@ -45,9 +48,24 @@
     } catch { /* */ }
   });
 
-  async function onPresetChange() {
-    if (selectedPreset) {
-      try { await api.applyPreset(selectedPreset); } catch { /* */ }
+  function currentRevision(profile: ProfileCatalogProfile) {
+    return profile.revisions.find((revision) => revision.current) ?? null;
+  }
+
+  function profileSelectionBlocked(profile: ProfileCatalogProfile): boolean {
+    return currentRevision(profile)?.status === 'revoked';
+  }
+
+  async function onProfileChange() {
+    if (selectedProfile) {
+      try {
+        const catalog = await api.selectProfile(selectedProfile);
+        profiles = catalog.profiles;
+        selectedProfile = catalog.default_profile ?? selectedProfile;
+        profileLoadError = null;
+      } catch (error) {
+        profileLoadError = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
@@ -70,23 +88,30 @@
     </p>
   </div>
 
-  <!-- Security preset (compact) -->
+  <!-- Profile (compact) -->
   <div class="bg-card border border-card-line rounded-xl p-4">
     <div class="flex items-center justify-between">
       <div>
-        <span class="text-sm font-medium text-foreground">Security Preset</span>
-        <p class="text-xs text-muted-foreground mt-0.5">Controls network access and sandbox policies.</p>
+        <span class="text-sm font-medium text-foreground">Profile</span>
+        <p class="text-xs text-muted-foreground mt-0.5">Controls VM assets, tools, MCP, and security rules.</p>
       </div>
       <select
         class="py-1.5 px-3 text-sm border border-line-2 rounded-lg bg-layer text-foreground focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-        bind:value={selectedPreset}
-        onchange={onPresetChange}
+        bind:value={selectedProfile}
+        onchange={onProfileChange}
+        disabled={profiles.length === 0}
       >
-        {#each presets as preset}
-          <option value={preset.id}>{preset.name}</option>
+        <option value="" disabled>{profiles.length === 0 ? 'No profiles' : 'Select profile'}</option>
+        {#each profiles as profile}
+          <option value={profile.profile_id} disabled={profileSelectionBlocked(profile)}>
+            {profile.profile_id}{profile.current_revision ? `@${profile.current_revision}` : ''}
+          </option>
         {/each}
       </select>
     </div>
+    {#if profileLoadError}
+      <p class="mt-2 text-xs text-destructive">{profileLoadError}</p>
+    {/if}
   </div>
 
   <!-- Appearance -->

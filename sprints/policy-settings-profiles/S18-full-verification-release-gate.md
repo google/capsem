@@ -262,3 +262,15 @@ the shipped bedrock, not the historical implementation.
   asset-health state, and response-time download progress. `capsem info <vm>`
   now renders the persisted Profile V2 VM pin with profile payload hash,
   package contract hash, and pinned kernel/initrd/rootfs hashes.
+- 2026-05-24: Follow-up UI wizard replay closed the remaining onboarding
+  ambiguity. The wizard Preferences step now loads `/profiles/catalog`, writes
+  selection through `/profiles/{id}/select`, disables revoked profile choices,
+  and the Ready step renders profile identity from asset health instead of the
+  old security-preset label. Verification commands:
+  - `pnpm --dir frontend exec vitest run src/lib/__tests__/onboarding-preferences-step.test.ts`
+    passed with 2 tests.
+  - `pnpm --dir frontend exec vitest run src/lib/__tests__/onboarding-preferences-step.test.ts src/lib/__tests__/session-runtime-truth.test.ts src/lib/__tests__/runtime-security-rules-section.test.ts src/lib/__tests__/profile-catalog-section.test.ts src/lib/__tests__/security-engine-health-section.test.ts src/lib/__tests__/api.test.ts`
+    passed with 87 tests.
+  - `pnpm --dir frontend run check` passed with 0 errors, 0 warnings, and
+    0 hints.
+  - `pnpm --dir frontend run build` passed.

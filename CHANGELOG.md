@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `capsem info <vm>` to preserve and render Profile V2 VM pins,
   including profile payload hash, package contract hash, and pinned
   kernel/initrd/rootfs hashes.
+- Changed the onboarding wizard to select Profile V2 profiles through the
+  profile catalog/select routes and to show profile identity in the ready
+  summary instead of the old security-preset wording.
 
 ### Added
 - Added `capsem mcp list` and `capsem mcp show` aliases for the Profile V2 MCP
