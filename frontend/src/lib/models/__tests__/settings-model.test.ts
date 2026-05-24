@@ -14,6 +14,54 @@ function loadModel(): SettingsModel {
 
 describe('SettingsModel', () => {
   describe('tree indexing', () => {
+    it('loads the Profile V2 /settings envelope without legacy tree fields', () => {
+      const model = new SettingsModel({
+        mode: 'settings_profiles_v2',
+        profile_presets: [
+          {
+            id: 'coding',
+            name: 'Coding',
+            description: 'Focused defaults for software development sessions.',
+            settings: { 'profiles.default_profile': 'coding' },
+          },
+          {
+            id: 'everyday-work',
+            name: 'Everyday Work',
+            description: 'Balanced defaults for daily work sessions.',
+            settings: { 'profiles.default_profile': 'everyday-work' },
+          },
+        ],
+        settings_profiles: {
+          selected_profile_id: 'everyday-work',
+          effective: {
+            profile_id: 'everyday-work',
+          },
+        },
+        effective_rules: {
+          http: {
+            block_example: {
+              on: 'http.request',
+              if: 'http.request.host == "example.com"',
+              decision: 'block',
+              priority: 10,
+              reason: 'test rule',
+            },
+          },
+        },
+      });
+
+      expect(model.tree).toEqual([]);
+      expect(model.issues).toEqual([]);
+      expect(model.presets.map((preset) => preset.id)).toEqual(['coding', 'everyday-work']);
+      expect(model.activePresetId).toBe('everyday-work');
+      expect(model.policyRuleEntries).toHaveLength(1);
+      expect(model.policyRuleEntries[0]).toMatchObject({
+        key: 'policy.http.block_example',
+        type: 'http',
+        name: 'block_example',
+      });
+    });
+
     it('finds leaf settings by ID', () => {
       const model = loadModel();
       const leaf = model.getLeaf('ai.anthropic.allow');

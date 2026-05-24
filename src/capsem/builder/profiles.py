@@ -31,6 +31,7 @@ from capsem.builder.models import GuestImageConfig, PackageManager
 
 
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+_CONFIG_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
 _REVISION_RE = re.compile(r"^[0-9]{4}\.[0-9]{4}\.[0-9]+$")
 _BLAKE3_RE = re.compile(r"^blake3:[0-9a-f]{64}$")
 
@@ -39,6 +40,7 @@ _RawTomlAdapter = TypeAdapter(dict[str, Any])
 NonEmptyStr = Annotated[str, Field(min_length=1)]
 VersionStr = Annotated[str, Field(min_length=1)]
 ProfileId = Annotated[str, Field(pattern=_PROFILE_ID_RE.pattern)]
+ConfigId = Annotated[str, Field(pattern=_CONFIG_ID_RE.pattern)]
 Revision = Annotated[str, Field(pattern=_REVISION_RE.pattern)]
 Blake3Hash = Annotated[str, Field(pattern=_BLAKE3_RE.pattern)]
 
@@ -171,7 +173,7 @@ class AiProvider(StrictModel):
     enabled: bool | None = None
     model: NonEmptyStr | None = None
     base_url: AnyUrl | None = None
-    credential_refs: list[NonEmptyStr] = Field(default_factory=list)
+    credential_refs: list[ConfigId] = Field(default_factory=list)
     rules: SecurityRules = Field(default_factory=SecurityRules)
 
 
@@ -180,7 +182,7 @@ class AiSettings(StrictModel):
 
 
 class McpServerCapsem(StrictModel):
-    credential_refs: list[NonEmptyStr] = Field(default_factory=list)
+    credential_refs: list[ConfigId] = Field(default_factory=list)
     allowed_tools: list[NonEmptyStr] = Field(default_factory=list)
     rules: SecurityRules = Field(default_factory=SecurityRules)
 
@@ -251,6 +253,9 @@ class PackageContract(StrictModel):
     runtimes: dict[str, VersionStr]
     python_modules: dict[str, VersionStr] = Field(default_factory=dict)
     node_packages: dict[str, VersionStr] = Field(default_factory=dict)
+    curl_installs: dict[str, Annotated[str, Field(pattern=r"^https://")]] = Field(
+        default_factory=dict
+    )
     system: SystemPackages
 
 
@@ -600,6 +605,11 @@ def create_builtin_profile_drafts(
 
 
 _FLOATING_VERSION = "*"
+_PROVIDER_CREDENTIAL_IDS = {
+    "anthropic": ["anthropic-api-key"],
+    "google": ["google-api-key"],
+    "openai": ["openai-api-key"],
+}
 
 
 def _split_versioned_package(spec: str, separator: str) -> tuple[str, str]:
@@ -619,6 +629,16 @@ def _split_npm_package(spec: str) -> tuple[str, str]:
                 return package, version
         return spec, _FLOATING_VERSION
     return _split_versioned_package(spec, "@")
+
+
+def _split_curl_install(spec: str, *, fallback_name: str | None = None) -> tuple[str, str]:
+    if "=" in spec:
+        name, url = spec.split("=", 1)
+        return name, url
+    if fallback_name:
+        return fallback_name, spec
+    stem = spec.rstrip("/").rsplit("/", 1)[-1].split(".", 1)[0]
+    return stem or "curl-install", spec
 
 
 def create_profile_from_guest_config(
@@ -652,6 +672,8 @@ def create_profile_from_guest_config(
     apt_packages: dict[str, str] = {}
     python_modules: dict[str, str] = {}
     node_packages: dict[str, str] = {}
+    curl_installs: dict[str, str] = {}
+    curl_tool_ids: set[str] = set()
     for package_set in guest_config.package_sets.values():
         if package_set.manager is PackageManager.APT:
             for spec in package_set.packages:
@@ -665,6 +687,12 @@ def create_profile_from_guest_config(
             for spec in package_set.packages:
                 package, version = _split_npm_package(spec)
                 node_packages[package] = version
+        elif package_set.manager is PackageManager.CURL:
+            for spec in package_set.packages:
+                name, url = _split_curl_install(spec)
+                curl_installs[name] = url
+                curl_tool_ids.add(name)
+            curl_tool_ids.update(package_set.version_commands.keys())
 
     tools: dict[str, ToolContract] = {
         "capsem_doctor": ToolContract(
@@ -673,12 +701,25 @@ def create_profile_from_guest_config(
             source=ToolSource.GUEST,
         )
     }
+    for tool_id in sorted(curl_tool_ids):
+        tools[tool_id] = ToolContract(
+            version=_FLOATING_VERSION,
+            required=True,
+            source=ToolSource.GUEST,
+        )
     for provider in guest_config.ai_providers.values():
         install = provider.install
         if install is not None and install.manager is PackageManager.NPM:
             for spec in install.packages:
                 package, version = _split_npm_package(spec)
                 node_packages[package] = version
+        if install is not None and install.manager is PackageManager.CURL:
+            for spec in install.packages:
+                name, url = _split_curl_install(
+                    spec,
+                    fallback_name=provider.cli.key if provider.cli else None,
+                )
+                curl_installs[name] = url
         if provider.cli is not None:
             tools[provider.cli.key] = ToolContract(
                 version=_FLOATING_VERSION,
@@ -709,6 +750,7 @@ def create_profile_from_guest_config(
         runtimes=runtime_versions,
         python_modules=python_modules,
         node_packages=node_packages,
+        curl_installs=curl_installs,
         system=SystemPackages(
             distro="debian",
             release="bookworm",
@@ -729,7 +771,7 @@ def create_profile_from_guest_config(
                 providers={
                     provider_id: AiProvider(
                         enabled=provider.enabled,
-                        credential_refs=provider.api_key.env_vars,
+                        credential_refs=_PROVIDER_CREDENTIAL_IDS.get(provider_id, []),
                     )
                     for provider_id, provider in guest_config.ai_providers.items()
                 }

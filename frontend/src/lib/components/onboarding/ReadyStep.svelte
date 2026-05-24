@@ -1,29 +1,62 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { onboardingStore } from '../../stores/onboarding.svelte.ts';
+  import BracketsAngle from 'phosphor-svelte/lib/BracketsAngle';
+  import Briefcase from 'phosphor-svelte/lib/Briefcase';
+  import * as api from '../../api';
+  import type { ProfileListRecord } from '../../types/gateway';
 
-  onMount(() => {
-    onboardingStore.loadAssetStatus();
+  type DisplayProfile = {
+    id: string;
+    name: string;
+    description: string;
+    bestFor: string;
+    ui: string;
+  };
+
+  const fallbackProfiles: DisplayProfile[] = [
+    {
+      id: 'coding',
+      name: 'Coding',
+      description: 'Focused defaults for software development sessions.',
+      bestFor: 'Coding agents, repository work, tests, and developer tooling.',
+      ui: 'coding',
+    },
+    {
+      id: 'everyday-work',
+      name: 'Everyday Work',
+      description: 'Balanced defaults for daily work sessions.',
+      bestFor: 'Daily work with useful tools and measured security prompts.',
+      ui: 'everyday',
+    },
+  ];
+
+  let profiles = $state<DisplayProfile[]>(fallbackProfiles);
+  let defaultProfile = $state<string | null>('everyday-work');
+
+  onMount(async () => {
+    try {
+      const response = await api.listProfiles();
+      const rows = response.profiles.map(profileFromRecord);
+      if (rows.length > 0) profiles = rows;
+      defaultProfile = response.default_profile ?? defaultProfile;
+    } catch {
+      // The service may not be running yet. Keep the screen useful with the
+      // built-in profile introduction instead of surfacing internal state.
+    }
   });
 
-  function assetSummaryLabel(): string {
-    if (onboardingStore.serviceStatus !== 'running') return 'Service offline';
-    if (onboardingStore.assetsReady) {
-      return onboardingStore.assetsVersion ? `Ready (v${onboardingStore.assetsVersion})` : 'Ready';
-    }
-    if (onboardingStore.assetsState === 'checking') return 'Checking';
-    if (onboardingStore.assetsState === 'updating') return 'Updating';
-    if (onboardingStore.assetsState === 'error') return 'Error';
-    return 'Unknown';
+  function profileFromRecord(record: ProfileListRecord): DisplayProfile {
+    return {
+      id: record.profile.id,
+      name: record.profile.name || record.profile.id,
+      description: record.profile.description || 'A ready-to-use Capsem session profile.',
+      bestFor: record.profile.best_for || 'General agent work.',
+      ui: record.profile.ui || 'everyday',
+    };
   }
 
-  function profileSummaryLabel(): string | null {
-    if (onboardingStore.assetsProfileId) {
-      return onboardingStore.assetsProfileRevision
-        ? `${onboardingStore.assetsProfileId}@${onboardingStore.assetsProfileRevision}`
-        : onboardingStore.assetsProfileId;
-    }
-    return onboardingStore.setupState?.security_preset ?? null;
+  function isSelected(profile: DisplayProfile): boolean {
+    return profile.id === defaultProfile;
   }
 </script>
 
@@ -35,71 +68,45 @@
   </div>
 
   <div>
-    <h2 class="text-xl font-medium text-foreground">Ready to Go</h2>
+    <h2 class="text-xl font-medium text-foreground">You're ready to start</h2>
     <p class="mt-2 text-sm text-muted-foreground-1">
-      Setup is complete. You can always reconfigure from Settings.
+      Start a session with the profile that matches your work. Profiles bundle the tools, model access, security rules, and workspace defaults for that kind of session.
     </p>
   </div>
 
-  <!-- Summary -->
-  <div class="bg-card border border-card-line rounded-xl p-4 text-left space-y-3">
-    <!-- Assets -->
-    <div class="flex items-center justify-between text-sm">
-      <span class="text-muted-foreground-1">VM Assets</span>
-      <span class={onboardingStore.assetsReady ? 'text-primary' : 'text-muted-foreground'}>{assetSummaryLabel()}</span>
-    </div>
-
-    <!-- Providers -->
-    {#if onboardingStore.detected}
-      <div class="flex items-center justify-between text-sm">
-        <span class="text-muted-foreground-1">AI Providers</span>
-        <span class="text-foreground">
-          {#if onboardingStore.detected.anthropic_api_key_present}Anthropic{/if}
-          {#if onboardingStore.detected.openai_api_key_present}{onboardingStore.detected.anthropic_api_key_present ? ', ' : ''}OpenAI{/if}
-          {#if onboardingStore.detected.google_api_key_present}{(onboardingStore.detected.anthropic_api_key_present || onboardingStore.detected.openai_api_key_present) ? ', ' : ''}Google{/if}
-          {#if !onboardingStore.detected.anthropic_api_key_present && !onboardingStore.detected.openai_api_key_present && !onboardingStore.detected.google_api_key_present}
-            None configured
-          {/if}
-        </span>
+  <div class="text-left space-y-3">
+    {#each profiles as profile (profile.id)}
+      <div
+        class="bg-card border rounded-xl p-4"
+        class:border-primary={isSelected(profile)}
+        class:border-card-line={!isSelected(profile)}
+      >
+        <div class="flex gap-3">
+          <div class="size-10 shrink-0 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+            {#if profile.ui === 'coding'}
+              <BracketsAngle size={20} />
+            {:else}
+              <Briefcase size={20} />
+            {/if}
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-medium text-foreground">{profile.name}</h3>
+              {#if isSelected(profile)}
+                <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">Default</span>
+              {/if}
+            </div>
+            <p class="mt-1 text-xs text-muted-foreground-1">{profile.description}</p>
+            <p class="mt-1 text-xs text-muted-foreground">{profile.bestFor}</p>
+          </div>
+        </div>
       </div>
-    {/if}
-
-    <!-- Profile state -->
-    {#if profileSummaryLabel()}
-      <div class="flex items-center justify-between text-sm">
-        <span class="text-muted-foreground-1">Profile</span>
-        <span class="text-foreground font-mono">{profileSummaryLabel()}</span>
-      </div>
-    {/if}
+    {/each}
   </div>
 
-  {#if !onboardingStore.assetsReady}
-    <div class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-left">
-      <p class="text-xs text-foreground">
-        VMs stay blocked until readiness is complete. You can still explore the app.
-      </p>
-      {#if onboardingStore.assetsState === 'updating'}
-        <p class="mt-1 text-xs text-muted-foreground">Assets are downloading in the background.</p>
-      {:else if onboardingStore.assetsState === 'checking'}
-        <p class="mt-1 text-xs text-muted-foreground">The service is verifying required assets.</p>
-      {:else if onboardingStore.assetsState === 'error'}
-        <p class="mt-1 text-xs text-muted-foreground">{onboardingStore.assetsError ?? 'Asset preparation failed.'}</p>
-      {:else if onboardingStore.serviceStatus !== 'running'}
-        <p class="mt-1 text-xs text-muted-foreground">Start the service to continue readiness checks.</p>
-      {/if}
-    </div>
-  {/if}
-
-  {#if onboardingStore.savedVmDependencies.length > 0}
-    <div class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-left">
-      <p class="text-xs font-medium text-foreground">Saved VM dependencies missing</p>
-      <ul class="mt-2 space-y-1">
-        {#each onboardingStore.savedVmDependencies as dep}
-          <li class="text-xs text-muted-foreground">
-            <span class="font-mono text-foreground">{dep.vm}</span> missing {dep.missing.join(', ')} ({dep.recovery_hint})
-          </li>
-        {/each}
-      </ul>
-    </div>
-  {/if}
+  <div class="rounded-lg border border-card-line bg-card p-3 text-left">
+    <p class="text-xs text-muted-foreground-1">
+      After this, use <span class="font-medium text-foreground">New Session</span> to choose a profile and launch your workspace.
+    </p>
+  </div>
 </div>

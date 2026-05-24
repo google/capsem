@@ -20,6 +20,7 @@
 #   /usr/bin/capsem-tray
 #   /usr/bin/capsem-admin
 #   /usr/share/capsem/admin-python/
+#   /usr/share/capsem/profiles/base/*.profile.toml
 #   /usr/share/capsem/assets/manifest.json{,.minisig} when assets_dir is provided
 #   DEBIAN/postinst script
 set -euo pipefail
@@ -96,6 +97,26 @@ if [ -n "$ASSETS_DIR" ]; then
         chmod 644 "$WORK_DIR/deb/usr/share/capsem/assets/manifest-sign.dev.pub"
         echo "  Added: manifest-sign.dev.pub"
     fi
+fi
+
+PROFILE_SRC="$SCRIPT_DIR/../config/profiles/base"
+if [ -d "$PROFILE_SRC" ]; then
+    echo "=== Adding base profiles ==="
+    mkdir -p "$WORK_DIR/deb/usr/share/capsem/profiles/base"
+    if [ -n "$ASSETS_DIR" ]; then
+        PROFILE_ASSET_ROOT="${CAPSEM_INSTALL_PROFILE_ASSET_ROOT:-https://assets.capsem.dev/vm}"
+        python3 "$SCRIPT_DIR/materialize-install-profiles.py" \
+            "$PROFILE_SRC" \
+            "$ASSETS_DIR" \
+            "$WORK_DIR/deb/usr/share/capsem/profiles/base" \
+            "$PROFILE_ASSET_ROOT"
+    else
+        cp "$PROFILE_SRC"/*.profile.toml "$WORK_DIR/deb/usr/share/capsem/profiles/base/"
+    fi
+    chmod 644 "$WORK_DIR/deb/usr/share/capsem/profiles/base/"*.profile.toml
+else
+    echo "  ERROR: base profiles not found: $PROFILE_SRC" >&2
+    exit 1
 fi
 
 echo "=== Adding postinst script ==="

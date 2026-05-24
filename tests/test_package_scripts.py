@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).parent.parent
 BUILD_PKG = REPO_ROOT / "scripts" / "build-pkg.sh"
 REPACK_DEB = REPO_ROOT / "scripts" / "repack-deb.sh"
 PREPARE_ADMIN_CLI = REPO_ROOT / "scripts" / "prepare-admin-cli.sh"
+SIMULATE_INSTALL = REPO_ROOT / "scripts" / "simulate-install.sh"
 PKG_POSTINSTALL = REPO_ROOT / "scripts" / "pkg-scripts" / "postinstall"
 DEB_POSTINST = REPO_ROOT / "scripts" / "deb-postinst.sh"
 
@@ -131,6 +132,35 @@ printf product > "$out"
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_simulate_install_preserves_admin_wrapper_payload():
+    """The local install harness must mirror the package capsem-admin layout."""
+    text = SIMULATE_INSTALL.read_text()
+
+    assert "capsem-admin" in text
+    assert "capsem-admin-python" in text
+    assert 'cp -a "$BIN_SRC/capsem-admin-python"' in text
+
+
+def test_simulate_install_codesigns_macos_macho_binaries_with_entitlements():
+    """The local install harness must not produce unsigned VZ binaries on macOS."""
+    text = SIMULATE_INSTALL.read_text()
+
+    assert '$(uname -s)' in text
+    assert "entitlements.plist" in text
+    assert "codesign --sign - --entitlements" in text
+    assert "file \"$bin\" | grep -q 'Mach-O'" in text
+
+
+def test_simulate_install_tolerates_assets_source_that_is_install_destination():
+    """The local install harness must handle repo assets symlinked to ~/.capsem/assets."""
+    text = SIMULATE_INSTALL.read_text()
+
+    assert "copy_if_different()" in text
+    assert 'if [[ -e "$dst" && "$src" -ef "$dst" ]]' in text
+    assert 'copy_if_different "$ASSETS_SRC/manifest.json"' in text
+    assert 'copy_if_different "$src_file" "$ASSETS_DST/$ARCH/$(basename "$src_file")"' in text
 
 
 def test_repack_deb_copies_signed_manifest_and_all_helpers(tmp_path):
@@ -332,6 +362,15 @@ def test_postinstall_release_critical_commands_fail_loudly():
                 assert "2>/dev/null" not in line, f"{script}: {line}"
 
 
+def test_postinstall_requires_target_user_for_setup():
+    """Package hooks must fail when they cannot run per-user setup."""
+    for script in (PKG_POSTINSTALL, DEB_POSTINST):
+        text = script.read_text()
+        assert "cannot complete per-user setup" in text
+        assert "skipping per-user setup" not in text
+        assert "run 'capsem setup' manually" not in text
+
+
 def test_postinstall_seeds_signed_manifest_and_dev_pubkey_loudly():
     """Package postinstall must copy signed manifests before setup verifies them."""
     for script in (PKG_POSTINSTALL, DEB_POSTINST):
@@ -361,3 +400,20 @@ def test_macos_postinstall_materializes_app_bundle_in_applications():
     assert "ditto \"$src\" \"$dst\"" in text
     assert "required app bundle missing" in text
     assert text.index("install_app_bundle") < text.index("# Copy companion binaries")
+
+
+def test_macos_postinstall_waits_for_service_and_gateway_before_opening_ui():
+    """The pkg must not open the app before the daemon and gateway are reachable."""
+    text = PKG_POSTINSTALL.read_text()
+
+    assert "wait_for_ui_ready()" in text
+    assert "capsem start" in text
+    assert "--unix-socket" in text
+    assert "gateway.port" in text
+    assert "/health" in text
+    assert "refusing to open UI early" in text
+
+    setup_pos = text.index("capsem setup --non-interactive --accept-detected")
+    wait_pos = text.index("wait_for_ui_ready", setup_pos)
+    open_pos = text.index("open /Applications/Capsem.app")
+    assert setup_pos < wait_pos < open_pos

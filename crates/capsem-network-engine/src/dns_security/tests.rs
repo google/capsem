@@ -4,8 +4,12 @@ use crate::dns_parser::DnsQuery;
 use crate::dns_transport::DnsHandlerResult;
 use capsem_logger::events::Decision;
 use capsem_security_engine::{
-    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+    CelEnforcementEvaluator, CelEnforcementRule, EventMutation, SecurityDecisionAction,
+    SecurityEngine,
 };
+use hickory_proto::op::{Message, MessageType, OpCode, Query};
+use hickory_proto::rr::{Name, RData, RecordType};
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, SystemTime};
 
 fn allowed_result() -> DnsHandlerResult {
@@ -58,6 +62,14 @@ fn dns_query() -> DnsQuery {
         qclass: 1,
         extra_questions: 0,
     }
+}
+
+fn dns_query_bytes(name: &str, qtype: RecordType, id: u16) -> Vec<u8> {
+    let mut msg = Message::new(id, MessageType::Query, OpCode::Query);
+    msg.metadata.recursion_desired = true;
+    let name = Name::from_ascii(name).unwrap();
+    msg.add_query(Query::query(name, qtype));
+    msg.to_vec().unwrap()
 }
 
 #[test]
@@ -241,6 +253,7 @@ fn runtime_dns_block_projects_to_denied_dns_result_without_upstream() {
         condition: "dns.request.qname == 'blocked.example.com'".into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("blocked DNS benchmark domain".into()),
+        mutations: Vec::new(),
     }])
     .unwrap();
 
@@ -261,6 +274,53 @@ fn runtime_dns_block_projects_to_denied_dns_result_without_upstream() {
         dns_result.policy_reason.as_deref(),
         Some("blocked DNS benchmark domain")
     );
+}
+
+#[test]
+fn runtime_dns_rewrite_projects_to_redirected_dns_result_without_upstream() {
+    let query_bytes = dns_query_bytes("blocked.example.com.", RecordType::A, 0x1234);
+    let query = crate::dns_parser::parse_query(&query_bytes).unwrap();
+    let event = build_dns_security_event_from_query(&query, Some("trace_dns".into()));
+    let evaluator = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "runtime.rewrite-dns".into(),
+        pack_id: Some("runtime-benchmark".into()),
+        condition: "dns.request.qname == 'blocked.example.com'".into(),
+        decision: SecurityDecisionAction::Rewrite,
+        reason: Some("redirect DNS benchmark domain".into()),
+        mutations: vec![EventMutation::ReplaceRegex {
+            path: "answer.ip".into(),
+            pattern: ".*".into(),
+            replacement: "203.0.113.77".into(),
+            reason: Some("redirect DNS benchmark domain".into()),
+        }],
+    }])
+    .unwrap();
+
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(evaluator));
+
+    let result = engine.evaluate(event).unwrap();
+    assert_eq!(
+        dns_security_result_rewrite_answers(&result),
+        vec![IpAddr::V4(Ipv4Addr::new(203, 0, 113, 77))]
+    );
+    let dns_result = build_dns_runtime_rewrite_result(&query_bytes, query, &result);
+    let response = Message::from_vec(&dns_result.answer_bytes).unwrap();
+
+    assert_eq!(dns_result.decision, Decision::Redirected);
+    assert_eq!(dns_result.upstream_resolver_ms, 0);
+    assert_eq!(dns_result.rcode, 0);
+    assert_eq!(dns_result.policy_mode.as_deref(), Some("runtime"));
+    assert_eq!(dns_result.policy_action.as_deref(), Some("rewrite"));
+    assert_eq!(
+        dns_result.policy_rule.as_deref(),
+        Some("runtime.rewrite-dns")
+    );
+    assert_eq!(response.answers.len(), 1);
+    match &response.answers[0].data {
+        RData::A(ip) => assert_eq!(ip.0, Ipv4Addr::new(203, 0, 113, 77)),
+        other => panic!("expected A answer, got {other:?}"),
+    }
 }
 
 #[test]

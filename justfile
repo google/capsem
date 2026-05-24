@@ -25,7 +25,7 @@
 #   test-gateway     -> (no deps; unit + mock UDS tests)
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
-#   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
+#   install          -> _pnpm-install + _stamp-version + profile-derived asset rebuild + _pack-initrd
 #                       (hard clean + native package install + status capture + guest DNS/HTTPS gate)
 #   cut-release      -> test + _stamp-version (commits changelog and creates a local tag)
 #   release [tag]    -> (waits for CI on a pushed tag)
@@ -59,12 +59,12 @@ default_asset_profile := "config/profiles/base/coding.profile.toml"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray"
 
-# Stamp version as 1.1.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
+# Stamp version as 1.2.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
     CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    NEW="${CAPSEM_RELEASE_VERSION:-1.1.$(date +%s)}"
+    NEW="${CAPSEM_RELEASE_VERSION:-1.2.$(date +%s)}"
     echo "Stamping version: ${CURRENT} -> ${NEW}"
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
@@ -877,7 +877,7 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 
 # Build package, runtime-clean local install, use the install.sh native command,
 # then verify installed status, service, gateway, and guest DNS/HTTPS.
-install: _pnpm-install _stamp-version _check-assets _pack-initrd
+install: _pnpm-install _stamp-version _check-assets
     #!/bin/bash
     set -euo pipefail
     # Strip test-isolation env vars so the installer never bakes a transient
@@ -891,6 +891,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
+    INSTALL_ASSETS_DIR="$ROOT/.capsem-assets/install"
 
     CAPSEM_SETTINGS_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/capsem-settings.XXXXXX")"
     cleanup_settings_backup() {
@@ -978,9 +979,34 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
     cargo build --release {{host_crates}}
 
+    echo "=== Rebuilding profile-derived VM assets ==="
+    HOST_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/amd64/x86_64/')
+    just build-assets "$HOST_ARCH" "{{default_asset_profile}}"
+
+    echo "=== Repacking VM assets ==="
+    just _pack-initrd
+
+    echo "=== Keeping existing local profile metadata coherent ==="
+    if [ -x "$HOME/.capsem/bin/capsem" ] && [ -d "$HOME/.capsem/profiles/base" ] && [ -f "{{assets_dir}}/manifest.json" ]; then
+        python3 scripts/materialize-install-profiles.py \
+            "config/profiles/base" \
+            "{{assets_dir}}" \
+            "$HOME/.capsem/profiles/base" \
+            "$HOME/.capsem/assets"
+        if "$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected; then
+            "$HOME/.capsem/bin/capsem" start >/dev/null 2>&1 || true
+        else
+            echo "WARNING: pre-package profile metadata repair failed; final package setup will retry." >&2
+        fi
+    fi
+
+    echo "=== Snapshotting package asset payload ==="
+    rm -rf "$INSTALL_ASSETS_DIR"
+    mkdir -p "$INSTALL_ASSETS_DIR"
+    bash scripts/sync-dev-assets.sh "{{assets_dir}}" "$INSTALL_ASSETS_DIR"
+
     echo "=== Clean uninstalling existing local Capsem ==="
     preserve_setting "service.toml"
-    preserve_setting "profiles"
     if [ -x "$HOME/.capsem/bin/capsem" ]; then
         if "$HOME/.capsem/bin/capsem" uninstall --yes; then
             echo "Existing local Capsem uninstalled."
@@ -1012,14 +1038,14 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         remove_stale_path "target/release/bundle/macos/Capsem.app"
         eval cargo tauri build --bundles app $TAURI_FLAGS
         echo "=== Signing local asset manifest for package payload ==="
-        bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
+        bash scripts/sync-dev-assets.sh "$INSTALL_ASSETS_DIR" "$INSTALL_ASSETS_DIR"
         echo "=== Preparing capsem-admin package payload ==="
         bash scripts/prepare-admin-cli.sh "target/release"
         echo "=== Assembling .pkg (v$VERSION) ==="
         bash scripts/build-pkg.sh \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
-            "{{assets_dir}}" \
+            "$INSTALL_ASSETS_DIR" \
             "$VERSION"
         PKG="packages/Capsem-$VERSION.pkg"
         echo "=== Installing .pkg ==="
@@ -1029,18 +1055,17 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         rm -f target/release/bundle/deb/*.deb
         eval cargo tauri build --bundles deb $TAURI_FLAGS
         echo "=== Signing local asset manifest for package payload ==="
-        bash scripts/sync-dev-assets.sh "{{assets_dir}}" "{{assets_dir}}"
+        bash scripts/sync-dev-assets.sh "$INSTALL_ASSETS_DIR" "$INSTALL_ASSETS_DIR"
         echo "=== Preparing capsem-admin package payload ==="
         bash scripts/prepare-admin-cli.sh "target/release"
         DEB=$(ls -t target/release/bundle/deb/*.deb | head -1)
-        bash scripts/repack-deb.sh "$DEB" "target/release" "{{assets_dir}}"
+        bash scripts/repack-deb.sh "$DEB" "target/release" "$INSTALL_ASSETS_DIR"
         echo "=== Installing .deb ==="
         sudo apt install -y "$DEB"
     fi
 
     echo "=== Restoring preserved settings ==="
     restore_setting "service.toml"
-    restore_setting "profiles"
 
     echo "=== Verifying installed layout ==="
     assert_executable "$HOME/.capsem/bin/capsem"
@@ -1069,7 +1094,10 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
     fi
 
     echo "=== Syncing locally built assets into ~/.capsem/assets ==="
-    bash scripts/sync-dev-assets.sh "{{assets_dir}}" "$HOME/.capsem/assets"
+    bash scripts/sync-dev-assets.sh "$INSTALL_ASSETS_DIR" "$HOME/.capsem/assets"
+
+    echo "=== Finalizing installed setup ==="
+    "$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected
 
     echo "=== Restarting installed service ==="
     "$HOME/.capsem/bin/capsem" stop >/dev/null 2>&1 || true
@@ -1121,7 +1149,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd
         --label just-install
 
     echo "=== Verifying guest DNS and HTTPS ==="
-    "$HOME/.capsem/bin/capsem" run 'set -eux; getent hosts elie.net; getent hosts generativelanguage.googleapis.com; curl -fsS --connect-timeout 10 https://elie.net >/dev/null'
+    "$HOME/.capsem/bin/capsem" run 'set -eux; getent hosts localhost; getent hosts elie.net; getent hosts generativelanguage.googleapis.com; curl -fsS --connect-timeout 10 https://elie.net >/dev/null; agy --version'
 
     echo "=== Pruning stale build artifacts ==="
     just _clean-stale
@@ -1244,7 +1272,7 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
+        'cd /src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && CAPSEM_INSTALL_PROFILE_ASSET_ROOT="$ASSETS_CONTAINER" bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
     echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
         'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'
@@ -1571,8 +1599,8 @@ _check-assets:
     fi
     if [ ${#missing[@]} -gt 0 ]; then
         echo "Missing VM assets in $dir/: ${missing[*]}"
-        echo "Building assets (requires docker)..."
-        just build-assets
+        echo "Building $arch assets (requires docker)..."
+        just build-assets "$arch"
     fi
 
 _pnpm-install:

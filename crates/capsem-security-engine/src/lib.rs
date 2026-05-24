@@ -202,7 +202,7 @@ impl SecurityEvent {
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
-            subject: SecurityEventSubject::Http(subject),
+            subject: SecurityEventSubject::Http(Box::new(subject)),
             context: EventContext::default(),
             trace: TraceSnapshot::default(),
             labels: Vec::new(),
@@ -399,6 +399,8 @@ pub struct SecurityDecision {
     pub reason: Option<String>,
     #[serde(default)]
     pub terminal: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mutations: Vec<EventMutation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -440,7 +442,7 @@ impl EventMutation {
 #[serde(tag = "family", rename_all = "snake_case")]
 pub enum SecurityEventSubject {
     Dns(DnsSecuritySubject),
-    Http(HttpSecuritySubject),
+    Http(Box<HttpSecuritySubject>),
     Mcp(McpSecuritySubject),
     Model(ModelSecuritySubject),
     File(FileSecuritySubject),
@@ -1538,6 +1540,8 @@ pub struct CelEnforcementRule {
     pub decision: SecurityDecisionAction,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mutations: Vec<EventMutation>,
 }
 
 #[derive(Debug)]
@@ -1577,6 +1581,7 @@ impl EnforcementEvaluator for CelEnforcementEvaluator {
                     pack_id: compiled.rule.pack_id.clone(),
                     reason: compiled.rule.reason.clone(),
                     terminal: compiled.rule.decision != SecurityDecisionAction::Allow,
+                    mutations: compiled.rule.mutations.clone(),
                 }));
             }
         }
@@ -2161,6 +2166,7 @@ impl SecurityEngine {
                         decision.pack_id.clone(),
                         decision.reason.clone(),
                     ));
+                    event.mutations.extend(decision.mutations.clone());
                     event.decision = Some(decision);
                 }
                 Ok(None) => {
@@ -2423,6 +2429,7 @@ fn default_deny_confirm_decision(decision: &SecurityDecision) -> SecurityDecisio
         pack_id: decision.pack_id.clone(),
         reason: Some(reason),
         terminal: true,
+        mutations: Vec::new(),
     }
 }
 
@@ -2816,6 +2823,7 @@ impl RuntimeRuleRegistry {
                         condition: entry.source.clone(),
                         decision: *decision,
                         reason: reason.clone(),
+                        mutations: Vec::new(),
                     })
                 }
                 RuntimeRuleDefinition::Detection { .. } => None,

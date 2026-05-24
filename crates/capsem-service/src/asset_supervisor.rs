@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -46,6 +48,17 @@ struct LocalAssetStatus {
     arch: String,
     missing: Vec<String>,
     resolved: ResolvedAssets,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAssetLocalStatus {
+    pub logical_name: &'static str,
+    pub hash: String,
+    pub source_url: String,
+    pub size: u64,
+    pub content_type: String,
+    pub path: PathBuf,
+    pub present: bool,
 }
 
 impl AssetSupervisor {
@@ -158,6 +171,9 @@ impl AssetSupervisor {
         let _guard = self.run_lock.lock().await;
         info!(
             event = "profile_asset_check_start",
+            profile_id = self.requirement.profile_id().unwrap_or(""),
+            revision = self.requirement.profile_revision().unwrap_or(""),
+            profile_payload_hash = self.requirement.profile_payload_hash().unwrap_or(""),
             "profile asset supervisor check started"
         );
         self.set_checking();
@@ -166,6 +182,9 @@ impl AssetSupervisor {
             Ok(status) if status.missing.is_empty() => {
                 info!(
                     event = "profile_asset_check_ready",
+                    profile_id = self.requirement.profile_id().unwrap_or(""),
+                    revision = self.requirement.profile_revision().unwrap_or(""),
+                    profile_payload_hash = self.requirement.profile_payload_hash().unwrap_or(""),
                     asset_version = %status.version,
                     arch = %status.arch,
                     "profile assets already ready"
@@ -178,6 +197,9 @@ impl AssetSupervisor {
             Err(e) => {
                 error!(
                     event = "profile_asset_check_error",
+                    profile_id = self.requirement.profile_id().unwrap_or(""),
+                    revision = self.requirement.profile_revision().unwrap_or(""),
+                    profile_payload_hash = self.requirement.profile_payload_hash().unwrap_or(""),
                     error = %e,
                     "profile asset check failed"
                 );
@@ -189,6 +211,9 @@ impl AssetSupervisor {
 
         info!(
             event = "profile_asset_missing",
+            profile_id = self.requirement.profile_id().unwrap_or(""),
+            revision = self.requirement.profile_revision().unwrap_or(""),
+            profile_payload_hash = self.requirement.profile_payload_hash().unwrap_or(""),
             asset_version = %status.version,
             arch = %status.arch,
             missing = ?status.missing,
@@ -217,6 +242,9 @@ impl AssetSupervisor {
             Err(e) => {
                 warn!(
                     event = "profile_asset_download_retryable_error",
+                    profile_id = self.requirement.profile_id().unwrap_or(""),
+                    revision = self.requirement.profile_revision().unwrap_or(""),
+                    profile_payload_hash = self.requirement.profile_payload_hash().unwrap_or(""),
                     error = %e,
                     "profile asset download failed; will retry"
                 );
@@ -230,6 +258,9 @@ impl AssetSupervisor {
         let health = self.snapshot();
         info!(
             event = "profile_asset_check_finish",
+            profile_id = health.profile_id.as_deref().unwrap_or(""),
+            revision = health.profile_revision.as_deref().unwrap_or(""),
+            profile_payload_hash = health.profile_payload_hash.as_deref().unwrap_or(""),
             outcome,
             state = health.state.as_str(),
             ready = health.ready,
@@ -449,6 +480,42 @@ impl ProfileAssetRequirement {
         })
         .collect()
     }
+
+    pub fn profile_id(&self) -> &str {
+        &self.profile_id
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
+
+    pub fn profile_payload_hash(&self) -> Option<&str> {
+        self.profile_payload_hash.as_deref()
+    }
+
+    pub fn arch(&self) -> &str {
+        &self.arch
+    }
+
+    pub fn local_asset_statuses(&self, base_dir: &Path) -> Vec<ProfileAssetLocalStatus> {
+        let resolved = self.resolved_assets(base_dir);
+        [
+            ("vmlinuz", &self.assets.kernel, resolved.kernel),
+            ("initrd.img", &self.assets.initrd, resolved.initrd),
+            ("rootfs.squashfs", &self.assets.rootfs, resolved.rootfs),
+        ]
+        .into_iter()
+        .map(|(logical_name, asset, path)| ProfileAssetLocalStatus {
+            logical_name,
+            hash: asset.hash.clone(),
+            source_url: redacted_url_for_log(&asset.url),
+            size: asset.size,
+            content_type: asset.content_type.clone(),
+            present: path.exists(),
+            path,
+        })
+        .collect()
+    }
 }
 
 impl AssetRequirement {
@@ -642,6 +709,7 @@ async fn download_missing_profile_assets(
         tokio::fs::rename(&tmp, &target)
             .await
             .with_context(|| format!("install {}", target.display()))?;
+        set_asset_readonly(&target).await?;
         info!(
             event = "profile_asset_install_ok",
             profile_id = %required.profile_id,
@@ -658,6 +726,18 @@ async fn download_missing_profile_assets(
             done: true,
         });
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn set_asset_readonly(path: &Path) -> Result<()> {
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o444))
+        .await
+        .with_context(|| format!("chmod 0444 {}", path.display()))
+}
+
+#[cfg(not(unix))]
+async fn set_asset_readonly(_path: &Path) -> Result<()> {
     Ok(())
 }
 

@@ -16,7 +16,8 @@
 #   /Applications/Capsem.app           -- Tauri GUI
 #   /usr/local/share/capsem/bin/       -- companion binaries
 #   /usr/local/share/capsem/admin-python/ -- capsem-admin Python payload
-#   /usr/local/share/capsem/assets/    -- signed manifest only (heavy assets downloaded on first use)
+#   /usr/local/share/capsem/profiles/base/ -- Profile V2 base profiles
+#   /usr/local/share/capsem/assets/    -- signed manifest only
 #   /usr/local/share/capsem/entitlements.plist
 #
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
@@ -62,6 +63,19 @@ else
     exit 1
 fi
 
+PROFILE_SRC="$SCRIPT_DIR/../config/profiles/base"
+if [ -d "$PROFILE_SRC" ]; then
+    mkdir -p "$SHARE_DIR/profiles/base"
+    python3 "$SCRIPT_DIR/materialize-install-profiles.py" \
+        "$PROFILE_SRC" \
+        "$ASSETS_DIR" \
+        "$SHARE_DIR/profiles/base" \
+        "${CAPSEM_INSTALL_PROFILE_ASSET_ROOT:-https://assets.capsem.dev/vm}"
+else
+    echo "ERROR: base profiles not found: $PROFILE_SRC" >&2
+    exit 1
+fi
+
 # Fallback app copy used by postinstall. The package payload also installs
 # /Applications/Capsem.app directly, but postinstall verifies/materializes the
 # app from this copy so a successful install cannot leave the GUI missing.
@@ -72,8 +86,8 @@ if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM assets: only bundle the signed manifest. The heavy assets (kernel, rootfs)
-# are downloaded on first use by `capsem setup` / auto-setup.
+# VM assets: only bundle the signed manifest. Heavy assets stay on the asset
+# channel; profiles may point at https:// or a local file:// mirror.
 mkdir -p "$SHARE_DIR/assets"
 for asset in manifest.json manifest.json.minisig; do
     src="$ASSETS_DIR/$asset"

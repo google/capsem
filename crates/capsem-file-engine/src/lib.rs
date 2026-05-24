@@ -123,7 +123,8 @@ fn file_security_event_id(
     hasher.update(operation.as_bytes());
     hasher.update(path.as_bytes());
     hasher.update(&timestamp_unix_nanos.to_be_bytes());
-    format!("file-{}", hasher.finalize().to_hex()[..16].to_string())
+    let digest = hasher.finalize().to_hex();
+    format!("file-{}", &digest[..16])
 }
 
 #[cfg(test)]

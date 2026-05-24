@@ -71,6 +71,16 @@ def _toml(data: dict) -> str:
 
 
 def _build_config(plan: ImagePlan) -> dict:
+    version_commands = {
+        "node": "node --version 2>&1 | tr -d v",
+        "npm": "npm --version 2>&1",
+        "uv": "uv --version 2>&1 | awk '{print $2}'",
+        "pip": "pip3 --version 2>&1 | awk '{print $2}'",
+    }
+    for tool_id, tool in sorted(plan.tools.items()):
+        if not tool.required or tool.source != "guest":
+            continue
+        version_commands.setdefault(tool_id, _tool_version_command(tool_id))
     arch_configs = {
         "arm64": {
             "base_image": f"debian:{plan.packages.system.release}-slim",
@@ -96,15 +106,16 @@ def _build_config(plan: ImagePlan) -> dict:
         "build": {
             "compression": "zstd",
             "compression_level": 15,
-            "version_commands": {
-                "node": "node --version 2>&1 | tr -d v",
-                "npm": "npm --version 2>&1",
-                "uv": "uv --version 2>&1 | awk '{print $2}'",
-                "pip": "pip3 --version 2>&1 | awk '{print $2}'",
-            },
+            "version_commands": version_commands,
             "architectures": selected,
         }
     }
+
+
+def _tool_version_command(tool_id: str) -> str:
+    if tool_id == "capsem_doctor":
+        return "capsem-doctor --version 2>&1 | head -1"
+    return f"{tool_id} --version 2>/dev/null | head -1"
 
 
 def _manifest_config(plan: ImagePlan) -> dict:
@@ -197,6 +208,28 @@ def _package_sets(plan: ImagePlan) -> dict[str, dict]:
                 "network": {
                     "name": "npm",
                     "domains": ["registry.npmjs.org"],
+                    "allow_get": True,
+                },
+            }
+        }
+    curl_installs = [
+        f"{name}={url}"
+        for name, url in sorted(plan.packages.curl_installs.items())
+    ]
+    if curl_installs:
+        package_sets["config/packages/curl.toml"] = {
+            "curl": {
+                "name": "Profile Curl Installs",
+                "manager": "curl",
+                "install_cmd": "curl -fsSL",
+                "packages": curl_installs,
+                "version_commands": {
+                    name: _tool_version_command(name)
+                    for name in sorted(plan.packages.curl_installs)
+                },
+                "network": {
+                    "name": "Curl installers",
+                    "domains": ["antigravity.google", "edgedl.me.gvt1.com"],
                     "allow_get": True,
                 },
             }

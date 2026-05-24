@@ -248,7 +248,8 @@ fn process_security_event_id(
     hasher.update(&exec_id.to_be_bytes());
     hasher.update(command.as_bytes());
     hasher.update(&timestamp_unix_ms.to_be_bytes());
-    format!("process-{}", hasher.finalize().to_hex()[..16].to_string())
+    let digest = hasher.finalize().to_hex();
+    format!("process-{}", &digest[..16])
 }
 
 #[cfg(test)]

@@ -85,7 +85,12 @@ impl HttpPolicy {
     /// If the domain is denied, returns immediately (no HTTP check).
     /// If allowed at domain level and no HTTP rules exist for this domain,
     /// allows the request (backward compat).
-    pub fn evaluate_request(&self, domain: &str, method: &str, path: &str) -> HttpEnforcementDecision {
+    pub fn evaluate_request(
+        &self,
+        domain: &str,
+        method: &str,
+        path: &str,
+    ) -> HttpEnforcementDecision {
         // 1. Domain-level check first.
         let domain_decision = self.evaluate_domain(domain);
         if domain_decision.action == Action::Deny {

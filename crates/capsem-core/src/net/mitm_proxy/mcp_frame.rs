@@ -145,7 +145,7 @@ where
             let decision_request =
                 McpDecisionRequest::from_request(&process_name, &request, &summary);
             let policy = endpoint.policy.read().await.clone();
-            let decision_provider = LocalMcpDecisionProvider::audit_only_arc(Arc::clone(&policy));
+            let decision_provider = LocalMcpDecisionProvider::enforce_arc(Arc::clone(&policy));
             let mut request_decision = decision_provider.decide(&decision_request);
             let mut runtime_block_event = None;
             if endpoint.security_engine.has_engine() {
@@ -847,6 +847,13 @@ impl LocalMcpDecisionProvider {
         }
     }
 
+    fn enforce_arc(policy: Arc<McpPolicy>) -> Self {
+        Self {
+            policy,
+            mode: McpPolicyMode::Enforce,
+        }
+    }
+
     fn decide(&self, request: &McpDecisionRequest) -> McpEnforcementDecision {
         if let Some(rule) = self.matching_request_rule(request) {
             let decision = self.decision_from_audit_rule(rule);
@@ -876,7 +883,10 @@ impl LocalMcpDecisionProvider {
         response: &JsonRpcResponse,
         base: McpEnforcementDecision,
     ) -> McpEnforcementDecision {
-        if matches!(base.action, McpEnforcementAction::Ask | McpEnforcementAction::Block) {
+        if matches!(
+            base.action,
+            McpEnforcementAction::Ask | McpEnforcementAction::Block
+        ) {
             return base;
         }
         if let Some(rule) = self.matching_response_rule(request, response) {
@@ -985,6 +995,12 @@ impl LocalMcpDecisionProvider {
         match rule.action {
             McpDecisionRuleAction::Allow => self.allow(rule_name(rule), rule_reason(rule)),
             McpDecisionRuleAction::Deny => self.block(rule_name(rule), rule_reason(rule)),
+            McpDecisionRuleAction::Rewrite => self.rewrite(
+                rule_name(rule),
+                rule_reason(rule),
+                rule.rewrite_target.clone(),
+                rule.rewrite_value.clone(),
+            ),
         }
     }
 
@@ -1238,7 +1254,7 @@ where
     let mut first_allow = None;
     for rule in rules {
         match rule.action {
-            McpDecisionRuleAction::Deny => return Some(rule),
+            McpDecisionRuleAction::Deny | McpDecisionRuleAction::Rewrite => return Some(rule),
             McpDecisionRuleAction::Allow => first_allow.get_or_insert(rule),
         };
     }
@@ -1266,6 +1282,10 @@ fn rule_matches_request(rule: &McpDecisionRule, request: &McpDecisionRequest) ->
                 && request.arguments.as_ref().and_then(|args| args.get(name)) == Some(equals)
         }
         McpDecisionRuleMatch::ReturnValue { .. } => false,
+        McpDecisionRuleMatch::Condition {
+            callback,
+            condition,
+        } => callback == "mcp.request" && mcp_condition_matches_request(condition, request),
     }
 }
 
@@ -1287,6 +1307,133 @@ fn rule_matches_response(
                     .and_then(|result| json_path(result, path))
                     == Some(equals)
         }
+        McpDecisionRuleMatch::Condition {
+            callback,
+            condition,
+        } => {
+            callback == "mcp.response"
+                && mcp_condition_matches_request(condition, request)
+                && mcp_condition_matches_response(condition, response)
+        }
+        _ => false,
+    }
+}
+
+fn mcp_condition_matches_request(condition: &str, request: &McpDecisionRequest) -> bool {
+    condition
+        .split("&&")
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .all(|term| mcp_request_condition_term_matches(term, request))
+}
+
+fn mcp_condition_matches_response(condition: &str, response: &JsonRpcResponse) -> bool {
+    condition
+        .split("&&")
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .all(|term| {
+            if term.starts_with("response.") {
+                mcp_response_condition_term_matches(term, response)
+            } else {
+                true
+            }
+        })
+}
+
+fn mcp_request_condition_term_matches(term: &str, request: &McpDecisionRequest) -> bool {
+    if term == "true" || term.starts_with("response.") {
+        return true;
+    }
+    if let Some(expected) = quoted_equality_rhs(term, "method") {
+        return request.method == expected;
+    }
+    if let Some(expected) = quoted_equality_rhs(term, "tool.name") {
+        return request.tool_name.as_deref() == Some(expected);
+    }
+    if let Some(path) = term
+        .strip_prefix("has(")
+        .and_then(|value| value.strip_suffix(')'))
+        .and_then(|value| value.trim().strip_prefix("arguments."))
+    {
+        return request
+            .arguments
+            .as_ref()
+            .is_some_and(|arguments| json_path(arguments, path).is_some());
+    }
+    if let Some((path, expected)) = quoted_path_equality_rhs(term, "arguments.") {
+        return request
+            .arguments
+            .as_ref()
+            .and_then(|arguments| json_path(arguments, path))
+            == Some(&serde_json::Value::String(expected.to_string()));
+    }
+    if let Some((path, needle)) = quoted_contains_rhs(term, "arguments.") {
+        return request
+            .arguments
+            .as_ref()
+            .and_then(|arguments| json_path(arguments, path))
+            .is_some_and(|value| json_value_contains_text(value, needle));
+    }
+    false
+}
+
+fn mcp_response_condition_term_matches(term: &str, response: &JsonRpcResponse) -> bool {
+    if let Some((path, needle)) = quoted_contains_rhs(term, "response.") {
+        let Some(result) = response.result.as_ref() else {
+            return false;
+        };
+        if path == "text" || path == "content" {
+            return json_value_contains_text(result, needle);
+        }
+        return json_path(result, path)
+            .is_some_and(|value| json_value_contains_text(value, needle));
+    }
+    false
+}
+
+fn quoted_equality_rhs<'a>(term: &'a str, lhs: &str) -> Option<&'a str> {
+    let (left, right) = term.split_once("==")?;
+    if left.trim() != lhs {
+        return None;
+    }
+    unquote(right.trim())
+}
+
+fn quoted_path_equality_rhs<'a>(term: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    let (left, right) = term.split_once("==")?;
+    let path = left.trim().strip_prefix(prefix)?;
+    let expected = unquote(right.trim())?;
+    Some((path, expected))
+}
+
+fn quoted_contains_rhs<'a>(term: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    let (left, right) = term.split_once(".contains(")?;
+    let path = left.trim().strip_prefix(prefix)?;
+    let needle = unquote(right.trim().strip_suffix(')')?.trim())?;
+    Some((path, needle))
+}
+
+fn unquote(value: &str) -> Option<&str> {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+}
+
+fn json_value_contains_text(value: &serde_json::Value, needle: &str) -> bool {
+    match value {
+        serde_json::Value::String(text) => text.contains(needle),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| json_value_contains_text(value, needle)),
+        serde_json::Value::Object(map) => map
+            .values()
+            .any(|value| json_value_contains_text(value, needle)),
         _ => false,
     }
 }
@@ -1316,6 +1463,9 @@ fn json_rpc_id_to_log_string(value: &serde_json::Value) -> Option<String> {
 }
 
 fn rule_name(rule: &McpDecisionRule) -> String {
+    if rule.id.starts_with("policy.") {
+        return rule.id.clone();
+    }
     format!("mcp.rule.{}", rule.id)
 }
 

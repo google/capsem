@@ -38,6 +38,37 @@ export interface ProfileAssetProvenance {
   content_type: string;
 }
 
+export interface ProfileAssetLocalStatus {
+  name: string;
+  path: string;
+  status: 'present' | 'missing' | 'downloading' | string;
+  source_url: string;
+  hash?: string;
+  size?: number;
+  content_type?: string;
+}
+
+export interface ProfileMissingAsset {
+  name: string;
+  path: string;
+  source_url?: string;
+}
+
+export interface ProfileAssetStatus {
+  state: 'ready' | 'missing' | 'error' | string;
+  ready: boolean;
+  usable_for_vm: boolean;
+  profile_id: string;
+  profile_revision?: string | null;
+  profile_payload_hash?: string | null;
+  asset_version?: string | null;
+  arch?: string | null;
+  assets: ProfileAssetLocalStatus[];
+  missing: string[];
+  missing_assets: ProfileMissingAsset[];
+  error?: string | null;
+}
+
 export interface SavedVmAssetDependency {
   vm: string;
   asset_version: string;
@@ -110,6 +141,7 @@ export interface ProfileCatalogProfile {
   profile_id: string;
   current_revision?: string | null;
   installed_revision?: string | null;
+  asset_status?: ProfileAssetStatus | null;
   revisions: ProfileCatalogRevision[];
 }
 
@@ -119,6 +151,30 @@ export interface ProfileCatalogResponse {
   default_profile?: string | null;
   catalog_source?: string | null;
   profiles: ProfileCatalogProfile[];
+}
+
+export interface ProfileSummary {
+  id: string;
+  name: string;
+  description?: string;
+  best_for?: string;
+  ui?: 'coding' | 'everyday' | string;
+  revision?: string | null;
+  icon_svg?: string | null;
+}
+
+export interface ProfileListRecord {
+  profile: ProfileSummary;
+  source: string;
+  path?: string | null;
+  locked: boolean;
+  asset_status?: ProfileAssetStatus | null;
+}
+
+export interface ProfileListResponse {
+  mode: 'settings_profiles_v2';
+  default_profile?: string | null;
+  profiles: ProfileListRecord[];
 }
 
 export interface ProfileRevisionsResponse {

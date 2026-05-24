@@ -444,7 +444,12 @@ def main() -> int:
     debug: dict[str, Any] | None = None
     debug_parse_error: str | None = None
     if not args.skip_debug:
-        debug = run_command([str(capsem_bin), "debug"], args.debug_timeout, env)
+        run_dir = Path(env.get("CAPSEM_RUN_DIR", str(capsem_home / "run"))).expanduser()
+        debug = run_command(
+            [str(capsem_bin), "--uds-path", str(run_dir / "service.sock"), "debug"],
+            args.debug_timeout,
+            env,
+        )
         write_text(out_dir / "debug.stdout.txt", debug["stdout"])
         write_text(out_dir / "debug.stderr.txt", debug["stderr"])
         debug_json, debug_parse_error = json_object_summary(debug["stdout"])

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, select_editable_profile, wait_exec_ready
 
 pytestmark = pytest.mark.e2e
 
@@ -27,6 +27,7 @@ def _guest_python(script: str) -> str:
 def _start_service(extra_env=None) -> ServiceInstance:
     svc = ServiceInstance(extra_env=extra_env)
     svc.start()
+    select_editable_profile(svc.client(), prefix="model-policy")
     return svc
 
 
@@ -244,7 +245,7 @@ print(json.dumps({{"returncode": proc.returncode, "stdout": proc.stdout, "stderr
         assert net_row["decision"] == "denied"
         assert net_row["status_code"] == 403
         assert net_row["bytes_sent"] > 0
-        assert net_row["policy_mode"] == "enforce"
+        assert net_row["policy_mode"] == "runtime"
         assert net_row["policy_action"] == "block"
         assert net_row["policy_reason"] == "E2E model policy block"
         assert "e2e-model-secret" not in (net_row["request_body_preview"] or "")
@@ -399,7 +400,7 @@ print(json.dumps({{
         assert ask_row["decision"] == "allowed"
         assert ask_row["status_code"] == 200
         assert ask_row["bytes_sent"] > 0
-        assert ask_row["policy_mode"] == "enforce"
+        assert ask_row["policy_mode"] == "runtime"
         assert ask_row["policy_action"] == "allow"
         assert ask_row["policy_reason"] == "E2E model policy ask"
         assert "ask-model-secret" in (ask_row["request_body_preview"] or "")
@@ -417,7 +418,7 @@ print(json.dumps({{
         assert rewrite_row["decision"] == "allowed"
         assert rewrite_row["status_code"] == 200
         assert rewrite_row["bytes_sent"] > 0
-        assert rewrite_row["policy_mode"] == "enforce"
+        assert rewrite_row["policy_mode"] == "runtime"
         assert rewrite_row["policy_action"] == "rewrite"
         assert rewrite_row["policy_reason"] == "E2E model request rewrite"
         assert "[redacted-model-secret]" in (
@@ -582,7 +583,7 @@ print(json.dumps({{
         )
         assert block_row["decision"] == "denied"
         assert block_row["status_code"] == 403
-        assert block_row["policy_mode"] == "enforce"
+        assert block_row["policy_mode"] == "runtime"
         assert block_row["policy_action"] == "block"
         assert block_row["policy_reason"] == "E2E block secret tool output"
         assert "tool-block-secret" not in (block_row["request_body_preview"] or "")
@@ -598,7 +599,7 @@ print(json.dumps({{
             lambda row: row["policy_rule"] == "policy.model.rewrite_e2e_tool_response",
             timeout=30.0,
         )
-        assert rewrite_row["policy_mode"] == "enforce"
+        assert rewrite_row["policy_mode"] == "runtime"
         assert rewrite_row["policy_action"] == "rewrite"
         assert rewrite_row["policy_reason"] == "E2E redact secret tool output"
         assert "[redacted-tool-secret]" in (

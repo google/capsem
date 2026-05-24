@@ -20,7 +20,7 @@ pub struct StatsResponse {
 pub struct ProvisionRequest {
     pub name: Option<String>,
     /// RAM in megabytes. If absent, service resolves from merged VM settings
-    /// (vm.resources.ram_gb, default 4 GiB).
+    /// (vm.resources.ram_gb, default 8 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
     /// CPU count. If absent, service resolves from merged VM settings
@@ -276,7 +276,7 @@ pub struct RunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_revision: Option<String>,
     /// Guest RAM in MiB. Falls back to merged VM settings
-    /// (vm.resources.ram_gb, default 4 GiB).
+    /// (vm.resources.ram_gb, default 8 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
     /// Guest CPU count. Falls back to merged VM settings

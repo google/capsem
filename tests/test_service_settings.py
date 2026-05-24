@@ -138,7 +138,7 @@ def test_service_settings_toml_immediately_validates_through_pydantic_json(
             version = 1
 
             [profiles]
-            base_dirs = ["/Library/Application Support/Capsem/profiles/base"]
+            base_dirs = ["~/.capsem/profiles/base"]
             corp_dirs = ["/Library/Application Support/Capsem/profiles/corp"]
             user_dirs = ["/Users/example/.capsem/profiles"]
             default_profile = "everyday-work"

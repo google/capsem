@@ -15,12 +15,12 @@ use std::time::SystemTime;
 use capsem_logger::events::DnsEvent;
 use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, BlockResponse, DnsSecuritySubject, Enforceability,
-    RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
+    EventMutation, RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
     SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError, SecurityEvent,
     SecurityEventCommon, SecurityResult, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
-use crate::dns_parser::{build_nxdomain, DnsQuery};
+use crate::dns_parser::{build_nxdomain, build_redirect_response, DnsQuery};
 use crate::dns_transport::DnsHandlerResult;
 
 const CAPSEM_VM_ID_ENV: &str = "CAPSEM_VM_ID";
@@ -134,6 +134,60 @@ pub fn dns_security_result_allows_transport(result: &SecurityResult) -> bool {
     )
 }
 
+pub fn dns_security_result_rewrite_answers(result: &SecurityResult) -> Vec<IpAddr> {
+    result
+        .resolved_event
+        .event
+        .mutations
+        .iter()
+        .filter_map(|mutation| match mutation {
+            EventMutation::ReplaceRegex {
+                path, replacement, ..
+            } if path == "answer.ip" => replacement.parse::<IpAddr>().ok(),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn build_dns_runtime_rewrite_result(
+    query_bytes: &[u8],
+    query: DnsQuery,
+    result: &SecurityResult,
+) -> DnsHandlerResult {
+    let policy_rule = dns_security_result_rule_id(result);
+    let policy_reason = dns_security_result_reason(result);
+    let answers = dns_security_result_rewrite_answers(result);
+    if answers.is_empty() {
+        return DnsHandlerResult {
+            answer_bytes: build_nxdomain(query_bytes).unwrap_or_default(),
+            query: Some(query),
+            decision: capsem_logger::events::Decision::Denied,
+            matched_rule: policy_rule.clone(),
+            upstream_resolver_ms: 0,
+            rcode: 3,
+            policy_mode: Some("runtime".into()),
+            policy_action: Some("rewrite".into()),
+            policy_rule,
+            policy_reason: Some(format!(
+                "{policy_reason}; no valid DNS rewrite answer was provided"
+            )),
+        };
+    }
+
+    DnsHandlerResult {
+        answer_bytes: build_redirect_response(query_bytes, &answers, 60).unwrap_or_default(),
+        query: Some(query),
+        decision: capsem_logger::events::Decision::Redirected,
+        matched_rule: policy_rule.clone(),
+        upstream_resolver_ms: 0,
+        rcode: 0,
+        policy_mode: Some("runtime".into()),
+        policy_action: Some("rewrite".into()),
+        policy_rule,
+        policy_reason: Some(policy_reason),
+    }
+}
+
 /// Project a terminal runtime Security Engine decision back to DNS transport
 /// bytes plus the legacy `dns_events` fields.
 pub fn build_dns_runtime_denied_result(
@@ -241,6 +295,7 @@ pub fn build_dns_resolved_security_event(event: &DnsEvent) -> ResolvedSecurityEv
                     | SecurityDecisionAction::Rewrite
                     | SecurityDecisionAction::Throttle
             ),
+            mutations: Vec::new(),
         });
     }
 
@@ -266,6 +321,12 @@ pub fn build_dns_resolved_security_event(event: &DnsEvent) -> ResolvedSecurityEv
                 .unwrap_or_else(|| "dns_request_denied".into()),
             rule_id,
         }),
+        "redirected" if event.policy_action.as_deref() == Some("rewrite") => {
+            SecurityAction::Rewrite(capsem_security_engine::RewritePatch {
+                target: "answer.ip".into(),
+                replacement_ref: event.qname.clone(),
+            })
+        }
         "error" => SecurityAction::Error(SecurityError {
             code: "dns_error".into(),
             message: reason.unwrap_or_else(|| "DNS request failed".into()),
@@ -389,7 +450,8 @@ fn dns_security_event_id(
     hasher.update(&qtype.to_be_bytes());
     hasher.update(&qclass.to_be_bytes());
     hasher.update(&timestamp_unix_nanos.to_be_bytes());
-    format!("dns-{}", hasher.finalize().to_hex()[..16].to_string())
+    let digest = hasher.finalize().to_hex();
+    format!("dns-{}", &digest[..16])
 }
 
 #[cfg(test)]

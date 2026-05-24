@@ -1016,7 +1016,20 @@ async fn serve_dns_session(
                     );
                 match security_engine.evaluate(event) {
                     Ok(runtime_result) => {
-                        if capsem_network_engine::dns_security::dns_security_result_allows_transport(
+                        if !capsem_network_engine::dns_security::dns_security_result_rewrite_answers(
+                            &runtime_result,
+                        )
+                        .is_empty()
+                        {
+                            let rewritten =
+                                capsem_network_engine::dns_security::build_dns_runtime_rewrite_result(
+                                    &req.raw,
+                                    query,
+                                    &runtime_result,
+                                );
+                            runtime_resolved_event = Some(runtime_result.resolved_event);
+                            rewritten
+                        } else if capsem_network_engine::dns_security::dns_security_result_allows_transport(
                             &runtime_result,
                         ) {
                             runtime_resolved_event = Some(runtime_result.resolved_event);

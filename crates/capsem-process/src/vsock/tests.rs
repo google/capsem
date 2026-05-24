@@ -266,6 +266,7 @@ fn blocked_process_exec_evaluation() -> capsem_process_engine::ProcessExecSecuri
                     .into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("shell exec blocked".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));

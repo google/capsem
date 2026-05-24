@@ -138,10 +138,35 @@ describe('api', () => {
       // Force disconnected state.
       mockFetch.mockRejectedValueOnce(new Error('fail'));
       await api.init();
+      mockFetch.mockRejectedValueOnce(new Error('still down'));
 
       const status = await api.getStatus();
       expect(status.service).toBe('offline');
       expect(status.vms).toEqual([]);
+    });
+
+    it('reconnects before reporting the dashboard status offline', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('startup race'));
+      await api.init();
+
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.2.0', service_socket: '/tmp/service.sock' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'fresh-token' }))
+        .mockReturnValueOnce(jsonResponse({
+          service: 'running',
+          gateway_version: '1.2.0',
+          vm_count: 0,
+          vms: [],
+          resource_summary: null,
+          assets: { ready: true, state: 'ready', profile_id: 'everyday-work' },
+        }));
+
+      const status = await api.getStatus();
+      expect(status.service).toBe('running');
+      expect(api.isConnected()).toBe(true);
+      expect(mockFetch.mock.calls.at(-3)?.[0]).toContain('/health');
+      expect(mockFetch.mock.calls.at(-2)?.[0]).toContain('/token');
+      expect(mockFetch.mock.calls.at(-1)?.[0]).toContain('/status');
     });
   });
 
@@ -288,6 +313,18 @@ describe('api', () => {
       expect(JSON.parse(call[1].body)).toEqual(changes);
     });
 
+    it('saveCredential writes Profile V2 credentials by credential id', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ configured: true }));
+      await api.saveCredential('google-api-key', 'gemini-test-key', 'Google AI API key');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/credentials/google-api-key');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual({
+        value: 'gemini-test-key',
+        description: 'Google AI API key',
+      });
+    });
+
     it('getPresets sends GET /settings/presets', async () => {
       const presets = [{ id: 'high', name: 'High', description: 'desc', settings: {}, mcp: null }];
       mockFetch.mockReturnValueOnce(jsonResponse(presets));
@@ -330,6 +367,43 @@ describe('api', () => {
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/profiles/catalog');
       expect(call[1].method).toBeUndefined();
+    });
+
+    it('listProfiles sends GET /profiles', async () => {
+      const mockResp = {
+        mode: 'settings_profiles_v2',
+        default_profile: 'coding',
+        profiles: [],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(mockResp));
+      const result = await api.listProfiles();
+      expect(result).toEqual(mockResp);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('refreshes the gateway token once when a profile request gets 401', async () => {
+      mockFetch
+        .mockReturnValueOnce(textResponse('{"error":"unauthorized"}', 401))
+        .mockReturnValueOnce(jsonResponse({ token: 'fresh-token' }))
+        .mockReturnValueOnce(jsonResponse({
+          mode: 'settings_profiles_v2',
+          manifest_present: true,
+          profiles: [],
+        }));
+
+      const result = await api.getProfileCatalog();
+      expect(result.mode).toBe('settings_profiles_v2');
+
+      const failed = mockFetch.mock.calls.at(-3);
+      const refresh = mockFetch.mock.calls.at(-2);
+      const retry = mockFetch.mock.calls.at(-1);
+      expect(failed?.[0]).toContain('/profiles/catalog');
+      expect(failed?.[1].headers.Authorization).toBe('Bearer tok');
+      expect(refresh?.[0]).toContain('/token');
+      expect(retry?.[0]).toContain('/profiles/catalog');
+      expect(retry?.[1].headers.Authorization).toBe('Bearer fresh-token');
     });
 
     it('getProfileRevisions sends GET /profiles/{id}/revisions', async () => {

@@ -16,8 +16,8 @@ fi
 if [ "$USER" = "root" ] || [ -z "${USER:-}" ]; then
     USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
     if [ -z "$USER" ] || [ "$USER" = "root" ]; then
-        echo "capsem: could not determine installing user, skipping per-user setup" >&2
-        exit 0
+        echo "capsem: could not determine installing user; cannot complete per-user setup" >&2
+        exit 1
     fi
 fi
 
@@ -25,7 +25,7 @@ PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
 
-seed_asset_manifests() {
+seed_assets() {
     for asset in manifest.json manifest.json.minisig; do
         src="$PKG_SHARE/assets/$asset"
         if [ ! -f "$src" ]; then
@@ -38,6 +38,18 @@ seed_asset_manifests() {
         install -m 0644 "$PKG_SHARE/assets/manifest-sign.dev.pub" \
             "$CAPSEM_DIR/assets/manifest-sign.dev.pub"
     fi
+}
+
+seed_base_profiles() {
+    src="$PKG_SHARE/profiles/base"
+    dst="$CAPSEM_DIR/profiles/base"
+    if [ ! -d "$src" ]; then
+        echo "capsem: required base profiles missing: $src" >&2
+        exit 1
+    fi
+    mkdir -p "$dst"
+    find "$dst" -maxdepth 1 -type f -name '*.profile.toml' -delete
+    install -m 0644 "$src/"*.profile.toml "$dst/"
 }
 
 install_app_bundle() {
@@ -53,11 +65,29 @@ install_app_bundle() {
     chmod -R a+rX "$dst"
 }
 
+wait_for_ui_ready() {
+    su "$USER" -c "$CAPSEM_DIR/bin/capsem start" >/dev/null
+    for _ in $(seq 1 60); do
+        if [ -S "$CAPSEM_DIR/run/service.sock" ] \
+            && curl -fsS --unix-socket "$CAPSEM_DIR/run/service.sock" --max-time 2 http://localhost/list >/dev/null 2>&1 \
+            && [ -f "$CAPSEM_DIR/run/gateway.port" ]; then
+            port=$(tr -d '[:space:]' < "$CAPSEM_DIR/run/gateway.port")
+            if echo "$port" | grep -Eq '^[0-9]+$' \
+                && curl -fsS --max-time 2 "http://127.0.0.1:$port/health" >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+        sleep 0.5
+    done
+    echo "capsem: service or gateway did not become ready; refusing to open UI early" >&2
+    return 1
+}
+
 # Create user-level directory layout. Local dev installs may have
 # ~/.capsem/assets as a symlink into the repo; never seed package assets
 # through that link as root, or the repo's generated manifest files become
 # root-owned and later dev gates cannot re-sign them.
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/run"
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
 if [ -L "$CAPSEM_DIR/assets" ]; then
     rm "$CAPSEM_DIR/assets"
 fi
@@ -85,10 +115,9 @@ if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     done
 fi
 
-# Copy assets (signed manifest and optional dev pubkey). The manifest and
-# signature are release-critical: setup verifies them before it can mark an
-# install complete.
-seed_asset_manifests
+# Copy asset metadata. Heavy VM payloads stay on the profile asset channel.
+seed_assets
+seed_base_profiles
 
 # Fix ownership (we ran as root)
 chown -R "$USER" "$CAPSEM_DIR"
@@ -109,9 +138,11 @@ done
 # release-critical: if either fails, Installer must report failure instead of
 # leaving a package that looks installed but cannot boot.
 su "$USER" -c "$CAPSEM_DIR/bin/capsem install"
-seed_asset_manifests
-chown -R "$USER" "$CAPSEM_DIR/assets"
+seed_assets
+seed_base_profiles
+chown -R "$USER" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles"
 su "$USER" -c "$CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected"
+wait_for_ui_ready
 
 # --- GUI detection and app launch ---
 # Open the desktop app for interactive onboarding if a GUI is available.

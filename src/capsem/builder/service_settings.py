@@ -47,6 +47,10 @@ def _default_user_profile_dirs() -> list[str]:
     return [str(Path(_default_capsem_home()) / "profiles")]
 
 
+def _default_base_profile_dirs() -> list[str]:
+    return [str(Path(_default_capsem_home()) / "profiles" / "base")]
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -93,9 +97,7 @@ class AppSettings(StrictModel):
 
 
 class ProfileRootSettings(StrictModel):
-    base_dirs: list[PathStr] = Field(
-        default_factory=lambda: ["/Library/Application Support/Capsem/profiles/base"]
-    )
+    base_dirs: list[PathStr] = Field(default_factory=_default_base_profile_dirs)
     corp_dirs: list[PathStr] = Field(default_factory=list)
     user_dirs: list[PathStr] = Field(default_factory=_default_user_profile_dirs)
     default_profile: ProfileId = "everyday-work"
@@ -232,7 +234,7 @@ def create_service_settings_draft(
 ) -> ServiceSettingsV2:
     return ServiceSettingsV2(
         profiles=ProfileRootSettings(
-            base_dirs=base_dirs or ["/Library/Application Support/Capsem/profiles/base"],
+            base_dirs=base_dirs or _default_base_profile_dirs(),
             corp_dirs=corp_dirs or [],
             user_dirs=user_dirs or _default_user_profile_dirs(),
             default_profile=default_profile,

@@ -75,6 +75,43 @@ def test_build_assets_script_routes_profile_builds_through_capsem_admin(
     assert (assets / "manifest.json").exists()
 
 
+def test_build_assets_script_repairs_dangling_assets_symlink(
+    tmp_path: Path,
+) -> None:
+    bin_dir, log = _fake_uv(tmp_path)
+    profile = tmp_path / "profile.toml"
+    profile.write_text('schema = "capsem.profile.v2"\n', encoding="utf-8")
+    real_assets = tmp_path / "home" / "assets"
+    assets = tmp_path / "assets"
+    assets.symlink_to(real_assets)
+    env = os.environ | {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "UV_LOG": str(log),
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            "scripts/build-assets.sh",
+            "--assets-dir",
+            str(assets),
+            "--arch",
+            "arm64",
+            "--profile",
+            str(profile),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert real_assets.is_dir()
+    assert (real_assets / "manifest.json").exists()
+
+
 def test_build_assets_script_rejects_unprofiled_builds(
     tmp_path: Path,
 ) -> None:

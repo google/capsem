@@ -58,6 +58,9 @@
       "@modelcontextprotocol/sdk": "1.2.3",
       "playwright": "1.44.0"
     },
+    "curl_installs": {
+      "agy": "https://antigravity.google/cli/install.sh"
+    },
     "system": {
       "distro": "debian",
       "release": "bookworm",

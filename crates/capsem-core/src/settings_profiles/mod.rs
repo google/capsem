@@ -525,6 +525,83 @@ pub fn install_verified_profile_payload(
     })
 }
 
+pub fn install_verified_profile_payload_sidecar(
+    roots: &ProfileRootSettings,
+    verified: &crate::profile_manifest::VerifiedProfilePayload,
+) -> Result<InstalledProfileRevision> {
+    roots.validate("profiles")?;
+    let corp_dir = roots
+        .corp_dirs
+        .first()
+        .ok_or_else(|| SettingsProfilesError::Forbidden {
+            message: "no corp profile directory is configured".to_string(),
+        })?;
+    let profile = Profile::from_profile_payload_v2_value(verified.value.clone())?;
+    if profile.id != verified.profile_id {
+        return Err(SettingsProfilesError::Validation {
+            path: "profile_payload.id".to_string(),
+            message: format!(
+                "runtime profile id '{}' does not match verified profile '{}'",
+                profile.id, verified.profile_id
+            ),
+        });
+    }
+    let runtime_profile_path = find_launchable_profile_path(roots, &verified.profile_id)
+        .ok_or_else(|| SettingsProfilesError::Validation {
+            path: "installed_profile_revision.runtime_profile_path".to_string(),
+            message: format!(
+                "installed profile revision '{}' has no launchable runtime profile",
+                verified.profile_id
+            ),
+        })?;
+
+    let revision_dir = corp_dir
+        .join(".catalog")
+        .join("profiles")
+        .join(&verified.profile_id)
+        .join(&verified.revision);
+    fs::create_dir_all(&revision_dir).map_err(|source| SettingsProfilesError::WriteFile {
+        path: revision_dir.clone(),
+        details: source.to_string(),
+    })?;
+    let payload_path = revision_dir.join("profile.json");
+    fs::write(&payload_path, &verified.payload_json).map_err(|source| {
+        SettingsProfilesError::WriteFile {
+            path: payload_path.clone(),
+            details: source.to_string(),
+        }
+    })?;
+
+    let current_record_path = corp_profile_revision_current_path(corp_dir, &verified.profile_id);
+    let current_record = InstalledProfileRevisionRecord {
+        profile_id: verified.profile_id.clone(),
+        revision: verified.revision.clone(),
+        payload_hash: verified.payload_hash.clone(),
+    };
+    let current_record_payload =
+        serde_json::to_string_pretty(&current_record).map_err(|source| {
+            SettingsProfilesError::Serialize {
+                kind: "installed profile revision",
+                details: source.to_string(),
+            }
+        })?;
+    fs::write(&current_record_path, current_record_payload).map_err(|source| {
+        SettingsProfilesError::WriteFile {
+            path: current_record_path.clone(),
+            details: source.to_string(),
+        }
+    })?;
+
+    Ok(InstalledProfileRevision {
+        profile_id: verified.profile_id.clone(),
+        revision: verified.revision.clone(),
+        payload_hash: verified.payload_hash.clone(),
+        runtime_profile_path,
+        payload_path,
+        current_record_path,
+    })
+}
+
 pub fn load_installed_profile_revision(
     roots: &ProfileRootSettings,
     profile_id: &str,
@@ -574,7 +651,8 @@ pub fn load_complete_installed_profile_revision(
         .ok_or_else(|| SettingsProfilesError::Forbidden {
             message: "no corp profile directory is configured".to_string(),
         })?;
-    let runtime_profile_path = corp_dir.join(format!("{}.toml", record.profile_id));
+    let runtime_profile_path = find_launchable_profile_path(roots, &record.profile_id)
+        .unwrap_or_else(|| corp_dir.join(format!("{}.toml", record.profile_id)));
     let payload_path = corp_dir
         .join(".catalog")
         .join("profiles")
@@ -694,7 +772,8 @@ fn installed_profile_revision_is_complete(
     let Some(corp_dir) = roots.corp_dirs.first() else {
         return Ok(false);
     };
-    let runtime_profile_path = corp_dir.join(format!("{}.toml", installed.profile_id));
+    let runtime_profile_path = find_launchable_profile_path(roots, &installed.profile_id)
+        .unwrap_or_else(|| corp_dir.join(format!("{}.toml", installed.profile_id)));
     let payload_path = corp_dir
         .join(".catalog")
         .join("profiles")
@@ -702,6 +781,18 @@ fn installed_profile_revision_is_complete(
         .join(&installed.revision)
         .join("profile.json");
     Ok(runtime_profile_path.is_file() && payload_path.is_file())
+}
+
+fn find_launchable_profile_path(roots: &ProfileRootSettings, profile_id: &str) -> Option<PathBuf> {
+    let filename = format!("{profile_id}.toml");
+    let package_filename = format!("{profile_id}.profile.toml");
+    roots
+        .corp_dirs
+        .iter()
+        .chain(roots.base_dirs.iter())
+        .chain(roots.user_dirs.iter())
+        .flat_map(|dir| [dir.join(&filename), dir.join(&package_filename)])
+        .find(|path| path.is_file())
 }
 
 fn remove_launchable_installed_profile_revision(
@@ -1182,9 +1273,13 @@ fn default_profile_catalog_check_interval_secs() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     #[serde(default = "schema_version")]
     pub version: u32,
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -1198,6 +1293,8 @@ pub struct Profile {
     pub icon_svg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extends_profile_id: Option<String>,
+    #[serde(default)]
+    pub compatibility: ProfileCompatibility,
     #[serde(default)]
     pub general: ProfileGeneralSettings,
     #[serde(default)]
@@ -1262,8 +1359,10 @@ impl Profile {
 
     pub fn everyday_work() -> Self {
         Self {
+            schema: None,
             version: SETTINGS_SCHEMA_VERSION,
             id: EVERYDAY_WORK_PROFILE_ID.to_string(),
+            revision: None,
             name: "Everyday Work".to_string(),
             description: "Balanced defaults for daily work sessions.".to_string(),
             best_for: "Daily work with useful tools and measured security prompts.".to_string(),
@@ -1271,6 +1370,7 @@ impl Profile {
             ui: ProfileUi::Everyday,
             icon_svg: None,
             extends_profile_id: None,
+            compatibility: ProfileCompatibility::default(),
             general: ProfileGeneralSettings::default(),
             appearance: ProfileAppearanceSettings::default(),
             editable: ProfileSectionEditability::default(),
@@ -1289,8 +1389,18 @@ impl Profile {
     }
 
     pub fn validate(&self) -> Result<()> {
-        validate_schema_version("version", self.version)?;
+        if let Some(schema) = &self.schema {
+            if schema != "capsem.profile.v2" {
+                validation_error("schema", "expected capsem.profile.v2")?;
+            }
+        }
+        validate_profile_schema_version("version", self.version)?;
         validate_profile_id("id", &self.id)?;
+        if let Some(revision) = &self.revision {
+            if revision.trim().is_empty() {
+                validation_error("revision", "profile revision cannot be empty")?;
+            }
+        }
         if self.name.trim().is_empty() {
             validation_error("name", "profile name cannot be empty")?;
         }
@@ -1313,12 +1423,48 @@ impl Profile {
             }
         }
         self.ai.validate("ai")?;
+        self.compatibility.validate("compatibility")?;
         self.mcp.validate("mcpServers")?;
         self.skills.validate("skills")?;
         self.packages.validate("packages")?;
         validate_tool_contracts("tools", &self.tools)?;
         self.vm.validate("vm")?;
         self.security.validate("security")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileCompatibility {
+    #[serde(default)]
+    pub min_binary: String,
+    #[serde(default)]
+    pub max_binary: String,
+    #[serde(default)]
+    pub guest_abi: String,
+}
+
+impl ProfileCompatibility {
+    fn validate(&self, path: &str) -> Result<()> {
+        if self.min_binary.trim() != self.min_binary {
+            validation_error(
+                &format!("{path}.min_binary"),
+                "must not have leading or trailing whitespace",
+            )?;
+        }
+        if self.max_binary.trim() != self.max_binary {
+            validation_error(
+                &format!("{path}.max_binary"),
+                "must not have leading or trailing whitespace",
+            )?;
+        }
+        if self.guest_abi.trim() != self.guest_abi {
+            validation_error(
+                &format!("{path}.guest_abi"),
+                "must not have leading or trailing whitespace",
+            )?;
+        }
         Ok(())
     }
 }
@@ -1393,7 +1539,7 @@ pub struct ProfileGeneralSettings {
 pub struct ProfileAppearanceSettings {
     #[serde(default)]
     pub theme: ProfileTheme,
-    #[serde(default = "default_accent")]
+    #[serde(default = "default_profile_accent")]
     pub accent: String,
 }
 
@@ -1401,7 +1547,7 @@ impl Default for ProfileAppearanceSettings {
     fn default() -> Self {
         Self {
             theme: ProfileTheme::InheritService,
-            accent: default_accent(),
+            accent: default_profile_accent(),
         }
     }
 }
@@ -1608,6 +1754,8 @@ pub struct ProfilePackageContract {
     #[serde(default)]
     pub node_packages: BTreeMap<String, String>,
     #[serde(default)]
+    pub curl_installs: BTreeMap<String, String>,
+    #[serde(default)]
     pub system: SystemPackageContract,
 }
 
@@ -1616,6 +1764,7 @@ impl ProfilePackageContract {
         validate_package_version_map(&format!("{path}.runtimes"), &self.runtimes)?;
         validate_package_version_map(&format!("{path}.python_modules"), &self.python_modules)?;
         validate_package_version_map(&format!("{path}.node_packages"), &self.node_packages)?;
+        validate_curl_install_map(&format!("{path}.curl_installs"), &self.curl_installs)?;
         self.system.validate(&format!("{path}.system"))?;
         Ok(())
     }
@@ -1676,6 +1825,8 @@ pub struct VmProfileSettings {
     pub memory_mib: u32,
     #[serde(default = "default_vcpu_count")]
     pub cpus: u8,
+    #[serde(default = "default_disk_mib")]
+    pub disk_mib: u32,
     #[serde(default)]
     pub network: VmNetworkMode,
     #[serde(default = "default_true")]
@@ -1691,6 +1842,7 @@ impl Default for VmProfileSettings {
         Self {
             memory_mib: default_memory_mib(),
             cpus: default_vcpu_count(),
+            disk_mib: default_disk_mib(),
             network: VmNetworkMode::Proxied,
             track_rootfs_dependencies: true,
             rootfs_image: None,
@@ -1709,6 +1861,9 @@ impl VmProfileSettings {
         }
         if self.cpus == 0 {
             validation_error(&format!("{path}.cpus"), "cpus must be greater than zero")?;
+        }
+        if self.disk_mib < 512 {
+            validation_error(&format!("{path}.disk_mib"), "disk_mib must be at least 512")?;
         }
         if let Some(rootfs_image) = &self.rootfs_image {
             if rootfs_image.as_os_str().is_empty() {
@@ -2089,7 +2244,7 @@ pub fn service_setting_descriptors() -> Vec<SettingDescriptor> {
             description: "Root directories that contain package-provided profiles.",
             scope: SettingScope::Service,
             widget: SettingWidget::DirectoryList,
-            default_value: json!(["/Library/Application Support/Capsem/profiles/base"]),
+            default_value: json!(["~/.capsem/profiles/base"]),
             sensitive: false,
         },
         SettingDescriptor {
@@ -2510,6 +2665,7 @@ pub fn fork_user_profile(
     let mut forked = source.profile.clone();
     forked.id = new_profile_id.to_string();
     forked.name = new_name.trim().to_string();
+    forked.extends_profile_id = Some(source_profile_id.to_string());
     create_user_profile(roots, forked)
 }
 
@@ -2551,6 +2707,8 @@ pub struct EffectiveVmSettings {
     pub vm: EffectiveSection<VmProfileSettings>,
     pub security: EffectiveSection<SecurityProfileSettings>,
     pub rules: Vec<EffectiveRule>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub credential_env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2879,9 +3037,44 @@ pub fn resolve_effective_vm_settings_with_corp(
     let mut merged = merge_profile_chain(&chain);
     let mut trace = emit_baseline_trace(&chain);
     let overrides = apply_corp_directives(&mut merged, &settings.corp_directives, &mut trace)?;
-    let effective = effective_settings_from_merged(&chain, &merged, &overrides);
+    let mut effective = effective_settings_from_merged(&chain, &merged, &overrides);
+    effective.credential_env = credential_env_from_service_settings(settings, &effective);
     emit_rule_events(&mut trace, &effective);
     Ok((effective, trace))
+}
+
+fn credential_env_from_service_settings(
+    settings: &ServiceSettings,
+    effective: &EffectiveVmSettings,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for (provider_id, provider) in &effective.ai.value.providers {
+        if !provider.enabled {
+            continue;
+        }
+        for credential_ref in &provider.credential_refs {
+            let Some(env_key) = provider_credential_env_var(provider_id, credential_ref) else {
+                continue;
+            };
+            let Some(credential) = settings.credentials.items.get(credential_ref) else {
+                continue;
+            };
+            let value = credential.value.trim();
+            if !value.is_empty() {
+                env.insert(env_key.to_string(), value.to_string());
+            }
+        }
+    }
+    env
+}
+
+fn provider_credential_env_var(provider_id: &str, credential_ref: &str) -> Option<&'static str> {
+    match (provider_id, credential_ref) {
+        ("anthropic", "anthropic-api-key") => Some("ANTHROPIC_API_KEY"),
+        ("google", "google-api-key") => Some("GEMINI_API_KEY"),
+        ("openai", "openai-api-key") => Some("OPENAI_API_KEY"),
+        _ => None,
+    }
 }
 
 pub fn vm_effective_settings_path(session_dir: impl AsRef<Path>) -> PathBuf {
@@ -3032,6 +3225,7 @@ fn effective_settings_from_merged(
             inherited_from: ancestor_ids.clone(),
         },
         rules: effective_rules_from_chain_and_overrides(chain, merged_profile, overrides),
+        credential_env: BTreeMap::new(),
     }
 }
 
@@ -3044,7 +3238,9 @@ fn merge_profile_chain(chain: &[&ProfileRecord]) -> Profile {
         let child = &record.profile;
 
         acc.version = child.version;
+        acc.schema = child.schema.clone();
         acc.id = child.id.clone();
+        acc.revision = child.revision.clone();
         acc.name = child.name.clone();
         acc.description = child.description.clone();
         acc.best_for = child.best_for.clone();
@@ -3052,6 +3248,7 @@ fn merge_profile_chain(chain: &[&ProfileRecord]) -> Profile {
         acc.ui = child.ui;
         acc.icon_svg = child.icon_svg.clone();
         acc.extends_profile_id = child.extends_profile_id.clone();
+        acc.compatibility = child.compatibility.clone();
 
         acc.general = child.general.clone();
         acc.appearance = child.appearance.clone();
@@ -3163,6 +3360,7 @@ fn merge_package_contract(acc: &mut ProfilePackageContract, child: &ProfilePacka
     merge_btreemap(&mut acc.runtimes, &child.runtimes);
     merge_btreemap(&mut acc.python_modules, &child.python_modules);
     merge_btreemap(&mut acc.node_packages, &child.node_packages);
+    merge_btreemap(&mut acc.curl_installs, &child.curl_installs);
     if !child.system.distro.is_empty() {
         acc.system.distro = child.system.distro.clone();
     }
@@ -3812,14 +4010,16 @@ fn default_accent() -> String {
     "blue".to_string()
 }
 
+fn default_profile_accent() -> String {
+    "#3b82f6".to_string()
+}
+
 fn default_profile_id() -> String {
     EVERYDAY_WORK_PROFILE_ID.to_string()
 }
 
 fn default_base_profile_dirs() -> Vec<PathBuf> {
-    vec![PathBuf::from(
-        "/Library/Application Support/Capsem/profiles/base",
-    )]
+    vec![crate::paths::capsem_home().join("profiles").join("base")]
 }
 
 fn default_user_profile_dirs() -> Vec<PathBuf> {
@@ -3843,11 +4043,15 @@ fn default_remote_policy_timeout_ms() -> u64 {
 }
 
 fn default_memory_mib() -> u32 {
-    4096
+    8192
 }
 
 fn default_vcpu_count() -> u8 {
     4
+}
+
+fn default_disk_mib() -> u32 {
+    16_384
 }
 
 fn default_ask() -> CapabilityMode {
@@ -3872,6 +4076,13 @@ fn validate_schema_version(path: &str, version: u32) -> Result<()> {
             path,
             &format!("expected schema version {SETTINGS_SCHEMA_VERSION}, got {version}"),
         )?;
+    }
+    Ok(())
+}
+
+fn validate_profile_schema_version(path: &str, version: u32) -> Result<()> {
+    if version != SETTINGS_SCHEMA_VERSION && version != 2 {
+        validation_error(path, "expected profile schema version 2")?;
     }
     Ok(())
 }
@@ -3975,6 +4186,32 @@ fn validate_package_version_map(path: &str, values: &BTreeMap<String, String>) -
     Ok(())
 }
 
+fn validate_curl_install_map(path: &str, values: &BTreeMap<String, String>) -> Result<()> {
+    for (name, url) in values {
+        validate_config_id(path, name)?;
+        let trimmed = url.trim();
+        if trimmed.is_empty() {
+            validation_error(
+                &format!("{path}.{name}"),
+                "curl install URL cannot be empty",
+            )?;
+        }
+        if !trimmed.starts_with("https://") {
+            validation_error(
+                &format!("{path}.{name}"),
+                "curl install URL must start with https://",
+            )?;
+        }
+        if trimmed.contains("..") || trimmed.contains('\\') {
+            validation_error(
+                &format!("{path}.{name}"),
+                "curl install URL cannot contain path traversal",
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_package_name(path: &str, value: &str) -> Result<()> {
     if value.is_empty() {
         validation_error(path, "package name cannot be empty")?;
@@ -4015,8 +4252,14 @@ fn validate_profile_asset_location(path: &str, value: &str) -> Result<()> {
     if value.is_empty() {
         validation_error(path, "asset location cannot be empty")?;
     }
-    if !value.starts_with("https://") && !value.starts_with("file://") {
-        validation_error(path, "asset location must start with https:// or file://")?;
+    let loopback_http = value.starts_with("http://127.0.0.1:")
+        || value.starts_with("http://localhost:")
+        || value.starts_with("http://[::1]:");
+    if !value.starts_with("https://") && !value.starts_with("file://") && !loopback_http {
+        validation_error(
+            path,
+            "asset location must start with https://, file://, or loopback http://",
+        )?;
     }
     if value.contains("..") || value.contains('\\') {
         validation_error(path, "asset location cannot contain path traversal")?;

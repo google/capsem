@@ -1,67 +1,48 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import * as api from '../../api';
-  import type { ProfileCatalogProfile } from '../../types/gateway';
+  import type { ProfileListRecord } from '../../types/gateway';
   import { themeStore, PRELINE_THEMES } from '../../stores/theme.svelte.ts';
   import { THEME_FAMILIES } from '../../terminal/themes';
 
   // -- Profiles --
-  let profiles = $state<ProfileCatalogProfile[]>([]);
+  let profiles = $state<ProfileListRecord[]>([]);
   let selectedProfile = $state<string>('');
   let profileLoadError = $state<string | null>(null);
 
-  // -- VM defaults --
-  let cpuCores = $state(4);
-  let ramGb = $state(4);
-  let maxVms = $state(10);
+  const defaultCpuCores = 4;
+  const defaultRamGb = 8;
+  const defaultActiveVms = 8;
 
   onMount(async () => {
     try {
-      const catalog = await api.getProfileCatalog();
-      profiles = catalog.profiles;
-      selectedProfile = catalog.default_profile ?? '';
+      const response = await api.listProfiles();
+      profiles = response.profiles;
+      selectedProfile = response.default_profile ?? '';
     } catch (error) {
       profileLoadError = error instanceof Error ? error.message : String(error);
     }
-    // Load current VM resource settings
-    try {
-      const settings = await api.getSettings();
-      const findLeaf = (id: string): unknown => {
-        const walk = (nodes: typeof settings.tree): unknown => {
-          for (const n of nodes) {
-            if (n.kind === 'leaf' && n.id === id) return n.effective_value;
-            if (n.kind === 'group' || (n.kind !== 'leaf' && 'children' in n)) {
-              const found = walk((n as { children: typeof settings.tree }).children ?? []);
-              if (found !== undefined) return found;
-            }
-          }
-          return undefined;
-        };
-        return walk(settings.tree);
-      };
-      const cpu = findLeaf('vm.resources.cpu_count');
-      if (typeof cpu === 'number') cpuCores = cpu;
-      const ram = findLeaf('vm.resources.ram_gb');
-      if (typeof ram === 'number') ramGb = ram;
-      const vms = findLeaf('vm.resources.max_concurrent_vms');
-      if (typeof vms === 'number') maxVms = vms;
-    } catch { /* */ }
   });
 
-  function currentRevision(profile: ProfileCatalogProfile) {
-    return profile.revisions.find((revision) => revision.current) ?? null;
+  function profileId(record: ProfileListRecord): string {
+    return record.profile.id;
   }
 
-  function profileSelectionBlocked(profile: ProfileCatalogProfile): boolean {
-    return currentRevision(profile)?.status === 'revoked';
+  function profileRevision(record: ProfileListRecord): string | null {
+    return record.profile.revision ?? record.asset_status?.profile_revision ?? null;
+  }
+
+  function profileSelectionBlocked(record: ProfileListRecord): boolean {
+    return record.asset_status?.usable_for_vm === false;
   }
 
   async function onProfileChange() {
     if (selectedProfile) {
       try {
-        const catalog = await api.selectProfile(selectedProfile);
-        profiles = catalog.profiles;
-        selectedProfile = catalog.default_profile ?? selectedProfile;
+        await api.selectProfile(selectedProfile);
+        const response = await api.listProfiles();
+        profiles = response.profiles;
+        selectedProfile = response.default_profile ?? selectedProfile;
         profileLoadError = null;
       } catch (error) {
         profileLoadError = error instanceof Error ? error.message : String(error);
@@ -69,15 +50,6 @@
     }
   }
 
-  async function saveVmDefaults() {
-    try {
-      await api.saveSettings({
-        'vm.resources.cpu_count': cpuCores,
-        'vm.resources.ram_gb': ramGb,
-        'vm.resources.max_concurrent_vms': maxVms,
-      });
-    } catch { /* */ }
-  }
 </script>
 
 <div class="space-y-5">
@@ -103,8 +75,8 @@
       >
         <option value="" disabled>{profiles.length === 0 ? 'No profiles' : 'Select profile'}</option>
         {#each profiles as profile}
-          <option value={profile.profile_id} disabled={profileSelectionBlocked(profile)}>
-            {profile.profile_id}{profile.current_revision ? `@${profile.current_revision}` : ''}
+          <option value={profileId(profile)} disabled={profileSelectionBlocked(profile)}>
+            {profile.profile.name || profileId(profile)}{profileRevision(profile) ? `@${profileRevision(profile)}` : ''}
           </option>
         {/each}
       </select>
@@ -177,41 +149,17 @@
 
     <div class="flex items-center justify-between">
       <span class="text-sm text-muted-foreground-1">CPU cores</span>
-      <select
-        class="py-1.5 px-3 text-sm border border-line-2 rounded-lg bg-layer text-foreground focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-        bind:value={cpuCores}
-        onchange={saveVmDefaults}
-      >
-        {#each [1, 2, 4, 6, 8] as n}
-          <option value={n}>{n}</option>
-        {/each}
-      </select>
+      <span class="text-sm font-medium text-foreground">{defaultCpuCores}</span>
     </div>
 
     <div class="flex items-center justify-between">
       <span class="text-sm text-muted-foreground-1">RAM</span>
-      <select
-        class="py-1.5 px-3 text-sm border border-line-2 rounded-lg bg-layer text-foreground focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-        bind:value={ramGb}
-        onchange={saveVmDefaults}
-      >
-        {#each [1, 2, 4, 8, 16] as n}
-          <option value={n}>{n} GB</option>
-        {/each}
-      </select>
+      <span class="text-sm font-medium text-foreground">{defaultRamGb} GB</span>
     </div>
 
     <div class="flex items-center justify-between">
-      <span class="text-sm text-muted-foreground-1">Max concurrent VMs</span>
-      <select
-        class="py-1.5 px-3 text-sm border border-line-2 rounded-lg bg-layer text-foreground focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-        bind:value={maxVms}
-        onchange={saveVmDefaults}
-      >
-        {#each [1, 2, 5, 10, 20] as n}
-          <option value={n}>{n}</option>
-        {/each}
-      </select>
+      <span class="text-sm text-muted-foreground-1">Active VMs</span>
+      <span class="text-sm font-medium text-foreground">{defaultActiveVms}</span>
     </div>
   </div>
 </div>

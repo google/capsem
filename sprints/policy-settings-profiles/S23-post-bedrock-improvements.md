@@ -36,6 +36,14 @@ or introduce a second policy/event authority.
 - Reporting setup from S19b after S12 fields are stable.
 - Deeper OpenTelemetry/dashboard polish after the bedrock status/debug truth is
   correct.
+- VM resource recommendation polish: detect host CPU/RAM, estimate realistic
+  active VM capacity at roughly 80% of system RAM, warn when selected defaults
+  or active sessions exceed the machine envelope, and keep the warning based on
+  active/running VMs rather than suspended or stopped VMs.
+- Credential discovery hardening: finish the planned `credential-pipeline`
+  spec-driven detector, explicitly scan legacy `~/.capsem/user.toml` and older
+  provider setting paths during cutover, and surface source-by-source scan
+  results so "not found" is distinguishable from "scan failed" in the UI.
 
 Credential brokerage remains its own split sprint in S10. Rate limits, budgets,
 and quotas remain their own split sprint in S22.

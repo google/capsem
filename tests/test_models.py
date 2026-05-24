@@ -598,7 +598,7 @@ class TestVmResourcesConfig:
     def test_defaults(self):
         r = VmResourcesConfig()
         assert r.cpu_count == 4
-        assert r.ram_gb == 4
+        assert r.ram_gb == 8
         assert r.scratch_disk_size_gb == 16
         assert r.log_bodies is False
         assert r.max_body_capture == 4096
@@ -709,6 +709,7 @@ class TestGuestImageConfig:
         assert g.mcp_servers == {}
         assert g.web_security.allow_read is False
         assert g.vm_resources.cpu_count == 4
+        assert g.vm_resources.ram_gb == 8
         assert g.vm_environment.shell.term == "xterm-256color"
 
     def test_full(self):

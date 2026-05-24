@@ -282,12 +282,10 @@ fn completed_http_records(
     resp_stats: &TelemetryResponseStats,
     llm_events: &[capsem_network_engine::model_stream::LlmEvent],
 ) -> (NetEvent, Vec<ResolvedSecurityEvent>, Option<ModelCall>) {
-    let net_event = build_net_event(&req_ctx, &resp_stats);
+    let net_event = build_net_event(req_ctx, resp_stats);
     let resolved_events = if req_ctx.runtime_security_results.is_empty() {
         vec![build_http_resolved_security_event(
-            &req_ctx,
-            &resp_stats,
-            &net_event,
+            req_ctx, resp_stats, &net_event,
         )]
     } else {
         req_ctx
@@ -298,8 +296,8 @@ fn completed_http_records(
             .collect()
     };
     let model_call = maybe_build_model_call(
-        &req_ctx,
-        &resp_stats,
+        req_ctx,
+        resp_stats,
         llm_events,
         &deps.pricing,
         &deps.trace_state,

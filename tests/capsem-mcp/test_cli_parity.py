@@ -79,6 +79,9 @@ CLI_ONLY: dict[str, str] = {
     "start":        "start the background service daemon",
     "stop":         "stop the background service daemon",
     "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
+    "export-policy-contexts": "developer/admin rule authoring helper; MCP exposes the runtime timeline instead",
+    "mcp list":     "human-readable MCP connector list; MCP callers use capsem_mcp_connectors",
+    "mcp show":     "human-readable MCP connector detail; MCP callers use capsem_mcp_connectors",
 
 }
 

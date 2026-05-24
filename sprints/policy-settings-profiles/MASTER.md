@@ -61,6 +61,20 @@ manifest/security/doc/doctor suite (`174 passed, 1 skipped`), `uv run python
 audit re-ran profile manifest/schema checks, profile asset service probes,
 fork/pin service probes, Python admin/profile/image tests, `git diff --check`,
 and the docs build after fixing asset supervisor finish-event logging.
+On 2026-05-24, the active release line was bumped to `1.2` and working
+metadata was stamped as `1.2.1779630258`; `just _stamp-version` now defaults
+to `1.2.<unix_timestamp>`.
+On 2026-05-24, release-prep asset gates passed focused service/UI checks for
+per-profile asset discovery and launch refusal:
+`cargo test -p capsem-service profile_asset -- --nocapture`,
+`cargo test -p capsem-service handle_list_profiles -- --nocapture`,
+`cargo test -p capsem-service handle_profile_catalog -- --nocapture`,
+`pnpm exec vitest run src/lib/__tests__/profile-catalog-section.test.ts
+src/lib/__tests__/session-runtime-truth.test.ts`, and `pnpm run check`.
+On 2026-05-24, first installed-app testing opened a release blocker hit list at
+[release-hit-list.md](release-hit-list.md). Active release work is now in full
+debug-loop mode: every UI/install/profile bug must be reproduced, diagnosed,
+fixed, tested, and checked off there before the release gate can close.
 
 ## Product Contract
 

@@ -95,6 +95,7 @@ fn plugin_event_output_carries_ask_throttle_labels_findings_and_mutations() {
         pack_id: Some("plugin-pack".into()),
         reason: Some("open-world request after PII access".into()),
         terminal: false,
+        mutations: Vec::new(),
     });
     event.findings.push(DetectionFinding {
         finding_id: "finding-pii".into(),
@@ -126,6 +127,7 @@ fn plugin_event_output_carries_ask_throttle_labels_findings_and_mutations() {
         pack_id: None,
         reason: Some("future quota check".into()),
         terminal: true,
+        mutations: Vec::new(),
     });
     validate_plugin_output(&event).unwrap();
 }
@@ -237,14 +239,14 @@ fn plugin_transform_rejects_hidden_subject_mutation() {
         },
     );
     let mut output = input.clone();
-    output.subject = SecurityEventSubject::Http(HttpSecuritySubject {
+    output.subject = SecurityEventSubject::Http(Box::new(HttpSecuritySubject {
         method: "POST".into(),
         host: "attacker.example.test".into(),
         path_class: "api".into(),
         request_bytes: 10,
         response_bytes: None,
         ..Default::default()
-    });
+    }));
 
     let error = validate_plugin_transform(&plugin_identity(), &input, &output).unwrap_err();
     assert!(matches!(
@@ -341,6 +343,7 @@ fn security_decision_projects_to_internal_transport_projection() {
         pack_id: Some("pack.block".into()),
         reason: Some("blocked".into()),
         terminal: true,
+        mutations: Vec::new(),
     });
     assert_eq!(
         project_transport_outcome(&event).unwrap(),
@@ -826,6 +829,7 @@ fn real_cel_enforcement_blocks_matching_security_event() {
                 .into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("metadata service access".into()),
+        mutations: Vec::new(),
     };
     let mut engine = SecurityEngine::default();
     engine.set_enforcement(Box::new(
@@ -858,6 +862,7 @@ fn real_cel_enforcement_rejects_internal_event_root() {
         condition: "event.subject.host == 'metadata.google.internal'".into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("bad".into()),
+        mutations: Vec::new(),
     }])
     .unwrap_err();
 
@@ -937,6 +942,7 @@ fn real_cel_policy_context_exposes_http_request_surface() {
             .into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("admin secret egress".into()),
+        mutations: Vec::new(),
     }])
     .unwrap();
 
@@ -1307,6 +1313,7 @@ fn real_cel_enforcement_compile_errors_fail_closed_before_install() {
         condition: "event.subject.host ==".into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("bad".into()),
+        mutations: Vec::new(),
     }])
     .unwrap_err();
 
@@ -1439,6 +1446,7 @@ fn security_engine_records_enforcement_and_detection_match_stats() {
             condition: "http.request.host == 'metadata.google.internal'".into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("metadata access".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));
@@ -2221,6 +2229,7 @@ impl EnforcementEvaluator for AskEnforcement {
             pack_id: Some("pack-enforcement".into()),
             reason: Some("operator approval required".into()),
             terminal: false,
+            mutations: Vec::new(),
         }))
     }
 }
@@ -2240,6 +2249,7 @@ impl ConfirmResolver for AllowConfirm {
             pack_id: decision.pack_id.clone(),
             reason: Some("operator allowed".into()),
             terminal: false,
+            mutations: Vec::new(),
         })
     }
 }

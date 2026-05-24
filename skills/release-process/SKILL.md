@@ -34,7 +34,7 @@ checkouts disagreeing about what was actually shipped.
   top of `main`, stamp a new unique version, create a new tag, and push forward.
 - Cancel superseded failed CI runs when useful, but leave the historical commit
   and tag alone. The goal is a clean next release, not rewriting the failed one.
-- Do not reuse a version string or tag name. For the `1.1.{unix_timestamp}`
+- Do not reuse a version string or tag name. For the `1.2.{unix_timestamp}`
   release line, choose a later timestamp and let the old tag remain historical.
 
 ### Prepare release commit and local tag
@@ -342,7 +342,7 @@ Keep a Changelog format in `CHANGELOG.md`. Every user-visible change gets an ent
 
 Binary and asset versions are **orthogonal**:
 
-- **Binary**: `1.1.{unix_timestamp}` for the current release line -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`. Set `CAPSEM_RELEASE_VERSION=x.y.z` when you need an exact preselected stamp.
+- **Binary**: `1.2.{unix_timestamp}` for the current release line -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`. Set `CAPSEM_RELEASE_VERSION=x.y.z` when you need an exact preselected stamp.
 - **Assets**: `YYYY.MMDD.patch` -- auto-derived by `gen_manifest.py` from the build date
 
 Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.

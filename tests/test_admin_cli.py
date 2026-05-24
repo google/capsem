@@ -251,7 +251,9 @@ def test_capsem_admin_profile_init_builtins_generates_typed_profiles(tmp_path) -
     assert coding.packages.system.apt["coreutils"] == "*"
     assert coding.packages.python_modules["pytest"] == "*"
     assert coding.packages.node_packages["@openai/codex"] == "*"
+    assert str(coding.packages.curl_installs["agy"]) == "https://antigravity.google/cli/install.sh"
     assert coding.tools["codex"].required is True
+    assert coding.tools["agy"].required is True
 
     result = CliRunner().invoke(
         cli,
@@ -530,7 +532,7 @@ def test_capsem_admin_settings_doctor_accepts_toml(tmp_path) -> None:
 version = 1
 
 [profiles]
-base_dirs = ["/Library/Application Support/Capsem/profiles/base"]
+base_dirs = ["~/.capsem/profiles/base"]
 user_dirs = ["/Users/example/.capsem/profiles"]
 default_profile = "everyday-work"
 """.lstrip(),

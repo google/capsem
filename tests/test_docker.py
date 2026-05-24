@@ -27,7 +27,9 @@ from capsem.builder.docker import (
     generate_build_context,
     render_dockerfile,
 )
+from capsem.builder.image_workspace import materialize_profile_image_workspace
 from capsem.builder.image_verify import ImageInventory, dump_image_inventory_json
+from capsem.builder.profiles import create_profile_draft
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -351,6 +353,19 @@ class TestRenderKernel:
         )
         assert "defconfig.arm64" in result
 
+    def test_arm64_kernel_requires_48_bit_user_va(self, real_config):
+        """ARM64 guest kernels must run 48-bit user VA for TCMalloc CLIs."""
+        defconfig = (PROJECT_ROOT / "guest/config/kernel/defconfig.arm64").read_text()
+        assert "CONFIG_ARM64_4K_PAGES=y" in defconfig
+        assert "CONFIG_ARM64_VA_BITS_48=y" in defconfig
+        assert "CONFIG_ARM64_VA_BITS=48" in defconfig
+
+        result = render_dockerfile(
+            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
+        )
+        assert "CONFIG_PGTABLE_LEVELS=4" in result
+        assert "arm64 kernel config missing required VA symbol" in result
+
     def test_arm64_kernel_image(self, real_config):
         result = render_dockerfile(
             "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
@@ -424,12 +439,40 @@ class TestGenerateBuildContext:
 
     def test_rootfs_npm_providers(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
+        assert "@anthropic-ai/claude-code" in ctx["npm_packages"]
         assert "@google/gemini-cli" in ctx["npm_packages"]
         assert "@openai/codex" in ctx["npm_packages"]
 
+    def test_rootfs_npm_packages_from_profile_package_sets(self, tmp_path):
+        profile = create_profile_draft("corp-dev", revision="2026.0520.12")
+        profile = profile.model_copy(
+            update={
+                "packages": profile.packages.model_copy(
+                    update={
+                        "node_packages": {
+                            "@anthropic-ai/claude-code": "*",
+                            "@google/gemini-cli": "*",
+                            "@openai/codex": "*",
+                        }
+                    }
+                )
+            }
+        )
+        materialize_profile_image_workspace(profile, tmp_path, arch="arm64")
+        config = load_guest_config(tmp_path)
+
+        ctx = generate_build_context("Dockerfile.rootfs.j2", config, "arm64")
+
+        assert ctx["npm_prefix"] == "/opt/ai-clis"
+        assert ctx["npm_packages"] == [
+            "@anthropic-ai/claude-code",
+            "@google/gemini-cli",
+            "@openai/codex",
+        ]
+
     def test_rootfs_curl_installs(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
-        assert "https://claude.ai/install.sh" in ctx["curl_installs"]
+        assert "https://antigravity.google/cli/install.sh" in ctx["curl_installs"]
 
     def test_rootfs_arch_config(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
@@ -469,6 +512,30 @@ class TestGuestConfigBuildAndDefaultsAlignment:
                 assert set(provider.install.packages).issubset(installed_packages), (
                     f"{key} install packages should be in the rootfs build context"
                 )
+
+    def test_profile_package_curl_installs_render_as_installer_urls(self, tmp_path):
+        profile = create_profile_draft("corp-dev", revision="2026.0520.12")
+        profile = profile.model_copy(
+            update={
+                "packages": profile.packages.model_copy(
+                    update={
+                        "curl_installs": {
+                            "agy": "https://antigravity.google/cli/install.sh",
+                        }
+                    }
+                )
+            }
+        )
+        materialize_profile_image_workspace(profile, tmp_path, arch="arm64")
+        config = load_guest_config(tmp_path)
+
+        ctx = generate_build_context("Dockerfile.rootfs.j2", config, "arm64")
+
+        assert ctx["curl_installs"] == ["https://antigravity.google/cli/install.sh"]
+        assert config.package_sets["curl"].packages == [
+            "agy=https://antigravity.google/cli/install.sh"
+        ]
+        assert config.package_sets["curl"].version_commands["agy"].startswith("agy --version")
 
     def test_web_registry_defaults_match_real_guest_security_config(self, real_config):
         defaults = generate_defaults_json(real_config)

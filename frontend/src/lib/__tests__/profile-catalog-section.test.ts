@@ -2,18 +2,25 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProfileCatalogResponse } from '../types/gateway';
+import type { ProfileCatalogResponse, ProfileListResponse } from '../types/gateway';
 
-let catalog: ProfileCatalogResponse;
+let profilesResponse: ProfileListResponse;
+let catalogResponse: ProfileCatalogResponse;
 
 const apiMock = {
-  getProfileCatalog: vi.fn(async () => catalog),
+  listProfiles: vi.fn(async () => profilesResponse),
+  getProfileCatalog: vi.fn(async () => catalogResponse),
   selectProfile: vi.fn(async (profileId: string) => {
-    catalog = {
-      ...catalog,
+    profilesResponse = {
+      ...profilesResponse,
       default_profile: profileId,
     };
-    return catalog;
+    return {
+      mode: 'settings_profiles_v2',
+      manifest_present: catalogResponse.manifest_present,
+      default_profile: profileId,
+      profiles: catalogResponse.profiles,
+    };
   }),
 };
 
@@ -21,109 +28,144 @@ vi.mock('../api', () => apiMock);
 
 const { default: ProfileCatalogSection } = await import('../components/settings/ProfileCatalogSection.svelte');
 
-function buildCatalog(): ProfileCatalogResponse {
+function buildProfiles(): ProfileListResponse {
   return {
     mode: 'settings_profiles_v2',
-    manifest_present: true,
     default_profile: 'everyday-work',
-    catalog_source: 'file:///profiles/profile-manifest.json',
     profiles: [
       {
-        profile_id: 'everyday-work',
-        current_revision: '2026.0520.2',
-        installed_revision: '2026.0520.1',
-        revisions: [
-          {
-            revision: '2026.0520.1',
-            status: 'deprecated',
-            min_binary: '1.0.0',
-            profile_hash: 'blake3:eeee',
-            current: false,
-            installed: true,
-          },
-          {
-            revision: '2026.0520.2',
-            status: 'active',
-            min_binary: '1.0.0',
-            profile_hash: 'blake3:ffff',
-            current: true,
-            installed: false,
-          },
-        ],
+        source: 'base',
+        locked: true,
+        profile: {
+          id: 'everyday-work',
+          name: 'Everyday Work',
+          description: 'Balanced defaults for daily work sessions.',
+          best_for: 'Daily work with useful tools and measured security prompts.',
+          ui: 'everyday',
+          revision: '2026.0524.6',
+        },
+        asset_status: {
+          state: 'ready',
+          ready: true,
+          usable_for_vm: true,
+          profile_id: 'everyday-work',
+          profile_revision: '2026.0524.6',
+          asset_version: 'everyday-work@2026.0524.6',
+          arch: 'arm64',
+          assets: [],
+          missing: [],
+          missing_assets: [],
+        },
       },
       {
-        profile_id: 'locked-corp',
-        current_revision: '2026.0520.1',
-        installed_revision: null,
-        revisions: [
-          {
-            revision: '2026.0520.1',
-            status: 'revoked',
-            min_binary: '1.0.0',
-            profile_hash: 'blake3:cccc',
-            current: true,
-            installed: false,
-          },
-        ],
+        source: 'base',
+        locked: true,
+        profile: {
+          id: 'coding',
+          name: 'Coding',
+          description: 'Focused defaults for software development sessions.',
+          best_for: 'Coding agents, repository work, tests, and developer tooling.',
+          ui: 'coding',
+          revision: '2026.0524.6',
+        },
+        asset_status: {
+          state: 'ready',
+          ready: true,
+          usable_for_vm: true,
+          profile_id: 'coding',
+          profile_revision: '2026.0524.6',
+          asset_version: 'coding@2026.0524.6',
+          arch: 'arm64',
+          assets: [],
+          missing: [],
+          missing_assets: [],
+        },
       },
     ],
+  };
+}
+
+function emptyCatalog(): ProfileCatalogResponse {
+  return {
+    mode: 'settings_profiles_v2',
+    manifest_present: false,
+    default_profile: 'everyday-work',
+    profiles: [],
   };
 }
 
 describe('ProfileCatalogSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    catalog = buildCatalog();
+    profilesResponse = buildProfiles();
+    catalogResponse = emptyCatalog();
   });
 
-  it('renders profile catalog revision lifecycle states without removed status', async () => {
+  it('renders installed profiles even when no signed catalog manifest is configured', async () => {
     render(ProfileCatalogSection);
 
-    await screen.findByText('everyday-work');
+    await screen.findByText('Everyday Work');
 
-    expect(screen.getByText('locked-corp')).toBeTruthy();
-    expect(screen.getByText('selected')).toBeTruthy();
-    expect(screen.getByText('update available')).toBeTruthy();
-    expect(screen.getByText('not installed')).toBeTruthy();
-    expect(screen.getAllByText('2026.0520.1').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('2026.0520.2').length).toBeGreaterThan(0);
-    expect(screen.getByText('deprecated')).toBeTruthy();
-    expect(screen.getByText('active')).toBeTruthy();
-    expect(screen.getByText('revoked')).toBeTruthy();
-    expect(screen.queryByText('removed')).toBeNull();
+    expect(screen.getByText('Coding')).toBeTruthy();
+    expect(screen.getByText('Default')).toBeTruthy();
+    expect(screen.getAllByText('ready').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('No profile catalog installed.')).toBeNull();
+    expect(screen.queryByText('No profiles installed.')).toBeNull();
+    expect(apiMock.listProfiles).toHaveBeenCalled();
+    expect(apiMock.getProfileCatalog).toHaveBeenCalled();
   });
 
-  it('selects a non-revoked profile through the profile route', async () => {
-    catalog = buildCatalog();
-    catalog.profiles[1].revisions[0].status = 'active';
+  it('selects a usable installed profile through the profile route', async () => {
     render(ProfileCatalogSection);
 
-    await screen.findByText('locked-corp');
+    await screen.findByText('Coding');
     const buttons = screen.getAllByRole('button', { name: 'Select' });
     await fireEvent.click(buttons[0]);
 
-    expect(apiMock.selectProfile).toHaveBeenCalledWith('locked-corp');
+    expect(apiMock.selectProfile).toHaveBeenCalledWith('coding');
     await waitFor(() => {
-      expect(screen.getByText('locked-corp selected.')).toBeTruthy();
+      expect(screen.getByText('Coding selected.')).toBeTruthy();
     });
+    expect(apiMock.listProfiles).toHaveBeenCalledTimes(2);
   });
 
-  it('does not allow revoked profiles to be selected', async () => {
+  it('does not allow profiles with missing assets to be selected or leak raw asset paths on cards', async () => {
+    profilesResponse = buildProfiles();
+    profilesResponse.profiles[1].asset_status = {
+      state: 'missing',
+      ready: false,
+      usable_for_vm: false,
+      profile_id: 'coding',
+      profile_revision: '2026.0524.6',
+      asset_version: 'coding@2026.0524.6',
+      arch: 'arm64',
+      assets: [],
+      missing: ['vmlinuz'],
+      missing_assets: [
+        {
+          name: 'vmlinuz',
+          path: '/Users/test/.capsem/assets/arm64/vmlinuz-deadbeef',
+          source_url: 'file:///mirror/vmlinuz',
+        },
+      ],
+    };
+
     render(ProfileCatalogSection);
 
-    await screen.findByText('locked-corp');
+    await screen.findByText('Coding');
+    expect(screen.getByText('assets missing')).toBeTruthy();
+    expect(screen.queryByText('/Users/test/.capsem/assets/arm64/vmlinuz-deadbeef')).toBeNull();
     const selectButtons = screen.getAllByRole<HTMLButtonElement>('button', { name: 'Select' });
     expect(selectButtons[0].disabled).toBe(true);
     expect(apiMock.selectProfile).not.toHaveBeenCalled();
   });
 
-  it('refreshes the catalog on demand', async () => {
+  it('refreshes installed profiles on demand', async () => {
     render(ProfileCatalogSection);
 
-    await screen.findByText('everyday-work');
-    catalog = {
+    await screen.findByText('Everyday Work');
+    profilesResponse = {
       mode: 'settings_profiles_v2',
-      manifest_present: true,
       default_profile: null,
       profiles: [],
     };
@@ -131,8 +173,8 @@ describe('ProfileCatalogSection', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh profiles' }));
 
     await waitFor(() => {
-      expect(screen.getByText('No profile catalog installed.')).toBeTruthy();
+      expect(screen.getByText('No profiles installed.')).toBeTruthy();
     });
-    expect(apiMock.getProfileCatalog).toHaveBeenCalledTimes(2);
+    expect(apiMock.listProfiles).toHaveBeenCalledTimes(2);
   });
 });

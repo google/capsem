@@ -272,6 +272,101 @@ fn status_report_preserves_service_asset_updating_state() {
     );
 }
 
+#[test]
+fn text_asset_status_is_concise_and_leaves_profile_for_trailing_block() {
+    let asset_health = crate::client::AssetHealth {
+        ready: true,
+        state: "ready".into(),
+        profile_id: Some("everyday-work".into()),
+        profile_revision: Some("2026.0524.2".into()),
+        profile_payload_hash: Some(format!("blake3:{}", "e".repeat(64))),
+        profile_assets: vec![
+            crate::client::ProfileAssetProvenance {
+                logical_name: "vmlinuz".into(),
+                hash: format!("blake3:{}", "a".repeat(64)),
+                source_url: "https://assets.example.test/vmlinuz".into(),
+                size: 7_993_856,
+                content_type: "application/octet-stream".into(),
+            },
+            crate::client::ProfileAssetProvenance {
+                logical_name: "rootfs.squashfs".into(),
+                hash: format!("blake3:{}", "b".repeat(64)),
+                source_url: "https://assets.example.test/rootfs.squashfs".into(),
+                size: 476_172_288,
+                content_type: "application/vnd.squashfs".into(),
+            },
+        ],
+        version: Some("everyday-work".into()),
+        arch: Some("arm64".into()),
+        missing: Vec::new(),
+        progress: None,
+        error: None,
+        retry_count: 0,
+        retryable: false,
+        saved_vm_dependencies: Vec::new(),
+        checked_at_unix_secs: Some(1_779_633_276),
+    };
+
+    let asset_lines = super::service_asset_status_lines(&asset_health);
+    assert_eq!(
+        asset_lines,
+        vec!["Assets:    ready (arm64; 2 assets; 461.7 MiB)"]
+    );
+    assert!(asset_lines
+        .iter()
+        .all(|line| !line.contains("https://") && !line.contains("blake3:")));
+
+    let profile_lines = super::profile_asset_status_lines(&asset_health);
+    assert_eq!(profile_lines[0], "Profile:   everyday-work");
+    assert!(profile_lines.contains(&"  revision: 2026.0524.2".to_string()));
+    assert!(profile_lines.contains(&"  assets: vmlinuz, rootfs.squashfs".to_string()));
+    assert!(profile_lines.contains(&format!("  payload_hash: blake3:{}", "e".repeat(64))));
+    assert!(profile_lines.contains(&"  checked: unix 1779633276".to_string()));
+}
+
+#[test]
+fn text_asset_status_reports_progress_and_saved_vm_dependencies_without_asset_dump() {
+    let asset_health = crate::client::AssetHealth {
+        ready: false,
+        state: "updating".into(),
+        profile_id: Some("coding-work".into()),
+        profile_revision: None,
+        profile_payload_hash: None,
+        profile_assets: Vec::new(),
+        version: Some("coding-work".into()),
+        arch: Some("arm64".into()),
+        missing: vec!["rootfs.squashfs".into()],
+        progress: Some(crate::client::AssetProgress {
+            logical_name: "rootfs.squashfs".into(),
+            bytes_done: 12 * 1024 * 1024,
+            bytes_total: Some(24 * 1024 * 1024),
+            done: false,
+        }),
+        error: None,
+        retry_count: 0,
+        retryable: false,
+        saved_vm_dependencies: vec![crate::client::SavedVmAssetDependency {
+            vm: "saved-old".into(),
+            asset_version: "2026.0415.1".into(),
+            arch: "arm64".into(),
+            missing: vec!["rootfs.squashfs".into()],
+            recovery_hint: "restore assets or delete the saved VM".into(),
+        }],
+        checked_at_unix_secs: None,
+    };
+
+    let lines = super::service_asset_status_lines(&asset_health);
+    assert_eq!(
+        lines,
+        vec![
+            "Assets:    updating (arm64)",
+            "  missing: rootfs.squashfs",
+            "  updating: rootfs.squashfs 12.0 MiB/24.0 MiB",
+            "  saved VM missing: saved-old needs rootfs.squashfs (2026.0415.1, arm64): restore assets or delete the saved VM",
+        ]
+    );
+}
+
 fn sample_security_engine_report() -> super::StatusSecurityEngineReport {
     super::StatusSecurityEngineReport {
         present: true,

@@ -811,7 +811,7 @@
           "name": "RAM",
           "description": "Amount of RAM allocated to the VM in GB.",
           "type": "number",
-          "default": 4,
+          "default": 8,
           "meta": {
             "min": 1,
             "max": 16

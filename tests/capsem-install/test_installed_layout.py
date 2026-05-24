@@ -71,8 +71,6 @@ class TestInstalledLayoutContract:
     def test_manifest_json_exists(self, installed_layout):
         """manifest.json present at ~/.capsem/assets/manifest.json."""
         manifest = ASSETS_DIR / "manifest.json"
-        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest.exists():
-            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert manifest.exists(), (
             f"manifest.json missing at {manifest} -- service will fail to start"
         )
@@ -95,8 +93,6 @@ class TestInstalledLayoutContract:
         arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
 
         manifest_path = ASSETS_DIR / "manifest.json"
-        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest_path.exists():
-            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert manifest_path.exists(), f"manifest missing: {manifest_path}"
 
         data = json.loads(manifest_path.read_text())
@@ -106,8 +102,6 @@ class TestInstalledLayoutContract:
             pytest.skip(f"no {arch} entry in manifest (cross-arch install)")
 
         arch_dir = ASSETS_DIR / arch
-        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not arch_dir.exists():
-            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert arch_dir.is_dir(), (
             f"arch dir missing: {arch_dir}\n"
             f"resolver will fail: ManifestV2::resolve() checks $ASSETS/{arch}/<hash>"
@@ -124,10 +118,6 @@ class TestInstalledLayoutContract:
             target = arch_dir / hashed
             if not target.exists():
                 missing.append((logical, meta["hash"], target, hashed))
-
-        if missing and os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
-            names = ", ".join(logical for logical, _, _, _ in missing)
-            pytest.skip(f"VM assets downloaded on first use, not bundled in .deb: {names}")
 
         assert not missing, "\n".join(
             f"asset missing: {target}\n"
@@ -172,6 +162,20 @@ class TestInstalledLayoutContract:
         assert (CAPSEM_DIR / "bin").is_dir()
         assert (CAPSEM_DIR / "assets").is_dir()
         assert (CAPSEM_DIR / "run").is_dir()
+
+    def test_installed_base_profiles_use_real_asset_sources(self, installed_layout):
+        """Seeded base profiles must not point at draft placeholder asset URLs."""
+        profiles_dir = CAPSEM_DIR / "profiles" / "base"
+        profiles = sorted(profiles_dir.glob("*.profile.toml"))
+        assert profiles, f"no base profiles found in {profiles_dir}"
+        for profile in profiles:
+            text = profile.read_text()
+            assert "assets.example.invalid" not in text, (
+                f"{profile} still points at the draft asset host"
+            )
+            assert "https://assets.capsem.dev/vm/" in text or "file://" in text, (
+                f"{profile} should be materialized to release or local asset files"
+            )
 
     # -- Service spawn contract --
     # When CLI auto-launches, it runs:

@@ -93,6 +93,7 @@ fn rule(id: impl Into<String>, condition: impl Into<String>) -> CelEnforcementRu
         condition: condition.into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("benchmark match".into()),
+        mutations: Vec::new(),
     }
 }
 

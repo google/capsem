@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -193,7 +193,11 @@ async fn refresh_assets(uds_path: Option<PathBuf>) -> Result<()> {
         .await
         .context("request Profile V2 asset reconcile from service")?;
     let result = response.into_result()?;
-    println!("{}", profile_asset_reconcile_summary_line(&result));
+    let summary = profile_asset_reconcile_summary_line(&result);
+    println!("{summary}");
+    if result["outcome"].as_str() == Some("error") {
+        bail!("{summary}");
+    }
     Ok(())
 }
 

@@ -85,6 +85,7 @@ fn process_exec_security_evaluation_blocks_matching_cel_rule() {
                     .into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("shell commands are blocked".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));
@@ -129,6 +130,7 @@ fn process_exec_security_evaluation_default_denies_ask_without_confirm_resolver(
                     .into(),
             decision: SecurityDecisionAction::Ask,
             reason: Some("shell commands require approval".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));

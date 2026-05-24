@@ -4,9 +4,10 @@
 # Runs as root after dpkg installs the package. Creates the per-user
 # ~/.capsem layout, registers the systemd user unit, and runs setup.
 #
-# The .deb installs companion binaries to /usr/bin/ and signed manifest files
-# to /usr/share/capsem/assets/. This script symlinks binaries into
-# ~/.capsem/bin/ and seeds the user's asset manifest.
+# The .deb installs companion binaries to /usr/bin/, Profile V2 base profiles
+# to /usr/share/capsem/profiles/base/, and signed manifest files to
+# /usr/share/capsem/assets/. This script symlinks binaries into ~/.capsem/bin/
+# and seeds the user's profile/asset state.
 set -euo pipefail
 
 # Determine the real user (not root from sudo)
@@ -20,16 +21,15 @@ else
 fi
 
 if [ -z "$TARGET_USER" ]; then
-    echo "capsem: could not determine installing user, skipping per-user setup"
-    echo "capsem: run 'capsem setup' manually to complete installation"
-    exit 0
+    echo "capsem: could not determine installing user; cannot complete per-user setup" >&2
+    exit 1
 fi
 
 USER_HOME=$(eval echo "~$TARGET_USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
 PKG_SHARE="/usr/share/capsem"
 
-seed_asset_manifests() {
+seed_assets() {
     for asset in manifest.json manifest.json.minisig; do
         if [ -f "$PKG_SHARE/assets/$asset" ]; then
             install -m 0644 "$PKG_SHARE/assets/$asset" "$CAPSEM_DIR/assets/$asset"
@@ -46,8 +46,18 @@ seed_asset_manifests() {
     fi
 }
 
+seed_base_profiles() {
+    if [ ! -d "$PKG_SHARE/profiles/base" ]; then
+        echo "capsem: required base profiles missing: $PKG_SHARE/profiles/base" >&2
+        exit 1
+    fi
+    mkdir -p "$CAPSEM_DIR/profiles/base"
+    find "$CAPSEM_DIR/profiles/base" -maxdepth 1 -type f -name '*.profile.toml' -delete
+    install -m 0644 "$PKG_SHARE/profiles/base/"*.profile.toml "$CAPSEM_DIR/profiles/base/"
+}
+
 # Create user-level directory layout
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run"
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
 
 # Symlink system binaries into user dir
 for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
@@ -56,7 +66,8 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator
     fi
 done
 
-seed_asset_manifests
+seed_assets
+seed_base_profiles
 
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
@@ -70,8 +81,9 @@ XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
     su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install"
 fi
-seed_asset_manifests
-chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/assets"
+seed_assets
+seed_base_profiles
+chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles"
 su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected"
 
 exit 0

@@ -4,10 +4,11 @@ use super::*;
 use std::collections::BTreeMap;
 
 use capsem_security_engine::{
-    BlockResponse, DetectionFinding, DnsSecuritySubject, FileSecuritySubject,
+    AskPlan, BlockResponse, DetectionFinding, DnsSecuritySubject, FileSecuritySubject,
     HttpBodySecuritySubject, HttpSecuritySubject, McpSecuritySubject, ModelInteractionEvidence,
     ModelRequestEvidence, ModelSecuritySubject, ProcessSecuritySubject, ResolvedEventStep,
-    SecurityEvent, SecurityEventCommon, TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
+    RewritePatch, SecurityError, SecurityEvent, SecurityEventCommon, ThrottlePlan,
+    TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 use serde::Serialize;
 
@@ -271,6 +272,38 @@ fn resolved_event(event: SecurityEvent, final_action: SecurityAction) -> Resolve
         final_action,
         emitter_results: Vec::new(),
     }
+}
+
+fn ask_action(reason_code: &str) -> SecurityAction {
+    SecurityAction::Ask(AskPlan {
+        prompt_id: format!("prompt-{reason_code}"),
+        reason_code: reason_code.to_string(),
+        default_action: Box::new(SecurityAction::Continue),
+    })
+}
+
+fn rewrite_action(reason_code: &str) -> SecurityAction {
+    SecurityAction::Rewrite(RewritePatch {
+        target: reason_code.to_string(),
+        replacement_ref: "replacement:test".to_string(),
+    })
+}
+
+fn throttle_action(reason_code: &str) -> SecurityAction {
+    SecurityAction::Throttle(ThrottlePlan {
+        delay_ms: 25,
+        quota_id: format!("quota-{reason_code}"),
+        scope: "vm".to_string(),
+        reason_code: reason_code.to_string(),
+        provider_source: None,
+    })
+}
+
+fn error_action(code: &str) -> SecurityAction {
+    SecurityAction::Error(SecurityError {
+        code: code.to_string(),
+        message: format!("{code} failed"),
+    })
 }
 
 fn resolved_http_event(
@@ -968,6 +1001,357 @@ fn writer_metrics_snapshot_counts_resolved_security_decisions_and_findings() {
 }
 
 #[test]
+fn writer_metrics_snapshot_updates_https_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-allow",
+                10,
+                Some(100),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-ask",
+                20,
+                Some(200),
+                ask_action("http.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-block",
+                30,
+                Some(300),
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "http blocked".into(),
+                    rule_id: Some("http.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-error",
+                40,
+                None,
+                error_action("http.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.http.http_requests_total, 4);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_requests_warned_total, 1);
+    assert_eq!(snapshot.http.http_requests_denied_total, 1);
+    assert_eq!(snapshot.http.http_requests_errored_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 600);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_dns_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-allow",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-ask",
+                ask_action("dns.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-block",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "dns blocked".into(),
+                    rule_id: Some("dns.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-rewrite",
+                rewrite_action("dns.rewrite"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-error",
+                error_action("dns.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.dns.dns_queries_total, 5);
+    assert_eq!(snapshot.dns.dns_queries_allowed_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_warned_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_rewritten_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_errored_total, 1);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_mcp_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-allow",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-ask",
+                ask_action("mcp.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-block",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "mcp blocked".into(),
+                    rule_id: Some("mcp.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-error",
+                error_action("mcp.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 4);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_allowed_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_warned_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_errored_total, 1);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_file_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-read",
+                "read",
+                Some(7),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-write",
+                "write",
+                Some(10),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-create",
+                "create",
+                Some(20),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-delete",
+                "delete",
+                None,
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-restore",
+                "restore",
+                Some(30),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-error",
+                "read",
+                Some(5),
+                error_action("file.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.filesystem.fs_reads_total, 2);
+    assert_eq!(snapshot.filesystem.fs_writes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_creates_total, 1);
+    assert_eq!(snapshot.filesystem.fs_deletes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_restores_total, 1);
+    assert_eq!(snapshot.filesystem.fs_errors_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_read_total, 12);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 60);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_process_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process-exec",
+                "exec",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process-audit",
+                "audit",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process-error",
+                "exec",
+                error_action("process.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.process.process_events_total, 3);
+    assert_eq!(snapshot.process.process_exec_total, 2);
+    assert_eq!(snapshot.process.process_audit_total, 1);
+    assert_eq!(snapshot.process.process_errors_total, 1);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_security_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let finding = DetectionFinding {
+        finding_id: "finding-security-counter".to_string(),
+        event_id: "evt-security-block".to_string(),
+        rule_id: "detect.security.counter".to_string(),
+        pack_id: "pack-detect".to_string(),
+        sigma_id: None,
+        title: "Security counter finding".to_string(),
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        tags: Vec::new(),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-ask",
+                0,
+                None,
+                ask_action("security.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-rewrite",
+                0,
+                None,
+                rewrite_action("security.rewrite"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-throttle",
+                0,
+                None,
+                throttle_action("security.throttle"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+                schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+                event: resolved_http_event("evt-security-block", 0, None, SecurityAction::Continue)
+                    .event,
+                steps: Vec::new(),
+                plugin_transforms: Vec::new(),
+                detection_findings: vec![finding],
+                final_action: SecurityAction::Block(BlockResponse {
+                    reason_code: "security blocked".into(),
+                    rule_id: Some("security.block".into()),
+                }),
+                emitter_results: Vec::new(),
+            }))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-error",
+                0,
+                None,
+                error_action("security.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.security.security_events_total, 5);
+    assert_eq!(snapshot.security.blocks_total, 1);
+    assert_eq!(snapshot.security.asks_total, 1);
+    assert_eq!(snapshot.security.rewrites_total, 1);
+    assert_eq!(snapshot.security.throttles_total, 1);
+    assert_eq!(snapshot.security.errors_total, 1);
+    assert_eq!(snapshot.security.detection_findings_total, 1);
+    assert_eq!(
+        snapshot.security.latest_block_rule_id.as_deref(),
+        Some("security.block")
+    );
+    assert_eq!(
+        snapshot.security.latest_detection_rule_id.as_deref(),
+        Some("detect.security.counter")
+    );
+}
+
+#[test]
 fn writer_metrics_snapshot_counts_canonical_vm_event_families() {
     let writer = DbWriter::open_in_memory(64).unwrap();
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -1069,6 +1453,155 @@ fn writer_metrics_snapshot_counts_canonical_vm_event_families() {
     assert_eq!(snapshot.process.process_events_total, 1);
     assert_eq!(snapshot.process.process_exec_total, 1);
     assert_eq!(snapshot.security.security_events_total, 7);
+}
+
+#[test]
+fn writer_metrics_snapshot_counts_live_vm_model_call_rows() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "vm-live-model",
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+                123,
+                45,
+                1_250,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "host-live-model",
+                AiAttributionScope::Host,
+                Some("vm-1"),
+                10_000,
+                20_000,
+                9_000_000,
+            )))
+            .await;
+        let mut errored = seed_model_call(
+            "vm-live-model-error",
+            AiAttributionScope::Vm,
+            Some("vm-1"),
+            9,
+            1,
+            500,
+        );
+        errored.status_code = Some(500);
+        writer.write(WriteOp::ModelCall(errored)).await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_500);
+
+    assert_eq!(snapshot.model.model_requests_total, 2);
+    assert_eq!(snapshot.model.model_requests_allowed_total, 1);
+    assert_eq!(snapshot.model.model_requests_errored_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 132);
+    assert_eq!(snapshot.model.model_output_tokens_total, 46);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 1_750);
+}
+
+#[test]
+fn writer_metrics_snapshot_counts_realistic_live_write_sequence_once() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer.write(WriteOp::NetEvent(seed_net_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-live-http",
+                100,
+                Some(250),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer.write(WriteOp::DnsEvent(seed_dns_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-live-dns",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "dns denied".into(),
+                    rule_id: Some("dns.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "vm-live-sequence",
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+                321,
+                123,
+                4_500,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "host-live-sequence",
+                AiAttributionScope::Host,
+                Some("vm-1"),
+                10_000,
+                20_000,
+                9_000_000,
+            )))
+            .await;
+        writer.write(WriteOp::McpCall(seed_mcp_call())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-live-mcp",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "tool denied".into(),
+                    rule_id: Some("mcp.block".into()),
+                }),
+            )))
+            .await;
+        writer.write(WriteOp::FileEvent(seed_file_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-live-file-create",
+                "create",
+                Some(64),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer.write(WriteOp::ExecEvent(seed_exec_event())).await;
+        writer.write(WriteOp::AuditEvent(seed_audit_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-live-process",
+                "exec",
+                SecurityAction::Continue,
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_750);
+
+    assert_eq!(snapshot.http.http_requests_total, 1);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 250);
+    assert_eq!(snapshot.dns.dns_queries_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.model.model_requests_total, 1);
+    assert_eq!(snapshot.model.model_requests_allowed_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 321);
+    assert_eq!(snapshot.model.model_output_tokens_total, 123);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 4_500);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.filesystem.fs_creates_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 64);
+    assert_eq!(snapshot.process.process_events_total, 1);
+    assert_eq!(snapshot.process.process_exec_total, 1);
+    assert_eq!(snapshot.security.security_events_total, 5);
 }
 
 #[test]

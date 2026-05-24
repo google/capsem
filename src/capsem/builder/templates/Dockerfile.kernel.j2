@@ -49,7 +49,20 @@ RUN make olddefconfig && \
             echo "FATAL: kernel config missing required netfilter symbol: $sym"; \
             exit 1; \
         }; \
-    done
+    done && \
+    if [ "{{ arch_name }}" = "arm64" ]; then \
+        for sym in \
+            CONFIG_ARM64_4K_PAGES=y \
+            CONFIG_ARM64_VA_BITS_48=y \
+            CONFIG_ARM64_VA_BITS=48 \
+            CONFIG_PGTABLE_LEVELS=4 \
+        ; do \
+            grep -qx "$sym" .config || { \
+                echo "FATAL: arm64 kernel config missing required VA symbol: $sym"; \
+                exit 1; \
+            }; \
+        done; \
+    fi
 
 # Compile kernel
 RUN make -j$(nproc) {{ arch.kernel_image | replace('arch/' ~ arch_name ~ '/boot/', '') }} && \

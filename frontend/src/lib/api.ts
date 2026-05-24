@@ -26,6 +26,7 @@ import type {
   RuntimeBacktestResult,
   DebugReport,
   ProfileCatalogResponse,
+  ProfileListResponse,
   ProfileRevisionsResponse,
 } from './types/gateway';
 import type {
@@ -169,9 +170,7 @@ class ApiError extends Error {
 }
 
 async function _get(path: string): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
-    headers: { Authorization: `Bearer ${_token}` },
-  });
+  const resp = await _authFetch(path);
   if (!resp.ok) {
     const body = await resp.text();
     throw new ApiError(resp.status, body);
@@ -180,10 +179,9 @@ async function _get(path: string): Promise<Response> {
 }
 
 async function _post(path: string, body?: unknown): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
+  const resp = await _authFetch(path, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${_token}`,
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -196,14 +194,49 @@ async function _post(path: string, body?: unknown): Promise<Response> {
 }
 
 async function _delete(path: string): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
+  const resp = await _authFetch(path, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${_token}` },
   });
   if (!resp.ok) {
     const text = await resp.text();
     throw new ApiError(resp.status, text);
   }
+  return resp;
+}
+
+async function _refreshAuthToken(): Promise<void> {
+  const tokenResp = await fetch(`${_baseUrl}/token`);
+  if (!tokenResp.ok) {
+    _connected = false;
+    _token = null;
+    const body = await tokenResp.text();
+    throw new ApiError(tokenResp.status, body);
+  }
+  const tokenData: TokenResponse = await tokenResp.json();
+  _token = tokenData.token;
+  _connected = true;
+}
+
+async function _authFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
+  if (!_token) {
+    await _refreshAuthToken();
+  }
+
+  const headers = {
+    ...((init.headers as Record<string, string> | undefined) ?? {}),
+    Authorization: `Bearer ${_token}`,
+  };
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    ...init,
+    headers,
+  });
+
+  if (resp.status === 401 && retry) {
+    _token = null;
+    await _refreshAuthToken();
+    return _authFetch(path, init, false);
+  }
+
   return resp;
 }
 
@@ -216,8 +249,11 @@ function isNetworkError(err: unknown): boolean {
 
 export async function getStatus(): Promise<StatusResponse> {
   if (!_connected) {
-    console.log('[api] getStatus() skipped: not connected');
-    return emptyStatus();
+    console.log('[api] getStatus() reconnecting before status poll');
+    const result = await init();
+    if (!result.connected) {
+      return emptyStatus();
+    }
   }
   try {
     const resp = await _get('/status');
@@ -233,6 +269,11 @@ export async function getStatus(): Promise<StatusResponse> {
 
 export async function getProfileCatalog(): Promise<ProfileCatalogResponse> {
   const resp = await _get('/profiles/catalog');
+  return await resp.json();
+}
+
+export async function listProfiles(): Promise<ProfileListResponse> {
+  const resp = await _get('/profiles');
   return await resp.json();
 }
 
@@ -377,9 +418,8 @@ export async function writeFile(id: string, path: string, content: string): Prom
 // -- Config --
 
 export async function reloadConfig(): Promise<ReloadConfigResult> {
-  const resp = await fetch(`${_baseUrl}/reload-config`, {
+  const resp = await _authFetch('/reload-config', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${_token}` },
   });
   const text = await resp.text();
   const parsed = text ? parseReloadConfigBody(text) : null;
@@ -685,6 +725,18 @@ export async function saveSettings(changes: Record<string, unknown>): Promise<Se
   return await resp.json();
 }
 
+/** Save a Profile V2 service credential by credential id. */
+export async function saveCredential(
+  credentialId: string,
+  value: string,
+  description?: string,
+): Promise<void> {
+  await _post(`/credentials/${encodeURIComponent(credentialId)}`, {
+    value,
+    ...(description ? { description } : {}),
+  });
+}
+
 /** List available security presets. */
 export async function getPresets(): Promise<SecurityPreset[]> {
   const resp = await _get('/settings/presets');
@@ -727,7 +779,7 @@ function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
     blocked_servers: [],
     tool_permissions: {},
   };
-  function walk(nodes: typeof settings.tree) {
+  function walk(nodes: NonNullable<SettingsResponse['tree']>) {
     for (const node of nodes) {
       if (node.kind === 'leaf') {
         if (node.id === 'mcp.policy.global') {
@@ -741,8 +793,8 @@ function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
       }
     }
   }
-  walk(settings.tree);
-  for (const rule of Object.values(settings.policy?.mcp ?? {})) {
+  walk(settings.tree ?? []);
+  for (const rule of Object.values((settings.policy ?? settings.effective_rules)?.mcp ?? {})) {
     const tool = policyToolName(rule);
     if (!tool) continue;
     if (rule.decision === 'allow' || rule.decision === 'ask' || rule.decision === 'block') {
@@ -1038,9 +1090,7 @@ export async function listFiles(id: string, path?: string, depth?: number): Prom
 /** Download a file from a VM workspace. Returns text, blob, and size. */
 export async function getFileContent(id: string, path: string): Promise<FileContentResult> {
   const sanitized = sanitizePath(path);
-  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
-    headers: { Authorization: `Bearer ${_token}` },
-  });
+  const resp = await _authFetch(`/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`);
   if (!resp.ok) {
     const body = await resp.text();
     throw new ApiError(resp.status, body);
@@ -1054,10 +1104,9 @@ export async function getFileContent(id: string, path: string): Promise<FileCont
 export async function uploadFile(id: string, path: string, content: Blob | string): Promise<FileUploadResponse> {
   const sanitized = sanitizePath(path);
   const body = typeof content === 'string' ? new Blob([content]) : content;
-  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
+  const resp = await _authFetch(`/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${_token}`,
       'Content-Type': 'application/octet-stream',
     },
     body,

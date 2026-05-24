@@ -44,7 +44,7 @@ EXPECTED_SCHEMAS = {
         "finding_id", "event_id", "rule_id", "pack_id", "sigma_id",
         "title", "severity", "confidence",
     ],
-    "detection_finding_tags": ["finding_id", "tag_index", "tag"],
+    "detection_finding_tags": ["id", "finding_id", "tag_index", "tag"],
     "security_event_links": [
         "event_id", "linked_event_id", "link_type", "evidence",
     ],

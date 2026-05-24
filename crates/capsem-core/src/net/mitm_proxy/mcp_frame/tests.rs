@@ -181,6 +181,7 @@ fn runtime_mcp_block_projects_to_pre_dispatch_policy_decision() {
         condition: "mcp.request.server_id == 'local' && mcp.request.tool_name == 'echo'".into(),
         decision: SecurityDecisionAction::Block,
         reason: Some("blocked MCP benchmark tool".into()),
+        mutations: Vec::new(),
     }])
     .unwrap();
     let mut engine = SecurityEngine::default();

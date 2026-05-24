@@ -65,6 +65,7 @@ pub fn build_http_resolved_security_event(
                     pack_id: None,
                     reason: reason.clone(),
                     terminal: false,
+                    mutations: Vec::new(),
                 });
                 steps.push(ResolvedEventStep {
                     kind: ResolvedEventStepKind::EnforcementMatch,
@@ -83,6 +84,7 @@ pub fn build_http_resolved_security_event(
                 pack_id: None,
                 reason: reason.clone(),
                 terminal: true,
+                mutations: Vec::new(),
             });
             steps.push(ResolvedEventStep {
                 kind: ResolvedEventStepKind::EnforcementMatch,

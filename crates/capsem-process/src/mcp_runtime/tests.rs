@@ -291,6 +291,40 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         editable: true,
     });
     effective.rules.push(EffectiveRule {
+        id: "dns.block-bad-domain".to_string(),
+        callback: "dns.request".to_string(),
+        condition: "dns.request.qname == \"blocked-dns.example\"".to_string(),
+        decision: RuleDecision::Block,
+        priority: 10,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Block blocked-dns.example".to_string()),
+        derived: false,
+        provenance: effective.profile.provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "dns.rewrite-fixture".to_string(),
+        callback: "dns.request".to_string(),
+        condition: "dns.request.qname == \"rewrite-dns.example\"".to_string(),
+        decision: RuleDecision::Rewrite,
+        priority: 11,
+        rewrite_target: Some("answer.ip =~ \".*\"".to_string()),
+        rewrite_value: Some("203.0.113.77".to_string()),
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Rewrite DNS answer".to_string()),
+        derived: false,
+        provenance: effective.profile.provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
         id: "http.user-read".to_string(),
         callback: "http.read".to_string(),
         condition: "true".to_string(),
@@ -352,7 +386,7 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         .contains(&"example.com".to_string()));
     assert_eq!(
         runtime.domain_policy.blocked_patterns(),
-        vec!["bad.example".to_string()]
+        vec!["bad.example".to_string(), "blocked-dns.example".to_string()]
     );
     assert_eq!(
         runtime.domain_policy.evaluate("example.com").0,
@@ -368,6 +402,13 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
             .blocked_patterns()
             .contains(&"bad.example".to_string()),
         "simple domain block rules must feed DNS-level full-block policy"
+    );
+    assert!(
+        runtime
+            .domain_policy
+            .blocked_patterns()
+            .contains(&"blocked-dns.example".to_string()),
+        "simple DNS block rules must feed DNS-level full-block policy"
     );
     assert!(
         !runtime
@@ -392,8 +433,57 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
             .decision
             .as_ref()
             .and_then(|decision| decision.rule.as_deref()),
-        Some("http.block-bad-domain")
+        Some("policy.http.block-bad-domain")
     );
+    let dns_blocked = security_engine
+        .evaluate(
+            capsem_network_engine::dns_security::build_dns_security_event_from_query(
+                &capsem_network_engine::dns_parser::DnsQuery {
+                    id: 7,
+                    qname: "blocked-dns.example".into(),
+                    qtype: 1,
+                    qclass: 1,
+                    extra_questions: 0,
+                },
+                None,
+            ),
+        )
+        .expect("profile runtime engine should evaluate canonical DNS CEL");
+    assert!(matches!(dns_blocked.action, SecurityAction::Block(_)));
+    assert_eq!(
+        dns_blocked
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("policy.dns.block-bad-domain")
+    );
+    let dns_rewritten = security_engine
+        .evaluate(
+            capsem_network_engine::dns_security::build_dns_security_event_from_query(
+                &capsem_network_engine::dns_parser::DnsQuery {
+                    id: 8,
+                    qname: "rewrite-dns.example".into(),
+                    qtype: 1,
+                    qclass: 1,
+                    extra_questions: 0,
+                },
+                None,
+            ),
+        )
+        .expect("profile runtime engine should evaluate canonical DNS rewrite CEL");
+    assert!(matches!(dns_rewritten.action, SecurityAction::Rewrite(_)));
+    assert_eq!(
+        dns_rewritten
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("policy.dns.rewrite-fixture")
+    );
+    assert_eq!(dns_rewritten.resolved_event.event.mutations.len(), 1);
 }
 
 #[test]
@@ -877,9 +967,21 @@ fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settin
     std::fs::create_dir_all(&session_dir).unwrap();
 
     let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
-    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+    let mut effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
         .expect("default effective profile should resolve");
+    effective
+        .credential_env
+        .insert("GEMINI_API_KEY".to_string(), "gemini-test-key".to_string());
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    let reloaded =
+        capsem_core::settings_profiles::load_vm_effective_settings(&session_dir).unwrap();
+    assert_eq!(
+        reloaded
+            .credential_env
+            .get("GEMINI_API_KEY")
+            .map(String::as_str),
+        Some("gemini-test-key")
+    );
 
     let runtime = load_runtime_policy_state_from_effective(&session_dir);
     let env = runtime
@@ -907,6 +1009,23 @@ fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settin
             .unwrap_or(false),
         "PATH must include /opt/ai-clis/bin for npm-installed AI CLIs"
     );
+    assert!(
+        env.get("PATH")
+            .map(|path| {
+                let mut entries = path.split(':');
+                matches!(entries.next(), Some("/root/.local/bin"))
+            })
+            .unwrap_or(false),
+        "PATH must prefer /root/.local/bin so Capsem wrappers win in non-interactive exec"
+    );
+    assert_eq!(
+        env.get("GEMINI_API_KEY").map(String::as_str),
+        Some("gemini-test-key")
+    );
+    assert!(
+        !env.contains_key("GOOGLE_API_KEY"),
+        "Gemini CLI warns when GOOGLE_API_KEY is injected alongside GEMINI_API_KEY"
+    );
 
     let files = runtime
         .guest_config
@@ -919,8 +1038,16 @@ fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settin
         .collect::<std::collections::BTreeSet<_>>();
     assert!(paths.contains("/root/.gemini/settings.json"));
     assert!(paths.contains("/root/.gemini/installation_id"));
+    assert!(paths.contains("/root/.local/bin/gemini"));
     assert!(paths.contains("/root/.codex/config.toml"));
     assert!(paths.contains("/root/.claude.json"));
+
+    let gemini_wrapper = files
+        .iter()
+        .find(|file| file.path == "/root/.local/bin/gemini")
+        .expect("gemini wrapper should be present");
+    assert_eq!(gemini_wrapper.mode, 0o755);
+    assert!(gemini_wrapper.content.contains("gemini --yolo"));
 
     let gemini_settings = files
         .iter()
@@ -990,13 +1117,12 @@ fn load_runtime_policy_state_falls_back_when_vm_effective_attachment_missing() {
     let runtime = load_runtime_policy_state_from_effective(dir.path());
 
     assert_eq!(runtime.domain_policy.default_action(), Action::Deny);
-    assert!(runtime
-        .domain_policy
-        .allowed_patterns()
-        .contains(&"elie.net".to_string()));
-    assert!(runtime
-        .domain_policy
-        .allowed_patterns()
-        .contains(&"*.elie.net".to_string()));
+    assert!(
+        !runtime
+            .domain_policy
+            .allowed_patterns()
+            .contains(&"legacy-only.test".to_string()),
+        "missing VM-effective settings fallback must not resurrect legacy allowlists"
+    );
     assert_eq!(runtime.mcp_policy.default_tool_decision, ToolDecision::Warn);
 }

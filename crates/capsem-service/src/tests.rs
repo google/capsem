@@ -3024,7 +3024,7 @@ async fn handle_logs_returns_structured_process_security_events_verbatim() {
     let vm_id = "vm-process-logs";
     let session_dir = state.run_dir.join("sessions").join(vm_id);
     std::fs::create_dir_all(&session_dir).unwrap();
-    std::fs::write(&session_dir.join("serial.log"), "guest booted\n").unwrap();
+    std::fs::write(session_dir.join("serial.log"), "guest booted\n").unwrap();
     let process_security_line = serde_json::json!({
         "timestamp": "2026-05-22T00:00:00Z",
         "level": "INFO",
@@ -3100,7 +3100,7 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
     let vm_id = "vm-security-logs";
     let session_dir = state.run_dir.join("sessions").join(vm_id);
     std::fs::create_dir_all(&session_dir).unwrap();
-    std::fs::write(&session_dir.join("serial.log"), "guest booted\n").unwrap();
+    std::fs::write(session_dir.join("serial.log"), "guest booted\n").unwrap();
 
     let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
     writer
@@ -3930,7 +3930,7 @@ async fn handle_fork_creates_persistent_sandbox() {
             env: None,
             forked_from: None,
             base_assets: Some(base_assets.clone()),
-            profile_pin: Some(source_profile_pin),
+            profile_pin: Some(source_profile_pin.clone()),
         },
     );
     let result = handle_fork(
@@ -3954,7 +3954,11 @@ async fn handle_fork_creates_persistent_sandbox() {
     assert_eq!(entry.base_assets, Some(base_assets));
     let pin = entry.profile_pin.as_ref().expect("fork must pin profile");
     assert_eq!(pin.profile_id, "everyday-work");
-    assert_eq!(pin.profile_revision.as_deref(), Some("2026.0520.1"));
+    assert_eq!(pin.profile_revision, source_profile_pin.profile_revision);
+    assert_eq!(
+        pin.profile_payload_hash,
+        source_profile_pin.profile_payload_hash
+    );
     assert!(pin.package_contract_hash.starts_with("blake3:"));
     assert_eq!(pin.base_assets, entry.base_assets);
 }
@@ -5063,6 +5067,122 @@ async fn handle_list_profiles_returns_catalog_with_default_profile() {
 }
 
 #[tokio::test]
+async fn handle_list_profiles_reports_asset_status_per_profile_without_poisoning_catalog() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
+    let user_dir = user_profile_path.parent().unwrap();
+    let source_dir = dir.path().join("sources");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(source_dir.join("vmlinuz"), b"good-kernel").unwrap();
+    std::fs::write(source_dir.join("initrd.img"), b"good-initrd").unwrap();
+    std::fs::write(source_dir.join("rootfs.squashfs"), b"good-rootfs").unwrap();
+
+    write_profile_fixture_with_assets(
+        &user_dir.join("good-assets.toml"),
+        "good-assets",
+        "Good Assets",
+        &source_dir,
+        b"good-kernel",
+        b"good-initrd",
+        b"good-rootfs",
+    );
+    write_profile_fixture_with_assets(
+        &user_dir.join("bad-assets.toml"),
+        "bad-assets",
+        "Bad Assets",
+        &source_dir,
+        b"bad-kernel",
+        b"bad-initrd",
+        b"bad-rootfs",
+    );
+    write_profile_fixture_with_assets(
+        &user_dir.join("unsigned-assets.toml"),
+        "unsigned-assets",
+        "Unsigned Assets",
+        &source_dir,
+        b"good-kernel",
+        b"good-initrd",
+        b"good-rootfs",
+    );
+    let corp_dir = dir.path().join("home/profiles/corp");
+    write_installed_profile_revision(
+        &corp_dir,
+        "good-assets",
+        "2026.0524.1",
+        br#"{"id":"good-assets"}"#,
+    );
+    write_installed_profile_revision(
+        &corp_dir,
+        "bad-assets",
+        "2026.0524.1",
+        br#"{"id":"bad-assets"}"#,
+    );
+
+    let assets_dir = dir.path().join("home/assets");
+    let good_kernel_path = write_cached_profile_asset(&assets_dir, "vmlinuz", b"good-kernel");
+    write_cached_profile_asset(&assets_dir, "initrd.img", b"good-initrd");
+    write_cached_profile_asset(&assets_dir, "rootfs.squashfs", b"good-rootfs");
+
+    let Json(val) = handle_list_profiles().await.unwrap();
+    let profiles = val["profiles"].as_array().expect("profiles array");
+    let good = profiles
+        .iter()
+        .find(|profile| profile["profile"]["id"] == serde_json::json!("good-assets"))
+        .expect("good profile should be listed");
+    let bad = profiles
+        .iter()
+        .find(|profile| profile["profile"]["id"] == serde_json::json!("bad-assets"))
+        .expect("bad profile should still be listed");
+    let unsigned = profiles
+        .iter()
+        .find(|profile| profile["profile"]["id"] == serde_json::json!("unsigned-assets"))
+        .expect("unsigned profile should still be listed");
+
+    assert_eq!(good["asset_status"]["state"], serde_json::json!("ready"));
+    assert_eq!(
+        good["asset_status"]["usable_for_vm"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        good["asset_status"]["profile_revision"],
+        serde_json::json!("2026.0524.1")
+    );
+    assert!(good["asset_status"]["assets"][0]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with(good_kernel_path.file_name().unwrap().to_str().unwrap()));
+    assert_eq!(bad["asset_status"]["state"], serde_json::json!("missing"));
+    assert_eq!(
+        bad["asset_status"]["usable_for_vm"],
+        serde_json::json!(false)
+    );
+    assert_eq!(bad["asset_status"]["missing"].as_array().unwrap().len(), 3);
+    assert!(
+        bad["asset_status"]["missing_assets"][0]["path"]
+            .as_str()
+            .unwrap()
+            .contains("bad-assets")
+            || bad["asset_status"]["missing_assets"][0]["path"]
+                .as_str()
+                .unwrap()
+                .contains("vmlinuz-")
+    );
+    assert_eq!(
+        unsigned["asset_status"]["state"],
+        serde_json::json!("error")
+    );
+    assert_eq!(
+        unsigned["asset_status"]["usable_for_vm"],
+        serde_json::json!(false)
+    );
+    assert!(unsigned["asset_status"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("no installed signed catalog revision"));
+}
+
+#[tokio::test]
 async fn handle_select_profile_updates_default_profile_without_preset_language() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
@@ -5154,6 +5274,116 @@ async fn handle_profile_catalog_reports_manifest_and_installed_revisions() {
         val["profiles"][0]["revisions"][1]["installed"],
         serde_json::json!(true)
     );
+}
+
+#[tokio::test]
+async fn handle_profile_catalog_reports_per_profile_asset_readiness() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
+    let home = dir.path().join("home");
+    let user_dir = user_profile_path.parent().unwrap();
+    let corp_dir = home.join("profiles").join("corp");
+    let source_dir = dir.path().join("catalog-sources");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(source_dir.join("vmlinuz"), b"catalog-kernel").unwrap();
+    std::fs::write(source_dir.join("initrd.img"), b"catalog-initrd").unwrap();
+    std::fs::write(source_dir.join("rootfs.squashfs"), b"catalog-rootfs").unwrap();
+    write_profile_fixture_with_assets(
+        &user_dir.join("catalog-good.toml"),
+        "catalog-good",
+        "Catalog Good",
+        &source_dir,
+        b"catalog-kernel",
+        b"catalog-initrd",
+        b"catalog-rootfs",
+    );
+    write_profile_fixture_with_assets(
+        &user_dir.join("catalog-bad.toml"),
+        "catalog-bad",
+        "Catalog Bad",
+        &source_dir,
+        b"catalog-bad-kernel",
+        b"catalog-bad-initrd",
+        b"catalog-bad-rootfs",
+    );
+    write_installed_profile_revision(
+        &corp_dir,
+        "catalog-good",
+        "2026.0520.1",
+        br#"{"id":"catalog-good"}"#,
+    );
+    write_installed_profile_revision(
+        &corp_dir,
+        "catalog-bad",
+        "2026.0520.1",
+        br#"{"id":"catalog-bad"}"#,
+    );
+    let assets_dir = home.join("assets");
+    write_cached_profile_asset(&assets_dir, "vmlinuz", b"catalog-kernel");
+    write_cached_profile_asset(&assets_dir, "initrd.img", b"catalog-initrd");
+    write_cached_profile_asset(&assets_dir, "rootfs.squashfs", b"catalog-rootfs");
+
+    std::fs::create_dir_all(corp_dir.join(".catalog")).unwrap();
+    std::fs::write(
+        corp_dir.join(".catalog/profile-manifest.json"),
+        r#"{
+          "format": 1,
+          "profiles": {
+            "catalog-good": {
+              "current_revision": "2026.0520.1",
+              "revisions": {
+                "2026.0520.1": {
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file:///profiles/catalog-good/2026.0520.1/profile.json",
+                  "profile_hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "profile_signature_url": "file:///profiles/catalog-good/2026.0520.1/profile.json.minisig"
+                }
+              }
+            },
+            "catalog-bad": {
+              "current_revision": "2026.0520.1",
+              "revisions": {
+                "2026.0520.1": {
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "file:///profiles/catalog-bad/2026.0520.1/profile.json",
+                  "profile_hash": "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "profile_signature_url": "file:///profiles/catalog-bad/2026.0520.1/profile.json.minisig"
+                }
+              }
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let Json(val) = handle_profile_catalog().await.unwrap();
+    let profiles = val["profiles"].as_array().expect("profiles array");
+    let good = profiles
+        .iter()
+        .find(|profile| profile["profile_id"] == serde_json::json!("catalog-good"))
+        .expect("catalog good profile should be listed");
+    let bad = profiles
+        .iter()
+        .find(|profile| profile["profile_id"] == serde_json::json!("catalog-bad"))
+        .expect("catalog bad profile should be listed");
+
+    assert_eq!(good["asset_status"]["state"], serde_json::json!("ready"));
+    assert_eq!(
+        good["asset_status"]["usable_for_vm"],
+        serde_json::json!(true)
+    );
+    assert_eq!(bad["asset_status"]["state"], serde_json::json!("missing"));
+    assert_eq!(
+        bad["asset_status"]["usable_for_vm"],
+        serde_json::json!(false)
+    );
+    assert!(bad["asset_status"]["missing_assets"][0]["path"]
+        .as_str()
+        .unwrap()
+        .contains("vmlinuz-"));
 }
 
 #[tokio::test]
@@ -5885,6 +6115,103 @@ profile_type = "coding"
         ),
     )
     .unwrap();
+}
+
+fn write_profile_fixture_with_assets(
+    path: &std::path::Path,
+    id: &str,
+    name: &str,
+    source_dir: &std::path::Path,
+    kernel: &[u8],
+    initrd: &[u8],
+    rootfs: &[u8],
+) {
+    let arch = host_asset_arch();
+    std::fs::write(
+        path,
+        format!(
+            r#"
+version = 1
+id = "{id}"
+name = "{name}"
+best_for = "{name} sessions."
+profile_type = "coding"
+
+[vm.assets.{arch}.kernel]
+url = "file://{}"
+hash = "blake3:{}"
+signature_url = "file://{}/vmlinuz.minisig"
+size = {}
+content_type = "application/octet-stream"
+
+[vm.assets.{arch}.initrd]
+url = "file://{}"
+hash = "blake3:{}"
+signature_url = "file://{}/initrd.img.minisig"
+size = {}
+content_type = "application/octet-stream"
+
+[vm.assets.{arch}.rootfs]
+url = "file://{}"
+hash = "blake3:{}"
+signature_url = "file://{}/rootfs.squashfs.minisig"
+size = {}
+content_type = "application/vnd.squashfs"
+"#,
+            source_dir.join("vmlinuz").display(),
+            blake3::hash(kernel).to_hex(),
+            source_dir.display(),
+            kernel.len(),
+            source_dir.join("initrd.img").display(),
+            blake3::hash(initrd).to_hex(),
+            source_dir.display(),
+            initrd.len(),
+            source_dir.join("rootfs.squashfs").display(),
+            blake3::hash(rootfs).to_hex(),
+            source_dir.display(),
+            rootfs.len(),
+        ),
+    )
+    .unwrap();
+}
+
+fn write_installed_profile_revision(
+    corp_dir: &std::path::Path,
+    profile_id: &str,
+    revision: &str,
+    payload: &[u8],
+) {
+    let record_dir = corp_dir.join(".catalog").join("profiles").join(profile_id);
+    let revision_dir = record_dir.join(revision);
+    std::fs::create_dir_all(&revision_dir).unwrap();
+    std::fs::write(revision_dir.join("profile.json"), payload).unwrap();
+    let payload_hash = format!("blake3:{}", blake3::hash(payload).to_hex());
+    std::fs::write(
+        record_dir.join("current.json"),
+        format!(
+            r#"{{
+          "profile_id": "{profile_id}",
+          "revision": "{revision}",
+          "payload_hash": "{payload_hash}"
+        }}"#,
+        ),
+    )
+    .unwrap();
+}
+
+fn write_cached_profile_asset(
+    assets_dir: &std::path::Path,
+    logical_name: &str,
+    bytes: &[u8],
+) -> PathBuf {
+    std::fs::create_dir_all(assets_dir).unwrap();
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    let path = assets_dir.join(capsem_core::asset_manager::hash_filename(
+        logical_name,
+        &hash,
+    ));
+    std::fs::write(&path, bytes).unwrap();
+    path
 }
 
 fn test_profile_rule(
@@ -8874,6 +9201,84 @@ async fn handle_save_settings_rejects_unknown_key() {
     let result = handle_save_settings(Json(changes)).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn handle_upsert_credential_writes_profile_v2_service_credential() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, service_path, user_profile_path) = install_settings_profiles_env(&dir);
+
+    let Json(value) = handle_upsert_credential(
+        Path("google-api-key".into()),
+        Json(CredentialUpsertRequest {
+            value: " gemini-test-key ".into(),
+            description: None,
+        }),
+    )
+    .await
+    .expect("credential write should succeed");
+
+    assert_eq!(value["credential_id"], serde_json::json!("google-api-key"));
+    assert_eq!(value["configured"], serde_json::json!(true));
+    let settings = capsem_core::settings_profiles::load_service_settings(&service_path).unwrap();
+    let credential = settings
+        .credentials
+        .items
+        .get("google-api-key")
+        .expect("credential should be stored under Profile V2 id");
+    assert_eq!(credential.value, "gemini-test-key");
+    assert_eq!(credential.description.as_deref(), Some("Google AI API key"));
+
+    std::fs::write(
+        &user_profile_path,
+        r#"
+version = 1
+id = "everyday-work"
+name = "Everyday Work"
+description = "Balanced defaults for daily work sessions."
+best_for = "Daily work with useful tools and measured security prompts."
+profile_type = "everyday-work"
+ui = "everyday"
+
+[ai.providers.google]
+enabled = true
+credential_refs = ["google-api-key"]
+"#,
+    )
+    .expect("test profile should write");
+
+    let (effective, _) =
+        capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(&settings, None)
+            .expect("effective settings should resolve after credential write");
+    assert_eq!(
+        effective
+            .credential_env
+            .get("GEMINI_API_KEY")
+            .map(String::as_str),
+        Some("gemini-test-key"),
+        "enabled google provider credential refs must project to the Gemini guest env var"
+    );
+    assert!(
+        !effective.credential_env.contains_key("GOOGLE_API_KEY"),
+        "Gemini CLI warns when GOOGLE_API_KEY is injected alongside GEMINI_API_KEY"
+    );
+}
+
+#[tokio::test]
+async fn handle_upsert_credential_rejects_unknown_id() {
+    let err = handle_upsert_credential(
+        Path("ai.google.api_key".into()),
+        Json(CredentialUpsertRequest {
+            value: "key".into(),
+            description: None,
+        }),
+    )
+    .await
+    .expect_err("legacy setting ids should not be accepted as credential ids");
+
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
 }
 

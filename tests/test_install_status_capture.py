@@ -33,6 +33,9 @@ def write_fake_capsem(
                 '  echo "status stderr marker" >&2',
                 f"  exit {status_code}",
                 "fi",
+                'if [ "$1" = "--uds-path" ]; then',
+                "  shift 2",
+                "fi",
                 'if [ "$1" = "debug" ]; then',
                 f"  printf '%s\\n' {json.dumps(debug_body)}",
                 '  echo "debug stderr marker" >&2',
@@ -56,6 +59,7 @@ def run_capture(
     env["HOME"] = str(tmp_path / "home")
     env["CAPSEM_HOME"] = str(tmp_path / "capsem-home")
     env["CAPSEM_RUN_DIR"] = str(tmp_path / "capsem-home" / "run")
+    env["CAPSEM_ASSETS_DIR"] = str(tmp_path / "capsem-home" / "assets")
     if extra_env:
         env.update(extra_env)
     system = platform.system()

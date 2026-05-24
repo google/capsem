@@ -72,6 +72,178 @@ is updated with the concrete branch and worktree path, verified by
   colima start` restored the Docker socket, and `just _pack-initrd` passed with
   Docker cross-compilation, initrd repack, hash-named asset refresh, and dev
   manifest signature verification.
+- **2026-05-24:** Release-prep asset/profile usability pass landed per-profile
+  VM asset discovery on `/profiles` and `/profiles/catalog`, including
+  missing local asset paths and `usable_for_vm`, plus UI guards that refuse to
+  select or launch bad profiles. Focused proof passed:
+  `cargo test -p capsem-service profile_asset -- --nocapture`,
+  `cargo test -p capsem-service handle_list_profiles -- --nocapture`,
+  `cargo test -p capsem-service handle_profile_catalog -- --nocapture`,
+  `cargo check -p capsem-service`, `pnpm exec vitest run
+  src/lib/__tests__/profile-catalog-section.test.ts
+  src/lib/__tests__/session-runtime-truth.test.ts`, and `pnpm run check`.
+  Visual smoke with Chrome DevTools against `http://127.0.0.1:5173/` confirmed
+  the launch-blocking asset modal renders and the Settings > Profiles route
+  renders without layout breakage; the live local service returned a 404 for
+  `/profiles/catalog`, which is an installed/running-service version mismatch
+  in the operator environment, not a frontend compile/layout failure.
+- **2026-05-24:** Active release line was bumped from `1.1` to `1.2` because
+  Profile V2, profile-owned assets, the engine boundaries, runtime rules, and
+  UI/CLI surfaces are major release-scope features. Current working metadata is
+  stamped as `1.2.1779630258`; `just _stamp-version` now defaults to
+  `1.2.<unix_timestamp>`. `LATEST_RELEASE.md` remains the latest published
+  release note until `just cut-release` stamps the final `1.2` changelog entry.
+- **2026-05-24:** Release install regression pass added guards for the
+  install/setup issues found during local QA: dashboard status now retries
+  gateway initialization before showing offline, stale gateway 401s refresh the
+  auth token once, the onboarding welcome/ready copy no longer exposes raw VM
+  asset readiness internals, and packaged profiles now install only a signed
+  catalog sidecar so `capsem run`/temporary `capsem shell` can pin profile,
+  package, and asset metadata without creating a duplicate corp profile. Focused
+  regression proof: `cargo test -p capsem-core
+  install_verified_profile_payload_sidecar --lib`, `cargo test -p capsem-core
+  packaged_base_profiles_emit_profile_schema_valid_payloads --lib`, `cargo test
+  -p capsem package_profile_revision_installs_sidecar_without_duplicate_profile
+  --bin capsem`, `cargo test -p capsem
+  local_profile_revision_installs_signed_catalog_shape_from_assets --bin
+  capsem`, `uv run python -m pytest
+  tests/test_package_scripts.py::test_simulate_install_preserves_admin_wrapper_payload
+  tests/test_package_scripts.py::test_simulate_install_codesigns_macos_macho_binaries_with_entitlements
+  -q`, plus the frontend API/onboarding/status tests named in the release QA
+  notes. Real installed-path replay passed after rebuilding and simulating the
+  local package payload: `capsem setup --non-interactive --accept-detected`,
+  `capsem start`, `capsem status`, `capsem run "echo test"`, and a piped
+  temporary `capsem shell` invocation all completed without the profile pinning
+  failure. Follow-up hardening after local QA: `just install` now reruns
+  non-interactive setup after restoring preserved settings and syncing assets,
+  before service restart, and both macOS/Linux package hooks fail loudly if
+  they cannot determine the target user for setup. A second install-gate replay
+  found initrd hash drift because local install restored package-owned
+  `profiles/base` and stale profile catalog sidecars after the package hook
+  materialized fresh profiles. `just install` now preserves only `service.toml`;
+  durable profile state remains preserved by `capsem uninstall`, while
+  postinstall/setup own package base profiles and catalog sidecars. A third
+  remote QA check showed `_pack-initrd` could mutate the live installed
+  `assets/` symlink before sudo completed; `just install` now runs the repack
+  inside the recipe and repairs existing local profile metadata before the
+  package step, so interrupted installs remain coherent. The local install
+  simulator now also skips same-file asset copies when repo `assets/` resolves
+  to `~/.capsem/assets`, matching the dev symlink layout. The macOS package
+  hook now waits for both the service UDS and gateway `/health` before opening
+  `/Applications/Capsem.app`, so Installer cannot launch the UI into a stale
+  offline screen. Regression proof:
+  `uv run python -m pytest
+  tests/test_release_workflow_policy.py::test_local_install_removes_old_runtime_before_installing_package
+  tests/test_release_workflow_policy.py::test_local_install_reruns_setup_after_restoring_settings
+  tests/test_package_scripts.py::test_simulate_install_tolerates_assets_source_that_is_install_destination
+  tests/test_package_scripts.py::test_macos_postinstall_waits_for_service_and_gateway_before_opening_ui
+  tests/test_package_scripts.py::test_postinstall_release_critical_commands_fail_loudly
+  tests/test_package_scripts.py::test_postinstall_requires_target_user_for_setup
+  -q` plus `bash -n scripts/pkg-scripts/postinstall scripts/deb-postinst.sh
+  scripts/simulate-install.sh`.
+- **2026-05-24:** Release hit-list Settings crash RHB-016 fixed in repo. The
+  installed service's Profile V2 `/settings` response intentionally omits the
+  legacy top-level `tree`, `issues`, and `presets` arrays; the frontend now
+  normalizes the typed `profile_presets`, `effective_rules`, and
+  `settings_profiles` envelope without crashing, and MCP policy extraction uses
+  the same optional-tree contract. Focused proof passed:
+  `pnpm exec vitest run src/lib/__tests__/api.test.ts
+  src/lib/models/__tests__/settings-model.test.ts
+  src/lib/__tests__/settings-page-reload-banner.test.ts
+  src/lib/__tests__/settings-debug-report.test.ts
+  src/lib/__tests__/settings-store.test.ts
+  src/lib/__tests__/profile-catalog-section.test.ts
+  src/lib/__tests__/session-runtime-truth.test.ts
+  src/lib/__tests__/onboarding-preferences-step.test.ts`, `pnpm run check`,
+  `git diff --check`, and `just build-ui`.
+- **2026-05-24:** Release hit-list Gemini injection bug RHB-017 fixed in repo.
+  Profile V2 effective settings now project enabled provider credential refs
+  into typed guest env (`google-api-key` -> `GEMINI_API_KEY`, with no duplicate
+  `GOOGLE_API_KEY`), and `capsem-process` merges that env into the boot
+  handshake. Gemini YOLO mode no longer relies only on an interactive
+  `/root/.bashrc` alias; boot config injects a `/root/.local/bin/gemini`
+  wrapper and puts `/root/.local/bin` first on `PATH` so non-interactive exec
+  gets the same default behavior. Focused proof passed: `cargo test -p
+  capsem-service handle_upsert_credential -- --nocapture`, `cargo test -p
+  capsem-process mcp_runtime -- --nocapture`, `cargo check -p capsem-core -p
+  capsem-process -p capsem-service`, and `uv run python -m py_compile
+  guest/artifacts/diagnostics/test_ai_cli.py`.
+- **2026-05-24:** Release hit-list VM header counter bug RHB-018 fixed in repo.
+  The Stats tab was correct because it queries `session.db` `model_calls`
+  directly, while the toolbar reads `/status` VM summaries from capsem-process's
+  live metrics snapshot. The logger now increments live VM model
+  request/token/cost counters on VM-scoped `WriteOp::ModelCall` rows and ignores
+  host-scoped model calls for VM accounting. The focused memory-counter suite
+  now has dedicated subsystem tests for HTTPS/HTTP, DNS, MCP, file, process,
+  model/token/cost, and security decision/detection buckets, plus a realistic
+  mixed write-sequence test that proves the counters are not double-counted.
+  Focused proof passed:
+  `cargo test -p capsem-logger
+  writer_metrics_snapshot_counts_live_vm_model_call_rows -- --nocapture`,
+  `cargo test -p capsem-logger metrics_snapshot -- --nocapture` (11 focused
+  memory-counter tests), full `cargo test -p capsem-logger` (114 unit tests +
+  128 roundtrip tests), `cargo check -p capsem-logger -p capsem-process -p
+  capsem-service`, `pnpm exec vitest run
+  src/lib/__tests__/session-runtime-truth.test.ts`, `pnpm run check`, `cargo
+  fmt --check`, `git diff --check`, and `just build-ui`.
+- **2026-05-24:** Release hit-list stale-offline and unlaunchable-profile
+  bugs RHB-005/RHB-019 fixed in repo. The gateway store now confirms
+  authenticated `/status` before marking an already-connected UI offline after
+  a transient health miss. Profile list/catalog launchability now uses the same
+  complete installed signed catalog revision contract as provision, so a
+  profile with TOML and present VM asset files but no verified installed
+  revision reports `usable_for_vm: false` instead of creating a card that fails
+  only after click. The dashboard regression keeps such a profile visible for
+  diagnosis, disables launch, and does not leak raw asset paths on the card.
+  Focused proof passed: `cargo test -p capsem-service handle_list_profiles --
+  --nocapture`, `cargo test -p capsem-service profile_catalog -- --nocapture`,
+  full `cargo test -p capsem-service` (115 lib tests + 217 service-bin tests
+  + doc tests), `cargo check -p capsem-service -p capsem-core`, `pnpm exec
+  vitest run src/lib/__tests__/session-runtime-truth.test.ts
+  src/lib/__tests__/gateway-store.test.ts
+  src/lib/__tests__/profile-catalog-section.test.ts`, `pnpm run check`, and
+  `just build-ui`.
+- **2026-05-24:** Google Antigravity CLI (`agy`) was added as a typed
+  Profile V2 guest tool instead of a one-off image tweak. The base
+  `everyday-work` and `coding` profiles now declare
+  `packages.curl_installs.agy = "https://antigravity.google/cli/install.sh"`
+  plus required `tools.agy`; `capsem-admin` profile schemas and fixtures accept
+  the typed curl-install map; rootfs/image-workspace generation materializes it
+  into a curl package set and strips the `agy=` key before invoking the
+  installer; guest diagnostics now assert `agy` is installed and runnable.
+  The profile payload fixture was re-signed after the JSON payload changed so
+  manifest reconciliation still proves minisign verification. Focused proof
+  passed: `uv run pytest tests/test_docker.py tests/test_image_workspace.py
+  tests/test_profiles.py tests/test_admin_cli.py tests/test_models.py
+  tests/test_config.py -q` (329 tests), `cargo test -p capsem-core
+  settings_profiles --lib -- --nocapture` (145 tests), `cargo test -p
+  capsem-core profile_manifest --lib -- --nocapture` (20 tests), `uv run
+  python -m py_compile guest/artifacts/diagnostics/test_ai_cli.py`, and
+  `minisign -V -q -p schemas/fixtures/profile-v2-test.pub -x
+  schemas/fixtures/profile-v2-valid.json.minisig -m
+  schemas/fixtures/profile-v2-valid.json`. Follow-up install hardening made
+  `just install` rebuild the host-arch profile-derived VM assets before
+  repacking and syncing them, and the installed VM smoke now runs
+  `agy --version`; static proof passed with `uv run pytest
+  tests/test_release_workflow_policy.py::test_local_install_removes_old_runtime_before_installing_package
+  tests/test_release_workflow_policy.py::test_local_install_verifies_fresh_install_and_guest_network
+  -q`. Installed-path QA then found `agy --version` crashing in the ARM64
+  guest with TCMalloc's 48-bit VA assumption. The installed `agy` was the
+  correct Linux/aarch64 binary at `/usr/local/bin/agy`; the failure was the
+  custom guest kernel's smaller allnoconfig ARM64 userspace VA layout, not the
+  macOS-vs-Linux installer selection. The ARM64 guest defconfig now pins
+  4K pages plus 48-bit VA (`CONFIG_ARM64_VA_BITS_48=y`,
+  `CONFIG_ARM64_VA_BITS=48`) and the kernel Dockerfile fails builds unless
+  olddefconfig produces `CONFIG_PGTABLE_LEVELS=4`, so the next profile-derived
+  kernel rebuild gives Linux ARM64 CLIs the VA shape they expect.
+- **2026-05-24:** AGY prompt-mode QA found a second guest contract bug:
+  `agy --prompt hello` starts a local language-server listener and failed with
+  `lookup localhost on 127.0.0.1:53: no such host`. `capsem-init` now writes a
+  deterministic `/etc/hosts` after the overlay root is mounted so `localhost`
+  stays local even while `/etc/resolv.conf` points at the Capsem DNS proxy.
+  Regression coverage added: guest diagnostics check `getent hosts localhost`
+  and `/etc/hosts`, and `just install` gates installed VM smoke on
+  `getent hosts localhost` before public DNS, HTTPS, and AGY version checks.
 
 ## Operating Mode
 
@@ -2842,6 +3014,32 @@ a valid claim -- mark it `[ ]` instead.
     readiness gate. Remaining before release is unchanged: run the broader
     `just smoke`/release packaging gate or explicitly accept the narrower S18
     replay matrix as the cut gate.
+    Follow-up S18 dashboard/status replay fixed a gateway-start race where the
+    frontend could keep reporting the dashboard service offline even after the
+    tray, CLI, gateway, and `/status` were healthy. `api.getStatus()` now
+    retries gateway initialization before returning the synthetic offline
+    status, and `capsem status` text output now keeps asset health concise with
+    profile provenance as the trailing block. The local simulate-install repair
+    path now also restores the packaged `capsem-admin` wrapper plus Python
+    payload so a failed sudo installer step does not leave the developer layout
+    missing admin tooling. Verification: `pnpm --dir frontend exec vitest run
+    src/lib/__tests__/api.test.ts
+    src/lib/__tests__/ready-step.test.ts` (**67** passed), `pnpm --dir frontend
+    run check`, `cargo test -p capsem text_asset_status` (**2** passed),
+    `cargo test -p capsem status_report` (**6** passed), `cargo test -p
+    capsem-service handle_upsert_credential` (**2** passed), `uv run pytest
+    tests/test_package_scripts.py::test_simulate_install_preserves_admin_wrapper_payload
+    -q` (**1** passed), and `git diff --check` passed. `just install` built
+    release binaries, rebuilt the
+    frontend and Tauri app, prepared `capsem-admin`, and assembled
+    `packages/Capsem-1.2.1779634969.pkg`; the final macOS `sudo installer`
+    step could not complete inside Codex because sudo required an interactive
+    password. The local dev install was restored through
+    `scripts/simulate-install.sh`, `capsem install`, `capsem setup
+    --non-interactive --accept-detected`, and `capsem start`; final
+    `capsem status` and authenticated gateway `/status` both reported
+    service/gateway `1.2.1779634969`, assets ready for `everyday-work`, and no
+    offline dashboard text in the dev frontend against the live gateway.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
@@ -3533,6 +3731,11 @@ proof slice.
 
 ### Deferred items (visible debt)
 
+- **Active release blocker hit list** -- First installed-app testing on
+  2026-05-24 promoted release usability bugs into
+  [release-hit-list.md](release-hit-list.md). That file is now the active
+  closeout board for UI/install/profile blockers; this tracker must not claim
+  release readiness while any P0 item remains open.
 - **capsem-doctor E2E ask probe** -- owned by S15/S18. Fire one ask rule per
   subsystem from inside a running VM and read the matched
   rule label back out of `session.db`. Unblock requires the

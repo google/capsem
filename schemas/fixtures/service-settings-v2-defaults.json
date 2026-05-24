@@ -9,7 +9,7 @@
   },
   "profiles": {
     "base_dirs": [
-      "/Library/Application Support/Capsem/profiles/base"
+      "/tmp/capsem-service-settings-defaults/profiles/base"
     ],
     "corp_dirs": [],
     "user_dirs": [

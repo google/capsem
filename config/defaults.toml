@@ -800,7 +800,7 @@ max = 8
 name = "Max concurrent VMs"
 description = "Maximum number of sandbox VMs that can be running simultaneously."
 type = "number"
-default = 10
+default = 8
 
 [settings.vm.resources.max_concurrent_vms.meta]
 min = 1
@@ -810,7 +810,7 @@ max = 20
 name = "RAM"
 description = "Amount of RAM allocated to the VM in GB."
 type = "number"
-default = 4
+default = 8
 
 [settings.vm.resources.ram_gb.meta]
 min = 1

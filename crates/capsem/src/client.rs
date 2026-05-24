@@ -507,30 +507,43 @@ impl UdsClient {
         // CAPSEM_HOME.
         if !isolation_mode_active() && service_install::is_service_installed() {
             info!("Service unit installed, using service manager");
-            match paths::try_start_via_service_manager().await {
-                Ok(true) => {
-                    info!("Service start requested via service manager");
-                    return self
-                        .connect_with_timeout(ConnectMode::AwaitStartup)
-                        .await
-                        .context(
-                            "Service manager started capsem but socket not ready. \
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                paths::try_start_via_service_manager(),
+            )
+            .await
+            {
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "Service manager start timed out. \
+                         Check logs or reinstall with `capsem install`"
+                    ));
+                }
+                Ok(result) => match result {
+                    Ok(true) => {
+                        info!("Service start requested via service manager");
+                        return self
+                            .connect_with_timeout(ConnectMode::AwaitStartup)
+                            .await
+                            .context(
+                                "Service manager started capsem but socket not ready. \
                              Check logs: journalctl --user -u capsem (Linux) or \
                              ~/Library/Logs/capsem/service.log (macOS)",
-                        );
-                }
-                Ok(false) => {
-                    return Err(anyhow::anyhow!(
-                        "Service unit found but service manager reports not installed"
-                    ));
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Service manager start failed: {}. \
+                            );
+                    }
+                    Ok(false) => {
+                        return Err(anyhow::anyhow!(
+                            "Service unit found but service manager reports not installed"
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Service manager start failed: {}. \
                          Check logs or reinstall with `capsem install`",
-                        e
-                    ));
-                }
+                            e
+                        ));
+                    }
+                },
             }
         }
 

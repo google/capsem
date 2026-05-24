@@ -34,7 +34,8 @@ use std::time::{Instant, SystemTime};
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 use capsem_security_engine::{
-    SecurityAction, SecurityDecisionAction, SecurityEngineError, SecurityEvent, SecurityResult,
+    EventMutation, SecurityAction, SecurityDecisionAction, SecurityEngineError, SecurityEvent,
+    SecurityResult,
 };
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -164,8 +165,9 @@ struct RuntimeHttpResponseInput {
 }
 
 enum RuntimeHttpDecision {
-    Allow(Option<SecurityResult>),
-    Reject(TelemetryRequestContext, String),
+    Allow(Option<Box<SecurityResult>>),
+    Rewrite(Box<SecurityResult>),
+    Reject(Box<TelemetryRequestContext>, String),
 }
 
 fn evaluate_runtime_http_request(
@@ -223,8 +225,11 @@ fn evaluate_runtime_http_request_inner(
     );
     let result = engine.evaluate(event)?;
 
+    if matches!(result.action, SecurityAction::Rewrite(_)) {
+        return Ok(RuntimeHttpDecision::Rewrite(Box::new(result)));
+    }
     if runtime_action_allows_transport(&result.action) {
-        return Ok(RuntimeHttpDecision::Allow(Some(result)));
+        return Ok(RuntimeHttpDecision::Allow(Some(Box::new(result))));
     }
 
     let decision = result.resolved_event.event.decision.as_ref();
@@ -238,13 +243,17 @@ fn evaluate_runtime_http_request_inner(
     denied_ctx.decision = Decision::Denied;
     denied_ctx.matched_rule = policy_rule.clone().or_else(|| Some(policy_reason.clone()));
     denied_ctx.policy_action = Some(policy_action);
-    denied_ctx.policy_rule = policy_rule;
+    denied_ctx.policy_rule = policy_rule.clone();
     denied_ctx.policy_reason = Some(policy_reason.clone());
     denied_ctx.runtime_security_results.push(result);
 
+    let response_reason = policy_rule
+        .as_deref()
+        .map(|rule| format!("{rule}: {policy_reason}"))
+        .unwrap_or_else(|| policy_reason.clone());
     Ok(RuntimeHttpDecision::Reject(
-        denied_ctx,
-        format!("Capsem: request blocked by security engine ({policy_reason})\n"),
+        Box::new(denied_ctx),
+        format!("Capsem: request blocked by security engine ({response_reason})\n"),
     ))
 }
 
@@ -278,8 +287,11 @@ fn evaluate_runtime_http_response_inner(
     );
     let result = engine.evaluate(event)?;
 
+    if matches!(result.action, SecurityAction::Rewrite(_)) {
+        return Ok(RuntimeHttpDecision::Rewrite(Box::new(result)));
+    }
     if runtime_action_allows_transport(&result.action) {
-        return Ok(RuntimeHttpDecision::Allow(Some(result)));
+        return Ok(RuntimeHttpDecision::Allow(Some(Box::new(result))));
     }
 
     let decision = result.resolved_event.event.decision.as_ref();
@@ -293,13 +305,17 @@ fn evaluate_runtime_http_response_inner(
     denied_ctx.decision = Decision::Denied;
     denied_ctx.matched_rule = policy_rule.clone().or_else(|| Some(policy_reason.clone()));
     denied_ctx.policy_action = Some(policy_action);
-    denied_ctx.policy_rule = policy_rule;
+    denied_ctx.policy_rule = policy_rule.clone();
     denied_ctx.policy_reason = Some(policy_reason.clone());
     denied_ctx.runtime_security_results.push(result);
 
+    let response_reason = policy_rule
+        .as_deref()
+        .map(|rule| format!("{rule}: {policy_reason}"))
+        .unwrap_or_else(|| policy_reason.clone());
     Ok(RuntimeHttpDecision::Reject(
-        denied_ctx,
-        format!("Capsem: response blocked by security engine ({policy_reason})\n"),
+        Box::new(denied_ctx),
+        format!("Capsem: response blocked by security engine ({response_reason})\n"),
     ))
 }
 
@@ -355,6 +371,117 @@ fn security_action_label(action: &SecurityAction) -> &'static str {
         SecurityAction::DropConnection(_) => "drop_connection",
         SecurityAction::ObserveOnly => "observe_only",
         SecurityAction::Error(_) => "error",
+    }
+}
+
+fn apply_runtime_http_request_rewrite(
+    result: &SecurityResult,
+    headers: &mut hyper::HeaderMap,
+    path: &mut String,
+    req_hdrs: &mut String,
+    body: &mut Option<Bytes>,
+    stats: &Arc<Mutex<BodyStats>>,
+) {
+    for mutation in &result.resolved_event.event.mutations {
+        match mutation {
+            EventMutation::StripHeader { path, .. } => {
+                if let Some(header) = path
+                    .strip_prefix("subject.headers.")
+                    .or_else(|| path.strip_prefix("http.request.headers."))
+                    .and_then(|name| hyper::header::HeaderName::from_bytes(name.as_bytes()).ok())
+                {
+                    headers.remove(header);
+                }
+            }
+            EventMutation::ReplaceRegex {
+                path: target_path,
+                pattern,
+                replacement,
+                ..
+            } if target_path == "request.path" || target_path == "http.request.path" => {
+                if let Ok(regex) = regex::Regex::new(pattern) {
+                    *path = regex.replace_all(path, replacement.as_str()).to_string();
+                }
+            }
+            EventMutation::ReplaceRegex {
+                path: target_path,
+                pattern,
+                replacement,
+                ..
+            } if target_path == "request.body" || target_path == "http.request.body.text" => {
+                if let (Some(bytes), Ok(regex)) = (body.as_mut(), regex::Regex::new(pattern)) {
+                    let text = String::from_utf8_lossy(bytes);
+                    let rewritten = regex.replace_all(&text, replacement.as_str()).into_owned();
+                    *bytes = Bytes::from(rewritten.clone());
+                    let mut stats = stats.lock().expect("req body stats lock");
+                    stats.bytes = rewritten.len() as u64;
+                    stats.preview.clear();
+                    let preview_len = stats.max_preview.min(rewritten.len());
+                    stats
+                        .preview
+                        .extend_from_slice(&rewritten.as_bytes()[..preview_len]);
+                }
+            }
+            EventMutation::ReplaceRegex {
+                path: target_path,
+                pattern,
+                replacement,
+                ..
+            } if target_path == "content" => {
+                if let (Some(bytes), Ok(regex)) = (body.as_mut(), regex::Regex::new(pattern)) {
+                    let text = String::from_utf8_lossy(bytes);
+                    let rewritten = regex.replace_all(&text, replacement.as_str()).into_owned();
+                    *bytes = Bytes::from(rewritten.clone());
+                    let mut stats = stats.lock().expect("req body stats lock");
+                    stats.bytes = rewritten.len() as u64;
+                    stats.preview.clear();
+                    let preview_len = stats.max_preview.min(rewritten.len());
+                    stats
+                        .preview
+                        .extend_from_slice(&rewritten.as_bytes()[..preview_len]);
+                }
+            }
+            _ => {}
+        }
+    }
+    *req_hdrs = format_headers(headers);
+}
+
+fn apply_runtime_http_response_rewrite(result: &SecurityResult, headers: &mut hyper::HeaderMap) {
+    for mutation in &result.resolved_event.event.mutations {
+        if let EventMutation::StripHeader { path, .. } = mutation {
+            if let Some(header) = path
+                .strip_prefix("subject.headers.")
+                .or_else(|| path.strip_prefix("http.response.headers."))
+                .and_then(|name| hyper::header::HeaderName::from_bytes(name.as_bytes()).ok())
+            {
+                headers.remove(header);
+            }
+        }
+    }
+}
+
+fn apply_runtime_http_response_body_rewrite(result: &SecurityResult, body: &mut Bytes) {
+    for mutation in &result.resolved_event.event.mutations {
+        let EventMutation::ReplaceRegex {
+            path,
+            pattern,
+            replacement,
+            ..
+        } = mutation
+        else {
+            continue;
+        };
+        if path != "response.text"
+            && path != "http.response.body.text"
+            && !path.starts_with("tool.arguments.")
+        {
+            continue;
+        }
+        if let Ok(regex) = regex::Regex::new(pattern) {
+            let text = String::from_utf8_lossy(body);
+            *body = Bytes::from(regex.replace_all(&text, replacement.as_str()).into_owned());
+        }
     }
 }
 
@@ -813,6 +940,17 @@ async fn synthetic_body_with_telemetry(
     body_text: String,
     req_ctx: TelemetryRequestContext,
 ) -> ProxyBoxBody {
+    if req_ctx
+        .policy_rule
+        .as_deref()
+        .is_some_and(|rule| rule.starts_with("policy.model."))
+    {
+        let mut stats = req_ctx
+            .request_body_stats
+            .lock()
+            .expect("req body stats lock");
+        stats.preview.clear();
+    }
     telemetry_hook::emit_synthetic_http_response(
         config.telemetry.as_ref(),
         req_ctx,
@@ -891,8 +1029,8 @@ async fn handle_request(
         .unwrap_or(false);
 
     let method = parts.method.to_string();
-    let (path, query) = split_path_query(&parts.uri);
-    let req_hdrs = format_headers(&parts.headers);
+    let (mut path, query) = split_path_query(&parts.uri);
+    let mut req_hdrs = format_headers(&parts.headers);
 
     // T1 slice 4: per-request counter, partitioned by decision.
     // upstream_error increments are handled at the dial site below.
@@ -942,7 +1080,7 @@ async fn handle_request(
     }
 
     // Save original request headers.
-    let original_headers = parts.headers.clone();
+    let mut original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
 
     // Helper: build a 502 Bad Gateway response with telemetry so upstream
@@ -1014,7 +1152,7 @@ async fn handle_request(
         preview: Vec::new(),
         max_preview: req_max_preview,
     }));
-    let buffered_request_body = if config.security_engine.has_engine() {
+    let mut buffered_request_body = if config.security_engine.has_engine() {
         Some(
             collect_request_body_for_security(
                 req_body
@@ -1030,6 +1168,10 @@ async fn handle_request(
     };
 
     let mut runtime_security_results: Vec<SecurityResult> = Vec::new();
+    let mut runtime_policy_mode: Option<String> = None;
+    let mut runtime_policy_action: Option<String> = None;
+    let mut runtime_policy_rule: Option<String> = None;
+    let mut runtime_policy_reason: Option<String> = None;
     if let Some(runtime_decision) = evaluate_runtime_http_request(
         config,
         RuntimeHttpRequestInput {
@@ -1050,13 +1192,45 @@ async fn handle_request(
         match runtime_decision {
             Ok(RuntimeHttpDecision::Allow(result)) => {
                 if let Some(result) = result {
-                    runtime_security_results.push(result);
+                    if let Some(decision) = result.resolved_event.event.decision.as_ref() {
+                        runtime_policy_mode = Some("runtime".into());
+                        runtime_policy_action =
+                            Some(security_decision_action_label(decision.action).into());
+                        runtime_policy_rule = decision.rule.clone();
+                        runtime_policy_reason = decision.reason.clone();
+                    }
+                    runtime_security_results.push(*result);
                 }
+            }
+            Ok(RuntimeHttpDecision::Rewrite(result)) => {
+                apply_runtime_http_request_rewrite(
+                    result.as_ref(),
+                    &mut original_headers,
+                    &mut path,
+                    &mut req_hdrs,
+                    &mut buffered_request_body,
+                    &req_stats,
+                );
+                runtime_policy_mode = Some("runtime".into());
+                runtime_policy_action = Some("rewrite".into());
+                runtime_policy_rule = result
+                    .resolved_event
+                    .event
+                    .decision
+                    .as_ref()
+                    .and_then(|decision| decision.rule.clone());
+                runtime_policy_reason = result
+                    .resolved_event
+                    .event
+                    .decision
+                    .as_ref()
+                    .and_then(|decision| decision.reason.clone());
+                runtime_security_results.push(*result);
             }
             Ok(RuntimeHttpDecision::Reject(req_ctx, body_text)) => {
                 return Ok(hyper::Response::builder()
                     .status(SECURITY_BLOCK_STATUS)
-                    .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
+                    .body(synthetic_body_with_telemetry(config, body_text, *req_ctx).await)
                     .unwrap());
             }
             Err(error) => {
@@ -1321,7 +1495,7 @@ async fn handle_request(
 
     // Capture response headers BEFORE stripping Content-Encoding.
     // Telemetry logs still record the original headers (useful for debugging).
-    let resp_hdrs = format_headers(&resp_parts.headers);
+    let mut resp_hdrs = format_headers(&resp_parts.headers);
 
     // Strip Content-Encoding / Content-Length when the body is gzip --
     // the DecompressionHook (sync ChunkHook) handles the actual byte
@@ -1367,16 +1541,16 @@ async fn handle_request(
         port: upstream_port,
         conn_type,
         identity: telemetry_identity,
-        policy_mode: None,
-        policy_action: None,
-        policy_rule: None,
-        policy_reason: None,
+        policy_mode: runtime_policy_mode,
+        policy_action: runtime_policy_action,
+        policy_rule: runtime_policy_rule,
+        policy_reason: runtime_policy_reason,
         runtime_security_results,
     };
 
     let response_body_security_enabled = config.security_engine.has_engine();
     let resp_body: ProxyBoxBody = if response_body_security_enabled {
-        let response_body =
+        let mut response_body =
             match collect_response_body_for_security(resp_body, is_gzip, 100 * 1024 * 1024).await {
                 Ok(body) => body,
                 Err(error) => {
@@ -1408,13 +1582,35 @@ async fn handle_request(
             match runtime_decision {
                 Ok(RuntimeHttpDecision::Allow(result)) => {
                     if let Some(result) = result {
-                        req_ctx.runtime_security_results.push(result);
+                        req_ctx.runtime_security_results.push(*result);
                     }
+                }
+                Ok(RuntimeHttpDecision::Rewrite(result)) => {
+                    apply_runtime_http_response_rewrite(result.as_ref(), &mut resp_parts.headers);
+                    apply_runtime_http_response_body_rewrite(result.as_ref(), &mut response_body);
+                    resp_parts.headers.remove("content-length");
+                    resp_hdrs = format_headers(&resp_parts.headers);
+                    req_ctx.response_headers = Some(resp_hdrs.clone());
+                    req_ctx.policy_mode = Some("runtime".into());
+                    req_ctx.policy_action = Some("rewrite".into());
+                    req_ctx.policy_rule = result
+                        .resolved_event
+                        .event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.rule.clone());
+                    req_ctx.policy_reason = result
+                        .resolved_event
+                        .event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.reason.clone());
+                    req_ctx.runtime_security_results.push(*result);
                 }
                 Ok(RuntimeHttpDecision::Reject(denied_ctx, body_text)) => {
                     return Ok(hyper::Response::builder()
                         .status(SECURITY_BLOCK_STATUS)
-                        .body(synthetic_body_with_telemetry(config, body_text, denied_ctx).await)
+                        .body(synthetic_body_with_telemetry(config, body_text, *denied_ctx).await)
                         .unwrap());
                 }
                 Err(error) => {

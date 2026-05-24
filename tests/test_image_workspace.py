@@ -40,6 +40,9 @@ def _profile_with_packages():
                     "node_packages": {
                         "@corp/agent-kit": "7.8.9",
                     },
+                    "curl_installs": {
+                        "agy": "https://antigravity.google/cli/install.sh",
+                    },
                     "system": draft.packages.system.model_copy(
                         update={
                             "apt": {
@@ -74,6 +77,7 @@ def test_materialize_profile_image_workspace_emits_valid_guest_config(tmp_path: 
         "config/packages/apt.toml",
         "config/packages/python.toml",
         "config/packages/node.toml",
+        "config/packages/curl.toml",
         "config/vm/resources.toml",
     }
     assert list(config.build.architectures) == ["arm64"]
@@ -86,6 +90,10 @@ def test_materialize_profile_image_workspace_emits_valid_guest_config(tmp_path: 
         "requests==2.32.3",
     ]
     assert config.package_sets["node"].packages == ["@corp/agent-kit@7.8.9"]
+    assert config.package_sets["curl"].packages == [
+        "agy=https://antigravity.google/cli/install.sh"
+    ]
+    assert config.package_sets["curl"].version_commands["agy"].startswith("agy --version")
     assert config.vm_resources.cpu_count == profile.vm.cpus
 
 
@@ -119,8 +127,10 @@ def test_profile_from_guest_config_workspace_preserves_unpinned_release_packages
     assert "coreutils=*" not in config.package_sets["apt"].packages
     assert "pytest" in config.package_sets["python"].packages
     assert "pytest==*" not in config.package_sets["python"].packages
+    assert "@anthropic-ai/claude-code" in config.package_sets["node"].packages
     assert "@openai/codex" in config.package_sets["node"].packages
     assert "@openai/codex@*" not in config.package_sets["node"].packages
+    assert "agy=https://antigravity.google/cli/install.sh" in config.package_sets["curl"].packages
 
 
 def test_materialize_profile_image_workspace_rejects_non_empty_output_without_force(

@@ -261,6 +261,18 @@ chroot /newroot ip route add default dev dummy0
 echo "nameserver 127.0.0.1" > /newroot/run/resolv.conf
 mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
 
+# Docker/runtime-generated image exports do not reliably preserve a useful
+# /etc/hosts. Keep loopback resolution local so CLIs that bind helper servers
+# (for example AGY language-server listeners) never ask the Capsem DNS proxy
+# to resolve localhost.
+cat > /newroot/etc/hosts <<'EOF'
+127.0.0.1 localhost
+127.0.1.1 capsem
+::1 localhost ip6-localhost ip6-loopback
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+EOF
+
 # iptables REDIRECT: use iptables-legacy since kernel has NF_TABLES=n.
 # Port 53 (DNS, UDP+TCP) goes to capsem-dns-proxy on :1053 -- T3.4.
 # Port 443 (HTTPS) goes to the agent's TLS-target listener (10443).

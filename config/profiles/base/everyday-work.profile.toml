@@ -32,7 +32,7 @@ security_rules = true
 [ai.providers.anthropic]
 enabled = true
 credential_refs = [
-    "ANTHROPIC_API_KEY",
+    "anthropic-api-key",
 ]
 
 [ai.providers.anthropic.rules.mcp]
@@ -48,7 +48,7 @@ credential_refs = [
 [ai.providers.google]
 enabled = true
 credential_refs = [
-    "GEMINI_API_KEY",
+    "google-api-key",
 ]
 
 [ai.providers.google.rules.mcp]
@@ -64,7 +64,7 @@ credential_refs = [
 [ai.providers.openai]
 enabled = true
 credential_refs = [
-    "OPENAI_API_KEY",
+    "openai-api-key",
 ]
 
 [ai.providers.openai.rules.mcp]
@@ -108,7 +108,7 @@ enabled = []
 disabled = []
 
 [vm]
-memory_mib = 4096
+memory_mib = 8192
 cpus = 4
 disk_mib = 16384
 network = "proxied"
@@ -180,8 +180,15 @@ rich = "*"
 fastmcp = "*"
 
 [packages.node_packages]
+"@anthropic-ai/claude-code" = "*"
 "@google/gemini-cli" = "*"
 "@openai/codex" = "*"
+
+[packages.curl_installs]
+# The Capsem guest is Linux/aarch64 even on Apple Silicon hosts. Do not swap
+# this for the macOS AGY build; AGY runtime compatibility belongs to the guest
+# Linux kernel/userspace contract.
+agy = "https://antigravity.google/cli/install.sh"
 
 [packages.system]
 distro = "debian"
@@ -236,6 +243,11 @@ required = true
 source = "guest"
 
 [tools.codex]
+version = "*"
+required = true
+source = "guest"
+
+[tools.agy]
 version = "*"
 required = true
 source = "guest"

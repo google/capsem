@@ -12,6 +12,10 @@ status/debug contracts from the bedrock release.
 ## Tasks
 
 - Define service-settings credential storage and profile release policy.
+- Design Google account brokerage as a first-class credential family before
+  wiring Drive/Gemini/Antigravity/Google provider integrations, so users do not
+  have to connect the same Google account separately for every Google-backed
+  surface.
 - Add service broker APIs.
 - Add audit events for credential release decisions.
 - Test allowed, denied, missing, stale, locked, and audited releases.

@@ -114,6 +114,7 @@ pub fn build_mcp_resolved_security_event(
                     | SecurityDecisionAction::Rewrite
                     | SecurityDecisionAction::Throttle
             ),
+            mutations: Vec::new(),
         });
         steps.push(ResolvedEventStep {
             kind: ResolvedEventStepKind::EnforcementMatch,

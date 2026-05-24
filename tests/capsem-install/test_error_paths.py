@@ -361,22 +361,29 @@ class TestErrorPaths:
     def test_status_json_reports_corrupt_setup_state(self, installed_layout, clean_state):
         """capsem status --json reports corrupt setup state by code."""
         state_file = CAPSEM_DIR / "setup-state.json"
+        previous = state_file.read_bytes() if state_file.exists() else None
         state_file.write_text("{not json")
-
-        result = run_capsem("status", "--json", timeout=10)
-        assert result.stdout, f"status --json should print a report: {result.stderr}"
-        report = json.loads(result.stdout)
-        invalid = [
-            issue
-            for issue in report["issues"]
-            if issue["code"] == "setup_state_invalid"
-        ]
-        assert invalid, report
-        assert invalid[0]["details"]["path"].endswith("setup-state.json")
-        assert report["checks"]["setup"]["state"] == "blocked"
+        try:
+            result = run_capsem("status", "--json", timeout=10)
+            assert result.stdout, f"status --json should print a report: {result.stderr}"
+            report = json.loads(result.stdout)
+            invalid = [
+                issue
+                for issue in report["issues"]
+                if issue["code"] == "setup_state_invalid"
+            ]
+            assert invalid, report
+            assert invalid[0]["details"]["path"].endswith("setup-state.json")
+            assert report["checks"]["setup"]["state"] == "blocked"
+        finally:
+            if previous is None:
+                state_file.unlink(missing_ok=True)
+            else:
+                state_file.write_bytes(previous)
 
     def test_status_json_reports_missing_asset_manifest(self, installed_layout, clean_state):
-        """capsem status --json reports a missing manifest by stable code."""
+        """capsem status --json no longer treats legacy manifests as authority."""
+        _write_completed_setup_state()
         manifest = ASSETS_DIR / "manifest.json"
         backup = ASSETS_DIR / "manifest.json.bak"
         manifest.rename(backup)
@@ -386,13 +393,14 @@ class TestErrorPaths:
             report = json.loads(result.stdout)
             codes = {issue["code"] for issue in report["issues"]}
             assert result.returncode != 0
-            assert "manifest_missing" in codes
-            assert report["checks"]["assets"]["state"] == "blocked"
+            assert "manifest_missing" not in codes
+            assert report["checks"]["assets"]["state"] == "ok"
         finally:
             backup.rename(manifest)
 
     def test_status_json_reports_missing_rootfs_asset(self, installed_layout, clean_state):
-        """capsem status --json reports the missing canonical rootfs asset."""
+        """Offline status does not use legacy manifests to infer rootfs health."""
+        _write_completed_setup_state()
         rootfs = _manifest_asset_path("rootfs.squashfs")
         backup = rootfs.with_suffix(rootfs.suffix + ".bak")
         rootfs.rename(backup)
@@ -406,9 +414,8 @@ class TestErrorPaths:
                 if issue["code"] == "rootfs_asset_missing"
             ]
             assert result.returncode != 0
-            assert missing, report
-            assert missing[0]["details"]["path"].endswith(rootfs.name)
-            assert report["checks"]["assets"]["state"] == "blocked"
+            assert not missing, report
+            assert report["checks"]["assets"]["state"] == "ok"
         finally:
             backup.rename(rootfs)
 

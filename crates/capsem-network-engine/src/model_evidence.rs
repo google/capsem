@@ -265,21 +265,20 @@ fn interaction_parse_status(
     request: &RequestMeta,
     response: Option<&StreamSummary>,
 ) -> ParseStatus {
-    if response
+    let has_partial_tool_arguments = response
         .map(|summary| {
             summary
                 .tool_calls
                 .iter()
                 .any(|call| arguments_status(&call.arguments) == ArgumentsStatus::PartialJson)
         })
-        .unwrap_or(false)
-    {
-        ParseStatus::Partial
-    } else if request.model.is_none()
+        .unwrap_or(false);
+    let missing_model = request.model.is_none()
         && response
             .and_then(|summary| summary.model.as_ref())
-            .is_none()
-    {
+            .is_none();
+
+    if has_partial_tool_arguments || missing_model {
         ParseStatus::Partial
     } else {
         ParseStatus::Complete

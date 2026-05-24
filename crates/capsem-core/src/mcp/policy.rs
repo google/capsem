@@ -27,6 +27,9 @@ pub struct McpUserConfig {
     /// Per-tool permission overrides (namespaced_name -> decision).
     #[serde(default)]
     pub tool_permissions: HashMap<String, ToolDecision>,
+    /// Conditional request/response rules projected from Profile V2.
+    #[serde(skip)]
+    pub audit_rules: Vec<McpDecisionRule>,
 }
 
 impl McpUserConfig {
@@ -70,12 +73,15 @@ impl McpUserConfig {
             tool_decisions.insert(k.clone(), *v);
         }
 
+        let mut audit_rules = self.audit_rules.clone();
+        audit_rules.extend(corp.audit_rules.clone());
+
         McpPolicy {
             blocked_servers,
             allowed_servers: Vec::new(),
             tool_decisions,
             default_tool_decision: default_perm,
-            audit_rules: Vec::new(),
+            audit_rules,
         }
     }
 }
@@ -134,6 +140,7 @@ pub enum ToolDecision {
 pub enum McpDecisionRuleAction {
     Allow,
     Deny,
+    Rewrite,
 }
 
 /// A request/response matcher for audit-only MCP decisions.
@@ -159,6 +166,10 @@ pub enum McpDecisionRuleMatch {
         path: String,
         equals: serde_json::Value,
     },
+    Condition {
+        callback: String,
+        condition: String,
+    },
 }
 
 /// A local MCP audit rule. T2 keeps these in the runtime policy so the
@@ -170,6 +181,8 @@ pub struct McpDecisionRule {
     pub action: McpDecisionRuleAction,
     pub matches: McpDecisionRuleMatch,
     pub reason: Option<String>,
+    pub rewrite_target: Option<String>,
+    pub rewrite_value: Option<String>,
 }
 
 impl ToolDecision {
@@ -398,6 +411,7 @@ mod tests {
                 m.insert("github__delete_repo".into(), ToolDecision::Block);
                 m
             },
+            audit_rules: Vec::new(),
         };
         let toml_str = toml::to_string(&cfg).unwrap();
         let decoded: McpUserConfig = toml::from_str(&toml_str).unwrap();

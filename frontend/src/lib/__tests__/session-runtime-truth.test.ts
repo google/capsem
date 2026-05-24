@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import NewTabPage from '../components/shell/NewTabPage.svelte';
 import CreateSandboxDialog from '../components/shell/CreateSandboxDialog.svelte';
+import Toolbar from '../components/shell/Toolbar.svelte';
 import { gatewayStore } from '../stores/gateway.svelte';
 import { tabStore } from '../stores/tabs.svelte';
 import { vmStore } from '../stores/vms.svelte';
@@ -42,6 +43,36 @@ vi.mock('../api', () => ({
   })),
   retrySetup: vi.fn(async () => undefined),
   openUrl: vi.fn(async () => undefined),
+  listProfiles: vi.fn(async () => ({
+    mode: 'settings_profiles_v2',
+    default_profile: 'coding',
+    profiles: [
+      {
+        source: 'base',
+        locked: true,
+        profile: {
+          id: 'coding',
+          name: 'Coding',
+          description: 'Focused defaults for software development sessions.',
+          best_for: 'Coding agents, repository work, tests, and developer tooling.',
+          ui: 'coding',
+          revision: '2026.0520.3',
+        },
+        asset_status: {
+          state: 'ready',
+          ready: true,
+          usable_for_vm: true,
+          profile_id: 'coding',
+          profile_revision: '2026.0520.3',
+          asset_version: 'coding@2026.0520.3',
+          arch: 'arm64',
+          assets: [],
+          missing: [],
+          missing_assets: [],
+        },
+      },
+    ],
+  })),
 }));
 
 const originalProvision = vmStore.provision.bind(vmStore);
@@ -96,24 +127,26 @@ describe('session runtime truth UI', () => {
     resetStores();
   });
 
-  it('treats unknown asset health as not ready', () => {
+  it('treats unknown asset health as not ready without hiding profile launch cards', async () => {
     render(NewTabPage);
 
     expect(screen.getByText('VM asset status is unknown')).toBeTruthy();
     expect(screen.getByText('Waiting for the service to report rootfs and manifest readiness.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: /quick session/i }) as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole('button', { name: /customize session/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect(await screen.findByText('Coding')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /start session/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: /advanced/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('shows service offline state as a blocking reason', () => {
+  it('shows service offline state as a blocking reason', async () => {
     vmStore.serviceStatus = 'unavailable';
     vmStore.assetHealth = assetHealth({ ready: true, state: 'ready', missing: [] });
     render(NewTabPage);
 
     expect(screen.getByText('Capsem service is offline')).toBeTruthy();
     expect(screen.getByText('Start or recover the service before creating sessions.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: /quick session/i }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: /customize session/i }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByText('Coding');
+    expect((screen.getByRole('button', { name: /start session/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /advanced/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('does not collapse service offline startup failure into empty-session copy', () => {
@@ -166,7 +199,30 @@ describe('session runtime truth UI', () => {
     expect(screen.getByText('corrupted')).toBeTruthy();
   });
 
-  it('shows ready profile asset provenance before session creation', () => {
+  it('renders live VM token and cost counters in the toolbar', () => {
+    tabStore.tabs = [{ id: 'tab-vm', title: 'Session', view: 'terminal', vmId: 'vm-live' }];
+    tabStore.activeId = 'tab-vm';
+    vmStore.vms = [
+      {
+        id: 'vm-live',
+        name: null,
+        status: 'Running',
+        persistent: false,
+        total_input_tokens: 1200,
+        total_output_tokens: 345,
+        total_estimated_cost: 0.42,
+        total_tool_calls: 7,
+      },
+    ];
+
+    render(Toolbar);
+
+    expect(screen.getByTitle('Tokens').textContent).toBe('1.5K tok');
+    expect(screen.getByTitle('Tool calls').textContent).toBe('7 calls');
+    expect(screen.getByTitle('Cost').textContent).toBe('$0.42');
+  });
+
+  it('shows installed profile cards instead of raw asset provenance before session creation', async () => {
     vmStore.assetHealth = assetHealth({
       ready: true,
       state: 'ready',
@@ -196,17 +252,16 @@ describe('session runtime truth UI', () => {
 
     render(NewTabPage);
 
-    expect(screen.getByText('Profile Assets')).toBeTruthy();
-    expect(screen.getByText('coding@2026.0520.3')).toBeTruthy();
-    expect(screen.getByText('arm64')).toBeTruthy();
-    expect(screen.getByText('2026.0520.2')).toBeTruthy();
-    expect(screen.getByText('vmlinuz')).toBeTruthy();
-    expect(screen.getByText('rootfs')).toBeTruthy();
-    expect(screen.getByText('12.0 KB')).toBeTruthy();
-    expect(screen.getByText('5.0 MB')).toBeTruthy();
+    expect(await screen.findByText('Coding')).toBeTruthy();
+    expect(screen.getByText('Focused defaults for software development sessions.')).toBeTruthy();
+    expect(screen.getByText('2026.0520.3')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /start session/i })).toBeTruthy();
+    expect(screen.queryByText('Profile Assets')).toBeNull();
+    expect(screen.queryByText('vmlinuz')).toBeNull();
+    expect(screen.queryByText('rootfs')).toBeNull();
   });
 
-  it('shows missing asset details and download progress without disabling launch controls', () => {
+  it('shows missing asset details and download progress without disabling launch controls', async () => {
     vmStore.assetHealth = assetHealth({
       state: 'updating',
       missing: ['rootfs', 'manifest.json'],
@@ -223,11 +278,10 @@ describe('session runtime truth UI', () => {
     expect(screen.getByText('Updating rootfs.')).toBeTruthy();
     expect(screen.getByText('Missing: rootfs, manifest.json')).toBeTruthy();
     expect(screen.getByRole('progressbar', { name: /profile asset download progress/i }).getAttribute('aria-valuenow')).toBe('25');
-    expect((screen.getByRole('button', { name: /quick session/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect(await screen.findByRole('button', { name: /start session/i })).toBeTruthy();
   });
 
-  it('checks asset status at first launch and opens a progress modal instead of provisioning too early', async () => {
-    const refreshSpy = vi.spyOn(vmStore, 'refresh').mockResolvedValue();
+  it('starts a session from the clicked profile card', async () => {
     vmStore.assetHealth = assetHealth({
       state: 'updating',
       profile_id: 'coding',
@@ -239,20 +293,175 @@ describe('session runtime truth UI', () => {
         done: false,
       },
     });
-    vmStore.provision = vi.fn(async () => ({ id: 'vm-blocked', name: 'vm-blocked' }));
+    const requests: ProvisionRequest[] = [];
+    vmStore.provision = vi.fn(async (request: ProvisionRequest) => {
+      requests.push(request);
+      return { id: 'vm-profile', name: 'vm-profile' };
+    });
+    tabStore.openVM = vi.fn();
 
     render(NewTabPage);
-    await fireEvent.click(screen.getByRole('button', { name: /quick session/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /start session/i }));
 
-    expect(refreshSpy).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('dialog', { name: /preparing profile assets/i })).toBeTruthy();
-    expect(screen.getAllByText('coding@2026.0520.3')).toHaveLength(2);
-    expect(screen.getAllByRole('progressbar', { name: /profile asset download progress/i })).toHaveLength(2);
-    expect(vmStore.provision).not.toHaveBeenCalled();
-    refreshSpy.mockRestore();
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toEqual({
+      persistent: false,
+      profile_id: 'coding',
+      profile_revision: '2026.0520.3',
+    });
+    expect(tabStore.openVM).toHaveBeenCalledWith('vm-profile', 'vm-profile');
   });
 
-  it('global new-session shortcut uses the same asset readiness gate', async () => {
+  it('refuses to launch when a profile card has missing assets', async () => {
+    vi.mocked(api.listProfiles).mockResolvedValueOnce({
+      mode: 'settings_profiles_v2',
+      default_profile: 'broken-profile',
+      profiles: [
+        {
+          source: 'base',
+          locked: true,
+          profile: {
+            id: 'broken-profile',
+            name: 'Broken Profile',
+            description: 'Broken test profile.',
+            best_for: 'Nothing until assets are fixed.',
+            ui: 'coding',
+            revision: '2026.0520.3',
+          },
+          asset_status: {
+            state: 'missing',
+            ready: false,
+            usable_for_vm: false,
+            profile_id: 'broken-profile',
+            profile_revision: '2026.0520.3',
+            asset_version: 'broken-profile@2026.0520.3',
+            arch: 'arm64',
+            assets: [],
+            missing: ['vmlinuz'],
+            missing_assets: [],
+          },
+        },
+      ],
+    });
+    vmStore.assetHealth = assetHealth({
+      state: 'error',
+      ready: false,
+      profile_id: 'broken-profile',
+      profile_revision: '2026.0520.3',
+      missing: ['vmlinuz'],
+      error: 'selected profile VM assets are not ready',
+    });
+    vmStore.provision = vi.fn(async () => ({ id: 'vm-bad-profile', name: 'vm-bad-profile' }));
+
+    render(NewTabPage);
+
+    expect(await screen.findByText('Broken Profile')).toBeTruthy();
+    expect(screen.getByText('Assets missing')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /start session/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(vmStore.provision).not.toHaveBeenCalled();
+  });
+
+  it('refuses to launch a profile that has assets but no signed catalog revision', async () => {
+    vi.mocked(api.listProfiles).mockResolvedValueOnce({
+      mode: 'settings_profiles_v2',
+      default_profile: 'coding',
+      profiles: [
+        {
+          source: 'base',
+          locked: true,
+          profile: {
+            id: 'coding',
+            name: 'Coding',
+            description: 'Focused defaults for software development sessions.',
+            best_for: 'Coding agents, repository work, tests, and developer tooling.',
+            ui: 'coding',
+            revision: null,
+          },
+          asset_status: {
+            state: 'error',
+            ready: false,
+            usable_for_vm: false,
+            profile_id: 'coding',
+            profile_revision: null,
+            profile_payload_hash: null,
+            asset_version: 'coding',
+            arch: 'arm64',
+            assets: [
+              {
+                name: 'vmlinuz',
+                path: '/Users/test/.capsem/assets/vmlinuz-good',
+                status: 'present',
+                source_url: 'file:///mirror/vmlinuz',
+              },
+            ],
+            missing: [],
+            missing_assets: [],
+            error: "profile 'coding' has no installed signed catalog revision; install it before creating a VM",
+          },
+        },
+      ],
+    });
+    vmStore.assetHealth = assetHealth({ ready: true, state: 'ready', missing: [] });
+    vmStore.provision = vi.fn(async () => ({ id: 'vm-unsigned-profile', name: 'vm-unsigned-profile' }));
+
+    render(NewTabPage);
+
+    expect(await screen.findByText('Coding')).toBeTruthy();
+    expect(screen.getByText('Unavailable')).toBeTruthy();
+    expect(screen.queryByText('/Users/test/.capsem/assets/vmlinuz-good')).toBeNull();
+    expect((screen.getByRole('button', { name: /start session/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(vmStore.provision).not.toHaveBeenCalled();
+  });
+
+  it('keeps advanced create disabled when the selected profile has missing assets', async () => {
+    vi.mocked(api.listProfiles).mockResolvedValueOnce({
+      mode: 'settings_profiles_v2',
+      default_profile: 'broken-profile',
+      profiles: [
+        {
+          source: 'base',
+          locked: true,
+          profile: {
+            id: 'broken-profile',
+            name: 'Broken Profile',
+            description: 'Broken test profile.',
+            best_for: 'Nothing until assets are fixed.',
+            ui: 'coding',
+            revision: '2026.0520.3',
+          },
+          asset_status: {
+            state: 'missing',
+            ready: false,
+            usable_for_vm: false,
+            profile_id: 'broken-profile',
+            profile_revision: '2026.0520.3',
+            asset_version: 'broken-profile@2026.0520.3',
+            arch: 'arm64',
+            assets: [],
+            missing: ['rootfs.squashfs'],
+            missing_assets: [],
+          },
+        },
+      ],
+    });
+    vmStore.showCreateModal = true;
+    vmStore.assetHealth = assetHealth({
+      state: 'error',
+      ready: false,
+      profile_id: 'broken-profile',
+      profile_revision: '2026.0520.3',
+      missing: ['rootfs.squashfs'],
+      error: 'selected profile VM assets are not ready',
+    });
+
+    render(CreateSandboxDialog);
+
+    expect(await screen.findByText('Broken Profile')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Create' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Assets missing')).toBeTruthy();
+  });
+
+  it('global new-session shortcut opens the profile-based advanced dialog', async () => {
     Object.defineProperty(window, 'matchMedia', {
       configurable: true,
       value: vi.fn(() => ({
@@ -287,8 +496,8 @@ describe('session runtime truth UI', () => {
     await waitFor(() => expect(screen.getByText('Sessions')).toBeTruthy());
     await fireEvent.keyDown(window, { key: 'n', metaKey: true });
 
-    expect(await screen.findByRole('dialog', { name: /preparing profile assets/i })).toBeTruthy();
-    expect(screen.getAllByText('coding@2026.0520.3')).toHaveLength(2);
+    expect(await screen.findByRole('dialog', { name: /new session/i })).toBeTruthy();
+    expect((await screen.findAllByText('Coding')).length).toBeGreaterThan(0);
     expect(vmStore.provision).not.toHaveBeenCalled();
   });
 
@@ -332,9 +541,8 @@ describe('session runtime truth UI', () => {
     refreshSpy.mockRestore();
   });
 
-  it('quick session lets the service choose resource defaults', async () => {
+  it('profile card session lets the service choose resource defaults', async () => {
     const requests: ProvisionRequest[] = [];
-    const refreshSpy = vi.spyOn(vmStore, 'refresh').mockResolvedValue();
     vmStore.assetHealth = assetHealth({
       ready: true,
       state: 'ready',
@@ -349,17 +557,15 @@ describe('session runtime truth UI', () => {
     tabStore.openVM = vi.fn();
 
     render(NewTabPage);
-    await fireEvent.click(screen.getByRole('button', { name: /quick session/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /start session/i }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0]).toEqual({
       persistent: false,
-      profile_id: 'everyday-work',
-      profile_revision: '2026.0520.2',
+      profile_id: 'coding',
+      profile_revision: '2026.0520.3',
     });
     expect(tabStore.openVM).toHaveBeenCalledWith('vm-1', 'vm-1');
-    expect(refreshSpy).toHaveBeenCalled();
-    refreshSpy.mockRestore();
   });
 
   it('customize dialog omits CPU and RAM in service-default mode', async () => {
@@ -380,7 +586,8 @@ describe('session runtime truth UI', () => {
     tabStore.openVM = vi.fn();
 
     render(CreateSandboxDialog);
-    expect(screen.getByText('coding@2026.0520.3')).toBeTruthy();
+    expect(await screen.findByText('Coding')).toBeTruthy();
+    expect(screen.getByText('2026.0520.3')).toBeTruthy();
     await fireEvent.input(screen.getByLabelText(/name/i), { target: { value: 'work' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -407,11 +614,18 @@ describe('session runtime truth UI', () => {
     });
 
     render(CreateSandboxDialog);
+    await screen.findByText('Coding');
     await fireEvent.click(screen.getByRole('button', { name: 'Override' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0]).toEqual({ persistent: false, ram_mb: 4096, cpus: 4 });
+    expect(requests[0]).toEqual({
+      persistent: false,
+      profile_id: 'coding',
+      profile_revision: '2026.0520.3',
+      ram_mb: 8192,
+      cpus: 4,
+    });
     expect(refreshSpy).toHaveBeenCalled();
     refreshSpy.mockRestore();
   });

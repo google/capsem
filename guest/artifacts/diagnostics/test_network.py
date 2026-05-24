@@ -104,6 +104,21 @@ def test_dns_nxdomain_propagates_from_upstream():
     assert "10.0.0.1" not in result.stdout
 
 
+def test_localhost_resolves_from_hosts_not_dns_proxy():
+    """localhost must resolve locally even though resolv.conf points at Capsem DNS."""
+    result = run("getent hosts localhost", timeout=5)
+    assert result.returncode == 0, f"localhost did not resolve:\n{result.stdout}\n{result.stderr}"
+    assert "127.0.0.1" in result.stdout or "::1" in result.stdout, (
+        f"localhost resolved to an unexpected address:\n{result.stdout}"
+    )
+
+    hosts = run("cat /etc/hosts", timeout=5)
+    assert hosts.returncode == 0, f"/etc/hosts unreadable:\n{hosts.stderr}"
+    assert "127.0.0.1 localhost" in hosts.stdout, (
+        f"/etc/hosts missing loopback localhost entry:\n{hosts.stdout}"
+    )
+
+
 def test_iptables_redirect_443_to_10443():
     """iptables must REDIRECT port 443 to 10443."""
     result = run(

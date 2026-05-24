@@ -260,28 +260,25 @@ pub async fn start_service() -> Result<()> {
     {
         let uid = nix::unistd::getuid();
         let target = format!("gui/{}/com.capsem.service", uid);
-        let status = tokio::process::Command::new("launchctl")
-            .args(["kickstart", "-k", &target])
-            .status()
-            .await?;
+        let mut command = tokio::process::Command::new("launchctl");
+        command.args(["kickstart", "-k", &target]);
+        let status = command_status_quiet(command).await?;
         if !status.success() {
             // Fallback: bootstrap the plist
             if let Some(plist) = plist_path() {
                 let domain = format!("gui/{}", uid);
-                let _ = tokio::process::Command::new("launchctl")
-                    .args(["bootstrap", &domain, &plist.to_string_lossy()])
-                    .status()
-                    .await;
+                let mut command = tokio::process::Command::new("launchctl");
+                command.args(["bootstrap", &domain, &plist.to_string_lossy()]);
+                let _ = command_status_quiet(command).await;
             }
         }
     }
 
     #[cfg(target_os = "linux")]
     {
-        let status = tokio::process::Command::new("systemctl")
-            .args(["--user", "start", "capsem"])
-            .status()
-            .await?;
+        let mut command = tokio::process::Command::new("systemctl");
+        command.args(["--user", "start", "capsem"]);
+        let status = command_status_quiet(command).await?;
         if !status.success() {
             anyhow::bail!("systemctl --user start capsem failed");
         }
@@ -293,6 +290,18 @@ pub async fn start_service() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn command_status_quiet(
+    mut command: tokio::process::Command,
+) -> std::io::Result<std::process::ExitStatus> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
 }
 
 /// Stop the capsem service via the platform service manager.

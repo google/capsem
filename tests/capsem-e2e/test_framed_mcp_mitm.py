@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, select_editable_profile, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
@@ -37,6 +37,7 @@ def _guest_python(script: str) -> str:
 def _start_service():
     svc = ServiceInstance()
     svc.start()
+    select_editable_profile(svc.client(), prefix="framed-policy")
     return svc
 
 
@@ -298,7 +299,7 @@ sys.exit(proc.returncode)
             assert row["method"] == method
             assert row["decision"] == "allowed"
             assert row["process_name"] == "python3"
-            assert row["policy_mode"] == "audit_only"
+            assert row["policy_mode"] == "enforce"
             assert row["policy_action"] == "allow"
 
         rows = _query_mcp_rows(db_path)

@@ -241,6 +241,7 @@ def create_current_policy_db(path: Path):
             confidence TEXT NOT NULL
         );
         CREATE TABLE detection_finding_tags (
+            id INTEGER PRIMARY KEY,
             finding_id TEXT NOT NULL,
             tag_index INTEGER NOT NULL,
             tag TEXT NOT NULL

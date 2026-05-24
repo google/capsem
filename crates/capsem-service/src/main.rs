@@ -273,7 +273,7 @@ pub struct ProvisionOptions<'a> {
 /// without losing earlier failures to the cull.
 const MAX_FAILED_SESSIONS: usize = 32;
 
-const DEFAULT_MAX_CONCURRENT_VMS: usize = 10;
+const DEFAULT_MAX_CONCURRENT_VMS: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 struct VmRuntimeDefaults {
@@ -458,6 +458,38 @@ impl ServiceState {
                     &effective.profile_id,
                 )
                 .context("load startup installed profile revision for profile pin")?;
+        }
+        let has_explicit_pin_identity = profile_revision
+            .as_deref()
+            .is_some_and(|revision| !revision.trim().is_empty())
+            && profile_payload_hash
+                .as_deref()
+                .is_some_and(|hash| !hash.trim().is_empty());
+        if installed_revision.is_none() && !has_explicit_pin_identity {
+            let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+                .context("discover profiles for inherited profile pin")?;
+            let chain = capsem_core::settings_profiles::resolve_ancestor_chain(
+                &catalog,
+                &effective.profile_id,
+            )
+            .context("resolve profile inheritance chain for inherited profile pin")?;
+            for ancestor in chain.iter().rev().skip(1) {
+                if let Some(record) =
+                    capsem_core::settings_profiles::load_complete_installed_profile_revision(
+                        &settings.profiles,
+                        &ancestor.profile.id,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "load inherited installed profile revision '{}' for profile pin",
+                            ancestor.profile.id
+                        )
+                    })?
+                {
+                    installed_revision = Some(record);
+                    break;
+                }
+            }
         }
         let (profile_revision, profile_payload_hash) = installed_revision
             .map(|record| (Some(record.revision), Some(record.payload_hash)))
@@ -3385,10 +3417,10 @@ fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<Str
     Ok(Some(lines.join("\n")))
 }
 
-fn security_log_cell<'a>(
-    row: &'a serde_json::Value,
+fn security_log_cell(
+    row: &serde_json::Value,
     index: usize,
-) -> Result<&'a serde_json::Value, AppError> {
+) -> Result<&serde_json::Value, AppError> {
     row.as_array()
         .and_then(|cells| cells.get(index))
         .ok_or_else(|| {
@@ -4459,10 +4491,168 @@ fn profile_record_json(
     })
 }
 
+fn profile_record_json_with_asset_status(
+    record: &capsem_core::settings_profiles::ProfileRecord,
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+    assets_dir: &FsPath,
+) -> serde_json::Value {
+    let mut value = profile_record_json(record);
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "asset_status".to_string(),
+            profile_asset_status_for_profile(settings, assets_dir, &record.profile.id),
+        );
+    }
+    value
+}
+
+fn profile_asset_requirement_for_status(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+    profile_id: &str,
+    arch: &str,
+) -> Result<ProfileAssetRequirement> {
+    let (effective, _) = capsem_core::settings_profiles::resolve_effective_vm_settings_with_corp(
+        settings,
+        Some(profile_id),
+    )
+    .with_context(|| format!("resolve profile '{profile_id}' for VM asset status"))?;
+    let mut required = ProfileAssetRequirement::from_effective(&effective, arch)?;
+    let installed = capsem_core::settings_profiles::load_complete_installed_profile_revision(
+        &settings.profiles,
+        profile_id,
+    )
+    .with_context(|| format!("load installed profile revision for '{profile_id}'"))?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "profile '{profile_id}' has no installed signed catalog revision; install it before creating a VM"
+        )
+    })?;
+    required =
+        required.with_installed_revision(Some(installed.revision), Some(installed.payload_hash));
+    Ok(required)
+}
+
+fn profile_asset_status_for_profile(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+    assets_dir: &FsPath,
+    profile_id: &str,
+) -> serde_json::Value {
+    match profile_asset_requirement_for_status(settings, profile_id, host_asset_arch()) {
+        Ok(required) => profile_asset_status_json(&required, assets_dir),
+        Err(error) => {
+            warn!(
+                event = "profile_asset_discovery_failed",
+                profile_id,
+                error = %error,
+                "profile asset discovery failed"
+            );
+            json!({
+                "state": "error",
+                "ready": false,
+                "usable_for_vm": false,
+                "profile_id": profile_id,
+                "arch": host_asset_arch(),
+                "error": error.to_string(),
+                "assets": [],
+                "missing": [],
+                "missing_assets": [],
+            })
+        }
+    }
+}
+
+fn profile_asset_status_json(
+    required: &ProfileAssetRequirement,
+    assets_dir: &FsPath,
+) -> serde_json::Value {
+    let rows = required.local_asset_statuses(assets_dir);
+    let missing = rows
+        .iter()
+        .filter(|row| !row.present)
+        .map(|row| row.logical_name.to_string())
+        .collect::<Vec<_>>();
+    let missing_assets = rows
+        .iter()
+        .filter(|row| !row.present)
+        .map(|row| {
+            json!({
+                "name": row.logical_name,
+                "path": row.path.display().to_string(),
+                "source_url": row.source_url,
+            })
+        })
+        .collect::<Vec<_>>();
+    let assets = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "name": row.logical_name,
+                "path": row.path.display().to_string(),
+                "status": if row.present { "present" } else { "missing" },
+                "source_url": row.source_url,
+                "hash": row.hash,
+                "size": row.size,
+                "content_type": row.content_type,
+            })
+        })
+        .collect::<Vec<_>>();
+    let ready = missing.is_empty();
+    let state = if ready { "ready" } else { "missing" };
+    if ready {
+        info!(
+            event = "profile_asset_discovery",
+            profile_id = required.profile_id(),
+            revision = required.revision().unwrap_or(""),
+            profile_payload_hash = required.profile_payload_hash().unwrap_or(""),
+            arch = required.arch(),
+            asset_state = state,
+            "profile asset discovery succeeded"
+        );
+    } else {
+        let missing_paths = rows
+            .iter()
+            .filter(|row| !row.present)
+            .map(|row| row.path.display().to_string())
+            .collect::<Vec<_>>();
+        warn!(
+            event = "profile_asset_discovery_failed",
+            profile_id = required.profile_id(),
+            revision = required.revision().unwrap_or(""),
+            profile_payload_hash = required.profile_payload_hash().unwrap_or(""),
+            arch = required.arch(),
+            asset_state = state,
+            missing = ?missing,
+            missing_paths = ?missing_paths,
+            "profile asset discovery found missing local assets"
+        );
+    }
+    json!({
+        "state": state,
+        "ready": ready,
+        "usable_for_vm": ready,
+        "profile_id": required.profile_id(),
+        "profile_revision": required.revision(),
+        "profile_payload_hash": required.profile_payload_hash(),
+        "asset_version": required.asset_version(),
+        "arch": required.arch(),
+        "assets": assets,
+        "missing": missing,
+        "missing_assets": missing_assets,
+    })
+}
+
 #[derive(Debug, Deserialize)]
 struct ProfileForkRequest {
     id: String,
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialUpsertRequest {
+    value: String,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4657,13 +4847,41 @@ fn load_service_settings_for_profiles(
     })
 }
 
+fn resolved_asset_locations_for_profile_status(
+    settings: &capsem_core::settings_profiles::ServiceSettings,
+) -> Result<capsem_core::settings_profiles::ResolvedServiceAssetLocations, AppError> {
+    let settings_path = service_settings_path();
+    let fallback_assets_dir = settings_path
+        .parent()
+        .map(|path| path.join("assets"))
+        .unwrap_or_else(|| capsem_core::paths::capsem_home().join("assets"));
+    capsem_core::settings_profiles::resolve_service_asset_locations(
+        settings,
+        None,
+        None,
+        fallback_assets_dir,
+    )
+    .map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("resolve profile asset locations: {error}"),
+        )
+    })
+}
+
 /// GET /profiles -- list typed Profile V2 profile records.
 async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
     let settings = load_service_settings_for_profiles()?;
+    let asset_locations = resolved_asset_locations_for_profile_status(&settings)?;
     let catalog = capsem_core::settings_profiles::discover_profiles(&settings.profiles)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("discover profiles: {e}")))?;
 
-    let mut profiles = catalog.list().map(profile_record_json).collect::<Vec<_>>();
+    let mut profiles = catalog
+        .list()
+        .map(|record| {
+            profile_record_json_with_asset_status(record, &settings, &asset_locations.assets_dir)
+        })
+        .collect::<Vec<_>>();
     profiles.sort_by(|left, right| {
         left["profile"]["id"]
             .as_str()
@@ -4674,6 +4892,7 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
     Ok(Json(json!({
         "mode": "settings_profiles_v2",
         "default_profile": settings.profiles.default_profile,
+        "asset_locations": asset_locations_status_json(&asset_locations),
         "profiles": profiles,
     })))
 }
@@ -4756,6 +4975,7 @@ fn profile_catalog_status_json(
     settings: &capsem_core::settings_profiles::ServiceSettings,
 ) -> Result<serde_json::Value, AppError> {
     let (manifest_path, manifest) = load_persisted_profile_manifest(settings)?;
+    let asset_locations = resolved_asset_locations_for_profile_status(settings)?;
     let mut profiles = Vec::new();
     if let Some(manifest) = &manifest {
         for (profile_id, profile) in &manifest.profiles {
@@ -4775,6 +4995,11 @@ fn profile_catalog_status_json(
                 "installed_revision": installed.as_ref().map(|installed| installed.revision.clone()),
                 "installed_payload_hash": installed.as_ref().map(|installed| installed.payload_hash.clone()),
                 "revisions": profile_revision_records_json(profile, installed.as_ref()),
+                "asset_status": profile_asset_status_for_profile(
+                    settings,
+                    &asset_locations.assets_dir,
+                    profile_id,
+                ),
             }));
         }
     }
@@ -4793,6 +5018,7 @@ fn profile_catalog_status_json(
         "check_interval_secs": settings.profile_catalog.check_interval_secs,
         "manifest_path": manifest_path.map(|path| path.display().to_string()),
         "manifest_present": manifest.is_some(),
+        "asset_locations": asset_locations_status_json(&asset_locations),
         "profiles": profiles,
     }))
 }
@@ -6011,6 +6237,7 @@ fn compile_runtime_enforcement_rule(
         condition: request.condition.clone(),
         decision: request.decision,
         reason: request.reason.clone(),
+        mutations: Vec::new(),
     }])?;
     Ok(runtime_rule_plan_id(&request.condition))
 }
@@ -6163,7 +6390,35 @@ fn profile_rule_condition(
     rule: &capsem_core::settings_profiles::EffectiveRule,
 ) -> Result<String, AppError> {
     let guard = profile_rule_callback_guard(&rule.callback)?;
-    Ok(format!("{guard} && ({})", rule.condition))
+    Ok(format!(
+        "{guard} && ({})",
+        normalize_profile_runtime_condition(&rule.callback, &rule.condition)
+    ))
+}
+
+fn normalize_profile_runtime_condition(callback: &str, condition: &str) -> String {
+    let mut normalized = condition.to_string();
+    if callback == "dns.request" {
+        normalized = normalized.replace("qname", "dns.request.qname");
+        normalized = normalized.replace("dns.request.dns.request.qname", "dns.request.qname");
+    }
+    if matches!(
+        callback,
+        "http.request" | "http.read" | "http.write" | "http.response"
+    ) {
+        for (from, to) in [
+            ("request.host", "http.request.host"),
+            ("request.path", "http.request.path"),
+            ("request.query", "http.request.query"),
+            ("request.method", "http.request.method"),
+            ("response.text", "http.response.body.text"),
+        ] {
+            normalized = normalized.replace(from, to);
+        }
+        normalized = normalized.replace("http.http.request.", "http.request.");
+        normalized = normalized.replace("http.http.response.", "http.response.");
+    }
+    normalized
 }
 
 fn profile_seeded_enforcement_record(
@@ -6212,6 +6467,7 @@ fn compile_runtime_enforcement_record(
         condition: record.source.clone(),
         decision: *decision,
         reason: reason.clone(),
+        mutations: Vec::new(),
     }])?;
     Ok(runtime_rule_plan_id(&record.source))
 }
@@ -6248,6 +6504,9 @@ fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Resul
     })?;
     let mut seeded = 0usize;
     for rule in &effective.rules {
+        if !profile_rule_supported_by_runtime_registry(rule) {
+            continue;
+        }
         let record = profile_seeded_enforcement_record(rule)?;
         let compiled_plan = compile_runtime_enforcement_record(&record).map_err(|error| {
             AppError(
@@ -6271,6 +6530,15 @@ fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Resul
         "seeded profile enforcement rules into runtime registry"
     );
     Ok(seeded)
+}
+
+fn profile_rule_supported_by_runtime_registry(
+    rule: &capsem_core::settings_profiles::EffectiveRule,
+) -> bool {
+    matches!(
+        rule.callback.as_str(),
+        "dns.request" | "http.request" | "http.read" | "http.write" | "http.response"
+    )
 }
 
 fn runtime_security_rule_overlays_store(
@@ -7694,10 +7962,7 @@ fn security_events_query_rows(
         .unwrap_or_default())
 }
 
-fn session_cell<'a>(
-    row: &'a serde_json::Value,
-    index: usize,
-) -> Result<&'a serde_json::Value, AppError> {
+fn session_cell(row: &serde_json::Value, index: usize) -> Result<&serde_json::Value, AppError> {
     row.as_array()
         .and_then(|cells| cells.get(index))
         .ok_or_else(|| {
@@ -8382,9 +8647,7 @@ fn session_domain_class(qname: &str) -> String {
 fn session_file_path_class(path: &str) -> String {
     if path == "/workspace" || path.starts_with("/workspace/") {
         "workspace".into()
-    } else if path == "/tmp" || path.starts_with("/tmp/") {
-        "temporary".into()
-    } else if path.starts_with("/var/folders/") {
+    } else if path == "/tmp" || path.starts_with("/tmp/") || path.starts_with("/var/folders/") {
         "temporary".into()
     } else {
         "unknown".into()
@@ -8863,6 +9126,7 @@ async fn handle_enforcement_backtest(
             condition: request.rule.condition.clone(),
             decision: request.rule.decision,
             reason: request.rule.reason.clone(),
+            mutations: Vec::new(),
         }])
         .map_err(|error| {
             AppError(
@@ -9431,6 +9695,76 @@ fn settings_response_json() -> serde_json::Value {
 /// GET /settings -- typed settings-profiles snapshot + rules/presets.
 async fn handle_get_settings() -> Json<serde_json::Value> {
     Json(settings_response_json())
+}
+
+fn known_profile_credential_description(id: &str) -> Option<&'static str> {
+    match id {
+        "anthropic-api-key" => Some("Anthropic API key"),
+        "openai-api-key" => Some("OpenAI API key"),
+        "google-api-key" => Some("Google AI API key"),
+        "github-token" => Some("GitHub token"),
+        "git-author-name" => Some("Git author name"),
+        "git-author-email" => Some("Git author email"),
+        "ssh-public-key" => Some("SSH public key"),
+        "claude-oauth-credentials-json" => Some("Claude OAuth credentials JSON"),
+        "google-adc-json" => Some("Google ADC JSON"),
+        _ => None,
+    }
+}
+
+/// POST /credentials/{id} -- write a known Profile V2 service credential.
+async fn handle_upsert_credential(
+    Path(id): Path<String>,
+    Json(request): Json<CredentialUpsertRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Some(default_description) = known_profile_credential_description(&id) else {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!("unknown credential id: {id}"),
+        ));
+    };
+    let value = request.value.trim();
+    if value.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "credential value cannot be empty".into(),
+        ));
+    }
+
+    let settings_path = service_settings_path();
+    let mut settings = capsem_core::settings_profiles::load_service_settings_or_default(
+        &settings_path,
+    )
+    .map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("load {}: {error}", settings_path.display()),
+        )
+    })?;
+    let description = request
+        .description
+        .filter(|description| !description.trim().is_empty())
+        .unwrap_or_else(|| default_description.to_string());
+    settings.credentials.items.insert(
+        id.clone(),
+        capsem_core::settings_profiles::TomlCredential {
+            description: Some(description),
+            value: value.to_string(),
+        },
+    );
+    capsem_core::settings_profiles::write_service_settings(&settings_path, &settings).map_err(
+        |error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("write {}: {error}", settings_path.display()),
+            )
+        },
+    )?;
+    Ok(Json(json!({
+        "mode": "settings_profiles_v2",
+        "credential_id": id,
+        "configured": true,
+    })))
 }
 
 /// POST /settings -- batch-update policy rules and return refreshed typed state.
@@ -12108,6 +12442,7 @@ async fn main() -> Result<()> {
         .route("/skills/{id}", delete(handle_delete_skill))
         .route("/setup/state", get(handle_get_setup_state))
         .route("/setup/detect", get(handle_detect_host_config))
+        .route("/credentials/{id}", post(handle_upsert_credential))
         .route("/setup/complete", post(handle_complete_onboarding))
         .route("/setup/retry", post(handle_setup_retry))
         .route("/setup/assets", get(handle_asset_status))

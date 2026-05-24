@@ -179,9 +179,14 @@ pub async fn run_setup(opts: SetupOptions) -> Result<()> {
         step_providers(&cd, &mut state, &opts)?;
     }
     if let Some(profile_id) = state.security_preset.as_deref() {
-        if std::env::var_os("CAPSEM_ASSETS_DIR").is_some() {
-            install_local_profile_revision_from_assets(&cd, profile_id)
-                .context("install local profile revision from CAPSEM_ASSETS_DIR")?;
+        if let Some(asset_root) = local_profile_asset_root(&cd) {
+            install_local_profile_revision_from_asset_root(
+                &cd,
+                profile_id,
+                &asset_root,
+                host_profile_asset_arch(),
+            )
+            .context("install local profile revision from assets")?;
         }
     }
 
@@ -275,6 +280,8 @@ fn step_security_preset(
     let mut service_settings =
         capsem_core::settings_profiles::load_service_settings_or_default(&service_path)
             .map_err(|e| anyhow::anyhow!(e))?;
+    cleanup_package_profile_runtime_duplicates(&service_settings.profiles)
+        .context("clean installed package profile duplicates")?;
     let catalog = capsem_core::settings_profiles::discover_profiles(&service_settings.profiles)
         .map_err(|e| anyhow::anyhow!(e))?;
     if catalog.get(&selected_profile).is_none() {
@@ -283,9 +290,14 @@ fn step_security_preset(
     service_settings.profiles.default_profile = selected_profile.clone();
     capsem_core::settings_profiles::write_service_settings(&service_path, &service_settings)
         .map_err(|e| anyhow::anyhow!(e))?;
-    if std::env::var_os("CAPSEM_ASSETS_DIR").is_some() {
-        install_local_profile_revision_from_assets(capsem_dir, &selected_profile)
-            .context("install local profile revision from CAPSEM_ASSETS_DIR")?;
+    if let Some(asset_root) = local_profile_asset_root(capsem_dir) {
+        install_local_profile_revision_from_asset_root(
+            capsem_dir,
+            &selected_profile,
+            &asset_root,
+            host_profile_asset_arch(),
+        )
+        .context("install local profile revision from assets")?;
     }
     println!("  Using default profile: {selected_profile}");
     state.security_preset = Some(selected_profile);
@@ -302,16 +314,16 @@ fn normalize_setup_profile_id(value: &str) -> String {
     }
 }
 
-fn install_local_profile_revision_from_assets(capsem_dir: &Path, profile_id: &str) -> Result<()> {
-    let assets_root = std::env::var_os("CAPSEM_ASSETS_DIR")
-        .map(PathBuf::from)
-        .context("CAPSEM_ASSETS_DIR is not set")?;
-    install_local_profile_revision_from_asset_root(
-        capsem_dir,
-        profile_id,
-        &assets_root,
-        host_profile_asset_arch(),
-    )
+fn local_profile_asset_root(capsem_dir: &Path) -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("CAPSEM_ASSETS_DIR").map(PathBuf::from) {
+        return Some(root);
+    }
+    let root = capsem_dir.join("assets");
+    if root.join("manifest.json").is_file() {
+        Some(root)
+    } else {
+        None
+    }
 }
 
 fn install_local_profile_revision_from_asset_root(
@@ -344,6 +356,10 @@ fn install_local_profile_revision_from_asset_root(
     service_settings.profiles.default_profile = profile_id.to_string();
     capsem_core::settings_profiles::write_service_settings(&service_path, &service_settings)
         .map_err(|e| anyhow::anyhow!(e))?;
+
+    if install_packaged_profile_sidecar(&service_settings.profiles, profile_id)? {
+        return Ok(());
+    }
 
     let payload = json!({
         "schema": "capsem.profile.v2",
@@ -510,6 +526,111 @@ fn install_local_profile_revision_from_asset_root(
         &verified,
     )
     .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(())
+}
+
+fn install_packaged_profile_sidecar(
+    roots: &capsem_core::settings_profiles::ProfileRootSettings,
+    profile_id: &str,
+) -> Result<bool> {
+    let Some(profile_path) = find_packaged_profile_path(roots, profile_id) else {
+        return Ok(false);
+    };
+    let input = std::fs::read_to_string(&profile_path)
+        .with_context(|| format!("read package profile {}", profile_path.display()))?;
+    let profile = capsem_core::settings_profiles::Profile::from_toml_str(&input)
+        .map_err(|e| anyhow::anyhow!(e))
+        .with_context(|| format!("parse package profile {}", profile_path.display()))?;
+    let payload_json =
+        serde_json::to_string_pretty(&profile).context("serialize package profile payload")?;
+    let revision = profile
+        .revision
+        .clone()
+        .filter(|revision| !revision.trim().is_empty())
+        .context("package profile revision is required for install sidecar")?;
+    let manifest = capsem_core::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "{profile_id}": {{
+              "current_revision": "{revision}",
+              "revisions": {{
+                "{revision}": {{
+                  "status": "active",
+                  "min_binary": "{}",
+                  "profile_url": "file://packaged-profile.json",
+                  "profile_hash": "blake3:{}",
+                  "profile_signature_url": "file://packaged-profile.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}"#,
+        env!("CARGO_PKG_VERSION"),
+        blake3::hash(payload_json.as_bytes()).to_hex()
+    ))
+    .context("build package profile manifest")?;
+    let revision_record = manifest
+        .revision(profile_id, &revision)
+        .context("resolve package profile manifest revision")?;
+    let verified = capsem_core::profile_manifest::verify_installable_profile_payload(
+        revision_record,
+        &payload_json,
+    )
+    .context("verify package profile payload")?;
+    capsem_core::settings_profiles::install_verified_profile_payload_sidecar(roots, &verified)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    cleanup_package_profile_runtime_duplicates(roots)
+        .context("clean package profile runtime duplicates")?;
+    Ok(true)
+}
+
+fn find_packaged_profile_path(
+    roots: &capsem_core::settings_profiles::ProfileRootSettings,
+    profile_id: &str,
+) -> Option<PathBuf> {
+    let profile_filename = format!("{profile_id}.profile.toml");
+    let legacy_filename = format!("{profile_id}.toml");
+    roots.base_dirs.iter().find_map(|dir| {
+        [dir.join(&profile_filename), dir.join(&legacy_filename)]
+            .into_iter()
+            .find(|path| path.is_file())
+    })
+}
+
+fn cleanup_package_profile_runtime_duplicates(
+    roots: &capsem_core::settings_profiles::ProfileRootSettings,
+) -> Result<()> {
+    for corp_dir in &roots.corp_dirs {
+        if !corp_dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(corp_dir)
+            .with_context(|| format!("read corp profile dir {}", corp_dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                continue;
+            }
+            let Some(profile_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if find_packaged_profile_path(roots, profile_id).is_none() {
+                continue;
+            }
+            let current = corp_dir
+                .join(".catalog")
+                .join("profiles")
+                .join(profile_id)
+                .join("current.json");
+            if current.is_file() {
+                std::fs::remove_file(&path).with_context(|| {
+                    format!("remove duplicate package profile {}", path.display())
+                })?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -966,10 +1087,20 @@ decision = "allow"
     fn local_profile_revision_installs_signed_catalog_shape_from_assets() {
         let d = tmp_dir();
         let assets = d.path().join("assets").join("arm64");
+        let base_dir = d.path().join("profiles/base");
         std::fs::create_dir_all(&assets).unwrap();
+        std::fs::create_dir_all(&base_dir).unwrap();
         std::fs::write(assets.join("vmlinuz"), b"kernel").unwrap();
         std::fs::write(assets.join("initrd.img"), b"initrd").unwrap();
         std::fs::write(assets.join("rootfs.squashfs"), b"rootfs").unwrap();
+
+        let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+        settings.profiles.base_dirs = vec![base_dir];
+        capsem_core::settings_profiles::write_service_settings(
+            d.path().join("service.toml"),
+            &settings,
+        )
+        .unwrap();
 
         install_local_profile_revision_from_asset_root(
             d.path(),
@@ -1025,6 +1156,61 @@ decision = "allow"
             profile.security.rules.http["block_example_post"].condition,
             "http.request.host == 'example.com' && http.request.method == 'POST'"
         );
+    }
+
+    #[test]
+    fn package_profile_revision_installs_sidecar_without_duplicate_profile() {
+        let d = tmp_dir();
+        let assets = d.path().join("assets").join("arm64");
+        let base_dir = d.path().join("profiles/base");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::create_dir_all(&base_dir).unwrap();
+        std::fs::write(assets.join("vmlinuz"), b"kernel").unwrap();
+        std::fs::write(assets.join("initrd.img"), b"initrd").unwrap();
+        std::fs::write(assets.join("rootfs.squashfs"), b"rootfs").unwrap();
+
+        std::fs::write(
+            base_dir.join("everyday-work.profile.toml"),
+            include_str!("../../../config/profiles/base/everyday-work.profile.toml"),
+        )
+        .unwrap();
+        let mut settings = capsem_core::settings_profiles::ServiceSettings::default();
+        settings.profiles.base_dirs = vec![base_dir.clone()];
+        capsem_core::settings_profiles::write_service_settings(
+            d.path().join("service.toml"),
+            &settings,
+        )
+        .unwrap();
+
+        install_local_profile_revision_from_asset_root(
+            d.path(),
+            capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+            &d.path().join("assets"),
+            "arm64",
+        )
+        .unwrap();
+
+        let settings = capsem_core::settings_profiles::load_service_settings_or_default(
+            d.path().join("service.toml"),
+        )
+        .unwrap();
+        let corp_dir = settings.profiles.corp_dirs[0].clone();
+        assert!(
+            !corp_dir.join("everyday-work.toml").exists(),
+            "package sidecar install must not create a duplicate corp profile"
+        );
+        let installed = capsem_core::settings_profiles::load_complete_installed_profile_revision(
+            &settings.profiles,
+            capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID,
+        )
+        .unwrap()
+        .expect("package profile sidecar should be complete");
+        assert_eq!(
+            installed.runtime_profile_path,
+            base_dir.join("everyday-work.profile.toml")
+        );
+        capsem_core::settings_profiles::discover_profiles(&settings.profiles)
+            .expect("package sidecar must not create duplicate profile ids");
     }
 
     // ---- --force-onboarding fast path ---------------------------------

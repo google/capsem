@@ -18,12 +18,16 @@ fn service_settings_defaults_validate() {
 #[test]
 fn service_settings_defaults_match_committed_python_contract() {
     let mut expected = ServiceSettings::default();
+    expected.profiles.base_dirs = vec![PathBuf::from(
+        "/tmp/capsem-service-settings-defaults/profiles/base",
+    )];
     expected.profiles.user_dirs = vec![PathBuf::from(
         "/tmp/capsem-service-settings-defaults/profiles",
     )];
-    let fixture: ServiceSettings = serde_json::from_str(include_str!(
-        "../../../../schemas/fixtures/service-settings-v2-defaults.json"
-    ))
+    let fixture: ServiceSettings = serde_json::from_str(include_str!(concat!(
+        "../../../../schemas/fixtures/service-settings-v2-default",
+        "s.json"
+    )))
     .unwrap();
 
     fixture.validate().unwrap();
@@ -65,9 +69,8 @@ fn service_settings_json_invalid_fixtures_match_runtime_rejections() {
         include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-credential.json"),
         include_str!("../../../../schemas/fixtures/service-settings-v2-invalid-assets.json"),
     ] {
-        match serde_json::from_str::<ServiceSettings>(fixture) {
-            Ok(settings) => assert!(settings.validate().is_err()),
-            Err(_) => {}
+        if let Ok(settings) = serde_json::from_str::<ServiceSettings>(fixture) {
+            assert!(settings.validate().is_err());
         }
     }
 }
@@ -599,6 +602,9 @@ numpy = "1.26.4"
 "@modelcontextprotocol/sdk" = "1.2.3"
 playwright = "1.44.0"
 
+[packages.curl_installs]
+agy = "https://antigravity.google/cli/install.sh"
+
 [packages.system]
 distro = "debian"
 release = "bookworm"
@@ -645,6 +651,10 @@ content_type = "application/vnd.squashfs"
     assert_eq!(
         profile.packages.node_packages["@modelcontextprotocol/sdk"],
         "1.2.3"
+    );
+    assert_eq!(
+        profile.packages.curl_installs["agy"],
+        "https://antigravity.google/cli/install.sh"
     );
     assert_eq!(profile.packages.system.distro, "debian");
     assert_eq!(
@@ -1168,6 +1178,31 @@ fn profile_payload_v2_converts_to_runtime_profile_shape() {
 }
 
 #[test]
+fn packaged_base_profiles_emit_profile_schema_valid_payloads() {
+    for (name, source) in [
+        (
+            "coding",
+            include_str!("../../../../config/profiles/base/coding.profile.toml"),
+        ),
+        (
+            "everyday-work",
+            include_str!("../../../../config/profiles/base/everyday-work.profile.toml"),
+        ),
+    ] {
+        let profile = Profile::from_toml_str(source).unwrap();
+        let payload_json = serde_json::to_string(&profile).unwrap();
+        crate::profile_payload_schema::validate_profile_payload_v2_json(&payload_json)
+            .unwrap_or_else(|error| {
+                panic!("{name} package profile emitted invalid payload: {error}")
+            });
+        assert!(
+            profile.appearance.accent.starts_with('#'),
+            "{name} profile accent must be a profile payload color"
+        );
+    }
+}
+
+#[test]
 fn install_verified_profile_payload_materializes_runtime_profile_and_revision_payload() {
     let temp = tempfile::tempdir().unwrap();
     let base_dir = temp.path().join("base");
@@ -1263,6 +1298,73 @@ fn install_verified_profile_payload_materializes_runtime_profile_and_revision_pa
     assert_eq!(record.source, ProfileSource::Corp);
     assert!(record.locked);
     assert_eq!(record.profile.packages.runtimes["python"], "3.12.3");
+}
+
+#[test]
+fn install_verified_profile_payload_sidecar_uses_package_profile_without_duplicate_runtime() {
+    let temp = tempfile::tempdir().unwrap();
+    let base_dir = temp.path().join("base");
+    let corp_dir = temp.path().join("corp");
+    let user_dir = temp.path().join("user");
+    fs::create_dir_all(&base_dir).unwrap();
+    let mut roots = test_roots(base_dir.clone(), user_dir);
+    roots.corp_dirs = vec![corp_dir.clone()];
+
+    let payload = include_str!("../../../../schemas/fixtures/profile-v2-valid.json");
+    let profile_value = serde_json::from_str::<serde_json::Value>(payload).unwrap();
+    let profile = Profile::from_profile_payload_v2_value(profile_value).unwrap();
+    fs::write(
+        base_dir.join("everyday-work.profile.toml"),
+        toml::to_string_pretty(&profile).unwrap(),
+    )
+    .unwrap();
+    let profile_hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+    let manifest = crate::profile_manifest::ProfileManifest::from_json(&format!(
+        r#"{{
+          "format": 1,
+          "profiles": {{
+            "everyday-work": {{
+              "current_revision": "2026.0520.1",
+              "revisions": {{
+                "2026.0520.1": {{
+                  "status": "active",
+                  "min_binary": "1.0.0",
+                  "profile_url": "https://assets.capsem.dev/profile.json",
+                  "profile_hash": "{profile_hash}",
+                  "profile_signature_url": "https://assets.capsem.dev/profile.json.minisig"
+                }}
+              }}
+            }}
+          }}
+        }}"#
+    ))
+    .unwrap();
+    let revision = manifest.revision("everyday-work", "2026.0520.1").unwrap();
+    let verified =
+        crate::profile_manifest::verify_installable_profile_payload(revision, payload).unwrap();
+
+    let installed = install_verified_profile_payload_sidecar(&roots, &verified).unwrap();
+
+    assert_eq!(
+        installed.runtime_profile_path,
+        base_dir.join("everyday-work.profile.toml")
+    );
+    assert!(installed.payload_path.exists());
+    assert!(installed.current_record_path.exists());
+    assert!(
+        !corp_dir.join("everyday-work.toml").exists(),
+        "sidecar install must not create a duplicate launchable corp profile"
+    );
+    let complete = load_complete_installed_profile_revision(&roots, EVERYDAY_WORK_PROFILE_ID)
+        .unwrap()
+        .expect("sidecar installed revision should be complete via package profile");
+    assert_eq!(
+        complete.runtime_profile_path,
+        installed.runtime_profile_path
+    );
+    let catalog = discover_profiles(&roots).unwrap();
+    let record = catalog.get(EVERYDAY_WORK_PROFILE_ID).unwrap();
+    assert_eq!(record.source, ProfileSource::Base);
 }
 
 #[test]
@@ -1901,6 +2003,10 @@ fn user_profile_fork_from_builtin_profile() {
 
     assert_eq!(forked.profile.id, "daily-strict");
     assert_eq!(forked.profile.name, "Daily Strict");
+    assert_eq!(
+        forked.profile.extends_profile_id.as_deref(),
+        Some(EVERYDAY_WORK_PROFILE_ID)
+    );
     assert_eq!(forked.source, ProfileSource::User);
     assert!(discover_profiles(&roots)
         .unwrap()

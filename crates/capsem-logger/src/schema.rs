@@ -390,6 +390,7 @@ pub const CREATE_SCHEMA: &str = "
         ON detection_findings(pack_id);
 
     CREATE TABLE IF NOT EXISTS detection_finding_tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         finding_id TEXT NOT NULL,
         tag_index INTEGER NOT NULL,
         tag TEXT NOT NULL,
@@ -862,6 +863,7 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_detection_findings_pack ON detection_findings(pack_id);
 
         CREATE TABLE IF NOT EXISTS detection_finding_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             finding_id TEXT NOT NULL,
             tag_index INTEGER NOT NULL,
             tag TEXT NOT NULL,

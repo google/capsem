@@ -105,6 +105,7 @@ fn block_host_engine(host: &str) -> Arc<dyn RuntimeSecurityEngine> {
             condition: format!("http.request.host == '{host}'"),
             decision: SecurityDecisionAction::Block,
             reason: Some(format!("block {host}")),
+            mutations: Vec::new(),
         }])
         .expect("test CEL rule should compile"),
     ));
@@ -523,6 +524,7 @@ async fn runtime_security_engine_blocks_plain_http_before_upstream_dispatch() {
                 .into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("inline OpenAI block".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));
@@ -581,6 +583,7 @@ async fn runtime_security_engine_blocks_request_body_before_upstream_dispatch() 
                 .into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("body secret egress".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));
@@ -631,6 +634,7 @@ async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
             condition: "http.response.body.text.contains('needle-from-upstream')".into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("response secret ingress".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));
@@ -700,6 +704,7 @@ async fn runtime_security_engine_matches_decoded_gzip_response_body() {
             condition: "http.response.body.text.contains('compressed-needle')".into(),
             decision: SecurityDecisionAction::Block,
             reason: Some("compressed response secret ingress".into()),
+            mutations: Vec::new(),
         }])
         .unwrap(),
     ));

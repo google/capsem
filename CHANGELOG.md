@@ -7,7 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1779658398] - 2026-05-24
+
 ### Fixed
+- Fixed guest `localhost` resolution during boot by restoring a deterministic
+  `/etc/hosts`, so CLIs that bind local helper servers such as Google
+  Antigravity (`agy`) do not send `localhost` lookups through Capsem DNS.
+- Fixed live VM header model counters so VM-scoped model calls update the
+  in-memory metrics snapshot used by `/status`, while host-scoped model calls
+  remain excluded from VM accounting.
+- Fixed Settings loading against the Profile V2 `/settings` contract so the UI
+  accepts typed `profile_presets`, `effective_rules`, and `settings_profiles`
+  responses without requiring the removed legacy settings tree.
+- Fixed Gemini guest setup for Profile V2 sessions: saved Google AI
+  credentials now project to `GEMINI_API_KEY`, and non-interactive Gemini
+  launches use a real wrapper that defaults to `--yolo` instead of relying on a
+  shell alias.
+- Fixed dashboard status polling to retry gateway initialization before
+  reporting the service offline, avoiding a stale offline state after
+  start/install races when the gateway is actually healthy.
+- Fixed dashboard connected-state polling to confirm `/status` before showing
+  the service offline after a transient gateway health miss.
+- Fixed human `capsem status` output to summarize profile assets compactly and
+  move profile provenance into a trailing block instead of dumping every asset
+  URL and hash inline.
+- Fixed the local install harness to restore the packaged `capsem-admin`
+  wrapper and Python payload when repairing or simulating an installed layout.
+- Fixed frontend gateway API calls to refresh the localhost auth token and
+  retry once after a 401, preventing the onboarding Profile step from blocking
+  on stale gateway credentials.
+- Fixed onboarding provider credentials for the Profile V2 cutover: detected
+  service credentials now show as configured, and manually entered keys are
+  saved as Profile V2 credential IDs instead of legacy settings keys.
+- Fixed the final onboarding screen to use session/profile language and show
+  profile cards instead of exposing VM asset readiness internals.
+- Fixed profile listing launchability so `/profiles` and `/profiles/catalog`
+  mark profiles without an installed signed catalog revision unusable even
+  when their VM asset files are present.
+- Fixed local setup for packaged Profile V2 installs so `capsem run` and
+  temporary `capsem shell` can pin profile/package/asset metadata from the
+  packaged base profile without generating a duplicate corp profile.
+- Fixed Profile V2 runtime defaults so packaged base profiles emit
+  schema-valid profile payload JSON instead of defaulting profile accent colors
+  to the service-settings-only `"blue"` value.
+- Fixed the local install simulation to codesign macOS Mach-O binaries with the
+  Virtualization entitlement, matching package postinstall behavior so release
+  smoke tests do not boot unsigned `capsem-process` binaries.
+- Fixed `just install` so it reruns non-interactive setup after restoring
+  preserved settings and syncing assets, preventing local reinstalls from
+  undoing package postinstall setup and leaving profile pins incomplete.
+- Fixed `just install` so it no longer restores package-owned `profiles/base`
+  or stale profile catalog sidecars over the freshly materialized package
+  profiles, preventing VM asset hash drift after initrd repacks.
+- Fixed `just install` so the initrd repack runs inside the recipe and repairs
+  the existing local profile metadata before any sudo/package step, keeping the
+  installed product coherent even if the user cancels or cannot complete sudo.
+- Fixed `just install` so local installs rebuild the host-arch profile-derived
+  VM assets before repacking/syncing them, preventing an old rootfs from
+  surviving after base profile package/tool contracts change.
+- Fixed ARM64 guest kernel configuration to use a 48-bit userspace virtual
+  address layout, so TCMalloc-based Linux ARM64 CLIs such as Google
+  Antigravity (`agy`) can run inside Capsem VMs instead of crashing during
+  startup.
+- Fixed the local install simulator to tolerate repo `assets/` being the same
+  filesystem tree as `~/.capsem/assets`, avoiding same-file copy failures while
+  repairing a dev install.
+- Fixed the macOS package postinstall hook so it waits for the service socket
+  and gateway health endpoint before opening the desktop app, preventing the UI
+  from launching into a stale offline screen during install.
+- Fixed package postinstall hooks to fail loudly when no target user can be
+  determined for per-user setup instead of leaving a package that requires
+  manual `capsem setup`.
 - Fixed Profile V2 HTTP write enforcement so derived `http.read` and
   `http.write` rules compile into guarded runtime CEL, preserve rule priority,
   let runtime overlays override profile defaults, and resolve profile `ask`
@@ -23,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before reporting macOS Docker-backed asset builds as blocked.
 
 ### Changed
+- Changed default VM sizing to the agent-friendly `4 CPU / 8 GB RAM / 8 active
+  VMs` baseline across Profile V2 base profiles, builder defaults, service
+  admission defaults, onboarding, and the create-session override UI, and
+  removed stale onboarding resource selectors that no longer write through
+  Profile V2.
+- Bumped the active release line and default stamping recipe from `1.1` to
+  `1.2` for the Profile V2/bedrock engine release.
 - Expanded human `capsem profile show` and `capsem profile resolve` output with
   package, tool, MCP, VM sizing, and VM asset contract summaries.
 - Changed `capsem create`, `capsem resume`, and `capsem restart` to preserve
@@ -38,8 +115,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed frontend VM launch to refresh selected-profile asset status at first
   launch and show a modal download/progress state instead of silently blocking
   creation while assets are checking or downloading.
+- Changed profile catalog/status surfaces to report VM asset readiness per
+  profile, including missing local paths, so one broken profile cannot hide or
+  block usable profiles.
+- Changed the frontend profile catalog and launch flows to refuse profiles
+  whose VM assets are missing or invalid while still showing the missing asset
+  path needed to repair the profile.
 
 ### Added
+- Added Google Antigravity CLI (`agy`) to the Profile V2 guest tool contract:
+  base profiles declare the official `https://antigravity.google/cli/install.sh`
+  curl install, `capsem-admin` schemas model it as typed `packages.curl_installs`,
+  and image-workspace/rootfs generation materializes and verifies it as a
+  required guest tool.
 - Added `capsem mcp list` and `capsem mcp show` aliases for the Profile V2 MCP
   connector inspection path.
 - Added typed Profile V2 document CLI coverage for `capsem profile create

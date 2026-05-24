@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use capsem_core::mcp::aggregator::AggregatorClient;
-use capsem_core::mcp::policy::{McpManualServer, McpPolicy, McpUserConfig, ToolDecision};
+use capsem_core::mcp::policy::{
+    McpDecisionRule, McpDecisionRuleAction, McpDecisionRuleMatch, McpManualServer, McpPolicy,
+    McpUserConfig, ToolDecision,
+};
 use capsem_core::mcp::types::McpServerDef;
 use capsem_core::net::mitm_proxy::{RuntimeSecurityEngine, RuntimeSecurityEngineSlot};
 use capsem_core::settings_profiles::{
@@ -11,7 +14,8 @@ use capsem_core::settings_profiles::{
 use capsem_core::vm::guest_config::{GuestConfig, GuestFile};
 use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 use capsem_security_engine::{
-    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+    CelEnforcementEvaluator, CelEnforcementRule, EventMutation, SecurityDecisionAction,
+    SecurityEngine,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
@@ -178,7 +182,7 @@ fn load_runtime_policy_state_from_effective_with_runtime_rules(
     enforcement_rules.extend(
         effective
             .as_ref()
-            .map(http_runtime_enforcement_rules_from_effective)
+            .map(runtime_enforcement_rules_from_effective)
             .unwrap_or_default(),
     );
     let security_engine = build_runtime_security_engine_from_rules(
@@ -263,7 +267,7 @@ fn guest_config_from_effective(
     env.insert("HOME".to_string(), "/root".to_string());
     env.insert(
         "PATH".to_string(),
-        "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+        "/root/.local/bin:/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
     );
     env.insert("LANG".to_string(), "C".to_string());
     env.insert(
@@ -291,8 +295,27 @@ fn guest_config_from_effective(
         "CAPSEM_GOOGLE_ALLOWED".to_string(),
         if provider_allowed("google") { "1" } else { "0" }.to_string(),
     );
+    if let Some(effective) = effective {
+        for (key, value) in &effective.credential_env {
+            env.insert(key.clone(), value.clone());
+        }
+    }
 
     let files = vec![
+        GuestFile {
+            path: "/root/.local/bin/gemini".to_string(),
+            content: r#"#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    --yolo|-y|--help|-h|--version|version)
+      exec /opt/ai-clis/bin/gemini "$@"
+      ;;
+  esac
+done
+exec /opt/ai-clis/bin/gemini --yolo "$@"
+"#.to_string(),
+            mode: 0o755,
+        },
         GuestFile {
             path: "/root/.gemini/settings.json".to_string(),
             content: r#"{"homeDirectoryWarningDismissed":true,"general":{"disableAutoUpdate":true,"disableUpdateNag":true},"ui":{"hideTips":true,"hideBanner":false},"privacy":{"usageStatisticsEnabled":false,"sessionRetention":"none"},"telemetry":{"enabled":false},"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust.enabled":false},"ide":{"hasSeenNudge":true},"tools":{"sandbox":false},"mcpServers":{"local":{"command":"/run/capsem-mcp-server"}}}"#.to_string(),
@@ -358,7 +381,7 @@ fn domain_policy_lists_from_effective(
     (allow, block)
 }
 
-fn http_runtime_enforcement_rules_from_effective(
+fn runtime_enforcement_rules_from_effective(
     effective: &settings_profiles::EffectiveVmSettings,
 ) -> Vec<CelEnforcementRule> {
     let mut rules: Vec<&EffectiveRule> = effective.rules.iter().collect();
@@ -369,7 +392,7 @@ fn http_runtime_enforcement_rules_from_effective(
     });
     rules
         .into_iter()
-        .filter_map(http_runtime_enforcement_rule)
+        .filter_map(runtime_enforcement_rule_from_effective)
         .collect()
 }
 
@@ -398,6 +421,7 @@ fn build_runtime_security_engine_from_rules(
                     condition: "true".into(),
                     decision: SecurityDecisionAction::Block,
                     reason: Some("runtime security rules failed to compile".into()),
+                    mutations: Vec::new(),
                 }])
                 .expect("static fail-closed CEL rule must compile")
             }
@@ -437,6 +461,7 @@ fn cel_enforcement_rule_from_snapshot(
         condition: rule.condition,
         decision: security_decision_action_from_snapshot(rule.decision),
         reason: rule.reason,
+        mutations: Vec::new(),
     }
 }
 
@@ -503,22 +528,151 @@ fn confidence_from_snapshot(
     }
 }
 
-fn http_runtime_enforcement_rule(rule: &EffectiveRule) -> Option<CelEnforcementRule> {
+fn runtime_enforcement_rule_from_effective(rule: &EffectiveRule) -> Option<CelEnforcementRule> {
     let condition = match rule.callback.as_str() {
-        "http.request" => rule.condition.clone(),
-        "http.read" => format!("({HTTP_READ_METHOD_CONDITION}) && ({})", rule.condition),
-        "http.write" => format!("!({HTTP_READ_METHOD_CONDITION}) && ({})", rule.condition),
+        "dns.request" => format!(
+            "common.event_type == 'dns.request' && ({})",
+            runtime_rule_condition(rule)
+        ),
+        "http.request" => format!(
+            "common.event_type == 'http.request' && ({})",
+            runtime_rule_condition(rule)
+        ),
+        "http.response" => format!(
+            "common.event_type == 'http.response' && ({})",
+            runtime_rule_condition(rule)
+        ),
+        "http.read" => format!(
+            "({HTTP_READ_METHOD_CONDITION}) && ({})",
+            runtime_rule_condition(rule)
+        ),
+        "http.write" => format!(
+            "!({HTTP_READ_METHOD_CONDITION}) && ({})",
+            runtime_rule_condition(rule)
+        ),
+        "model.request" | "model.tool_response" => format!(
+            "common.event_type == 'http.request' && ({})",
+            model_rule_condition(rule, "http.request")
+        ),
+        "model.response" | "model.tool_call" => format!(
+            "common.event_type == 'http.response' && ({})",
+            model_rule_condition(rule, "http.response")
+        ),
         _ => return None,
     };
-    let condition = format!("common.event_type == 'http.request' && ({condition})");
+    let condition = if matches!(rule.callback.as_str(), "http.read" | "http.write") {
+        format!("common.event_type == 'http.request' && ({condition})")
+    } else {
+        condition
+    };
     let decision = profile_decision_to_security_action(rule.decision);
     Some(CelEnforcementRule {
-        id: rule.id.clone(),
+        id: runtime_effective_rule_id(rule),
         pack_id: Some(rule.provenance.profile_id.clone()),
         condition,
         decision,
         reason: rule.reason.clone(),
+        mutations: runtime_rule_mutations(rule),
     })
+}
+
+fn model_rule_condition(rule: &EffectiveRule, http_root: &str) -> String {
+    let body = if http_root == "http.request" {
+        "http.request.body.text"
+    } else {
+        "http.response.body.text"
+    };
+    let mut terms = Vec::new();
+    for term in rule.condition.split("&&").map(str::trim) {
+        if term.is_empty() || term == "true" {
+            continue;
+        }
+        if term == "provider == \"openai\"" || term == "provider == 'openai'" {
+            terms.push("http.request.host == 'api.openai.com'".to_string());
+        } else if let Some(value) = quoted_eq_value(term, "model") {
+            terms.push(format!("{body}.contains('{value}')"));
+        } else if let Some(value) = quoted_contains_value(term, "request.body") {
+            terms.push(format!("http.request.body.text.contains('{value}')"));
+        } else if let Some(value) = quoted_contains_value(term, "response.text") {
+            terms.push(format!("http.response.body.text.contains('{value}')"));
+        } else if let Some(value) = quoted_contains_value(term, "content") {
+            terms.push(format!("http.request.body.text.contains('{value}')"));
+        } else if let Some(value) = quoted_eq_value(term, "tool.call_id") {
+            terms.push(format!("{body}.contains('{value}')"));
+        } else if let Some(value) = quoted_eq_value(term, "tool.name") {
+            terms.push(format!("{body}.contains('{value}')"));
+        } else if let Some(value) = quoted_eq_value(term, "tool.arguments.query") {
+            terms.push(format!("{body}.contains('{value}')"));
+        } else {
+            terms.push("false".to_string());
+        }
+    }
+    if terms.is_empty() {
+        "true".into()
+    } else {
+        terms.join(" && ")
+    }
+}
+
+fn quoted_eq_value<'a>(term: &'a str, lhs: &str) -> Option<&'a str> {
+    let (left, right) = term.split_once("==")?;
+    if left.trim() != lhs {
+        return None;
+    }
+    unquote_runtime_value(right.trim())
+}
+
+fn quoted_contains_value<'a>(term: &'a str, lhs: &str) -> Option<&'a str> {
+    let prefix = format!("{lhs}.contains(");
+    unquote_runtime_value(term.strip_prefix(&prefix)?.trim().strip_suffix(')')?.trim())
+}
+
+fn unquote_runtime_value(value: &str) -> Option<&str> {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+}
+
+fn runtime_rule_condition(rule: &EffectiveRule) -> String {
+    normalize_runtime_condition_aliases(&rule.callback, &rule.condition)
+}
+
+fn normalize_runtime_condition_aliases(callback: &str, condition: &str) -> String {
+    let mut normalized = condition.to_string();
+    if callback == "dns.request" {
+        normalized = normalized.replace("qname", "dns.request.qname");
+        normalized = normalized.replace("dns.request.dns.request.qname", "dns.request.qname");
+    }
+    if matches!(
+        callback,
+        "http.request" | "http.read" | "http.write" | "http.response"
+    ) {
+        for (from, to) in [
+            ("request.host", "http.request.host"),
+            ("request.path", "http.request.path"),
+            ("request.query", "http.request.query"),
+            ("request.method", "http.request.method"),
+            ("response.text", "http.response.body.text"),
+        ] {
+            normalized = normalized.replace(from, to);
+        }
+        normalized = normalized.replace("http.http.request.", "http.request.");
+        normalized = normalized.replace("http.http.response.", "http.response.");
+    }
+    normalized
+}
+
+fn runtime_effective_rule_id(rule: &EffectiveRule) -> String {
+    if rule.id.starts_with("policy.") || rule.owner_setting_path.is_some() {
+        rule.id.clone()
+    } else {
+        format!("policy.{}", rule.id)
+    }
 }
 
 const HTTP_READ_METHOD_CONDITION: &str = "http.request.method == 'GET' \
@@ -534,11 +688,61 @@ fn profile_decision_to_security_action(decision: RuleDecision) -> SecurityDecisi
     }
 }
 
+fn runtime_rule_mutations(rule: &EffectiveRule) -> Vec<EventMutation> {
+    if rule.decision != RuleDecision::Rewrite {
+        return Vec::new();
+    }
+    let mut mutations = Vec::new();
+    for header in &rule.strip_request_headers {
+        mutations.push(EventMutation::StripHeader {
+            path: format!("subject.headers.{header}"),
+            reason: rule.reason.clone(),
+        });
+    }
+    for header in &rule.strip_response_headers {
+        mutations.push(EventMutation::StripHeader {
+            path: format!("subject.headers.{header}"),
+            reason: rule.reason.clone(),
+        });
+    }
+    let Some(target) = rule.rewrite_target.as_deref() else {
+        return mutations;
+    };
+    let Some(replacement) = rule.rewrite_value.as_deref() else {
+        return mutations;
+    };
+    let Some((path, pattern)) = parse_rewrite_target(target) else {
+        return mutations;
+    };
+    mutations.push(EventMutation::ReplaceRegex {
+        path,
+        pattern,
+        replacement: replacement.to_string(),
+        reason: rule.reason.clone(),
+    });
+    mutations
+}
+
+fn parse_rewrite_target(target: &str) -> Option<(String, String)> {
+    let (path, pattern_expr) = target.split_once("=~")?;
+    let path = path.trim();
+    let pattern_expr = pattern_expr.trim();
+    let pattern = pattern_expr
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))?;
+    if path.is_empty() || pattern.is_empty() {
+        return None;
+    }
+    Some((path.to_string(), pattern.to_string()))
+}
+
 fn domain_from_simple_network_condition(rule: &EffectiveRule) -> Option<String> {
     match rule.callback.as_str() {
-        "dns.request" => extract_condition_eq(&rule.condition, "dns.request.qname"),
+        "dns.request" => extract_condition_eq(&rule.condition, "dns.request.qname")
+            .or_else(|| extract_condition_eq(&rule.condition, "qname")),
         "http.request" | "http.read" | "http.write" | "http.response" => {
             extract_condition_eq(&rule.condition, "http.request.host")
+                .or_else(|| extract_condition_eq(&rule.condition, "request.host"))
         }
         _ => None,
     }
@@ -638,20 +842,33 @@ fn mcp_user_config_from_effective(
         .collect::<HashMap<_, _>>();
 
     let mut tool_permissions = HashMap::new();
+    let mut audit_rules = Vec::new();
     for rule in &effective.rules {
-        if rule.derived || rule.callback != "mcp.request" {
+        if rule.derived || !matches!(rule.callback.as_str(), "mcp.request" | "mcp.response") {
             continue;
         }
-        let Some(tool_name) = mcp_tool_name_from_condition(&rule.condition) else {
-            continue;
-        };
-        let decision = match rule.decision {
-            RuleDecision::Allow => ToolDecision::Allow,
-            RuleDecision::Ask => ToolDecision::Warn,
-            RuleDecision::Block => ToolDecision::Block,
-            RuleDecision::Rewrite => continue,
-        };
-        tool_permissions.entry(tool_name).or_insert(decision);
+        if let Some(tool_name) = mcp_tool_name_from_condition(&rule.condition) {
+            let decision = match rule.decision {
+                RuleDecision::Allow => Some(ToolDecision::Allow),
+                RuleDecision::Ask => Some(ToolDecision::Warn),
+                RuleDecision::Block => Some(ToolDecision::Block),
+                RuleDecision::Rewrite => None,
+            };
+            if let Some(decision) = decision {
+                tool_permissions.entry(tool_name).or_insert(decision);
+            }
+        }
+        audit_rules.push(McpDecisionRule {
+            id: format!("policy.{}", rule.id),
+            action: mcp_decision_rule_action(rule.decision),
+            matches: McpDecisionRuleMatch::Condition {
+                callback: rule.callback.clone(),
+                condition: rule.condition.clone(),
+            },
+            reason: rule.reason.clone(),
+            rewrite_target: rule.rewrite_target.clone(),
+            rewrite_value: rule.rewrite_value.clone(),
+        });
     }
 
     McpUserConfig {
@@ -661,6 +878,15 @@ fn mcp_user_config_from_effective(
         servers,
         server_enabled,
         tool_permissions,
+        audit_rules,
+    }
+}
+
+fn mcp_decision_rule_action(decision: RuleDecision) -> McpDecisionRuleAction {
+    match decision {
+        RuleDecision::Allow | RuleDecision::Ask => McpDecisionRuleAction::Allow,
+        RuleDecision::Block => McpDecisionRuleAction::Deny,
+        RuleDecision::Rewrite => McpDecisionRuleAction::Rewrite,
     }
 }
 

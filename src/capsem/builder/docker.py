@@ -81,6 +81,12 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     npm_packages: list[str] = []
     npm_prefix = "/opt/ai-clis"
     curl_installs: list[str] = []
+    for package_set in config.package_sets.values():
+        if package_set.manager == PackageManager.NPM:
+            npm_packages.extend(package_set.packages)
+        elif package_set.manager == PackageManager.CURL:
+            curl_installs.extend(_curl_install_urls(package_set.packages))
+
     for provider in config.ai_providers.values():
         if provider.enabled and provider.install:
             if provider.install.manager == PackageManager.NPM:
@@ -88,7 +94,10 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
                 if provider.install.prefix:
                     npm_prefix = provider.install.prefix
             elif provider.install.manager == PackageManager.CURL:
-                curl_installs.extend(provider.install.packages)
+                curl_installs.extend(_curl_install_urls(provider.install.packages))
+
+    npm_packages = list(dict.fromkeys(npm_packages))
+    curl_installs = list(dict.fromkeys(curl_installs))
 
     return {
         "arch": arch,
@@ -101,6 +110,17 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "curl_installs": curl_installs,
         "guest_binaries": GUEST_BINARIES,
     }
+
+
+def _curl_install_urls(packages: list[str]) -> list[str]:
+    urls: list[str] = []
+    for spec in packages:
+        if "=" in spec:
+            _, url = spec.split("=", 1)
+            urls.append(url)
+        else:
+            urls.append(spec)
+    return urls
 
 
 def _kernel_context(

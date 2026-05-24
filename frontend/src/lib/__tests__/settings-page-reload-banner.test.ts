@@ -102,6 +102,30 @@ describe('SettingsPage reload failure banner', () => {
     expect(screen.queryByText(/Saved, but the running service did not reload/)).toBeNull();
   });
 
+  it('loads the Profile V2 settings envelope without requiring legacy tree fields', async () => {
+    mockResponse = {
+      mode: 'settings_profiles_v2',
+      profile_presets: [
+        {
+          id: 'everyday-work',
+          name: 'Everyday Work',
+          description: 'Balanced defaults for daily work sessions.',
+          settings: { 'profiles.default_profile': 'everyday-work' },
+        },
+      ],
+      settings_profiles: {
+        selected_profile_id: 'everyday-work',
+      },
+      effective_rules: {},
+    };
+
+    await renderLoadedSettingsPage();
+
+    expect(settingsStore.error).toBeNull();
+    expect(screen.getByRole('button', { name: 'Profiles' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Policy' })).toBeTruthy();
+  });
+
   it('dismisses the banner when every affected session stops', async () => {
     await renderLoadedSettingsPage();
     vmStore.vms = [vm('vm-a', 'Running')];

@@ -190,7 +190,12 @@ class PackageSetConfig(BaseModel):
             raise ValueError("packages must have at least one entry")
         if not self.install_cmd:
             raise ValueError("install_cmd must not be empty")
-        bad = set(self.version_commands) - set(self.packages)
+        package_keys = set(self.packages)
+        if self.manager is PackageManager.CURL:
+            package_keys.update(
+                spec.split("=", 1)[0] for spec in self.packages if "=" in spec
+            )
+        bad = set(self.version_commands) - package_keys
         if bad:
             raise ValueError(
                 f"version_commands keys not in packages: {sorted(bad)}"
@@ -270,7 +275,7 @@ class VmResourcesConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     cpu_count: int = Field(default=4, ge=1, le=8)
-    ram_gb: int = Field(default=4, ge=1, le=16)
+    ram_gb: int = Field(default=8, ge=1, le=16)
     scratch_disk_size_gb: int = Field(default=16, ge=1, le=128)
     log_bodies: bool = False
     max_body_capture: int = Field(default=4096, ge=0, le=1048576)

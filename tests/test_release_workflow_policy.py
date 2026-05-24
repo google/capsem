@@ -430,6 +430,8 @@ def test_check_assets_requires_profile_image_inventory():
 
     assert "vmlinuz initrd.img rootfs.squashfs image-inventory.json" in body
     assert 'missing+=("$arch/$f")' in body
+    assert 'just build-assets "$arch"' in body
+    assert "just build-assets\n" not in body
 
 
 def _just_install_body() -> str:
@@ -446,10 +448,22 @@ def test_local_install_removes_old_runtime_before_installing_package():
     """`just install` must prove the old runtime is gone before reinstalling."""
     body = _just_install_body()
 
+    assert "install: _pnpm-install _stamp-version _check-assets\n" in body
+    assert "install: _pnpm-install _stamp-version _check-assets _pack-initrd" not in body
+    assert 'echo "=== Rebuilding profile-derived VM assets ==="' in body
+    assert 'just build-assets "$HOST_ARCH" "{{default_asset_profile}}"' in body
+    assert 'echo "=== Repacking VM assets ==="' in body
+    assert "\n    just _pack-initrd\n" in body
+    assert 'echo "=== Keeping existing local profile metadata coherent ==="' in body
+    assert "scripts/materialize-install-profiles.py" in body
+    assert 'INSTALL_ASSETS_DIR="$ROOT/.capsem-assets/install"' in body
+    assert 'bash scripts/sync-dev-assets.sh "{{assets_dir}}" "$INSTALL_ASSETS_DIR"' in body
     assert 'echo "=== Clean uninstalling existing local Capsem ==="' in body
     assert 'CAPSEM_SETTINGS_BACKUP="$(mktemp -d' in body
-    for setting in ("service.toml", "profiles"):
-        assert setting in body
+    assert 'preserve_setting "service.toml"' in body
+    assert 'restore_setting "service.toml"' in body
+    assert 'preserve_setting "profiles"' not in body
+    assert 'restore_setting "profiles"' not in body
     assert '"$HOME/.capsem/bin/capsem" uninstall --yes' in body
     assert '"$ROOT/target/release/capsem" uninstall --yes' in body
     assert "assert_clean_uninstall" in body
@@ -460,11 +474,33 @@ def test_local_install_removes_old_runtime_before_installing_package():
     assert '! -name persistent_registry.json' in body
 
     clean_pos = body.index("=== Clean uninstalling existing local Capsem ===")
+    snapshot_pos = body.index("=== Snapshotting package asset payload ===")
     assert_pos = body.index("\n    assert_clean_uninstall", clean_pos)
+    rebuild_pos = body.index("=== Rebuilding profile-derived VM assets ===")
+    repack_pos = body.index("=== Repacking VM assets ===")
+    repair_pos = body.index("=== Keeping existing local profile metadata coherent ===")
     mac_install_pos = body.index('sudo installer -pkg "$PKG" -target /')
     linux_install_pos = body.index('sudo apt install -y "$DEB"')
-    assert clean_pos < assert_pos < mac_install_pos
-    assert clean_pos < assert_pos < linux_install_pos
+    assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < assert_pos < mac_install_pos
+    assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < assert_pos < linux_install_pos
+
+
+def test_local_install_reruns_setup_after_restoring_settings():
+    """`just install` must not undo package postinstall setup with restored state."""
+    body = _just_install_body()
+
+    assert 'preserve_setting "profiles"' not in body
+    assert 'restore_setting "profiles"' not in body
+    assert 'echo "=== Restoring preserved settings ==="' in body
+    assert 'echo "=== Syncing locally built assets into ~/.capsem/assets ==="' in body
+    assert 'echo "=== Finalizing installed setup ==="' in body
+    assert '"$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected' in body
+
+    restore_pos = body.index('echo "=== Restoring preserved settings ==="')
+    sync_pos = body.index('echo "=== Syncing locally built assets into ~/.capsem/assets ==="')
+    setup_pos = body.index('echo "=== Finalizing installed setup ==="')
+    restart_pos = body.index('echo "=== Restarting installed service ==="')
+    assert restore_pos < sync_pos < setup_pos < restart_pos
 
 
 def test_local_install_uses_same_native_install_commands_as_install_sh():
@@ -518,8 +554,10 @@ def test_local_install_verifies_fresh_install_and_guest_network():
     assert "--label just-install" in body
     assert '"$HOME/.capsem/bin/capsem" run' in body
     assert "getent hosts elie.net" in body
+    assert "getent hosts localhost" in body
     assert "getent hosts generativelanguage.googleapis.com" in body
     assert "curl -fsS --connect-timeout 10 https://elie.net" in body
+    assert "agy --version" in body
 
     gateway_pos = body.index("=== Verifying gateway health ===")
     status_pos = body.index("=== Capturing installed status ===")

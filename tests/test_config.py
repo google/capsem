@@ -144,7 +144,7 @@ allow_post = true
 VM_RESOURCES_TOML = """\
 [resources]
 cpu_count = 4
-ram_gb = 4
+ram_gb = 8
 scratch_disk_size_gb = 16
 log_bodies = false
 max_body_capture = 4096
@@ -271,6 +271,7 @@ class TestLoadGuestConfigMinimal:
         assert cfg.mcp_servers == {}
         assert cfg.web_security.allow_read is False
         assert cfg.vm_resources.cpu_count == 4
+        assert cfg.vm_resources.ram_gb == 8
         assert cfg.vm_environment.shell.term == "xterm-256color"
 
 
@@ -335,7 +336,7 @@ class TestLoadGuestConfigFull:
         cfg = load_guest_config(guest_full)
         r = cfg.vm_resources
         assert r.cpu_count == 4
-        assert r.ram_gb == 4
+        assert r.ram_gb == 8
         assert r.scratch_disk_size_gb == 16
 
     def test_vm_environment_loaded(self, guest_full):
@@ -709,7 +710,8 @@ class TestGeneratedSettingsAuthorityQuarantine:
             "frontend/src/lib/types/settings.ts",
             "frontend/src/lib/mock-settings.ts",
             "frontend/src/lib/mock-settings.generated.ts",
-            "crates/capsem-core/src/net/mitm_proxy/policy_v2_http_hook.rs",
+            "crates/capsem-core/src/net/mitm_proxy/interpreter_hook.rs",
+            "crates/capsem-core/src/net/mitm_proxy/pipeline_factory.rs",
             "crates/capsem-core/src/net/mitm_proxy/telemetry_hook.rs",
         ]
         combined = "\n".join(_read_project_file(path) for path in checked_files)

@@ -27,6 +27,8 @@ use crate::schema;
 /// enforces this defensively to prevent unbounded storage.
 const MAX_FIELD_BYTES: usize = 256 * 1024;
 
+type ModelToolCallMatch = (Option<i64>, Option<String>, Option<String>, LinkStatus);
+
 /// Truncate an optional string field to MAX_FIELD_BYTES.
 fn cap_field(s: &Option<String>) -> Option<String> {
     s.as_ref().map(|v| {
@@ -494,6 +496,7 @@ impl VmMetricsAccumulator {
     fn update_for_write_op(&self, op: &WriteOp) -> Option<VmMetricsUpdate> {
         match op {
             WriteOp::ResolvedSecurityEvent(event) => VmMetricsUpdate::from_resolved_event(event),
+            WriteOp::ModelCall(call) => VmMetricsUpdate::from_model_call(call),
             _ => None,
         }
     }
@@ -952,6 +955,43 @@ impl VmMetricsUpdate {
         }
         Some(update)
     }
+
+    fn from_model_call(call: &ModelCall) -> Option<Self> {
+        let attribution_scope = call
+            .ai_evidence
+            .as_ref()
+            .map(|evidence| evidence.attribution_scope)
+            .unwrap_or(AiAttributionScope::Vm);
+        if attribution_scope != AiAttributionScope::Vm {
+            return None;
+        }
+
+        let mut model = VmModelMetrics {
+            model_requests_total: 1,
+            model_input_tokens_total: call.input_tokens.unwrap_or_default(),
+            model_output_tokens_total: call.output_tokens.unwrap_or_default(),
+            model_estimated_cost_micros_total: model_call_cost_micros(call.estimated_cost_usd),
+            ..VmModelMetrics::default()
+        };
+        if call.status_code.is_some_and(|status| status >= 400) {
+            model.model_requests_errored_total = 1;
+        } else {
+            model.model_requests_allowed_total = 1;
+        }
+
+        Some(Self {
+            model: Some(model),
+            ..Self::default()
+        })
+    }
+}
+
+fn model_call_cost_micros(estimated_cost_usd: f64) -> u64 {
+    if estimated_cost_usd.is_finite() && estimated_cost_usd > 0.0 {
+        (estimated_cost_usd * 1_000_000.0).round() as u64
+    } else {
+        0
+    }
 }
 
 #[derive(Default)]
@@ -998,6 +1038,7 @@ impl From<&ResolvedSecurityEvent> for VmSecurityMetricsUpdate {
     }
 }
 
+#[derive(Default)]
 enum VmSecurityActionMetric {
     Block {
         event_id: String,
@@ -1009,6 +1050,7 @@ enum VmSecurityActionMetric {
     Rewrite,
     Throttle,
     Error,
+    #[default]
     Other,
 }
 
@@ -1018,12 +1060,6 @@ struct VmDetectionMetric {
     title: String,
     severity: String,
     timestamp_unix_ms: u64,
-}
-
-impl Default for VmSecurityActionMetric {
-    fn default() -> Self {
-        Self::Other
-    }
 }
 
 fn record_http_decision(http: &mut VmHttpMetrics, action: &SecurityAction) {
@@ -2101,7 +2137,7 @@ fn find_matching_model_tool_call(
     conn: &Connection,
     trace_id: Option<&str>,
     normalized_tool_name: &str,
-) -> rusqlite::Result<(Option<i64>, Option<String>, Option<String>, LinkStatus)> {
+) -> rusqlite::Result<ModelToolCallMatch> {
     let Some(trace_id) = trace_id else {
         return Ok((None, None, None, LinkStatus::UnlinkedPending));
     };

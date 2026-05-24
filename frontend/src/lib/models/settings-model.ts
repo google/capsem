@@ -33,6 +33,30 @@ function normalizePolicyConfig(policy: PolicyConfig | undefined): PolicyConfig {
   };
 }
 
+function normalizeSecurityPresets(response: SettingsResponse): SecurityPreset[] {
+  if (Array.isArray(response.presets)) {
+    return response.presets;
+  }
+  if (!Array.isArray(response.profile_presets)) {
+    return [];
+  }
+  return response.profile_presets.map((preset) => ({
+    id: preset.id,
+    name: preset.name,
+    description: preset.description,
+    settings: preset.settings ?? {},
+    mcp: null,
+  }));
+}
+
+function normalizeSettingsTree(response: SettingsResponse): SettingsNode[] {
+  return Array.isArray(response.tree) ? response.tree : [];
+}
+
+function normalizeSettingsIssues(response: SettingsResponse): ConfigIssue[] {
+  return Array.isArray(response.issues) ? response.issues : [];
+}
+
 export const POLICY_RULE_TYPES = ['mcp', 'http', 'dns', 'model', 'hook'] as const;
 export type PolicyRuleType = (typeof POLICY_RULE_TYPES)[number];
 export const EDITABLE_POLICY_RULE_TYPES = ['mcp', 'http', 'dns', 'model'] as const;
@@ -448,15 +472,17 @@ export class SettingsModel {
   private _issues: ConfigIssue[];
   private _presets: SecurityPreset[];
   private _policy: PolicyConfig;
+  private _selectedProfileId: string | null;
   private _leafIndex: Map<string, SettingsLeaf>;
   private _mcpIndex: Map<string, McpServerNode>;
   private _pendingChanges: Map<string, SettingsChangeValue>;
 
   constructor(response: SettingsResponse) {
-    this._tree = response.tree;
-    this._issues = response.issues;
-    this._presets = response.presets;
-    this._policy = normalizePolicyConfig(response.policy);
+    this._tree = normalizeSettingsTree(response);
+    this._issues = normalizeSettingsIssues(response);
+    this._presets = normalizeSecurityPresets(response);
+    this._policy = normalizePolicyConfig(response.policy ?? response.effective_rules);
+    this._selectedProfileId = response.settings_profiles?.selected_profile_id ?? null;
     this._leafIndex = new Map();
     this._mcpIndex = new Map();
     this._pendingChanges = new Map();
@@ -745,6 +771,13 @@ export class SettingsModel {
   }
 
   get activePresetId(): string | null {
+    if (this._selectedProfileId) {
+      for (const preset of this._presets) {
+        if (preset.settings['profiles.default_profile'] === this._selectedProfileId) {
+          return preset.id;
+        }
+      }
+    }
     for (const preset of this._presets) {
       const allMatch = Object.entries(preset.settings).every(([id, val]) => {
         const leaf = this._leafIndex.get(id);

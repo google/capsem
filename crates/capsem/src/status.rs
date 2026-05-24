@@ -1268,56 +1268,129 @@ async fn print_text_status(
         print_security_engine_status(security_engine);
     }
     print_defunct_sessions(service.running).await;
+    if let Some(asset_health) = asset_health {
+        print_profile_asset_status(asset_health);
+    }
 }
 
 fn print_service_asset_status(asset_health: &client::AssetHealth) {
-    let version = asset_health.version.as_deref().unwrap_or("unknown");
+    for line in service_asset_status_lines(asset_health) {
+        println!("{line}");
+    }
+}
+
+fn print_profile_asset_status(asset_health: &client::AssetHealth) {
+    for line in profile_asset_status_lines(asset_health) {
+        println!("{line}");
+    }
+}
+
+fn service_asset_status_lines(asset_health: &client::AssetHealth) -> Vec<String> {
     let arch = asset_health.arch.as_deref().unwrap_or("unknown");
-    println!("Assets:    {} (v{}, {})", asset_health.state, version, arch);
-    if let Some(profile_id) = &asset_health.profile_id {
-        match asset_health.profile_revision.as_deref() {
-            Some(revision) => println!("  profile: {} ({})", profile_id, revision),
-            None => println!("  profile: {}", profile_id),
-        }
-    }
-    if let Some(hash) = &asset_health.profile_payload_hash {
-        println!("  profile_payload_hash: {}", hash);
-    }
-    for asset in &asset_health.profile_assets {
-        println!(
-            "  asset: {} hash={} source={} size={} content_type={}",
-            asset.logical_name, asset.hash, asset.source_url, asset.size, asset.content_type
-        );
+    let mut lines = Vec::new();
+    if asset_health.profile_assets.is_empty() {
+        lines.push(format!("Assets:    {} ({arch})", asset_health.state));
+    } else {
+        let total_bytes = asset_health
+            .profile_assets
+            .iter()
+            .map(|asset| asset.size)
+            .sum::<u64>();
+        lines.push(format!(
+            "Assets:    {} ({}; {} assets; {})",
+            asset_health.state,
+            arch,
+            asset_health.profile_assets.len(),
+            format_bytes(total_bytes)
+        ));
     }
     if !asset_health.missing.is_empty() {
-        println!("  missing: {}", asset_health.missing.join(", "));
+        lines.push(format!("  missing: {}", asset_health.missing.join(", ")));
     }
     if let Some(progress) = &asset_health.progress {
         match progress.bytes_total {
-            Some(total) => println!(
-                "  updating: {} {}/{} bytes",
-                progress.logical_name, progress.bytes_done, total
-            ),
-            None => println!(
-                "  updating: {} {} bytes",
-                progress.logical_name, progress.bytes_done
-            ),
+            Some(total) => lines.push(format!(
+                "  updating: {} {}/{}",
+                progress.logical_name,
+                format_bytes(progress.bytes_done),
+                format_bytes(total)
+            )),
+            None => lines.push(format!(
+                "  updating: {} {}",
+                progress.logical_name,
+                format_bytes(progress.bytes_done)
+            )),
         }
     }
     if let Some(error) = &asset_health.error {
-        println!("  error: {}", error);
-    }
-    if let Some(checked_at) = asset_health.checked_at_unix_secs {
-        println!("  checked_at_unix_secs: {}", checked_at);
+        lines.push(format!("  error: {}", error));
     }
     for dependency in &asset_health.saved_vm_dependencies {
-        println!(
-            "  saved VM missing: {} needs {} ({}, {})",
+        lines.push(format!(
+            "  saved VM missing: {} needs {} ({}, {}): {}",
             dependency.vm,
             dependency.missing.join(", "),
             dependency.asset_version,
-            dependency.arch
-        );
+            dependency.arch,
+            dependency.recovery_hint
+        ));
+    }
+    lines
+}
+
+fn profile_asset_status_lines(asset_health: &client::AssetHealth) -> Vec<String> {
+    let has_profile = asset_health.profile_id.is_some()
+        || asset_health.profile_revision.is_some()
+        || asset_health.profile_payload_hash.is_some()
+        || !asset_health.profile_assets.is_empty()
+        || asset_health.arch.is_some()
+        || asset_health.checked_at_unix_secs.is_some();
+    if !has_profile {
+        return Vec::new();
+    }
+
+    let profile_id = asset_health.profile_id.as_deref().unwrap_or("unknown");
+    let mut lines = vec![format!("Profile:   {profile_id}")];
+    let revision = asset_health.profile_revision.as_deref().or_else(|| {
+        asset_health
+            .version
+            .as_deref()
+            .filter(|version| *version != profile_id)
+    });
+    if let Some(revision) = revision {
+        lines.push(format!("  revision: {revision}"));
+    }
+    if let Some(arch) = &asset_health.arch {
+        lines.push(format!("  arch: {arch}"));
+    }
+    if !asset_health.profile_assets.is_empty() {
+        let names = asset_health
+            .profile_assets
+            .iter()
+            .map(|asset| asset.logical_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("  assets: {names}"));
+    }
+    if let Some(hash) = &asset_health.profile_payload_hash {
+        lines.push(format!("  payload_hash: {hash}"));
+    }
+    if let Some(checked_at) = asset_health.checked_at_unix_secs {
+        lines.push(format!("  checked: unix {checked_at}"));
+    }
+    lines
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * KIB;
+    const GIB: f64 = 1024.0 * MIB;
+
+    match bytes {
+        0..=1023 => format!("{bytes} B"),
+        _ if bytes < 1024 * 1024 => format!("{:.1} KiB", bytes as f64 / KIB),
+        _ if bytes < 1024 * 1024 * 1024 => format!("{:.1} MiB", bytes as f64 / MIB),
+        _ => format!("{:.1} GiB", bytes as f64 / GIB),
     }
 }
 

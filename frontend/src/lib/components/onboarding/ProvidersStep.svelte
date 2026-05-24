@@ -2,26 +2,62 @@
   import { onMount } from 'svelte';
   import * as api from '../../api';
   import type { SettingsNode, SettingsLeaf } from '../../types/settings';
+  import type { DetectedConfigSummary } from '../../types/onboarding';
 
   let loading = $state(true);
   let validating = $state<string | null>(null);
   let validationResults = $state<Record<string, { valid: boolean; message: string }>>({});
   let keyInputs = $state<Record<string, string>>({});
 
-  type ProviderInfo = {
+  type ProviderDef = {
     id: string;       // validate_api_key provider name
     name: string;     // display name
     settingId: string; // setting leaf ID
+    credentialId: string; // Profile V2 service credential ID
+    detectedKey: keyof Pick<
+      DetectedConfigSummary,
+      | 'anthropic_api_key_present'
+      | 'openai_api_key_present'
+      | 'google_api_key_present'
+      | 'github_token_present'
+    >;
+  };
+
+  type ProviderInfo = ProviderDef & {
     configured: boolean;
     corpLocked: boolean;
     docsUrl: string | null; // where to get a key
   };
 
-  const providerDefs = [
-    { id: 'anthropic', name: 'Anthropic', settingId: 'ai.anthropic.api_key' },
-    { id: 'openai', name: 'OpenAI', settingId: 'ai.openai.api_key' },
-    { id: 'google', name: 'Google AI', settingId: 'ai.google.api_key' },
-    { id: 'github', name: 'GitHub', settingId: 'repository.providers.github.token' },
+  const providerDefs: ProviderDef[] = [
+    {
+      id: 'anthropic',
+      name: 'Anthropic',
+      settingId: 'ai.anthropic.api_key',
+      credentialId: 'anthropic-api-key',
+      detectedKey: 'anthropic_api_key_present',
+    },
+    {
+      id: 'openai',
+      name: 'OpenAI',
+      settingId: 'ai.openai.api_key',
+      credentialId: 'openai-api-key',
+      detectedKey: 'openai_api_key_present',
+    },
+    {
+      id: 'google',
+      name: 'Google AI',
+      settingId: 'ai.google.api_key',
+      credentialId: 'google-api-key',
+      detectedKey: 'google_api_key_present',
+    },
+    {
+      id: 'github',
+      name: 'GitHub',
+      settingId: 'repository.providers.github.token',
+      credentialId: 'github-token',
+      detectedKey: 'github_token_present',
+    },
   ];
 
   function fallbackProviders(): ProviderInfo[] {
@@ -58,6 +94,15 @@
     return false;
   }
 
+  function credentialIdsFromSettings(settings: Awaited<ReturnType<typeof api.getSettings>>): Set<string> {
+    const ids = settings.settings_profiles?.service?.credential_ids;
+    return new Set(Array.isArray(ids) ? ids : []);
+  }
+
+  function detectedProviderPresent(summary: DetectedConfigSummary | null, p: (typeof providerDefs)[number]): boolean {
+    return Boolean(summary?.[p.detectedKey]);
+  }
+
   function ensureKeyInputs() {
     for (const p of providers) {
       if (!p.configured && !p.corpLocked && keyInputs[p.id] === undefined) {
@@ -67,15 +112,22 @@
   }
 
   onMount(async () => {
+    let detected: DetectedConfigSummary | null = null;
+    try {
+      detected = await api.runDetection();
+    } catch { /* */ }
+
     try {
       const settings = await api.getSettings();
       const tree = Array.isArray(settings.tree) ? settings.tree : [];
+      const credentialIds = credentialIdsFromSettings(settings);
 
       providers = providerDefs.map(p => {
         const leaf = findLeaf(tree, p.settingId);
         return {
           ...p,
-          configured: isPopulated(leaf),
+          configured:
+            credentialIds.has(p.credentialId) || isPopulated(leaf) || detectedProviderPresent(detected, p),
           corpLocked: leaf?.corp_locked ?? false,
           docsUrl: leaf?.metadata?.docs_url ?? null,
         };
@@ -86,23 +138,31 @@
       const emailLeaf = findLeaf(tree, 'repository.git.identity.author_email');
       gitName = (nameLeaf?.effective_value as string) || null;
       gitEmail = (emailLeaf?.effective_value as string) || null;
+      gitName = gitName || detected?.git_name || null;
+      gitEmail = gitEmail || detected?.git_email || null;
 
       // SSH
       const sshLeaf = findLeaf(tree, 'vm.environment.ssh.public_key');
-      sshConfigured = isPopulated(sshLeaf);
+      sshConfigured = isPopulated(sshLeaf) || Boolean(detected?.ssh_public_key_present);
 
       // Claude OAuth
       const oauthLeaf = findLeaf(tree, 'ai.anthropic.claude.credentials_json');
-      oauthConfigured = isPopulated(oauthLeaf);
+      oauthConfigured = isPopulated(oauthLeaf) || Boolean(detected?.claude_oauth_present);
     } catch {
-      providers = fallbackProviders();
+      providers = providerDefs.map(p => ({
+        ...p,
+        configured: detectedProviderPresent(detected, p),
+        corpLocked: false,
+        docsUrl: null,
+      }));
+      gitName = detected?.git_name ?? null;
+      gitEmail = detected?.git_email ?? null;
+      sshConfigured = Boolean(detected?.ssh_public_key_present);
+      oauthConfigured = Boolean(detected?.claude_oauth_present);
     } finally {
       ensureKeyInputs();
       loading = false;
     }
-
-    // Also trigger background detection to populate any missing settings
-    try { await api.runDetection(); } catch { /* */ }
   });
 
   async function validateAndSave(p: ProviderInfo) {
@@ -115,7 +175,7 @@
       validationResults[p.id] = result;
 
       if (result.valid) {
-        await api.saveSettings({ [p.settingId]: key });
+        await api.saveCredential(p.credentialId, key, `${p.name} API key`);
         // Mark as configured
         const idx = providers.findIndex(x => x.id === p.id);
         if (idx >= 0) providers[idx].configured = true;

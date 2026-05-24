@@ -318,11 +318,7 @@ fn runtime_cel_path(event_family: EventFamily, field_path: &str) -> Result<Strin
         return Err(unsupported_field_path(field_path));
     }
 
-    let canonical_suffix = match (event_family, scope, suffix) {
-        _ => suffix,
-    };
-
-    Ok(format!("{root}.{scope}.{canonical_suffix}"))
+    Ok(format!("{root}.{scope}.{suffix}"))
 }
 
 fn event_family_policy_root(event_family: EventFamily) -> Result<&'static str> {
@@ -364,33 +360,65 @@ fn event_family_cel_guard(event_family: EventFamily) -> Result<String> {
 }
 
 fn is_supported_runtime_field(event_family: EventFamily, scope: &str, suffix: &str) -> bool {
-    match (event_family, scope, suffix) {
-        (EventFamily::Dns, "request", "qname" | "domain_class") => true,
-        (
-            EventFamily::Http,
-            "request",
-            "method" | "scheme" | "host" | "port" | "path" | "query" | "url" | "path_class"
-            | "bytes" | "body.text",
-        ) => true,
-        (EventFamily::Http, "response", "status" | "bytes" | "body.text") => true,
-        (EventFamily::Mcp, "request", "server_id" | "tool_name") => true,
-        (
-            EventFamily::Model,
-            "request",
-            "provider"
-            | "model"
-            | "estimated_input_tokens"
-            | "estimated_output_tokens"
-            | "estimated_cost_micros",
-        ) => true,
-        (EventFamily::File, "activity", "operation" | "path" | "path_class" | "byte_count") => true,
-        (EventFamily::Process, "activity", "operation" | "command_class") => true,
-        (EventFamily::Credential, "activity", "operation" | "credential_id") => true,
-        (EventFamily::Vm, "activity", "operation") => true,
-        (EventFamily::Profile, "activity", "operation" | "profile_id" | "profile_revision") => true,
-        (EventFamily::Conversation, "activity", "operation" | "conversation_id") => true,
-        _ => false,
-    }
+    matches!(
+        (event_family, scope, suffix),
+        (EventFamily::Dns, "request", "qname" | "domain_class")
+            | (
+                EventFamily::Http,
+                "request",
+                "method"
+                    | "scheme"
+                    | "host"
+                    | "port"
+                    | "path"
+                    | "query"
+                    | "url"
+                    | "path_class"
+                    | "bytes"
+                    | "body.text",
+            )
+            | (
+                EventFamily::Http,
+                "response",
+                "status" | "bytes" | "body.text"
+            )
+            | (EventFamily::Mcp, "request", "server_id" | "tool_name")
+            | (
+                EventFamily::Model,
+                "request",
+                "provider"
+                    | "model"
+                    | "estimated_input_tokens"
+                    | "estimated_output_tokens"
+                    | "estimated_cost_micros",
+            )
+            | (
+                EventFamily::File,
+                "activity",
+                "operation" | "path" | "path_class" | "byte_count",
+            )
+            | (
+                EventFamily::Process,
+                "activity",
+                "operation" | "command_class"
+            )
+            | (
+                EventFamily::Credential,
+                "activity",
+                "operation" | "credential_id"
+            )
+            | (EventFamily::Vm, "activity", "operation")
+            | (
+                EventFamily::Profile,
+                "activity",
+                "operation" | "profile_id" | "profile_revision",
+            )
+            | (
+                EventFamily::Conversation,
+                "activity",
+                "operation" | "conversation_id",
+            )
+    )
 }
 
 fn unsupported_field_path(field_path: &str) -> SecurityPackSchemaError {
@@ -606,7 +634,7 @@ fn event_field_value<'a>(event_value: &'a Value, field_path: &str) -> Option<&'a
 
 fn canonical_event_field_value<'a>(event_value: &'a Value, field_path: &str) -> Option<&'a Value> {
     let event_family = event_value.get("event_family")?.as_str()?;
-    let Some((scope, suffix)) = field_path
+    let (scope, suffix) = field_path
         .strip_prefix(&format!("{event_family}.request."))
         .map(|suffix| ("request", suffix))
         .or_else(|| {
@@ -618,10 +646,7 @@ fn canonical_event_field_value<'a>(event_value: &'a Value, field_path: &str) -> 
             field_path
                 .strip_prefix(&format!("{event_family}.activity."))
                 .map(|suffix| ("activity", suffix))
-        })
-    else {
-        return None;
-    };
+        })?;
     let mut current = event_value.get("subject")?.get(scope)?;
     for part in suffix.split('.') {
         current = current.get(part)?;

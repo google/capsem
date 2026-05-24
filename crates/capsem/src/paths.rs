@@ -30,7 +30,9 @@ pub struct CapsemPaths {
 /// Binaries: current_exe() parent -> sibling capsem-service, capsem-process.
 /// Assets: `<capsem_home>/assets/` via [`capsem_core::paths::capsem_assets_dir`].
 pub fn discover_paths() -> Result<CapsemPaths> {
-    let exe_path = std::env::current_exe().context("cannot determine executable path")?;
+    let exe_path = invoked_executable_path()
+        .or_else(|| std::env::current_exe().ok())
+        .context("cannot determine executable path")?;
     let bin_dir = exe_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("executable path has no parent: {}", exe_path.display()))?;
@@ -46,6 +48,27 @@ pub fn discover_paths() -> Result<CapsemPaths> {
         tray_bin: bin_dir.join("capsem-tray"),
         assets_dir: capsem_core::paths::capsem_assets_dir(),
     })
+}
+
+fn invoked_executable_path() -> Option<PathBuf> {
+    let argv0 = std::env::args_os().next()?;
+    invoked_executable_path_from_argv0(PathBuf::from(argv0), std::env::current_dir().ok()?)
+}
+
+fn invoked_executable_path_from_argv0(path: PathBuf, cwd: PathBuf) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return Some(path);
+    }
+    if path
+        .parent()
+        .is_some_and(|parent| parent.as_os_str().is_empty())
+    {
+        return None;
+    }
+    if path.parent().is_some() {
+        return Some(cwd.join(path));
+    }
+    None
 }
 
 /// Build the assets dir path from HOME. Test-only: production paths go through
@@ -65,10 +88,9 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
             .map(|p| p.exists())
             .unwrap_or(false)
         {
-            let status = tokio::process::Command::new("systemctl")
-                .args(["--user", "start", "capsem"])
-                .status()
-                .await?;
+            let mut command = tokio::process::Command::new("systemctl");
+            command.args(["--user", "start", "--no-block", "capsem"]);
+            let status = command_status_quiet(command).await?;
             if status.success() {
                 return Ok(true);
             }
@@ -82,10 +104,9 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
             .unwrap_or(false)
         {
             let uid = nix::unistd::getuid();
-            let status = tokio::process::Command::new("launchctl")
-                .args(["kickstart", &format!("gui/{}/com.capsem.service", uid)])
-                .status()
-                .await?;
+            let mut command = tokio::process::Command::new("launchctl");
+            command.args(["kickstart", &format!("gui/{}/com.capsem.service", uid)]);
+            let status = command_status_quiet(command).await?;
             if status.success() {
                 return Ok(true);
             }
@@ -93,6 +114,18 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
     }
 
     Ok(false)
+}
+
+async fn command_status_quiet(
+    mut command: tokio::process::Command,
+) -> std::io::Result<std::process::ExitStatus> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
 }
 
 #[cfg(test)]
@@ -118,6 +151,36 @@ mod tests {
         assert_eq!(
             assets_dir_from_home("/Users/elie"),
             PathBuf::from("/Users/elie/.capsem/assets")
+        );
+    }
+
+    #[test]
+    fn invoked_path_preserves_absolute_symlink_entrypoint() {
+        assert_eq!(
+            invoked_executable_path_from_argv0(
+                PathBuf::from("/home/user/.capsem/bin/capsem"),
+                PathBuf::from("/work")
+            ),
+            Some(PathBuf::from("/home/user/.capsem/bin/capsem"))
+        );
+    }
+
+    #[test]
+    fn invoked_path_resolves_relative_entrypoint_with_slash() {
+        assert_eq!(
+            invoked_executable_path_from_argv0(
+                PathBuf::from("target/debug/capsem"),
+                PathBuf::from("/work")
+            ),
+            Some(PathBuf::from("/work/target/debug/capsem"))
+        );
+    }
+
+    #[test]
+    fn invoked_path_ignores_path_lookup_entrypoint() {
+        assert_eq!(
+            invoked_executable_path_from_argv0(PathBuf::from("capsem"), PathBuf::from("/work")),
+            None
         );
     }
 

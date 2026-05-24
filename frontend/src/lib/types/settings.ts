@@ -178,10 +178,28 @@ export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpSe
 
 /** Unified response from load_settings / save_settings. */
 export interface SettingsResponse {
-  tree: SettingsNode[];
-  issues: ConfigIssue[];
-  presets: SecurityPreset[];
+  tree?: SettingsNode[];
+  issues?: ConfigIssue[];
+  presets?: SecurityPreset[];
+  profile_presets?: ProfilePreset[];
+  effective_rules?: PolicyConfig;
   policy?: PolicyConfig;
+  mode?: 'settings_profiles_v2' | string;
+  settings_profiles?: {
+    selected_profile_id?: string;
+    service?: {
+      credential_ids?: string[];
+    };
+    [key: string]: unknown;
+  };
+}
+
+/** Profile V2 preset entry returned by /settings. */
+export interface ProfilePreset {
+  id: string;
+  name: string;
+  description: string;
+  settings: Record<string, SettingValue>;
 }
 
 /** A security preset definition. */

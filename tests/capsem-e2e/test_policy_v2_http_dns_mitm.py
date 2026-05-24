@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, select_editable_profile, wait_exec_ready
 
 pytestmark = pytest.mark.e2e
 
@@ -25,6 +25,7 @@ def _guest_python(script: str) -> str:
 def _start_service() -> ServiceInstance:
     svc = ServiceInstance()
     svc.start()
+    select_editable_profile(svc.client(), prefix="policy-v2")
     return svc
 
 
@@ -273,7 +274,7 @@ print(json.dumps({
         assert block_row["query"] == "token=secret"
         assert block_row["decision"] == "denied"
         assert block_row["status_code"] == 403
-        assert block_row["policy_mode"] == "enforce"
+        assert block_row["policy_mode"] == "runtime"
         assert block_row["policy_action"] == "block"
         assert block_row["policy_reason"] == "E2E HTTP path/query/header block"
         assert block_row["bytes_sent"] == 0
@@ -297,7 +298,7 @@ print(json.dumps({
         assert strip_row["path"] == "/"
         assert strip_row["query"] == "visible=yes"
         assert strip_row["decision"] == "allowed"
-        assert strip_row["policy_mode"] == "enforce"
+        assert strip_row["policy_mode"] == "runtime"
         assert strip_row["policy_action"] == "rewrite"
         assert strip_row["policy_reason"] == "E2E HTTP request header strip"
         assert "authorization" not in (strip_row["request_headers"] or "").lower()
@@ -320,7 +321,7 @@ print(json.dumps({
         assert response_strip_row["method"] == "GET"
         assert response_strip_row["path"] == "/response-strip-e2e"
         assert response_strip_row["decision"] == "allowed"
-        assert response_strip_row["policy_mode"] == "enforce"
+        assert response_strip_row["policy_mode"] == "runtime"
         assert response_strip_row["policy_action"] == "rewrite"
         assert (
             response_strip_row["policy_reason"]
@@ -412,7 +413,7 @@ print(json.dumps({{
         assert block_row["matched_rule"] == "policy.dns.block_e2e_dns"
         assert block_row["source_proto"] == "udp"
         assert block_row["upstream_resolver_ms"] == 0
-        assert block_row["policy_mode"] == "enforce"
+        assert block_row["policy_mode"] == "runtime"
         assert block_row["policy_action"] == "block"
         assert block_row["policy_reason"] == "E2E DNS block"
 
@@ -435,7 +436,7 @@ print(json.dumps({{
         assert rewrite_row["matched_rule"] == "policy.dns.rewrite_e2e_dns"
         assert rewrite_row["source_proto"] == "udp"
         assert rewrite_row["upstream_resolver_ms"] == 0
-        assert rewrite_row["policy_mode"] == "enforce"
+        assert rewrite_row["policy_mode"] == "runtime"
         assert rewrite_row["policy_action"] == "rewrite"
         assert rewrite_row["policy_reason"] == "E2E DNS rewrite"
     finally:

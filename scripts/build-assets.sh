@@ -71,6 +71,21 @@ if [[ ! -f "$PROFILE" ]]; then
     exit 1
 fi
 
+ensure_assets_dir() {
+    if [[ -L "$ASSETS_DIR" ]]; then
+        local target
+        target="$(readlink "$ASSETS_DIR")"
+        if [[ "$target" != /* ]]; then
+            target="$(cd "$(dirname "$ASSETS_DIR")" && pwd)/$target"
+        fi
+        mkdir -p "$target"
+    else
+        mkdir -p "$ASSETS_DIR"
+    fi
+}
+
+ensure_assets_dir
+
 if [[ -n "$ARCH" ]]; then
     ARCH="$(normalize_arch "$ARCH")"
     arches=("$ARCH")
