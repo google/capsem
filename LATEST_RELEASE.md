@@ -1,7 +1,7 @@
-version: 1.2.1779662531
+version: 1.2.1779665141
 ---
 ### Fixed
-- Fixed package setup for manifest-only installs so packaged Profile V2
-  sidecars install before local heavy VM asset fallback, allowing `.deb`
-  postinstall to complete from signed packaged profiles without bundled
-  kernel/initrd/rootfs files.
+- Fixed the Linux install test harness clean-state path to stop the systemd
+  user unit before killing scoped Capsem processes, preventing `Restart=always`
+  from racing tests that intentionally replace `capsem-service` with a broken
+  binary.

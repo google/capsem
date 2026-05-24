@@ -72,3 +72,14 @@ def test_custom_bin_src_skips_auto_build(tmp_path, monkeypatch):
     monkeypatch.delenv("CAPSEM_INSTALL_SKIP_BUILD", raising=False)
 
     assert not _should_build_default_bin_src(tmp_path / "prebuilt")
+
+
+def test_clean_state_stops_systemd_unit_before_process_kill():
+    """The deb harness unit uses Restart=always, so process kill alone races."""
+    text = (PROJECT_ROOT / "tests" / "capsem-install" / "conftest.py").read_text()
+
+    assert 'os.environ.get("CAPSEM_DEB_INSTALLED") == "1"' in text
+    assert '["systemctl", "--user", "stop", "capsem"]' in text
+    assert text.index('["systemctl", "--user", "stop", "capsem"]') < text.index(
+        '["pkill", "-f", f"{install_prefix}{proc_name}"]'
+    )

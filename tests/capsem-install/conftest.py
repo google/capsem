@@ -171,6 +171,16 @@ def _kill_service() -> None:
     # installed prefix. We build the pattern from INSTALL_DIR so HOME expansion
     # is consistent and we never match target/debug binaries.
     install_prefix = str(INSTALL_DIR) + "/"
+    if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and shutil.which("systemctl"):
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "stop", "capsem"],
+                capture_output=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+
     for proc_name in ["capsem-service", "capsem-gateway", "capsem-tray", "capsem-process"]:
         subprocess.run(
             ["pkill", "-f", f"{install_prefix}{proc_name}"],

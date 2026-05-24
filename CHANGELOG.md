@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1779665141] - 2026-05-24
+
+### Fixed
+- Fixed the Linux install test harness clean-state path to stop the systemd
+  user unit before killing scoped Capsem processes, preventing `Restart=always`
+  from racing tests that intentionally replace `capsem-service` with a broken
+  binary.
+
 ## [1.2.1779662531] - 2026-05-24
 
 ### Fixed
