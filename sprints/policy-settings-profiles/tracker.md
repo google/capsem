@@ -2796,6 +2796,19 @@ a valid claim -- mark it `[ ]` instead.
     `capsem.enforcement-pack-validation.v1` and
     `capsem.detection-pack-validation.v1` envelopes, and moved the public Rule
     Authoring docs route from `/security/policy/` to `/security/rules/`.
+    Latest S18 usability replay after the final S09/S11 CLI truth-surface
+    slices passed `cargo test -p capsem` (**282** tests), `cargo build -p
+    capsem`, `pnpm --dir frontend run check`, `pnpm --dir frontend run build`,
+    `pnpm --dir docs run build`, `cargo build -p capsem-process -p
+    capsem-service -p capsem`, and the real-VM smoke
+    `uv run python -m pytest
+    tests/capsem-e2e/test_e2e_lifecycle.py::TestStartExecDelete::test_start_exec_delete
+    tests/capsem-e2e/test_e2e_lifecycle.py::TestDoctor::test_doctor_passes
+    -q` (**2** passed in 45.09s). This proves the current branch can build the
+    operator CLI/frontend/docs, boot a VM, execute, delete, and pass doctor
+    with rebuilt binaries. Remaining before release: run the broader
+    `just smoke`/release packaging gate or explicitly accept the narrower S18
+    replay matrix as the cut gate.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

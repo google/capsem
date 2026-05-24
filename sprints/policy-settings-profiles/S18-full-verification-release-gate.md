@@ -241,3 +241,24 @@ the shipped bedrock, not the historical implementation.
   - The remaining doctor failure was real: `POST https://example.com` reached upstream and returned `405` even with `CAPSEM_WEB_ALLOW_WRITE=0`. Root cause was that Profile V2 derived `http.read` and `http.write` rules existed in VM-effective settings but `capsem-process` only compiled `http.request` callbacks into the runtime Security Engine.
   - The long-term fix compiles `http.read` and `http.write` into guarded CEL over `common.event_type == 'http.request'`, splits read methods from write methods, preserves profile rule priority before catch-all defaults, and places service runtime overlays before profile defaults so live operator blocks win. Release-scope clarification: S15 owns real ask/confirm UX, so shipped Profile V2 `ask` decisions resolve as allow/pass until the confirm resolver lands.
   - Follow-up environment replay: Colima had been half-running (context selected, VM listed as running, Docker socket dead, SSH reset by peer). A clean `colima stop && colima start` restored Docker, and `just _pack-initrd` then passed normally: Linux guest binaries cross-compiled in Docker, the initrd was repacked, hash-named assets were refreshed, and the dev manifest signature verified. The earlier Docker/Colima caveat is cleared for this workstation state.
+- 2026-05-24: Continued S18 after the final S09/S11 operator-surface slices.
+  Verification commands:
+  - `cargo test -p capsem` passed with 282 CLI/status/client tests, including
+    typed Profile V2 provision response preservation, VM provision provenance
+    rendering, and `capsem info` profile-pin rendering.
+  - `cargo build -p capsem` passed.
+  - `pnpm --dir frontend run check` passed with 0 errors, 0 warnings, and
+    0 hints.
+  - `pnpm --dir frontend run build` passed and generated the production
+    frontend bundle.
+  - `pnpm --dir docs run build` passed; Starlight generated 69 pages.
+  - `cargo build -p capsem-process -p capsem-service -p capsem` passed so the
+    VM replay used rebuilt service/process/CLI binaries.
+  - `uv run python -m pytest tests/capsem-e2e/test_e2e_lifecycle.py::TestStartExecDelete::test_start_exec_delete tests/capsem-e2e/test_e2e_lifecycle.py::TestDoctor::test_doctor_passes -q`
+    passed with 2 real-VM tests in 45.09s.
+  User-facing proof added before this replay: `capsem create`, `capsem resume`,
+  and `capsem restart` keep the first-line VM id while printing resolved
+  profile id/revision/status, package contract hash, pinned VM asset hashes,
+  asset-health state, and response-time download progress. `capsem info <vm>`
+  now renders the persisted Profile V2 VM pin with profile payload hash,
+  package contract hash, and pinned kernel/initrd/rootfs hashes.
