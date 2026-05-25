@@ -4,6 +4,16 @@ Last updated: 2026-05-15
 
 ## Active Sprint
 
+Release rescue note (2026-05-24): `v1.2.1779668968` proved source tests,
+asset builds, install E2E, Linux packaging, macOS notarization, and release
+creation, then failed the final live download verifier because the extracted
+package run did not seed packaged base profiles into isolated `CAPSEM_HOME`.
+The package profiles also still materialized VM asset URLs to
+`assets.capsem.dev`, while the release uploads assets to GitHub with
+arch-prefixed names. The active fix is to materialize release package profiles
+with a GitHub release URL template and make the verifier seed package base
+profiles before running `capsem update --assets`.
+
 S7 - Update/Uninstall/Purge Integration (done; full release gate passed after
 merging latest `origin/main`; PR CI cargo-proxy hardening in progress)
 

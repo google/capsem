@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1779673506] - 2026-05-24
+
+### Fixed
+- Fixed release package profile asset URLs so packaged Profile V2 installs
+  download VM assets from the live GitHub Release, and updated the post-release
+  verifier to seed packaged profiles before running `capsem update --assets`.
+
 ## [1.2.1779668968] - 2026-05-24
 
 ### Fixed

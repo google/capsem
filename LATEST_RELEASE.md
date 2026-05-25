@@ -1,6 +1,6 @@
-version: 1.2.1779668968
+version: 1.2.1779673506
 ---
 ### Fixed
-- Fixed macOS package notarization for the packaged `capsem-admin` Python
-  payload by signing native Mach-O wheel extension files before building the
-  installer package.
+- Fixed release package profile asset URLs so packaged Profile V2 installs
+  download VM assets from the live GitHub Release, and updated the post-release
+  verifier to seed packaged profiles before running `capsem update --assets`.

@@ -63,6 +63,20 @@ def test_post_release_binary_e2e_is_release_blocking():
     assert "no .deb" not in body.lower()
     assert "skipping binary e2e" not in body.lower()
     assert "exit 0" not in body
+    assert "PKG_PROFILES=" in body
+    assert '$CAPSEM_HOME/profiles/base' in body
+
+
+def test_release_packages_materialize_profiles_to_github_assets():
+    """Release installers must seed profile asset URLs that exist on the release."""
+    text = _workflow_text()
+
+    assert (
+        'CAPSEM_INSTALL_PROFILE_ASSET_ROOT="https://github.com/google/capsem/releases/download/v${VERSION}/{arch}-{name}"'
+        in text
+    )
+    assert "bash scripts/build-pkg.sh" in text
+    assert "bash scripts/repack-deb.sh" in text
 
 
 def test_release_manifest_binary_metadata_is_preserved():
@@ -627,7 +641,36 @@ def test_simulate_install_copies_only_arch_asset_files(tmp_path):
     for name in ("vmlinuz", "initrd.img", "rootfs.squashfs"):
         (arch_src / name).write_text(name)
     (arch_src / arch).mkdir()
-    (assets_src / "manifest.json").write_text("{}")
+    (assets_src / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "assets": {
+                    "current": "2026.0524.1",
+                    "releases": {
+                        "2026.0524.1": {
+                            "date": "2026-05-24",
+                            "deprecated": False,
+                            "min_binary": "1.0.0",
+                            "arches": {
+                                arch: {
+                                    "vmlinuz": {"hash": "1" * 64, "size": len("vmlinuz")},
+                                    "initrd.img": {
+                                        "hash": "2" * 64,
+                                        "size": len("initrd.img"),
+                                    },
+                                    "rootfs.squashfs": {
+                                        "hash": "3" * 64,
+                                        "size": len("rootfs.squashfs"),
+                                    },
+                                }
+                            },
+                        }
+                    },
+                },
+            }
+        )
+    )
     (assets_src / "manifest.json.minisig").write_text("sig")
     (assets_src / "manifest-sign.dev.pub").write_text("pub")
 

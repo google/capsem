@@ -95,6 +95,40 @@ def _fake_tool_dir(tmp_path: Path) -> Path:
     return tool_dir
 
 
+def test_materialize_install_profiles_supports_release_asset_template(tmp_path):
+    """Release packages must point profile VM assets at uploaded GitHub assets."""
+    assets_dir = tmp_path / "assets"
+    out_dir = tmp_path / "profiles"
+    _seed_assets(assets_dir)
+
+    res = subprocess.run(
+        [
+            "python3",
+            str(REPO_ROOT / "scripts" / "materialize-install-profiles.py"),
+            str(REPO_ROOT / "config" / "profiles" / "base"),
+            str(assets_dir),
+            str(out_dir),
+            "https://github.com/google/capsem/releases/download/v1.2.3/{arch}-{name}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert res.returncode == 0, (
+        f"profile materializer failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+    )
+    profile = (out_dir / "everyday-work.profile.toml").read_text()
+    assert (
+        'url = "https://github.com/google/capsem/releases/download/v1.2.3/arm64-vmlinuz"'
+        in profile
+    )
+    assert (
+        'signature_url = "https://github.com/google/capsem/releases/download/v1.2.3/arm64-vmlinuz.minisig"'
+        in profile
+    )
+
+
 def test_build_pkg_payload_includes_signed_manifest_and_helpers(tmp_path):
     """The macOS pkg payload must include manifest.json, minisig, and all helpers."""
     app = tmp_path / "Capsem.app"
@@ -436,7 +470,7 @@ def test_macos_postinstall_replaces_symlinked_asset_dir_before_seeding():
 
     assert 'if [ -L "$CAPSEM_DIR/assets" ]' in text
     assert 'rm "$CAPSEM_DIR/assets"' in text
-    assert text.index('if [ -L "$CAPSEM_DIR/assets" ]') < text.index("# Copy assets")
+    assert text.index('if [ -L "$CAPSEM_DIR/assets" ]') < text.index("# Copy asset metadata")
 
 
 def test_macos_postinstall_materializes_app_bundle_in_applications():

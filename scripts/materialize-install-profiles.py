@@ -12,6 +12,8 @@ Usage:
 ``asset_source_root`` is either:
   - an absolute path to a local asset root, rendered as file:// URLs, or
   - an http(s) base URL, rendered as <base>/<profile>/<revision>/<arch>/<asset>.
+  - an http(s) URL template containing {profile}, {revision}, {arch}, and/or
+    {name}; release packages use this for GitHub's arch-prefixed asset names.
 """
 
 from __future__ import annotations
@@ -44,6 +46,13 @@ def _usage() -> str:
 
 
 def _asset_uri(root: str, profile_id: str, revision: str, arch: str, logical_name: str) -> str:
+    if "{" in root:
+        return root.format(
+            profile=quote(profile_id),
+            revision=quote(revision),
+            arch=quote(arch),
+            name=quote(logical_name),
+        )
     if root.startswith(("https://", "http://")):
         base = root.rstrip("/")
         return (

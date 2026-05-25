@@ -408,6 +408,7 @@ jobs:
           APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          export CAPSEM_INSTALL_PROFILE_ASSET_ROOT="https://github.com/google/capsem/releases/download/v${VERSION}/{arch}-{name}"
           bash scripts/build-pkg.sh \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
@@ -597,6 +598,8 @@ jobs:
 
       - name: Repack .deb with companion binaries
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          export CAPSEM_INSTALL_PROFILE_ASSET_ROOT="https://github.com/google/capsem/releases/download/v${VERSION}/{arch}-{name}"
           DEB_FILE=$(ls target/release/bundle/deb/*.deb)
           bash scripts/repack-deb.sh "$DEB_FILE" "target/release" "assets"
 
@@ -1022,9 +1025,15 @@ jobs:
 
           # Stand up a clean CAPSEM_HOME using the package payload manifest.
           export CAPSEM_HOME=/tmp/capsem-home
-          mkdir -p "$CAPSEM_HOME/assets"
+          mkdir -p "$CAPSEM_HOME/assets" "$CAPSEM_HOME/profiles/base"
           cp "$PKG_MANIFEST" "$CAPSEM_HOME/assets/manifest.json"
           cp "$PKG_SIG" "$CAPSEM_HOME/assets/manifest.json.minisig"
+          PKG_PROFILES=$(find . -path '*/usr/share/capsem/profiles/base' -type d -print -quit)
+          if [ -z "$PKG_PROFILES" ]; then
+            echo "::error::.deb payload missing base profiles"
+            exit 1
+          fi
+          cp "$PKG_PROFILES/"*.profile.toml "$CAPSEM_HOME/profiles/base/"
           # No CAPSEM_RELEASE_URL override -- the binary must hit real GitHub.
           "$CAPSEM_BIN" update --assets
           # Sanity: at least the host arch's three canonical files must now exist.
