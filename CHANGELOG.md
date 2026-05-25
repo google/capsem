@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1779668968] - 2026-05-24
+
+### Fixed
+- Fixed macOS package notarization for the packaged `capsem-admin` Python
+  payload by signing native Mach-O wheel extension files before building the
+  installer package.
+
 ## [1.2.1779665197] - 2026-05-24
 
 ### Fixed

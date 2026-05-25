@@ -8,6 +8,7 @@ temporary payload before the script's trap deletes it.
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 from pathlib import Path
 
@@ -51,7 +52,39 @@ def _seed_admin_python_payload(bin_dir: Path) -> None:
 
 def _seed_assets(assets_dir: Path) -> None:
     assets_dir.mkdir(parents=True)
-    (assets_dir / "manifest.json").write_text('{"format":2}\n')
+    arch_dir = assets_dir / "arm64"
+    arch_dir.mkdir()
+    for name, body in {
+        "vmlinuz": b"kernel",
+        "initrd.img": b"initrd",
+        "rootfs.squashfs": b"rootfs",
+    }.items():
+        (arch_dir / name).write_bytes(body)
+    (assets_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "assets": {
+                    "current": "2026.0524.1",
+                    "releases": {
+                        "2026.0524.1": {
+                            "date": "2026-05-24",
+                            "deprecated": False,
+                            "min_binary": "1.0.0",
+                            "arches": {
+                                "arm64": {
+                                    "vmlinuz": {"hash": "1" * 64, "size": 6},
+                                    "initrd.img": {"hash": "2" * 64, "size": 6},
+                                    "rootfs.squashfs": {"hash": "3" * 64, "size": 6},
+                                }
+                            },
+                        }
+                    },
+                },
+            }
+        )
+        + "\n"
+    )
     (assets_dir / "manifest.json.minisig").write_text("trusted comment: test\nsig\n")
     (assets_dir / "manifest-sign.dev.pub").write_text("untrusted comment: dev pub\nPUB\n")
 
@@ -132,6 +165,21 @@ printf product > "$out"
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_build_pkg_signs_admin_python_macho_payload_before_pkgbuild():
+    """Native Python wheel extensions in capsem-admin must be notarization-safe."""
+    text = BUILD_PKG.read_text()
+
+    assert "sign_macho_tree()" in text
+    assert 'file "$file_path" | grep -q \'Mach-O\'' in text
+    assert 'codesign \\' in text
+    assert '--options runtime' in text
+    assert '--timestamp' in text
+    assert 'sign_macho_tree "$SHARE_DIR/admin-python" "$CODE_SIGNING_IDENTITY"' in text
+    assert text.index('sign_macho_tree "$SHARE_DIR/admin-python" "$CODE_SIGNING_IDENTITY"') < text.index(
+        'pkgbuild \\'
+    )
 
 
 def test_simulate_install_preserves_admin_wrapper_payload():

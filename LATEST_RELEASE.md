@@ -1,5 +1,6 @@
-version: 1.2.1779665197
+version: 1.2.1779668968
 ---
 ### Fixed
-- Fixed release metadata stamping so the Python lockfile records the same
-  package version as the workspace, Tauri app, and Python project metadata.
+- Fixed macOS package notarization for the packaged `capsem-admin` Python
+  payload by signing native Mach-O wheel extension files before building the
+  installer package.

@@ -29,10 +29,29 @@ BIN_DIR="${2:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [s
 ASSETS_DIR="${3:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
 VERSION="${4:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
 SIGNING_IDENTITY="${5:-}"
+CODE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
+
+sign_macho_tree() {
+    local root="$1"
+    local identity="$2"
+    if [ -z "$identity" ] || [ ! -d "$root" ]; then
+        return 0
+    fi
+    while IFS= read -r -d '' file_path; do
+        if file "$file_path" | grep -q 'Mach-O'; then
+            codesign \
+                --sign "$identity" \
+                --options runtime \
+                --timestamp \
+                --force \
+                "$file_path"
+        fi
+    done < <(find "$root" -type f -print0)
+}
 
 echo "=== Assembling .pkg payload ==="
 
@@ -57,6 +76,7 @@ done
 ADMIN_PYTHON_DIR="$BIN_DIR/capsem-admin-python"
 if [ -d "$ADMIN_PYTHON_DIR" ]; then
     cp -R "$ADMIN_PYTHON_DIR" "$SHARE_DIR/admin-python"
+    sign_macho_tree "$SHARE_DIR/admin-python" "$CODE_SIGNING_IDENTITY"
 else
     echo "ERROR: capsem-admin Python payload not found: $ADMIN_PYTHON_DIR" >&2
     echo "       Run scripts/prepare-admin-cli.sh $BIN_DIR before packaging." >&2
