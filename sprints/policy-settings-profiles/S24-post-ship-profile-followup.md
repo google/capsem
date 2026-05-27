@@ -1,18 +1,24 @@
 # S24 - Post-Ship Profile V2 Meta Sprint
 
+Status: superseded by
+[Profile Foundation Sprint](../profile-foundation/MASTER.md).
+
+S24 established that all remaining Profile V2 work is in scope. The Foundation
+sprint replaces S24 as the active execution board with F-numbered ordering,
+code reality checks, and explicit foundation exit criteria.
+
 ## Goal
 
 Run one clean Profile V2 meta sprint after the bedrock release.
 
-The release shipped. S24 is now the active parent queue for all remaining
-Profile V2 work, including installed proof gaps, small product polish, and the
-larger follow-on product sprints that were previously parked as "next" or
-"post-bedrock." Nothing open is excluded from the meta sprint; items are only
-sequenced into child sprints so the work stays reviewable.
+The release shipped. S24 established that all remaining Profile V2 work belongs
+in one parent queue, including installed proof gaps, small product polish, and
+the larger follow-on product sprints that were previously parked as "next" or
+"post-bedrock." Active execution has moved to Foundation F00-F12.
 
 ## Operating Rule
 
-- S24 is the active Profile V2 parent sprint.
+- The Foundation sprint is the active Profile V2 parent sprint.
 - Child sprint files remain the source of detailed design and acceptance
   criteria.
 - `release-hit-list.md` remains historical installed-app evidence; active
@@ -28,7 +34,7 @@ sequenced into child sprints so the work stays reviewable.
 
 | Lane | Child Sprint | Status | Scope |
 | --- | --- | --- | --- |
-| Immediate installed proof | `release-hit-list.md` plus this S24 file | Active | Prove the shipped package, service/gateway readiness, dashboard/profile cards, Settings Profiles, CLI/VM startup, repeated install coherence, and profile provisioning truth. |
+| Immediate installed proof | `release-hit-list.md` plus this S24 file | Foundation F01 Input | Prove the shipped package, service/gateway readiness, dashboard/profile cards, Settings Profiles, CLI/VM startup, repeated install coherence, and profile provisioning truth. |
 | Engine/performance follow-up | [S08b](S08b-bedrock-engine.md), [S08d](S08d-engine-performance-benchmarks.md) | Child Sprint | Preserve shipped bedrock contracts while closing remaining runtime dispatch, journal, benchmark, concurrency, and release artifact proof gaps. |
 | CLI/product polish | [S09](S09-cli-integration.md) | Child Sprint | Command naming/output polish that was not needed for the bedrock release but affects day-to-day Profile V2 usability. |
 | Credential brokerage | [S10](S10-credential-brokerage.md) | Child Sprint | Release credentials from service/profile settings into sessions using the frozen Profile V2 contracts and the `credential-pipeline` discovery output. |
@@ -37,7 +43,7 @@ sequenced into child sprints so the work stays reviewable.
 | Product UI and workbench | [S16](S16-profile-ui.md), [S16a](S16a-unified-timeline-and-agent-workbench.md) | Child Sprints | Profile UI polish plus the everyday-work timeline/workbench and structured `/timeline/{id}` API. |
 | Product integrations | [S13](S13-remote-policy-plugin.md), [S20](S20-openapi-to-mcp.md), [S21](S21-local-llm.md), [S22](S22-rate-limits-budgets-and-quotas.md) | Child Sprints | Remote plugins, OpenAPI-to-MCP, local model providers, rate limits, budgets, and quotas. |
 | Site and market story | [S19](S19-documentation-and-site.md), [S19a](S19a-marketing-site-refresh.md) | Child Sprints | Post-ship docs corrections, marketing refresh, performance-backed claims, and install/setup wording. |
-| Product expansion umbrella | [S23](S23-post-bedrock-improvements.md) | Folded Under S24 | Broad post-bedrock product ideas stay in S23, but S23 is now a child lane of S24 rather than a competing "next" sprint. |
+| Product expansion umbrella | [S23](S23-post-bedrock-improvements.md) | Foundation Crosswalk Input | Broad post-bedrock product ideas stay in S23 as source material and are now ordered by the Foundation sprint rather than a competing "next" sprint. |
 
 ## Immediate Work Queue
 
@@ -71,7 +77,8 @@ Close the shipped-but-needs-proof items from `release-hit-list.md`:
 
 ### C. Board Reconciliation
 
-- Mark `release-hit-list.md` items as closed, migrated, or active under S24.
+- Mark `release-hit-list.md` items as closed, migrated, or active under
+  Foundation F01.
 - Reconcile stale S08b/S08d/S09/S11/S16/S18/S23 wording so the active board
   reflects the shipped release plus remaining child sprint work.
 - Keep child sprint acceptance criteria visible instead of burying work in a
@@ -109,4 +116,4 @@ Close the shipped-but-needs-proof items from `release-hit-list.md`:
   paths, reports, and child sprint auditability.
 - Performance: S08d and any workbench/metrics/reporting regressions.
 - Missing/deferred: none at the meta-sprint level. Unstarted child sprints are
-  visible S24 scope, not exclusions.
+  visible Foundation scope, not exclusions.

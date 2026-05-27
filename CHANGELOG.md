@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Added the Profile Foundation meta sprint with F00-F12 sub-sprints, a
+  code-reality check, and a crosswalk from the old Profile V2 S-numbered
+  boards.
 - Reframed S24 as the active post-ship Profile V2 meta sprint so every open
   Profile V2 item is tracked as in-scope child sprint work.
 - Created S24 as the single post-ship Profile V2 sprint and migrated remaining

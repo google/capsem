@@ -6,10 +6,13 @@ live under `sprints/retired/`.
 
 ## Active Release Authority
 
+- `profile-foundation/` - active post-ship Profile V2 Foundation meta sprint.
+  Enter through `profile-foundation/MASTER.md`; `tracker.md` records code
+  checks and execution status. This board owns the current F-numbered order.
 - `policy-settings-profiles/` - active Profile V2 and bedrock release board.
-  Enter through `policy-settings-profiles/NOW.md` for the current operational
-  view, `policy-settings-profiles/MASTER.md` for the roadmap, and
-  `policy-settings-profiles/tracker.md` for evidence.
+  This is now historical evidence and source material for the Foundation
+  sprint. Enter through `policy-settings-profiles/NOW.md` only when tracing old
+  S-numbered decisions.
 - `policy-settings-profiles/release-hit-list.md` - historical installed-app and
   release usability evidence feeding the S24 immediate work queue.
 - `credential-pipeline/` - standalone precursor for spec-driven credential,
@@ -18,27 +21,24 @@ live under `sprints/retired/`.
 
 ## Next Profile V2 Work
 
-The release-blocking Profile V2 path is tracked inside
-`policy-settings-profiles/NOW.md` and `policy-settings-profiles/MASTER.md`:
+The active Profile V2 path is tracked inside
+`profile-foundation/MASTER.md`:
 
-- `S24 - Post-Ship Profile V2 Meta Sprint` - active parent sprint for all
-  remaining Profile V2 work: installed proof, release-hit-list migration,
-  profile UI/settings/dashboard polish, Gemini/metrics installed VM proof,
-  credential brokerage, workbench, metrics/reporting, plugins, local LLM,
-  OpenAPI-to-MCP, quotas, docs/site, product expansion, and board
-  reconciliation.
-- S10/S12/S13/S14/S15/S16a/S17/S19a/S19b/S20/S21/S22/S23 remain separate
-  child sprint files for design and acceptance criteria. They are in S24 scope,
-  not parked outside the active Profile V2 plan.
+- `Profile Foundation Sprint` - active parent sprint for all remaining
+  foundation work. It exits only when installed Profile V2 behavior, the full
+  Security Event system, plugins, credentials, metrics/reporting, workbench,
+  integrations, quotas, docs/site, and final release proof are trusted.
+- F00-F12 are the execution order. Old S-numbered files remain source material,
+  not ordering authority.
 
 ## Folded Product Threads
 
 - Better dashboard and stats work is folded into Profile V2: launch/profile UX
   in S16, structured timeline/workbench in S16a, live metrics in S12, and
-  reporting/dashboard packaging in S19b. All are S24 child lanes.
+  reporting/dashboard packaging in S19b. All are Foundation child lanes.
 - Credential release belongs to
   `policy-settings-profiles/S10-credential-brokerage.md`; source discovery and
-  inventory stay in `credential-pipeline/`. S10 is a S24 child lane.
+  inventory stay in `credential-pipeline/`. S10 is carried by Foundation F06.
 - Linux, old audit bugs, old forensics, and older service/frontend refactors
   are retired until they are rewritten against the Profile V2 contracts.
 

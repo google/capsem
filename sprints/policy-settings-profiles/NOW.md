@@ -4,34 +4,33 @@ Last updated: 2026-05-27
 
 ## Active Authority
 
-- `MASTER.md` is the roadmap.
-- `tracker.md` is the detailed evidence log.
-- This file is the short operational view for the next session.
+- `../profile-foundation/MASTER.md` is now the active post-ship Profile V2
+  Foundation roadmap.
+- This S-numbered board remains historical evidence and source material.
+- Use this file only when tracing old Profile V2 bedrock decisions.
 
-## Post-Ship Meta Sprint
+## Superseded By Foundation Sprint
 
-The Profile V2 bedrock release shipped. The active work is now:
+The Profile V2 bedrock release shipped. The active work moved to:
 
-1. [S24 - Post-Ship Profile V2 Meta Sprint](S24-post-ship-profile-followup.md).
-2. Keep `release-hit-list.md` as historical bug evidence; migrate active work
-   into S24.
-3. Treat all remaining open Profile V2 sprint files as S24 child sprints.
-   Installed proof gaps, small product polish, credential brokerage, workbench,
+1. [Profile Foundation Sprint](../profile-foundation/MASTER.md).
+2. Foundation F00-F12 are the trusted order.
+3. Old S-numbered sprint files remain detailed source material and crosswalk
+   entries, not execution order.
+4. Installed proof gaps, product polish, credential brokerage, workbench,
    metrics/reporting, plugins, local LLM, OpenAPI-to-MCP, quotas, docs/site,
-   and S23 product expansion are in scope.
-4. Keep old retired boards retired unless their user problem is rewritten into
-   a Profile V2 child sprint with current contracts and acceptance criteria.
+   and S23 product expansion are all Foundation scope.
 
 The installed-app proof gaps and polish items from `release-hit-list.md` are
-now the immediate S24 work queue.
+now Foundation F01 input.
 
 ## Closed For Bedrock
 
 - S08/S08b/S08c/S08d: engine, corpus, gateway, and benchmark foundations have
   enough evidence for the shipped bedrock release. Remaining benchmark and
-  engine polish is S24 child-sprint work.
+  engine polish is Foundation F02-F04 work.
 - S09: CLI integration is closed for the bedrock release. Further command
-  naming/output polish is S24 product polish.
+  naming/output polish is Foundation F01/F05 product polish.
 - S11: status/debug/provenance is closed for bedrock truth. Full live metrics
   polish remains S12.
 - S16: profile UI is closed for the bedrock release. Richer workbench/dashboard
@@ -46,7 +45,7 @@ now the immediate S24 work queue.
   MCP inventory, and skills inventory.
 - S10 owns credential release/brokerage into sessions after the bedrock
   contracts are frozen. It consumes `credential-pipeline`; it is a child sprint
-  of S24, not a separate active board.
+  of Foundation F06, not a separate active board.
 - S12/S19b own metrics, OTel/export, dashboards, reporting, and operational
   packaging.
 - S16a owns the larger workbench/timeline experience.

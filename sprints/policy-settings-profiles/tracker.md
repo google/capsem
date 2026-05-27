@@ -3048,7 +3048,7 @@ a valid claim -- mark it `[ ]` instead.
     profile promises credential release.
     Post-ship update: the bedrock release shipped. Remaining installed proof,
     release-hit-list evidence, polish, and open follow-on Profile V2 lanes are
-    migrated under S24 as the active meta sprint.
+    migrated under the Foundation sprint as the active meta sprint.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- S24 child sprint. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
