@@ -7,8 +7,9 @@ live under `sprints/retired/`.
 ## Active Release Authority
 
 - `policy-settings-profiles/` - active Profile V2 and bedrock release board.
-  Enter through `policy-settings-profiles/MASTER.md`, then use
-  `policy-settings-profiles/tracker.md` for current status.
+  Enter through `policy-settings-profiles/NOW.md` for the current operational
+  view, `policy-settings-profiles/MASTER.md` for the roadmap, and
+  `policy-settings-profiles/tracker.md` for evidence.
 - `policy-settings-profiles/release-hit-list.md` - active installed-app and
   release usability closeout board.
 - `credential-pipeline/` - standalone precursor for spec-driven credential,
@@ -18,22 +19,16 @@ live under `sprints/retired/`.
 ## Next Profile V2 Work
 
 The release-blocking Profile V2 path is tracked inside
-`policy-settings-profiles/MASTER.md`:
+`policy-settings-profiles/NOW.md` and `policy-settings-profiles/MASTER.md`:
 
-- `S08b - Bedrock Engine` - finish engine boundaries, canonical event journal,
-  emitter ownership, and runtime dispatch for shipped event families.
-- `S09 - CLI Integration` - keep the usable CLI surface aligned with the
-  bedrock contract.
-- `S11 - Status, Debug, Provenance` - make status/debug/logs explain shipped
-  truth.
-- `S15 - Confirm UX (Ask)` - replace placeholder ask behavior with real UI/CLI
-  resolution before advertising user-facing ask.
-- `S16 - Profile UI` - first-class profile catalog, profile-backed session
-  creation, and runtime visibility.
 - `S18 - Full Verification And Release Gate` - final install/VM/E2E release
-  proof.
-- `S19 - Documentation And Site` - document shipped behavior and explicit
-  deferrals.
+  proof. Current decision: run the broader `just smoke` / release packaging
+  gate, or explicitly accept the narrower S18 replay matrix already recorded.
+- `S15 - Confirm UX (Ask)` - conditional only if ask is advertised or enabled
+  as user-facing behavior. Otherwise ask remains disabled/pass-through and S15
+  is post-bedrock.
+- `S10 - Credential Brokerage` - standalone extension after bedrock, fed by
+  `credential-pipeline/`, unless a shipped profile promises credential release.
 
 ## Folded Product Threads
 

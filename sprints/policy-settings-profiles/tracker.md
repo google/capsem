@@ -2625,7 +2625,7 @@ a valid claim -- mark it `[ ]` instead.
     `tools/call` row. Still missing in S08d: model/file VM-originated
     benchmarks, concurrency cases, backtest/hunt scan-rate artifacts, and
     broader release gates.
-24. [ ] [S09 - CLI integration](S09-cli-integration.md)
+24. [x] [S09 - CLI integration](S09-cli-integration.md)
     -- release-blocking bedrock surface. The release is not usable if profile
     catalog/revision, profile-backed VM create, enforcement/detection
     validate/compile/backtest/live registry/stats/hunt, logs/status/debug, and
@@ -2723,7 +2723,7 @@ a valid claim -- mark it `[ ]` instead.
     -- standalone extension split. It must use the frozen profile/security/
     resolved-event contracts and cannot block the bedrock release unless a
     shipped profile explicitly promises credential release.
-26. [ ] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
+26. [x] [S11 - Status, debug, provenance](S11-status-debug-provenance.md)
     -- release-blocking for bedrock truth. Status/debug/logs must explain
     active settings, profile catalog/revision/asset state, VM pins,
     enforcement/detection matches, engine provenance, and live-health fields
@@ -3040,6 +3040,12 @@ a valid claim -- mark it `[ ]` instead.
     `capsem status` and authenticated gateway `/status` both reported
     service/gateway `1.2.1779634969`, assets ready for `everyday-work`, and no
     offline dashboard text in the dev frontend against the live gateway.
+    Current state after sprint cleanup: S18 is the active bedrock release gate.
+    Remaining decision is unchanged: run the broader `just smoke` / release
+    packaging gate or explicitly accept the narrower replay matrix already
+    recorded here. S10 credential brokerage and the `credential-pipeline`
+    source-detection graph are split from this bedrock gate unless a shipped
+    profile promises credential release.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback

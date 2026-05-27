@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Added a current Profile V2 sprint snapshot and reconciled the active board so
+  S18 is the explicit release gate while S09, S11, S16, and S19 are marked
+  closed for the bedrock release.
 - Reduced the top-level sprint inventory to active Profile V2 work plus the
   credential detection pipeline, moving completed boards to `sprints/done/` and
   stale or superseded boards to `sprints/retired/`.
