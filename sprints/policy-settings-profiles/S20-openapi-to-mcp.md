@@ -1,6 +1,6 @@
 # S20 - OpenAPI To MCP
 
-Status: proposed standalone sprint
+Status: S24 child sprint
 
 ## Product Goal
 

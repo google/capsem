@@ -2,8 +2,10 @@
 
 ## Status
 
-Proposed later sprint. This is not rescue work and it is not a license to keep
-reshaping the Profile V2 bedrock after release.
+Folded under [S24 - Post-Ship Profile V2 Meta Sprint](S24-post-ship-profile-followup.md).
+This is not rescue work and it is not a license to keep reshaping the Profile
+V2 bedrock after release. It is the broad product-expansion child lane for the
+Profile V2 meta sprint.
 
 ## Goal
 

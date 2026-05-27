@@ -11,33 +11,34 @@ live under `sprints/retired/`.
   view, `policy-settings-profiles/MASTER.md` for the roadmap, and
   `policy-settings-profiles/tracker.md` for evidence.
 - `policy-settings-profiles/release-hit-list.md` - historical installed-app and
-  release usability evidence now migrated into S24.
+  release usability evidence feeding the S24 immediate work queue.
 - `credential-pipeline/` - standalone precursor for spec-driven credential,
-  MCP, and skills detection. It feeds Profile V2 S10 credential brokerage, but
-  S10 remains owned by `policy-settings-profiles/`.
+  MCP, and skills detection. It feeds Profile V2 S10 credential brokerage,
+  which is owned by the S24 meta sprint inside `policy-settings-profiles/`.
 
 ## Next Profile V2 Work
 
 The release-blocking Profile V2 path is tracked inside
 `policy-settings-profiles/NOW.md` and `policy-settings-profiles/MASTER.md`:
 
-- `S24 - Post-Ship Profile V2 Follow-Up` - active cleanup sprint for shipped
-  leftovers, installed proof, release-hit-list migration, profile UI/settings/
-  dashboard polish, Gemini/metrics installed VM proof, and board reconciliation.
-- `S15 - Confirm UX (Ask)` - conditional only if ask is advertised or enabled
-  as user-facing behavior. Otherwise ask remains disabled/pass-through and S15
-  is post-bedrock.
-- `S10 - Credential Brokerage` - standalone extension after bedrock, fed by
-  `credential-pipeline/`, unless a shipped profile promises credential release.
+- `S24 - Post-Ship Profile V2 Meta Sprint` - active parent sprint for all
+  remaining Profile V2 work: installed proof, release-hit-list migration,
+  profile UI/settings/dashboard polish, Gemini/metrics installed VM proof,
+  credential brokerage, workbench, metrics/reporting, plugins, local LLM,
+  OpenAPI-to-MCP, quotas, docs/site, product expansion, and board
+  reconciliation.
+- S10/S12/S13/S14/S15/S16a/S17/S19a/S19b/S20/S21/S22/S23 remain separate
+  child sprint files for design and acceptance criteria. They are in S24 scope,
+  not parked outside the active Profile V2 plan.
 
 ## Folded Product Threads
 
 - Better dashboard and stats work is folded into Profile V2: launch/profile UX
   in S16, structured timeline/workbench in S16a, live metrics in S12, and
-  reporting/dashboard packaging in S19b.
+  reporting/dashboard packaging in S19b. All are S24 child lanes.
 - Credential release belongs to
   `policy-settings-profiles/S10-credential-brokerage.md`; source discovery and
-  inventory stay in `credential-pipeline/`.
+  inventory stay in `credential-pipeline/`. S10 is a S24 child lane.
 - Linux, old audit bugs, old forensics, and older service/frontend refactors
   are retired until they are rewritten against the Profile V2 contracts.
 

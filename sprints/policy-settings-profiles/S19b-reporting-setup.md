@@ -1,6 +1,6 @@
 # S19b - Reporting Setup
 
-Status: proposed standalone sprint
+Status: S24 child sprint
 
 ## Product Goal
 
@@ -8,8 +8,9 @@ Provide a clear, shippable reporting setup package for teams that want to send
 Capsem observability data to external reporting systems such as OpenTelemetry
 collectors, Prometheus-compatible pipelines, and Grafana dashboards.
 
-This is a standalone operations enablement sprint. Capsem can ship the core
-Profile V2 runtime without this sprint, but users who need reporting should
+This is an operations enablement child sprint of
+[S24 - Post-Ship Profile V2 Meta Sprint](S24-post-ship-profile-followup.md).
+The core Profile V2 runtime shipped first, but users who need reporting should
 have an official path instead of piecing together metrics, dashboards, and
 privacy guidance themselves.
 

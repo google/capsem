@@ -3,8 +3,9 @@
 Date: 2026-05-24
 Mode: historical release debug loop. The bedrock release shipped; active
 post-ship work is migrated to
-[S24 - Post-Ship Profile V2 Follow-Up](S24-post-ship-profile-followup.md).
-Every remaining item below is evidence for S24, not a separate active sprint.
+[S24 - Post-Ship Profile V2 Meta Sprint](S24-post-ship-profile-followup.md).
+Every remaining item below is evidence for the immediate S24 queue, not a
+separate active sprint.
 
 ## Rules
 

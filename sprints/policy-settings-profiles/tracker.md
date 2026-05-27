@@ -3047,9 +3047,10 @@ a valid claim -- mark it `[ ]` instead.
     source-detection graph are split from this bedrock gate unless a shipped
     profile promises credential release.
     Post-ship update: the bedrock release shipped. Remaining installed proof,
-    release-hit-list evidence, and polish are migrated to S24.
+    release-hit-list evidence, polish, and open follow-on Profile V2 lanes are
+    migrated under S24 as the active meta sprint.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
-    -- post-bedrock improvement split by the release contract. Build a friendly
+    -- S24 child sprint. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
     sessions. S16a owns the Conversation Engine and structured
     `/timeline/{id}` API, consuming S08b's canonical resolved-event journal.
@@ -3057,10 +3058,10 @@ a valid claim -- mark it `[ ]` instead.
     files, network, processes, findings, asks/confirms, snapshots, artifacts,
     and profile/rule provenance from one coherent timeline.
 35. [ ] [S17 - Security capabilities UI](S17-security-capabilities-ui.md)
-    -- post-bedrock security UI polish. It may deepen capability editors and
+    -- S24 child sprint for security UI polish. It may deepen capability editors and
     explainers but must consume, not reshape, the S08/S16 contract.
 36. [ ] [S19a - Marketing site refresh](S19a-marketing-site-refresh.md)
-    -- post-bedrock marketing improvement. Refresh the landing page around four
+    -- S24 child sprint. Refresh the landing page around four
     pillars: Ship Fast With AI, Ship Safely, Scale Your Productivity Without
     Drag, and Enterprise Ready. Include realtime CEL enforcement,
     Sigma-compatible detection with backtest and forensic timeline/session
@@ -3070,32 +3071,33 @@ a valid claim -- mark it `[ ]` instead.
     `artifacts/S19a-marketing-site-refresh/current-ui-baseline/`; refreshed
     pillar screenshots remain part of S19a's final gate.
 37. [ ] [S20 - OpenAPI to MCP](S20-openapi-to-mcp.md)
-    -- proposed standalone product sprint. Convert reviewed OpenAPI-described
+    -- S24 child sprint. Convert reviewed OpenAPI-described
     HTTP services into profile-owned MCP tools with provenance, diagnostics,
     UI visibility, and normal security/audit/timeline treatment.
 38. [ ] [S21 - Local LLM](S21-local-llm.md)
-    -- proposed standalone product sprint. Make local model services
+    -- S24 child sprint. Make local model services
     first-class profile/VM AI providers instead of generic HTTP traffic.
 39. [ ] [S19b - Reporting setup](S19b-reporting-setup.md)
-    -- proposed standalone, non-blocking operations sprint. Provide reporting
+    -- S24 child sprint. Provide reporting
     setup docs, collector examples, privacy guidance, and dashboard packaging
     after S12/runtime fields are stable.
 40. [ ] [S22 - Rate limits, budgets, and quotas](S22-rate-limits-budgets-and-quotas.md)
-    -- proposed later full sprint, not S08/S13 scope. Decide local engine vs
+    -- S24 child sprint. Decide local engine vs
     plugin-backed provider vs hybrid centralized quota design, then implement
     HTTP/MCP/model/token/cost/request limits using S08b normalized event
     dimensions and the reserved `Throttle` action.
 41. [ ] [S23 - Post-bedrock improvements](S23-post-bedrock-improvements.md)
-    -- proposed later improvement track. This is where richer plugins,
+    -- folded under S24 as the broad product-expansion lane. This is where richer plugins,
     workbench polish, marketing/site polish, OpenAPI-to-MCP, local LLM,
-    reporting setup, and other product expansion work lands after the bedrock
-    release. It is not rescue work and must not mutate the engine/profile/API
-    terms.
-42. [~] [S24 - Post-ship Profile V2 follow-up](S24-post-ship-profile-followup.md)
-    -- active follow-up sprint after the bedrock release. Consolidates
-    installed proof, release-hit-list migration, profile UI/settings/dashboard
-    polish, Gemini/metrics installed VM proof, and board reconciliation into
-    one queue.
+    reporting setup, and other product expansion work lands. It is not rescue
+    work and must not mutate the engine/profile/API terms.
+42. [~] [S24 - Post-ship Profile V2 meta sprint](S24-post-ship-profile-followup.md)
+    -- active parent meta sprint after the bedrock release. Consolidates all
+    remaining Profile V2 work: installed proof, release-hit-list migration,
+    profile UI/settings/dashboard polish, Gemini/metrics installed VM proof,
+    credential brokerage, workbench, metrics/reporting, plugins, local LLM,
+    OpenAPI-to-MCP, quotas, docs/site, product expansion, and board
+    reconciliation.
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
@@ -3747,8 +3749,8 @@ proof slice.
 - **Historical release blocker hit list** -- First installed-app testing on
   2026-05-24 promoted release usability bugs into
   [release-hit-list.md](release-hit-list.md). After the bedrock release shipped,
-  remaining proof and polish moved to
-  [S24 - Post-Ship Profile V2 Follow-Up](S24-post-ship-profile-followup.md).
+  remaining proof and polish moved into the immediate queue of
+  [S24 - Post-Ship Profile V2 Meta Sprint](S24-post-ship-profile-followup.md).
 - **capsem-doctor E2E ask probe** -- owned by S15/S18. Fire one ask rule per
   subsystem from inside a running VM and read the matched
   rule label back out of `session.db`. Unblock requires the

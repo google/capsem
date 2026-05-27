@@ -1,6 +1,6 @@
 # S21 - Local LLM
 
-Status: proposed standalone sprint
+Status: S24 child sprint
 
 ## Product Goal
 

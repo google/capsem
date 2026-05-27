@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed standalone sprint. Not part of the S08/S13 ship path and not part of
-the bedrock release.
+S24 child sprint. It was not part of the S08/S13 ship path or the bedrock
+release, but it is now in scope under
+[S24 - Post-Ship Profile V2 Meta Sprint](S24-post-ship-profile-followup.md).
 
 ## Goal
 

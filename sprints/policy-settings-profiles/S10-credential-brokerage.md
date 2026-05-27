@@ -4,10 +4,12 @@
 
 Implement the promised credential release capability.
 
-This is a standalone post-bedrock split. Credential brokerage must not mutate
-the Profile V2 engine terms. It consumes signed profiles, service settings,
-Security Engine decisions, resolved-event logging, CLI/UI route conventions, and
-status/debug contracts from the bedrock release.
+This is a child sprint of
+[S24 - Post-Ship Profile V2 Meta Sprint](S24-post-ship-profile-followup.md).
+Credential brokerage must not mutate the Profile V2 engine terms. It consumes
+signed profiles, service settings, Security Engine decisions, resolved-event
+logging, CLI/UI route conventions, and status/debug contracts from the bedrock
+release.
 
 ## Tasks
 
