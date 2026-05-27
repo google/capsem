@@ -26,6 +26,12 @@ the same sprint as Profile UI.
 Make Capsem usable for everyday agent work, not just forensic inspection, using
 one structured timeline endpoint.
 
+This sprint absorbs the still-useful deep-dive ideas from the retired
+`analytics-dashboard`, `better_stats`, and `forensics` boards: conversation
+review, session evidence, raw-event drilldown, and timeline search. It must
+rebuild them on the S08b canonical resolved-event journal instead of reviving
+old direct-SQL dashboard endpoints.
+
 The UI should expose:
 
 - an agent workbench for Codex/Claude SDK-backed sessions when those adapters

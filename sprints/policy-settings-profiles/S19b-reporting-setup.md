@@ -13,6 +13,10 @@ Profile V2 runtime without this sprint, but users who need reporting should
 have an official path instead of piecing together metrics, dashboards, and
 privacy guidance themselves.
 
+Dashboard packaging ideas from retired `analytics-dashboard` are folded here
+only after S12 exposes stable fields. S19b may provide Grafana/dashboard
+examples, but it must not define a competing runtime stats API.
+
 ## Problem
 
 S12 defines the runtime observability architecture, but runtime metrics alone

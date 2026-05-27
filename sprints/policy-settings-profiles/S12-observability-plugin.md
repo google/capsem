@@ -24,6 +24,11 @@ shipped a narrow hotfix:
 This sprint is the real metrics/OTel sprint that the release team
 deferred to. It must not regress the hotfix.
 
+The retired `better_stats`, `analytics-dashboard`, and `telemetry` boards are
+historical input only. S12 owns the live metrics contract and status/metrics
+truth; dashboard presentation that depends on those fields is implemented in
+S16/S16a or packaged for reporting in S19b.
+
 ## Goal
 
 Replace ad-hoc telemetry with a typed live-metrics architecture in which

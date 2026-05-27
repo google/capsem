@@ -37,3 +37,17 @@
 - `rg` found no non-retired, non-done references to the retired top-level
   sprint paths.
 - `git diff --check` passed.
+
+## Second Pass
+
+- [x] Fold better-dashboard ideas into Profile V2 S16/S16a/S12/S19b instead
+      of reviving retired `analytics-dashboard` or `better_stats`.
+- [x] Keep `credential-pipeline/` as the only standalone active precursor for
+      source detection, MCP inventory, and skills inventory.
+- [x] Confirm S10 credential brokerage remains owned by
+      `policy-settings-profiles/`.
+- [x] Move completed one-off boards under `sprints/done/`.
+- [x] Move stale, rebooted, speculative, or superseded boards under
+      `sprints/retired/`.
+- [x] Verify top-level `sprints/` contains only `credential-pipeline`, `done`,
+      `policy-settings-profiles`, and `retired`.

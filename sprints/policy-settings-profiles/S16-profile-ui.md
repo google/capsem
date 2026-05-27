@@ -12,6 +12,12 @@ revision/assets/rules, create a VM from it, inspect existing VM profile state,
 and operate runtime enforcement/detection overlays without falling back to raw
 requests.
 
+Dashboard launch/profile-card work is folded here from the retired
+`analytics-dashboard`, `better_stats`, and `frontend-rebuild` boards. S16 owns
+the profile-backed dashboard entry point and launch readiness. It does not own
+the richer historical analytics dashboard, structured timeline, or reporting
+package; those belong to S16a, S12, and S19b.
+
 ## Tasks
 
 - Add profile selector.

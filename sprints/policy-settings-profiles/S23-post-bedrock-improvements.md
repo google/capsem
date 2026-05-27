@@ -35,7 +35,8 @@ or introduce a second policy/event authority.
 - OpenAPI-to-MCP and Local LLM product sprints from S20/S21.
 - Reporting setup from S19b after S12 fields are stable.
 - Deeper OpenTelemetry/dashboard polish after the bedrock status/debug truth is
-  correct.
+  correct. Historical `analytics-dashboard` and `better_stats` ideas must be
+  reintroduced through S16/S16a/S12/S19b, not by reviving the retired boards.
 - VM resource recommendation polish: detect host CPU/RAM, estimate realistic
   active VM capacity at roughly 80% of system RAM, warn when selected defaults
   or active sessions exceed the machine envelope, and keep the warning based on

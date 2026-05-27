@@ -42,6 +42,21 @@ These directories are historical only for Profile V2 planning:
 - `sprints/retired/profile-v2-runtime-hygiene/`
 - `sprints/retired/profile-v2-s07-uds-api/`
 - `sprints/retired/profile-v2-test-fix/`
+- `sprints/retired/audit-bugs/`
+- `sprints/retired/capsem-service-split/`
+- `sprints/retired/capsem-service-split-followup/`
+- `sprints/retired/doctor-vm-crash/`
+- `sprints/retired/firebase-session-monitor-relay/`
+- `sprints/retired/forensics/`
+- `sprints/retired/frontend-rebuild/`
+- `sprints/retired/linux/`
+- `sprints/retired/linux-clippy-1.95/`
+- `sprints/retired/orthogonal-ci/`
+- `sprints/retired/tauri-shell/`
+- `sprints/retired/telemetry/`
+- `sprints/retired/tray-notifications/`
+- `sprints/retired/tray-ui-integration/`
+- `sprints/retired/tty/`
 
 They may contain useful tests, bug history, or old implementation notes, but
 they do not create live work unless a current sprint file names the carried

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Reduced the top-level sprint inventory to active Profile V2 work plus the
+  credential detection pipeline, moving completed boards to `sprints/done/` and
+  stale or superseded boards to `sprints/retired/`.
 - Inventoried sprint planning docs and moved retired Profile V2, release, and
   legacy boards under `sprints/retired/` so active release planning starts from
   `sprints/policy-settings-profiles/`.
