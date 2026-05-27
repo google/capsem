@@ -10,8 +10,8 @@ live under `sprints/retired/`.
   Enter through `policy-settings-profiles/NOW.md` for the current operational
   view, `policy-settings-profiles/MASTER.md` for the roadmap, and
   `policy-settings-profiles/tracker.md` for evidence.
-- `policy-settings-profiles/release-hit-list.md` - active installed-app and
-  release usability closeout board.
+- `policy-settings-profiles/release-hit-list.md` - historical installed-app and
+  release usability evidence now migrated into S24.
 - `credential-pipeline/` - standalone precursor for spec-driven credential,
   MCP, and skills detection. It feeds Profile V2 S10 credential brokerage, but
   S10 remains owned by `policy-settings-profiles/`.
@@ -21,9 +21,9 @@ live under `sprints/retired/`.
 The release-blocking Profile V2 path is tracked inside
 `policy-settings-profiles/NOW.md` and `policy-settings-profiles/MASTER.md`:
 
-- `S18 - Full Verification And Release Gate` - final install/VM/E2E release
-  proof. Current decision: run the broader `just smoke` / release packaging
-  gate, or explicitly accept the narrower S18 replay matrix already recorded.
+- `S24 - Post-Ship Profile V2 Follow-Up` - active cleanup sprint for shipped
+  leftovers, installed proof, release-hit-list migration, profile UI/settings/
+  dashboard polish, Gemini/metrics installed VM proof, and board reconciliation.
 - `S15 - Confirm UX (Ask)` - conditional only if ask is advertised or enabled
   as user-facing behavior. Otherwise ask remains disabled/pass-through and S15
   is post-bedrock.

@@ -8,21 +8,21 @@ Last updated: 2026-05-27
 - `tracker.md` is the detailed evidence log.
 - This file is the short operational view for the next session.
 
-## Bedrock Release Path
+## Post-Ship Path
 
-The Profile V2 sprint is no longer a broad exploration. Most implementation
-lanes are closed for the bedrock cut. The active release decision is S18:
+The Profile V2 bedrock release shipped. The active work is now:
 
-1. Run the broader `just smoke` / release packaging gate, or explicitly accept
-   the narrower S18 replay matrix already recorded in `tracker.md`.
-2. Keep `ask` non-user-facing unless S15 confirm resolution is implemented and
-   verified. If ask stays disabled/pass-through, S15 is not a release blocker.
-3. Do not reopen dashboard, forensics, Linux, old audit bugs, service split, or
+1. [S24 - Post-Ship Profile V2 Follow-Up](S24-post-ship-profile-followup.md).
+2. Keep `release-hit-list.md` as historical bug evidence; migrate active work
+   into S24.
+3. Keep `ask` non-user-facing unless S15 confirm resolution is implemented and
+   verified. If ask stays disabled/pass-through, S15 is post-ship work.
+4. Do not reopen dashboard, forensics, Linux, old audit bugs, service split, or
    old frontend boards unless they are rewritten against the Profile V2
    contracts.
 
-The installed-app bug closeout remains in `release-hit-list.md`. Most entries
-are fixed in repo but still need installed package/UI/VM proof during S18.
+The installed-app proof gaps and polish items from `release-hit-list.md` are
+now S24 tasks.
 
 ## Closed For Bedrock
 
@@ -35,7 +35,9 @@ are fixed in repo but still need installed package/UI/VM proof during S18.
   polish remains S12.
 - S16: profile UI is closed for the bedrock release. Richer workbench/dashboard
   composition moves to S16a/S17/S19b.
-- S19: docs/site contract is closed for bedrock; S18 owns the final docs replay.
+- S18: release gate is historical; the release shipped.
+- S19: docs/site contract is closed for bedrock; S24 owns post-ship corrections
+  discovered while proving installed behavior.
 
 ## Still Separate
 

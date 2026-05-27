@@ -2953,7 +2953,7 @@ a valid claim -- mark it `[ ]` instead.
     troubleshooting at profile provenance, Settings -> Policy, `capsem logs`,
     debug reports, and typed rule references. S19 is closed for the bedrock
     release; S18 owns final docs-review replay.
-33. [~] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
+33. [x] [S18 - Full verification and release gate](S18-full-verification-release-gate.md)
     -- table-stakes release work, not an improvement sprint.
     -- core Profile V2 bedrock release replay and verification gate. This gate
     must prove the engine split, CLI, UI, docs, install, VM boot, profile pins,
@@ -3046,6 +3046,8 @@ a valid claim -- mark it `[ ]` instead.
     recorded here. S10 credential brokerage and the `credential-pipeline`
     source-detection graph are split from this bedrock gate unless a shipped
     profile promises credential release.
+    Post-ship update: the bedrock release shipped. Remaining installed proof,
+    release-hit-list evidence, and polish are migrated to S24.
 34. [ ] [S16a - Unified timeline and agent workbench](S16a-unified-timeline-and-agent-workbench.md)
     -- post-bedrock improvement split by the release contract. Build a friendly
     everyday-work UI for Codex/Claude SDK-backed sessions and terminal fallback
@@ -3089,6 +3091,11 @@ a valid claim -- mark it `[ ]` instead.
     reporting setup, and other product expansion work lands after the bedrock
     release. It is not rescue work and must not mutate the engine/profile/API
     terms.
+42. [~] [S24 - Post-ship Profile V2 follow-up](S24-post-ship-profile-followup.md)
+    -- active follow-up sprint after the bedrock release. Consolidates
+    installed proof, release-hit-list migration, profile UI/settings/dashboard
+    polish, Gemini/metrics installed VM proof, and board reconciliation into
+    one queue.
 
 ## S06c - Ablate legacy NetworkPolicy runtime
 
@@ -3737,11 +3744,11 @@ proof slice.
 
 ### Deferred items (visible debt)
 
-- **Active release blocker hit list** -- First installed-app testing on
+- **Historical release blocker hit list** -- First installed-app testing on
   2026-05-24 promoted release usability bugs into
-  [release-hit-list.md](release-hit-list.md). That file is now the active
-  closeout board for UI/install/profile blockers; this tracker must not claim
-  release readiness while any P0 item remains open.
+  [release-hit-list.md](release-hit-list.md). After the bedrock release shipped,
+  remaining proof and polish moved to
+  [S24 - Post-Ship Profile V2 Follow-Up](S24-post-ship-profile-followup.md).
 - **capsem-doctor E2E ask probe** -- owned by S15/S18. Fire one ask rule per
   subsystem from inside a running VM and read the matched
   rule label back out of `session.db`. Unblock requires the

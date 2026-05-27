@@ -1,7 +1,10 @@
 # Profile V2 Release Hit List
 
 Date: 2026-05-24
-Mode: full debug loop. Every item needs reproduce -> diagnose -> fix -> focused proof -> release proof.
+Mode: historical release debug loop. The bedrock release shipped; active
+post-ship work is migrated to
+[S24 - Post-Ship Profile V2 Follow-Up](S24-post-ship-profile-followup.md).
+Every remaining item below is evidence for S24, not a separate active sprint.
 
 ## Rules
 
