@@ -221,7 +221,7 @@ Status: Done
 
 ## Requirements for Other Teams
 
-### Service team (amend `sprints/next-gen/tracker.md`)
+### Service team (historical next-gen notes archived at `sprints/retired/next-gen/tracker.md`)
 
 - [x] capsem-service spawns `capsem-gateway` then `capsem-tray` as child processes on startup
 - [x] Kills both on shutdown (kill_on_drop + explicit kill in graceful shutdown)

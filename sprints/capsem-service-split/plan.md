@@ -71,8 +71,9 @@ Do **NOT** do in this sprint:
 - Move any `handle_*` function.
 - Change any handler signature or behavior.
 - Touch `crates/capsem-service/src/api.rs` (separate concern).
-- Add Python integration tests -- that's the
-  `sprints/mcp-endpoint-coverage/` sprint's territory. Do not conflict.
+- Add Python integration tests -- the historical MCP coverage notes live under
+  `sprints/retired/mcp-endpoint-coverage/`; do not conflict with any current
+  sprint that reopens that surface.
 
 ## Key decisions
 
@@ -110,9 +111,9 @@ Search pattern: `grep -n "fn.*sanitize\|fn.*validate_vm\|fn.*generate_tmp\|fn.*a
 
 ### MCP sprint coordination
 
-The `sprints/mcp-endpoint-coverage/` sprint is active (paused mid-flight). It
-is test-only: adds Python tests under `tests/capsem-mcp/` and
-`tests/capsem-e2e/`. It does NOT edit `crates/capsem-service/src/main.rs`.
+The historical `sprints/retired/mcp-endpoint-coverage/` sprint was test-only:
+it added Python tests under `tests/capsem-mcp/` and `tests/capsem-e2e/`. It did
+NOT edit `crates/capsem-service/src/main.rs`.
 
 **Conflict risk:** zero direct. Merge risk: zero because the MCP sprint
 doesn't touch the Rust source. Proceed without waiting.

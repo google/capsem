@@ -5,8 +5,9 @@ Last updated: 2026-05-15
 ## Why This Exists
 
 Inherits the release-team handoff "OpenTelemetry Metrics Handoff"
-(2026-05-15). During release-debug-loop final verification the release
-branch found that service `/list` was opening every running VM's
+(2026-05-15). During the retired release-debug-loop final verification,
+archived at `sprints/retired/release-debug-loop/`, the release branch found
+that service `/list` was opening every running VM's
 `session.db` to compute aggregate telemetry. That coupled list/status
 to per-session SQLite at exactly the wrong time. The release branch
 shipped a narrow hotfix:

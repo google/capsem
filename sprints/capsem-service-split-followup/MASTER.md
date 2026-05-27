@@ -12,7 +12,7 @@
 | T3 | `src/routes/files.rs` | Not started | T2 | Python suite stable |
 | T4 | `src/routes/images.rs` (handle_fork) | Not started | T2 | Python suite stable |
 | T6 | `src/routes/history.rs` | Not started | T2 | Python suite stable |
-| T5 | `src/routes/mcp.rs` | Not started | T2 | **`sprints/mcp-endpoint-coverage/` complete** + Python suite stable |
+| T5 | `src/routes/mcp.rs` | Not started | T2 | Python suite stable + no active MCP handler test sprint in flight |
 | T7 | `src/process.rs` (spawn dedup) | Not started | T2 + Path A/B decision in `T7-process.md` | Python suite stable |
 
 ## Phase groupings
@@ -20,7 +20,7 @@
 - **Phase 1 -- Foundations:** T1 → T2. Unlocks everything else.
 - **Phase 2 -- Route modules:** T3, T4, T6 (any order; each an isolated
   PR). Runs after T2.
-- **Phase 3 -- Blocked work:** T5 (waits on mcp-endpoint-coverage), T7
+- **Phase 3 -- Blocked work:** T5 (waits on MCP handler test ownership to be clear), T7
   (waits on Path A vs Path B written decision).
 
 ## Baseline at sprint scaffolding
@@ -52,8 +52,8 @@ Start when **both** are true:
 
 1. `just test` green end-to-end locally on `next-gen` for at least one
    consecutive run without retries.
-2. `sprints/mcp-endpoint-coverage/` either complete (tracker shows done)
-   or has explicitly handed off the MCP handler surface to this sprint.
+2. No active MCP handler test sprint owns the MCP handler surface. Historical
+   coverage notes live under `sprints/retired/mcp-endpoint-coverage/`.
 
 When you start: create `tracker.md` (active sub-sprint) and
 `T<N>-<name>.md` (sub-sprint plan) in this directory, then execute. Keep

@@ -57,9 +57,9 @@ Current baseline (commit on `next-gen` HEAD):
    prove "no behavior change" on handler moves. Likely causes to probe:
    pytest-xdist parallel races, leaked sandboxes between tests,
    gateway/guest startup flakes. Tracked separately.
-2. **`sprints/mcp-endpoint-coverage/` complete.** It owns the MCP handler
-   surface and is paused mid-flight. Touching MCP handlers before it
-   finishes will collide with its test additions.
+2. **MCP handler test ownership clear.** Historical MCP coverage notes now live
+   under `sprints/retired/mcp-endpoint-coverage/`. Before touching MCP
+   handlers, confirm no current sprint has re-opened that handler surface.
 
 When both are resolved, start with T1.
 
@@ -160,15 +160,15 @@ each handler against a test `ServiceState` with an empty/non-empty db.
 
 **Commit.** `refactor(service): extract history routes into routes/history.rs`.
 
-### T5 -- `src/routes/mcp.rs` (BLOCKED on mcp-endpoint-coverage)
+### T5 -- `src/routes/mcp.rs` (BLOCKED until MCP handler ownership is clear)
 
 **Scope.** `handle_mcp_servers` (~1797), `handle_mcp_tools` (~1832),
 `handle_mcp_policy` (~1852), `handle_mcp_refresh` (~1876),
 `handle_mcp_approve` (~1892), `handle_mcp_call` (~1911).
 
-**Do not start this sub-sprint until `sprints/mcp-endpoint-coverage/`
-completes.** That sprint is actively adding tests against these handlers;
-moving them underneath it causes merge pain.
+**Do not start this sub-sprint while another current sprint owns MCP handler
+tests.** Historical coverage notes live at
+`sprints/retired/mcp-endpoint-coverage/`.
 
 ### T7 -- `src/process.rs` (DECIDE Path A vs B before coding)
 
@@ -261,6 +261,8 @@ enter T7 without a written choice in `T7-process.md`.
    sub-sprint whose blockers are clear.
 5. Verify blockers are resolved:
    - `just test` runs clean locally on a fresh clone.
-   - `sprints/mcp-endpoint-coverage/tracker.md` shows the sprint as done.
+   - Any current MCP handler coverage sprint has handed off the surface, or
+     only the retired archive at `sprints/retired/mcp-endpoint-coverage/`
+     remains.
 6. Create `T<N>-<name>.md` for the chosen sub-sprint + `tracker.md`, then
    execute.

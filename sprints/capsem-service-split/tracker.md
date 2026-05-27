@@ -130,5 +130,6 @@ moves handlers (files/images/mcp/history), `PersistentRegistry`, dedups
 spawn paths. Blocked on:
 
 1. Python integration test stabilization.
-2. `sprints/mcp-endpoint-coverage/` completing -- that sprint owns the MCP
-   handler surface, so a future `routes/mcp.rs` must wait.
+2. MCP handler test ownership being clear -- historical coverage notes live at
+   `sprints/retired/mcp-endpoint-coverage/`, so a future `routes/mcp.rs`
+   sprint must confirm no current sprint has reopened that surface.

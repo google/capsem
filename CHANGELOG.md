@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Inventoried sprint planning docs and moved retired Profile V2, release, and
+  legacy boards under `sprints/retired/` so active release planning starts from
+  `sprints/policy-settings-profiles/`.
+
 ## [1.2.1779673506] - 2026-05-24
 
 ### Fixed
