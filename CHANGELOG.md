@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made security plugins, dashboard improvements, Google/Gemini integration,
   OpenTelemetry, remote decisions, and remote alert logging explicit Profile
   Foundation scope.
+- Renamed Foundation F07 around graph, dashboard, and observability so product
+  relationships are a first-class contract instead of dashboard-only logic.
 - Reframed S24 as the active post-ship Profile V2 meta sprint so every open
   Profile V2 item is tracked as in-scope child sprint work.
 - Created S24 as the single post-ship Profile V2 sprint and migrated remaining

@@ -27,17 +27,18 @@ The active Profile V2 path is tracked inside
 - `Profile Foundation Sprint` - active parent sprint for all remaining
   foundation work. It exits only when installed Profile V2 behavior, the full
   Security Event system, security plugins, remote decisions, remote alert
-  logging, Google/Gemini integration, credentials, OpenTelemetry,
-  metrics/reporting, dashboard improvements, workbench, integrations, quotas,
-  docs/site, and final release proof are trusted.
+  logging, Google/Gemini integration, credentials, product graph,
+  OpenTelemetry, metrics/reporting, dashboard improvements, workbench,
+  integrations, quotas, docs/site, and final release proof are trusted.
 - F00-F12 are the execution order. Old S-numbered files remain source material,
   not ordering authority.
 
 ## Folded Product Threads
 
 - Better dashboard and stats work is folded into Profile V2: launch/profile UX
-  in S16, structured timeline/workbench in S16a, live metrics in S12, and
-  reporting/dashboard packaging in S19b. All are Foundation child lanes.
+  in S16, product graph/dashboard/observability in Foundation F07, structured
+  timeline/workbench in S16a, live metrics in S12, and reporting/dashboard
+  packaging in S19b. All are Foundation child lanes.
 - Credential release belongs to
   `policy-settings-profiles/S10-credential-brokerage.md`; source discovery and
   inventory stay in `credential-pipeline/`. S10 is carried by Foundation F06.

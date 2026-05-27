@@ -4,8 +4,9 @@
 
 A clean Foundation meta sprint that replaces the mixed post-ship S-numbered
 Profile V2 queue with ordered F-numbered sub-sprints. The sprint exits only
-when the core Profile V2 product, Security Event system, plugins, metrics,
-workbench, credentials, quotas, and docs have stable contracts and verification.
+when the core Profile V2 product, Security Event system, plugins, product
+graph, dashboard, metrics, workbench, credentials, quotas, and docs have stable
+contracts and verification.
 
 ## Key Decisions
 
@@ -32,7 +33,7 @@ workbench, credentials, quotas, and docs have stable contracts and verification.
 2. F01 proves the installed product.
 3. F02/F03 close the event contract and runtime journal.
 4. F04/F05 close rule/detection/confirm UX.
-5. F06/F07 add credentials and operational truth.
+5. F06/F07 add credentials, graph/dashboard, and operational truth.
 6. F08-F11 add workbench, plugins, integrations, and quotas.
 7. F12 closes docs/site/release story and final gates.
 

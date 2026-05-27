@@ -76,7 +76,7 @@ What this does not prove yet:
 | S08c, S08d | Rule packs, detection, benchmarks | F04 |
 | S09, S16 | Product surface polish | F01, F05 |
 | S10, `credential-pipeline` | Credential brokerage and Google account integration | F06 |
-| S11, S12, S19b | Dashboard, status, metrics, OpenTelemetry, reporting, remote alert logging | F07 |
+| S11, S12, S19b, retired graph/dashboard ideas | Graph, dashboard, status, metrics, OpenTelemetry, reporting, remote alert logging | F07 |
 | S14, S15, S17 | Rules, ask, capabilities UX | F05 |
 | S16a | Timeline and workbench | F08 |
 | S13, S23 plugins | Security plugin system, remote decisions, observer alerts | F09 |
@@ -99,7 +99,7 @@ runtime into that ledger, then layer product and extension systems on top.
 | 4 | [F04 - Policy Packs Detection And Benchmarks](F04-policy-packs-detection-and-benchmarks.md) | Not Started | Close CEL enforcement, detection packs, backtest/hunt, corpus parity, and benchmark/release artifact proof. | S08a, S08c, S08d |
 | 5 | [F05 - Rules Confirm And Capability UX](F05-rules-confirm-capability-ux.md) | Not Started | Build rule editors, ask/confirm resolver UX, CLI parity, capability controls, and detection finding/backtest views. | S14, S15, S17 |
 | 6 | [F06 - Credential Brokerage Foundation](F06-credential-brokerage-foundation.md) | Not Started | Broker credentials from service/profile settings into sessions with audit, policy, UI/status, source discovery handoff, and Google account integration for Drive/Gemini/Google-backed providers. | S10, `credential-pipeline` |
-| 7 | [F07 - Metrics Status And Reporting Foundation](F07-metrics-status-reporting-foundation.md) | Not Started | Finish dashboard improvements, live metrics, OTel/export surfaces, status/debug truth, remote alert logging, dashboard counters, and reporting setup. | S11, S12, S19b |
+| 7 | [F07 - Graph Dashboard And Observability Foundation](F07-graph-dashboard-observability-foundation.md) | Not Started | Finish the product graph, dashboard improvements, live metrics, OTel/export surfaces, status/debug truth, remote alert logging, dashboard counters, and reporting setup. | S11, S12, S19b |
 | 8 | [F08 - Timeline And Workbench Foundation](F08-timeline-workbench-foundation.md) | Not Started | Define conversation/timeline engine and everyday-work review UI over canonical resolved events. | S16a |
 | 9 | [F09 - Plugin System Foundation](F09-plugin-system-foundation.md) | Not Started | Implement deterministic signed security plugins, remote/WASM enforcement decisions, observer extensions, and remote alert event contracts. | S13, S23 |
 | 10 | [F10 - Product Integration Foundation](F10-product-integration-foundation.md) | Not Started | Bring OpenAPI-to-MCP, Local LLM, and deeper Google/Gemini provider integration under profile-owned security, diagnostics, audit, and UI contracts. | S20, S21, Google/Gemini |
@@ -127,7 +127,7 @@ Not trusted until Foundation proves it:
 - production ask/confirm;
 - credential release into sessions;
 - Google deep integration beyond first-slice account brokerage and Gemini proof;
-- live metrics/export/reporting completeness;
+- product graph, dashboard, live metrics/export/reporting completeness;
 - timeline/workbench product workflow;
 - quotas/budgets enforcement.
 

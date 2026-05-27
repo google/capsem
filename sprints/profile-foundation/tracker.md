@@ -15,8 +15,8 @@ Last updated: 2026-05-27
 - [ ] Execute F04 policy packs, detection, and benchmarks.
 - [ ] Execute F05 rules, confirm, and capability UX.
 - [ ] Execute F06 credential brokerage foundation.
-- [ ] Execute F07 dashboard, metrics, status, OpenTelemetry, reporting, and
-      remote alert logging foundation.
+- [ ] Execute F07 graph, dashboard, metrics, status, OpenTelemetry, reporting,
+      and remote alert logging foundation.
 - [ ] Execute F08 timeline and workbench foundation.
 - [ ] Execute F09 security plugin, remote decision, and observer alert
       foundation.

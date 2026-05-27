@@ -1,12 +1,17 @@
-# F07 - Metrics Status And Reporting Foundation
+# F07 - Graph Dashboard And Observability Foundation
 
 ## Goal
 
-Make dashboards, runtime health, metrics, export, reporting, and alert logging
-explain the same foundation truth.
+Make the product graph, dashboards, runtime health, metrics, export,
+reporting, and alert logging explain the same foundation truth.
 
 ## Scope
 
+- Product graph model for profiles, VMs, sessions, credentials, providers,
+  MCP servers, tools, skills, rules, Security Events, resolved events,
+  findings, plugin decisions, alerts, quotas, and reports.
+- Graph query/API shape that dashboards, workbench, reporting, and support
+  bundles can consume without inventing separate relationship logic.
 - Live per-VM metrics accumulator and `/metrics/json`.
 - Model/provider/token/cost counters.
 - Security action, detection, MCP, HTTP, DNS, file, and process counters.
@@ -21,6 +26,10 @@ explain the same foundation truth.
 
 ## Acceptance Criteria
 
+- Graph nodes and edges have stable ids, ownership, redaction boundaries, and
+  links back to canonical event ids where security evidence is involved.
+- Dashboard views consume the graph/metrics contracts instead of recomputing
+  truth from unrelated ad hoc sources.
 - UI/status/CLI counters match runtime data.
 - Host/service AI accounting is separate from VM accounting.
 - Remote alert logs are bounded, redacted, correlated to canonical event ids,
