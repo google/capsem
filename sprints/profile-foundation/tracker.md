@@ -15,10 +15,12 @@ Last updated: 2026-05-27
 - [ ] Execute F04 policy packs, detection, and benchmarks.
 - [ ] Execute F05 rules, confirm, and capability UX.
 - [ ] Execute F06 credential brokerage foundation.
-- [ ] Execute F07 metrics, status, and reporting foundation.
+- [ ] Execute F07 dashboard, metrics, status, OpenTelemetry, reporting, and
+      remote alert logging foundation.
 - [ ] Execute F08 timeline and workbench foundation.
-- [ ] Execute F09 plugin system foundation.
-- [ ] Execute F10 product integration foundation.
+- [ ] Execute F09 security plugin, remote decision, and observer alert
+      foundation.
+- [ ] Execute F10 product integration and Google/Gemini foundation.
 - [ ] Execute F11 quotas, budgets, and rate limits.
 - [ ] Execute F12 docs, site, and Foundation release gate.
 
