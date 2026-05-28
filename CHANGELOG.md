@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Fixed Linux KVM VirtioFS rename-over-existing semantics so atomic CLI config
+  rewrites keep the moved inode bound to the target path instead of making the
+  rewritten file disappear from the guest dentry cache.
 - Fixed KVM vCPU run-loop handling so application processors continue across
   guest HLT exits and transient `KVM_RUN` `EAGAIN` responses instead of
   silently dropping out of the VM.

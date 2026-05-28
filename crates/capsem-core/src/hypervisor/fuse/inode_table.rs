@@ -117,6 +117,32 @@ impl InodeTable {
             self.entries.remove(&ino);
         }
     }
+
+    pub fn rename_path(&mut self, old_path: &Path, new_path: &Path) {
+        let moved: Vec<u64> = self
+            .entries
+            .iter()
+            .filter_map(|(&ino, entry)| {
+                same_or_descendant(&entry.host_path, old_path).then_some(ino)
+            })
+            .collect();
+
+        self.entries.retain(|ino, entry| {
+            moved.contains(ino) || !same_or_descendant(&entry.host_path, new_path)
+        });
+
+        for ino in moved {
+            if let Some(entry) = self.entries.get_mut(&ino) {
+                if let Ok(suffix) = entry.host_path.strip_prefix(old_path) {
+                    entry.host_path = if suffix.as_os_str().is_empty() {
+                        new_path.to_path_buf()
+                    } else {
+                        new_path.join(suffix)
+                    };
+                }
+            }
+        }
+    }
 }
 
 fn valid_child_name(name: &[u8]) -> Option<&str> {
@@ -130,6 +156,10 @@ fn valid_child_name(name: &[u8]) -> Option<&str> {
         return None;
     }
     Some(name_str)
+}
+
+fn same_or_descendant(path: &Path, prefix: &Path) -> bool {
+    path == prefix || path.strip_prefix(prefix).is_ok()
 }
 
 #[cfg(test)]

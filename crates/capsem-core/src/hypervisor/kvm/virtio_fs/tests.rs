@@ -934,6 +934,38 @@ fn rename_file() {
 }
 
 #[test]
+fn rename_over_existing_rebinds_source_inode_to_target_path() {
+    let dir = temp_share("rename-over-existing");
+    std::fs::write(dir.join("config.json"), b"old").unwrap();
+    std::fs::write(dir.join("config.json.tmp"), b"new").unwrap();
+    let mut proc = test_processor(&dir);
+    let _target_ino = lookup(&mut proc, 1, "config.json").unwrap();
+    let temp_ino = lookup(&mut proc, 1, "config.json.tmp").unwrap();
+
+    let rename_in = FuseRenameIn { newdir: 1 };
+    let h = make_header(FUSE_RENAME, 1, 1);
+    let mut body = fuse::as_bytes(&rename_in).to_vec();
+    body.extend_from_slice(b"config.json.tmp\0config.json\0");
+    let resp = proc.handle_request(&build_request(&h, &body));
+    assert_eq!(response_error(&resp), 0);
+
+    let fh = open_file(&mut proc, temp_ino, libc::O_RDONLY as u32).unwrap();
+    let read_in = FuseReadIn {
+        fh,
+        offset: 0,
+        size: 1024,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let h = make_header(FUSE_READ, temp_ino, 2);
+    let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(&resp[OUT_HDR_SIZE..], b"new");
+}
+
+#[test]
 fn rename_readonly_rejected() {
     let dir = temp_share("rename-ro");
     std::fs::write(dir.join("a.txt"), b"x").unwrap();

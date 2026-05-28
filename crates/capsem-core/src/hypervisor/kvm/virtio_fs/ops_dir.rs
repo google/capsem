@@ -209,7 +209,7 @@ impl FuseProcessor {
         )
     }
 
-    fn rename_impl(&self, header: &FuseInHeader, newdir: u64, names_buf: &[u8]) -> Vec<u8> {
+    fn rename_impl(&mut self, header: &FuseInHeader, newdir: u64, names_buf: &[u8]) -> Vec<u8> {
         let (old_name, new_name) = match fuse::extract_two_names(names_buf) {
             Some(n) => n,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
@@ -222,8 +222,11 @@ impl FuseProcessor {
             Some(p) => p,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        match std::fs::rename(old_path, new_path) {
-            Ok(()) => fuse::success_response(header.unique, &[]),
+        match std::fs::rename(&old_path, &new_path) {
+            Ok(()) => {
+                self.inodes.rename_path(&old_path, &new_path);
+                fuse::success_response(header.unique, &[])
+            }
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         }
     }
