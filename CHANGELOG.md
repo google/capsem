@@ -54,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Fixed the Linux KVM full `capsem-doctor -x -v` gate, which now passes on the
+  nested-KVM proving host after the SMP, VirtioFS, runtime cache, Git trust, and
+  network proxy fixes.
 - Fixed Git workflows in Linux KVM workspaces by adding guest system Git trust
   for VirtioFS-owned `/root` repositories, avoiding dubious-ownership failures
   when commands run as guest root.

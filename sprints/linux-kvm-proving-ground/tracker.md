@@ -37,7 +37,7 @@
   on VirtioFS and failed wheel/archive cache symlinks with EINVAL.
 - [x] Fix live doctor blocker where Git refused `/root` repos as dubious
   ownership because VirtioFS exposes host uid/gid while commands run as root.
-- [ ] Run live boot gate: `capsem run "capsem-doctor"`.
+- [x] Run live boot gate: `capsem run "capsem-doctor"`.
 - [ ] Inspect telemetry/session evidence after a successful boot.
 - [ ] Record boot and first-exec timing.
 - [x] Fix only reproduced Linux/KVM blockers found so far.
@@ -151,10 +151,10 @@
 - E2E/VM: `capsem-doctor -x -v -k 'uv_pip_install_works or uv_add_package_works'`
   passed.
 - E2E/VM: `capsem-doctor -x -v -k git_workflow` passed.
-- E2E/VM: `capsem-doctor -x -v` remains open on
-  the next full-suite blocker; do not call the live doctor gate green until a
-  complete run passes.
+- E2E/VM: `capsem-doctor -x -v` passed the full Linux KVM doctor suite:
+  307 passed, 11 skipped in 191.45s.
 - Telemetry: Pending successful full doctor/session inspection.
-- Performance: Pending live boot.
+- Performance: Live doctor boot/exec gate passed; first-exec timing still needs
+  explicit session evidence.
 - Missing/deferred: Full doctor gate, telemetry inspection, and performance
   timing remain pending.
