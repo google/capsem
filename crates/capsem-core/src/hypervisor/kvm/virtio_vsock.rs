@@ -841,6 +841,7 @@ mod tests {
             driver_addr: RAM_BASE + 0x2000,
             device_addr: used_gpa,
             size: 256,
+            warm_restore: false,
         };
 
         let idx = queue_used_idx(&mem.clone_ref(RAM_BASE), &queue).unwrap();
@@ -858,6 +859,7 @@ mod tests {
             driver_addr: avail_gpa,
             device_addr: RAM_BASE + 0x4000,
             size: 256,
+            warm_restore: false,
         };
 
         let idx = queue_avail_idx(&mem.clone_ref(RAM_BASE), &queue).unwrap();

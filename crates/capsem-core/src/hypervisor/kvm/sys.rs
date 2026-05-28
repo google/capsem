@@ -887,6 +887,10 @@ pub(super) const KVM_GET_SREGS: u64 = _ior(KVMIO, 0x83, 312); // sizeof kvm_sreg
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_SET_SREGS: u64 = _iow(KVMIO, 0x84, 312); // sizeof kvm_sregs
 #[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_MSRS: u64 = _iowr(KVMIO, 0x88, 8); // sizeof kvm_msrs header
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_MSRS: u64 = _iow(KVMIO, 0x89, 8); // sizeof kvm_msrs header
+#[cfg(target_arch = "x86_64")]
 pub(super) const KVM_GET_FPU: u64 = _ior(KVMIO, 0x8c, 416); // sizeof kvm_fpu
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_SET_FPU: u64 = _iow(KVMIO, 0x8d, 416); // sizeof kvm_fpu
@@ -1090,6 +1094,15 @@ pub(super) struct KvmMpState {
 
 #[cfg(target_arch = "x86_64")]
 #[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct KvmMsrEntry {
+    pub index: u32,
+    pub reserved: u32,
+    pub data: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct KvmLapicState {
     pub regs: [u8; 1024],
@@ -1242,6 +1255,7 @@ const _: () = {
     assert!(std::mem::size_of::<KvmEnableCap>() == 104);
     assert!(std::mem::size_of::<KvmCpuidEntry2>() == 40);
     assert!(std::mem::size_of::<KvmMpState>() == 4);
+    assert!(std::mem::size_of::<KvmMsrEntry>() == 16);
     assert!(std::mem::size_of::<KvmLapicState>() == 1024);
     assert!(std::mem::size_of::<KvmIrqchip>() == 520);
     assert!(std::mem::size_of::<KvmPitState2>() == 112);
@@ -1512,6 +1526,80 @@ impl VcpuFd {
         };
         if ret < 0 {
             bail!("KVM_SET_SREGS failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn get_msrs(&self, indexes: &[u32]) -> Result<Vec<KvmMsrEntry>> {
+        let header_len = 8usize;
+        let entry_len = std::mem::size_of::<KvmMsrEntry>();
+        let mut buf = vec![0u8; header_len + indexes.len() * entry_len];
+        buf[0..4].copy_from_slice(&(indexes.len() as u32).to_ne_bytes());
+        for (i, index) in indexes.iter().enumerate() {
+            let offset = header_len + i * entry_len;
+            buf[offset..offset + 4].copy_from_slice(&index.to_ne_bytes());
+        }
+
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_MSRS as libc::c_ulong,
+                buf.as_mut_ptr() as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_GET_MSRS failed: {}", std::io::Error::last_os_error());
+        }
+        let count = ret as usize;
+        if count > indexes.len() {
+            bail!(
+                "KVM_GET_MSRS returned more entries than requested: returned={}, requested={}",
+                count,
+                indexes.len()
+            );
+        }
+
+        let mut entries = Vec::with_capacity(count);
+        for i in 0..count {
+            let offset = header_len + i * entry_len;
+            let entry =
+                unsafe { std::ptr::read_unaligned(buf[offset..].as_ptr() as *const KvmMsrEntry) };
+            entries.push(entry);
+        }
+        Ok(entries)
+    }
+
+    pub fn set_msrs(&self, entries: &[KvmMsrEntry]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let header_len = 8usize;
+        let entry_len = std::mem::size_of::<KvmMsrEntry>();
+        let mut buf = vec![0u8; header_len + entries.len() * entry_len];
+        buf[0..4].copy_from_slice(&(entries.len() as u32).to_ne_bytes());
+        for (i, entry) in entries.iter().enumerate() {
+            let offset = header_len + i * entry_len;
+            unsafe {
+                std::ptr::write_unaligned(buf[offset..].as_mut_ptr() as *mut KvmMsrEntry, *entry);
+            }
+        }
+
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_MSRS as libc::c_ulong,
+                buf.as_ptr() as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_MSRS failed: {}", std::io::Error::last_os_error());
+        }
+        let count = ret as usize;
+        if count != entries.len() {
+            bail!(
+                "KVM_SET_MSRS restored only {count}/{} entries",
+                entries.len()
+            );
         }
         Ok(())
     }
@@ -1873,6 +1961,8 @@ mod tests {
         assert_eq!(KVM_SET_PIT2, 0x4070_AEA0);
         assert_eq!(KVM_GET_CLOCK, 0x8030_AE7C);
         assert_eq!(KVM_SET_CLOCK, 0x4030_AE7B);
+        assert_eq!(KVM_GET_MSRS, 0xC008_AE88);
+        assert_eq!(KVM_SET_MSRS, 0x4008_AE89);
         assert_eq!(KVM_GET_VCPU_EVENTS, 0x8040_AE9F);
         assert_eq!(KVM_SET_VCPU_EVENTS, 0x4040_AEA0);
         assert_eq!(KVM_GET_FPU, 0x81A0_AE8C);

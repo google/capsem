@@ -693,6 +693,9 @@ impl VmHandle for KvmHandle {
         self.state.store(VmState::Saving as u8, Ordering::SeqCst);
         #[cfg(target_arch = "x86_64")]
         let result = self.control.snapshots().and_then(|snapshots| {
+            for (_slot, transport) in &self._mmio_transports {
+                transport.quiesce()?;
+            }
             #[cfg(test)]
             let vm_snapshot = if let Some(vm) = self._vm.as_ref() {
                 checkpoint::snapshot_vm(vm)?
@@ -869,6 +872,7 @@ mod tests {
             mp_state: sys::KvmMpState {
                 mp_state: sys::KVM_MP_STATE_RUNNABLE,
             },
+            msrs: Vec::new(),
             lapic: sys::KvmLapicState::default(),
             events: sys::KvmVcpuEvents::default(),
             debugregs: sys::KvmDebugRegs::default(),
@@ -949,7 +953,7 @@ mod tests {
 
         assert_eq!(handle.state(), VmState::Paused);
         let meta = std::fs::metadata(path).unwrap();
-        assert_eq!(meta.len(), 44 + 4 + 6580 + 1720 + 4096);
+        assert_eq!(meta.len(), 44 + 4 + 6952 + 1720 + 4096);
         handle.resume().unwrap();
         handle.stop().unwrap();
         waiter.join().unwrap();

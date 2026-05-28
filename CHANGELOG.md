@@ -68,9 +68,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue state, and by making guest snapshot preparation force a post-resume
   vsock reconnect. The durable process-preserving KVM resume contract still
   fails because restored guests stop making timer-driven forward progress.
+- Fixed x86_64 KVM process-preserving warm resume by checkpointing VM interrupt
+  controller, PIT, clock, extended vCPU state, selected timer/paravirtual MSRs,
+  Virtio-MMIO transport state, vhost-vsock queue state, and by restoring timer
+  MSRs after LAPIC state so resumed guests keep making forward progress.
+- Added warm-restore Virtio queue reconstruction and a pre-checkpoint
+  VirtioFS quiesce hook with structured queue/IRQ telemetry so KVM checkpoints
+  do not replay pre-suspend userspace FUSE work through fresh device workers.
 - Improved x86_64 KVM checkpoint restore correctness by preserving vCPU MP
-  state and avoiding cold-boot x86 setup writes over restored guest RAM; live
-  KVM process-preserving resume still needs virtio/interrupt device state.
+  state and avoiding cold-boot x86 setup writes over restored guest RAM.
 - Fixed the Linux KVM full `capsem-doctor -x -v` gate, which now passes on the
   nested-KVM proving host after the SMP, VirtioFS, runtime cache, Git trust, and
   network proxy fixes.

@@ -89,13 +89,23 @@ impl VirtioDevice for VirtioConsoleDevice {
                 transmitq_device_addr = q.device_addr,
                 "virtio-console transmit queue activated"
             );
-            self.transmitq = Some(VirtQueue::new(
-                mem.clone(),
-                q.desc_addr,
-                q.driver_addr,
-                q.device_addr,
-                q.size,
-            ));
+            self.transmitq = Some(if q.warm_restore {
+                VirtQueue::new_restored(
+                    mem.clone(),
+                    q.desc_addr,
+                    q.driver_addr,
+                    q.device_addr,
+                    q.size,
+                )
+            } else {
+                VirtQueue::new(
+                    mem.clone(),
+                    q.desc_addr,
+                    q.driver_addr,
+                    q.device_addr,
+                    q.size,
+                )
+            });
         }
         self.mem = Some(mem);
     }
@@ -276,12 +286,14 @@ mod tests {
                 driver_addr: 0,
                 device_addr: 0,
                 size: 0,
+                warm_restore: false,
             },
             QueueConfig {
                 desc_addr: desc,
                 driver_addr: avail,
                 device_addr: used,
                 size: 8,
+                warm_restore: false,
             },
         ];
         dev.activate(mem.clone_ref(RAM_BASE), &queues);

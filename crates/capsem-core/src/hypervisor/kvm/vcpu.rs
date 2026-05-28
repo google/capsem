@@ -182,7 +182,9 @@ impl VcpuControl {
             .iter()
             .enumerate()
             .map(|(idx, snapshot)| {
-                snapshot.ok_or_else(|| anyhow::anyhow!("missing KVM vCPU snapshot for vCPU {idx}"))
+                snapshot
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("missing KVM vCPU snapshot for vCPU {idx}"))
             })
             .collect()
     }
@@ -539,6 +541,7 @@ mod tests {
             mp_state: super::super::sys::KvmMpState {
                 mp_state: super::super::sys::KVM_MP_STATE_RUNNABLE,
             },
+            msrs: Vec::new(),
             lapic: super::super::sys::KvmLapicState::default(),
             events: super::super::sys::KvmVcpuEvents::default(),
             debugregs: super::super::sys::KvmDebugRegs::default(),

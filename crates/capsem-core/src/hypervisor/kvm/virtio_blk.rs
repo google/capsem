@@ -260,13 +260,23 @@ impl VirtioDevice for VirtioBlockDevice {
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
         if let Some(q) = queues.first() {
             if q.size > 0 {
-                self.queue = Some(VirtQueue::new(
-                    mem.clone(),
-                    q.desc_addr,
-                    q.driver_addr,
-                    q.device_addr,
-                    q.size,
-                ));
+                self.queue = Some(if q.warm_restore {
+                    VirtQueue::new_restored(
+                        mem.clone(),
+                        q.desc_addr,
+                        q.driver_addr,
+                        q.device_addr,
+                        q.size,
+                    )
+                } else {
+                    VirtQueue::new(
+                        mem.clone(),
+                        q.desc_addr,
+                        q.driver_addr,
+                        q.device_addr,
+                        q.size,
+                    )
+                });
             }
         }
         self.mem = Some(mem);
@@ -462,6 +472,7 @@ mod tests {
                 driver_addr: RAM_BASE + AVAIL_RING_OFFSET,
                 device_addr: RAM_BASE + USED_RING_OFFSET,
                 size: QUEUE_TEST_SIZE,
+                warm_restore: false,
             };
             dev.activate(mem.clone_ref(RAM_BASE), &[queue_config]);
 

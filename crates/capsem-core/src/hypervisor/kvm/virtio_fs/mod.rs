@@ -18,9 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::Result;
-use tracing::{debug, trace};
+use anyhow::{Context, Result};
+use tracing::{debug, trace, warn};
 
 use super::memory::GuestMemoryRef;
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
@@ -150,12 +151,17 @@ fn write_response(mem: &GuestMemoryRef, chain: &DescriptorChain, data: &[u8]) ->
 // Worker thread
 // ---------------------------------------------------------------------------
 
+enum WorkerCommand {
+    Notify(u32),
+    Drain(mpsc::Sender<()>),
+}
+
 fn worker_loop(
     mut proc: FuseProcessor,
     mut request_queue: VirtQueue,
     mut hiprio_queue: VirtQueue,
     mem: GuestMemoryRef,
-    rx: mpsc::Receiver<u32>,
+    rx: mpsc::Receiver<WorkerCommand>,
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
 ) {
@@ -163,85 +169,122 @@ fn worker_loop(
         event_name = "virtio.fs.worker_start",
         "virtio-fs worker started"
     );
-    while let Ok(queue_index) = rx.recv() {
-        match queue_index {
-            0 => {
-                // High-priority queue: FORGET ops (fire-and-forget, no response)
-                let mut processed = 0u32;
-                while let Some(chain) = hiprio_queue.pop() {
-                    processed += 1;
-                    let buf = gather_readable(&mem, &chain).unwrap_or_default();
-                    if let Some(header) = fuse::read_struct::<FuseInHeader>(&buf) {
-                        let body = &buf[std::mem::size_of::<FuseInHeader>()..];
-                        trace!(
-                            event_name = "virtio.fs.request",
-                            queue = "hiprio",
-                            opcode = header.opcode,
-                            unique = header.unique,
-                            "virtio-fs FUSE request"
-                        );
-                        match header.opcode {
-                            FUSE_FORGET => proc.do_forget(&header, body),
-                            FUSE_BATCH_FORGET => proc.do_batch_forget(body),
-                            _ => {}
-                        }
-                    }
-                    hiprio_queue.push_used(chain.head, 0);
-                }
-                trace!(
-                    event_name = "virtio.fs.queue_drain",
-                    queue = "hiprio",
-                    processed,
-                    "virtio-fs queue drained"
-                );
+    while let Ok(command) = rx.recv() {
+        match command {
+            WorkerCommand::Notify(0) => {
+                drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
                 signal_irq(irq_fd, &interrupt_status);
             }
-            1 => {
-                // Request queue: full FUSE operations
-                let mut processed = 0u32;
-                while let Some(chain) = request_queue.pop() {
-                    processed += 1;
-                    let request_buf = match gather_readable(&mem, &chain) {
-                        Some(buf) => buf,
-                        None => {
-                            let response = fuse::error_response(0, -libc::ENOMEM);
-                            let written = write_response(&mem, &chain, &response);
-                            request_queue.push_used(chain.head, written);
-                            continue;
-                        }
-                    };
-                    if let Some(header) = fuse::read_struct::<FuseInHeader>(&request_buf) {
-                        trace!(
-                            event_name = "virtio.fs.request",
-                            queue = "request",
-                            opcode = header.opcode,
-                            unique = header.unique,
-                            "virtio-fs FUSE request"
-                        );
-                    }
-                    let response = proc.handle_request(&request_buf);
-                    let written = write_response(&mem, &chain, &response);
-                    request_queue.push_used(chain.head, written);
-                }
-                trace!(
-                    event_name = "virtio.fs.queue_drain",
-                    queue = "request",
-                    processed,
-                    "virtio-fs queue drained"
-                );
+            WorkerCommand::Notify(1) => {
+                drain_request_queue(&mut proc, &mut request_queue, &mem);
                 signal_irq(irq_fd, &interrupt_status);
             }
-            _ => {}
+            WorkerCommand::Notify(_) => {}
+            WorkerCommand::Drain(done) => {
+                let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
+                let request = drain_request_queue(&mut proc, &mut request_queue, &mem);
+                if hiprio > 0 || request > 0 {
+                    signal_irq(irq_fd, &interrupt_status);
+                }
+                debug!(
+                    event_name = "virtio.fs.quiesce",
+                    hiprio_processed = hiprio,
+                    request_processed = request,
+                    "virtio-fs queues quiesced"
+                );
+                let _ = done.send(());
+            }
         }
     }
     debug!("virtio-fs worker exiting");
 }
 
+fn drain_hiprio_queue(
+    proc: &mut FuseProcessor,
+    hiprio_queue: &mut VirtQueue,
+    mem: &GuestMemoryRef,
+) -> u32 {
+    // High-priority queue: FORGET ops (fire-and-forget, no response)
+    let mut processed = 0u32;
+    while let Some(chain) = hiprio_queue.pop() {
+        processed += 1;
+        let buf = gather_readable(mem, &chain).unwrap_or_default();
+        if let Some(header) = fuse::read_struct::<FuseInHeader>(&buf) {
+            let body = &buf[std::mem::size_of::<FuseInHeader>()..];
+            trace!(
+                event_name = "virtio.fs.request",
+                queue = "hiprio",
+                opcode = header.opcode,
+                unique = header.unique,
+                "virtio-fs FUSE request"
+            );
+            match header.opcode {
+                FUSE_FORGET => proc.do_forget(&header, body),
+                FUSE_BATCH_FORGET => proc.do_batch_forget(body),
+                _ => {}
+            }
+        }
+        hiprio_queue.push_used(chain.head, 0);
+    }
+    debug!(
+        event_name = "virtio.fs.queue_drain",
+        queue = "hiprio",
+        processed,
+        "virtio-fs queue drained"
+    );
+    processed
+}
+
+fn drain_request_queue(
+    proc: &mut FuseProcessor,
+    request_queue: &mut VirtQueue,
+    mem: &GuestMemoryRef,
+) -> u32 {
+    // Request queue: full FUSE operations
+    let mut processed = 0u32;
+    while let Some(chain) = request_queue.pop() {
+        processed += 1;
+        let request_buf = match gather_readable(mem, &chain) {
+            Some(buf) => buf,
+            None => {
+                let response = fuse::error_response(0, -libc::ENOMEM);
+                let written = write_response(mem, &chain, &response);
+                request_queue.push_used(chain.head, written);
+                continue;
+            }
+        };
+        if let Some(header) = fuse::read_struct::<FuseInHeader>(&request_buf) {
+            trace!(
+                event_name = "virtio.fs.request",
+                queue = "request",
+                opcode = header.opcode,
+                unique = header.unique,
+                "virtio-fs FUSE request"
+            );
+        }
+        let response = proc.handle_request(&request_buf);
+        let written = write_response(mem, &chain, &response);
+        request_queue.push_used(chain.head, written);
+    }
+    debug!(
+        event_name = "virtio.fs.queue_drain",
+        queue = "request",
+        processed,
+        "virtio-fs queue drained"
+    );
+    processed
+}
+
 fn signal_irq(irq_fd: RawFd, interrupt_status: &AtomicU32) {
     interrupt_status.fetch_or(1, Ordering::SeqCst);
     let val: u64 = 1;
-    unsafe {
-        libc::write(irq_fd, &val as *const u64 as *const libc::c_void, 8);
+    let ret = unsafe { libc::write(irq_fd, &val as *const u64 as *const libc::c_void, 8) };
+    if ret < 0 {
+        warn!(
+            event_name = "virtio.fs.irq_signal_failed",
+            error = %std::io::Error::last_os_error(),
+            "failed to signal virtio-fs interrupt eventfd"
+        );
     }
 }
 
@@ -254,7 +297,7 @@ pub(in crate::hypervisor::kvm) struct VirtioFsDevice {
     /// FUSE state: present before activation, moved to worker on activate.
     processor: Option<FuseProcessor>,
     /// Channel to signal the worker thread.
-    notify_tx: Option<mpsc::Sender<u32>>,
+    notify_tx: Option<mpsc::Sender<WorkerCommand>>,
     /// Worker thread handle (joined on drop).
     worker_handle: Option<std::thread::JoinHandle<()>>,
     /// Eventfd wired to the guest GIC for interrupt injection.
@@ -333,6 +376,13 @@ impl VirtioDevice for VirtioFsDevice {
 
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
         let hiprio_queue = match queues.get(0).filter(|q| q.size > 0) {
+            Some(q) if q.warm_restore => VirtQueue::new_restored(
+                mem.clone(),
+                q.desc_addr,
+                q.driver_addr,
+                q.device_addr,
+                q.size,
+            ),
             Some(q) => VirtQueue::new(
                 mem.clone(),
                 q.desc_addr,
@@ -343,6 +393,13 @@ impl VirtioDevice for VirtioFsDevice {
             None => return,
         };
         let request_queue = match queues.get(1).filter(|q| q.size > 0) {
+            Some(q) if q.warm_restore => VirtQueue::new_restored(
+                mem.clone(),
+                q.desc_addr,
+                q.driver_addr,
+                q.device_addr,
+                q.size,
+            ),
             Some(q) => VirtQueue::new(
                 mem.clone(),
                 q.desc_addr,
@@ -386,14 +443,26 @@ impl VirtioDevice for VirtioFsDevice {
     }
 
     fn queue_notify(&mut self, queue_index: u32) {
-        trace!(
+        debug!(
             event_name = "virtio.fs.queue_notify",
-            queue_index,
-            "virtio-fs queue notified"
+            queue_index, "virtio-fs queue notified"
         );
         if let Some(ref tx) = self.notify_tx {
-            let _ = tx.send(queue_index);
+            let _ = tx.send(WorkerCommand::Notify(queue_index));
         }
+    }
+
+    fn quiesce(&mut self) -> Result<()> {
+        let Some(tx) = self.notify_tx.as_ref() else {
+            return Ok(());
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        tx.send(WorkerCommand::Drain(done_tx))
+            .context("send virtio-fs quiesce command")?;
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .context("wait for virtio-fs quiesce")?;
+        Ok(())
     }
 }
 

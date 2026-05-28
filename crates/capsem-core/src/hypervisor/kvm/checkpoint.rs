@@ -13,21 +13,49 @@ use super::memory::GuestMemory;
 use super::sys::KVM_MP_STATE_RUNNABLE;
 #[cfg(target_arch = "x86_64")]
 use super::sys::{
-    KvmClockData, KvmDebugRegs, KvmFpu, KvmIrqchip, KvmLapicState, KvmMpState, KvmPitState2,
-    KvmRegs, KvmSregs, KvmVcpuEvents, KvmXcrs, KvmXsave, VcpuFd, VmFd, KVM_IRQCHIP_IOAPIC,
-    KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
+    KvmClockData, KvmDebugRegs, KvmFpu, KvmIrqchip, KvmLapicState, KvmMpState, KvmMsrEntry,
+    KvmPitState2, KvmRegs, KvmSregs, KvmVcpuEvents, KvmXcrs, KvmXsave, VcpuFd, VmFd,
+    KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
 };
 #[cfg(target_arch = "x86_64")]
 use super::virtio_mmio::{QueueSnapshot, VirtioMmioSnapshot};
 
 const MAGIC: &[u8; 16] = b"CAPSEM-KVM-CKPT\0";
-const VERSION: u32 = 5;
+const VERSION: u32 = 7;
 const HEADER_LEN: u64 = 16 + 4 + 4 + 8 + 4 + 4 + 4;
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
+#[cfg(target_arch = "x86_64")]
+const SELECTED_MSR_INDEXES: &[u32] = &[
+    0x0000_0010, // IA32_TSC
+    0x0000_0011, // KVM_WALL_CLOCK
+    0x0000_0012, // KVM_SYSTEM_TIME
+    0x0000_001b, // IA32_APIC_BASE
+    0x0000_0174, // IA32_SYSENTER_CS
+    0x0000_0175, // IA32_SYSENTER_ESP
+    0x0000_0176, // IA32_SYSENTER_EIP
+    0x0000_0277, // IA32_PAT
+    0x0000_06e0, // IA32_TSC_DEADLINE
+    0xc000_0081, // IA32_STAR
+    0xc000_0082, // IA32_LSTAR
+    0xc000_0083, // IA32_CSTAR
+    0xc000_0084, // IA32_FMASK
+    0xc000_0100, // FS.base
+    0xc000_0101, // GS.base
+    0xc000_0102, // KernelGSBase
+    0xc000_0103, // TSC_AUX
+    0x4b56_4d00, // KVM_WALL_CLOCK_NEW
+    0x4b56_4d01, // KVM_SYSTEM_TIME_NEW
+    0x4b56_4d02, // KVM_ASYNC_PF_EN
+    0x4b56_4d03, // KVM_STEAL_TIME
+    0x4b56_4d04, // KVM_PV_EOI_EN
+    0x4b56_4d05, // KVM_PV_UNHALT
+];
 #[cfg(target_arch = "x86_64")]
 const X86_VCPU_STATE_LEN: u32 = (std::mem::size_of::<KvmRegs>()
     + std::mem::size_of::<KvmSregs>()
     + std::mem::size_of::<KvmMpState>()
+    + std::mem::size_of::<u32>()
+    + SELECTED_MSR_INDEXES.len() * std::mem::size_of::<KvmMsrEntry>()
     + std::mem::size_of::<KvmLapicState>()
     + std::mem::size_of::<KvmVcpuEvents>()
     + std::mem::size_of::<KvmDebugRegs>()
@@ -95,12 +123,13 @@ impl CheckpointHeader {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct VcpuSnapshot {
     pub id: u32,
     pub regs: KvmRegs,
     pub sregs: KvmSregs,
     pub mp_state: KvmMpState,
+    pub msrs: Vec<KvmMsrEntry>,
     pub lapic: KvmLapicState,
     pub events: KvmVcpuEvents,
     pub debugregs: KvmDebugRegs,
@@ -163,6 +192,7 @@ pub(super) fn snapshot_vcpu(vcpu: &VcpuFd) -> Result<VcpuSnapshot> {
         regs: vcpu.get_regs()?,
         sregs: vcpu.get_sregs()?,
         mp_state: vcpu.get_mp_state()?,
+        msrs: vcpu.get_msrs(SELECTED_MSR_INDEXES)?,
         lapic: vcpu.get_lapic()?,
         events: vcpu.get_vcpu_events()?,
         debugregs: vcpu.get_debugregs()?,
@@ -197,6 +227,7 @@ pub(super) fn restore_vcpus(vcpu_fds: &[VcpuFd], snapshots: &[VcpuSnapshot]) -> 
         vcpu.set_sregs(&snapshot.sregs)?;
         vcpu.set_regs(&snapshot.regs)?;
         vcpu.set_vcpu_events(&snapshot.events)?;
+        vcpu.set_msrs(&snapshot.msrs)?;
         vcpu.set_mp_state(snapshot.mp_state)?;
     }
     Ok(())
@@ -430,6 +461,22 @@ fn write_vcpu_snapshot(writer: &mut impl Write, snapshot: &VcpuSnapshot) -> Resu
     write_pod(writer, &snapshot.regs).context("write checkpoint vCPU regs")?;
     write_pod(writer, &snapshot.sregs).context("write checkpoint vCPU sregs")?;
     write_pod(writer, &snapshot.mp_state).context("write checkpoint vCPU mp_state")?;
+    if snapshot.msrs.len() > SELECTED_MSR_INDEXES.len() {
+        bail!(
+            "checkpoint vCPU MSR count exceeds selected set: {} > {}",
+            snapshot.msrs.len(),
+            SELECTED_MSR_INDEXES.len()
+        );
+    }
+    writer
+        .write_all(&(snapshot.msrs.len() as u32).to_le_bytes())
+        .context("write checkpoint vCPU MSR count")?;
+    for entry in &snapshot.msrs {
+        write_pod(writer, entry).context("write checkpoint vCPU MSR entry")?;
+    }
+    for _ in snapshot.msrs.len()..SELECTED_MSR_INDEXES.len() {
+        write_pod(writer, &KvmMsrEntry::default()).context("write checkpoint vCPU MSR padding")?;
+    }
     write_pod(writer, &snapshot.lapic).context("write checkpoint vCPU LAPIC state")?;
     write_pod(writer, &snapshot.events).context("write checkpoint vCPU events")?;
     write_pod(writer, &snapshot.debugregs).context("write checkpoint vCPU debug registers")?;
@@ -454,6 +501,29 @@ fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSn
         regs: read_pod(reader).context("read checkpoint vCPU regs")?,
         sregs: read_pod(reader).context("read checkpoint vCPU sregs")?,
         mp_state: read_pod(reader).context("read checkpoint vCPU mp_state")?,
+        msrs: {
+            let mut count_bytes = [0u8; 4];
+            reader
+                .read_exact(&mut count_bytes)
+                .context("read checkpoint vCPU MSR count")?;
+            let count = u32::from_le_bytes(count_bytes) as usize;
+            if count > SELECTED_MSR_INDEXES.len() {
+                bail!(
+                    "checkpoint vCPU MSR count exceeds selected set: {} > {}",
+                    count,
+                    SELECTED_MSR_INDEXES.len()
+                );
+            }
+            let mut entries = Vec::with_capacity(count);
+            for i in 0..SELECTED_MSR_INDEXES.len() {
+                let entry: KvmMsrEntry =
+                    read_pod(reader).context("read checkpoint vCPU MSR entry")?;
+                if i < count {
+                    entries.push(entry);
+                }
+            }
+            entries
+        },
         lapic: read_pod(reader).context("read checkpoint vCPU LAPIC state")?,
         events: read_pod(reader).context("read checkpoint vCPU events")?,
         debugregs: read_pod(reader).context("read checkpoint vCPU debug registers")?,
@@ -708,6 +778,11 @@ mod tests {
             regs,
             sregs,
             mp_state,
+            msrs: vec![KvmMsrEntry {
+                index: 0x6e0,
+                reserved: 0,
+                data: 0x1000 + id as u64,
+            }],
             lapic: KvmLapicState::default(),
             events: KvmVcpuEvents::default(),
             debugregs: KvmDebugRegs::default(),
@@ -824,6 +899,8 @@ mod tests {
         assert_eq!(restored.vcpus[1].regs.rip, 0x1001);
         assert_eq!(restored.vcpus[1].sregs.cr3, 0x2001);
         assert_eq!(restored.vcpus[1].mp_state.mp_state, KVM_MP_STATE_RUNNABLE);
+        assert_eq!(restored.vcpus[1].msrs[0].index, 0x6e0);
+        assert_eq!(restored.vcpus[1].msrs[0].data, 0x1001);
         assert_eq!(restored.vm, vm_snapshot());
         assert_eq!(restored.mmio_devices, vec![mmio(3)]);
     }

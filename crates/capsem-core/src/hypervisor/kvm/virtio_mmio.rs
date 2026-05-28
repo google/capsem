@@ -69,6 +69,7 @@ pub(super) struct QueueConfig {
     pub driver_addr: u64,
     pub device_addr: u64,
     pub size: u16,
+    pub warm_restore: bool,
 }
 
 /// Device-specific behavior for a virtio device.
@@ -90,6 +91,10 @@ pub(super) trait VirtioDevice: Send {
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]);
     /// Called when a queue is notified (guest wrote to QUEUE_NOTIFY).
     fn queue_notify(&mut self, queue_index: u32);
+    /// Called while vCPUs are paused before checkpointing device/guest state.
+    fn quiesce(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// Whether the transport should raise the virtio-mmio used-buffer IRQ
     /// after queue processing. Vhost-backed devices wire their own callfd.
     fn uses_mmio_interrupt(&self) -> bool {
@@ -285,6 +290,12 @@ impl VirtioMmioTransport {
     }
 
     #[cfg(target_arch = "x86_64")]
+    pub fn quiesce(&self) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        state.device.quiesce()
+    }
+
+    #[cfg(target_arch = "x86_64")]
     pub fn restore(&self, snapshot: &VirtioMmioSnapshot) -> Result<()> {
         let mut state = self.state.lock().unwrap();
         if snapshot.queues.len() != state.queues.len() {
@@ -317,6 +328,7 @@ impl VirtioMmioTransport {
                     driver_addr: q.driver_addr(),
                     device_addr: q.device_addr(),
                     size: q.num,
+                    warm_restore: true,
                 })
                 .collect();
             state.device.activate(mem, &queue_configs);
@@ -517,6 +529,7 @@ impl MmioDevice for VirtioMmioTransport {
                             driver_addr: q.driver_addr(),
                             device_addr: q.device_addr(),
                             size: q.num,
+                            warm_restore: false,
                         })
                         .collect();
                     state.device.activate(mem, &queue_configs);

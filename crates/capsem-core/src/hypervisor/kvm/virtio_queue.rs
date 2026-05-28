@@ -5,6 +5,8 @@
 
 use std::sync::atomic::{fence, Ordering};
 
+use tracing::debug;
+
 use super::memory::GuestMemoryRef;
 
 // ---------------------------------------------------------------------------
@@ -98,12 +100,70 @@ impl VirtQueue {
         size: u16,
     ) -> Self {
         let next_used = read_u16(&mem, used_ring_gpa + 2);
+        Self::from_indices(
+            mem,
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_used,
+            next_used,
+        )
+    }
+
+    /// Recreate a queue after warm restore.
+    ///
+    /// KVM checkpoints are taken after device quiescence. Descriptor heads that
+    /// were visible before suspend have either already been completed by the
+    /// pre-suspend device instance or belong to backend-specific standing
+    /// buffers. Replaying them through a fresh userspace device can wedge
+    /// VirtioFS after resume, so restored queues wait for the next driver
+    /// submission while preserving the used-ring index for future completions.
+    pub fn new_restored(
+        mem: GuestMemoryRef,
+        desc_table_gpa: u64,
+        avail_ring_gpa: u64,
+        used_ring_gpa: u64,
+        size: u16,
+    ) -> Self {
+        let next_avail = read_u16(&mem, avail_ring_gpa + 2);
+        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        debug!(
+            event_name = "virtio.queue.restore",
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_avail,
+            next_used,
+            "virtqueue restored"
+        );
+        Self::from_indices(
+            mem,
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_avail,
+            next_used,
+        )
+    }
+
+    fn from_indices(
+        mem: GuestMemoryRef,
+        desc_table_gpa: u64,
+        avail_ring_gpa: u64,
+        used_ring_gpa: u64,
+        size: u16,
+        next_avail: u16,
+        next_used: u16,
+    ) -> Self {
         Self {
             desc_table_gpa,
             avail_ring_gpa,
             used_ring_gpa,
             size,
-            next_avail: next_used,
+            next_avail,
             next_used,
             mem,
         }
@@ -348,6 +408,31 @@ mod tests {
         let chain = q.pop().unwrap();
         assert_eq!(chain.head, 1);
         assert_eq!(chain.descriptors[0].addr, RAM_BASE + 0x2000);
+        assert!(q.pop().is_none());
+    }
+
+    #[test]
+    fn restored_queue_skips_pre_checkpoint_available_entries() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            1,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x2000,
+                len: 128,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 1, 1);
+        write_avail_idx(&mem, avail_gpa, 2);
+        write_used_idx(&mem, used_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new_restored(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
         assert!(q.pop().is_none());
     }
 
