@@ -131,6 +131,13 @@ class TestRootfsValidationContract:
         assert "/var/lib/capsem/venv" in init_script
         assert "/root/.venv" not in init_script
 
+    def test_capsem_init_keeps_uv_cache_off_virtiofs_workspace(self):
+        """uv cache must live on guest overlay so wheel symlinks work."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "UV_CACHE_DIR=/var/cache/capsem/uv" in init_script
+        assert "mkdir -p /var/lib/capsem /var/cache/capsem/uv" in init_script
+
     def test_validate_rootfs_derives_binary_requirements_from_guest_binaries(self):
         """The release validator imports GUEST_BINARIES and checks /usr/local/bin."""
         validator = (PROJECT_ROOT / "scripts" / "validate-rootfs.sh").read_text()

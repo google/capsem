@@ -33,6 +33,8 @@ def test_pip_install_works():
 
 def test_uv_pip_install_works():
     """uv pip install must work inside the activated venv."""
+    result = run("test \"$UV_CACHE_DIR\" = /var/cache/capsem/uv")
+    assert result.returncode == 0, "UV_CACHE_DIR must keep uv cache off /root VirtioFS"
     result = run("uv pip install wheel 2>&1", timeout=30)
     assert result.returncode == 0, f"uv pip install failed: {result.stdout}"
     result = run("python3 -c 'import wheel; print(wheel.__version__)'")

@@ -519,12 +519,13 @@ export NPM_CONFIG_UPDATE_NOTIFIER=false
 export NPM_CONFIG_FUND=false
 export NPM_CONFIG_AUDIT=false
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export UV_CACHE_DIR=/var/cache/capsem/uv
 
 # Create Python virtualenv in the background so it doesn't block the PTY agent.
 # Keep it on the guest overlay, not /root: /root is the VirtioFS workspace on
 # Linux KVM and cannot reliably execute venv interpreter copies/symlinks.
 # uv venv is ~100ms; fall back to stdlib venv if uv is missing.
-chroot /newroot mkdir -p /var/lib/capsem
+chroot /newroot mkdir -p /var/lib/capsem /var/cache/capsem/uv
 (chroot /newroot uv venv --system-site-packages /var/lib/capsem/venv 2>/dev/null || \
     chroot /newroot python3 -m venv --system-site-packages /var/lib/capsem/venv 2>/dev/null || true
  touch /newroot/run/capsem-venv-ready) &
@@ -550,6 +551,7 @@ fi
 if [ -f /var/lib/capsem/venv/bin/activate ]; then
     . /var/lib/capsem/venv/bin/activate
 fi
+export UV_CACHE_DIR=/var/cache/capsem/uv
 PROFILE
 
 # Copy boot timing data into chroot for the PTY agent to send via vsock.

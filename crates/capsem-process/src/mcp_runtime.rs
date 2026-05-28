@@ -273,6 +273,10 @@ fn guest_config_from_effective(
         "VIRTUAL_ENV".to_string(),
         "/var/lib/capsem/venv".to_string(),
     );
+    env.insert(
+        "UV_CACHE_DIR".to_string(),
+        "/var/cache/capsem/uv".to_string(),
+    );
     env.insert("LANG".to_string(), "C".to_string());
     env.insert(
         "CAPSEM_WEB_ALLOW_READ".to_string(),

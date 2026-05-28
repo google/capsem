@@ -1013,6 +1013,11 @@ fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settin
         env.get("VIRTUAL_ENV").map(String::as_str),
         Some("/var/lib/capsem/venv")
     );
+    assert_eq!(
+        env.get("UV_CACHE_DIR").map(String::as_str),
+        Some("/var/cache/capsem/uv"),
+        "uv cache must stay off the VirtioFS workspace"
+    );
     assert!(
         env.get("PATH")
             .map(|path| {

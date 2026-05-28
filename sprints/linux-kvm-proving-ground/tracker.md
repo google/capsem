@@ -33,6 +33,8 @@
   disappeared after VirtioFS rename-over-existing.
 - [x] Fix live doctor blocker where VirtioFS symlink reads returned
   `Function not implemented` because `READLINK` used the `GETXATTR` opcode.
+- [x] Fix live doctor blocker where `uv pip install` used `/root/.cache/uv`
+  on VirtioFS and failed wheel/archive cache symlinks with EINVAL.
 - [ ] Run live boot gate: `capsem run "capsem-doctor"`.
 - [ ] Inspect telemetry/session evidence after a successful boot.
 - [ ] Record boot and first-exec timing.
@@ -82,6 +84,10 @@
   symlinks unreadable and made `ls` xattr probes report `Invalid argument`.
   The S21 doctor scenario now asserts symlink creation and uses a
   workspace-relative target so it tests snapshot restore under `/root`.
+- `uv pip install wheel` then failed because uv's default cache lived under
+  `/root/.cache/uv`, which is the VirtioFS workspace on Linux KVM. The guest
+  boot contract now sets `UV_CACHE_DIR=/var/cache/capsem/uv`, and PID 1 creates
+  that overlay-backed cache before venv/CLI use.
 - Guest DNS/MITM path is live: the net proxy listens on 10443/10080, the DNS
   proxy listens on UDP/TCP 1053, `getent hosts generativelanguage.googleapis.com`
   resolves, and `curl -sI https://generativelanguage.googleapis.com` reaches
@@ -114,8 +120,12 @@
   with 56 VirtioFS tests after the FUSE `READLINK` opcode fix.
 - Unit/contract: `cargo test -p capsem-process load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settings -- --nocapture`
   passed after the guest venv boot-contract change.
+- Unit/contract: `cargo test -p capsem-process load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settings -- --nocapture`
+  passed after adding `UV_CACHE_DIR` to the guest boot contract.
 - Functional: `uv run pytest -q tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py -k 'network_proxies or python_venv'`
   passed for init-script proxy and venv contracts.
+- Functional: `uv run pytest -q tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py -k 'python_venv or uv_cache'`
+  passed for overlay-backed Python venv and uv cache contracts.
 - E2E/VM: `just exec "nproc && grep -E 'processor|^siblings|^cpu cores' /proc/cpuinfo | head -20"`
   passed with `4` visible processors in the Linux KVM guest.
 - E2E/VM: Live probes verified DNS/MITM proxy listeners, external DNS
@@ -126,6 +136,8 @@
 - E2E/VM: Live relative symlink probe in `/root` now supports `ls`, `readlink`,
   and `test -e`.
 - E2E/VM: `capsem-doctor -x -v -k s21_symlink_revert` passed.
+- E2E/VM: `capsem-doctor -x -v -k 'uv_pip_install_works or uv_add_package_works'`
+  passed.
 - E2E/VM: `capsem-doctor -x -v` remains open on
   the next full-suite blocker; do not call the live doctor gate green until a
   complete run passes.

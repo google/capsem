@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Fixed Linux KVM guest `uv pip install` by moving the uv cache off the
+  VirtioFS workspace to `/var/cache/capsem/uv`, avoiding wheel/archive symlink
+  failures under `/root/.cache/uv`.
 - Fixed Linux KVM VirtioFS symlink reads by correcting the FUSE `READLINK`
   opcode from the `GETXATTR` slot to Linux opcode 5, which also stops xattr
   probes from being misrouted as symlink reads.
