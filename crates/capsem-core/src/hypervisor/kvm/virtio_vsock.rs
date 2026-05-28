@@ -181,11 +181,23 @@ impl VhostVsockDevice {
             )
             .context("VHOST_SET_VRING_NUM")?;
 
-            // Set base index (always 0 on fresh init)
+            // Set base index to the next descriptor vhost should consume.
+            // On warm restore, the guest driver will not rebuild the rings.
+            // RX descriptors completed before suspend must not be reused, but
+            // TX needs to wait for the next guest submission instead of
+            // resuming from stale used-ring state.
+            let used_idx = queue_used_idx(mem, queue).context("read vhost-vsock used ring idx")?;
+            let avail_idx =
+                queue_avail_idx(mem, queue).context("read vhost-vsock avail ring idx")?;
+            let base = if i == 0 { used_idx } else { avail_idx };
             let vring_base = VhostVringState {
                 index: i as u32,
-                num: 0,
+                num: base,
             };
+            debug!(
+                queue_index = i,
+                base, used_idx, avail_idx, "vhost-vsock vring base restored"
+            );
             vhost_ioctl(
                 vhost_fd,
                 VHOST_SET_VRING_BASE,
@@ -263,6 +275,22 @@ impl VhostVsockDevice {
 
         Ok(())
     }
+}
+
+fn queue_used_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
+    let ptr = mem
+        .gpa_to_host(queue.device_addr + 2)
+        .context("vhost-vsock used ring idx GPA out of range")?;
+    let idx = unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) };
+    Ok(idx as u32)
+}
+
+fn queue_avail_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
+    let ptr = mem
+        .gpa_to_host(queue.driver_addr + 2)
+        .context("vhost-vsock avail ring idx GPA out of range")?;
+    let idx = unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) };
+    Ok(idx as u32)
 }
 
 /// Bridge vhost-vsock call eventfds into virtio-mmio interrupts.
@@ -709,6 +737,7 @@ fn vsock_listener_loop(
 
 #[cfg(test)]
 mod tests {
+    use super::super::memory::{GuestMemory, RAM_BASE};
     use super::*;
 
     // -----------------------------------------------------------------------
@@ -800,6 +829,40 @@ mod tests {
     fn vhost_backend_configures_rx_tx_only() {
         assert_eq!(VSOCK_NUM_QUEUES, 3);
         assert_eq!(VHOST_VSOCK_BACKEND_QUEUES, 2);
+    }
+
+    #[test]
+    fn queue_used_idx_reads_vring_used_index() {
+        let mem = GuestMemory::new(0x10000).unwrap();
+        let used_gpa = RAM_BASE + 0x4000;
+        mem.write_at(0x4002, &37u16.to_le_bytes()).unwrap();
+        let queue = QueueConfig {
+            desc_addr: RAM_BASE + 0x1000,
+            driver_addr: RAM_BASE + 0x2000,
+            device_addr: used_gpa,
+            size: 256,
+        };
+
+        let idx = queue_used_idx(&mem.clone_ref(RAM_BASE), &queue).unwrap();
+
+        assert_eq!(idx, 37);
+    }
+
+    #[test]
+    fn queue_avail_idx_reads_vring_avail_index() {
+        let mem = GuestMemory::new(0x10000).unwrap();
+        let avail_gpa = RAM_BASE + 0x2000;
+        mem.write_at(0x2002, &91u16.to_le_bytes()).unwrap();
+        let queue = QueueConfig {
+            desc_addr: RAM_BASE + 0x1000,
+            driver_addr: avail_gpa,
+            device_addr: RAM_BASE + 0x4000,
+            size: 256,
+        };
+
+        let idx = queue_avail_idx(&mem.clone_ref(RAM_BASE), &queue).unwrap();
+
+        assert_eq!(idx, 91);
     }
 
     #[test]

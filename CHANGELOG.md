@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Expanded x86_64 KVM warm-restore groundwork by checkpointing VM interrupt
+  controller, PIT, clock, extended vCPU, Virtio-MMIO transport, and vhost-vsock
+  queue state, and by making guest snapshot preparation force a post-resume
+  vsock reconnect. The durable process-preserving KVM resume contract still
+  fails because restored guests stop making timer-driven forward progress.
 - Improved x86_64 KVM checkpoint restore correctness by preserving vCPU MP
   state and avoiding cold-boot x86 setup writes over restored guest RAM; live
   KVM process-preserving resume still needs virtio/interrupt device state.

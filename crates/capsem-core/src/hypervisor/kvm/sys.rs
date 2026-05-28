@@ -871,6 +871,14 @@ pub(super) const KVM_CREATE_IRQCHIP: u64 = _io(KVMIO, 0x60);
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_CREATE_PIT2: u64 = _iow(KVMIO, 0x77, 64); // sizeof kvm_pit_config
 #[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_IRQCHIP: u64 = _iowr(KVMIO, 0x62, 520); // sizeof kvm_irqchip
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_IRQCHIP: u64 = _ior(KVMIO, 0x63, 520); // sizeof kvm_irqchip
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_CLOCK: u64 = _ior(KVMIO, 0x7c, 48); // sizeof kvm_clock_data
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_CLOCK: u64 = _iow(KVMIO, 0x7b, 48); // sizeof kvm_clock_data
+#[cfg(target_arch = "x86_64")]
 pub(super) const KVM_GET_REGS: u64 = _ior(KVMIO, 0x81, 144); // sizeof kvm_regs
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_SET_REGS: u64 = _iow(KVMIO, 0x82, 144); // sizeof kvm_regs
@@ -879,11 +887,39 @@ pub(super) const KVM_GET_SREGS: u64 = _ior(KVMIO, 0x83, 312); // sizeof kvm_sreg
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_SET_SREGS: u64 = _iow(KVMIO, 0x84, 312); // sizeof kvm_sregs
 #[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_FPU: u64 = _ior(KVMIO, 0x8c, 416); // sizeof kvm_fpu
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_FPU: u64 = _iow(KVMIO, 0x8d, 416); // sizeof kvm_fpu
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_LAPIC: u64 = _ior(KVMIO, 0x8e, 1024); // sizeof kvm_lapic_state
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_LAPIC: u64 = _iow(KVMIO, 0x8f, 1024); // sizeof kvm_lapic_state
+#[cfg(target_arch = "x86_64")]
 pub(super) const KVM_GET_SUPPORTED_CPUID: u64 = _iowr(KVMIO, 0x05, 8); // sizeof kvm_cpuid2 header
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_GET_MP_STATE: u64 = _ior(KVMIO, 0x98, 4); // sizeof kvm_mp_state
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_SET_MP_STATE: u64 = _iow(KVMIO, 0x99, 4); // sizeof kvm_mp_state
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_PIT2: u64 = _ior(KVMIO, 0x9f, 112); // sizeof kvm_pit_state2
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_PIT2: u64 = _iow(KVMIO, 0xa0, 112); // sizeof kvm_pit_state2
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_VCPU_EVENTS: u64 = _ior(KVMIO, 0x9f, 64); // sizeof kvm_vcpu_events
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_VCPU_EVENTS: u64 = _iow(KVMIO, 0xa0, 64); // sizeof kvm_vcpu_events
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_DEBUGREGS: u64 = _ior(KVMIO, 0xa1, 128); // sizeof kvm_debugregs
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_DEBUGREGS: u64 = _iow(KVMIO, 0xa2, 128); // sizeof kvm_debugregs
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_XSAVE: u64 = _ior(KVMIO, 0xa4, 4096); // sizeof kvm_xsave
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_XSAVE: u64 = _iow(KVMIO, 0xa5, 4096); // sizeof kvm_xsave
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_GET_XCRS: u64 = _ior(KVMIO, 0xa6, 392); // sizeof kvm_xcrs
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_SET_XCRS: u64 = _iow(KVMIO, 0xa7, 392); // sizeof kvm_xcrs
 
 // ---------------------------------------------------------------------------
 // x86_64 exit reasons
@@ -897,6 +933,13 @@ pub(super) const KVM_EXIT_HLT: u32 = 5;
 pub(super) const KVM_EXIT_SHUTDOWN: u32 = 8;
 #[cfg(target_arch = "x86_64")]
 pub(super) const KVM_EXIT_FAIL_ENTRY: u32 = 9;
+
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_IRQCHIP_PIC_MASTER: u32 = 0;
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_IRQCHIP_PIC_SLAVE: u32 = 1;
+#[cfg(target_arch = "x86_64")]
+pub(super) const KVM_IRQCHIP_IOAPIC: u32 = 2;
 
 // x86_64 vCPU MP states
 #[cfg(target_arch = "x86_64")]
@@ -1045,6 +1088,138 @@ pub(super) struct KvmMpState {
     pub mp_state: u32,
 }
 
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmLapicState {
+    pub regs: [u8; 1024],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmLapicState {
+    fn default() -> Self {
+        Self { regs: [0; 1024] }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmIrqchip {
+    pub chip_id: u32,
+    pub pad: u32,
+    pub chip: [u8; 512],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmIrqchip {
+    fn default() -> Self {
+        Self {
+            chip_id: 0,
+            pad: 0,
+            chip: [0; 512],
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmPitState2 {
+    pub bytes: [u8; 112],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmPitState2 {
+    fn default() -> Self {
+        Self { bytes: [0; 112] }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmClockData {
+    pub bytes: [u8; 48],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmClockData {
+    fn default() -> Self {
+        Self { bytes: [0; 48] }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmVcpuEvents {
+    pub bytes: [u8; 64],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmVcpuEvents {
+    fn default() -> Self {
+        Self { bytes: [0; 64] }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmDebugRegs {
+    pub bytes: [u8; 128],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmDebugRegs {
+    fn default() -> Self {
+        Self { bytes: [0; 128] }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmFpu {
+    pub bytes: [u8; 416],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmFpu {
+    fn default() -> Self {
+        Self { bytes: [0; 416] }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmXcrs {
+    pub bytes: [u8; 392],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmXcrs {
+    fn default() -> Self {
+        Self { bytes: [0; 392] }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmXsave {
+    pub bytes: [u8; 4096],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for KvmXsave {
+    fn default() -> Self {
+        Self { bytes: [0; 4096] }
+    }
+}
+
 /// kvm_run IO exit data (at offset 32 in the kvm_run mmap'd region).
 #[cfg(target_arch = "x86_64")]
 #[repr(C)]
@@ -1067,6 +1242,15 @@ const _: () = {
     assert!(std::mem::size_of::<KvmEnableCap>() == 104);
     assert!(std::mem::size_of::<KvmCpuidEntry2>() == 40);
     assert!(std::mem::size_of::<KvmMpState>() == 4);
+    assert!(std::mem::size_of::<KvmLapicState>() == 1024);
+    assert!(std::mem::size_of::<KvmIrqchip>() == 520);
+    assert!(std::mem::size_of::<KvmPitState2>() == 112);
+    assert!(std::mem::size_of::<KvmClockData>() == 48);
+    assert!(std::mem::size_of::<KvmVcpuEvents>() == 64);
+    assert!(std::mem::size_of::<KvmDebugRegs>() == 128);
+    assert!(std::mem::size_of::<KvmFpu>() == 416);
+    assert!(std::mem::size_of::<KvmXcrs>() == 392);
+    assert!(std::mem::size_of::<KvmXsave>() == 4096);
 };
 
 // ---------------------------------------------------------------------------
@@ -1162,6 +1346,103 @@ impl VmFd {
                 "KVM_CREATE_PIT2 failed: {}",
                 std::io::Error::last_os_error()
             );
+        }
+        Ok(())
+    }
+
+    pub fn get_irqchip(&self, chip_id: u32) -> Result<KvmIrqchip> {
+        let mut irqchip = KvmIrqchip {
+            chip_id,
+            ..Default::default()
+        };
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_IRQCHIP as libc::c_ulong,
+                &mut irqchip as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!(
+                "KVM_GET_IRQCHIP({chip_id}) failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(irqchip)
+    }
+
+    pub fn set_irqchip(&self, irqchip: &KvmIrqchip) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_IRQCHIP as libc::c_ulong,
+                irqchip as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!(
+                "KVM_SET_IRQCHIP({}) failed: {}",
+                irqchip.chip_id,
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(())
+    }
+
+    pub fn get_pit2(&self) -> Result<KvmPitState2> {
+        let mut pit = KvmPitState2::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_PIT2 as libc::c_ulong,
+                &mut pit as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_GET_PIT2 failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(pit)
+    }
+
+    pub fn set_pit2(&self, pit: &KvmPitState2) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_PIT2 as libc::c_ulong,
+                pit as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_PIT2 failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn get_clock(&self) -> Result<KvmClockData> {
+        let mut clock = KvmClockData::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_CLOCK as libc::c_ulong,
+                &mut clock as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_GET_CLOCK failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(clock)
+    }
+
+    pub fn set_clock(&self, clock: &KvmClockData) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_CLOCK as libc::c_ulong,
+                clock as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_CLOCK failed: {}", std::io::Error::last_os_error());
         }
         Ok(())
     }
@@ -1309,6 +1590,192 @@ impl VcpuFd {
         Ok(())
     }
 
+    pub fn get_lapic(&self) -> Result<KvmLapicState> {
+        let mut lapic = KvmLapicState::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_LAPIC as libc::c_ulong,
+                &mut lapic as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_GET_LAPIC failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(lapic)
+    }
+
+    pub fn set_lapic(&self, lapic: &KvmLapicState) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_LAPIC as libc::c_ulong,
+                lapic as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_LAPIC failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn get_vcpu_events(&self) -> Result<KvmVcpuEvents> {
+        let mut events = KvmVcpuEvents::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_VCPU_EVENTS as libc::c_ulong,
+                &mut events as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!(
+                "KVM_GET_VCPU_EVENTS failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(events)
+    }
+
+    pub fn set_vcpu_events(&self, events: &KvmVcpuEvents) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_VCPU_EVENTS as libc::c_ulong,
+                events as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!(
+                "KVM_SET_VCPU_EVENTS failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(())
+    }
+
+    pub fn get_debugregs(&self) -> Result<KvmDebugRegs> {
+        let mut debugregs = KvmDebugRegs::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_DEBUGREGS as libc::c_ulong,
+                &mut debugregs as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!(
+                "KVM_GET_DEBUGREGS failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(debugregs)
+    }
+
+    pub fn set_debugregs(&self, debugregs: &KvmDebugRegs) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_DEBUGREGS as libc::c_ulong,
+                debugregs as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!(
+                "KVM_SET_DEBUGREGS failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(())
+    }
+
+    pub fn get_fpu(&self) -> Result<KvmFpu> {
+        let mut fpu = KvmFpu::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_FPU as libc::c_ulong,
+                &mut fpu as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_GET_FPU failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(fpu)
+    }
+
+    pub fn set_fpu(&self, fpu: &KvmFpu) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_FPU as libc::c_ulong,
+                fpu as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_FPU failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn get_xcrs(&self) -> Result<KvmXcrs> {
+        let mut xcrs = KvmXcrs::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_XCRS as libc::c_ulong,
+                &mut xcrs as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_GET_XCRS failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(xcrs)
+    }
+
+    pub fn set_xcrs(&self, xcrs: &KvmXcrs) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_XCRS as libc::c_ulong,
+                xcrs as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_XCRS failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn get_xsave(&self) -> Result<KvmXsave> {
+        let mut xsave = KvmXsave::default();
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_GET_XSAVE as libc::c_ulong,
+                &mut xsave as *mut _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_GET_XSAVE failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(xsave)
+    }
+
+    pub fn set_xsave(&self, xsave: &KvmXsave) -> Result<()> {
+        let ret = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                KVM_SET_XSAVE as libc::c_ulong,
+                xsave as *const _ as u64,
+            )
+        };
+        if ret < 0 {
+            bail!("KVM_SET_XSAVE failed: {}", std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     /// Get the IO exit data from the kvm_run mmap'd region.
     pub fn io_data(&self) -> &KvmRunIo {
         unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo) }
@@ -1393,6 +1860,27 @@ mod tests {
     #[test]
     fn kvm_create_vcpu_value() {
         assert_eq!(KVM_CREATE_VCPU, 0x0000_AE41);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn kvm_x86_64_checkpoint_ioctl_values() {
+        assert_eq!(KVM_GET_LAPIC, 0x8400_AE8E);
+        assert_eq!(KVM_SET_LAPIC, 0x4400_AE8F);
+        assert_eq!(KVM_GET_IRQCHIP, 0xC208_AE62);
+        assert_eq!(KVM_SET_IRQCHIP, 0x8208_AE63);
+        assert_eq!(KVM_GET_PIT2, 0x8070_AE9F);
+        assert_eq!(KVM_SET_PIT2, 0x4070_AEA0);
+        assert_eq!(KVM_GET_CLOCK, 0x8030_AE7C);
+        assert_eq!(KVM_SET_CLOCK, 0x4030_AE7B);
+        assert_eq!(KVM_GET_VCPU_EVENTS, 0x8040_AE9F);
+        assert_eq!(KVM_SET_VCPU_EVENTS, 0x4040_AEA0);
+        assert_eq!(KVM_GET_FPU, 0x81A0_AE8C);
+        assert_eq!(KVM_SET_FPU, 0x41A0_AE8D);
+        assert_eq!(KVM_GET_XCRS, 0x8188_AEA6);
+        assert_eq!(KVM_SET_XCRS, 0x4188_AEA7);
+        assert_eq!(KVM_GET_XSAVE, 0x9000_AEA4);
+        assert_eq!(KVM_SET_XSAVE, 0x5000_AEA5);
     }
 
     // -----------------------------------------------------------------------

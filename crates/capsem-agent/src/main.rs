@@ -32,6 +32,7 @@ use vsock_io::{read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd, 
 const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
 /// Reconnect timeout before giving up (seconds).
 const RECONNECT_TIMEOUT_SECS: u64 = 30;
+const SNAPSHOT_RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 // ---------------------------------------------------------------------------
 // Control message framing (using capsem-proto types)
@@ -858,6 +859,7 @@ fn run_bridge(
     thread::spawn(move || {
         control_loop(
             control_fd,
+            terminal_fd,
             master_fd,
             child_pid,
             &boot_env_owned,
@@ -1449,6 +1451,7 @@ fn delete_nofollow(path: &str) -> io::Result<()> {
 #[allow(clippy::too_many_arguments)]
 fn control_loop(
     control_fd: RawFd,
+    terminal_fd: RawFd,
     master_fd: RawFd,
     child_pid: Pid,
     boot_env: &[(String, String)],
@@ -1703,6 +1706,15 @@ fn control_loop(
                 if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() {
                     break;
                 }
+                eprintln!(
+                    "[capsem-agent] PrepareSnapshot: snapshot ready; closing vsock pair for post-resume reconnect"
+                );
+                unsafe {
+                    libc::shutdown(control_fd, libc::SHUT_RDWR);
+                    libc::shutdown(terminal_fd, libc::SHUT_RDWR);
+                }
+                thread::sleep(SNAPSHOT_RECONNECT_DELAY);
+                break;
             }
             Ok(HostToGuest::Unfreeze) => {
                 eprintln!("[capsem-agent] Unfreeze: thawing /");
@@ -3105,6 +3117,7 @@ mod tests {
             control_loop(
                 ctrl_read_fd,
                 master_fd,
+                master_fd,
                 child_pid,
                 &[],
                 ctrl_tx,
@@ -3152,6 +3165,14 @@ mod tests {
     }
 
     #[test]
+    fn control_loop_prepare_snapshot_sends_ready_then_exits_for_reconnect() {
+        let responses = run_control_loop_with_messages(vec![HostToGuest::PrepareSnapshot]);
+
+        assert_eq!(responses.len(), 1);
+        assert!(matches!(responses[0], GuestToHost::SnapshotReady));
+    }
+
+    #[test]
     fn control_loop_resize_changes_pty_winsize() {
         let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
         let pty = openpty(None, None).expect("openpty");
@@ -3178,6 +3199,7 @@ mod tests {
         let handle = thread::spawn(move || {
             control_loop(
                 ctrl_read_fd,
+                master_fd,
                 master_fd,
                 child_pid,
                 &[],

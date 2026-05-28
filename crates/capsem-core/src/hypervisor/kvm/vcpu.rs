@@ -539,6 +539,12 @@ mod tests {
             mp_state: super::super::sys::KvmMpState {
                 mp_state: super::super::sys::KVM_MP_STATE_RUNNABLE,
             },
+            lapic: super::super::sys::KvmLapicState::default(),
+            events: super::super::sys::KvmVcpuEvents::default(),
+            debugregs: super::super::sys::KvmDebugRegs::default(),
+            fpu: super::super::sys::KvmFpu::default(),
+            xcrs: super::super::sys::KvmXcrs::default(),
+            xsave: super::super::sys::KvmXsave::default(),
         }
     }
 

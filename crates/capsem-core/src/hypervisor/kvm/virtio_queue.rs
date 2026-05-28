@@ -97,13 +97,14 @@ impl VirtQueue {
         used_ring_gpa: u64,
         size: u16,
     ) -> Self {
+        let next_used = read_u16(&mem, used_ring_gpa + 2);
         Self {
             desc_table_gpa,
             avail_ring_gpa,
             used_ring_gpa,
             size,
-            next_avail: 0,
-            next_used: 0,
+            next_avail: next_used,
+            next_used,
             mem,
         }
     }
@@ -207,6 +208,12 @@ impl VirtQueue {
     }
 }
 
+fn read_u16(mem: &GuestMemoryRef, gpa: u64) -> u16 {
+    mem.gpa_to_host(gpa).map_or(0, |ptr| unsafe {
+        u16::from_le(std::ptr::read_unaligned(ptr as *const u16))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::memory::{GuestMemory, RAM_BASE};
@@ -262,6 +269,11 @@ mod tests {
         u16::from_le_bytes(buf)
     }
 
+    fn write_used_idx(mem: &GuestMemory, used_ring_gpa: u64, idx: u16) {
+        let offset = (used_ring_gpa - RAM_BASE) + 2;
+        mem.write_at(offset, &idx.to_le_bytes()).unwrap();
+    }
+
     // Helper: read used ring entry
     fn read_used_entry(mem: &GuestMemory, used_ring_gpa: u64, ring_index: u16) -> (u32, u32) {
         let offset = (used_ring_gpa - RAM_BASE) + 4 + (ring_index as u64) * 8;
@@ -283,6 +295,59 @@ mod tests {
         let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
+        assert!(q.pop().is_none());
+    }
+
+    #[test]
+    fn restored_queue_starts_after_used_entries() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 256,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 0, 0);
+        write_avail_idx(&mem, avail_gpa, 1);
+        write_used_idx(&mem, used_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        assert!(q.pop().is_none());
+    }
+
+    #[test]
+    fn restored_queue_preserves_unprocessed_entries() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            1,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x2000,
+                len: 128,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 1, 1);
+        write_avail_idx(&mem, avail_gpa, 2);
+        write_used_idx(&mem, used_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        let chain = q.pop().unwrap();
+        assert_eq!(chain.head, 1);
+        assert_eq!(chain.descriptors[0].addr, RAM_BASE + 0x2000);
         assert!(q.pop().is_none());
     }
 

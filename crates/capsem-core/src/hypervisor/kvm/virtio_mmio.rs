@@ -8,6 +8,8 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+use anyhow::{bail, Result};
+
 use super::memory::GuestMemoryRef;
 use super::mmio::MmioDevice;
 
@@ -110,6 +112,31 @@ struct QueueState {
     device_hi: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct QueueSnapshot {
+    pub num: u16,
+    pub ready: bool,
+    pub desc_lo: u32,
+    pub desc_hi: u32,
+    pub driver_lo: u32,
+    pub driver_hi: u32,
+    pub device_lo: u32,
+    pub device_hi: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct VirtioMmioSnapshot {
+    pub status: u32,
+    pub features_sel: u32,
+    pub driver_features: u64,
+    pub driver_features_sel: u32,
+    pub queue_sel: u32,
+    pub queues: Vec<QueueSnapshot>,
+    pub interrupt_status: u32,
+    pub config_generation: u32,
+    pub activated: bool,
+}
+
 impl QueueState {
     fn new() -> Self {
         Self {
@@ -134,6 +161,32 @@ impl QueueState {
 
     fn device_addr(&self) -> u64 {
         (self.device_hi as u64) << 32 | self.device_lo as u64
+    }
+
+    fn snapshot(&self) -> QueueSnapshot {
+        QueueSnapshot {
+            num: self.num,
+            ready: self.ready,
+            desc_lo: self.desc_lo,
+            desc_hi: self.desc_hi,
+            driver_lo: self.driver_lo,
+            driver_hi: self.driver_hi,
+            device_lo: self.device_lo,
+            device_hi: self.device_hi,
+        }
+    }
+
+    fn restore(snapshot: &QueueSnapshot) -> Self {
+        Self {
+            num: snapshot.num,
+            ready: snapshot.ready,
+            desc_lo: snapshot.desc_lo,
+            desc_hi: snapshot.desc_hi,
+            driver_lo: snapshot.driver_lo,
+            driver_hi: snapshot.driver_hi,
+            device_lo: snapshot.device_lo,
+            device_hi: snapshot.device_hi,
+        }
     }
 }
 
@@ -213,6 +266,69 @@ impl VirtioMmioTransport {
         let transport = Self::new(device, mem);
         transport.state.lock().unwrap().interrupt_status = interrupt_status;
         transport
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub fn snapshot(&self) -> VirtioMmioSnapshot {
+        let state = self.state.lock().unwrap();
+        VirtioMmioSnapshot {
+            status: state.status,
+            features_sel: state.features_sel,
+            driver_features: state.driver_features,
+            driver_features_sel: state.driver_features_sel,
+            queue_sel: state.queue_sel,
+            queues: state.queues.iter().map(QueueState::snapshot).collect(),
+            interrupt_status: state.interrupt_status.load(Ordering::SeqCst),
+            config_generation: state.config_generation,
+            activated: state.activated,
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub fn restore(&self, snapshot: &VirtioMmioSnapshot) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        if snapshot.queues.len() != state.queues.len() {
+            bail!(
+                "virtio-mmio queue count mismatch: checkpoint={}, device={}",
+                snapshot.queues.len(),
+                state.queues.len()
+            );
+        }
+
+        state.status = snapshot.status;
+        state.features_sel = snapshot.features_sel;
+        state.driver_features = snapshot.driver_features;
+        state.driver_features_sel = snapshot.driver_features_sel;
+        state.queue_sel = snapshot.queue_sel;
+        state.queues = snapshot.queues.iter().map(QueueState::restore).collect();
+        state
+            .interrupt_status
+            .store(snapshot.interrupt_status, Ordering::SeqCst);
+        state.config_generation = snapshot.config_generation;
+        state.activated = snapshot.activated;
+
+        if state.activated {
+            let mem = state.mem.clone();
+            let queue_configs: Vec<QueueConfig> = state
+                .queues
+                .iter()
+                .map(|q| QueueConfig {
+                    desc_addr: q.desc_addr(),
+                    driver_addr: q.driver_addr(),
+                    device_addr: q.device_addr(),
+                    size: q.num,
+                })
+                .collect();
+            state.device.activate(mem, &queue_configs);
+            tracing::info!(
+                event_name = "virtio.mmio.restore_activate",
+                device_type = state.device.device_type(),
+                queues = queue_configs.len(),
+                "virtio-mmio device restored and activated"
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -680,6 +796,72 @@ mod tests {
         write_u32(&t, STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
         write_u32(&t, STATUS, 0); // reset
         assert_eq!(read_u32(&t, STATUS), 0);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn restore_rehydrates_state_and_activates_device() {
+        let (t, activated, notify_count) = make_transport();
+        let snapshot = VirtioMmioSnapshot {
+            status: STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+            features_sel: 1,
+            driver_features: 0x1000_0001,
+            driver_features_sel: 0,
+            queue_sel: 1,
+            queues: vec![
+                QueueSnapshot {
+                    num: 16,
+                    ready: true,
+                    desc_lo: 0x1000,
+                    desc_hi: 0,
+                    driver_lo: 0x2000,
+                    driver_hi: 0,
+                    device_lo: 0x3000,
+                    device_hi: 0,
+                },
+                QueueSnapshot {
+                    num: 8,
+                    ready: false,
+                    desc_lo: 0x4000,
+                    desc_hi: 0,
+                    driver_lo: 0x5000,
+                    driver_hi: 0,
+                    device_lo: 0x6000,
+                    device_hi: 0,
+                },
+            ],
+            interrupt_status: 1,
+            config_generation: 7,
+            activated: true,
+        };
+
+        t.restore(&snapshot).unwrap();
+
+        assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(t.snapshot(), snapshot);
+        write_u32(&t, QUEUE_NOTIFY, 0);
+        assert_eq!(notify_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn restore_rejects_wrong_queue_count() {
+        let (t, _, _) = make_transport();
+        let snapshot = VirtioMmioSnapshot {
+            status: 0,
+            features_sel: 0,
+            driver_features: 0,
+            driver_features_sel: 0,
+            queue_sel: 0,
+            queues: Vec::new(),
+            interrupt_status: 0,
+            config_generation: 0,
+            activated: false,
+        };
+
+        let err = t.restore(&snapshot).unwrap_err();
+
+        assert!(err.to_string().contains("queue count mismatch"));
     }
 
     // -----------------------------------------------------------------------

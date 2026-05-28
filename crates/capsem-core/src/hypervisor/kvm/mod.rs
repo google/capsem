@@ -69,6 +69,21 @@ fn irq_to_gsi(irq: u32) -> u32 {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+fn virtio_mmio_device_count(config: &VmConfig, vsock_ports: &[u32]) -> u32 {
+    let mut device_count = 1; // console at slot 0
+    if config.disk_path.is_some() {
+        device_count += 1;
+    }
+    if config.scratch_disk_path.is_some() {
+        device_count += 1;
+    }
+    if !vsock_ports.is_empty() {
+        device_count += 1;
+    }
+    device_count + config.virtio_fs_shares.len() as u32
+}
+
 impl Hypervisor for KvmHypervisor {
     fn boot(
         &self,
@@ -198,10 +213,16 @@ impl Hypervisor for KvmHypervisor {
                 checkpoint_path,
                 &guest_mem,
                 config.cpu_count,
+                virtio_mmio_device_count(config, vsock_ports),
             )?)
         } else {
             None
         };
+
+        #[cfg(target_arch = "x86_64")]
+        if let Some(restored) = restored_checkpoint.as_ref() {
+            checkpoint::restore_vm(&vm, &restored.vm)?;
+        }
 
         // -- Arch-specific: FDT (aarch64) / boot_params (x86_64) ---------
         #[cfg(target_arch = "aarch64")]
@@ -256,20 +277,11 @@ impl Hypervisor for KvmHypervisor {
         if restored_checkpoint.is_some() {
             tracing::info!("KVM checkpoint restore: skipping cold boot x86_64 boot state setup");
         } else if let Some(kernel_info) = kernel_info.as_ref() {
-            // Count virtio MMIO devices for cmdline generation
-            let mut device_count: u32 = 1; // console at slot 0
-            if config.disk_path.is_some() {
-                device_count += 1;
-            }
-            if config.scratch_disk_path.is_some() {
-                device_count += 1;
-            }
-            if !vsock_ports.is_empty() {
-                device_count += 1;
-            }
-            device_count += config.virtio_fs_shares.len() as u32;
-
-            let cmdline = boot_x86_64::build_cmdline(&config.kernel_cmdline, device_count, has_pit);
+            let cmdline = boot_x86_64::build_cmdline(
+                &config.kernel_cmdline,
+                virtio_mmio_device_count(config, vsock_ports),
+                has_pit,
+            );
             let e820 = memory::build_e820_map(config.ram_bytes);
 
             boot_x86_64::write_gdt(&guest_mem)?;
@@ -352,6 +364,8 @@ impl Hypervisor for KvmHypervisor {
 
         let mmio_bus = Arc::new(mmio::MmioBus::new());
         #[cfg(target_arch = "x86_64")]
+        let mut mmio_transports: Vec<(u32, Arc<virtio_mmio::VirtioMmioTransport>)> = Vec::new();
+        #[cfg(target_arch = "x86_64")]
         let console_irq_fd = create_irq_eventfd()?;
         #[cfg(target_arch = "x86_64")]
         vm.irqfd(
@@ -369,10 +383,18 @@ impl Hypervisor for KvmHypervisor {
             Box::new(console_device),
             guest_mem.clone_ref(memory::RAM_BASE),
         );
+        #[cfg(target_arch = "x86_64")]
+        let console_mmio = {
+            let transport = Arc::new(console_mmio);
+            mmio_transports.push((0, Arc::clone(&transport)));
+            transport
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let console_mmio = Arc::new(console_mmio);
         mmio_bus.register(
             memory::virtio_mmio_addr(0),
             memory::VIRTIO_MMIO_SIZE,
-            Arc::new(console_mmio),
+            console_mmio,
         )?;
 
         // -- x86_64: PIO bus + 16550 UART ---------------------------------
@@ -405,10 +427,18 @@ impl Hypervisor for KvmHypervisor {
                 Box::new(blk_device),
                 guest_mem.clone_ref(memory::RAM_BASE),
             );
+            #[cfg(target_arch = "x86_64")]
+            let blk_mmio = {
+                let transport = Arc::new(blk_mmio);
+                mmio_transports.push((1, Arc::clone(&transport)));
+                transport
+            };
+            #[cfg(not(target_arch = "x86_64"))]
+            let blk_mmio = Arc::new(blk_mmio);
             mmio_bus.register(
                 memory::virtio_mmio_addr(1),
                 memory::VIRTIO_MMIO_SIZE,
-                Arc::new(blk_mmio),
+                blk_mmio,
             )?;
         }
 
@@ -432,10 +462,18 @@ impl Hypervisor for KvmHypervisor {
                 Box::new(scratch_device),
                 guest_mem.clone_ref(memory::RAM_BASE),
             );
+            #[cfg(target_arch = "x86_64")]
+            let scratch_mmio = {
+                let transport = Arc::new(scratch_mmio);
+                mmio_transports.push((2, Arc::clone(&transport)));
+                transport
+            };
+            #[cfg(not(target_arch = "x86_64"))]
+            let scratch_mmio = Arc::new(scratch_mmio);
             mmio_bus.register(
                 memory::virtio_mmio_addr(2),
                 memory::VIRTIO_MMIO_SIZE,
-                Arc::new(scratch_mmio),
+                scratch_mmio,
             )?;
         }
 
@@ -463,10 +501,13 @@ impl Hypervisor for KvmHypervisor {
                 fs_irq_fd,
                 fs_interrupt_status,
             );
+            let fs_mmio = Arc::new(fs_mmio);
+            #[cfg(target_arch = "x86_64")]
+            mmio_transports.push((slot, Arc::clone(&fs_mmio)));
             mmio_bus.register(
                 memory::virtio_mmio_addr(slot),
                 memory::VIRTIO_MMIO_SIZE,
-                Arc::new(fs_mmio),
+                fs_mmio,
             )?;
         }
 
@@ -488,10 +529,13 @@ impl Hypervisor for KvmHypervisor {
                 guest_mem.clone_ref(memory::RAM_BASE),
                 Arc::clone(&vsock_interrupt_status),
             );
+            let vsock_mmio = Arc::new(vsock_mmio);
+            #[cfg(target_arch = "x86_64")]
+            mmio_transports.push((3, Arc::clone(&vsock_mmio)));
             mmio_bus.register(
                 memory::virtio_mmio_addr(3),
                 memory::VIRTIO_MMIO_SIZE,
-                Arc::new(vsock_mmio),
+                vsock_mmio,
             )?;
 
             let vsock_gsi = irq_to_gsi(memory::virtio_mmio_irq(3));
@@ -514,6 +558,22 @@ impl Hypervisor for KvmHypervisor {
                 vsock_tx,
                 Arc::clone(&shutdown),
             );
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        if let Some(restored) = restored_checkpoint.as_ref() {
+            for snapshot in &restored.mmio_devices {
+                let Some((_slot, transport)) = mmio_transports
+                    .iter()
+                    .find(|(slot, _transport)| *slot == snapshot.slot)
+                else {
+                    anyhow::bail!(
+                        "checkpoint MMIO slot {} does not exist in restored VM",
+                        snapshot.slot
+                    );
+                };
+                transport.restore(&snapshot.transport)?;
+            }
         }
 
         // -- Shared: spawn vCPU threads -----------------------------------
@@ -539,6 +599,8 @@ impl Hypervisor for KvmHypervisor {
             _vcpu_handles: vcpu_handles,
             _guest_mem: guest_mem,
             _mmio_bus: mmio_bus,
+            #[cfg(target_arch = "x86_64")]
+            _mmio_transports: mmio_transports,
             _vsock_listener_handles: vsock_listener_handles,
             _vsock_irq_handles: vsock_irq_handles,
         };
@@ -557,6 +619,8 @@ struct KvmHandle {
     _vcpu_handles: Vec<std::thread::JoinHandle<Result<()>>>,
     _guest_mem: memory::GuestMemory,
     _mmio_bus: Arc<mmio::MmioBus>,
+    #[cfg(target_arch = "x86_64")]
+    _mmio_transports: Vec<(u32, Arc<virtio_mmio::VirtioMmioTransport>)>,
     _vsock_listener_handles: Vec<std::thread::JoinHandle<()>>,
     _vsock_irq_handles: Vec<std::thread::JoinHandle<()>>,
 }
@@ -628,10 +692,35 @@ impl VmHandle for KvmHandle {
         }
         self.state.store(VmState::Saving as u8, Ordering::SeqCst);
         #[cfg(target_arch = "x86_64")]
-        let result = self
-            .control
-            .snapshots()
-            .and_then(|snapshots| checkpoint::write_checkpoint(path, &self._guest_mem, &snapshots));
+        let result = self.control.snapshots().and_then(|snapshots| {
+            #[cfg(test)]
+            let vm_snapshot = if let Some(vm) = self._vm.as_ref() {
+                checkpoint::snapshot_vm(vm)?
+            } else {
+                checkpoint::VmSnapshot::default()
+            };
+            #[cfg(not(test))]
+            let vm_snapshot = self
+                ._vm
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing KVM VM fd for checkpoint save"))
+                .and_then(checkpoint::snapshot_vm)?;
+            let mmio_snapshots: Vec<_> = self
+                ._mmio_transports
+                .iter()
+                .map(|(slot, transport)| checkpoint::MmioDeviceSnapshot {
+                    slot: *slot,
+                    transport: transport.snapshot(),
+                })
+                .collect();
+            checkpoint::write_checkpoint(
+                path,
+                &self._guest_mem,
+                &snapshots,
+                &vm_snapshot,
+                &mmio_snapshots,
+            )
+        });
         #[cfg(not(target_arch = "x86_64"))]
         let result = Err(anyhow::anyhow!(
             "KVM save_state is only implemented for x86_64"
@@ -762,6 +851,8 @@ mod tests {
             _vcpu_handles: Vec::new(),
             _guest_mem: memory::GuestMemory::new(4096).unwrap(),
             _mmio_bus: Arc::new(mmio::MmioBus::new()),
+            #[cfg(target_arch = "x86_64")]
+            _mmio_transports: Vec::new(),
             _vsock_listener_handles: Vec::new(),
             _vsock_irq_handles: Vec::new(),
         }
@@ -778,6 +869,12 @@ mod tests {
             mp_state: sys::KvmMpState {
                 mp_state: sys::KVM_MP_STATE_RUNNABLE,
             },
+            lapic: sys::KvmLapicState::default(),
+            events: sys::KvmVcpuEvents::default(),
+            debugregs: sys::KvmDebugRegs::default(),
+            fpu: sys::KvmFpu::default(),
+            xcrs: sys::KvmXcrs::default(),
+            xsave: sys::KvmXsave::default(),
         }
     }
 
@@ -852,7 +949,7 @@ mod tests {
 
         assert_eq!(handle.state(), VmState::Paused);
         let meta = std::fs::metadata(path).unwrap();
-        assert_eq!(meta.len(), 40 + 4 + 460 + 4096);
+        assert_eq!(meta.len(), 44 + 4 + 6580 + 1720 + 4096);
         handle.resume().unwrap();
         handle.stop().unwrap();
         waiter.join().unwrap();
