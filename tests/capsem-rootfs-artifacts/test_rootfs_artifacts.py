@@ -85,6 +85,52 @@ class TestRootfsValidationContract:
         assert "capsem-dns-proxy" in GUEST_BINARIES
         assert "capsem-sysutil" in GUEST_BINARIES
 
+    def test_capsem_init_creates_console_fallback_before_redirect(self):
+        """PID 1 must keep logging even when devtmpfs omits /dev/console."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+        redirect = "exec 0<\"$CONSOLE_DEV\" 1>\"$CONSOLE_DEV\" 2>\"$CONSOLE_DEV\""
+        fallback = "mknod -m 600 /dev/console c 5 1"
+        ttyS0_node = "mknod -m 600 /dev/ttyS0 c 4 64"
+        ttyS0 = "CONSOLE_DEV=/dev/ttyS0"
+        hvc0 = "CONSOLE_DEV=/dev/hvc0"
+
+        assert fallback in init_script
+        assert ttyS0_node in init_script
+        assert ttyS0 in init_script
+        assert hvc0 in init_script
+        assert init_script.index(fallback) < init_script.index(redirect)
+
+    def test_capsem_init_writes_host_visible_stage_markers(self):
+        """VirtioFS boots must leave a host-readable stage marker for triage."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+        stage_file = "/mnt/shared/system/capsem-init-stage.log"
+        agent_log = "/mnt/shared/system/capsem-agent.log"
+
+        assert stage_file in init_script
+        assert agent_log in init_script
+        assert 'init_stage "virtiofs-mounted"' in init_script
+        assert 'init_stage "overlay-mounted"' in init_script
+        assert 'init_stage "starting-agent"' in init_script
+        assert 'init_stage "agent-exited-$AGENT_STATUS"' in init_script
+
+    def test_capsem_init_keeps_network_proxies_alive_or_fails(self):
+        """Network proxy launch must survive shell transitions and fail closed."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "nohup '$NET_PROXY_PATH' </dev/null >/run/capsem-net-proxy.log 2>&1 &" in init_script
+        assert "nohup '$DNS_PROXY_PATH' </dev/null >/run/capsem-dns-proxy.log 2>&1 &" in init_script
+        assert "[capsem-init] FATAL: capsem-net-proxy did not become ready" in init_script
+        assert "[capsem-init] FATAL: capsem-dns-proxy did not become ready" in init_script
+        assert "[capsem-init] FATAL: capsem-net-proxy not found" in init_script
+        assert "[capsem-init] FATAL: capsem-dns-proxy not found" in init_script
+
+    def test_capsem_init_keeps_python_venv_off_virtiofs_workspace(self):
+        """The Python venv must live on the guest overlay, not /root VirtioFS."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "/var/lib/capsem/venv" in init_script
+        assert "/root/.venv" not in init_script
+
     def test_validate_rootfs_derives_binary_requirements_from_guest_binaries(self):
         """The release validator imports GUEST_BINARIES and checks /usr/local/bin."""
         validator = (PROJECT_ROOT / "scripts" / "validate-rootfs.sh").read_text()

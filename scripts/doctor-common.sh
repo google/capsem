@@ -57,8 +57,12 @@ _reg run-signed-chmod "chmod +x scripts/run_signed.sh" \
                       "Make scripts/run_signed.sh executable"
 _reg pnpm-install     "cd frontend && pnpm install --frozen-lockfile" \
                       "Install frontend deps"
-_reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets" \
-                      "Build VM assets (kernel + rootfs)"
+_reg linux-host-build-deps "case \"\$(uname -s)\" in Linux) if command -v apt-get >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev; elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y pkgconf-pkg-config openssl-devel gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel; else echo 'install pkg-config, OpenSSL, GTK, WebKitGTK, appindicator, librsvg, and xdo development headers via your OS package manager' >&2; exit 1; fi ;; *) exit 0 ;; esac" \
+                      "Install Linux host-build dependencies"
+_reg linux-kvm-devices "scripts/fix-linux-kvm-devices.sh" \
+                      "Repair Linux KVM and vhost-vsock device access"
+_reg build-assets     "HOST_ARCH=\$(uname -m | sed 's/aarch64/arm64/;s/amd64/x86_64/'); [[ \"\$HOST_ARCH\" == \"arm64\" ]] || HOST_ARCH=x86_64; touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets \"\$HOST_ARCH\"" \
+                      "Build host-arch VM assets (kernel + rootfs)"
 _reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _pack-initrd" \
                       "Cross-compile guest binaries + repack initrd"
 

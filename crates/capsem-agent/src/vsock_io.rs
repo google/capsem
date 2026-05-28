@@ -107,17 +107,37 @@ pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
 
     // Leak a &'static str for the label so RetryOpts can use it.
     let static_label: &'static str = Box::leak(format!("vsock-{label}").into_boxed_str());
+    let mut attempts: u32 = 0;
+    let mut last_err: Option<io::Error> = None;
 
     match retry_with_backoff(
         &RetryOpts::new(static_label, Duration::from_secs(30)),
-        || vsock_connect(cid, port).ok(),
+        || {
+            attempts += 1;
+            eprintln!("[capsem-agent] {label} connect attempt {attempts} (port {port})");
+            match vsock_connect(cid, port) {
+                Ok(fd) => Some(fd),
+                Err(e) => {
+                    eprintln!("[capsem-agent] {label} connect attempt {attempts} failed: {e}");
+                    last_err = Some(e);
+                    None
+                }
+            }
+        },
     ) {
         Ok(fd) => {
             eprintln!("[capsem-agent] {label} connected (port {port})");
             fd
         }
         Err(e) => {
-            eprintln!("[capsem-agent] {label} connect timed out: {e}");
+            match last_err {
+                Some(err) => {
+                    eprintln!("[capsem-agent] {label} connect timed out: {e}; last error: {err}");
+                }
+                None => {
+                    eprintln!("[capsem-agent] {label} connect timed out: {e}");
+                }
+            }
             std::process::exit(1);
         }
     }

@@ -102,6 +102,10 @@ pub fn boot_vm(
     let mut sm = HostStateMachine::new_host();
 
     info!(
+        event_name = "vm.boot.start",
+        cpu_count,
+        ram_bytes,
+        virtiofs_shares = virtiofs_shares.len(),
         "[boot-audit] boot_vm: cpu={cpu_count} ram_bytes={ram_bytes} virtiofs_shares={}",
         virtiofs_shares.len()
     );
@@ -115,7 +119,10 @@ pub fn boot_vm(
 
     let config = {
         let _span = debug_span!("config_build").entered();
-        info!("[boot-audit] building VmConfig");
+        info!(
+            event_name = "vm.boot.config_build_start",
+            "[boot-audit] building VmConfig"
+        );
 
         let kernel_path = kernel_override
             .map(|p| p.to_path_buf())
@@ -216,10 +223,16 @@ pub fn boot_vm(
             builder = builder.virtio_fs_share(&share.tag, &share.host_path, share.read_only);
         }
 
-        info!("[boot-audit] calling VmConfig::build()");
+        info!(
+            event_name = "vm.boot.config_build_call",
+            "[boot-audit] calling VmConfig::build()"
+        );
         builder.build().context("failed to build VmConfig")?
     };
-    info!("[boot-audit] VmConfig built successfully");
+    info!(
+        event_name = "vm.boot.config_build_ok",
+        "[boot-audit] VmConfig built successfully"
+    );
 
     let vsock_ports = [
         VSOCK_PORT_CONTROL,
@@ -236,7 +249,18 @@ pub fn boot_vm(
         VSOCK_PORT_DNS_PROXY,
     ];
 
-    info!("[boot-audit] calling hypervisor boot");
+    #[cfg(target_os = "linux")]
+    let hypervisor_name = "kvm";
+    #[cfg(target_os = "macos")]
+    let hypervisor_name = "apple_vz";
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let hypervisor_name = "unsupported";
+
+    info!(
+        event_name = "vm.boot.hypervisor_start",
+        hypervisor = hypervisor_name,
+        "[boot-audit] calling hypervisor boot"
+    );
     let (vm, vsock_rx) = {
         let _span = debug_span!("hypervisor_boot").entered();
         #[cfg(target_os = "macos")]
@@ -245,7 +269,10 @@ pub fn boot_vm(
         let result = KvmHypervisor.boot(&config, &vsock_ports);
         result.context("failed to boot VM")?
     };
-    info!("[boot-audit] hypervisor boot returned OK");
+    info!(
+        event_name = "vm.boot.hypervisor_ok",
+        "[boot-audit] hypervisor boot returned OK"
+    );
 
     sm.transition(HostState::Booting, "vm_started")?;
 

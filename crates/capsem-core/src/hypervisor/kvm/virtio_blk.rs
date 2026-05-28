@@ -274,6 +274,11 @@ impl VirtioDevice for VirtioBlockDevice {
 
     fn queue_notify(&mut self, queue_index: u32) {
         if queue_index != 0 {
+            tracing::warn!(
+                event_name = "virtio.blk.queue_notify_ignored",
+                queue_index,
+                "virtio-blk ignored notification for unknown queue"
+            );
             return;
         }
 
@@ -281,15 +286,29 @@ impl VirtioDevice for VirtioBlockDevice {
         // while process_read/write/get_id/write_status need &self/&mut self.
         let mut queue = match self.queue.take() {
             Some(q) => q,
-            None => return,
+            None => {
+                tracing::warn!(
+                    event_name = "virtio.blk.queue_notify_unconfigured",
+                    "virtio-blk notified before queue was configured"
+                );
+                return;
+            }
         };
 
         // Process all available descriptor chains
+        let mut processed = 0u32;
         while let Some(chain) = queue.pop() {
             let descs = &chain.descriptors;
+            processed += 1;
 
             // Need at least 2 descriptors: header + status
             if descs.len() < 2 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk descriptor chain too short"
+                );
                 queue.push_used(chain.head, 0);
                 continue;
             }
@@ -297,6 +316,12 @@ impl VirtioDevice for VirtioBlockDevice {
             // First descriptor: request header (must be device-readable)
             let header_desc = &descs[0];
             if header_desc.is_write_only() {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk request header descriptor was write-only"
+                );
                 queue.push_used(chain.head, 0);
                 continue;
             }
@@ -304,6 +329,13 @@ impl VirtioDevice for VirtioBlockDevice {
             let (type_, sector) = match self.parse_header(header_desc.addr, header_desc.len) {
                 Some(h) => h,
                 None => {
+                    tracing::warn!(
+                        event_name = "virtio.blk.request_malformed",
+                        head = chain.head,
+                        header_addr = format_args!("{:#x}", header_desc.addr),
+                        header_len = header_desc.len,
+                        "virtio-blk request header could not be parsed"
+                    );
                     queue.push_used(chain.head, 0);
                     continue;
                 }
@@ -312,6 +344,14 @@ impl VirtioDevice for VirtioBlockDevice {
             // Last descriptor: status (must be device-writable, 1 byte)
             let status_desc = &descs[descs.len() - 1];
             if !status_desc.is_write_only() || status_desc.len < 1 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    status_addr = format_args!("{:#x}", status_desc.addr),
+                    status_len = status_desc.len,
+                    status_write_only = status_desc.is_write_only(),
+                    "virtio-blk status descriptor was invalid"
+                );
                 queue.push_used(chain.head, 0);
                 continue;
             }
@@ -330,6 +370,16 @@ impl VirtioDevice for VirtioBlockDevice {
                 VIRTIO_BLK_T_GET_ID => self.process_get_id(&data_descs),
                 _ => VIRTIO_BLK_S_UNSUPP,
             };
+            tracing::trace!(
+                event_name = "virtio.blk.request_complete",
+                head = chain.head,
+                request_type = type_,
+                sector,
+                descriptor_count = descs.len(),
+                total_data,
+                status,
+                "virtio-blk request completed"
+            );
 
             self.write_status(status_desc.addr, status);
 
@@ -343,6 +393,15 @@ impl VirtioDevice for VirtioBlockDevice {
         }
 
         self.queue = Some(queue);
+        tracing::trace!(
+            event_name = "virtio.blk.queue_drain",
+            processed,
+            "virtio-blk queue notification drained"
+        );
+    }
+
+    fn uses_mmio_interrupt(&self) -> bool {
+        true
     }
 }
 

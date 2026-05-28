@@ -267,7 +267,11 @@ fn guest_config_from_effective(
     env.insert("HOME".to_string(), "/root".to_string());
     env.insert(
         "PATH".to_string(),
-        "/root/.local/bin:/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+        "/var/lib/capsem/venv/bin:/root/.local/bin:/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+    );
+    env.insert(
+        "VIRTUAL_ENV".to_string(),
+        "/var/lib/capsem/venv".to_string(),
     );
     env.insert("LANG".to_string(), "C".to_string());
     env.insert(

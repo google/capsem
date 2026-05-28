@@ -78,6 +78,9 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     // E2E-only: lets capsem-process dial a local fixture while preserving
     // the guest-visible upstream host for MITM policy/provider detection.
     "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+    // Debug-build-only: allows targeted kernel boot diagnostics without
+    // making release boots noisy.
+    "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
 ];
 
 // ---------------------------------------------------------------------------

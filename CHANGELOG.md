@@ -39,9 +39,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legacy boards under `sprints/retired/` so active release planning starts from
   `sprints/policy-settings-profiles/`.
 
+### Added
+- Added live x86_64 KVM SMP boot support with synthetic ACPI RSDP/RSDT/MADT
+  tables and guest CPUID topology so Linux discovers all configured vCPUs.
+- Added x86_64 KVM checkpoint trait support for cooperative pause/resume,
+  atomic guest-memory checkpoint writes, and checkpoint restore of guest RAM
+  plus vCPU regs/sregs, with targeted vCPU kicks for blocking `KVM_RUN` pause
+  and unsupported KVM restore paths failing closed instead of silently
+  cold-booting.
+
 ### Fixed
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Fixed KVM vCPU run-loop handling so application processors continue across
+  guest HLT exits and transient `KVM_RUN` `EAGAIN` responses instead of
+  silently dropping out of the VM.
+- Fixed guest doctor readiness on Linux KVM by keeping the DNS and MITM network
+  proxies alive across init shell transitions, failing closed when either proxy
+  cannot start, and moving the Python virtualenv off the VirtioFS workspace to
+  `/var/lib/capsem/venv`.
+- Fixed the Gemini doctor wrapper lookup to use portable POSIX `command -v`
+  instead of a shell-specific `type -P`.
+- Fixed Linux developer bootstrap so fresh hosts install the C toolchain,
+  Node/npm, and sqlite before cargo tool setup, and so pnpm is pinned to the
+  lockfile-compatible 10.x installer path instead of picking up stale pnpm 11
+  shims.
+- Fixed `doctor --fix` VM asset setup to build the host architecture instead
+  of requiring cross-architecture Docker emulation during first setup.
+- Fixed KVM pure-logic regressions by correcting the vhost-vsock vring ioctl
+  size and tightening VirtioFS namespace path handling.
 
 ## [1.2.1779673506] - 2026-05-24
 

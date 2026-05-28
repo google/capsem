@@ -1,6 +1,8 @@
 use anyhow::Result;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::metrics::VmMetricsSnapshot;
+use nix::libc;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,6 +37,22 @@ const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
 /// replay layer takes care of forward-path losses regardless of this
 /// number; the watchdog's job is just to cover return-path losses.
 const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
+const READY_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResourceMetricsContext {
+    pub(crate) configured_vcpus: u32,
+    pub(crate) configured_ram_mb: u64,
+    pub(crate) session_dir: PathBuf,
+}
+
+fn shutdown_grace_period(vm_ready: bool) -> Duration {
+    if vm_ready {
+        READY_SHUTDOWN_GRACE
+    } else {
+        Duration::ZERO
+    }
+}
 
 async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
     j_rx.await
@@ -51,7 +69,9 @@ pub(crate) async fn handle_ipc_connection(
     mcp_runtime: Arc<McpRuntime>,
     db: Arc<capsem_logger::DbWriter>,
     vm_ready: Arc<AtomicBool>,
+    vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vm_id: String,
+    resource_metrics: ResourceMetricsContext,
 ) -> Result<()> {
     let mut std_stream = stream.into_std()?;
     // First frame on every IPC connection is a Hello -- detect cross-version
@@ -200,7 +220,7 @@ pub(crate) async fn handle_ipc_connection(
                 }
             }
             ServiceToProcess::GetMetricsSnapshot { id } => {
-                let snapshot = metrics_snapshot(&db, &vm_id);
+                let snapshot = metrics_snapshot(&db, &vm_id, &resource_metrics);
                 capsem_core::try_send!(
                     "ipc_metrics_snapshot",
                     ipc_tx_out
@@ -559,11 +579,65 @@ pub(crate) async fn handle_ipc_connection(
                 );
             }
             ServiceToProcess::Shutdown => {
+                let ready = vm_ready.load(Ordering::Acquire);
+                let grace = shutdown_grace_period(ready);
+                info!(
+                    event_name = "vm.lifecycle.shutdown_requested",
+                    vm_id = %vm_id,
+                    guest_ready = ready,
+                    grace_ms = grace.as_millis() as u64,
+                    "Received Shutdown command"
+                );
                 capsem_core::try_send!(
                     "ctrl_shutdown",
                     ctrl_tx.send(ServiceToProcess::Shutdown).await
                 );
-                info!("Received Shutdown command, exiting IPC loop gracefully");
+                let vm_for_stop = Arc::clone(&vm);
+                let vm_id_for_stop = vm_id.clone();
+                tokio::spawn(async move {
+                    if !grace.is_zero() {
+                        tokio::time::sleep(grace).await;
+                    }
+                    info!(
+                        event_name = "vm.lifecycle.stop_start",
+                        vm_id = %vm_id_for_stop,
+                        guest_ready = ready,
+                        "stopping VM after shutdown request"
+                    );
+                    let stop_result = tokio::task::spawn_blocking(move || {
+                        #[cfg(target_os = "macos")]
+                        {
+                            capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
+                                vm_for_stop.blocking_lock().stop()
+                            })?
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            vm_for_stop.blocking_lock().stop()
+                        }
+                    })
+                    .await;
+                    match stop_result {
+                        Ok(Ok(())) => info!(
+                            event_name = "vm.lifecycle.stop_ok",
+                            vm_id = %vm_id_for_stop,
+                            "VM stopped after shutdown request"
+                        ),
+                        Ok(Err(e)) => warn!(
+                            event_name = "vm.lifecycle.stop_error",
+                            vm_id = %vm_id_for_stop,
+                            error = %e,
+                            "VM stop failed after shutdown request"
+                        ),
+                        Err(e) => warn!(
+                            event_name = "vm.lifecycle.stop_join_error",
+                            vm_id = %vm_id_for_stop,
+                            error = %e,
+                            "VM stop task failed after shutdown request"
+                        ),
+                    }
+                });
+                info!("Exiting IPC loop gracefully after Shutdown command");
                 break;
             }
             ServiceToProcess::Suspend { checkpoint_path } => {
@@ -619,14 +693,97 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
     }
 }
 
-fn metrics_snapshot(db: &capsem_logger::DbWriter, vm_id: &str) -> VmMetricsSnapshot {
+fn metrics_snapshot(
+    db: &capsem_logger::DbWriter,
+    vm_id: &str,
+    resources: &ResourceMetricsContext,
+) -> VmMetricsSnapshot {
     let captured_at_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX);
-    db.metrics_snapshot(vm_id, false, captured_at_unix_ms)
+    let mut snapshot = db.metrics_snapshot(vm_id, false, captured_at_unix_ms);
+    snapshot.resources.configured_ram_mb = resources.configured_ram_mb;
+    snapshot.resources.configured_vcpus = resources.configured_vcpus;
+    snapshot.resources.host_pid = Some(std::process::id());
+    if let Some(proc_stats) = read_self_proc_stats() {
+        snapshot.resources.host_process_rss_bytes = Some(proc_stats.rss_bytes);
+        snapshot.resources.host_cpu_time_micros = Some(proc_stats.cpu_time_micros);
+    }
+    snapshot.resources.session_disk_bytes = dir_size_bytes(&resources.session_dir).ok();
+    snapshot.resources.workspace_disk_bytes =
+        dir_size_bytes(&resources.session_dir.join("guest").join("workspace")).ok();
+    snapshot.resources.rootfs_overlay_bytes =
+        dir_size_bytes(&resources.session_dir.join("guest").join("system")).ok();
+    snapshot
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcStats {
+    rss_bytes: u64,
+    cpu_time_micros: u64,
+}
+
+fn read_self_proc_stats() -> Option<ProcStats> {
+    read_proc_stats_from_path(Path::new("/proc/self/stat")).ok()
+}
+
+fn read_proc_stats_from_path(path: &Path) -> std::io::Result<ProcStats> {
+    let stat = std::fs::read_to_string(path)?;
+    parse_proc_stat(&stat)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid /proc stat"))
+}
+
+fn parse_proc_stat(stat: &str) -> Option<ProcStats> {
+    let close = stat.rfind(") ")?;
+    let fields: Vec<&str> = stat[close + 2..].split_whitespace().collect();
+    let utime_ticks: u64 = fields.get(11)?.parse().ok()?;
+    let stime_ticks: u64 = fields.get(12)?.parse().ok()?;
+    let rss_pages: i64 = fields.get(21)?.parse().ok()?;
+    let rss_pages = u64::try_from(rss_pages.max(0)).ok()?;
+    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if ticks_per_second <= 0 || page_size <= 0 {
+        return None;
+    }
+    Some(ProcStats {
+        rss_bytes: rss_pages.saturating_mul(page_size as u64),
+        cpu_time_micros: utime_ticks
+            .saturating_add(stime_ticks)
+            .saturating_mul(1_000_000)
+            / ticks_per_second as u64,
+    })
+}
+
+fn dir_size_bytes(path: &Path) -> std::io::Result<u64> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+    if !metadata.is_dir() {
+        return Ok(0);
+    }
+
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            total = total.saturating_add(dir_size_bytes(&entry.path())?);
+        } else if file_type.is_file() {
+            total = total.saturating_add(entry.metadata()?.len());
+        }
+    }
+    Ok(total)
 }
 
 #[cfg(test)]

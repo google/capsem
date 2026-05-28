@@ -124,15 +124,10 @@ impl FuseProcessor {
             Some(i) => i,
             None => {
                 // File doesn't exist yet -- create it
-                let name_str = match std::str::from_utf8(name) {
-                    Ok(s) => s,
-                    Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
+                let child_path = match self.inodes.child_path(header.nodeid, name) {
+                    Some(p) => p,
+                    None => return fuse::error_response(header.unique, -libc::EINVAL),
                 };
-                let parent_path = match self.inodes.get(header.nodeid) {
-                    Some(p) => p.clone(),
-                    None => return fuse::error_response(header.unique, -libc::ENOENT),
-                };
-                let child_path = parent_path.join(name_str);
 
                 let flags = create_in.flags as i32;
                 let accmode = flags & libc::O_ACCMODE;

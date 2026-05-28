@@ -1,5 +1,7 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 
 fn temp_share(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("capsem-virtfs-test").join(name);
@@ -18,36 +20,27 @@ fn test_processor(dir: &Path) -> FuseProcessor {
     }
 }
 
+fn test_device(dir: &Path) -> VirtioFsDevice {
+    VirtioFsDevice::new("capsem", dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap()
+}
+
 #[test]
 fn fs_device_type() {
     let dir = temp_share("dev-type");
-    assert_eq!(
-        VirtioFsDevice::new("capsem", &dir, false, -1)
-            .unwrap()
-            .device_type(),
-        VIRTIO_ID_FS
-    );
+    assert_eq!(test_device(&dir).device_type(), VIRTIO_ID_FS);
 }
 
 #[test]
 fn fs_features() {
     let dir = temp_share("features");
-    assert_ne!(
-        VirtioFsDevice::new("capsem", &dir, false, -1)
-            .unwrap()
-            .features()
-            & VIRTIO_F_VERSION_1,
-        0
-    );
+    assert_ne!(test_device(&dir).features() & VIRTIO_F_VERSION_1, 0);
 }
 
 #[test]
 fn fs_two_queues() {
     let dir = temp_share("queues");
     assert_eq!(
-        VirtioFsDevice::new("capsem", &dir, false, -1)
-            .unwrap()
-            .queue_max_sizes(),
+        test_device(&dir).queue_max_sizes(),
         &[QUEUE_SIZE, QUEUE_SIZE]
     );
 }
@@ -55,7 +48,7 @@ fn fs_two_queues() {
 #[test]
 fn fs_config_tag() {
     let dir = temp_share("cfg-tag");
-    let dev = VirtioFsDevice::new("capsem", &dir, false, -1).unwrap();
+    let dev = test_device(&dir);
     let mut data = [0u8; 36];
     dev.read_config(0, &mut data);
     assert_eq!(&data[..6], b"capsem");
@@ -65,7 +58,7 @@ fn fs_config_tag() {
 #[test]
 fn fs_config_nrq() {
     let dir = temp_share("cfg-nrq");
-    let dev = VirtioFsDevice::new("capsem", &dir, false, -1).unwrap();
+    let dev = test_device(&dir);
     let mut data = [0u8; 4];
     dev.read_config(36, &mut data);
     assert_eq!(u32::from_le_bytes(data), 1);
@@ -74,7 +67,7 @@ fn fs_config_nrq() {
 #[test]
 fn fs_config_past_end() {
     let dir = temp_share("cfg-past");
-    let dev = VirtioFsDevice::new("capsem", &dir, false, -1).unwrap();
+    let dev = test_device(&dir);
     let mut data = [0xFFu8; 4];
     dev.read_config(40, &mut data);
     assert!(data.iter().all(|&b| b == 0));
@@ -985,6 +978,17 @@ fn symlink_readonly_rejected() {
     let h = make_header(FUSE_SYMLINK, 1, 1);
     let resp = proc.handle_request(&build_request(&h, b"link\0target\0"));
     assert_eq!(response_error(&resp), -libc::EROFS);
+}
+
+#[test]
+fn symlink_escape_rejected_and_removed() {
+    let dir = temp_share("symlink-escape");
+    let mut proc = test_processor(&dir);
+
+    let h = make_header(FUSE_SYMLINK, 1, 1);
+    let resp = proc.handle_request(&build_request(&h, b"escape\0/etc/passwd\0"));
+    assert_eq!(response_error(&resp), -libc::EINVAL);
+    assert!(!dir.join("escape").exists());
 }
 
 #[test]

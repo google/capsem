@@ -62,6 +62,80 @@ class TestDevSetup:
             "uv run capsem-admin --version"
         )
 
+    def test_bootstrap_installs_linux_build_prereqs_before_cargo_tools(self):
+        bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
+
+        assert "build-essential" in bootstrap
+        assert "nodejs npm" in bootstrap
+        assert "sqlite3" in bootstrap
+        assert "pkg-config" in bootstrap
+        assert "libssl-dev" in bootstrap
+        assert "libgtk-3-dev" in bootstrap
+        assert "libwebkit2gtk-4.1-dev" in bootstrap
+        assert "libayatana-appindicator3-dev" in bootstrap
+        assert "librsvg2-dev" in bootstrap
+        assert "libxdo-dev" in bootstrap
+        assert "command -v cc" in bootstrap
+        assert bootstrap.index("build-essential") < bootstrap.index(
+            '"$SCRIPT_DIR/scripts/doctor-common.sh" --fix'
+        )
+
+    def test_bootstrap_exports_pnpm_bin_after_installer(self):
+        bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
+
+        assert 'SHELL=/bin/bash PNPM_VERSION=10.33.4 PNPM_HOME="$HOME/.local/share/pnpm"' in bootstrap
+        assert 'export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"' in bootstrap
+
+    def test_doctor_fix_builds_host_arch_assets(self):
+        doctor = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
+
+        assert r"HOST_ARCH=\$(uname -m" in doctor
+        assert r'just build-assets \"\$HOST_ARCH\"' in doctor
+        assert 'CAPSEM_SKIP_ASSET_CHECK=1 just build-assets"' not in doctor
+
+    def test_bootstrap_repairs_linux_kvm_devices_before_doctor(self):
+        bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
+
+        assert "scripts/fix-linux-kvm-devices.sh" in bootstrap
+        assert "/dev/vhost-vsock" in bootstrap
+        assert bootstrap.index("fix-linux-kvm-devices.sh") < bootstrap.index(
+            '"$SCRIPT_DIR/scripts/doctor-common.sh" --fix'
+        )
+
+    def test_doctor_can_auto_fix_linux_kvm_devices(self):
+        doctor = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
+        linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()
+        fixer = (PROJECT_ROOT / "scripts" / "fix-linux-kvm-devices.sh").read_text()
+
+        assert "_reg linux-kvm-devices" in doctor
+        assert "fixable linux-kvm-devices" in linux
+        assert "/dev/vhost-vsock" in linux
+        assert "modprobe vhost_vsock" in fixer
+        assert 'KERNEL=="kvm"' in fixer
+        assert 'KERNEL=="vhost-vsock"' in fixer
+
+    def test_doctor_can_auto_fix_linux_host_build_deps(self):
+        doctor = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
+        linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()
+
+        assert "_reg linux-host-build-deps" in doctor
+        assert "pkg-config libssl-dev" in doctor
+        assert "libgtk-3-dev" in doctor
+        assert "pkgconf-pkg-config openssl-devel" in doctor
+        assert "gtk3-devel" in doctor
+        assert "fixable linux-host-build-deps" in linux
+        assert "pkg-config --exists openssl gtk+-3.0 webkit2gtk-4.1" in linux
+        assert "/usr/include/xdo.h" in linux
+
+    def test_dev_service_refreshes_local_profile_after_asset_repack(self):
+        justfile = (PROJECT_ROOT / "justfile").read_text()
+
+        assert 'CAPSEM_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}"' in justfile
+        assert "setup --non-interactive --accept-detected" in justfile
+        assert justfile.index('CAPSEM_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}"') < justfile.index(
+            "Starting capsem-service"
+        )
+
     def test_bootstrap_installs_shared_agent_skill_symlinks_non_destructively(self):
         bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
 

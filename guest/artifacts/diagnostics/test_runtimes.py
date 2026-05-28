@@ -17,7 +17,7 @@ def test_runtime_version(runtime):
 def test_pip_install_works():
     """pip install must work without PEP 668 or permission errors.
 
-    The guest VM activates a venv at /root/.venv so packages install
+    The guest VM activates a venv at /var/lib/capsem/venv so packages install
     to a writable location (rootfs is read-only).
     """
     # Install a small, pure-Python package

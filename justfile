@@ -189,11 +189,10 @@ _ensure-service: _sign
         ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
         echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
     fi
-    # `_pack-initrd` rewrites initrd.img and regenerates the local asset
-    # manifest. Refresh the local setup profile before starting the service so
-    # the profile catalog pins match the exact assets this dev service will use.
-    SETUP_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}"
-    CAPSEM_ASSETS_DIR="$SETUP_ASSETS_DIR" {{cli_binary}} setup --non-interactive --accept-detected
+    # Refresh the local development profile after every initrd repack. The
+    # profile pins asset hashes, so leaving it stale makes the service reject
+    # the freshly repacked initrd before the VM can boot.
+    CAPSEM_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}" {{cli_binary}} setup --non-interactive --accept-detected
     cleanup_runtime_processes
     GATEWAY_ARGS=(--gateway-binary {{gateway_binary}})
     if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
@@ -206,7 +205,7 @@ _ensure-service: _sign
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.
-    RUST_LOG=capsem=debug nohup {{service_binary}} \
+    RUST_LOG="${RUST_LOG:-capsem=debug}" nohup {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
         "${GATEWAY_ARGS[@]}" \
@@ -1669,6 +1668,9 @@ _pack-initrd:
     fi
     if [ "$NEED_BUILD" = "true" ]; then
         echo "=== Cross-compile agent ==="
+        if [ -d "$RELEASE_DIR" ]; then
+            chmod u+w "$RELEASE_DIR"/capsem-* 2>/dev/null || true
+        fi
         uv run capsem-builder agent --arch "$arch"
         echo ""
     else

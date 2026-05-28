@@ -384,6 +384,12 @@ class TestRenderKernel:
         )
         assert "defconfig.x86_64" in result
 
+    def test_x86_64_kernel_supports_kvm_virtio_mmio_cmdline_devices(self, real_config):
+        """KVM backend exposes virtio devices through cmdline-described MMIO."""
+        defconfig = (PROJECT_ROOT / "guest/config/kernel/defconfig.x86_64").read_text()
+        assert "CONFIG_VIRTIO_MMIO=y" in defconfig
+        assert "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" in defconfig
+
     def test_x86_64_kernel_image(self, real_config):
         result = render_dockerfile(
             "Dockerfile.kernel.j2", real_config, "x86_64", kernel_version="6.6.127"

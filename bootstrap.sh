@@ -113,6 +113,34 @@ done
 echo ""
 echo "== Installing dependencies =="
 
+if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+    _apt_packages=""
+    command -v cc >/dev/null 2>&1 || _apt_packages="$_apt_packages build-essential"
+    command -v node >/dev/null 2>&1 || _apt_packages="$_apt_packages nodejs npm"
+    command -v sqlite3 >/dev/null 2>&1 || _apt_packages="$_apt_packages sqlite3"
+    command -v pkg-config >/dev/null 2>&1 || _apt_packages="$_apt_packages pkg-config"
+    if ! command -v pkg-config >/dev/null 2>&1 ||
+        ! pkg-config --exists openssl gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1 librsvg-2.0 2>/dev/null ||
+        [ ! -f /usr/include/xdo.h ]; then
+        _apt_packages="$_apt_packages libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev"
+    fi
+    if [ -n "$_apt_packages" ]; then
+        if confirm "Linux development packages via apt ($_apt_packages)"; then
+            sudo apt-get update
+            # shellcheck disable=SC2086
+            sudo apt-get install -y $_apt_packages
+        fi
+    fi
+fi
+
+if [ "$(uname -s)" = "Linux" ] && grep -Eq '(^flags|^Features)[[:space:]]*:.*\b(vmx|svm)\b' /proc/cpuinfo; then
+    if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ] || [ ! -r /dev/vhost-vsock ] || [ ! -w /dev/vhost-vsock ]; then
+        if confirm "Linux KVM/vhost-vsock device access (requires sudo)"; then
+            "$SCRIPT_DIR/scripts/fix-linux-kvm-devices.sh"
+        fi
+    fi
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
     if confirm "uv (Python package manager, via astral.sh -> ~/.local/bin)"; then
         curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh \
@@ -187,9 +215,9 @@ else
             # Official installer; no npm or sudo required. Drops to ~/.local/share/pnpm.
             if confirm "pnpm (Node package manager, via get.pnpm.io)"; then
                 curl --proto '=https' --tlsv1.2 -fsSL https://get.pnpm.io/install.sh \
-                    | env SHELL=/bin/sh ENV="" PNPM_HOME="$HOME/.local/share/pnpm" sh -
+                    | env SHELL=/bin/bash PNPM_VERSION=10.33.4 PNPM_HOME="$HOME/.local/share/pnpm" sh -
                 export PNPM_HOME="$HOME/.local/share/pnpm"
-                export PATH="$PNPM_HOME:$PATH"
+                export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
             fi ;;
     esac
     if command -v pnpm >/dev/null 2>&1; then

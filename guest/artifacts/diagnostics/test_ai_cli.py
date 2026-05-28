@@ -78,7 +78,7 @@ def test_gemini_api_key_no_duplicate():
 
 def test_gemini_noninteractive_wrapper_defaults_to_yolo():
     """Non-interactive exec must get Gemini YOLO mode without relying on bash aliases."""
-    result = run("type -P gemini")
+    result = run("command -v gemini")
     assert result.returncode == 0, f"gemini not on PATH: {result.stderr}"
     assert result.stdout.strip() == "/root/.local/bin/gemini", (
         f"gemini wrapper must win on PATH, got {result.stdout!r}"

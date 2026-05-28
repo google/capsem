@@ -367,7 +367,7 @@ fn main() {
     // Step 4b: Activate Python venv if capsem-init created one.
     // capsem-init creates the venv in the background and touches a ready flag when done.
     // Wait briefly for it to finish before checking.
-    const VENV_DIR: &str = "/root/.venv";
+    const VENV_DIR: &str = "/var/lib/capsem/venv";
     const VENV_READY: &str = "/run/capsem-venv-ready";
     let venv_activate = std::path::Path::new(VENV_DIR).join("bin/activate");
     if !venv_activate.exists() && !std::path::Path::new(VENV_READY).exists() {
@@ -382,7 +382,10 @@ fn main() {
         boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()));
         // Prepend venv bin to PATH if PATH exists in boot_env.
         if let Some((_, path_val)) = boot_env.iter_mut().find(|(k, _)| k == "PATH") {
-            *path_val = format!("{VENV_DIR}/bin:{path_val}");
+            let venv_bin = format!("{VENV_DIR}/bin");
+            if !path_val.split(':').any(|entry| entry == venv_bin) {
+                *path_val = format!("{venv_bin}:{path_val}");
+            }
         }
         blog_line(&mut blog, "venv activated in boot_env");
     } else {

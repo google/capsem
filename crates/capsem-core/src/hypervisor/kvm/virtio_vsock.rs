@@ -5,7 +5,7 @@
 //! connections from the guest.
 
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
@@ -15,9 +15,10 @@ use tracing::{debug, info, warn};
 
 use super::memory::{self, GuestMemoryRef};
 use super::sys::{
-    self, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState, VHOST_SET_MEM_TABLE,
-    VHOST_SET_OWNER, VHOST_SET_VRING_ADDR, VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL,
-    VHOST_SET_VRING_KICK, VHOST_SET_VRING_NUM, VHOST_VSOCK_SET_GUEST_CID,
+    self, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState, VHOST_GET_FEATURES,
+    VHOST_SET_FEATURES, VHOST_SET_MEM_TABLE, VHOST_SET_OWNER, VHOST_SET_VRING_ADDR,
+    VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL, VHOST_SET_VRING_KICK, VHOST_SET_VRING_NUM,
+    VHOST_VSOCK_SET_GUEST_CID, VHOST_VSOCK_SET_RUNNING,
 };
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
 use crate::hypervisor::VsockConnection;
@@ -29,6 +30,10 @@ use crate::hypervisor::VsockConnection;
 const VIRTIO_ID_VSOCK: u32 = 19;
 const VIRTIO_F_VERSION_1: u64 = 1 << 32;
 const VSOCK_NUM_QUEUES: usize = 3; // rx, tx, event
+                                   // Linux vhost_vsock backs only the RX/TX virtqueues. The guest-facing
+                                   // virtio-vsock device still exposes the event queue, but it is not passed to
+                                   // VHOST_SET_VRING_* ioctls because the kernel backend has vqs[2].
+const VHOST_VSOCK_BACKEND_QUEUES: usize = 2;
 
 /// Reserved CIDs: 0 = hypervisor, 1 = reserved, 2 = host.
 const MIN_GUEST_CID: u32 = 3;
@@ -115,33 +120,55 @@ impl VhostVsockDevice {
         // 1. Set owner
         vhost_ioctl(vhost_fd, VHOST_SET_OWNER, 0).context("VHOST_SET_OWNER")?;
 
-        // 2. Set memory table (one contiguous region: guest RAM)
-        let hva = mem
-            .gpa_to_host(memory::RAM_BASE)
-            .context("RAM_BASE not in guest memory")? as u64;
+        let mut backend_features = 0u64;
+        vhost_ioctl(
+            vhost_fd,
+            VHOST_GET_FEATURES,
+            &mut backend_features as *mut u64 as u64,
+        )
+        .context("VHOST_GET_FEATURES")?;
+        let enabled_features = backend_features & self.features();
+        vhost_ioctl(
+            vhost_fd,
+            VHOST_SET_FEATURES,
+            &enabled_features as *const u64 as u64,
+        )
+        .context("VHOST_SET_FEATURES")?;
+        debug!(
+            backend_features = format_args!("{backend_features:#x}"),
+            enabled_features = format_args!("{enabled_features:#x}"),
+            "vhost-vsock features negotiated"
+        );
 
-        let region = VhostMemoryRegion {
-            guest_phys_addr: memory::RAM_BASE,
-            memory_size: mem.size(),
-            userspace_addr: hva,
-            flags_padding: 0,
-        };
-
-        // vhost_memory: nregions(u32) + padding(u32) + regions[]
-        let mut mem_table = vec![0u8; 8 + std::mem::size_of::<VhostMemoryRegion>()];
-        mem_table[0..4].copy_from_slice(&1u32.to_ne_bytes()); // nregions = 1
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                &region as *const VhostMemoryRegion as *const u8,
-                mem_table.as_mut_ptr().add(8),
-                std::mem::size_of::<VhostMemoryRegion>(),
-            );
+        // 2. Set memory table. On x86_64 this must mirror KVM's split
+        // RAM map around the PCI/MMIO hole; vhost translates guest physical
+        // addresses directly and cannot be given a fictitious contiguous map.
+        let regions = build_vhost_memory_regions(mem)?;
+        let mut mem_table = vec![0u8; 8 + regions.len() * std::mem::size_of::<VhostMemoryRegion>()];
+        mem_table[0..4].copy_from_slice(&(regions.len() as u32).to_ne_bytes());
+        for (i, region) in regions.iter().enumerate() {
+            let offset = 8 + i * std::mem::size_of::<VhostMemoryRegion>();
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    region as *const VhostMemoryRegion as *const u8,
+                    mem_table.as_mut_ptr().add(offset),
+                    std::mem::size_of::<VhostMemoryRegion>(),
+                );
+            }
         }
         vhost_ioctl(vhost_fd, VHOST_SET_MEM_TABLE, mem_table.as_ptr() as u64)
             .context("VHOST_SET_MEM_TABLE")?;
 
-        // 3. Configure each vring
-        for (i, queue) in queues.iter().enumerate() {
+        if queues.len() < VHOST_VSOCK_BACKEND_QUEUES {
+            bail!(
+                "vhost-vsock needs {VHOST_VSOCK_BACKEND_QUEUES} backend queues, got {}",
+                queues.len()
+            );
+        }
+
+        // 3. Configure backend vrings. The virtio-vsock event queue is
+        // guest-visible but not represented in Linux vhost_vsock.
+        for (i, queue) in queues.iter().take(VHOST_VSOCK_BACKEND_QUEUES).enumerate() {
             // Set queue size
             let vring_state = VhostVringState {
                 index: i as u32,
@@ -226,7 +253,204 @@ impl VhostVsockDevice {
         )
         .context("VHOST_VSOCK_SET_GUEST_CID")?;
 
+        let running: libc::c_int = 1;
+        vhost_ioctl(
+            vhost_fd,
+            VHOST_VSOCK_SET_RUNNING,
+            &running as *const libc::c_int as u64,
+        )
+        .context("VHOST_VSOCK_SET_RUNNING")?;
+
         Ok(())
+    }
+}
+
+/// Bridge vhost-vsock call eventfds into virtio-mmio interrupts.
+///
+/// Linux's vhost backend signals the per-queue callfd when it has used-ring
+/// work for the guest. KVM_IRQFD can inject the IRQ from that eventfd, but the
+/// virtio-mmio guest driver also reads the device's InterruptStatus register.
+/// The userspace transport owns that register, so we must set bit 0 before
+/// raising the IRQ.
+pub(super) fn spawn_call_irq_bridges(
+    call_fds: &[RawFd],
+    irq_fds: Vec<OwnedFd>,
+    interrupt_status: Arc<AtomicU32>,
+    shutdown: Arc<AtomicBool>,
+) -> Result<Vec<JoinHandle<()>>> {
+    if call_fds.len() != irq_fds.len() {
+        bail!(
+            "vhost-vsock callfd/irqfd count mismatch: {} callfd(s), {} irqfd(s)",
+            call_fds.len(),
+            irq_fds.len()
+        );
+    }
+
+    let mut handles = Vec::with_capacity(call_fds.len());
+    for (queue_index, (&call_fd, irq_fd)) in call_fds.iter().zip(irq_fds.into_iter()).enumerate() {
+        let call_dup = unsafe { libc::dup(call_fd) };
+        if call_dup < 0 {
+            bail!(
+                "dup(vhost-vsock callfd queue {queue_index}): {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        let call_fd = unsafe { OwnedFd::from_raw_fd(call_dup) };
+        let interrupt_status = Arc::clone(&interrupt_status);
+        let shutdown = Arc::clone(&shutdown);
+        let handle = thread::Builder::new()
+            .name(format!("vhost-vsock-callirq-{queue_index}"))
+            .spawn(move || {
+                if let Err(e) =
+                    call_irq_bridge_loop(queue_index, call_fd, irq_fd, interrupt_status, shutdown)
+                {
+                    warn!(queue_index, "vhost-vsock call irq bridge stopped: {e:#}");
+                }
+            })
+            .context("failed to spawn vhost-vsock call irq bridge")?;
+        handles.push(handle);
+    }
+
+    Ok(handles)
+}
+
+fn call_irq_bridge_loop(
+    queue_index: usize,
+    call_fd: OwnedFd,
+    irq_fd: OwnedFd,
+    interrupt_status: Arc<AtomicU32>,
+    shutdown: Arc<AtomicBool>,
+) -> Result<()> {
+    let mut pollfd = libc::pollfd {
+        fd: call_fd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+
+    while !shutdown.load(Ordering::Relaxed) {
+        pollfd.revents = 0;
+        let ret = unsafe { libc::poll(&mut pollfd, 1, 200) };
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            bail!("poll(vhost-vsock callfd queue {queue_index}): {err}");
+        }
+        if ret == 0 {
+            continue;
+        }
+        if pollfd.revents & libc::POLLNVAL != 0 {
+            bail!("vhost-vsock callfd queue {queue_index} became invalid");
+        }
+        if pollfd.revents & (libc::POLLERR | libc::POLLHUP) != 0 {
+            bail!("vhost-vsock callfd queue {queue_index} closed");
+        }
+        if pollfd.revents & libc::POLLIN == 0 {
+            continue;
+        }
+
+        loop {
+            let mut value = 0u64;
+            let ret = unsafe {
+                libc::read(
+                    call_fd.as_raw_fd(),
+                    &mut value as *mut u64 as *mut libc::c_void,
+                    std::mem::size_of::<u64>(),
+                )
+            };
+            if ret == std::mem::size_of::<u64>() as isize {
+                signal_mmio_irq(queue_index, irq_fd.as_raw_fd(), &interrupt_status);
+                continue;
+            }
+            if ret < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                if err.kind() == std::io::ErrorKind::WouldBlock {
+                    break;
+                }
+                bail!("read(vhost-vsock callfd queue {queue_index}): {err}");
+            }
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn signal_mmio_irq(queue_index: usize, irq_fd: RawFd, interrupt_status: &AtomicU32) {
+    interrupt_status.fetch_or(1, Ordering::SeqCst);
+    let one: u64 = 1;
+    let ret = unsafe {
+        libc::write(
+            irq_fd,
+            &one as *const u64 as *const libc::c_void,
+            std::mem::size_of::<u64>(),
+        )
+    };
+    if ret < 0 {
+        warn!(
+            queue_index,
+            error = %std::io::Error::last_os_error(),
+            "failed to signal vhost-vsock virtio-mmio irqfd"
+        );
+    } else {
+        tracing::trace!(
+            event_name = "virtio.vsock.call_irq",
+            queue_index,
+            "vhost-vsock callfd raised virtio-mmio interrupt"
+        );
+    }
+}
+
+fn build_vhost_memory_regions(mem: &GuestMemoryRef) -> Result<Vec<VhostMemoryRegion>> {
+    let hva = mem
+        .gpa_to_host(memory::RAM_BASE)
+        .context("RAM_BASE not in guest memory")? as u64;
+    build_vhost_memory_regions_from_parts(mem.size(), hva)
+}
+
+fn build_vhost_memory_regions_from_parts(
+    ram_size: u64,
+    hva_base: u64,
+) -> Result<Vec<VhostMemoryRegion>> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if ram_size <= memory::PCI_HOLE_START {
+            return Ok(vec![VhostMemoryRegion {
+                guest_phys_addr: 0,
+                memory_size: ram_size,
+                userspace_addr: hva_base,
+                flags_padding: 0,
+            }]);
+        }
+
+        Ok(vec![
+            VhostMemoryRegion {
+                guest_phys_addr: 0,
+                memory_size: memory::PCI_HOLE_START,
+                userspace_addr: hva_base,
+                flags_padding: 0,
+            },
+            VhostMemoryRegion {
+                guest_phys_addr: memory::PCI_HOLE_END,
+                memory_size: ram_size - memory::PCI_HOLE_START,
+                userspace_addr: hva_base + memory::PCI_HOLE_START,
+                flags_padding: 0,
+            },
+        ])
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        Ok(vec![VhostMemoryRegion {
+            guest_phys_addr: memory::RAM_BASE,
+            memory_size: ram_size,
+            userspace_addr: hva_base,
+            flags_padding: 0,
+        }])
     }
 }
 
@@ -274,7 +498,13 @@ impl VirtioDevice for VhostVsockDevice {
 
     fn queue_notify(&mut self, queue_index: u32) {
         let idx = queue_index as usize;
-        if idx >= VSOCK_NUM_QUEUES {
+        if idx >= VHOST_VSOCK_BACKEND_QUEUES {
+            if idx < VSOCK_NUM_QUEUES {
+                debug!(
+                    queue_index,
+                    "ignoring virtio-vsock event queue notification"
+                );
+            }
             return;
         }
         // Write 1 to kick eventfd to wake vhost module
@@ -567,6 +797,37 @@ mod tests {
     }
 
     #[test]
+    fn vhost_backend_configures_rx_tx_only() {
+        assert_eq!(VSOCK_NUM_QUEUES, 3);
+        assert_eq!(VHOST_VSOCK_BACKEND_QUEUES, 2);
+    }
+
+    #[test]
+    fn vhost_memory_table_single_region_below_x86_pci_hole() {
+        let hva = 0x1000_0000;
+        let regions = build_vhost_memory_regions_from_parts(64 * 1024 * 1024, hva).unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].guest_phys_addr, memory::RAM_BASE);
+        assert_eq!(regions[0].memory_size, 64 * 1024 * 1024);
+        assert_eq!(regions[0].userspace_addr, hva);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn vhost_memory_table_splits_around_x86_pci_hole() {
+        let hva = 0x1000_0000;
+        let ram_size = memory::PCI_HOLE_START + 0x2000;
+        let regions = build_vhost_memory_regions_from_parts(ram_size, hva).unwrap();
+        assert_eq!(regions.len(), 2);
+        assert_eq!(regions[0].guest_phys_addr, 0);
+        assert_eq!(regions[0].memory_size, memory::PCI_HOLE_START);
+        assert_eq!(regions[0].userspace_addr, hva);
+        assert_eq!(regions[1].guest_phys_addr, memory::PCI_HOLE_END);
+        assert_eq!(regions[1].memory_size, 0x2000);
+        assert_eq!(regions[1].userspace_addr, hva + memory::PCI_HOLE_START);
+    }
+
+    #[test]
     fn config_space_guest_cid() {
         let dev = VhostVsockDevice {
             guest_cid: 42,
@@ -670,6 +931,70 @@ mod tests {
         dev.queue_notify(0);
         dev.queue_notify(1);
         dev.queue_notify(2);
+    }
+
+    #[test]
+    fn call_irq_bridge_sets_mmio_status_and_signals_irqfd() {
+        let call_fd = create_eventfd().unwrap();
+        let irq_fd = create_eventfd().unwrap();
+        let irq_read_fd = unsafe { libc::dup(irq_fd.as_raw_fd()) };
+        assert!(irq_read_fd >= 0);
+        let irq_read_fd = unsafe { OwnedFd::from_raw_fd(irq_read_fd) };
+
+        let interrupt_status = Arc::new(AtomicU32::new(0));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let handles = spawn_call_irq_bridges(
+            &[call_fd.as_raw_fd()],
+            vec![irq_fd],
+            Arc::clone(&interrupt_status),
+            Arc::clone(&shutdown),
+        )
+        .unwrap();
+
+        write_eventfd(call_fd.as_raw_fd(), 1);
+
+        for _ in 0..50 {
+            if interrupt_status.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(interrupt_status.load(Ordering::SeqCst), 1);
+        assert_eq!(read_eventfd_retry(irq_read_fd.as_raw_fd()), 1);
+
+        shutdown.store(true, Ordering::SeqCst);
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    fn write_eventfd(fd: RawFd, value: u64) {
+        let ret = unsafe {
+            libc::write(
+                fd,
+                &value as *const u64 as *const libc::c_void,
+                std::mem::size_of::<u64>(),
+            )
+        };
+        assert_eq!(ret, std::mem::size_of::<u64>() as isize);
+    }
+
+    fn read_eventfd_retry(fd: RawFd) -> u64 {
+        for _ in 0..50 {
+            let mut value = 0u64;
+            let ret = unsafe {
+                libc::read(
+                    fd,
+                    &mut value as *mut u64 as *mut libc::c_void,
+                    std::mem::size_of::<u64>(),
+                )
+            };
+            if ret == std::mem::size_of::<u64>() as isize {
+                return value;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("eventfd was not signaled");
     }
 
     #[test]

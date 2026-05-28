@@ -34,10 +34,16 @@ impl VirtqDesc {
         let offset = desc_table_gpa + (index as u64) * 16;
         let host = mem.gpa_to_host(offset)?;
         unsafe {
-            let addr = u64::from_le(*(host as *const u64));
-            let len = u32::from_le(*((host as *const u8).add(8) as *const u32));
-            let flags = u16::from_le(*((host as *const u8).add(12) as *const u16));
-            let next = u16::from_le(*((host as *const u8).add(14) as *const u16));
+            let addr = u64::from_le(std::ptr::read_unaligned(host as *const u64));
+            let len = u32::from_le(std::ptr::read_unaligned(
+                (host as *const u8).add(8) as *const u32
+            ));
+            let flags = u16::from_le(std::ptr::read_unaligned(
+                (host as *const u8).add(12) as *const u16
+            ));
+            let next = u16::from_le(std::ptr::read_unaligned(
+                (host as *const u8).add(14) as *const u16
+            ));
             Some(VirtqDesc {
                 addr,
                 len,
@@ -161,7 +167,7 @@ impl VirtQueue {
         // avail ring layout: flags (u16), idx (u16), ring[size] (u16 each)
         let idx_gpa = self.avail_ring_gpa + 2; // skip flags
         if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
-            unsafe { u16::from_le(*(ptr as *const u16)) }
+            unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
         } else {
             0
         }
@@ -172,7 +178,7 @@ impl VirtQueue {
         // ring entries start at offset 4 (after flags + idx)
         let entry_gpa = self.avail_ring_gpa + 4 + (ring_index as u64) * 2;
         if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
-            unsafe { u16::from_le(*(ptr as *const u16)) }
+            unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
         } else {
             0
         }
@@ -184,8 +190,8 @@ impl VirtQueue {
         let entry_gpa = self.used_ring_gpa + 4 + (ring_index as u64) * 8;
         if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
             unsafe {
-                *(ptr as *mut u32) = (id as u32).to_le();
-                *((ptr as *mut u32).add(1)) = len.to_le();
+                std::ptr::write_unaligned(ptr as *mut u32, (id as u32).to_le());
+                std::ptr::write_unaligned((ptr as *mut u8).add(4) as *mut u32, len.to_le());
             }
         }
     }
@@ -195,7 +201,7 @@ impl VirtQueue {
         let idx_gpa = self.used_ring_gpa + 2; // skip flags
         if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
             unsafe {
-                *(ptr as *mut u16) = idx.to_le();
+                std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
             }
         }
     }

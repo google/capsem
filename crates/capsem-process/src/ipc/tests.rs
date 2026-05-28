@@ -40,6 +40,16 @@ async fn exec_wait_returns_completed_exec_result() {
 }
 
 #[test]
+fn shutdown_before_guest_ready_has_no_grace_period() {
+    assert_eq!(shutdown_grace_period(false), Duration::ZERO);
+}
+
+#[test]
+fn shutdown_after_guest_ready_allows_guest_grace_period() {
+    assert_eq!(shutdown_grace_period(true), Duration::from_secs(2));
+}
+
+#[test]
 fn classify_ping() {
     assert_eq!(
         classify_ipc_message(&ServiceToProcess::Ping),
@@ -66,7 +76,25 @@ fn classify_drain_runtime_rule_matches() {
 #[test]
 fn metrics_snapshot_is_process_owned_and_versioned() {
     let writer = capsem_logger::DbWriter::open_in_memory(16).unwrap();
-    let snapshot = metrics_snapshot(&writer, "vm-s07");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("guest").join("workspace")).unwrap();
+    std::fs::create_dir_all(dir.path().join("guest").join("system")).unwrap();
+    std::fs::write(
+        dir.path().join("guest").join("workspace").join("work.txt"),
+        b"work",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("guest").join("system").join("rootfs.img"),
+        b"overlay",
+    )
+    .unwrap();
+    let resources = ResourceMetricsContext {
+        configured_vcpus: 4,
+        configured_ram_mb: 8192,
+        session_dir: dir.path().to_path_buf(),
+    };
+    let snapshot = metrics_snapshot(&writer, "vm-s07", &resources);
 
     assert_eq!(snapshot.vm_id, "vm-s07");
     assert_eq!(
@@ -77,7 +105,27 @@ fn metrics_snapshot_is_process_owned_and_versioned() {
     assert_eq!(snapshot.ask.total_asks, 0);
     assert_eq!(snapshot.process.process_events_total, 0);
     assert_eq!(snapshot.security.security_events_total, 0);
+    assert_eq!(snapshot.resources.configured_vcpus, 4);
+    assert_eq!(snapshot.resources.configured_ram_mb, 8192);
+    assert_eq!(snapshot.resources.host_pid, Some(std::process::id()));
+    assert!(snapshot.resources.host_process_rss_bytes.unwrap_or(0) > 0);
+    assert!(snapshot.resources.host_cpu_time_micros.is_some());
+    assert_eq!(snapshot.resources.workspace_disk_bytes, Some(4));
+    assert_eq!(snapshot.resources.rootfs_overlay_bytes, Some(7));
+    assert_eq!(snapshot.resources.session_disk_bytes, Some(11));
     assert!(snapshot.captured_at_unix_ms > 0);
+}
+
+#[test]
+fn parse_proc_stat_extracts_rss_and_cpu_time() {
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+    let stat = "123 (capsem process) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22";
+
+    let parsed = parse_proc_stat(stat).unwrap();
+
+    assert_eq!(parsed.cpu_time_micros, (11 + 12) * 1_000_000 / ticks);
+    assert_eq!(parsed.rss_bytes, 21 * page_size);
 }
 
 #[test]

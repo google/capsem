@@ -160,6 +160,7 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
         "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+        "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
     ] {
         assert!(
             PROCESS_ENV_ALLOWLIST.contains(&key),

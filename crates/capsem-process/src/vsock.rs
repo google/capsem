@@ -1521,8 +1521,20 @@ async fn collect_terminal_control_pair(
             anyhow::bail!("vsock channel closed before terminal/control pair arrived");
         };
         match conn.port {
-            capsem_core::VSOCK_PORT_TERMINAL => terminal = Some(conn),
-            capsem_core::VSOCK_PORT_CONTROL => control = Some(conn),
+            capsem_core::VSOCK_PORT_TERMINAL => {
+                if terminal.is_none() {
+                    terminal = Some(conn);
+                } else {
+                    warn!("duplicate terminal vsock connection before control; dropping extra fd");
+                }
+            }
+            capsem_core::VSOCK_PORT_CONTROL => {
+                if control.is_none() {
+                    control = Some(conn);
+                } else {
+                    warn!("duplicate control vsock connection before terminal; dropping extra fd");
+                }
+            }
             capsem_core::VSOCK_PORT_SNI_PROXY
             | capsem_proto::VSOCK_PORT_AUDIT
             | capsem_proto::VSOCK_PORT_DNS_PROXY => {
