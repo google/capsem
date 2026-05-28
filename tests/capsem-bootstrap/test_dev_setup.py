@@ -114,6 +114,25 @@ class TestDevSetup:
         assert 'KERNEL=="kvm"' in fixer
         assert 'KERNEL=="vhost-vsock"' in fixer
 
+    def test_doctor_smokes_linux_kvm_device_ioctls(self):
+        linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()
+
+        assert "KVM_GET_API_VERSION" in linux
+        assert "0xAE00" in linux
+        assert "KVM API usable" in linux
+        assert 'os.open("/dev/kvm"' in linux
+        assert 'os.open("/dev/vhost-vsock"' in linux
+
+    def test_guest_doctor_checks_smp_visibility(self):
+        environment = (
+            PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_environment.py"
+        ).read_text()
+
+        assert "test_smp_vcpus_visible" in environment
+        assert "nproc" in environment
+        assert "/proc/cpuinfo" in environment
+        assert "expected at least 2 vCPUs" in environment
+
     def test_doctor_can_auto_fix_linux_host_build_deps(self):
         doctor = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
         linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()

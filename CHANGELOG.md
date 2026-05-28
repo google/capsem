@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Added Linux host doctor smoke probes for `KVM_GET_API_VERSION` and
+  `/dev/vhost-vsock` openability so bootstrap verifies usable KVM devices, not
+  just filesystem permissions.
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
   leaving snapshot symlink restore scoped to `/root`.
@@ -43,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sprints/policy-settings-profiles/`.
 
 ### Added
+- Added an in-guest `capsem-doctor` SMP diagnostic that compares `nproc` with
+  `/proc/cpuinfo` and requires at least two visible vCPUs.
 - Added live x86_64 KVM SMP boot support with synthetic ACPI RSDP/RSDT/MADT
   tables and guest CPUID topology so Linux discovers all configured vCPUs.
 - Added x86_64 KVM checkpoint trait support for cooperative pause/resume,

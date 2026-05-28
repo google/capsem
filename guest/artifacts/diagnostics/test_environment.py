@@ -68,6 +68,23 @@ def test_architecture():
         f"unexpected arch: {arch}"
 
 
+def test_smp_vcpus_visible():
+    """The guest must see the configured SMP topology, not only the boot CPU."""
+    nproc_result = run("nproc")
+    assert nproc_result.returncode == 0, \
+        f"nproc failed: {nproc_result.stdout}\n{nproc_result.stderr}"
+    nproc = int(nproc_result.stdout.strip())
+
+    cpuinfo_result = run("grep -c '^processor[[:space:]]*:' /proc/cpuinfo")
+    assert cpuinfo_result.returncode == 0, \
+        f"/proc/cpuinfo processor count failed: {cpuinfo_result.stdout}\n{cpuinfo_result.stderr}"
+    cpuinfo_count = int(cpuinfo_result.stdout.strip())
+
+    assert nproc == cpuinfo_count, \
+        f"nproc={nproc}, /proc/cpuinfo processors={cpuinfo_count}"
+    assert nproc >= 2, f"expected at least 2 vCPUs, got {nproc}"
+
+
 # -- Mount points --
 
 
