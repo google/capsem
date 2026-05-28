@@ -138,6 +138,14 @@ class TestRootfsValidationContract:
         assert "UV_CACHE_DIR=/var/cache/capsem/uv" in init_script
         assert "mkdir -p /var/lib/capsem /var/cache/capsem/uv" in init_script
 
+    def test_capsem_init_trusts_guest_git_workspaces(self):
+        """Git must work in /root even though VirtioFS files use host uid/gid."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "cat > /newroot/etc/gitconfig" in init_script
+        assert "directory = *" in init_script
+        assert "defaultBranch = main" in init_script
+
     def test_validate_rootfs_derives_binary_requirements_from_guest_binaries(self):
         """The release validator imports GUEST_BINARIES and checks /usr/local/bin."""
         validator = (PROJECT_ROOT / "scripts" / "validate-rootfs.sh").read_text()

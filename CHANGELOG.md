@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Fixed Git workflows in Linux KVM workspaces by adding guest system Git trust
+  for VirtioFS-owned `/root` repositories, avoiding dubious-ownership failures
+  when commands run as guest root.
 - Fixed Linux KVM guest `uv pip install` by moving the uv cache off the
   VirtioFS workspace to `/var/cache/capsem/uv`, avoiding wheel/archive symlink
   failures under `/root/.cache/uv`.

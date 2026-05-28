@@ -554,6 +554,16 @@ fi
 export UV_CACHE_DIR=/var/cache/capsem/uv
 PROFILE
 
+# VirtioFS exposes workspace files with the host uid/gid while guest commands
+# run as root. Trust guest Git workspaces explicitly so `git status/config/add`
+# works in repos created under /root.
+cat > /newroot/etc/gitconfig << 'GITCONFIG'
+[safe]
+	directory = *
+[init]
+	defaultBranch = main
+GITCONFIG
+
 # Copy boot timing data into chroot for the PTY agent to send via vsock.
 boot_mark "agent_start"
 cp "$TIMING_FILE" /newroot/run/capsem-boot-timing 2>/dev/null || true

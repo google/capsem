@@ -35,6 +35,8 @@
   `Function not implemented` because `READLINK` used the `GETXATTR` opcode.
 - [x] Fix live doctor blocker where `uv pip install` used `/root/.cache/uv`
   on VirtioFS and failed wheel/archive cache symlinks with EINVAL.
+- [x] Fix live doctor blocker where Git refused `/root` repos as dubious
+  ownership because VirtioFS exposes host uid/gid while commands run as root.
 - [ ] Run live boot gate: `capsem run "capsem-doctor"`.
 - [ ] Inspect telemetry/session evidence after a successful boot.
 - [ ] Record boot and first-exec timing.
@@ -88,6 +90,10 @@
   `/root/.cache/uv`, which is the VirtioFS workspace on Linux KVM. The guest
   boot contract now sets `UV_CACHE_DIR=/var/cache/capsem/uv`, and PID 1 creates
   that overlay-backed cache before venv/CLI use.
+- Git workflow diagnostics then failed after `git init`: the repo was owned by
+  the VirtioFS host uid/gid, but commands run as guest root, triggering Git's
+  dubious-ownership guard. Guest PID 1 now writes `/etc/gitconfig` with
+  `safe.directory=*` and `init.defaultBranch=main` inside the isolated VM.
 - Guest DNS/MITM path is live: the net proxy listens on 10443/10080, the DNS
   proxy listens on UDP/TCP 1053, `getent hosts generativelanguage.googleapis.com`
   resolves, and `curl -sI https://generativelanguage.googleapis.com` reaches
@@ -126,6 +132,8 @@
   passed for init-script proxy and venv contracts.
 - Functional: `uv run pytest -q tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py -k 'python_venv or uv_cache'`
   passed for overlay-backed Python venv and uv cache contracts.
+- Functional: `uv run pytest -q tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py -k 'uv_cache or git_workspaces'`
+  passed for uv cache and guest Git workspace contracts.
 - E2E/VM: `just exec "nproc && grep -E 'processor|^siblings|^cpu cores' /proc/cpuinfo | head -20"`
   passed with `4` visible processors in the Linux KVM guest.
 - E2E/VM: Live probes verified DNS/MITM proxy listeners, external DNS
@@ -138,6 +146,7 @@
 - E2E/VM: `capsem-doctor -x -v -k s21_symlink_revert` passed.
 - E2E/VM: `capsem-doctor -x -v -k 'uv_pip_install_works or uv_add_package_works'`
   passed.
+- E2E/VM: `capsem-doctor -x -v -k git_workflow` passed.
 - E2E/VM: `capsem-doctor -x -v` remains open on
   the next full-suite blocker; do not call the live doctor gate green until a
   complete run passes.
