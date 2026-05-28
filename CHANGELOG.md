@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Strengthened the suspend/resume lifecycle integration test so it now proves
+  a background guest process keeps the same PID and continues writing after
+  warm resume, giving Apple VZ and KVM the same long-term state-preservation
+  contract.
 - Added Linux host doctor smoke probes for `KVM_GET_API_VERSION` and
   `/dev/vhost-vsock` openability so bootstrap verifies usable KVM devices, not
   just filesystem permissions.
