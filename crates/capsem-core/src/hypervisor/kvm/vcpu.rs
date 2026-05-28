@@ -536,6 +536,9 @@ mod tests {
             id,
             regs: super::super::sys::KvmRegs::default(),
             sregs: super::super::sys::KvmSregs::default(),
+            mp_state: super::super::sys::KvmMpState {
+                mp_state: super::super::sys::KVM_MP_STATE_RUNNABLE,
+            },
         }
     }
 

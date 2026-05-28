@@ -10,15 +10,19 @@ use anyhow::{bail, Context, Result};
 
 use super::memory::GuestMemory;
 #[cfg(target_arch = "x86_64")]
-use super::sys::{KvmRegs, KvmSregs, VcpuFd};
+use super::sys::{KvmMpState, KvmRegs, KvmSregs, VcpuFd};
+#[cfg(all(target_arch = "x86_64", test))]
+use super::sys::KVM_MP_STATE_RUNNABLE;
 
 const MAGIC: &[u8; 16] = b"CAPSEM-KVM-CKPT\0";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const HEADER_LEN: u64 = 16 + 4 + 4 + 8 + 4 + 4;
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
 #[cfg(target_arch = "x86_64")]
 const X86_VCPU_STATE_LEN: u32 =
-    (std::mem::size_of::<KvmRegs>() + std::mem::size_of::<KvmSregs>()) as u32;
+    (std::mem::size_of::<KvmRegs>()
+        + std::mem::size_of::<KvmSregs>()
+        + std::mem::size_of::<KvmMpState>()) as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CheckpointHeader {
@@ -80,6 +84,7 @@ pub(super) struct VcpuSnapshot {
     pub id: u32,
     pub regs: KvmRegs,
     pub sregs: KvmSregs,
+    pub mp_state: KvmMpState,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -94,6 +99,7 @@ pub(super) fn snapshot_vcpu(vcpu: &VcpuFd) -> Result<VcpuSnapshot> {
         id: vcpu.id(),
         regs: vcpu.get_regs()?,
         sregs: vcpu.get_sregs()?,
+        mp_state: vcpu.get_mp_state()?,
     })
 }
 
@@ -116,6 +122,7 @@ pub(super) fn restore_vcpus(vcpu_fds: &[VcpuFd], snapshots: &[VcpuSnapshot]) -> 
         }
         vcpu.set_sregs(&snapshot.sregs)?;
         vcpu.set_regs(&snapshot.regs)?;
+        vcpu.set_mp_state(snapshot.mp_state)?;
     }
     Ok(())
 }
@@ -282,6 +289,7 @@ fn write_vcpu_snapshot(writer: &mut impl Write, snapshot: &VcpuSnapshot) -> Resu
         .context("write checkpoint vCPU id")?;
     write_pod(writer, &snapshot.regs).context("write checkpoint vCPU regs")?;
     write_pod(writer, &snapshot.sregs).context("write checkpoint vCPU sregs")?;
+    write_pod(writer, &snapshot.mp_state).context("write checkpoint vCPU mp_state")?;
     Ok(())
 }
 
@@ -299,6 +307,7 @@ fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSn
         id,
         regs: read_pod(reader).context("read checkpoint vCPU regs")?,
         sregs: read_pod(reader).context("read checkpoint vCPU sregs")?,
+        mp_state: read_pod(reader).context("read checkpoint vCPU mp_state")?,
     })
 }
 
@@ -379,7 +388,15 @@ mod tests {
         regs.rip = 0x1000 + id as u64;
         let mut sregs = KvmSregs::default();
         sregs.cr3 = 0x2000 + id as u64;
-        VcpuSnapshot { id, regs, sregs }
+        let mp_state = KvmMpState {
+            mp_state: KVM_MP_STATE_RUNNABLE,
+        };
+        VcpuSnapshot {
+            id,
+            regs,
+            sregs,
+            mp_state,
+        }
     }
 
     #[test]
@@ -422,6 +439,7 @@ mod tests {
         assert_eq!(restored.vcpus.len(), 2);
         assert_eq!(restored.vcpus[1].regs.rip, 0x1001);
         assert_eq!(restored.vcpus[1].sregs.cr3, 0x2001);
+        assert_eq!(restored.vcpus[1].mp_state.mp_state, KVM_MP_STATE_RUNNABLE);
     }
 
     #[test]

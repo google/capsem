@@ -253,7 +253,9 @@ impl Hypervisor for KvmHypervisor {
         }
 
         #[cfg(target_arch = "x86_64")]
-        if let Some(kernel_info) = kernel_info.as_ref() {
+        if restored_checkpoint.is_some() {
+            tracing::info!("KVM checkpoint restore: skipping cold boot x86_64 boot state setup");
+        } else if let Some(kernel_info) = kernel_info.as_ref() {
             // Count virtio MMIO devices for cmdline generation
             let mut device_count: u32 = 1; // console at slot 0
             if config.disk_path.is_some() {
@@ -773,6 +775,9 @@ mod tests {
             id,
             regs,
             sregs: sys::KvmSregs::default(),
+            mp_state: sys::KvmMpState {
+                mp_state: sys::KVM_MP_STATE_RUNNABLE,
+            },
         }
     }
 
@@ -847,7 +852,7 @@ mod tests {
 
         assert_eq!(handle.state(), VmState::Paused);
         let meta = std::fs::metadata(path).unwrap();
-        assert_eq!(meta.len(), 40 + 4 + 456 + 4096);
+        assert_eq!(meta.len(), 40 + 4 + 460 + 4096);
         handle.resume().unwrap();
         handle.stop().unwrap();
         waiter.join().unwrap();

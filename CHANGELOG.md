@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Improved x86_64 KVM checkpoint restore correctness by preserving vCPU MP
+  state and avoiding cold-boot x86 setup writes over restored guest RAM; live
+  KVM process-preserving resume still needs virtio/interrupt device state.
 - Fixed the Linux KVM full `capsem-doctor -x -v` gate, which now passes on the
   nested-KVM proving host after the SMP, VirtioFS, runtime cache, Git trust, and
   network proxy fixes.
