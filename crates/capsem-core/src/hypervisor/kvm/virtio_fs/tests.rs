@@ -1002,6 +1002,27 @@ fn symlink_and_readlink() {
 }
 
 #[test]
+fn linux_readlink_opcode_is_five_not_getxattr() {
+    let dir = temp_share("symlink-opcode");
+    std::fs::write(dir.join("target.txt"), b"real").unwrap();
+    let mut proc = test_processor(&dir);
+
+    let h = make_header(FUSE_SYMLINK, 1, 1);
+    let resp = proc.handle_request(&build_request(&h, b"link.txt\0target.txt\0"));
+    assert_eq!(response_error(&resp), 0);
+    let entry: FuseEntryOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
+
+    let h = make_header(5, entry.nodeid, 2);
+    let resp = proc.handle_request(&build_request(&h, &[]));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(&resp[OUT_HDR_SIZE..], b"target.txt");
+
+    let h = make_header(22, entry.nodeid, 3);
+    let resp = proc.handle_request(&build_request(&h, &[]));
+    assert_eq!(response_error(&resp), -libc::ENOSYS);
+}
+
+#[test]
 fn symlink_readonly_rejected() {
     let dir = temp_share("symlink-ro");
     let mut proc = test_processor(&dir);

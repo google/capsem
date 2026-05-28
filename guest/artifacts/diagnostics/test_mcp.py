@@ -1854,7 +1854,8 @@ def test_scenario_s20_touch_mtime_unchanged():
 def test_scenario_s21_symlink_revert():
     """S21: create A, symlink B->A, snap, delete B, revert -> B restored as symlink."""
     run("echo s21_target > /root/s21_a.txt")
-    run("ln -sf /root/s21_a.txt /root/s21_link")
+    r = run("ln -sf s21_a.txt /root/s21_link")
+    assert r.returncode == 0, f"symlink creation failed: {r.stderr}"
     cp = _mcp_snap_create("s21_with_link")
     run("rm /root/s21_link")
 

@@ -31,6 +31,8 @@
   and Python venv placement.
 - [x] Fix live doctor blocker where Claude's atomic `.claude.json` rewrite
   disappeared after VirtioFS rename-over-existing.
+- [x] Fix live doctor blocker where VirtioFS symlink reads returned
+  `Function not implemented` because `READLINK` used the `GETXATTR` opcode.
 - [ ] Run live boot gate: `capsem run "capsem-doctor"`.
 - [ ] Inspect telemetry/session evidence after a successful boot.
 - [ ] Record boot and first-exec timing.
@@ -74,6 +76,12 @@
   opens used the moved temp inode's stale old host path and returned ENOENT.
   VirtioFS now updates moved inode paths and evicts overwritten target mappings
   after successful rename.
+- The symlink revert failure was first visible in snapshot diagnostics, but the
+  lower-level bug was VirtioFS protocol dispatch: Linux sends `READLINK` as
+  opcode 5, while opcode 22 is `GETXATTR`. The wrong constant made real
+  symlinks unreadable and made `ls` xattr probes report `Invalid argument`.
+  The S21 doctor scenario now asserts symlink creation and uses a
+  workspace-relative target so it tests snapshot restore under `/root`.
 - Guest DNS/MITM path is live: the net proxy listens on 10443/10080, the DNS
   proxy listens on UDP/TCP 1053, `getent hosts generativelanguage.googleapis.com`
   resolves, and `curl -sI https://generativelanguage.googleapis.com` reaches
@@ -102,6 +110,8 @@
   failed with ENOENT before the VirtioFS rename fix and passed after it.
 - Unit/contract: `cargo test -p capsem-core virtio_fs -- --nocapture` passed
   with 55 VirtioFS tests after the rename fix.
+- Unit/contract: `cargo test -p capsem-core virtio_fs -- --nocapture` passed
+  with 56 VirtioFS tests after the FUSE `READLINK` opcode fix.
 - Unit/contract: `cargo test -p capsem-process load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settings -- --nocapture`
   passed after the guest venv boot-contract change.
 - Functional: `uv run pytest -q tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py -k 'network_proxies or python_venv'`
@@ -113,9 +123,12 @@
   execution in the guest.
 - E2E/VM: Live `claude mcp list` now preserves `/root/.claude.json` and keeps
   the Capsem MCP server configured after Claude rewrites its state file.
+- E2E/VM: Live relative symlink probe in `/root` now supports `ls`, `readlink`,
+  and `test -e`.
+- E2E/VM: `capsem-doctor -x -v -k s21_symlink_revert` passed.
 - E2E/VM: `capsem-doctor -x -v` remains open on
-  `test_scenario_s21_symlink_revert`; do not call the live doctor gate green
-  until snapshot symlink revert is fixed.
+  the next full-suite blocker; do not call the live doctor gate green until a
+  complete run passes.
 - Telemetry: Pending successful full doctor/session inspection.
 - Performance: Pending live boot.
 - Missing/deferred: Full doctor gate, telemetry inspection, and performance
