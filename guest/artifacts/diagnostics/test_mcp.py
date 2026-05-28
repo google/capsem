@@ -1852,7 +1852,7 @@ def test_scenario_s20_touch_mtime_unchanged():
 
 
 def test_scenario_s21_symlink_revert():
-    """S21: create A, symlink B->A, snap, delete B, revert -> B restored as symlink."""
+    """S21: create A, symlink B->A, snap, delete B, revert -> B restored."""
     run("echo s21_target > /root/s21_a.txt")
     r = run("ln -sf s21_a.txt /root/s21_link")
     assert r.returncode == 0, f"symlink creation failed: {r.stderr}"
@@ -1863,9 +1863,10 @@ def test_scenario_s21_symlink_revert():
     assert "gone" in r.stdout
 
     _mcp_revert("s21_link", cp)
-    # The reverted file should exist (content copied from snapshot, may not be a symlink).
-    r = run("test -e /root/s21_link && echo exists || echo gone")
-    assert "exists" in r.stdout, f"link should be restored: {r.stdout}"
+    r = run("test -L /root/s21_link && readlink /root/s21_link && cat /root/s21_link")
+    assert r.returncode == 0, f"link should be restored: {r.stdout}\n{r.stderr}"
+    assert "s21_a.txt" in r.stdout
+    assert "s21_target" in r.stdout
     run("rm -f /root/s21_a.txt /root/s21_link")
 
 

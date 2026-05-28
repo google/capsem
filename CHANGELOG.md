@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Added Linux KVM doctor coverage that creates and resolves symlinks under
+  `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
+  leaving snapshot symlink restore scoped to `/root`.
 - Reduced the top-level sprint inventory to active Profile V2 work plus the
   credential detection pipeline, moving completed boards to `sprints/done/` and
   stale or superseded boards to `sprints/retired/`.

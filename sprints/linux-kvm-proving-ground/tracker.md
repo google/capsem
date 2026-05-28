@@ -72,9 +72,9 @@
   synthetic ACPI MADT tables and guest CPUID topology. Application processors
   also stay alive across guest HLT and transient `KVM_RUN` `EAGAIN` exits.
 - `capsem-doctor -x -v` now passes through the AI CLI, environment, injection,
-  lifecycle, and most MCP checks. The current open failure is
-  `test_scenario_s21_symlink_revert`, where snapshot revert does not restore a
-  symlink path deleted after the snapshot.
+  lifecycle, MCP S21 symlink revert, uv package install/add, and Git workflow
+  blockers. The current open gate is a fresh full-suite run after the Git and
+  `/tmp` symlink diagnostic updates.
 - Claude's config rewrite failure was reproduced with strace: the CLI wrote a
   `.claude.json.tmp.*` file, renamed it over `.claude.json`, then subsequent
   opens used the moved temp inode's stale old host path and returned ENOENT.
@@ -84,8 +84,10 @@
   lower-level bug was VirtioFS protocol dispatch: Linux sends `READLINK` as
   opcode 5, while opcode 22 is `GETXATTR`. The wrong constant made real
   symlinks unreadable and made `ls` xattr probes report `Invalid argument`.
-  The S21 doctor scenario now asserts symlink creation and uses a
-  workspace-relative target so it tests snapshot restore under `/root`.
+  The S21 doctor scenario now asserts symlink creation and restore under
+  `/root`. A separate environment diagnostic covers symlink creation under
+  overlay-backed `/tmp` so link-heavy caches/tools can stay off VirtioFS without
+  weakening snapshot symlink coverage.
 - `uv pip install wheel` then failed because uv's default cache lived under
   `/root/.cache/uv`, which is the VirtioFS workspace on Linux KVM. The guest
   boot contract now sets `UV_CACHE_DIR=/var/cache/capsem/uv`, and PID 1 creates
@@ -144,6 +146,8 @@
 - E2E/VM: Live relative symlink probe in `/root` now supports `ls`, `readlink`,
   and `test -e`.
 - E2E/VM: `capsem-doctor -x -v -k s21_symlink_revert` passed.
+- E2E/VM: `capsem-doctor -x -v -k 'tmp_symlink_support or s21_symlink_revert'`
+  passed for `/tmp` symlink usability plus workspace snapshot symlink restore.
 - E2E/VM: `capsem-doctor -x -v -k 'uv_pip_install_works or uv_add_package_works'`
   passed.
 - E2E/VM: `capsem-doctor -x -v -k git_workflow` passed.

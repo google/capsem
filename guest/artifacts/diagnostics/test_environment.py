@@ -124,6 +124,24 @@ def test_tmp_is_writable():
     run(f"rm -f {test_file}")
 
 
+def test_tmp_symlink_support():
+    """/tmp must support symlinks for tools that keep link-heavy caches off /root."""
+    result = run(
+        "rm -f /tmp/capsem_link /tmp/capsem_target && "
+        "echo tmp-link > /tmp/capsem_target && "
+        "ln -s /tmp/capsem_target /tmp/capsem_link && "
+        "test -L /tmp/capsem_link && "
+        "readlink /tmp/capsem_link && "
+        "cat /tmp/capsem_link"
+    )
+    assert result.returncode == 0, (
+        f"/tmp symlink support failed: {result.stdout}\n{result.stderr}"
+    )
+    assert "/tmp/capsem_target" in result.stdout
+    assert "tmp-link" in result.stdout
+    run("rm -f /tmp/capsem_link /tmp/capsem_target")
+
+
 def test_rootfs_is_overlay():
     """Root filesystem must be an overlay mount."""
     result = run("mount | grep 'on / '")
