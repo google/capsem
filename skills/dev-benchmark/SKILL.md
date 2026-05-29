@@ -27,7 +27,7 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | Category | Command | What it measures |
 |----------|---------|-----------------|
 | disk | `capsem-bench disk` | Sequential/random I/O on scratch disk (write/read throughput, IOPS) |
-| rootfs | `capsem-bench rootfs` | Read-only rootfs performance (sequential + random 4K reads) |
+| rootfs | `capsem-bench rootfs` | Read-only rootfs performance: largest-file sequential read, random 4K reads, large-binary sequential reads, small JS/package reads, and metadata stat-walk throughput |
 | storage | `capsem-bench storage` | Diagnostic split across rootfs reads and writable paths such as `/root`, `/tmp`, `/var/tmp`, `/var/log`, and `/run` |
 | startup | `capsem-bench startup` | Cold-start latency for python3, node, claude, gemini, codex |
 | http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles) |
@@ -104,6 +104,15 @@ Common causes:
 4. Check `storage.rootfs.backing.squashfs_superblock` for the booted rootfs compression and block/chunk size before comparing Linux/macOS rootfs reads
 5. Compare the detailed I/O profile: sequential 4K/64K/1M IOPS/MB/s, random 4K read IOPS, and random 4K sync-write IOPS with p95 latency
 6. Use the reported mount table to confirm which filesystem backs each path before assigning blame to KVM, VirtioFS, overlayfs, or the host filesystem
+
+### Rootfs read regression
+
+1. Run: `just run "capsem-bench rootfs"`
+2. Compare `rootfs.seq_read` for the historical largest-file sequential read gate
+3. Compare `rootfs.large_binary_seq_read` to isolate large CLI binary reads
+4. Compare `rootfs.small_js_read` for loader-style reads across many small JS/JSON/package files
+5. Compare `rootfs.metadata_stat` for thousands of `lstat` calls across the rootfs tree
+6. Keep `rootfs.rand_read_4k` as the broad mixed-file random-read signal
 
 ### Adding a new benchmark
 

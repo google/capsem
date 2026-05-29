@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sprints/policy-settings-profiles/`.
 
 ### Added
+- Added rootfs benchmark sub-metrics for large binary sequential reads, small
+  JS/package file reads, and metadata-heavy `lstat` walks so Linux/macOS rootfs
+  gaps can be attributed to data reads versus loader-style metadata pressure.
 - Added an opt-in `capsem-bench storage` diagnostic that records mount metadata
   and splits rootfs reads from writable-path I/O across workspace, tmpfs,
   overlay, and runtime directories for Linux/macOS performance comparisons,
