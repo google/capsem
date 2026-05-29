@@ -428,6 +428,7 @@ def test_local_cross_compile_validates_one_fresh_deb_artifact():
     assert 'VSOCK_SECURITY_FLAG="--security-opt seccomp=unconfined"' in body
     assert "$VSOCK_FLAG" in body
     assert "$VSOCK_SECURITY_FLAG" in body
+    assert 'capsem-frontend-node-modules-$TARGET_ARCH:/src/frontend/node_modules' in body
     assert 'DEB_DIR=/cargo-target/\\$RUST_TARGET/release/bundle/deb' in body
     assert 'rm -f \\"\\$DEB_DIR\\"/*.deb' in body
     assert 'DEBS=(\\"\\$DEB_DIR\\"/*.deb)' in body

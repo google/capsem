@@ -666,6 +666,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         -v "capsem-cargo-registry:/usr/local/cargo/registry" \
         -v "capsem-cargo-git:/usr/local/cargo/git" \
         -v "capsem-host-target-$TARGET_ARCH:/cargo-target" \
+        -v "capsem-frontend-node-modules-$TARGET_ARCH:/src/frontend/node_modules" \
         -v "capsem-rustup:/usr/local/rustup" \
         -w /src \
         capsem-host-builder:latest \
