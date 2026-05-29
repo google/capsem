@@ -1,0 +1,31 @@
+{
+  "name": "capsem-plugin-prototype",
+  "version": "1.0.0",
+  "description": "Capsem plugin execution prototype",
+  "main": "dist/server.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "test": "vitest run",
+    "bench": "tsx scripts/bench.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "devDependencies": {
+    "@bytecodealliance/componentize-js": "^0.21.0",
+    "@bytecodealliance/jco": "^1.19.0",
+    "@types/node": "^25.9.1",
+    "assemblyscript": "^0.28.17",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  },
+  "dependencies": {
+    "@napi-rs/blake-hash": "^1.3.6"
+  }
+}
