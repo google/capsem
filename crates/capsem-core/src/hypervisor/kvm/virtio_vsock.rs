@@ -527,7 +527,7 @@ impl VirtioDevice for VhostVsockDevice {
         info!("vhost-vsock activated (CID={})", self.guest_cid);
     }
 
-    fn queue_notify(&mut self, queue_index: u32) {
+    fn queue_notify(&mut self, queue_index: u32) -> bool {
         let idx = queue_index as usize;
         if idx >= VHOST_VSOCK_BACKEND_QUEUES {
             if idx < VSOCK_NUM_QUEUES {
@@ -536,7 +536,7 @@ impl VirtioDevice for VhostVsockDevice {
                     "ignoring virtio-vsock event queue notification"
                 );
             }
-            return;
+            return false;
         }
         // Write 1 to kick eventfd to wake vhost module
         let val: u64 = 1;
@@ -547,6 +547,7 @@ impl VirtioDevice for VhostVsockDevice {
                 8,
             );
         }
+        false
     }
 }
 
@@ -963,6 +964,7 @@ mod tests {
             device_addr: used_gpa,
             size: 256,
             warm_restore: false,
+            event_idx: false,
         };
 
         let idx = queue_used_idx(&mem.clone_ref(RAM_BASE), &queue).unwrap();
@@ -981,6 +983,7 @@ mod tests {
             device_addr: RAM_BASE + 0x4000,
             size: 256,
             warm_restore: false,
+            event_idx: false,
         };
 
         let idx = queue_avail_idx(&mem.clone_ref(RAM_BASE), &queue).unwrap();

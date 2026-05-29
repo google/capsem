@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 
 use super::memory::GuestMemoryRef;
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
-use super::virtio_queue::VirtQueue;
+use super::virtio_queue::{VirtQueue, VIRTIO_RING_F_EVENT_IDX};
 
 /// Virtio block device ID.
 const VIRTIO_ID_BLOCK: u32 = 2;
@@ -438,9 +438,9 @@ impl VirtioBlockDevice {
         device_id: &[u8; VIRTIO_BLK_ID_LEN],
         mem: &GuestMemoryRef,
         queue: &mut VirtQueue,
-    ) -> u32 {
+    ) -> QueueProcessResult {
         let mut processed = 0u32;
-        while let Some(chain) = queue.pop() {
+        while let Some(chain) = queue.pop_or_enable_notification() {
             let descs = &chain.descriptors;
             processed += 1;
 
@@ -540,8 +540,17 @@ impl VirtioBlockDevice {
             queue.flush_used();
         }
 
-        processed
+        let should_interrupt = queue.prepare_kick();
+        QueueProcessResult {
+            processed,
+            should_interrupt,
+        }
     }
+}
+
+struct QueueProcessResult {
+    processed: u32,
+    should_interrupt: bool,
 }
 
 impl VirtioDevice for VirtioBlockDevice {
@@ -550,7 +559,7 @@ impl VirtioDevice for VirtioBlockDevice {
     }
 
     fn features(&self) -> u64 {
-        let mut f = VIRTIO_F_VERSION_1;
+        let mut f = VIRTIO_F_VERSION_1 | VIRTIO_RING_F_EVENT_IDX;
         if self.read_only {
             f |= VIRTIO_BLK_F_RO;
         } else {
@@ -586,20 +595,22 @@ impl VirtioDevice for VirtioBlockDevice {
         if let Some(q) = queues.first() {
             if q.size > 0 {
                 let queue = if q.warm_restore {
-                    VirtQueue::new_restored(
+                    VirtQueue::new_restored_with_event_idx(
                         mem.clone(),
                         q.desc_addr,
                         q.driver_addr,
                         q.device_addr,
                         q.size,
+                        q.event_idx,
                     )
                 } else {
-                    VirtQueue::new(
+                    VirtQueue::new_with_event_idx(
                         mem.clone(),
                         q.desc_addr,
                         q.driver_addr,
                         q.device_addr,
                         q.size,
+                        q.event_idx,
                     )
                 };
 
@@ -654,14 +665,14 @@ impl VirtioDevice for VirtioBlockDevice {
         self.mem = Some(mem);
     }
 
-    fn queue_notify(&mut self, queue_index: u32) {
+    fn queue_notify(&mut self, queue_index: u32) -> bool {
         if queue_index != 0 {
             tracing::warn!(
                 event_name = "virtio.blk.queue_notify_ignored",
                 queue_index,
                 "virtio-blk ignored notification for unknown queue"
             );
-            return;
+            return false;
         }
 
         let mut queue = match self.queue.take() {
@@ -671,15 +682,15 @@ impl VirtioDevice for VirtioBlockDevice {
                     event_name = "virtio.blk.queue_notify_unconfigured",
                     "virtio-blk notified before queue was configured"
                 );
-                return;
+                return false;
             }
         };
 
         let mem = match self.mem.as_ref() {
             Some(mem) => mem,
-            None => return,
+            None => return false,
         };
-        let processed = Self::process_queue(
+        let result = Self::process_queue(
             &mut self.file,
             self.read_only,
             self.capacity_sectors,
@@ -691,9 +702,11 @@ impl VirtioDevice for VirtioBlockDevice {
         self.queue = Some(queue);
         tracing::trace!(
             event_name = "virtio.blk.queue_drain",
-            processed,
+            processed = result.processed,
+            should_interrupt = result.should_interrupt,
             "virtio-blk queue notification drained"
         );
+        result.should_interrupt
     }
 
     fn quiesce(&mut self) -> Result<()> {
@@ -761,7 +774,7 @@ fn block_worker_loop(
             }
         }
 
-        let processed = VirtioBlockDevice::process_queue(
+        let result = VirtioBlockDevice::process_queue(
             &mut file,
             read_only,
             capacity_sectors,
@@ -769,7 +782,7 @@ fn block_worker_loop(
             &mem,
             &mut queue,
         );
-        if processed > 0 {
+        if result.should_interrupt {
             signal_irq(irq_fd, &interrupt_status);
         }
         for done in drain_replies {
@@ -777,7 +790,8 @@ fn block_worker_loop(
         }
         tracing::trace!(
             event_name = "virtio.blk.queue_drain",
-            processed,
+            processed = result.processed,
+            should_interrupt = result.should_interrupt,
             "virtio-blk ioeventfd worker drained queue notification"
         );
 
@@ -917,6 +931,10 @@ mod tests {
 
     impl TestHarness {
         fn new(path: &std::path::Path, read_only: bool) -> Self {
+            Self::new_with_event_idx(path, read_only, false)
+        }
+
+        fn new_with_event_idx(path: &std::path::Path, read_only: bool, event_idx: bool) -> Self {
             let mem_size = 1024 * 1024; // 1MB
             let mem = GuestMemory::new(mem_size).unwrap();
             let mut dev = VirtioBlockDevice::new(path, read_only).unwrap();
@@ -928,6 +946,7 @@ mod tests {
                 device_addr: RAM_BASE + USED_RING_OFFSET,
                 size: QUEUE_TEST_SIZE,
                 warm_restore: false,
+                event_idx,
             };
             dev.activate(mem.clone_ref(RAM_BASE), &[queue_config]);
 
@@ -964,6 +983,7 @@ mod tests {
                 device_addr: RAM_BASE + USED_RING_OFFSET,
                 size: QUEUE_TEST_SIZE,
                 warm_restore: false,
+                event_idx: false,
             };
             dev.activate(mem.clone_ref(RAM_BASE), &[queue_config]);
 
@@ -1007,6 +1027,13 @@ mod tests {
             let idx_offset = AVAIL_RING_OFFSET + 2;
             self.mem
                 .write_at(idx_offset, &avail_idx.to_le_bytes())
+                .unwrap();
+        }
+
+        fn write_used_event(&self, used_event: u16) {
+            let offset = AVAIL_RING_OFFSET + 4 + (QUEUE_TEST_SIZE as u64) * 2;
+            self.mem
+                .write_at(offset, &used_event.to_le_bytes())
                 .unwrap();
         }
 
@@ -1084,6 +1111,7 @@ mod tests {
         let dev = VirtioBlockDevice::new(&path, true).unwrap();
         let f = dev.features();
         assert_ne!(f & VIRTIO_F_VERSION_1, 0, "must have VERSION_1");
+        assert_ne!(f & VIRTIO_RING_F_EVENT_IDX, 0, "must have EVENT_IDX");
         assert_ne!(f & VIRTIO_BLK_F_RO, 0, "must have RO bit");
         assert_eq!(f & VIRTIO_BLK_F_DISCARD, 0, "RO disks must not discard");
     }
@@ -1094,6 +1122,7 @@ mod tests {
         let dev = VirtioBlockDevice::new(&path, false).unwrap();
         let f = dev.features();
         assert_ne!(f & VIRTIO_F_VERSION_1, 0, "must have VERSION_1");
+        assert_ne!(f & VIRTIO_RING_F_EVENT_IDX, 0, "must have EVENT_IDX");
         assert_eq!(f & VIRTIO_BLK_F_RO, 0, "must NOT have RO bit");
         assert_ne!(f & VIRTIO_BLK_F_DISCARD, 0, "RW disks must support discard");
     }
@@ -1545,6 +1574,40 @@ mod tests {
         // avail ring empty (idx=0), notify should be a no-op
         h.dev.queue_notify(0);
         assert_eq!(h.read_used_idx(), 0);
+    }
+
+    #[test]
+    fn block_event_idx_suppresses_driver_interrupt_until_used_event() {
+        let disk_data = vec![0x5au8; 512];
+        let path = temp_disk_with_data("event-idx-suppress.img", &disk_data);
+        let mut h = TestHarness::new_with_event_idx(&path, true, true);
+
+        h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
+        h.write_used_event(4);
+
+        assert!(!h.dev.queue_notify(0));
+        assert_eq!(
+            h.read_status(DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64 + 512),
+            VIRTIO_BLK_S_OK
+        );
+        assert_eq!(h.read_used_idx(), 1);
+    }
+
+    #[test]
+    fn block_event_idx_interrupts_when_used_event_is_crossed() {
+        let disk_data = vec![0x6bu8; 512];
+        let path = temp_disk_with_data("event-idx-kick.img", &disk_data);
+        let mut h = TestHarness::new_with_event_idx(&path, true, true);
+
+        h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
+        h.write_used_event(0);
+
+        assert!(h.dev.queue_notify(0));
+        assert_eq!(
+            h.read_status(DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64 + 512),
+            VIRTIO_BLK_S_OK
+        );
+        assert_eq!(h.read_used_idx(), 1);
     }
 
     #[test]

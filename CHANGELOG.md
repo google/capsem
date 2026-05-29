@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-descriptor guest payload order.
 
 ### Changed
+- Added KVM virtio-blk event-index negotiation and shared virtqueue
+  notification-suppression helpers, with canonical Linux benchmark artifacts
+  recording the mixed performance result for the Firecracker-path sprint.
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
   Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,
   and Google AI.

@@ -110,13 +110,14 @@ impl VirtioDevice for VirtioConsoleDevice {
         self.mem = Some(mem);
     }
 
-    fn queue_notify(&mut self, queue_index: u32) {
+    fn queue_notify(&mut self, queue_index: u32) -> bool {
+        let mut completed = false;
         if queue_index == 1 {
             let Some(mem) = self.mem.as_ref() else {
-                return;
+                return false;
             };
             let Some(queue) = self.transmitq.as_mut() else {
-                return;
+                return false;
             };
             while let Some(chain) = queue.pop() {
                 let mut written = 0u32;
@@ -154,8 +155,10 @@ impl VirtioDevice for VirtioConsoleDevice {
                     "virtio-console transmit descriptor completed"
                 );
                 queue.push_used(chain.head, written);
+                completed = true;
             }
         }
+        completed
     }
 
     fn uses_mmio_interrupt(&self) -> bool {
@@ -284,6 +287,7 @@ mod tests {
                 device_addr: 0,
                 size: 0,
                 warm_restore: false,
+                event_idx: false,
             },
             QueueConfig {
                 desc_addr: desc,
@@ -291,6 +295,7 @@ mod tests {
                 device_addr: used,
                 size: 8,
                 warm_restore: false,
+                event_idx: false,
             },
         ];
         dev.activate(mem.clone_ref(RAM_BASE), &queues);
