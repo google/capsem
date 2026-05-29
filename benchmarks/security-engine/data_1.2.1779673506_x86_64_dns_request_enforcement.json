@@ -1,0 +1,105 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_dns_request_enforcement",
+  "version": "1.2.1779673506",
+  "source_commit": "e75cacf9",
+  "timestamp": 1780074233.463676,
+  "arch": "x86_64",
+  "host": {
+    "platform": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "version": "#3-Ubuntu SMP PREEMPT Mon Apr 13 16:29:20 UTC 2026",
+    "machine": "x86_64",
+    "processor": "",
+    "python_version": "3.14.4",
+    "cpu_count": 16,
+    "cpu_count_logical": 16,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count_physical": 8,
+    "memory_total_bytes": 67415740416,
+    "memory_total_gb": 62.79,
+    "os_pretty_name": "Ubuntu 26.04 LTS",
+    "os_id": "ubuntu",
+    "os_version_id": "26.04"
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_dns_request_enforcement_benchmark_records_vm_originated_path -xvs",
+  "workload": {
+    "event_family": "dns",
+    "event_type": "dns.request",
+    "source": "vm_originated",
+    "path": "guest_resolver_to_dns_proxy_to_security_engine"
+  },
+  "runs": 8,
+  "gate_ms": 1000,
+  "rule": {
+    "id": "runtime.block-dns-bench.406d3acb",
+    "pack_id": "runtime-benchmark",
+    "condition": "dns.request.qname == 'security-engine-bench-ae1625e5.example.com'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_dns_request_ms": {
+      "min": 1.221,
+      "mean": 2.305,
+      "median": 1.566,
+      "p95": 7.655,
+      "p99": 7.655,
+      "max": 7.655,
+      "values": [
+        7.655,
+        1.862,
+        1.594,
+        1.671,
+        1.531,
+        1.221,
+        1.366,
+        1.538
+      ]
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 16,
+      "distinct_event_ids": 16,
+      "blocked_count": 16,
+      "vm_id": "secdns-22973417",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elieb_google_com",
+      "process_operation": null,
+      "process_command_class": null,
+      "rule_id": "runtime.block-dns-bench.406d3acb",
+      "reason": "DNS request blocked by security benchmark"
+    },
+    "session_db_dns_events": {
+      "row_count": 16,
+      "denied_count": 16,
+      "qname": "security-engine-bench-ae1625e5.example.com",
+      "policy_mode": "runtime",
+      "policy_action": "block",
+      "policy_rule": "runtime.block-dns-bench.406d3acb",
+      "policy_reason": "DNS request blocked by security benchmark"
+    },
+    "runtime_match_count": 16,
+    "runtime_last_event_id": "dns-4292f3808a2ab990",
+    "logs_exposed_security_decision": true
+  },
+  "project_version": "1.2.1779673506",
+  "recorded_at": 1780074233.463995,
+  "recorded_at_utc": "2026-05-29T17:03:53.463997+00:00",
+  "git": {
+    "commit": "e75cacf92bb3e0c41c14109b0204bd6987c7ed57",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/capsem-bench/data_1.2.1779673506_x86_64.json",
+      "benchmarks/fork/data_1.2.1779673506_x86_64.json",
+      "benchmarks/host-native/data_1.2.1779673506_x86_64.json",
+      "benchmarks/lifecycle/data_1.2.1779673506_x86_64.json",
+      "benchmarks/parallel/data_1.2.1779673506_x86_64.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_dns_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_http_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_mcp_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_process_enforcement.json"
+    ]
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "version": "0.1.0",
+  "timestamp": 1780074151.254175,
+  "runs": 3,
+  "fork": {
+    "fork_ms": {
+      "min": 114.6,
+      "mean": 115.1,
+      "max": 115.4,
+      "values": [
+        114.6,
+        115.4,
+        115.3
+      ]
+    },
+    "image_size_mb": {
+      "min": 91.8,
+      "mean": 101.1,
+      "max": 105.8,
+      "values": [
+        91.79,
+        105.79,
+        105.79
+      ]
+    },
+    "boot_provision_ms": {
+      "min": 1485.6,
+      "mean": 1514.1,
+      "max": 1529.4,
+      "values": [
+        1529.4,
+        1485.6,
+        1527.4
+      ]
+    },
+    "boot_ready_ms": {
+      "min": 26.1,
+      "mean": 29.8,
+      "max": 35.3,
+      "values": [
+        26.1,
+        35.3,
+        28.0
+      ]
+    }
+  },
+  "schema": "capsem.benchmark-artifact.v1",
+  "project_version": "1.2.1779673506",
+  "arch": "x86_64",
+  "recorded_at": 1780074151.254563,
+  "recorded_at_utc": "2026-05-29T17:02:31.254566+00:00",
+  "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs",
+  "host": {
+    "platform": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "version": "#3-Ubuntu SMP PREEMPT Mon Apr 13 16:29:20 UTC 2026",
+    "machine": "x86_64",
+    "processor": "",
+    "python_version": "3.14.4",
+    "cpu_count": 16,
+    "cpu_count_logical": 16,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count_physical": 8,
+    "memory_total_bytes": 67415740416,
+    "memory_total_gb": 62.79,
+    "os_pretty_name": "Ubuntu 26.04 LTS",
+    "os_id": "ubuntu",
+    "os_version_id": "26.04"
+  },
+  "git": {
+    "commit": "e75cacf92bb3e0c41c14109b0204bd6987c7ed57",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/capsem-bench/data_1.2.1779673506_x86_64.json",
+      "benchmarks/fork/data_1.2.1779673506_x86_64.json",
+      "benchmarks/host-native/data_1.2.1779673506_x86_64.json",
+      "benchmarks/lifecycle/data_1.2.1779673506_x86_64.json",
+      "benchmarks/parallel/data_1.2.1779673506_x86_64.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_dns_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_http_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_mcp_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_process_enforcement.json"
+    ]
+  }
+}

@@ -1,35 +1,35 @@
 {
   "version": "0.3.0",
-  "timestamp": 1780070901.0460274,
-  "hostname": "bench-f2e18065",
+  "timestamp": 1780074045.0511973,
+  "hostname": "bench-765d7212",
   "disk": {
     "directory": "/root",
     "size_mb": 256,
     "seq_write": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 1666.3,
-      "throughput_mbps": 153.6
+      "duration_ms": 1631.6,
+      "throughput_mbps": 156.9
     },
     "seq_read": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 646.9,
-      "throughput_mbps": 395.7
+      "duration_ms": 725.5,
+      "throughput_mbps": 352.8
     },
     "rand_write_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 3511.0,
-      "iops": 2848.2,
-      "throughput_mbps": 11.1
+      "duration_ms": 3601.1,
+      "iops": 2776.9,
+      "throughput_mbps": 10.8
     },
     "rand_read_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 1276.1,
-      "iops": 7836.5,
-      "throughput_mbps": 30.6
+      "duration_ms": 1344.2,
+      "iops": 7439.6,
+      "throughput_mbps": 29.1
     }
   },
   "rootfs": {
@@ -44,16 +44,16 @@
       "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
       "size_bytes": 239650512,
       "block_size": 1048576,
-      "duration_ms": 1263.3,
-      "throughput_mbps": 180.9
+      "duration_ms": 1208.6,
+      "throughput_mbps": 189.1
     },
     "files_found": 5554,
     "rand_read_4k": {
       "count": 5000,
-      "files_sampled": 2620,
+      "files_sampled": 2612,
       "block_size": 4096,
-      "duration_ms": 3098.3,
-      "iops": 1613.8,
+      "duration_ms": 3086.0,
+      "iops": 1620.2,
       "throughput_mbps": 6.3
     },
     "large_binary_seq_read": {
@@ -66,15 +66,15 @@
             "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
             "size_bytes": 239650512,
             "block_size": 1048576,
-            "duration_ms": 1331.7,
-            "throughput_mbps": 171.6
+            "duration_ms": 1313.3,
+            "throughput_mbps": 174.0
           },
           "warm": {
             "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
             "size_bytes": 239650512,
             "block_size": 1048576,
-            "duration_ms": 40.7,
-            "throughput_mbps": 5616.5
+            "duration_ms": 42.4,
+            "throughput_mbps": 5385.6
           }
         },
         {
@@ -84,15 +84,15 @@
             "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
             "size_bytes": 239650512,
             "block_size": 1048576,
-            "duration_ms": 1040.5,
-            "throughput_mbps": 219.7
+            "duration_ms": 1174.1,
+            "throughput_mbps": 194.7
           },
           "warm": {
             "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
             "size_bytes": 239650512,
             "block_size": 1048576,
-            "duration_ms": 40.4,
-            "throughput_mbps": 5653.4
+            "duration_ms": 44.0,
+            "throughput_mbps": 5189.7
           }
         },
         {
@@ -102,31 +102,31 @@
             "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
             "size_bytes": 222019904,
             "block_size": 1048576,
-            "duration_ms": 1120.4,
-            "throughput_mbps": 189.0
+            "duration_ms": 1069.2,
+            "throughput_mbps": 198.0
           },
           "warm": {
             "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
             "size_bytes": 222019904,
             "block_size": 1048576,
-            "duration_ms": 39.9,
-            "throughput_mbps": 5307.5
+            "duration_ms": 38.3,
+            "throughput_mbps": 5534.4
           }
         }
       ],
       "bytes_read": 701320928,
-      "cold_duration_ms": 3492.6,
-      "warm_duration_ms": 121.0,
-      "cold_throughput_mbps": 191.5,
-      "warm_throughput_mbps": 5527.5
+      "cold_duration_ms": 3556.6,
+      "warm_duration_ms": 124.7,
+      "cold_throughput_mbps": 188.1,
+      "warm_throughput_mbps": 5363.5
     },
     "small_js_read": {
       "count": 5000,
       "files_sampled": 113,
-      "bytes_read": 44636928,
-      "duration_ms": 59.6,
-      "ops_per_sec": 83957.1,
-      "throughput_mbps": 714.8
+      "bytes_read": 44189738,
+      "duration_ms": 62.8,
+      "ops_per_sec": 79605.5,
+      "throughput_mbps": 671.0
     },
     "metadata_stat": {
       "entries": 6573,
@@ -134,8 +134,8 @@
       "dirs": 670,
       "symlinks": 349,
       "errors": 0,
-      "duration_ms": 156.9,
-      "stats_per_sec": 41880.4
+      "duration_ms": 155.1,
+      "stats_per_sec": 42383.6
     }
   },
   "startup": {
@@ -147,13 +147,13 @@
           "--version"
         ],
         "timings_ms": [
-          44.3,
-          31.0,
-          30.9
+          31.5,
+          31.1,
+          47.1
         ],
-        "min_ms": 30.9,
-        "mean_ms": 35.4,
-        "max_ms": 44.3
+        "min_ms": 31.1,
+        "mean_ms": 36.6,
+        "max_ms": 47.1
       },
       "node": {
         "command": [
@@ -162,11 +162,11 @@
         ],
         "timings_ms": [
           299.0,
-          299.6,
-          299.5
+          295.7,
+          299.6
         ],
-        "min_ms": 299.0,
-        "mean_ms": 299.4,
+        "min_ms": 295.7,
+        "mean_ms": 298.1,
         "max_ms": 299.6
       },
       "claude": {
@@ -175,13 +175,13 @@
           "--version"
         ],
         "timings_ms": [
-          1651.7,
-          1387.2,
-          1391.6
+          1439.6,
+          1439.0,
+          1287.4
         ],
-        "min_ms": 1387.2,
-        "mean_ms": 1476.8,
-        "max_ms": 1651.7
+        "min_ms": 1287.4,
+        "mean_ms": 1388.7,
+        "max_ms": 1439.6
       },
       "gemini": {
         "command": [
@@ -189,13 +189,13 @@
           "--version"
         ],
         "timings_ms": [
-          3231.8,
-          2900.2,
-          3120.6
+          3279.6,
+          3020.4,
+          2976.6
         ],
-        "min_ms": 2900.2,
-        "mean_ms": 3084.2,
-        "max_ms": 3231.8
+        "min_ms": 2976.6,
+        "mean_ms": 3092.2,
+        "max_ms": 3279.6
       },
       "codex": {
         "command": [
@@ -203,13 +203,13 @@
           "--version"
         ],
         "timings_ms": [
-          823.9,
-          921.4,
-          1025.5
+          872.5,
+          817.1,
+          817.3
         ],
-        "min_ms": 823.9,
-        "mean_ms": 923.6,
-        "max_ms": 1025.5
+        "min_ms": 817.1,
+        "mean_ms": 835.6,
+        "max_ms": 872.5
       }
     }
   },
@@ -219,76 +219,100 @@
     "concurrency": 5,
     "successful": 50,
     "failed": 0,
-    "total_duration_ms": 810.3,
-    "requests_per_sec": 61.7,
-    "transfer_bytes": 3999421,
+    "total_duration_ms": 814.2,
+    "requests_per_sec": 61.4,
+    "transfer_bytes": 3983083,
     "latency_ms": {
-      "min": 47.8,
-      "max": 278.3,
-      "mean": 77.9,
-      "p50": 54.6,
-      "p95": 264.9,
-      "p99": 275.7
+      "min": 47.4,
+      "max": 290.0,
+      "mean": 80.2,
+      "p50": 54.3,
+      "p95": 281.5,
+      "p99": 287.0
     }
   },
   "throughput": {
     "url": "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf",
     "http_code": 200,
     "size_bytes": 9984968,
-    "duration_s": 0.521,
-    "throughput_mbps": 18.27
+    "duration_s": 0.532,
+    "throughput_mbps": 17.89
   },
   "snapshot": {
     "10_files": {
-      "create_ms": 2878.5,
+      "create_ms": 2945.6,
       "create_ok": true,
-      "list_ms": 945.4,
+      "list_ms": 935.2,
       "list_ok": true,
-      "changes_ms": 920.6,
+      "changes_ms": 934.1,
       "changes_ok": true,
-      "revert_ms": 926.6,
+      "revert_ms": 933.5,
       "revert_ok": true,
-      "delete_ms": 919.1,
+      "delete_ms": 945.3,
       "delete_ok": true
     },
     "100_files": {
-      "create_ms": 999.0,
+      "create_ms": 1052.9,
       "create_ok": true,
-      "list_ms": 922.0,
+      "list_ms": 946.4,
       "list_ok": true,
-      "changes_ms": 936.5,
+      "changes_ms": 946.7,
       "changes_ok": true,
-      "revert_ms": 924.1,
+      "revert_ms": 943.5,
       "revert_ok": true,
-      "delete_ms": 920.4,
+      "delete_ms": 974.2,
       "delete_ok": true
     },
     "500_files": {
-      "create_ms": 1017.1,
+      "create_ms": 1030.6,
       "create_ok": true,
-      "list_ms": 927.1,
+      "list_ms": 957.8,
       "list_ok": true,
-      "changes_ms": 962.3,
+      "changes_ms": 995.8,
       "changes_ok": true,
-      "revert_ms": 911.3,
+      "revert_ms": 956.4,
       "revert_ok": true,
-      "delete_ms": 940.5,
+      "delete_ms": 980.3,
       "delete_ok": true
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780070955.4459748,
+  "recorded_at": 1780074099.9040685,
+  "recorded_at_utc": "2026-05-29T17:01:39.904073+00:00",
   "command": "capsem-bench all",
   "host": {
     "platform": "Linux",
     "release": "7.0.0-1003-gcp",
+    "version": "#3-Ubuntu SMP PREEMPT Mon Apr 13 16:29:20 UTC 2026",
     "machine": "x86_64",
-    "cpu_count": 16
+    "processor": "",
+    "python_version": "3.14.4",
+    "cpu_count": 16,
+    "cpu_count_logical": 16,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count_physical": 8,
+    "memory_total_bytes": 67415740416,
+    "memory_total_gb": 62.79,
+    "os_pretty_name": "Ubuntu 26.04 LTS",
+    "os_id": "ubuntu",
+    "os_version_id": "26.04"
   },
   "git": {
-    "commit": "039c09b231affd8f3f71a2c0cbca5e1c54f309d9",
-    "dirty": false
+    "commit": "e75cacf92bb3e0c41c14109b0204bd6987c7ed57",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/capsem-bench/data_1.2.1779673506_x86_64.json",
+      "benchmarks/fork/data_1.2.1779673506_x86_64.json",
+      "benchmarks/host-native/data_1.2.1779673506_x86_64.json",
+      "benchmarks/lifecycle/data_1.2.1779673506_x86_64.json",
+      "benchmarks/parallel/data_1.2.1779673506_x86_64.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_dns_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_http_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_mcp_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_process_enforcement.json"
+    ]
   }
 }
