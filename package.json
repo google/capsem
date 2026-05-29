@@ -10,7 +10,10 @@
     "dev": "tsx src/server.ts",
     "test": "vitest run",
     "bench": "tsx scripts/bench.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ui:dev": "vite --host 127.0.0.1 --config ui-preview/vite.config.ts",
+    "ui:build": "vite build --config ui-preview/vite.config.ts",
+    "ui:preview": "vite preview --host 127.0.0.1 --config ui-preview/vite.config.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,10 +22,13 @@
   "devDependencies": {
     "@bytecodealliance/componentize-js": "^0.21.0",
     "@bytecodealliance/jco": "^1.19.0",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@types/node": "^25.9.1",
     "assemblyscript": "^0.28.17",
+    "svelte": "^5.55.10",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
+    "vite": "^8.0.14",
     "vitest": "^4.1.7"
   },
   "dependencies": {

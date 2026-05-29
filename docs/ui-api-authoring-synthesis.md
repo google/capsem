@@ -4,7 +4,9 @@
 
 `emit` is not an authoring API. It is an internal lowering/transport operation.
 
-The public API must be made of named UI surfaces:
+`renderer` is also the wrong public primitive if it means arbitrary UI code.
+Capsem should not have an open-ended renderer escape hatch. The public API must
+be made of named UI surfaces and catalog-driven payloads:
 
 ```ts
 ui.sidePanel(...);
@@ -12,52 +14,104 @@ ui.modal(...);
 ui.tab(...);
 ui.chat(...);
 ui.statusItem(...);
-ui.renderer(...);
+ui.catalog(...);
 ```
 
-Authors should think like Chrome extension authors: declare surfaces in a
-manifest, then call focused methods on those surfaces. They should not think in
-host messages, sockets, iframes, or patch routing.
+Authors should think like Chrome extension authors: declare surfaces,
+commands, menus, tools, and catalogs in a manifest, then call focused methods
+on those surfaces. They should not think in host messages, sockets, iframes,
+DOM, HTML, CSS, or patch routing.
+
+## Design Rule
+
+There is one UI engine for Capsem:
+
+```text
+SurfaceModel + Catalog + DataModel + Action
+```
+
+Every UI surface uses that engine:
+
+- chat windows
+- side panels
+- tabs
+- modals
+- status items
+- remote UI cards
+- plugin-authored UI contributions
+- model-authored UI contributions
+
+Third-party code never receives DOM authority. If a plugin contributes a
+custom component, it contributes a schema and optionally a sandboxed resolver
+that returns lower-level catalog nodes. The resolver follows the same wall as
+security plugins:
+
+```text
+resolveComponent(component_copy, context_copy) -> component_tree_copy
+```
+
+Only the returned catalog tree crosses back. The host validates it before the
+trusted Svelte renderer paints anything.
 
 ## Research Synthesis
 
-Chrome teaches the strongest API shape: static manifest declarations plus
+Chrome teaches the strongest extension shape: static manifest declarations plus
 runtime noun APIs. Copy `sidePanel`, `commands`, `contextMenus`, `action`,
 permissions, and option-object methods. Do not copy browser-specific
 `tabs/windows` semantics unless Capsem has a real corresponding workspace
 surface.
 
-Agent UI protocols teach the data model: split model-visible content from
-renderer-private content, use stable IDs, snapshots/deltas, and message parts.
-OpenAI Apps SDK is the best privacy model. Vercel AI SDK is the best chat
-transcript shape. AG-UI is the best live-update vocabulary.
+VS Code gives contribution taxonomy: commands, menus, views, chat
+participants, tools, and declared surface IDs. It also shows that chat should
+stream structured parts: markdown, progress, buttons, tool states, followups,
+and references. Copy the taxonomy, not webviews as an authoring escape hatch.
+
+Obsidian gives workspace ergonomics: register a view, find or create a side
+leaf, reveal it, and keep lifecycle cleanup obvious. Copy
+`ensureSideLeaf`/reveal behavior through `ui.sidePanel(id).reveal()` and
+`ui.tab(id).reveal()`, not ambient DOM authority.
 
 A2UI is the strongest default shape for generated UI across trust boundaries:
 declarative surfaces, component catalogs, data binding, flat adjacency-list
-component graphs, and streaming updates without arbitrary code execution. This
-should influence Capsem's structured block/catalog path more than any renderer
-library should.
+component graphs, streaming updates, and no arbitrary code execution. This
+should be the center of Capsem's UI object model.
 
-assistant-ui's generative UI spec is the simplest useful reference: a
-`generative-ui` message part carries a JSON component tree, and the renderer
-resolves names against a consumer-provided allowlist. It is good for chat-local
-component trees. A2UI's flat model is better for long-lived panels and patches.
+assistant-ui's generative UI spec is the small-tree version of the same idea:
+a `generative-ui` message part carries JSON nodes, and a renderer resolves
+component names against an allowlist. That is useful for chat-local simple
+trees, but A2UI's flat model is better for long-lived surfaces and patches.
 
 CopilotKit gives the product taxonomy: controlled components, declarative
-catalog UI, and open-ended sandboxed UI. Capsem should support all three under
-one UI family, but the default should be controlled/declarative.
+catalog UI, and open-ended sandboxed UI. Capsem should deliberately reject the
+open-ended lane for now. We keep controlled and declarative under one engine.
 
-ArrowJS teaches renderer ergonomics: plain JS state, tagged template rendering,
-small runtime, and model-friendly syntax. Copy that feel for sandbox renderers,
-but validate markup and gate unsafe property bindings such as `.innerHTML`.
+ArrowJS teaches authoring ergonomics: tiny concepts, plain TypeScript, and
+model-friendly examples. Do not copy inline DOM authority. If Capsem uses
+Arrow-like syntax, it should compile into sandboxed component resolvers that
+return catalog nodes.
 
-prompt-kit and motion-primitives are design/implementation references for
-first-party block catalogs and polished interactions. They are not protocol
-surfaces.
+prompt-kit and motion-primitives are implementation references for first-party
+chat blocks and interaction polish. They are not protocol surfaces.
 
-Capsem's frontend teaches placement ownership: Svelte owns the shell, tabs,
-toolbars, side panels, modals, and styling. Plugins provide structured blocks,
-commands, state, and optional sandbox renderer entries.
+## Catalog Types
+
+Capsem should use catalogs as the extension point, not arbitrary renderers. The
+first catalog is not invented by us: it is A2UI v0.9 Basic, ported as Rust
+structs/enums and rendered by trusted Svelte. Capsem-specific catalogs come
+after that baseline is proven.
+
+| Catalog | Purpose | Third-Party? | Runtime |
+| --- | --- | --- | --- |
+| A2UI v0.9 Basic | Baseline protocol: `Text`, `Row`, `Column`, `Card`, `Button`, `Modal`, `Image`, `Icon`, `Divider`, data binding, functions, actions | No | Trusted Svelte/Preline |
+| Chat baseline | Ordered transcript surfaces composed from A2UI Basic components | No | Same A2UI engine plus chat ordering |
+| `capsem.security` | Security objects: `DecisionBadge`, `PolicyFinding`, `TraceLink`, `RiskMeter`, `EvidenceList` | No initially | Trusted Svelte or resolver to A2UI Basic |
+| `capsem.workspace` | Workspace objects: `FileTree`, `GitContext`, `BranchBadge`, `WorktreeSummary` | Maybe by review | Trusted Svelte or resolver to A2UI Basic |
+| `vendor.*` | Extension-specific semantic components | Yes, with capability review | Sandbox resolver to approved catalog nodes |
+
+Custom catalog functions are pure and schema-validated. They may format data,
+derive labels, or choose variants. They must not fetch, read files, mutate UI,
+or call tools. If a function needs authority, it is a tool or plugin callback,
+not a catalog function.
 
 ## Manifest Shape
 
@@ -77,12 +131,19 @@ export default Plugin({
           title: "Git Context",
           scope: "workspace",
           placement: "right",
+          catalog: "a2ui.basic.v0_9",
         },
       ],
       tabs: [],
       modals: [],
       statusItems: [],
-      renderers: [],
+      catalogs: [
+        {
+          id: "vendor.git",
+          extends: "capsem.workspace",
+          components: ["GitContextSummary"],
+        },
+      ],
     },
   },
 });
@@ -103,18 +164,22 @@ Plugin("capsem.git-context")
       : "detached";
 
     await context.ui.sidePanel("capsem.gitContext").replace({
-      scope: { workspaceId: context.workspace.id },
-      title: "Git Context",
-      blocks: [
+      catalog: "a2ui.basic.v0_9",
+      data: {
+        project: context.workspace.name,
+        branch,
+        worktree: context.workspace.root,
+      },
+      components: [
+        { id: "root", component: "Card", child: "body" },
         {
-          kind: "keyValue",
-          id: `git:${context.workspace.id}`,
-          rows: [
-            ["project", context.workspace.name],
-            ["branch", branch],
-            ["worktree", context.workspace.root],
-          ],
+          id: "body",
+          component: "Column",
+          children: ["title", "branch", "worktree"],
         },
+        { id: "title", component: "Text", text: { path: "/project" }, variant: "h3" },
+        { id: "branch", component: "Text", text: { path: "/branch" }, variant: "body" },
+        { id: "worktree", component: "Text", text: { path: "/worktree" }, variant: "caption" },
       ],
     });
 
@@ -122,33 +187,60 @@ Plugin("capsem.git-context")
   });
 ```
 
-The plugin callback still returns the mutated object it received. UI work is a
-side effect through a constrained context capability, but the authoring object
-is `ui.sidePanel(...)`, not `emit`.
+The plugin callback still returns the object it received. UI work is a side
+effect through a constrained context capability, but the authoring object is
+`ui.sidePanel(...)`, not `emit`.
+
+## Chat Shape
+
+Chat is not a separate UI system. A chat message is an ordered surface update
+using the same catalogs.
+
+```ts
+await context.ui.chat(threadId).append({
+  catalog: "a2ui.basic.v0_9",
+  parts: [
+    { id: "root", component: "Card", child: "body" },
+    { id: "body", component: "Column", children: ["tool", "summary"] },
+    { id: "tool", component: "Text", text: "git.inspect completed", variant: "caption" },
+    { id: "summary", component: "Text", text: "Found 3 workspace facts.", variant: "body" },
+  ],
+});
+```
+
+This lets models, tools, and plugins share the same block vocabulary. The
+surface decides placement: chat bubble, right panel, workspace tab, modal body,
+or remote UI card.
 
 ## Lowered Host Object
 
-Surface calls compile into an internal object like this:
+Surface calls compile into internal operations like this:
 
 ```ts
-{
-  kind: "ui.surface",
-  action: "replace",
-  surface: "sidePanel",
-  id: "capsem.gitContext",
-  scope: { workspaceId: "..." },
-  title: "Git Context",
-  modelContent: { summary: "Git branch main" },
-  privateContent: { rawHead: "ref: refs/heads/main" },
-  update: {
-    mode: "snapshot",
-    blocks: [],
+[
+  {
+    kind: "createSurface",
+    surface: "sidePanel",
+    surfaceId: "capsem.gitContext",
+    catalogId: "capsem.workspace",
   },
-}
+  {
+    kind: "updateDataModel",
+    surfaceId: "capsem.gitContext",
+    data: { project, branch, worktree },
+  },
+  {
+    kind: "updateComponents",
+    surfaceId: "capsem.gitContext",
+    components: [
+      { id: "root", component: "GitContext", bind: { branch: "/branch" } },
+    ],
+  },
+]
 ```
 
-This object is for validation, logging, remote UI routing, and renderer
-dispatch. It is not the API we teach plugin authors.
+This object is for validation, logging, remote UI routing, and rendering. It is
+not the API we teach plugin authors.
 
 ## Surface Semantics
 
@@ -159,62 +251,17 @@ dispatch. It is not the API we teach plugin authors.
 supports `open`, `reveal`, `replace`, `patch`, and `close`.
 
 `ui.modal(id)` is for short confirmation and compact forms. It supports
-`open`, `confirm`, and `close`. It is not a long-lived renderer host.
+`open`, `confirm`, and `close`. It is not a long-lived app host.
 
-`ui.chat(threadId)` is a transcript surface. It appends `parts[]`: text,
-markdown, activity, tool, data, source, error, step, and command/button parts.
+`ui.chat(threadId)` is a transcript surface. It appends ordered catalog parts:
+text, markdown, activity, tool, data, source, error, step, and command/button
+parts.
 
 `ui.statusItem(id)` is small status or command affordance in trusted shell
 chrome.
 
-`ui.renderer(id)` declares or references sandboxed rich rendering. Renderers are
-escape hatches, not the common path.
-
-## Payload Levels
-
-Each surface can accept three payload levels:
-
-1. Built-in Capsem blocks, rendered by trusted Svelte.
-2. Declarative catalog updates, A2UI-like, rendered by trusted Svelte/native
-   clients.
-3. Sandboxed renderer references, ArrowJS/MCP-app-like, used only when the
-   catalog cannot express the UI.
-
-Example declarative catalog update:
-
-```ts
-await context.ui.sidePanel("capsem.gitContext").replace({
-  catalog: "capsem.basic",
-  surfaceId: "capsem.gitContext",
-  data: {
-    project: context.workspace.name,
-    branch,
-    worktree: context.workspace.root,
-  },
-  components: [
-    { id: "root", component: "Card", children: ["title", "facts"] },
-    { id: "title", component: "Text", text: "Git Context", variant: "title" },
-    {
-      id: "facts",
-      component: "KeyValue",
-      bind: { rows: "/gitFacts" },
-    },
-  ],
-});
-```
-
-Internally this may lower to an A2UI-like sequence:
-
-```ts
-[
-  { kind: "createSurface", surfaceId: "capsem.gitContext", catalogId: "capsem.basic" },
-  { kind: "updateDataModel", surfaceId: "capsem.gitContext", data: { gitFacts } },
-  { kind: "updateComponents", surfaceId: "capsem.gitContext", components },
-]
-```
-
-This is the right bridge between model-authored UI and plugin-authored UI:
-catalog components are expressive enough for rich UI but still validateable.
+`ui.catalog(id)` references a component/function catalog declared by the
+manifest.
 
 ## One UI Family
 
@@ -223,8 +270,8 @@ same UI family. The difference is authority:
 
 - built-ins can call trusted shell internals
 - plugins call the constrained `context.ui` object
-- models produce validated UI objects through tools or render-capable outputs
-- renderers receive private hydration data only after host authorization
+- models produce validated catalog operations through tools or model output
+- custom components can only run sandboxed resolvers that return catalog nodes
 
 That keeps Capsem from forking into one UI protocol for agents and another for
 plugins.
@@ -234,15 +281,17 @@ plugins.
 The MVP should implement:
 
 1. Manifest `contributes.ui.sidePanels`, `tabs`, `modals`, `statusItems`,
-   `renderers`, `commands`, and `menus`.
+   `catalogs`, `commands`, and `menus`.
 2. Runtime surface handles: `ui.sidePanel(id)`, `ui.tab(id)`, `ui.modal(id)`,
    `ui.chat(id)`, `ui.statusItem(id)`.
-3. Built-in structured block rendering in trusted Svelte.
-4. A small Capsem catalog with A2UI-like component IDs, component names,
-   children references, and data bindings.
+3. A2UI v0.9 Basic, rendered in trusted Svelte/Preline.
+4. A2UI Basic component IDs, component names, children references, data binding,
+   and actions, ported directly before Capsem-specific catalogs are added.
 5. Internal lowered `UiSurfaceOperation` for validation/logging/routing.
-6. A later renderer-frame spike for ArrowJS-style custom rendering.
+6. A sandboxed component resolver ABI that can only return validated catalog
+   nodes.
 
-The first implementation should prove the API with a git context side panel:
-detect `.git`, read `HEAD`, optionally fetch GitHub stats through the HTTPS
-capability, and replace a side-panel block.
+The first implementation should prove the API with a git context side panel
+and a chat message using the same catalog engine: detect `.git`, read `HEAD`,
+optionally fetch GitHub stats through the HTTPS capability, update the side
+panel, and append a chat part.

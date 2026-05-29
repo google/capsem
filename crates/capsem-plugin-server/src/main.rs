@@ -1,3 +1,5 @@
+mod ui_preview;
+
 use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
@@ -12,6 +14,7 @@ use capsem_plugin_engine::{
     InstallPluginRequest, InstallRunRequest, PluginError, PluginRegistry, RunPluginRequest,
 };
 use serde_json::json;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 #[derive(Clone)]
@@ -46,10 +49,15 @@ async fn main() -> anyhow::Result<()> {
 
 fn app(state: AppState) -> Router {
     Router::new()
-        .route("/", get(health))
+        .route("/", get(ui_preview::preview_html))
+        .route("/ui-preview", get(ui_preview::preview_html))
+        .route("/ui/spec/demo", get(ui_preview::demo))
+        .route("/ui/spec/validate", post(ui_preview::validate))
+        .route("/health", get(health))
         .route("/plugins/install", post(install_plugin))
         .route("/plugins/run", post(run_plugin))
         .route("/plugins/install-run", post(install_run_plugin))
+        .nest_service("/assets", ServeDir::new("ui-preview/dist/assets"))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
