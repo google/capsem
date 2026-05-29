@@ -81,7 +81,11 @@ benchmarks diverge and you need to separate VirtioFS workspace costs from
 tmpfs, overlayfs, squashfs/rootfs reads, and host filesystem behavior.
 
 The path set is configurable via `CAPSEM_STORAGE_BENCH_PATHS`; write test size
-is configurable via `CAPSEM_STORAGE_BENCH_SIZE_MB` (default: 64).
+is configurable via `CAPSEM_STORAGE_BENCH_SIZE_MB` (default: 64). The detailed
+I/O profile also records sequential 4K/64K/1M read/write IOPS and random 4K
+read plus sync-write IOPS with latency percentiles. Its file size and random
+operation count are configurable via `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`
+(default: 64) and `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS` (default: 2000).
 
 ### CLI cold-start (`startup`)
 

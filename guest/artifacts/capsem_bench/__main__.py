@@ -35,6 +35,8 @@ def main():
         console.print("  CAPSEM_BENCH_SIZE_MB            Write test size in MB (default: 256)")
         console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
         console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
+        console.print("  CAPSEM_STORAGE_IO_PROFILE_SIZE_MB    Storage IOPS profile size")
+        console.print("  CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS Storage random I/O operations")
         sys.exit(0)
 
     if mode not in VALID_MODES:

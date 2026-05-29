@@ -126,6 +126,20 @@ def validate_storage_split_result(data: dict[str, Any]) -> None:
         )
     assert "writable" in data, "storage writable section missing"
     assert data["writable"], "storage writable section is empty"
+    for path, item in data["writable"].items():
+        if "skipped" in item or "error" in item:
+            continue
+        assert "io_profile" in item, f"storage {path} I/O profile missing"
+        profile = item["io_profile"]
+        assert profile["sequential"], f"storage {path} sequential profile empty"
+        assert profile["random"], f"storage {path} random profile empty"
+        assert "read_4k" in profile["random"], f"storage {path} random read missing"
+        assert "write_4k_sync" in profile["random"], (
+            f"storage {path} random sync write missing"
+        )
+        for workload, stats in profile["random"].items():
+            _assert_gte(stats["iops"], 1, f"storage {path} {workload} IOPS")
+            assert "latency_ms" in stats, f"storage {path} {workload} latency missing"
 
 
 def _assert_gte(value: float, gate: float, label: str) -> None:

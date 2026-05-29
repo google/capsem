@@ -105,6 +105,41 @@ def _valid_result():
                     "seq_read_warm": {"throughput_mbps": 200},
                     "rand_write_4k": {"iops": 1000},
                     "rand_read_4k": {"iops": 1000},
+                    "io_profile": {
+                        "sequential": {
+                            "4k": {
+                                "write": {
+                                    "iops": 1000,
+                                    "throughput_mbps": 4,
+                                    "avg_latency_ms": 1,
+                                },
+                                "read_cold": {
+                                    "iops": 1000,
+                                    "throughput_mbps": 4,
+                                    "avg_latency_ms": 1,
+                                },
+                                "read_warm": {
+                                    "iops": 1000,
+                                    "throughput_mbps": 4,
+                                    "avg_latency_ms": 1,
+                                },
+                            }
+                        },
+                        "random": {
+                            "read_4k": {
+                                "iops": 1000,
+                                "throughput_mbps": 4,
+                                "avg_latency_ms": 1,
+                                "latency_ms": {"p95": 1},
+                            },
+                            "write_4k_sync": {
+                                "iops": 1000,
+                                "throughput_mbps": 4,
+                                "avg_latency_ms": 1,
+                                "latency_ms": {"p95": 1},
+                            },
+                        },
+                    },
                 }
             },
         },

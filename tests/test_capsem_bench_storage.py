@@ -6,6 +6,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "guest" / "artifacts"))
 
 from capsem_bench.storage import (  # noqa: E402
     find_mount_for_path,
+    io_profile_bench,
     parse_mountinfo,
     path_stat,
     storage_paths,
@@ -51,3 +52,22 @@ def test_storage_paths_are_deduped(monkeypatch):
     monkeypatch.setenv("CAPSEM_STORAGE_BENCH_PATHS", "/root:/root:/tmp")
 
     assert storage_paths() == ["/root", "/tmp"]
+
+
+def test_io_profile_reports_sequential_and_random_iops(tmp_path):
+    profile = io_profile_bench(
+        str(tmp_path),
+        size_mb=1,
+        seq_block_sizes=(4096,),
+        rand_op_count=8,
+    )
+
+    assert profile["size_mb"] == 1
+    assert profile["random_ops"] == 8
+    assert profile["sequential"]["4k"]["write"]["iops"] > 0
+    assert profile["sequential"]["4k"]["read_cold"]["throughput_mbps"] > 0
+    assert profile["sequential"]["4k"]["read_warm"]["avg_latency_ms"] >= 0
+    assert profile["random"]["read_4k"]["iops"] > 0
+    assert profile["random"]["read_4k"]["latency_ms"]["p95"] >= 0
+    assert profile["random"]["write_4k_sync"]["sync_each"] is True
+    assert profile["random"]["write_4k_sync"]["latency_ms"]["p95"] >= 0
