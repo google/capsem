@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OS metadata, and added a host-native benchmark artifact to the canonical
   `just benchmark` path so VM performance is recorded beside the machine's
   local disk, startup, small-file read, and metadata-stat baselines.
+- Split benchmark artifact git metadata into overall dirty state and
+  `source_dirty`, so artifacts generated earlier in the same run do not hide
+  whether the measured source tree itself was clean.
 - Standardized benchmark execution around `just benchmark`, with `just bench`
   as an alias and no Linux-only benchmark recipe, so performance artifacts use
   one cross-platform recording path.

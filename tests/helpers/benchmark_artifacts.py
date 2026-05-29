@@ -61,9 +61,17 @@ def enrich_benchmark_artifact(
     if command:
         enriched["command"] = command
     enriched["host"] = _host_metadata()
+    git_status = _git(project_root, "status", "--short", "--untracked-files=all")
+    dirty_paths = _git_status_paths(git_status)
+    source_dirty_paths = [
+        path for path in dirty_paths
+        if not (path == "benchmarks" or path.startswith("benchmarks/"))
+    ]
     enriched["git"] = {
         "commit": _git(project_root, "rev-parse", "HEAD"),
-        "dirty": bool(_git(project_root, "status", "--short")),
+        "dirty": bool(dirty_paths),
+        "source_dirty": bool(source_dirty_paths),
+        "dirty_paths": dirty_paths[:50],
     }
     return enriched
 
@@ -78,6 +86,21 @@ def _git(project_root: Path, *args: str) -> str:
         ).strip()
     except Exception:
         return "unknown"
+
+
+def _git_status_paths(status: str) -> list[str]:
+    if not status or status == "unknown":
+        return []
+    paths = []
+    for line in status.splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[1]
+        if path:
+            paths.append(path)
+    return paths
 
 
 def _host_metadata() -> dict[str, Any]:

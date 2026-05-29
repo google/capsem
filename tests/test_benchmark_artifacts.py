@@ -46,6 +46,8 @@ def test_enrich_benchmark_artifact_records_host_and_commit(monkeypatch, tmp_path
     assert data["host"]["cpu_count_logical"] >= 1
     assert data["host"]["python_version"]
     assert data["git"]["commit"]
+    assert data["git"]["source_dirty"] in (True, False)
+    assert isinstance(data["git"]["dirty_paths"], list)
     assert data["metric"] == 42
 
 
