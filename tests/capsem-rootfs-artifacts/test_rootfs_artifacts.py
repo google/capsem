@@ -122,13 +122,6 @@ class TestRootfsValidationContract:
         assert 'echo 4096 > "$dev/queue/read_ahead_kb"' in init_script
         assert 'echo 256 > "$dev/queue/nr_requests"' in init_script
 
-    def test_capsem_init_exposes_system_overlay_trim_mount(self):
-        """Pre-fork trimming must target the ext4 upper mount, not overlayfs /."""
-        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
-
-        assert "mount --bind /mnt/system /newroot/run/capsem-system" in init_script
-        assert "system overlay trim mount exposed at /run/capsem-system" in init_script
-
     def test_capsem_init_keeps_network_proxies_alive_or_fails(self):
         """Network proxy launch must survive shell transitions and fail closed."""
         init_script = (ARTIFACTS_DIR / "capsem-init").read_text()

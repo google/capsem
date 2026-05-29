@@ -165,10 +165,10 @@ Host-side latency for fork (image creation) and boot-from-image. Measured over 3
 
 | Metric | Min | Mean | Max | Gate | Description |
 |--------|-----|------|-----|------|-------------|
-| fork | 101.6ms | 112.7ms | 121.0ms | 500ms | Reflink/sparse-preserving copy of rootfs overlay + workspace |
-| image_size | 73.8MB | 89.8MB | 105.8MB | 128MB | Actual disk (blocks), not logical sparse size |
-| boot_provision | 1,524.9ms | 1,537.2ms | 1,561.4ms | 3,500ms | Clone image into new session + boot |
-| boot_ready | 25.2ms | 33.5ms | 39.8ms | 1,200ms | First ready check after provisioning |
+| fork | 114.6ms | 115.1ms | 115.4ms | 500ms | Reflink/sparse-preserving copy of rootfs overlay + workspace |
+| image_size | 91.8MB | 101.1MB | 105.8MB | 128MB | Actual disk (blocks), not logical sparse size |
+| boot_provision | 1,485.6ms | 1,514.1ms | 1,529.4ms | 1,200ms | Clone image into new session + boot |
+| boot_ready | 26.1ms | 29.8ms | 35.3ms | 1,200ms | First ready check after provisioning |
 
 Fork is fast because the backend uses copy-on-write or sparse-preserving copy paths where available. Image size reports actual allocated blocks, not the logical sparse file size. Both rootfs overlay changes (installed packages) and workspace files (`/root/`) survive fork.
 

@@ -5,12 +5,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
-fn pre_fork_guest_flush_command_trims_before_freezing() {
+fn pre_fork_guest_flush_command_freezes_and_syncs() {
     let command = pre_fork_guest_flush_command();
 
-    assert!(command.starts_with(
-        "fstrim -m 8M /run/capsem-system 2>/dev/null || fstrim -m 8M / 2>/dev/null || true; sync;"
-    ));
+    assert!(!command.contains("fstrim"));
     assert!(command.contains("fsfreeze -f /"));
     assert!(command.contains("fsfreeze -u /"));
 }

@@ -221,15 +221,6 @@ mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
 
-if [ "$STORAGE_MODE" = "virtiofs" ]; then
-    mkdir -p /newroot/run/capsem-system
-    if mount --bind /mnt/system /newroot/run/capsem-system; then
-        echo "[capsem-init] system overlay trim mount exposed at /run/capsem-system"
-    else
-        echo "[capsem-init] WARNING: failed to expose system overlay trim mount"
-    fi
-fi
-
 # Mount /root workspace.
 # VirtioFS mode: bind-mount the workspace/ dir from the VirtioFS share.
 # Block mode: prefer scratch disk (virtio block device), fall back to tmpfs.

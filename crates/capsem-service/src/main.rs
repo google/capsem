@@ -2165,9 +2165,8 @@ async fn handle_fork(
             .map(Some)
             .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    // Trim deleted ext4 blocks, then freeze + thaw the guest root filesystem so
-    // the system overlay (/dev/vdb backed by rootfs.img) is compact and fully
-    // flushed before fork clone.
+    // Freeze + thaw the guest root filesystem so the ext4 system overlay
+    // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
     if let Some(ref uds) = uds_path {
         let freeze_id = state.next_job_id();
         if let Err(e) = send_ipc_command(
@@ -2283,7 +2282,7 @@ async fn handle_fork(
 }
 
 fn pre_fork_guest_flush_command() -> &'static str {
-    "fstrim -m 8M /run/capsem-system 2>/dev/null || fstrim -m 8M / 2>/dev/null || true; sync; fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
+    "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
 }
 
 fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str) -> Result<()> {

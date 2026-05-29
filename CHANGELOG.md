@@ -97,9 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
-- Added Linux KVM virtio-blk discard handling and a best-effort pre-fork
-  `fstrim -m 8M /run/capsem-system` so large deleted ext4 overlay extents can
-  be punched out of `rootfs.img` before cloning fork images.
+- Added Linux KVM virtio-blk discard handling so explicit guest discard/trim
+  requests can punch holes in writable virtio block backing files.
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
 - Expanded x86_64 KVM warm-restore groundwork by checkpointing VM interrupt
