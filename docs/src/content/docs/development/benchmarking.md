@@ -52,6 +52,15 @@ The diagnostic suite enforces that total boot time stays under 1 second (`test_e
 
 ## Benchmark categories
 
+### Host-native baseline
+
+`just benchmark` records a host-native artifact under `benchmarks/host-native/`
+on every run. It uses the same artifact envelope as VM benchmarks and records
+UTC time, host CPU/RAM/OS metadata, git state, filesystem context, local disk
+I/O, CLI startup, synthetic small-file reads, and metadata-stat throughput. Use
+this artifact as the local bare-host reference for VM comparison; it is not
+produced by `capsem-bench` inside the guest.
+
 ### Disk I/O (`disk`)
 
 Measures scratch disk performance in `/root` (VirtioFS-backed workspace).

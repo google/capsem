@@ -8,7 +8,7 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 ## Quick start
 
 ```bash
-just benchmark                      # Run the standard artifact-recording benchmark suite
+just benchmark                      # Run the standard artifact-recording benchmark suite, including host-native baseline
 just bench                          # Alias for just benchmark
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
@@ -34,6 +34,12 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | throughput | `capsem-bench throughput` | 100MB download through MITM proxy (end-to-end MB/s) |
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
 | all | `capsem-bench` | Default production suite; excludes opt-in storage and load diagnostics |
+
+`just benchmark` also records a host-native artifact under
+`benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file
+reads, metadata-stat throughput, filesystem context, UTC timestamp, host
+hardware/OS metadata, and git state. Use this when comparing VM performance
+against the hardware that produced the run.
 
 ### Snapshot benchmarks
 

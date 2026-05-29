@@ -37,10 +37,14 @@ def test_enrich_benchmark_artifact_records_host_and_commit(monkeypatch, tmp_path
     assert data["schema"] == "capsem.benchmark-artifact.v1"
     assert data["project_version"] == "1.2.3"
     assert data["arch"] == "x86_64"
+    assert data["recorded_at_utc"].endswith("+00:00")
     assert data["run_id"] == "run-1"
     assert data["command"] == "just benchmark"
     assert data["host"]["platform"]
+    assert data["host"]["release"]
     assert data["host"]["cpu_count"] >= 1
+    assert data["host"]["cpu_count_logical"] >= 1
+    assert data["host"]["python_version"]
     assert data["git"]["commit"]
     assert data["metric"] == 42
 

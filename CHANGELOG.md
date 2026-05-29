@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Extended benchmark artifacts with UTC timestamps plus richer host hardware and
+  OS metadata, and added a host-native benchmark artifact to the canonical
+  `just benchmark` path so VM performance is recorded beside the machine's
+  local disk, startup, small-file read, and metadata-stat baselines.
 - Standardized benchmark execution around `just benchmark`, with `just bench`
   as an alias and no Linux-only benchmark recipe, so performance artifacts use
   one cross-platform recording path.
