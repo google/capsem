@@ -62,6 +62,20 @@ class TestDevSetup:
             "uv run capsem-admin --version"
         )
 
+    def test_pyproject_declares_benchmark_rich_dependency(self):
+        pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+
+        dev_deps = pyproject["dependency-groups"]["dev"]
+        assert any(dep.startswith("rich>=") for dep in dev_deps)
+
+    def test_doctor_checks_uv_python_dependencies(self):
+        doctor = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
+
+        assert "_reg python-deps" in doctor
+        assert "uv sync" in doctor
+        assert "import rich" in doctor
+        assert "uv Python dependencies" in doctor
+
     def test_bootstrap_installs_linux_build_prereqs_before_cargo_tools(self):
         bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
 

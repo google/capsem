@@ -76,6 +76,38 @@ def _valid_result():
                 "delete_ms": 300,
             },
         },
+        "storage": {
+            "mounts": [
+                {
+                    "mount_point": "/",
+                    "fs_type": "ext4",
+                    "source": "/dev/root",
+                }
+            ],
+            "paths": {
+                "/": {"exists": True, "writable": False},
+                "/root": {"exists": True, "writable": True},
+            },
+            "rootfs": {
+                "seq_reads": [
+                    {
+                        "label": "largest",
+                        "cold": {"throughput_mbps": 100},
+                        "warm": {"throughput_mbps": 200},
+                    }
+                ],
+                "rand_read_4k": {"iops": 1000},
+            },
+            "writable": {
+                "/root": {
+                    "seq_write": {"throughput_mbps": 100},
+                    "seq_read_cold": {"throughput_mbps": 100},
+                    "seq_read_warm": {"throughput_mbps": 200},
+                    "rand_write_4k": {"iops": 1000},
+                    "rand_read_4k": {"iops": 1000},
+                }
+            },
+        },
     }
 
 

@@ -1,6 +1,6 @@
 ---
 name: dev-benchmark
-description: Capsem benchmarking with capsem-bench. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers all 7 benchmark categories (disk, rootfs, startup, http, throughput, snapshot, all), the JSON output format, and how to add new benchmarks.
+description: Capsem benchmarking with capsem-bench. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers benchmark categories (disk, rootfs, storage, startup, http, throughput, snapshot, all), the JSON output format, and how to add new benchmarks.
 ---
 
 # Benchmarking
@@ -12,6 +12,7 @@ just bench                          # Run in-VM, host lifecycle/fork, and Securi
 just bench-linux-record             # Linux-only release-candidate artifact run
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
+just run "capsem-bench storage"     # Storage split diagnostics
 just test                           # Full validation including benchmarks
 ```
 
@@ -27,11 +28,12 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 |----------|---------|-----------------|
 | disk | `capsem-bench disk` | Sequential/random I/O on scratch disk (write/read throughput, IOPS) |
 | rootfs | `capsem-bench rootfs` | Read-only rootfs performance (sequential + random 4K reads) |
+| storage | `capsem-bench storage` | Diagnostic split across rootfs reads and writable paths such as `/root`, `/tmp`, `/var/tmp`, `/var/log`, and `/run` |
 | startup | `capsem-bench startup` | Cold-start latency for python3, node, claude, gemini, codex |
 | http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles) |
 | throughput | `capsem-bench throughput` | 100MB download through MITM proxy (end-to-end MB/s) |
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
-| all | `capsem-bench` | All of the above |
+| all | `capsem-bench` | Default production suite; excludes opt-in storage and load diagnostics |
 
 ### Snapshot benchmarks
 
@@ -69,6 +71,8 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 
 - `CAPSEM_BENCH_DIR`: Test directory for disk benchmarks (default: `/root`)
 - `CAPSEM_BENCH_SIZE_MB`: Write test size in MB (default: 256)
+- `CAPSEM_STORAGE_BENCH_PATHS`: Colon-separated writable paths for storage split diagnostics (default: `/root:/tmp:/var/tmp:/var/log:/run`)
+- `CAPSEM_STORAGE_BENCH_SIZE_MB`: Write test size in MB for each storage split writable path (default: 64)
 
 ## Investigating slowness
 
@@ -89,6 +93,12 @@ Common causes:
 1. Run: `just run "capsem-bench disk"`
 2. Compare sequential write/read throughput against baseline
 3. Check if VirtioFS mode changed (block mode has different I/O characteristics)
+
+### Storage split regression
+
+1. Run: `just run "capsem-bench storage"`
+2. Compare `/root` against `/tmp`, `/var/tmp`, `/var/log`, and `/run` to separate VirtioFS workspace costs from tmpfs, overlay, and rootfs read costs
+3. Use the reported mount table to confirm which filesystem backs each path before assigning blame to KVM, VirtioFS, overlayfs, or the host filesystem
 
 ### Adding a new benchmark
 

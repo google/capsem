@@ -16,10 +16,19 @@ from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
-PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
-GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
-TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
+
+
+def binary_dir_from_env(project_root):
+    configured = os.environ.get("CAPSEM_TEST_BIN_DIR", "target/debug")
+    path = Path(configured)
+    return path if path.is_absolute() else project_root / path
+
+
+BIN_DIR = binary_dir_from_env(PROJECT_ROOT)
+SERVICE_BINARY = BIN_DIR / "capsem-service"
+PROCESS_BINARY = BIN_DIR / "capsem-process"
+GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
+TRAY_BINARY = BIN_DIR / "capsem-tray"
 ASSETS_DIR = Path(os.environ.get("CAPSEM_ASSETS_DIR", PROJECT_ROOT / "assets"))
 
 

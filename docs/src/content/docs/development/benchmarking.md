@@ -13,6 +13,7 @@ Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the 
 just bench                          # In-VM, lifecycle/fork, and Security Engine benchmarks
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
+just run "capsem-bench storage"     # Rootfs/workspace/tmpfs split
 just run "capsem-bench startup"     # CLI cold-start only
 just run "capsem-bench http"        # HTTP through proxy
 just run "capsem-bench throughput"  # 100MB download
@@ -71,6 +72,16 @@ Measures read performance on the compressed squashfs rootfs where binaries and l
 |------|--------|--------|
 | Sequential read | Read the largest file in `/usr/bin`, `/usr/lib`, `/opt/ai-clis` in 1MB blocks | Throughput (MB/s) |
 | Random 4K read | 5,000 random `pread` calls across all rootfs files (>4KB) | IOPS, throughput |
+
+### Storage split diagnostics (`storage`)
+
+Measures rootfs reads plus writable-path I/O across `/root`, `/tmp`,
+`/var/tmp`, `/var/log`, and `/run` by default. Use it when Linux and macOS
+benchmarks diverge and you need to separate VirtioFS workspace costs from
+tmpfs, overlayfs, squashfs/rootfs reads, and host filesystem behavior.
+
+The path set is configurable via `CAPSEM_STORAGE_BENCH_PATHS`; write test size
+is configurable via `CAPSEM_STORAGE_BENCH_SIZE_MB` (default: 64).
 
 ### CLI cold-start (`startup`)
 

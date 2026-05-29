@@ -104,6 +104,29 @@ def validate_capsem_bench_result(data: dict[str, Any]) -> None:
                 f"snapshot {bucket} {op} latency",
             )
 
+    if "storage" in data:
+        validate_storage_split_result(data["storage"])
+
+
+def validate_storage_split_result(data: dict[str, Any]) -> None:
+    assert data["mounts"], "storage mountinfo is empty"
+    assert "/" in data["paths"], "storage path metadata missing root path"
+    assert "rootfs" in data, "storage rootfs section missing"
+    assert data["rootfs"]["seq_reads"], "storage rootfs seq_reads is empty"
+    for item in data["rootfs"]["seq_reads"]:
+        _assert_gte(
+            item["cold"]["throughput_mbps"],
+            1,
+            f"storage rootfs {item['label']} cold read",
+        )
+        _assert_gte(
+            item["warm"]["throughput_mbps"],
+            1,
+            f"storage rootfs {item['label']} warm read",
+        )
+    assert "writable" in data, "storage writable section missing"
+    assert data["writable"], "storage writable section is empty"
+
 
 def _assert_gte(value: float, gate: float, label: str) -> None:
     assert value >= gate, f"{label} {value:.1f} below {gate:.1f} gate"
