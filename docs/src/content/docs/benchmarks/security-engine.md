@@ -16,7 +16,7 @@ VM-originated latency numbers as proof of CEL expression speed.
 | CEL microbench | `cargo bench -p capsem-security-engine --bench security_engine_cel` | compile/evaluate cost, rule-count scaling, policy context projection, dedupe cost. |
 | Detection pack microbench | `cargo bench -p capsem-core --bench security_packs` | Detection IR parse/lowering and pack compile cost. |
 | VM-originated serial path | `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs` | real service + VM + transport + telemetry/log/status path. |
-| Full bench gate | `just bench` | in-VM bench suite, lifecycle/fork, and Security Engine benchmark lanes. |
+| Full benchmark gate | `just benchmark` | standard artifact-recording suite across in-VM, lifecycle/fork/parallel, and Security Engine lanes. |
 
 ## What To Record
 

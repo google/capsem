@@ -8,8 +8,8 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 ## Quick start
 
 ```bash
-just bench                          # Run in-VM, host lifecycle/fork, and Security Engine benchmarks
-just bench-linux-record             # Linux-only release-candidate artifact run
+just benchmark                      # Run the standard artifact-recording benchmark suite
+just bench                          # Alias for just benchmark
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench storage"     # Storage split diagnostics
@@ -270,12 +270,12 @@ projection.
 - Host-side fork: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
 - Host-side Security Engine: `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs`
 - Both host-side: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
-- Full run: `just bench` or `just test`
+- Full run: `just benchmark` (or alias `just bench`) or `just test`
 
 ## Benchmark data directory
 
 Host-side benchmarks save arch-scoped JSON to `benchmarks/` (committed to git
-for release-candidate baselines). Set `CAPSEM_BENCHMARK_RUN_ID` for an
+for performance baselines). Set `CAPSEM_BENCHMARK_RUN_ID` for an
 intentional named run and `CAPSEM_BENCHMARK_OUTPUT_DIR` for exploratory runs
 that should not dirty the checkout:
 

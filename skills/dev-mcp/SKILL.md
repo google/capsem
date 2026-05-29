@@ -101,7 +101,7 @@ capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
 | Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just bench` |
+| Benchmark performance | `just benchmark` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 

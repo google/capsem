@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Standardized benchmark execution around `just benchmark`, with `just bench`
+  as an alias and no Linux-only benchmark recipe, so performance artifacts use
+  one cross-platform recording path.
 - Changed the guest rootfs build default to a configurable 128K squashfs block
   size, improving measured CLI startup and sequential rootfs reads while
   recording the chunk-size choice in `guest/config/build.toml`.

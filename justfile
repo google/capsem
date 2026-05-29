@@ -21,8 +21,9 @@
 #   test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
 #                       + _check-assets + _pack-initrd (everything: audit, cov, cross-compile,
 #                       frontend, python, injection, integration, bench, test-install)
-#   bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
-#   bench-linux-record -> bench path with Linux-only arch-scoped artifact run id
+#   benchmark        -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
+#                       (standard artifact-recording performance suite)
+#   bench            -> benchmark
 #   test-gateway     -> (no deps; unit + mock UDS tests)
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
@@ -882,40 +883,20 @@ coverage:
     echo "Coverage report: target/llvm-cov/html/index.html"
     open target/llvm-cov/html/index.html 2>/dev/null || true
 
-# Run in-VM benchmarks, host lifecycle/fork benchmarks, and Security Engine benchmarks
-bench: _ensure-setup _check-assets _pack-initrd _ensure-service
+# Run the standard artifact-recording benchmark suite.
+benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
-    echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, snapshots) ==="
-    {{cli_binary}} run "capsem-bench"
-    echo ""
-    echo "=== Host-side benchmarks (lifecycle, fork) ==="
-    uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
-
-    echo "=== Security Engine benchmarks ==="
-    cargo bench -p capsem-security-engine --bench security_engine_cel
-    cargo bench -p capsem-core --bench security_packs
-    uv run python -m pytest tests/capsem-serial/test_security_engine_benchmark.py -v --tb=short -m "serial or benchmark"
-
-# Record Linux benchmark artifacts with a stable run id for release-candidate comparison.
-bench-linux-record: _ensure-setup _check-assets _pack-initrd _ensure-service
-    #!/bin/bash
-    set -euo pipefail
-    if [[ "$(uname -s)" != "Linux" ]]; then
-        echo "bench-linux-record only runs on Linux" >&2
-        exit 1
-    fi
-    source {{justfile_directory()}}/scripts/lib/exec_lock.sh
-    acquire_exec_lock "$HOME/.capsem/run/execution.lock"
-    export CAPSEM_BENCHMARK_RUN_ID="${CAPSEM_BENCHMARK_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
-    echo "=== Linux benchmark run: $CAPSEM_BENCHMARK_RUN_ID ==="
     echo "=== Criterion microbenchmarks ==="
     cargo bench -p capsem-security-engine --bench security_engine_cel
     cargo bench -p capsem-core --bench security_packs
     echo "=== VM-originated and in-VM benchmark artifacts ==="
-    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/ -v --tb=short -m "serial or benchmark"
+    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/ -v --tb=short -m benchmark
+
+# Backward-compatible alias for the canonical benchmark suite.
+bench: benchmark
 
 # Build package, runtime-clean local install, use the install.sh native command,
 # then verify installed status, service, gateway, and guest DNS/HTTPS.

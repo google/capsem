@@ -10,7 +10,8 @@ Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the 
 ## Running benchmarks
 
 ```bash
-just bench                          # In-VM, lifecycle/fork, and Security Engine benchmarks
+just benchmark                      # Standard artifact-recording benchmark suite
+just bench                          # Alias for just benchmark
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
 just run "capsem-bench storage"     # Rootfs/workspace/tmpfs split
@@ -146,7 +147,7 @@ materialization, 100-rule last-match evaluation, Detection IR parse/lowering,
 and a native Rust lookup comparator for the same HTTP policy. These numbers
 explain runtime hot-path and rule-pack costs; they do not replace
 VM-originated benchmark artifacts. Committed host-side artifacts live under
-`benchmarks/security-engine/`. The `just bench` recipe runs both Criterion
+`benchmarks/security-engine/`. The `just benchmark` recipe runs both Criterion
 harnesses before the VM-originated security benchmark.
 
 ### Security Engine VM-originated benchmarks
