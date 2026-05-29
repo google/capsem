@@ -18,3 +18,5 @@
 - Remapped the UI preview renderer from generic A2UI tree dumping to
   Preline recipe adapters for alerts, cards, card-style tabs, buttons, badges,
   and modal shells.
+- Added explicit Preline recipe metadata to UI preview examples so the renderer
+  maps A2UI fields into named component variants instead of guessing from ids.

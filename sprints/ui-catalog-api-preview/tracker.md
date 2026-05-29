@@ -51,6 +51,9 @@
   leakage, generic fallback rendering, missing Preline variants/slots in the
   Rust API, and the unresolved question of whether A2UI Basic can carry enough
   recipe intent or needs a Capsem UI catalogue layer.
+- Recipe metadata: preview examples now carry `{ component, variant, docsUrl }`
+  from Rust. The Svelte renderer uses that metadata for supported Preline
+  adapters instead of inferring the recipe from component ids.
 
 ## Coverage Ledger
 
@@ -73,4 +76,5 @@
   throughput claim in this sprint.
 - Missing/deferred: live Capsem gateway/MCP integration, plugin ABI rename from
   `ui.emit` to typed `context.ui.*`, full A2UI Basic renderer coverage,
-  Preline-correct component class recipes, and typed variant/slot APIs.
+  full production typed variant/slot APIs, and renderer fixtures that assert
+  exact Preline recipe strings.

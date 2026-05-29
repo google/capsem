@@ -55,18 +55,33 @@ fn demo_payload() -> UiPreviewPayload {
                 "Alert",
                 r#"ui.alert(msg="Security review required")"#,
                 "security",
+                UiRecipe::new(
+                    "alert",
+                    "discovery",
+                    "https://preline.co/docs/components/alerts.html#discovery",
+                ),
                 Ui::alert("preview-alert", "Security review required"),
             ),
             UiPreviewExample::new(
                 "Ask Modal",
                 r#"ui.ask(text="Allow this model call?", yes="Allow", no="Deny")"#,
                 "interactive",
+                UiRecipe::new(
+                    "modal",
+                    "basic",
+                    "https://preline.co/docs/components/modal.html",
+                ),
                 Ui::ask("preview-ask", "Allow this model call?", "Allow", "Deny"),
             ),
             UiPreviewExample::new(
                 "Card",
                 r#"ui.card(title="A2UI Basic Card", description="Rendered through Preline card tokens.")"#,
                 "component",
+                UiRecipe::new(
+                    "card",
+                    "simple",
+                    "https://preline.co/docs/components/card.html#simple-card",
+                ),
                 Ui::card(
                     "preview-card",
                     "A2UI Basic Card",
@@ -77,6 +92,11 @@ fn demo_payload() -> UiPreviewPayload {
                 "Status Callout",
                 r#"ui.status_callout(title="A2UI Basic", msg="Composed, not invented.")"#,
                 "status",
+                UiRecipe::new(
+                    "card",
+                    "top-border",
+                    "https://preline.co/docs/components/card.html",
+                ),
                 Ui::status_callout(
                     "preview-status",
                     "A2UI Basic",
@@ -87,6 +107,11 @@ fn demo_payload() -> UiPreviewPayload {
                 "Chat Baseline",
                 "ui.chat_baseline()",
                 "chat",
+                UiRecipe::new(
+                    "card",
+                    "chat-baseline",
+                    "https://preline.co/docs/components/card.html",
+                ),
                 Ui::chat_baseline("preview-chat"),
             ),
         ],
@@ -107,7 +132,26 @@ pub struct UiPreviewExample {
     pub name: &'static str,
     pub api: &'static str,
     pub surface: &'static str,
+    pub recipe: UiRecipe,
     pub messages: Vec<A2uiServerMessage>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiRecipe {
+    pub component: &'static str,
+    pub variant: &'static str,
+    pub docs_url: &'static str,
+}
+
+impl UiRecipe {
+    fn new(component: &'static str, variant: &'static str, docs_url: &'static str) -> Self {
+        Self {
+            component,
+            variant,
+            docs_url,
+        }
+    }
 }
 
 impl UiPreviewExample {
@@ -115,12 +159,14 @@ impl UiPreviewExample {
         name: &'static str,
         api: &'static str,
         surface: &'static str,
+        recipe: UiRecipe,
         document: capsem_plugin_engine::ui::A2uiDocument,
     ) -> Self {
         Self {
             name,
             api,
             surface,
+            recipe,
             messages: document.messages,
         }
     }

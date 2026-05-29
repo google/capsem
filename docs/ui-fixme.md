@@ -19,9 +19,10 @@ visual system when the component claims to be Preline.
 
 ## Errors To Fix
 
-- The preview still mixes two systems: Preline docs classes and Capsem-style
-  semantic classes such as `bg-card`, `text-foreground`, `border-card-line`,
-  `bg-surface`, and `text-muted-foreground-1`.
+- The preview must distinguish Preline v4 semantic classes that appear in the
+  docs (`bg-card`, `text-foreground`, `border-card-line`) from Capsem-invented
+  approximations. Preline's exact recipe strings are allowed; local
+  translation is not.
 - Earlier commits treated Preline as a theme/token provider instead of as a set
   of documented component recipes. That made the preview look Preline-ish
   rather than Preline-correct.
@@ -41,13 +42,11 @@ visual system when the component claims to be Preline.
 - The current status callout is an invented convenience over `Card`, `Row`,
   `Icon`, and `Text`. It may be acceptable as a Capsem helper, but it must map
   to a named Preline recipe or be renamed as a Capsem composition.
-- The preview has no catalogue metadata describing which Preline recipe is being
-  used. That means the renderer guesses from component ids like `alert-row` and
-  `card-body`.
-- Component ids are currently doing semantic work. That is fragile. The API
-  should carry recipe/variant/slot intent explicitly when A2UI Basic allows it,
-  or the helper should generate a stable wrapper convention documented as part
-  of Capsem's UI catalogue.
+- The preview now has per-example recipe metadata, but the production API still
+  does not. Component ids should stop doing semantic work in the renderer.
+  The API should carry recipe/variant/slot intent explicitly when A2UI Basic
+  allows it, or the helper should generate a stable wrapper convention
+  documented as part of Capsem's UI catalogue.
 
 ## A2UI Constraint Check
 
@@ -111,10 +110,10 @@ falling back to a fake generic box.
 
 ## Immediate Next Steps
 
-1. Replace semantic-token classes in the preview renderer with exact Preline
-   docs classes for the supported recipes.
+1. Replace remaining local approximations in the preview renderer with exact
+   Preline docs classes for supported recipes.
 2. Add typed Rust enums for alert, card, modal, badge, and button variants.
-3. Update preview examples so each example names its Preline recipe and variant.
+3. Move preview-only recipe metadata into the real Rust authoring API.
 4. Add tests that snapshot the renderer adapter contract at the data/slot level.
 5. Decide whether variants live as Capsem metadata around A2UI Basic or require
    a richer Capsem UI catalogue.

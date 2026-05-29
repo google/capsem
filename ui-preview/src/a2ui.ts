@@ -42,7 +42,14 @@ export type PreviewExample = {
   name: string;
   api: string;
   surface: string;
+  recipe: PreviewRecipe;
   messages: A2uiMessage[];
+};
+
+export type PreviewRecipe = {
+  component: string;
+  variant: string;
+  docsUrl: string;
 };
 
 export type SurfaceModel = {
@@ -172,23 +179,23 @@ export function lookupPath(path: string, data: unknown, scope: unknown): unknown
 
 export function textClass(variant: unknown, tone = "default"): string {
   if (tone === "alert") {
-    return "text-sm text-primary-800";
+    return "mt-2 text-sm text-foreground";
   }
 
   switch (variant) {
     case "h1":
-      return "text-4xl font-semibold tracking-normal text-foreground";
+      return "text-4xl font-semibold tracking-normal text-stone-800 dark:text-neutral-200";
     case "h2":
-      return "text-2xl font-semibold tracking-normal text-foreground";
+      return "text-2xl font-semibold tracking-normal text-stone-800 dark:text-neutral-200";
     case "h3":
-      return "font-semibold text-foreground";
+      return "font-semibold text-stone-800 dark:text-neutral-200";
     case "h4":
-      return "text-sm font-semibold tracking-normal text-foreground";
+      return "text-sm font-semibold tracking-normal text-stone-800 dark:text-neutral-200";
     case "caption":
-      return "mt-1 text-xs font-medium uppercase text-muted-foreground-1";
+      return "mt-1 text-xs font-medium uppercase text-stone-500 dark:text-neutral-500";
     case "body":
     default:
-      return "mt-1 text-sm text-muted-foreground-1";
+      return "mt-1 text-sm text-stone-500 dark:text-neutral-400";
   }
 }
 
