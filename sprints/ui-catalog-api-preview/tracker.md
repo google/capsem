@@ -25,11 +25,20 @@
   validated component operations.
 - Browser verification loaded `http://127.0.0.1:8787/`, opened the ask modal,
   logged `ask.yes`, and rendered weather/chat data bindings.
+- Correction: `Weather Card` was a bad demo label because `WeatherCard` is not
+  an A2UI Basic component. The live preview now shows `Card`, backed by
+  `component: "Card"`, and renders it with the Preline card token pattern.
+- Crate check: crates.io has `a2ui-types`, `a2ui-core`, and `a2ui-validation`
+  from `applegrew/a2ui-rs`. We added `a2ui-types` and cross-check outgoing
+  Rust messages against its v0.9 `ServerToClientMessage`. The crate leaves
+  catalog component bodies as JSON values, so Capsem still needs its strict
+  Basic component enum port for component-level type safety.
 
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-plugin-engine` covers A2UI weather,
-  modal, and chat fixture round trips plus typed helper validation.
+  modal, and chat fixture round trips plus typed helper validation and
+  `a2ui-types` v0.9 server message parsing.
 - Functional: `cargo test -p capsem-plugin-server`; `curl /ui/spec/demo`
   returned five examples; Rust server served `/`; `npm test` passed the
   prototype JS test lane without sweeping private upstream checkouts.

@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "a2ui-types"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76b3948998984293a9f024fe59269cf6a0bff766b097f263a632dfb55cda295e"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -167,6 +177,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 name = "capsem-plugin-engine"
 version = "0.1.0"
 dependencies = [
+ "a2ui-types",
  "blake3",
  "reqwest",
  "serde",

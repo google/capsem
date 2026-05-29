@@ -824,6 +824,37 @@ impl Ui {
         )
     }
 
+    pub fn card(
+        surface_id: impl Into<String>,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> A2uiDocument {
+        let surface_id = surface_id.into();
+        A2uiDocument::new(surface_id.clone()).components(
+            surface_id,
+            vec![
+                card("root", "card-body"),
+                column("card-body", ["card-title", "card-description", "card-meta"]),
+                text("card-title", title, Some(TextVariant::H3)),
+                text("card-description", description, Some(TextVariant::Body)),
+                row(
+                    "card-meta",
+                    ["card-icon", "card-caption"],
+                    Some(Align::Center),
+                ),
+                BasicComponent::Icon(Icon {
+                    id: "card-icon".to_owned(),
+                    name: IconName::Known(KnownIcon::Info),
+                }),
+                text(
+                    "card-caption",
+                    "A2UI Basic component: Card",
+                    Some(TextVariant::Caption),
+                ),
+            ],
+        )
+    }
+
     pub fn weather_card(surface_id: impl Into<String>) -> A2uiDocument {
         let surface_id = surface_id.into();
         A2uiDocument::new(surface_id.clone())
@@ -1033,6 +1064,7 @@ impl Ui {
 pub fn validate_messages(messages: &[A2uiServerMessage]) -> Result<(), String> {
     let mut surfaces = BTreeMap::<String, String>::new();
     for message in messages {
+        validate_against_a2ui_types(message)?;
         match message {
             A2uiServerMessage::CreateSurface { create_surface, .. } => {
                 if create_surface.surface_id.trim().is_empty() {
@@ -1087,6 +1119,34 @@ pub fn validate_messages(messages: &[A2uiServerMessage]) -> Result<(), String> {
             }
         }
     }
+    Ok(())
+}
+
+fn validate_against_a2ui_types(message: &A2uiServerMessage) -> Result<(), String> {
+    let value = serde_json::to_value(message).map_err(|error| error.to_string())?;
+    let parsed: a2ui_types::v09::server_to_client::ServerToClientMessage =
+        serde_json::from_value(value).map_err(|error| {
+            format!("A2UI Rust type validation failed for server message: {error}")
+        })?;
+
+    if parsed.version != A2UI_VERSION {
+        return Err(format!("version must be {A2UI_VERSION}"));
+    }
+
+    let message_count = [
+        parsed.create_surface.is_some(),
+        parsed.update_components.is_some(),
+        parsed.update_data_model.is_some(),
+        parsed.delete_surface.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+
+    if message_count != 1 {
+        return Err("A2UI server message must contain exactly one operation".to_owned());
+    }
+
     Ok(())
 }
 

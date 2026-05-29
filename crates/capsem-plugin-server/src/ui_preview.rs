@@ -64,10 +64,14 @@ fn demo_payload() -> UiPreviewPayload {
                 Ui::ask("preview-ask", "Allow this model call?", "Allow", "Deny"),
             ),
             UiPreviewExample::new(
-                "Weather Card",
-                "ui.weather_card()",
-                "data",
-                Ui::weather_card("preview-weather"),
+                "Card",
+                r#"ui.card(title="A2UI Basic Card", description="Rendered through Preline card tokens.")"#,
+                "component",
+                Ui::card(
+                    "preview-card",
+                    "A2UI Basic Card",
+                    "Rendered through the Svelte/Preline Card pattern.",
+                ),
             ),
             UiPreviewExample::new(
                 "Status Callout",

@@ -143,18 +143,18 @@ export function lookupPath(path: string, data: unknown, scope: unknown): unknown
 export function textClass(variant: unknown): string {
   switch (variant) {
     case "h1":
-      return "text-4xl font-semibold tracking-normal text-slate-950";
+      return "text-4xl font-semibold tracking-normal text-foreground";
     case "h2":
-      return "text-2xl font-semibold tracking-normal text-slate-900";
+      return "text-2xl font-semibold tracking-normal text-foreground";
     case "h3":
-      return "text-lg font-semibold tracking-normal text-slate-900";
+      return "text-lg font-semibold tracking-normal text-foreground";
     case "h4":
-      return "text-sm font-semibold tracking-normal text-slate-900";
+      return "text-sm font-semibold tracking-normal text-foreground";
     case "caption":
-      return "text-xs text-slate-500";
+      return "text-xs text-muted-foreground-1";
     case "body":
     default:
-      return "text-sm leading-6 text-slate-700";
+      return "text-sm leading-6 text-muted-foreground-1";
   }
 }
 

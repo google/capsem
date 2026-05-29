@@ -34,6 +34,11 @@ fn typed_helpers_emit_valid_a2ui_basic_messages() {
     for document in [
         Ui::alert("alert-surface", "Security review required"),
         Ui::ask("ask-surface", "Allow this model call?", "Allow", "Deny"),
+        Ui::card(
+            "card-surface",
+            "A2UI Basic Card",
+            "Rendered through the Svelte/Preline Card pattern.",
+        ),
         Ui::weather_card("weather-surface"),
         Ui::status_callout(
             "status-surface",
@@ -119,6 +124,12 @@ fn assert_fixture_round_trip(source: &str) {
 
     let round_tripped = serde_json::to_value(&example).expect("fixture serializes from Rust model");
     assert_eq!(round_tripped, source_value);
+
+    for message in example.messages {
+        let value = serde_json::to_value(message).expect("serializes for a2ui-types");
+        serde_json::from_value::<a2ui_types::v09::server_to_client::ServerToClientMessage>(value)
+            .expect("also parses with the upstream a2ui-types v0.9 server message type");
+    }
 }
 
 const WEATHER_CURRENT: &str = r#"{

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import A2Node from "./A2Node.svelte";
   import {
     actionContext,
     actionName,
@@ -10,15 +11,24 @@
     type SurfaceModel,
   } from "./a2ui";
 
-  export let id: string;
-  export let surface: SurfaceModel;
-  export let scope: unknown = surface.data;
-  export let onAction: (action: RenderAction) => void = () => {};
+  let {
+    id,
+    surface,
+    scope = surface.data,
+    onAction = () => {},
+  }: {
+    id: string;
+    surface: SurfaceModel;
+    scope?: unknown;
+    onAction?: (action: RenderAction) => void;
+  } = $props();
 
-  let open = false;
+  let open = $state(false);
 
-  $: component = surface.components.get(id);
-  $: childItems = component ? resolveChildren(component.children, surface.data, scope) : [];
+  let component = $derived(surface.components.get(id));
+  let childItems = $derived(
+    component ? resolveChildren(component.children, surface.data, scope) : [],
+  );
 
   function prop(name: string): string {
     const value = component?.[name];
@@ -52,12 +62,12 @@
   function buttonClass(): string {
     const variant = component?.variant;
     if (variant === "primary") {
-      return "inline-flex min-h-9 items-center justify-center rounded-md border border-slate-950 bg-slate-950 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800";
+      return "inline-flex min-h-9 items-center justify-center rounded-lg border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover";
     }
     if (variant === "borderless") {
-      return "inline-flex min-h-9 items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100";
+      return "inline-flex min-h-9 items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-layer-foreground hover:bg-layer-hover";
     }
-    return "inline-flex min-h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50";
+    return "inline-flex min-h-9 items-center justify-center rounded-lg border border-layer-line bg-layer px-3 py-2 text-sm font-medium text-layer-foreground hover:bg-layer-hover";
   }
 </script>
 
@@ -68,7 +78,7 @@
     </p>
   {:else if component.component === "Icon"}
     <span
-      class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700"
+      class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-layer-line bg-surface text-sm font-semibold text-muted-foreground-1"
       aria-hidden="true"
     >
       {iconText(component.name)}
@@ -84,26 +94,28 @@
   {:else if component.component === "Row"}
     <div class={rowClass()}>
       {#each childItems as child (child.key)}
-        <svelte:self id={child.id} {surface} scope={child.scope} {onAction} />
+        <A2Node id={child.id} {surface} scope={child.scope} {onAction} />
       {/each}
     </div>
   {:else if component.component === "Column" || component.component === "List"}
     <div class={columnClass()}>
       {#each childItems as child (child.key)}
-        <svelte:self id={child.id} {surface} scope={child.scope} {onAction} />
+        <A2Node id={child.id} {surface} scope={child.scope} {onAction} />
       {/each}
     </div>
   {:else if component.component === "Card"}
-    <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <svelte:self id={prop("child")} {surface} {scope} {onAction} />
+    <section class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl">
+      <div class="p-4 md:p-5">
+        <A2Node id={prop("child")} {surface} {scope} {onAction} />
+      </div>
     </section>
   {:else if component.component === "Button"}
-    <button class={buttonClass()} type="button" on:click={runButton}>
-      <svelte:self id={prop("child")} {surface} {scope} {onAction} />
+    <button class={buttonClass()} type="button" onclick={runButton}>
+      <A2Node id={prop("child")} {surface} {scope} {onAction} />
     </button>
   {:else if component.component === "Modal"}
     <div>
-      <svelte:self
+      <A2Node
         id={prop("trigger")}
         {surface}
         {scope}
@@ -113,20 +125,20 @@
         }}
       />
       {#if open}
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-          <section class="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-xl">
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4">
+          <section class="w-full max-w-md rounded-xl border border-overlay-border bg-overlay p-5 shadow-xl">
             <div class="mb-4 flex items-center justify-between gap-4">
-              <p class="text-sm font-semibold text-slate-900">Ask</p>
+              <p class="text-sm font-semibold text-foreground">Ask</p>
               <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground-1 hover:bg-layer-hover"
                 type="button"
                 aria-label="Close"
-                on:click={() => (open = false)}
+                onclick={() => (open = false)}
               >
                 x
               </button>
             </div>
-            <svelte:self
+            <A2Node
               id={prop("content")}
               {surface}
               {scope}
@@ -140,9 +152,9 @@
       {/if}
     </div>
   {:else if component.component === "Divider"}
-    <hr class="w-full border-slate-200" />
+    <hr class="w-full border-card-divider" />
   {:else}
-    <div class="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+    <div class="rounded-lg border border-card-line bg-surface p-3 text-sm text-warning">
       Unsupported A2UI Basic component: {component.component}
     </div>
   {/if}

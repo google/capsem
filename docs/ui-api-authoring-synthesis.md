@@ -76,6 +76,13 @@ declarative surfaces, component catalogs, data binding, flat adjacency-list
 component graphs, streaming updates, and no arbitrary code execution. This
 should be the center of Capsem's UI object model.
 
+Rust crate check: crates.io currently has `a2ui-types`, `a2ui-core`, and
+`a2ui-validation`. `a2ui-types` gives v0.8/v0.9 protocol message structs, but
+v0.9 catalog components are still represented as JSON values, so Capsem still
+needs strict Rust component enums/builders for A2UI Basic if we want
+component-level type safety. The first prototype now cross-checks our messages
+against `a2ui-types::v09::server_to_client::ServerToClientMessage`.
+
 assistant-ui's generative UI spec is the small-tree version of the same idea:
 a `generative-ui` message part carries JSON nodes, and a renderer resolves
 component names against an allowlist. That is useful for chat-local simple
