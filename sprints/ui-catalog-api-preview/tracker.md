@@ -47,6 +47,10 @@
   boxes. Examples implemented against the docs recipes: soft alert, simple
   card, top-border status callout, card-style tabs, pill badges, Preline
   button classes, and Svelte-owned modal shell/body/actions.
+- FIXME: `docs/ui-fixme.md` now tracks the remaining UI errors: semantic-token
+  leakage, generic fallback rendering, missing Preline variants/slots in the
+  Rust API, and the unresolved question of whether A2UI Basic can carry enough
+  recipe intent or needs a Capsem UI catalogue layer.
 
 ## Coverage Ledger
 
@@ -68,4 +72,5 @@
   machine after the real Preline/Tailwind v4 pipeline landed; no runtime
   throughput claim in this sprint.
 - Missing/deferred: live Capsem gateway/MCP integration, plugin ABI rename from
-  `ui.emit` to typed `context.ui.*`, full A2UI Basic renderer coverage.
+  `ui.emit` to typed `context.ui.*`, full A2UI Basic renderer coverage,
+  Preline-correct component class recipes, and typed variant/slot APIs.
