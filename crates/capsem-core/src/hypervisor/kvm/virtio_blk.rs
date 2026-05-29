@@ -1,8 +1,8 @@
 //! Virtio block device (type 2) for disk I/O.
 //!
 //! File-backed block device with one requestq. Supports read, write,
-//! and get-ID operations. Read-only mode enforced via feature bit
-//! and write rejection.
+//! get-ID, and discard operations. Read-only mode enforced via feature bit
+//! and write/discard rejection.
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -25,14 +25,19 @@ const SECTOR_SIZE: u64 = 512;
 /// Maximum device ID length (virtio spec).
 const VIRTIO_BLK_ID_LEN: usize = 20;
 
+/// Size of one virtio discard segment.
+const DISCARD_SEGMENT_SIZE: usize = 16;
+
 // Feature bits
 const VIRTIO_BLK_F_RO: u64 = 1 << 5;
+const VIRTIO_BLK_F_DISCARD: u64 = 1 << 13;
 const VIRTIO_F_VERSION_1: u64 = 1 << 32;
 
 // Request types
 const VIRTIO_BLK_T_IN: u32 = 0;
 const VIRTIO_BLK_T_OUT: u32 = 1;
 const VIRTIO_BLK_T_GET_ID: u32 = 8;
+const VIRTIO_BLK_T_DISCARD: u32 = 11;
 
 // Status bytes
 const VIRTIO_BLK_S_OK: u8 = 0;
@@ -195,6 +200,99 @@ impl VirtioBlockDevice {
         VIRTIO_BLK_S_OK
     }
 
+    /// Process a discard request by punching holes in the backing file.
+    fn process_discard(&mut self, data_descs: &[(u64, u32)]) -> u8 {
+        if self.read_only {
+            return VIRTIO_BLK_S_IOERR;
+        }
+
+        let data = match self.read_guest_data(data_descs) {
+            Some(data) => data,
+            None => return VIRTIO_BLK_S_IOERR,
+        };
+        if data.len() % DISCARD_SEGMENT_SIZE != 0 {
+            return VIRTIO_BLK_S_IOERR;
+        }
+
+        for segment in data.chunks_exact(DISCARD_SEGMENT_SIZE) {
+            let sector = u64::from_le_bytes(segment[0..8].try_into().unwrap());
+            let num_sectors = u32::from_le_bytes(segment[8..12].try_into().unwrap()) as u64;
+            if num_sectors == 0 {
+                continue;
+            }
+
+            let offset = match sector.checked_mul(SECTOR_SIZE) {
+                Some(offset) => offset,
+                None => return VIRTIO_BLK_S_IOERR,
+            };
+            let len = match num_sectors.checked_mul(SECTOR_SIZE) {
+                Some(len) => len,
+                None => return VIRTIO_BLK_S_IOERR,
+            };
+            if offset
+                .checked_add(len)
+                .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
+            {
+                return VIRTIO_BLK_S_IOERR;
+            }
+
+            if self.discard_range(offset, len).is_err() {
+                return VIRTIO_BLK_S_IOERR;
+            }
+        }
+
+        VIRTIO_BLK_S_OK
+    }
+
+    fn read_guest_data(&self, data_descs: &[(u64, u32)]) -> Option<Vec<u8>> {
+        let mem = self.mem.as_ref()?;
+        let total_len: usize = data_descs.iter().map(|&(_, len)| len as usize).sum();
+        let mut data = Vec::with_capacity(total_len);
+        for &(gpa, len) in data_descs {
+            if len == 0 {
+                continue;
+            }
+            let host_ptr = mem.gpa_to_host(gpa)?;
+            let buf = unsafe { std::slice::from_raw_parts(host_ptr, len as usize) };
+            data.extend_from_slice(buf);
+        }
+        Some(data)
+    }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> std::io::Result<()> {
+        use std::os::unix::io::AsRawFd;
+
+        let ret = unsafe {
+            libc::fallocate(
+                self.file.as_raw_fd(),
+                libc::FALLOC_FL_KEEP_SIZE | libc::FALLOC_FL_PUNCH_HOLE,
+                offset as libc::off_t,
+                len as libc::off_t,
+            )
+        };
+        if ret == 0 {
+            return Ok(());
+        }
+
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            // Keep the guest operation functional on filesystems without hole
+            // punching; ext4/xfs/btrfs still reclaim blocks through fallocate.
+            Some(libc::EOPNOTSUPP | libc::ENOSYS | libc::EINVAL) => {
+                self.file.seek(SeekFrom::Start(offset))?;
+                let mut remaining = len;
+                let zeros = [0_u8; 64 * 1024];
+                while remaining > 0 {
+                    let n = zeros.len().min(remaining as usize);
+                    self.file.write_all(&zeros[..n])?;
+                    remaining -= n as u64;
+                }
+                Ok(())
+            }
+            _ => Err(error),
+        }
+    }
+
     /// Write a status byte to a guest physical address.
     fn write_status(&self, gpa: u64, status: u8) {
         if let Some(mem) = self.mem.as_ref() {
@@ -232,6 +330,8 @@ impl VirtioDevice for VirtioBlockDevice {
         let mut f = VIRTIO_F_VERSION_1;
         if self.read_only {
             f |= VIRTIO_BLK_F_RO;
+        } else {
+            f |= VIRTIO_BLK_F_DISCARD;
         }
         f
     }
@@ -241,15 +341,17 @@ impl VirtioDevice for VirtioBlockDevice {
     }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {
-        // Config space: u64 capacity at offset 0, zeros beyond
-        let capacity_bytes = self.capacity_sectors.to_le_bytes();
+        let mut config = [0_u8; 48];
+        config[0..8].copy_from_slice(&self.capacity_sectors.to_le_bytes());
+        if !self.read_only {
+            let max_discard_sectors = self.capacity_sectors.min(u32::MAX as u64) as u32;
+            config[36..40].copy_from_slice(&max_discard_sectors.to_le_bytes());
+            config[40..44].copy_from_slice(&32_u32.to_le_bytes());
+            config[44..48].copy_from_slice(&1_u32.to_le_bytes());
+        }
+
         for (i, byte) in data.iter_mut().enumerate() {
-            let config_offset = offset as usize + i;
-            if config_offset < 8 {
-                *byte = capacity_bytes[config_offset];
-            } else {
-                *byte = 0;
-            }
+            *byte = config.get(offset as usize + i).copied().unwrap_or_default();
         }
     }
 
@@ -378,6 +480,7 @@ impl VirtioDevice for VirtioBlockDevice {
                 VIRTIO_BLK_T_IN => self.process_read(sector, &data_descs),
                 VIRTIO_BLK_T_OUT => self.process_write(sector, &data_descs),
                 VIRTIO_BLK_T_GET_ID => self.process_get_id(&data_descs),
+                VIRTIO_BLK_T_DISCARD => self.process_discard(&data_descs),
                 _ => VIRTIO_BLK_S_UNSUPP,
             };
             tracing::trace!(
@@ -588,6 +691,7 @@ mod tests {
         let f = dev.features();
         assert_ne!(f & VIRTIO_F_VERSION_1, 0, "must have VERSION_1");
         assert_ne!(f & VIRTIO_BLK_F_RO, 0, "must have RO bit");
+        assert_eq!(f & VIRTIO_BLK_F_DISCARD, 0, "RO disks must not discard");
     }
 
     #[test]
@@ -597,6 +701,7 @@ mod tests {
         let f = dev.features();
         assert_ne!(f & VIRTIO_F_VERSION_1, 0, "must have VERSION_1");
         assert_eq!(f & VIRTIO_BLK_F_RO, 0, "must NOT have RO bit");
+        assert_ne!(f & VIRTIO_BLK_F_DISCARD, 0, "RW disks must support discard");
     }
 
     #[test]
@@ -633,8 +738,24 @@ mod tests {
         let path = temp_disk("cap-past.img", 512);
         let dev = VirtioBlockDevice::new(&path, false).unwrap();
         let mut data = [0xFFu8; 4];
-        dev.read_config(8, &mut data);
+        dev.read_config(80, &mut data);
         assert!(data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn block_config_reports_discard_limits_for_writable_disk() {
+        let path = temp_disk("discard-cfg.img", 8192);
+        let dev = VirtioBlockDevice::new(&path, false).unwrap();
+        let mut data = [0u8; 12];
+        dev.read_config(36, &mut data);
+
+        let max_discard_sectors = u32::from_le_bytes(data[0..4].try_into().unwrap());
+        let max_discard_seg = u32::from_le_bytes(data[4..8].try_into().unwrap());
+        let discard_sector_alignment = u32::from_le_bytes(data[8..12].try_into().unwrap());
+
+        assert_eq!(max_discard_sectors, 16);
+        assert_eq!(max_discard_seg, 32);
+        assert_eq!(discard_sector_alignment, 1);
     }
 
     #[test]
@@ -823,6 +944,48 @@ mod tests {
 
         let status_offset = data_offset + VIRTIO_BLK_ID_LEN as u64;
         assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_OK);
+    }
+
+    #[test]
+    fn block_discard_punches_range_and_reads_back_zeroes() {
+        let original = vec![0xABu8; 4096];
+        let path = temp_disk_with_data("discard.img", &original);
+        let mut h = TestHarness::new(&path, false);
+
+        h.setup_request(VIRTIO_BLK_T_DISCARD, 0, DISCARD_SEGMENT_SIZE as u32, false);
+        let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        let mut segment = [0u8; DISCARD_SEGMENT_SIZE];
+        segment[0..8].copy_from_slice(&1_u64.to_le_bytes());
+        segment[8..12].copy_from_slice(&2_u32.to_le_bytes());
+        h.write_bytes(data_offset, &segment);
+
+        h.dev.queue_notify(0);
+
+        let status_offset = data_offset + DISCARD_SEGMENT_SIZE as u64;
+        assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_OK);
+
+        let file_data = std::fs::read(&path).unwrap();
+        assert_eq!(&file_data[..512], &original[..512]);
+        assert!(file_data[512..1536].iter().all(|byte| *byte == 0));
+        assert_eq!(&file_data[1536..], &original[1536..]);
+    }
+
+    #[test]
+    fn block_discard_to_read_only_returns_ioerr() {
+        let path = temp_disk_with_data("discard-ro.img", &[0xABu8; 4096]);
+        let mut h = TestHarness::new(&path, true);
+
+        h.setup_request(VIRTIO_BLK_T_DISCARD, 0, DISCARD_SEGMENT_SIZE as u32, false);
+        let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        let mut segment = [0u8; DISCARD_SEGMENT_SIZE];
+        segment[0..8].copy_from_slice(&1_u64.to_le_bytes());
+        segment[8..12].copy_from_slice(&2_u32.to_le_bytes());
+        h.write_bytes(data_offset, &segment);
+
+        h.dev.queue_notify(0);
+
+        let status_offset = data_offset + DISCARD_SEGMENT_SIZE as u64;
+        assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_IOERR);
     }
 
     #[test]

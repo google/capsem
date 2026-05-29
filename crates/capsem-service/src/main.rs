@@ -2165,16 +2165,16 @@ async fn handle_fork(
             .map(Some)
             .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    // Freeze + thaw the guest root filesystem so the ext4 system overlay
-    // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
+    // Trim deleted ext4 blocks, then freeze + thaw the guest root filesystem so
+    // the system overlay (/dev/vdb backed by rootfs.img) is compact and fully
+    // flushed before fork clone.
     if let Some(ref uds) = uds_path {
         let freeze_id = state.next_job_id();
         if let Err(e) = send_ipc_command(
             uds,
             ServiceToProcess::Exec {
                 id: freeze_id,
-                command: "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
-                    .to_string(),
+                command: pre_fork_guest_flush_command().to_string(),
             },
             Some(10),
         )
@@ -2280,6 +2280,10 @@ async fn handle_fork(
         name: name.clone(),
         size_bytes,
     }))
+}
+
+fn pre_fork_guest_flush_command() -> &'static str {
+    "fstrim / 2>/dev/null || true; sync; fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
 }
 
 fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str) -> Result<()> {

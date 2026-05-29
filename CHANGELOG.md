@@ -97,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Added Linux KVM virtio-blk discard handling and a best-effort pre-fork
+  `fstrim /` so deleted ext4 overlay blocks can be punched out of
+  `rootfs.img` before cloning fork images.
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
 - Expanded x86_64 KVM warm-restore groundwork by checkpointing VM interrupt
