@@ -24,7 +24,7 @@
 - Svelte must not receive plugin-authored HTML/classes. It receives typed,
   validated component operations.
 - Browser verification loaded `http://127.0.0.1:8787/`, opened the ask modal,
-  logged `ask.yes`, and rendered weather/chat data bindings.
+  logged `ask.yes`, and rendered card/chat data bindings.
 - Correction: `Weather Card` was a bad demo label because `WeatherCard` is not
   an A2UI Basic component. The live preview now shows `Card`, backed by
   `component: "Card"`, and renders it with the Preline card token pattern.
@@ -37,22 +37,29 @@
   and the shell follows Preline docs/card patterns: max-width page container,
   stone canvas, blue primary tabs, semantic card tokens, card headers, and
   Svelte-owned state.
+- Preline CSS correction: the preview now imports the real `preline` package
+  through Tailwind v4/Vite (`@tailwindcss/vite`, `@tailwindcss/forms`,
+  `@source "../../node_modules/preline"`, and the packaged theme CSS). Browser
+  verification shows no Tailwind CDN and live Preline runtime tokens such as
+  `--card-line`, `--primary`, and `--primary-hover`.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-plugin-engine` covers A2UI weather,
-  modal, and chat fixture round trips plus typed helper validation and
+- Unit/contract: `cargo test -p capsem-plugin-engine` covers upstream A2UI
+  weather, modal, and chat fixture round trips plus typed helper validation and
   `a2ui-types` v0.9 server message parsing.
 - Functional: `cargo test -p capsem-plugin-server`; `curl /ui/spec/demo`
   returned five examples; Rust server served `/`; `npm test` passed the
   prototype JS test lane without sweeping private upstream checkouts.
 - Adversarial: Rust tests reject invented component names, non-Basic catalogs,
   and updates before create.
-- E2E/VM: in-app browser preview loaded from the Rust server, opened ask modal,
-  clicked allow, and rendered weather/chat bindings. VM path deferred for this
-  isolated prototype.
+- E2E/VM: in-app browser preview loaded from the Rust server, confirmed the
+  rendered section appears before the A2UI JSON, no Tailwind CDN is loaded, and
+  real Preline tokens drive rendered card/button styles. VM path deferred for
+  this isolated prototype.
 - Telemetry: deferred.
-- Performance: `npm run ui:build` produced the preview bundle in ~300ms on this
-  machine; no runtime throughput claim in this sprint.
+- Performance: `npm run ui:build` produced the preview bundle in ~150ms on this
+  machine after the real Preline/Tailwind v4 pipeline landed; no runtime
+  throughput claim in this sprint.
 - Missing/deferred: live Capsem gateway/MCP integration, plugin ABI rename from
   `ui.emit` to typed `context.ui.*`, full A2UI Basic renderer coverage.

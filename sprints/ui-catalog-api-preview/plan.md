@@ -25,14 +25,14 @@ Render five Preline-shaped experiences by composing A2UI Basic components:
 
 1. alert, composed from `Card`, `Row`, `Icon`, and `Text`
 2. ask modal, composed from `Modal`, `Button`, `Column`, `Row`, and `Text`
-3. weather card, based on the upstream A2UI Basic weather example
+3. card, composed from the upstream A2UI Basic `Card` component
 4. status/badge-like callout, composed from `Card`, `Row`, `Icon`, and `Text`
 5. chat baseline, composed from A2UI Basic components and chat ordering
 
 The preview must show:
 
 - the Rust API operations produced by `ui.alert(...)`, `ui.ask(...)`, and
-  `ui.weather_card(...)`;
+  `ui.card(...)`;
 - the A2UI Basic serialized format returned by the Rust server;
 - the Svelte/Preline render output;
 - an interactive ask modal with yes/no actions.
@@ -79,7 +79,7 @@ The preview must show:
 - Rust tests prove serialized format parses back to strong typed operations.
 - Invalid operations fail in Rust before Svelte sees them.
 - Rust server exposes a preview page and JSON endpoint.
-- Preview renders alert, ask modal, weather card, status callout, and chat baseline.
+- Preview renders alert, ask modal, card, status callout, and chat baseline.
 - Ask modal has yes/no controls in the UI.
 - Sprint docs explain how plugin callbacks will feed this same path.
 

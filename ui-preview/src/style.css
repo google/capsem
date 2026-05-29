@@ -1,26 +1,11 @@
+@import "tailwindcss";
+@source "./";
+@source "../index.html";
+@source "../../node_modules/preline";
+@plugin "@tailwindcss/forms";
+@import "../../node_modules/preline/css/themes/theme.css";
+
 html {
-  --background: #f5f5f4;
-  --surface: #f8f8f7;
-  --foreground: #57534d;
-  --card: #ffffff;
-  --card-line: #e7e5e4;
-  --card-divider: #e7e5e4;
-  --layer: #ffffff;
-  --layer-line: #e7e5e4;
-  --layer-hover: #f5f5f4;
-  --layer-foreground: #57534d;
-  --primary: #155dfc;
-  --primary-hover: #0f4fd8;
-  --primary-foreground: #ffffff;
-  --primary-100: #dbeafe;
-  --primary-200: #bfdbfe;
-  --muted-foreground-1: #6a7282;
-  --muted-foreground: #8b837b;
-  --overlay: #ffffff;
-  --overlay-border: #e7e5e4;
-  --popover: #ffffff;
-  --popover-border: #e7e5e4;
-  --warning: #8b5cf6;
   background: var(--background);
 }
 

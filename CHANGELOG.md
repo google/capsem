@@ -13,3 +13,5 @@
   Preline card tokens, and cross-check Rust messages with `a2ui-types`.
 - Moved the rendered preview above the A2UI JSON and restyled the shell around
   Preline's docs/card theme.
+- Replaced the preview's Tailwind CDN/token mimic with the real `preline`
+  package processed through the Tailwind v4 Vite pipeline.

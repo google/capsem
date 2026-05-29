@@ -63,7 +63,7 @@
     </header>
 
     {#if error}
-      <section class="rounded-xl border border-card-line bg-card p-4 text-sm text-warning">
+      <section class="rounded-xl border border-card-line bg-card p-4 text-sm text-destructive">
         {error}
       </section>
     {:else if !current || !surface}

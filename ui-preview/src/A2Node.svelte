@@ -126,7 +126,7 @@
       />
       {#if open}
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4">
-          <section class="w-full max-w-md rounded-xl border border-overlay-border bg-overlay p-5 shadow-xl">
+          <section class="w-full max-w-md rounded-xl border border-overlay-line bg-overlay p-5 shadow-xl">
             <div class="mb-4 flex items-center justify-between gap-4">
               <p class="text-sm font-semibold text-foreground">Ask</p>
               <button
@@ -154,7 +154,7 @@
   {:else if component.component === "Divider"}
     <hr class="w-full border-card-divider" />
   {:else}
-    <div class="rounded-lg border border-card-line bg-surface p-3 text-sm text-warning">
+    <div class="rounded-lg border border-card-line bg-surface p-3 text-sm text-destructive">
       Unsupported A2UI Basic component: {component.component}
     </div>
   {/if}
