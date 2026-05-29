@@ -28,6 +28,7 @@ use crate::job_store::{with_quiescence, JobResult, JobStore};
 /// guest. Post-initial handshakes (on re-keyed connections) do not
 /// retry: the guest drives retry at the transport layer.
 const HANDSHAKE_RETRY_MAX: usize = 3;
+const SUSPEND_RECONNECT_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
@@ -496,6 +497,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // attribution.
                         let suspend_start = std::time::Instant::now();
                         let mut suspend_result = with_quiescence(&h_tx, &j_s, std::time::Duration::from_secs(10), || async {
+                            let grace_start = std::time::Instant::now();
+                            tokio::time::sleep(SUSPEND_RECONNECT_GRACE).await;
+                            info!(target: "suspend", op = "snapshot_reconnect_grace", duration_ms = grace_start.elapsed().as_millis() as u64, "stage complete");
                             let pause_save_start = std::time::Instant::now();
                             let r = tokio::task::spawn_blocking(move || {
                                 #[cfg(target_os = "macos")]

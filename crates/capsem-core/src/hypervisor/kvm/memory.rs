@@ -312,7 +312,7 @@ impl GuestMemory {
     /// Allocate a new guest memory region of the given size.
     /// The region is zero-initialized and page-aligned.
     pub fn new(size: u64) -> Result<Self> {
-        if size == 0 || size % PAGE_SIZE != 0 {
+        if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             bail!("guest memory size must be non-zero and page-aligned, got {size}");
         }
 
@@ -797,12 +797,14 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_kernel_above_legacy_hole() {
         assert!(KERNEL_LOAD_ADDR >= HIGH_MEM_START);
     }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_boot_structs_below_ebda() {
         assert!(BOOT_PARAMS_ADDR + 4096 <= EBDA_START);
         assert!(GDT_ADDR + 24 <= EBDA_START);
@@ -813,6 +815,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_boot_structs_no_overlap() {
         // GDT: 0x500..0x518 (24 bytes)
         // BOOT_PARAMS: 0x7000..0x8000 (4096 bytes)
@@ -917,6 +920,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_virtio_mmio_in_pci_hole() {
         let window_end = VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * VIRTIO_MMIO_MAX_DEVICES as u64;
         assert!(
@@ -931,6 +935,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_irq_base_above_legacy() {
         assert!(
             VIRTIO_MMIO_IRQ_BASE > 4,

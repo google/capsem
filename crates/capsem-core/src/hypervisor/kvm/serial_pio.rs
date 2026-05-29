@@ -134,8 +134,8 @@ mod tests {
     fn thr_writes_to_pipe() {
         let (rx, tx) = make_pipe();
         let uart = Serial16550::new(tx, rx);
-        uart.write(THR, &[b'A']);
-        uart.write(THR, &[b'B']);
+        uart.write(THR, b"A");
+        uart.write(THR, b"B");
 
         // Read from the pipe
         let mut buf = [0u8; 2];
@@ -162,7 +162,7 @@ mod tests {
         uart.write(LCR, &[0x03]); // 8n1
 
         // This should write to THR
-        uart.write(THR, &[b'X']);
+        uart.write(THR, b"X");
 
         // Check that only 'X' was written
         let mut buf = [0u8; 1];

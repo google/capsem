@@ -68,6 +68,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue state, and by making guest snapshot preparation force a post-resume
   vsock reconnect. The durable process-preserving KVM resume contract still
   fails because restored guests stop making timer-driven forward progress.
+- Fixed the Linux full-test gate under current Rust by cleaning KVM, service,
+  and app clippy warnings that were promoted to errors.
+- Fixed native guest-agent rebuilds so readonly `target/linux-agent` outputs
+  are replaced atomically instead of failing with `Permission denied`.
+- Fixed host-side `capsem-pty-agent` exec tests by avoiding inaccessible
+  `/root` working directories outside the guest.
+- Fixed the PTY/vsock bridge to use nonblocking bidirectional polling with
+  bounded buffers, preventing full-duplex terminal traffic from deadlocking or
+  dropping queued bytes during peer shutdown.
+- Fixed the full test harness to put pytest and VM temporary files under
+  `target/tmp` instead of the host `/tmp` tmpfs, avoiding disk-pressure
+  cascades during the four-worker VM integration phase.
+- Fixed service settings reload isolation by pinning each service instance to
+  its startup `service.toml` path, so tests and running services do not follow
+  later `CAPSEM_HOME` environment changes.
+- Fixed Linux KVM multi-VM vsock boot by allocating a per-VM host port block
+  and passing the offset to guest agents through the kernel command line,
+  preventing concurrent VMs from racing on fixed host ports 5000-5007.
+- Fixed KVM suspend timing by giving the guest agent time to leave the
+  pre-checkpoint vsock bridge and enter its post-resume reconnect loop before
+  VM state is saved.
 - Fixed x86_64 KVM process-preserving warm resume by checkpointing VM interrupt
   controller, PIT, clock, extended vCPU state, selected timer/paravirtual MSRs,
   Virtio-MMIO transport state, vhost-vsock queue state, and by restoring timer

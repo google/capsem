@@ -765,11 +765,15 @@ mod tests {
     }
 
     fn snapshot(id: u32) -> VcpuSnapshot {
-        let mut regs = KvmRegs::default();
-        regs.rax = id as u64 + 10;
-        regs.rip = 0x1000 + id as u64;
-        let mut sregs = KvmSregs::default();
-        sregs.cr3 = 0x2000 + id as u64;
+        let regs = KvmRegs {
+            rax: id as u64 + 10,
+            rip: 0x1000 + id as u64,
+            ..Default::default()
+        };
+        let sregs = KvmSregs {
+            cr3: 0x2000 + id as u64,
+            ..Default::default()
+        };
         let mp_state = KvmMpState {
             mp_state: KVM_MP_STATE_RUNNABLE,
         };

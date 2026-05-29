@@ -106,7 +106,7 @@ impl VirtioBlockDevice {
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
         if offset
             .checked_add(total_len)
-            .map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE)
+            .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
         {
             return VIRTIO_BLK_S_IOERR;
         }
@@ -151,7 +151,7 @@ impl VirtioBlockDevice {
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
         if offset
             .checked_add(total_len)
-            .map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE)
+            .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
         {
             return VIRTIO_BLK_S_IOERR;
         }
@@ -700,8 +700,8 @@ mod tests {
     #[test]
     fn block_read_single_sector() {
         let mut data = vec![0u8; 512];
-        for i in 0..512 {
-            data[i] = (i % 256) as u8;
+        for (i, byte) in data.iter_mut().enumerate().take(512) {
+            *byte = (i % 256) as u8;
         }
         let path = temp_disk_with_data("read-1.img", &data);
         let mut h = TestHarness::new(&path, true);
@@ -722,8 +722,8 @@ mod tests {
     #[test]
     fn block_read_multiple_sectors() {
         let mut data = vec![0u8; 1024]; // 2 sectors
-        for i in 0..1024 {
-            data[i] = ((i * 7) % 256) as u8;
+        for (i, byte) in data.iter_mut().enumerate().take(1024) {
+            *byte = ((i * 7) % 256) as u8;
         }
         let path = temp_disk_with_data("read-multi.img", &data);
         let mut h = TestHarness::new(&path, true);
@@ -840,8 +840,8 @@ mod tests {
     #[test]
     fn block_multiple_requests_in_batch() {
         let mut data = vec![0u8; 1024]; // 2 sectors
-        for i in 0..1024 {
-            data[i] = (i % 256) as u8;
+        for (i, byte) in data.iter_mut().enumerate().take(1024) {
+            *byte = (i % 256) as u8;
         }
         let path = temp_disk_with_data("batch.img", &data);
         let mut h = TestHarness::new(&path, true);
@@ -893,7 +893,7 @@ mod tests {
         // Both in avail ring
         h.push_avail(0, 0, 2); // desc head 0 at ring[0], avail_idx=2
                                // Write ring entry for second request
-        let entry_offset = AVAIL_RING_OFFSET + 4 + 1 * 2; // ring[1]
+        let entry_offset = AVAIL_RING_OFFSET + 4 + 2; // ring[1]
         h.mem.write_at(entry_offset, &3u16.to_le_bytes()).unwrap();
 
         h.dev.queue_notify(0);

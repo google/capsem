@@ -40,6 +40,33 @@ use crate::vm::VmState;
 
 const KVM_PAUSE_TIMEOUT: Duration = Duration::from_secs(5);
 
+fn kvm_vsock_seed(config: &VmConfig) -> u32 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(config.kernel_path.to_string_lossy().as_bytes());
+    if let Some(path) = config
+        .scratch_disk_path
+        .as_ref()
+        .or(config.disk_path.as_ref())
+    {
+        hasher.update(path.to_string_lossy().as_bytes());
+    }
+    for share in &config.virtio_fs_shares {
+        hasher.update(share.tag.as_bytes());
+        hasher.update(share.host_path.to_string_lossy().as_bytes());
+    }
+    let hash = hasher.finalize();
+    let mut bytes = [0u8; 4];
+    bytes.copy_from_slice(&hash.as_bytes()[..4]);
+    u32::from_le_bytes(bytes)
+}
+
+fn append_kvm_vsock_port_offset(cmdline: &str, offset: u32) -> String {
+    if offset == 0 {
+        return cmdline.to_string();
+    }
+    format!("{cmdline} capsem.vsock_port_offset={offset}")
+}
+
 #[cfg(target_arch = "x86_64")]
 fn create_irq_eventfd() -> Result<OwnedFd> {
     let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
@@ -116,6 +143,19 @@ impl Hypervisor for KvmHypervisor {
 
         #[cfg(target_arch = "x86_64")]
         let restoring = config.checkpoint_path.is_some();
+
+        let vsock_bindings = if vsock_ports.is_empty() {
+            None
+        } else {
+            Some(virtio_vsock::bind_vsock_listeners_for_vm(
+                vsock_ports,
+                kvm_vsock_seed(config),
+            )?)
+        };
+        let kernel_cmdline = append_kvm_vsock_port_offset(
+            &config.kernel_cmdline,
+            vsock_bindings.as_ref().map_or(0, |b| b.offset()),
+        );
 
         // -- Arch-specific: interrupt controller --------------------------
         #[cfg(target_arch = "x86_64")]
@@ -260,7 +300,7 @@ impl Hypervisor for KvmHypervisor {
                 ram_base: memory::RAM_BASE,
                 ram_size: config.ram_bytes,
                 cpu_count: config.cpu_count,
-                cmdline: config.kernel_cmdline.clone(),
+                cmdline: kernel_cmdline.clone(),
                 initrd_start: initrd_info.as_ref().map(|i| i.guest_addr).unwrap_or(0),
                 initrd_end: initrd_info
                     .as_ref()
@@ -278,7 +318,7 @@ impl Hypervisor for KvmHypervisor {
             tracing::info!("KVM checkpoint restore: skipping cold boot x86_64 boot state setup");
         } else if let Some(kernel_info) = kernel_info.as_ref() {
             let cmdline = boot_x86_64::build_cmdline(
-                &config.kernel_cmdline,
+                &kernel_cmdline,
                 virtio_mmio_device_count(config, vsock_ports),
                 has_pit,
             );
@@ -517,8 +557,8 @@ impl Hypervisor for KvmHypervisor {
         let mut vsock_listener_handles = Vec::new();
         let mut vsock_irq_handles = Vec::new();
 
-        if !vsock_ports.is_empty() {
-            let guest_cid = 3u32;
+        if let Some(vsock_bindings) = vsock_bindings {
+            let guest_cid = vsock_bindings.guest_cid();
             let vhost_fd = virtio_vsock::open_vhost_vsock()?;
             let (vsock_device, call_fds) =
                 virtio_vsock::VhostVsockDevice::new(guest_cid, vhost_fd)?;
@@ -553,8 +593,7 @@ impl Hypervisor for KvmHypervisor {
             )?;
 
             vsock_listener_handles = virtio_vsock::spawn_vsock_listeners(
-                guest_cid,
-                vsock_ports,
+                vsock_bindings,
                 vsock_tx,
                 Arc::clone(&shutdown),
             );
@@ -863,8 +902,10 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     fn snapshot(id: u32) -> checkpoint::VcpuSnapshot {
-        let mut regs = sys::KvmRegs::default();
-        regs.rip = 0x1000 + id as u64;
+        let regs = sys::KvmRegs {
+            rip: 0x1000 + id as u64,
+            ..Default::default()
+        };
         checkpoint::VcpuSnapshot {
             id,
             regs,

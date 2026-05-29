@@ -111,6 +111,14 @@ fn not_found_not_retryable() {
     assert!(!is_retryable_handshake_error(&err));
 }
 
+#[test]
+fn suspend_reconnect_grace_covers_guest_snapshot_delay() {
+    assert!(
+        SUSPEND_RECONNECT_GRACE >= std::time::Duration::from_secs(2),
+        "guest agent sleeps for SNAPSHOT_RECONNECT_DELAY before reconnecting after SnapshotReady"
+    );
+}
+
 // -----------------------------------------------------------------------
 // collect_terminal_control_pair
 // -----------------------------------------------------------------------

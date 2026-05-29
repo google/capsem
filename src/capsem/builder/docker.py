@@ -577,6 +577,8 @@ def cross_compile_agent(
         if not src.exists():
             raise RuntimeError(f"Expected binary not found: {src}")
         dst = output_dir / binary
+        if dst.exists():
+            dst.unlink()
         shutil.copy2(str(src), str(dst))
         if dst.stat().st_size == 0:
             raise RuntimeError(f"Binary is empty: {dst}")

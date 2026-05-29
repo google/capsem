@@ -735,10 +735,10 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
         match ReflinkSnapshot::try_reflink(src, dst) {
-            Ok(true) => return Ok(()),
+            Ok(true) => Ok(()),
             Ok(false) | Err(_) => {
                 std::fs::copy(src, dst)?;
-                return Ok(());
+                Ok(())
             }
         }
     }

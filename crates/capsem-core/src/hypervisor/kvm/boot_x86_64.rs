@@ -347,7 +347,7 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
 
     // 1 PDPT entry = 1 GB (maps to 1 PD page)
     // 1 PD page = 512 PD entries = 512 * 2MB = 1GB
-    let gb_count = (ram_size + 0x3FFF_FFFF) / 0x4000_0000;
+    let gb_count = ram_size.div_ceil(0x4000_0000);
 
     let mut pdpt = vec![0u8; 4096];
     for i in 0..gb_count {
@@ -359,7 +359,7 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
     mem.write_at(PDPT_ADDR - RAM_BASE, &pdpt)?;
 
     let mut pd = vec![0u8; (gb_count * 4096) as usize];
-    let total_pages = (ram_size + 0x1F_FFFF) / 0x20_0000;
+    let total_pages = ram_size.div_ceil(0x20_0000);
 
     for i in 0..total_pages {
         let entry: u64 = (i << 21) | 0x83; // present + writable + huge page (PS bit)

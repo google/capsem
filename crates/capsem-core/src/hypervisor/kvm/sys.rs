@@ -327,12 +327,7 @@ impl KvmFd {
                  (3) kvm module is loaded (`sudo modprobe kvm_intel` or `kvm_amd`)"
             );
         }
-        let raw = unsafe {
-            libc::open(
-                b"/dev/kvm\0".as_ptr() as *const libc::c_char,
-                libc::O_RDWR | libc::O_CLOEXEC,
-            )
-        };
+        let raw = unsafe { libc::open(c"/dev/kvm".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
         if raw < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EACCES) {
@@ -803,7 +798,7 @@ impl VcpuFd {
 
     /// Get a mutable pointer to the kvm_run MMIO data buffer.
     /// Used by the MMIO handler to write read responses back.
-    pub fn mmio_data_mut(&self) -> &mut [u8; 8] {
+    pub fn mmio_data_mut(&mut self) -> &mut [u8; 8] {
         unsafe { &mut *(self.run.add(KVM_RUN_EXIT_DATA_OFFSET + 8) as *mut [u8; 8]) }
     }
 }
@@ -1575,7 +1570,7 @@ impl VcpuFd {
         }
         let header_len = 8usize;
         let entry_len = std::mem::size_of::<KvmMsrEntry>();
-        let mut buf = vec![0u8; header_len + entries.len() * entry_len];
+        let mut buf = vec![0u8; header_len + std::mem::size_of_val(entries)];
         buf[0..4].copy_from_slice(&(entries.len() as u32).to_ne_bytes());
         for (i, entry) in entries.iter().enumerate() {
             let offset = header_len + i * entry_len;
@@ -1608,7 +1603,7 @@ impl VcpuFd {
     pub fn set_cpuid2(&self, entries: &[KvmCpuidEntry2]) -> Result<()> {
         let entry_size = std::mem::size_of::<KvmCpuidEntry2>();
         let header_size = std::mem::size_of::<u32>() * 2;
-        let total_size = header_size + entries.len() * entry_size;
+        let total_size = header_size + std::mem::size_of_val(entries);
 
         let layout = std::alloc::Layout::from_size_align(total_size, 8).context("cpuid layout")?;
         let buf = unsafe { std::alloc::alloc_zeroed(layout) };

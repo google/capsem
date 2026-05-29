@@ -584,7 +584,6 @@ fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     let result = ReflinkSnapshot::try_reflink(&src_path, &dst_path).unwrap();
     // On tmpfs/ext4, FICLONE is not supported so this should be false.
     // On btrfs/xfs, it would be true. Either way, no error.
-    assert!(result == true || result == false);
     // If reflink failed, dst was cleaned up and caller does byte copy.
     if !result {
         assert!(!dst_path.exists());

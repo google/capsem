@@ -252,7 +252,7 @@ impl VirtQueue {
         if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u32, (id as u32).to_le());
-                std::ptr::write_unaligned((ptr as *mut u8).add(4) as *mut u32, len.to_le());
+                std::ptr::write_unaligned(ptr.add(4) as *mut u32, len.to_le());
             }
         }
     }

@@ -287,10 +287,11 @@ pub(super) fn run_vcpu(
     std::thread::Builder::new()
         .name(format!("kvm-vcpu-{vcpu_id}"))
         .spawn(move || {
+            let mut vcpu = vcpu;
             info!(vcpu_id, "vCPU thread started");
             let registration = control.register_current_thread(vcpu_id)?;
             let result = vcpu_loop(
-                &vcpu,
+                &mut vcpu,
                 &mmio_bus,
                 #[cfg(target_arch = "x86_64")]
                 &pio_bus,
@@ -307,7 +308,7 @@ pub(super) fn run_vcpu(
 }
 
 fn vcpu_loop(
-    vcpu: &VcpuFd,
+    vcpu: &mut VcpuFd,
     mmio_bus: &MmioBus,
     #[cfg(target_arch = "x86_64")] pio_bus: &PioBus,
     control: &VcpuControl,

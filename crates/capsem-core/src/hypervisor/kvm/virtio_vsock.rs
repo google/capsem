@@ -43,6 +43,9 @@ const VMADDR_CID_ANY: u32 = u32::MAX;
 // AF_VSOCK constants
 const AF_VSOCK: i32 = 40;
 const VMADDR_CID_ANY_BIND: u32 = u32::MAX; // VMADDR_CID_ANY for bind
+const VSOCK_PORT_BLOCK_BASE_OFFSET: u32 = 15_000;
+const VSOCK_PORT_BLOCK_SIZE: u32 = 16;
+const VSOCK_PORT_BLOCK_COUNT: u32 = 2_500;
 
 // ---------------------------------------------------------------------------
 // VhostVsockDevice
@@ -315,7 +318,7 @@ pub(super) fn spawn_call_irq_bridges(
     }
 
     let mut handles = Vec::with_capacity(call_fds.len());
-    for (queue_index, (&call_fd, irq_fd)) in call_fds.iter().zip(irq_fds.into_iter()).enumerate() {
+    for (queue_index, (&call_fd, irq_fd)) in call_fds.iter().zip(irq_fds).enumerate() {
         let call_dup = unsafe { libc::dup(call_fd) };
         if call_dup < 0 {
             bail!(
@@ -569,12 +572,7 @@ fn vhost_ioctl(fd: RawFd, request: u64, arg: u64) -> Result<()> {
 
 /// Open the vhost-vsock device.
 pub(super) fn open_vhost_vsock() -> Result<OwnedFd> {
-    let raw = unsafe {
-        libc::open(
-            b"/dev/vhost-vsock\0".as_ptr() as *const libc::c_char,
-            libc::O_RDWR | libc::O_CLOEXEC,
-        )
-    };
+    let raw = unsafe { libc::open(c"/dev/vhost-vsock".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
     if raw < 0 {
         bail!(
             "/dev/vhost-vsock: {} (is vhost_vsock module loaded?)",
@@ -603,51 +601,112 @@ struct SockaddrVm {
 struct VsockSocketAnchor(OwnedFd);
 unsafe impl Send for VsockSocketAnchor {}
 
-/// Spawn listener threads for the given vsock ports.
-///
-/// Each thread binds an AF_VSOCK socket, listens, and accepts connections.
-/// Accepted connections are sent as `VsockConnection` via the channel.
-/// Threads exit when the shutdown flag is set.
-pub(super) fn spawn_vsock_listeners(
-    _guest_cid: u32,
-    ports: &[u32],
-    tx: mpsc::UnboundedSender<VsockConnection>,
-    shutdown: Arc<AtomicBool>,
-) -> Vec<JoinHandle<()>> {
-    let mut handles = Vec::new();
-
-    for &port in ports {
-        let tx = tx.clone();
-        let shutdown = Arc::clone(&shutdown);
-
-        let handle = thread::Builder::new()
-            .name(format!("vsock-listen-{port}"))
-            .spawn(move || {
-                if let Err(e) = vsock_listener_loop(port, &tx, &shutdown) {
-                    warn!(port, "vsock listener failed: {e:#}");
-                }
-            })
-            .expect("failed to spawn vsock listener thread");
-
-        handles.push(handle);
-    }
-
-    handles
+pub(super) struct BoundVsockListener {
+    logical_port: u32,
+    physical_port: u32,
+    sock: OwnedFd,
 }
 
-fn vsock_listener_loop(
-    port: u32,
-    tx: &mpsc::UnboundedSender<VsockConnection>,
-    shutdown: &AtomicBool,
-) -> Result<()> {
-    // Create AF_VSOCK socket
+pub(super) struct BoundVsockListeners {
+    offset: u32,
+    guest_cid: u32,
+    listeners: Vec<BoundVsockListener>,
+}
+
+impl BoundVsockListeners {
+    pub(super) fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    pub(super) fn guest_cid(&self) -> u32 {
+        self.guest_cid
+    }
+}
+
+pub(super) fn bind_vsock_listeners_for_vm(
+    logical_ports: &[u32],
+    seed: u32,
+) -> Result<BoundVsockListeners> {
+    if logical_ports.is_empty() {
+        return Ok(BoundVsockListeners {
+            offset: 0,
+            guest_cid: MIN_GUEST_CID,
+            listeners: Vec::new(),
+        });
+    }
+
+    let start = seed % VSOCK_PORT_BLOCK_COUNT;
+    let mut last_addr_in_use = None;
+    for attempt in 0..VSOCK_PORT_BLOCK_COUNT {
+        let block = (start + attempt) % VSOCK_PORT_BLOCK_COUNT;
+        let offset = VSOCK_PORT_BLOCK_BASE_OFFSET + block * VSOCK_PORT_BLOCK_SIZE;
+        match try_bind_vsock_port_block(logical_ports, offset) {
+            Ok(listeners) => {
+                let guest_cid = MIN_GUEST_CID + block;
+                info!(
+                    offset,
+                    guest_cid,
+                    ports = ?logical_ports,
+                    "allocated KVM vsock port block"
+                );
+                return Ok(BoundVsockListeners {
+                    offset,
+                    guest_cid,
+                    listeners,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                last_addr_in_use = Some(error);
+            }
+            Err(error) => {
+                bail!("bind KVM vsock port block: {error}");
+            }
+        }
+    }
+
+    let detail = last_addr_in_use
+        .map(|error| error.to_string())
+        .unwrap_or_else(|| "all candidate port blocks exhausted".to_string());
+    bail!("no free KVM vsock port block found: {detail}")
+}
+
+fn try_bind_vsock_port_block(
+    logical_ports: &[u32],
+    offset: u32,
+) -> std::io::Result<Vec<BoundVsockListener>> {
+    let mut listeners = Vec::with_capacity(logical_ports.len());
+    for &logical_port in logical_ports {
+        let physical_port = physical_vsock_port(logical_port, offset)?;
+        let sock = bind_vsock_listener_socket(physical_port)?;
+        listeners.push(BoundVsockListener {
+            logical_port,
+            physical_port,
+            sock,
+        });
+    }
+    Ok(listeners)
+}
+
+fn physical_vsock_port(logical_port: u32, offset: u32) -> std::io::Result<u32> {
+    let physical_port = logical_port.checked_add(offset).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "vsock port overflow")
+    })?;
+    if physical_port > u16::MAX as u32 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "vsock port exceeds u16 range",
+        ));
+    }
+    Ok(physical_port)
+}
+
+fn bind_vsock_listener_socket(port: u32) -> std::io::Result<OwnedFd> {
     let sock_fd = unsafe { libc::socket(AF_VSOCK, libc::SOCK_STREAM, 0) };
     if sock_fd < 0 {
-        bail!("socket(AF_VSOCK): {}", std::io::Error::last_os_error());
+        return Err(std::io::Error::last_os_error());
     }
     let sock = unsafe { OwnedFd::from_raw_fd(sock_fd) };
 
-    // Bind to VMADDR_CID_ANY (accept from any guest)
     let addr = SockaddrVm {
         svm_family: AF_VSOCK as u16,
         svm_reserved1: 0,
@@ -664,21 +723,60 @@ fn vsock_listener_loop(
         )
     };
     if ret < 0 {
-        bail!(
-            "bind(AF_VSOCK, port={port}): {}",
-            std::io::Error::last_os_error()
-        );
+        return Err(std::io::Error::last_os_error());
     }
 
     let ret = unsafe { libc::listen(sock.as_raw_fd(), 4) };
     if ret < 0 {
-        bail!(
-            "listen(AF_VSOCK, port={port}): {}",
-            std::io::Error::last_os_error()
-        );
+        return Err(std::io::Error::last_os_error());
     }
 
-    info!(port, "vsock: listener ready");
+    Ok(sock)
+}
+
+/// Spawn listener threads for the given vsock ports.
+///
+/// Each thread accepts connections from a pre-bound AF_VSOCK socket.
+/// Accepted connections are sent as `VsockConnection` via the channel.
+/// Threads exit when the shutdown flag is set.
+pub(super) fn spawn_vsock_listeners(
+    listeners: BoundVsockListeners,
+    tx: mpsc::UnboundedSender<VsockConnection>,
+    shutdown: Arc<AtomicBool>,
+) -> Vec<JoinHandle<()>> {
+    let mut handles = Vec::new();
+
+    for listener in listeners.listeners {
+        let tx = tx.clone();
+        let shutdown = Arc::clone(&shutdown);
+        let logical_port = listener.logical_port;
+        let physical_port = listener.physical_port;
+
+        let handle = thread::Builder::new()
+            .name(format!("vsock-listen-{physical_port}"))
+            .spawn(move || {
+                if let Err(e) = vsock_listener_loop(listener, &tx, &shutdown) {
+                    warn!(logical_port, physical_port, "vsock listener failed: {e:#}");
+                }
+            })
+            .expect("failed to spawn vsock listener thread");
+
+        handles.push(handle);
+    }
+
+    handles
+}
+
+fn vsock_listener_loop(
+    listener: BoundVsockListener,
+    tx: &mpsc::UnboundedSender<VsockConnection>,
+    shutdown: &AtomicBool,
+) -> Result<()> {
+    let sock = listener.sock;
+    let logical_port = listener.logical_port;
+    let physical_port = listener.physical_port;
+
+    info!(logical_port, physical_port, "vsock: listener ready");
 
     // Accept loop with poll timeout for shutdown checks
     let mut pollfd = libc::pollfd {
@@ -694,7 +792,7 @@ fn vsock_listener_loop(
             if err.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            bail!("poll(AF_VSOCK, port={port}): {err}");
+            bail!("poll(AF_VSOCK, port={physical_port}): {err}");
         }
         if ret == 0 {
             continue; // timeout, check shutdown
@@ -713,17 +811,25 @@ fn vsock_listener_loop(
             if err.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            warn!(port, "vsock accept failed: {err}");
+            warn!(logical_port, physical_port, "vsock accept failed: {err}");
             continue;
         }
 
-        debug!(port, fd = conn_fd, "vsock: accepted connection");
+        debug!(
+            logical_port,
+            physical_port,
+            fd = conn_fd,
+            "vsock: accepted connection"
+        );
 
         let anchor = VsockSocketAnchor(unsafe { OwnedFd::from_raw_fd(conn_fd) });
-        let conn = VsockConnection::new(conn_fd, port, Box::new(anchor));
+        let conn = VsockConnection::new(conn_fd, logical_port, Box::new(anchor));
 
         if let Err(e) = tx.send(conn) {
-            warn!(port, "vsock: channel closed, stopping listener: {e}");
+            warn!(
+                logical_port,
+                physical_port, "vsock: channel closed, stopping listener: {e}"
+            );
             break;
         }
     }
@@ -829,6 +935,21 @@ mod tests {
     fn vhost_backend_configures_rx_tx_only() {
         assert_eq!(VSOCK_NUM_QUEUES, 3);
         assert_eq!(VHOST_VSOCK_BACKEND_QUEUES, 2);
+    }
+
+    #[test]
+    fn kvm_vsock_port_block_stays_in_valid_port_range() {
+        let max_offset =
+            VSOCK_PORT_BLOCK_BASE_OFFSET + (VSOCK_PORT_BLOCK_COUNT - 1) * VSOCK_PORT_BLOCK_SIZE;
+        let physical = physical_vsock_port(5007, max_offset).unwrap();
+
+        assert!(physical <= u16::MAX as u32);
+    }
+
+    #[test]
+    fn physical_vsock_port_rejects_overflow_and_u16_exhaustion() {
+        assert!(physical_vsock_port(u32::MAX, 1).is_err());
+        assert!(physical_vsock_port(u16::MAX as u32, 1).is_err());
     }
 
     #[test]

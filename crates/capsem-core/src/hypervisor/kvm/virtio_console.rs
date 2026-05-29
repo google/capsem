@@ -243,11 +243,8 @@ mod tests {
 
         // Collect what was broadcast
         let mut all = Vec::new();
-        loop {
-            match rx.try_recv() {
-                Ok(chunk) => all.extend_from_slice(&chunk),
-                Err(_) => break,
-            }
+        while let Ok(chunk) = rx.try_recv() {
+            all.extend_from_slice(&chunk);
         }
         assert_eq!(all, b"hello from guest");
     }

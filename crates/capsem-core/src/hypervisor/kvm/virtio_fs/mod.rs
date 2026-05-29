@@ -314,7 +314,7 @@ impl VirtioFsDevice {
         interrupt_status: Arc<AtomicU32>,
     ) -> Result<Self> {
         let mut tag_buf = [0u8; TAG_LEN];
-        let len = tag.as_bytes().len().min(TAG_LEN);
+        let len = tag.len().min(TAG_LEN);
         tag_buf[..len].copy_from_slice(&tag.as_bytes()[..len]);
 
         Ok(Self {
@@ -375,7 +375,7 @@ impl VirtioDevice for VirtioFsDevice {
     fn write_config(&self, _offset: u64, _data: &[u8]) {}
 
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
-        let hiprio_queue = match queues.get(0).filter(|q| q.size > 0) {
+        let hiprio_queue = match queues.first().filter(|q| q.size > 0) {
             Some(q) if q.warm_restore => VirtQueue::new_restored(
                 mem.clone(),
                 q.desc_addr,

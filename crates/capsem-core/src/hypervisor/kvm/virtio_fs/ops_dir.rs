@@ -85,7 +85,10 @@ impl FuseProcessor {
             };
             buf.extend_from_slice(fuse::as_bytes(&dirent));
             buf.extend_from_slice(&entry.name);
-            buf.extend(std::iter::repeat(0u8).take(entry_size - dirent_hdr - entry.name.len()));
+            buf.extend(std::iter::repeat_n(
+                0u8,
+                entry_size - dirent_hdr - entry.name.len(),
+            ));
         }
 
         fuse::success_response(header.unique, &buf)

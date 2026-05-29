@@ -83,6 +83,8 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
 ];
 
+const SUSPEND_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 // ---------------------------------------------------------------------------
 // Service state
 // ---------------------------------------------------------------------------
@@ -96,6 +98,7 @@ struct ServiceState {
     assets_dir: PathBuf,
     asset_locations: capsem_core::settings_profiles::ResolvedServiceAssetLocations,
     service_settings: capsem_core::settings_profiles::ServiceSettings,
+    service_settings_path: PathBuf,
     run_dir: PathBuf,
     job_counter: AtomicU64,
     /// Service-owned asset state machine and background reconciler.
@@ -378,11 +381,11 @@ impl ServiceState {
     }
 
     fn current_service_settings(&self) -> capsem_core::settings_profiles::ServiceSettings {
-        let settings_path = service_settings_path();
+        let settings_path = &self.service_settings_path;
         if !settings_path.exists() {
             return self.service_settings.clone();
         }
-        capsem_core::settings_profiles::load_service_settings(&settings_path).unwrap_or_else(
+        capsem_core::settings_profiles::load_service_settings(settings_path).unwrap_or_else(
             |error| {
                 warn!(
                     error = %error,
@@ -11428,7 +11431,7 @@ async fn handle_suspend(
     // a subsequent resume request fails with permission denied because the old process
     // hasn't released the checkpoint file yet.
     let mut suspended = false;
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+    let _ = tokio::time::timeout(SUSPEND_CONFIRM_TIMEOUT, async {
         while let Ok(msg) = rx.recv().await {
             if let ProcessToService::StateChanged { state, .. } = msg {
                 if state == "Suspended" {
@@ -12241,6 +12244,7 @@ async fn main() -> Result<()> {
         assets_dir: assets_base_dir,
         asset_locations,
         service_settings,
+        service_settings_path,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         asset_supervisor,
@@ -12836,14 +12840,14 @@ fn ensure_tray_running(manager: &mut CompanionManager) -> (StatusCode, EnsureTra
     #[cfg(not(target_os = "macos"))]
     {
         let _ = manager;
-        return (
+        (
             StatusCode::OK,
             EnsureTrayResponse {
                 tray: "unsupported",
                 pid: None,
                 reason: Some("capsem-tray is only supported on macOS".into()),
             },
-        );
+        )
     }
 
     #[cfg(target_os = "macos")]

@@ -393,6 +393,7 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
     export CAPSEM_ASSETS_DIR="{{justfile_directory()}}/{{assets_dir}}"
+    export TMPDIR="{{justfile_directory()}}/target/tmp"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
@@ -414,7 +415,8 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     }
     cleanup_isolated_home_processes
     rm -rf "$CAPSEM_HOME"
-    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
+    rm -rf "$TMPDIR"
+    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs" "$TMPDIR"
 
     # ---- Stage 1: parallel fast-fail (audits + lint + frontend) -------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
