@@ -2283,7 +2283,7 @@ async fn handle_fork(
 }
 
 fn pre_fork_guest_flush_command() -> &'static str {
-    "fstrim /run/capsem-system 2>/dev/null || fstrim / 2>/dev/null || true; sync; fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
+    "fstrim -m 8M /run/capsem-system 2>/dev/null || fstrim -m 8M / 2>/dev/null || true; sync; fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
 }
 
 fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str) -> Result<()> {
