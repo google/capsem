@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its shutdown event under parallel pytest.
 - Fixed the local Python coverage gate to match the CI-owned 89% schema floor,
   with a regression test that prevents local/CI coverage threshold drift.
+- Fixed serial benchmark gates for Linux KVM by separating backend-dependent
+  provision latency from steady-state exec/delete latency and cleaning transient
+  apt metadata out of the fork image-size workload.
 - Fixed the Linux full-test gate under current Rust by cleaning KVM, service,
   and app clippy warnings that were promoted to errors.
 - Fixed native guest-agent rebuilds so readonly `target/linux-agent` outputs
