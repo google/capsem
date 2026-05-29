@@ -440,7 +440,7 @@ def create_squashfs(
     output_path: Path,
     compression: str,
     compression_level: int,
-    block_size: str = "64K",
+    block_size: str = "128K",
 ) -> None:
     """Create a squashfs image from a tar archive using a container."""
     abs_dir = str(tar_path.parent.resolve())
@@ -1108,6 +1108,7 @@ def build_image(
                 runtime, tar_path, squashfs_path,
                 config.build.compression.value,
                 config.build.compression_level,
+                config.build.squashfs_block_size,
             )
             tar_path.unlink(missing_ok=True)
 

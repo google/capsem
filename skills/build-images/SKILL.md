@@ -64,6 +64,11 @@ assets/
     initrd.img           Initial ramdisk (repacked by just run)
 ```
 
+Rootfs squashfs settings live under `[build]` in `guest/config/build.toml`.
+The current default is `compression = "zstd"`, `compression_level = 15`, and
+`squashfs_block_size = "128K"`, balancing sequential rootfs reads, CLI startup,
+image size, and small-file reads.
+
 ## Adding packages to the VM
 
 1. Edit the appropriate config in `guest/config/packages/` (apt or python TOML)

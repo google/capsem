@@ -1,6 +1,7 @@
 [build]
 compression = "zstd"
 compression_level = 15
+squashfs_block_size = "128K"
 
 [build.version_commands]
 node = "node --version 2>&1 | tr -d v"

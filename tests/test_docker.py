@@ -1087,6 +1087,7 @@ class TestCreateSquashfs:
         assert "mksquashfs" in cmd_str
         assert "-comp zstd" in cmd_str
         assert "-Xcompression-level 15" in cmd_str
+        assert "-b 128K" in cmd_str
 
     @patch("capsem.builder.docker.run_cmd")
     def test_gzip_no_level_flag(self, mock_run):

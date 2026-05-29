@@ -106,6 +106,7 @@ def _build_config(plan: ImagePlan) -> dict:
         "build": {
             "compression": "zstd",
             "compression_level": 15,
+            "squashfs_block_size": "128K",
             "version_commands": version_commands,
             "architectures": selected,
         }

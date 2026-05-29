@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Changed the guest rootfs build default to a configurable 128K squashfs block
+  size, improving measured CLI startup and sequential rootfs reads while
+  recording the chunk-size choice in `guest/config/build.toml`.
 - Strengthened the suspend/resume lifecycle integration test so it now proves
   a background guest process keeps the same PID and continues writing after
   warm resume, giving Apple VZ and KVM the same long-term state-preservation
