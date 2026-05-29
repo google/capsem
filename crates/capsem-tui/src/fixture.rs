@@ -59,22 +59,6 @@ pub fn fixture_state() -> AppState {
                     cost_micros: 76_000,
                 },
             },
-            SessionSummary {
-                id: "security".to_string(),
-                title: "Security".to_string(),
-                repo_path: None,
-                profile: "high-risk".to_string(),
-                branch: None,
-                lifecycle: SessionLifecycle::Suspended,
-                attention: vec![Attention::ApprovalRequired, Attention::StaleData],
-                stats: SessionStats {
-                    duration: Duration::from_secs(19 * 60),
-                    jobs: 0,
-                    events: 311,
-                    tokens: 91_250,
-                    cost_micros: 488_000,
-                },
-            },
         ],
     }
 }

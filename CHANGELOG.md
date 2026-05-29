@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the initial `capsem-tui` crate with a fixture-backed standalone
   terminal control screen, global service light-bar state, per-session desktop
   indicators, and deterministic snapshot rendering for early UI proof.
+- Added a `just dev-tui` standalone TUI prototype with two fixture sessions,
+  SVG snapshot export, and keyboard session switching that does not capture
+  plain `q`.
+- Added live `capsem-tui` gateway wiring against the installed Capsem HTTP
+  gateway with token auth, periodic refresh, typed session mapping, fixture
+  fallback, and HTTP provider tests.
+- Added active-session terminal WebSocket wiring for `capsem-tui`, including
+  gateway token reuse, terminal input forwarding, output buffering, resize
+  messages, and basic ANSI cleanup for the Ratatui surface.
+- Added hidden `capsem-tui` overlays for help, active-session statistics, and
+  the session list so the normal terminal surface stays minimal.
 
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,

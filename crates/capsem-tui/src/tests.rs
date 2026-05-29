@@ -1,6 +1,11 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::app::{App, AppAction, AppOverlay};
 use crate::fixture::fixture_state;
+use crate::gateway_provider::{state_from_status_json_for_test, GatewayProvider};
 use crate::model::{Attention, ServiceStatus, SessionLifecycle};
-use crate::ui::render_snapshot;
+use crate::ui::{render_app_snapshot, render_snapshot};
 
 #[test]
 fn fixture_models_global_service_state_and_session_indicators() {
@@ -22,11 +27,14 @@ fn fixture_models_global_service_state_and_session_indicators() {
 fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
-    assert!(snapshot.contains("● 18ms [w/r/i 1/1/1] [terminals 3]"));
-    assert!(snapshot.contains("Profile V2"));
-    assert!(snapshot.contains("w!:Linux OS"));
-    assert!(snapshot.contains("github.com/google/capsem"));
-    assert!(snapshot.contains("duration=47m tokens=38.4k cost=$0.21"));
+    assert!(snapshot.contains("● 18ms"));
+    assert!(snapshot.contains("1  profile-v2"));
+    assert!(snapshot.contains("2  linux-os!"));
+    assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21"));
+    assert!(
+        !snapshot.contains("github.com/google/capsem"),
+        "repo metadata belongs in a popup or future status segment, not the empty terminal surface"
+    );
     assert!(
         !snapshot.contains("┌"),
         "minimal UI should not render boxes"
@@ -35,4 +43,250 @@ fn snapshot_contains_light_bar_tabs_and_active_desktop() {
         !snapshot.contains("? help"),
         "help belongs in a popup, not persistent chrome"
     );
+}
+
+#[test]
+fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('q'), KeyModifiers::NONE)),
+        AppAction::Forward
+    );
+    assert_eq!(app.state().active_session_id, "profile-v2");
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Right, KeyModifiers::CONTROL)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.state().active_session_id, "linux-os");
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Left, KeyModifiers::CONTROL)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.state().active_session_id, "profile-v2");
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('2'), KeyModifiers::CONTROL)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.state().active_session_id, "linux-os");
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        AppAction::Forward
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Esc, KeyModifiers::CONTROL)),
+        AppAction::Exit
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(10), KeyModifiers::NONE)),
+        AppAction::Exit
+    );
+}
+
+#[test]
+fn refresh_preserves_active_session_when_it_still_exists() {
+    let mut app = App::new(fixture_state());
+    app.select_session(1);
+
+    let mut refreshed = fixture_state();
+    refreshed.sessions[1].stats.tokens = 42;
+    app.replace_state(refreshed);
+
+    assert_eq!(app.state().active_session_id, "linux-os");
+    assert_eq!(
+        app.state()
+            .active_session()
+            .expect("active session")
+            .stats
+            .tokens,
+        42
+    );
+}
+
+#[test]
+fn function_keys_toggle_hidden_overlays() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(app.overlay(), AppOverlay::None);
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(1), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Help);
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(2), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Stats);
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(2), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
+}
+
+#[test]
+fn stats_overlay_renders_on_demand_without_persistent_help() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::F(2), KeyModifiers::NONE));
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render app snapshot");
+
+    assert!(snapshot.contains("stats"));
+    assert!(snapshot.contains("profile-v2"));
+    assert!(snapshot.contains("tokens"));
+    assert!(
+        !render_snapshot(&fixture_state(), 100, 24)
+            .expect("render base snapshot")
+            .contains("F1 help"),
+        "help is hidden until requested"
+    );
+}
+
+#[test]
+fn gateway_status_json_maps_to_tui_state() {
+    let state = state_from_status_json_for_test(
+        gateway_status_body(),
+        std::time::Duration::from_millis(24),
+    )
+    .expect("parse service list");
+
+    assert_eq!(state.service.status, ServiceStatus::Online);
+    assert_eq!(state.service.latency, std::time::Duration::from_millis(24));
+    assert_eq!(state.active_session_id, "vm-1");
+    assert_eq!(state.sessions.len(), 2);
+
+    let active = &state.sessions[0];
+    assert_eq!(active.title, "profile-main");
+    assert_eq!(active.profile, "profile-v2");
+    assert_eq!(active.lifecycle, SessionLifecycle::Working);
+    assert_eq!(active.stats.duration, std::time::Duration::from_secs(2840));
+    assert_eq!(active.stats.tokens, 38_912);
+    assert_eq!(active.stats.cost_micros, 215_000);
+
+    let attention = &state.sessions[1];
+    assert_eq!(attention.lifecycle, SessionLifecycle::Suspended);
+    assert!(attention.attention.contains(&Attention::PolicyDeny));
+}
+
+#[test]
+fn malformed_gateway_status_fails_state_mapping() {
+    let error = state_from_status_json_for_test(
+        r#"{"service":"running","vms":"not a list"}"#,
+        std::time::Duration::ZERO,
+    )
+    .expect_err("malformed gateway status should fail");
+
+    assert!(error.to_string().contains("invalid type"));
+}
+
+#[tokio::test]
+async fn gateway_provider_loads_status_over_http_gateway() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let body = gateway_status_body().to_string();
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("GET /status "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(
+                    request.contains("authorization: Bearer test-token")
+                        || request.contains("Authorization: Bearer test-token"),
+                    "missing bearer auth: {request:?}"
+                );
+                write_json_response(&mut stream, &body).await;
+            }
+        }
+    });
+
+    let state = GatewayProvider::new(format!("http://{addr}"))
+        .load_async()
+        .await
+        .expect("load state over gateway");
+
+    assert_eq!(state.sessions.len(), 2);
+    assert_eq!(state.sessions[0].id, "vm-1");
+
+    server.await.expect("server task");
+}
+
+fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+    KeyEvent::new(code, modifiers)
+}
+
+async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 256];
+    loop {
+        let bytes_read = stream.read(&mut buffer).await.expect("read request");
+        if bytes_read == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..bytes_read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&request).into_owned()
+}
+
+async fn write_json_response(stream: &mut tokio::net::TcpStream, body: &str) {
+    let response = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .expect("write response");
+}
+
+fn gateway_status_body() -> &'static str {
+    r#"{
+        "service": "running",
+        "gateway_version": "test",
+        "vm_count": 2,
+        "resource_summary": null,
+        "vms": [
+            {
+                "id": "vm-1",
+                "name": "profile-main",
+                "status": "Running",
+                "profile_id": "profile-v2",
+                "profile_revision": "main",
+                "uptime_secs": 2840,
+                "total_input_tokens": 30000,
+                "total_output_tokens": 8912,
+                "total_estimated_cost": 0.215,
+                "total_tool_calls": 7,
+                "total_requests": 11,
+                "total_file_events": 3
+            },
+            {
+                "id": "vm-2",
+                "status": "Suspended",
+                "profile_id": "linux-os",
+                "uptime_secs": 7860,
+                "total_input_tokens": 10000,
+                "total_output_tokens": 2900,
+                "total_estimated_cost": 0.076,
+                "denied_requests": 1
+            }
+        ]
+    }"#
 }

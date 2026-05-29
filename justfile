@@ -252,6 +252,11 @@ ui: _ensure-setup _pnpm-install run-service
 dev-frontend: _pnpm-install
     cd frontend && pnpm run dev
 
+# Standalone terminal control-plane prototype.
+# Pass extra args after `--`: `just dev-tui -- --snapshot`.
+dev-tui *ARGS:
+    cargo run -p capsem-tui {{ARGS}}
+
 # Build the Tauri desktop app (capsem-app) with a fresh frontend bundle.
 # IMPORTANT: the Tauri binary embeds frontend/dist at cargo compile time via
 # tauri::generate_context!(), so rebuilding only the frontend has no effect

@@ -1,12 +1,16 @@
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use capsem_tui::app::{App, AppAction};
 use capsem_tui::fixture::FixtureProvider;
+use capsem_tui::gateway_provider::GatewayProvider;
+use capsem_tui::model::{AppState, ServiceStatus};
 use capsem_tui::provider::StateProvider;
-use capsem_tui::ui::{render, render_snapshot};
+use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalSurface};
+use capsem_tui::ui::{render_app, render_snapshot, render_svg_snapshot};
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -25,6 +29,22 @@ struct Cli {
     #[arg(long)]
     snapshot: bool,
 
+    /// Print a deterministic SVG rendering instead of opening the terminal UI.
+    #[arg(long)]
+    snapshot_svg: bool,
+
+    /// Use the built-in two-session fixture instead of the installed Capsem gateway.
+    #[arg(long)]
+    fixture: bool,
+
+    /// Capsem gateway base URL. Defaults to installed runtime files, then 127.0.0.1:19222.
+    #[arg(long)]
+    gateway_url: Option<String>,
+
+    /// Live gateway refresh interval in milliseconds.
+    #[arg(long, default_value_t = 1_000)]
+    refresh_ms: u64,
+
     /// Snapshot width.
     #[arg(long, default_value_t = 100)]
     width: u16,
@@ -36,25 +56,92 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let provider = FixtureProvider;
-    let state = provider.load()?;
+    let state = load_state(&cli)?;
+    let live_provider = live_provider(&cli);
+    let terminal_bridge = live_provider
+        .as_ref()
+        .map(|provider| TerminalBridge::spawn(provider.base_url().to_string()));
+
+    if cli.snapshot_svg {
+        println!("{}", render_svg_snapshot(&state, cli.width, cli.height)?);
+        return Ok(());
+    }
 
     if cli.snapshot {
         println!("{}", render_snapshot(&state, cli.width, cli.height)?);
         return Ok(());
     }
 
-    run_interactive(&state)
+    run_interactive(
+        App::new(state),
+        live_provider,
+        terminal_bridge,
+        cli.refresh_interval(),
+    )
 }
 
-fn run_interactive(state: &capsem_tui::model::AppState) -> Result<()> {
+fn load_state(cli: &Cli) -> Result<AppState> {
+    if cli.fixture {
+        return FixtureProvider.load();
+    }
+
+    let base_url = cli
+        .gateway_url
+        .clone()
+        .unwrap_or_else(GatewayProvider::default_base_url);
+    match GatewayProvider::new(base_url.clone()).load() {
+        Ok(state) => Ok(state),
+        Err(_) if cli.gateway_url.is_none() => {
+            let mut state = FixtureProvider
+                .load()
+                .context("load capsem-tui fallback fixture")?;
+            state.service.status = ServiceStatus::Offline;
+            state.service.latency = Duration::ZERO;
+            state.service.reconnect_attempt = Some(1);
+            Ok(state)
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("load capsem gateway state from {base_url}"))
+        }
+    }
+}
+
+fn live_provider(cli: &Cli) -> Option<GatewayProvider> {
+    if cli.fixture {
+        return None;
+    }
+    Some(GatewayProvider::new(
+        cli.gateway_url
+            .clone()
+            .unwrap_or_else(GatewayProvider::default_base_url),
+    ))
+}
+
+impl Cli {
+    fn refresh_interval(&self) -> Duration {
+        Duration::from_millis(self.refresh_ms.max(100))
+    }
+}
+
+fn run_interactive(
+    mut app: App,
+    live_provider: Option<GatewayProvider>,
+    terminal_bridge: Option<TerminalBridge>,
+    refresh_interval: Duration,
+) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_loop(&mut terminal, state);
+    let result = run_loop(
+        &mut terminal,
+        &mut app,
+        live_provider,
+        terminal_bridge,
+        refresh_interval,
+    );
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -65,18 +152,90 @@ fn run_interactive(state: &capsem_tui::model::AppState) -> Result<()> {
 
 fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    state: &capsem_tui::model::AppState,
+    app: &mut App,
+    live_provider: Option<GatewayProvider>,
+    terminal_bridge: Option<TerminalBridge>,
+    refresh_interval: Duration,
 ) -> Result<()> {
+    let mut last_refresh = Instant::now();
+    let mut surface = TerminalSurface::new();
+    let mut connected_session_id = String::new();
     loop {
-        terminal.draw(|frame| render(frame, state))?;
+        if let Some(bridge) = &terminal_bridge {
+            for event in bridge.drain_events() {
+                surface.apply(event);
+            }
+            sync_terminal_connection(
+                app,
+                bridge,
+                &mut connected_session_id,
+                terminal.size()?.width,
+                terminal.size()?.height.saturating_sub(1),
+            );
+        }
+        if last_refresh.elapsed() >= refresh_interval {
+            refresh_state(app, live_provider.as_ref());
+            last_refresh = Instant::now();
+        }
+        terminal.draw(|frame| render_app(frame, app, Some(&surface)))?;
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
-                Event::Key(key) if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) => {
-                    break;
+                Event::Key(key) => match app.handle_key(key) {
+                    AppAction::Exit => break,
+                    AppAction::Consumed => {}
+                    AppAction::Forward => {
+                        if let (Some(bridge), Some(bytes)) =
+                            (&terminal_bridge, key_to_terminal_bytes(key))
+                        {
+                            bridge.input(bytes);
+                        }
+                    }
+                },
+                Event::Resize(width, height) => {
+                    if let Some(bridge) = &terminal_bridge {
+                        bridge.resize(width, height.saturating_sub(1));
+                    }
                 }
                 _ => {}
             }
         }
     }
     Ok(())
+}
+
+fn sync_terminal_connection(
+    app: &App,
+    bridge: &TerminalBridge,
+    connected_session_id: &mut String,
+    cols: u16,
+    rows: u16,
+) {
+    let active_id = &app.state().active_session_id;
+    if active_id.is_empty() || active_id == connected_session_id {
+        return;
+    }
+    bridge.connect(active_id.clone(), cols, rows);
+    connected_session_id.clone_from(active_id);
+}
+
+fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) {
+    let Some(provider) = provider else {
+        return;
+    };
+    match provider.load() {
+        Ok(state) => app.replace_state(state),
+        Err(_) => {
+            let mut state = app.state().clone();
+            state.service.status = ServiceStatus::Offline;
+            state.service.latency = Duration::ZERO;
+            state.service.reconnect_attempt = Some(
+                state
+                    .service
+                    .reconnect_attempt
+                    .unwrap_or_default()
+                    .saturating_add(1),
+            );
+            app.replace_state(state);
+        }
+    }
 }

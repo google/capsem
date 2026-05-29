@@ -23,21 +23,25 @@ thin client over typed state and actions exposed by Capsem service/gateway APIs.
 | ID | Status | Scope | Proof |
 | --- | --- | --- | --- |
 | T00 | Done | Crate setup and standalone fixture screen | `cargo test -p capsem-tui`; snapshot command |
-| T01 | Not Started | Terminal screenshot/snapshot proof path | buffer snapshots; screenshot/export strategy |
-| T02 | Not Started | Multiple desktop tabs and per-session indicators | render tests for active/attention states |
-| T03 | Not Started | Keyboard controls and focus/modal ownership | key-sequence tests |
-| T04 | Not Started | Help, full statistics, and new-session screens | screen render tests |
-| T05 | Not Started | Home/resume screen with profile/session list | fixture render tests |
-| T06 | Not Started | Typed HTTP/service model inventory and API gaps | service schema gap doc |
-| T07 | Not Started | Wire local gateway/service read-only state | fake + live gateway tests |
+| T01 | Done | Terminal screenshot/snapshot proof path | `--snapshot-svg`; rendered PNG inspection |
+| T02 | Done | Multiple desktop tabs and per-session indicators | render tests for active/attention states |
+| T03 | Done | Keyboard controls and focus/modal ownership | key-sequence tests |
+| T04 | Done | Help, full statistics, and new-session screens | overlay render tests |
+| T05 | Done | Home/resume screen with profile/session list | fixture render tests |
+| T06 | Done | Typed HTTP gateway model inventory and API gaps | `/status` schema mapped into TUI model |
+| T07 | Done | Wire installed gateway read-only state | HTTP provider test + live snapshot |
 | T08 | Not Started | Safe service control actions | confirmation/action tests |
 | T09 | Not Started | Remote transport readiness | reconnect/event cursor tests |
+| T10 | In Progress | Active terminal WebSocket surface | terminal buffer/input tests |
 
 ## Current Decision
 
-Wire a provider boundary early, but do not wire real Capsem HTTP behavior until
-the standalone shell, tab model, keyboard model, and overlays are testable. The
-first crate uses fixture state through the same interface later used by HTTP.
+The standalone shell is now wired read-only to the installed Capsem HTTP
+gateway. Default mode discovers the installed gateway port from runtime files,
+falls back to `http://127.0.0.1:19222`, fetches `/token`, and then polls
+authenticated `GET /status`; `--fixture` keeps the two-session demo path for
+visual iteration; `--gateway-url` turns connection failures into explicit errors
+for focused gateway testing.
 
 ## T00 Closeout
 
@@ -47,11 +51,55 @@ first crate uses fixture state through the same interface later used by HTTP.
 - Deferred real screenshot export/CAPSEM MCP capture to T01 because the current
   exposed Capsem MCP tool surface does not include terminal screenshot capture.
 
+## T01-T03 Closeout
+
+- Added `--snapshot-svg` style-preserving export for visual proof.
+- Reworked the standalone shell into a tmux-like single status bar with global
+  service state on the left, numbered session tabs in the center, and active
+  session stats on the right.
+- Added a typed app controller for session switching.
+- Kept plain `q` and Ctrl-C available for the agent/terminal stream; standalone
+  exits on F10, Ctrl-Esc, or Cmd-Q when the terminal delivers it, and switches
+  sessions with modified arrow keys or modified tab numbers.
+- Added `just dev-tui` for direct local playback.
+
+## T04-T05 Closeout
+
+- Added hidden overlays for help, active-session statistics, and session/home
+  list.
+- Kept the normal terminal surface clean; overlays only appear through function
+  keys and toggle back off with the same key.
+- Scoped the home screen to existing sessions for this slice. New-session
+  creation remains part of the later safe-action sprint because it mutates
+  service state.
+
+## T06-T07 Closeout
+
+- Inventoried the existing gateway status model instead of adding a parallel
+  API: `StatusResponse { vms }` already carries ID, name, status, profile,
+  uptime, token/cost counters, policy-deny counters, and file event/request
+  counters.
+- Added a typed `GatewayProvider` that reads the installed HTTP gateway.
+- Mapped service status into TUI lifecycle state: running, suspended, stopped,
+  failed/defunct.
+- Mapped existing gateway-exposed deny and stale profile status into attention
+  markers.
+- Added periodic interactive refresh while preserving the selected tab when it
+  still exists after reload.
+- Added active-session terminal WebSocket wiring through the gateway:
+  `/token`, `/terminal/{id}?token=...`, resize messages, terminal input
+  forwarding, and output buffering for the Ratatui surface.
+- Kept richer missing state explicit for future API work: waiting-for-input,
+  terminal bell, per-session repo/path metadata, security/enforcement/detection
+  totals, and event cursor semantics are not invented by the TUI.
+
 ## Testing Gate
 
 - Unit/contract: required for state and render logic.
-- Functional: standalone demo and text/snapshot render output.
-- Adversarial: malformed/missing fields once the HTTP model exists.
-- E2E/VM: deferred until service wiring begins.
-- Telemetry: deferred until service wiring begins.
+- Functional: standalone demo, text snapshot, and SVG render output.
+- Adversarial: malformed gateway status and authenticated provider parsing.
+- E2E/VM: live empty-service snapshot covered; live multi-VM terminal session
+  proof remains open.
+- Telemetry: mapped from current counters; event stream/cursor semantics remain
+  open.
 - Performance: frame/render timing deferred until interactive loop exists.
