@@ -1,64 +1,64 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780088804.5019596,
+  "timestamp": 1780095524.1912746,
   "runs": 3,
   "operations": {
     "provision_ms": {
-      "min": 2239.8,
-      "mean": 2256.4,
-      "max": 2286.7,
+      "min": 2232.1,
+      "mean": 2234.6,
+      "max": 2236.0,
       "values": [
-        2239.8,
-        2286.7,
-        2242.6
+        2235.6,
+        2232.1,
+        2236.0
       ]
     },
     "exec_ready_ms": {
-      "min": 22.8,
-      "mean": 24.2,
-      "max": 26.1,
+      "min": 22.9,
+      "mean": 23.8,
+      "max": 24.4,
       "values": [
-        26.1,
-        22.8,
-        23.6
+        22.9,
+        24.4,
+        24.2
       ]
     },
     "exec_ms": {
-      "min": 21.1,
-      "mean": 24.2,
-      "max": 29.4,
+      "min": 22.0,
+      "mean": 22.2,
+      "max": 22.6,
       "values": [
-        29.4,
         22.0,
-        21.1
+        22.6,
+        22.1
       ]
     },
     "delete_ms": {
-      "min": 63.8,
-      "mean": 98.3,
-      "max": 167.1,
+      "min": 166.3,
+      "mean": 166.5,
+      "max": 166.8,
       "values": [
-        167.1,
-        63.9,
-        63.8
+        166.3,
+        166.8,
+        166.5
       ]
     },
     "total_ms": {
-      "min": 2351.1,
-      "mean": 2403.0,
-      "max": 2462.4,
+      "min": 2445.9,
+      "mean": 2447.2,
+      "max": 2448.8,
       "values": [
-        2462.4,
-        2395.4,
-        2351.1
+        2446.8,
+        2445.9,
+        2448.8
       ]
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780088804.5023427,
-  "recorded_at_utc": "2026-05-29T21:06:44.502346+00:00",
+  "recorded_at": 1780095524.191736,
+  "recorded_at_utc": "2026-05-29T22:58:44.191739+00:00",
   "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
   "host": {
     "platform": "Linux",
@@ -78,7 +78,7 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "0dbd5099bd084a30b6efd01b7c56513f49b3607c",
+    "commit": "ba8f260e593bc89bdfc70cfb4d67b1452fd8a028",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [

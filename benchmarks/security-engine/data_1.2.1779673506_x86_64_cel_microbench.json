@@ -1,7 +1,7 @@
 {
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "criterion_cel_microbench",
-  "source_commit": "0dbd5099",
+  "source_commit": "ba8f260e",
   "profile": {
     "cargo_profile": "bench",
     "criterion_samples": 100,
@@ -22,248 +22,248 @@
       "name": "dedupe_1000_rows_100_unique_limit_100",
       "full_id": "security_engine_backtest_dedupe/dedupe_1000_rows_100_unique_limit_100",
       "estimate_kind": "slope",
-      "estimate_ns": 583176.7516743018,
+      "estimate_ns": 583016.6030146298,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 582653.6000153385,
-        "upper_bound": 583752.0233462381
+        "lower_bound": 582625.2512373523,
+        "upper_bound": 583451.7544824886
       },
-      "estimate_standard_error_ns": 279.5418384387252,
-      "mean_ns": 583548.3689054538,
+      "estimate_standard_error_ns": 210.90893090268415,
+      "mean_ns": 583493.0564498444,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 582941.8328289194,
-        "upper_bound": 584262.731958658
+        "lower_bound": 583080.7136157647,
+        "upper_bound": 583959.3152629568
       },
-      "median_ns": 582757.0951388888,
+      "median_ns": 583044.3759908219,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 582273.75,
-        "upper_bound": 583289.3489583334
+        "lower_bound": 582678.6153846154,
+        "upper_bound": 583479.5
       },
-      "slope_ns": 583176.7516743018,
+      "slope_ns": 583016.6030146298,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 582653.6000153385,
-        "upper_bound": 583752.0233462381
+        "lower_bound": 582625.2512373523,
+        "upper_bound": 583451.7544824886
       },
-      "slope_standard_error_ns": 279.5418384387252
+      "slope_standard_error_ns": 210.90893090268415
     },
     {
       "group": "security_engine_backtest_dedupe",
       "name": "dedupe_100_unique_limit_100",
       "full_id": "security_engine_backtest_dedupe/dedupe_100_unique_limit_100",
       "estimate_kind": "slope",
-      "estimate_ns": 67516.13938781341,
+      "estimate_ns": 66713.03604590907,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 67201.85514907312,
-        "upper_bound": 68010.16148917616
+        "lower_bound": 66661.91282493356,
+        "upper_bound": 66770.35790060602
       },
-      "estimate_standard_error_ns": 215.49951794434025,
-      "mean_ns": 67475.23587768004,
+      "estimate_standard_error_ns": 27.686632402088314,
+      "mean_ns": 66736.64765826604,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 67268.56062823322,
-        "upper_bound": 67753.11071629972
+        "lower_bound": 66690.98153956271,
+        "upper_bound": 66786.01587861593
       },
-      "median_ns": 67198.4394503546,
+      "median_ns": 66672.28384091923,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 67156.95495495496,
-        "upper_bound": 67232.0825
+        "lower_bound": 66626.21546338966,
+        "upper_bound": 66709.98333333334
       },
-      "slope_ns": 67516.13938781341,
+      "slope_ns": 66713.03604590907,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 67201.85514907312,
-        "upper_bound": 68010.16148917616
+        "lower_bound": 66661.91282493356,
+        "upper_bound": 66770.35790060602
       },
-      "slope_standard_error_ns": 215.49951794434025
+      "slope_standard_error_ns": 27.686632402088314
     },
     {
       "group": "security_engine_cel_compile",
       "name": "canonical_http_policy",
       "full_id": "security_engine_cel_compile/canonical_http_policy",
       "estimate_kind": "slope",
-      "estimate_ns": 108876.70512280184,
+      "estimate_ns": 108017.131263189,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 108681.12744992175,
-        "upper_bound": 109088.86787078618
+        "lower_bound": 107880.12684101283,
+        "upper_bound": 108152.62802665783
       },
-      "estimate_standard_error_ns": 104.37555422381587,
-      "mean_ns": 108821.00195468505,
+      "estimate_standard_error_ns": 69.65607983563184,
+      "mean_ns": 107926.531046043,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 108692.25365886242,
-        "upper_bound": 108956.91902002062
+        "lower_bound": 107833.89239608136,
+        "upper_bound": 108022.3527780091
       },
-      "median_ns": 108698.57818877551,
+      "median_ns": 107823.92946859903,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 108547.26666666666,
-        "upper_bound": 108782.8627118644
+        "lower_bound": 107726.85,
+        "upper_bound": 107938.74722222223
       },
-      "slope_ns": 108876.70512280184,
+      "slope_ns": 108017.131263189,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 108681.12744992175,
-        "upper_bound": 109088.86787078618
+        "lower_bound": 107880.12684101283,
+        "upper_bound": 108152.62802665783
       },
-      "slope_standard_error_ns": 104.37555422381587
+      "slope_standard_error_ns": 69.65607983563184
     },
     {
       "group": "security_engine_cel_compile",
       "name": "header_authorization_exists",
       "full_id": "security_engine_cel_compile/header_authorization_exists",
       "estimate_kind": "slope",
-      "estimate_ns": 18700.370782181006,
+      "estimate_ns": 18661.294992857496,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18636.689211001754,
-        "upper_bound": 18774.28885860369
+        "lower_bound": 18629.332351967223,
+        "upper_bound": 18696.39326739906
       },
-      "estimate_standard_error_ns": 35.1972949692842,
-      "mean_ns": 18853.871836393533,
+      "estimate_standard_error_ns": 17.101887047333193,
+      "mean_ns": 18647.68447106566,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18789.090112151796,
-        "upper_bound": 18925.5309469759
+        "lower_bound": 18618.519695476487,
+        "upper_bound": 18677.925121519205
       },
-      "median_ns": 18806.58899371069,
+      "median_ns": 18631.60644599303,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18756.535474936885,
-        "upper_bound": 18903.31266846361
+        "lower_bound": 18604.631528964863,
+        "upper_bound": 18661.0322671156
       },
-      "slope_ns": 18700.370782181006,
+      "slope_ns": 18661.294992857496,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18636.689211001754,
-        "upper_bound": 18774.28885860369
+        "lower_bound": 18629.332351967223,
+        "upper_bound": 18696.39326739906
       },
-      "slope_standard_error_ns": 35.1972949692842
+      "slope_standard_error_ns": 17.101887047333193
     },
     {
       "group": "security_engine_cel_compile",
       "name": "host_contains_google",
       "full_id": "security_engine_cel_compile/host_contains_google",
       "estimate_kind": "slope",
-      "estimate_ns": 18199.06989771216,
+      "estimate_ns": 18116.698037051465,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18159.7696117661,
-        "upper_bound": 18238.032758210156
+        "lower_bound": 18064.857530575675,
+        "upper_bound": 18169.848796964197
       },
-      "estimate_standard_error_ns": 19.95082182603772,
-      "mean_ns": 18150.717216342666,
+      "estimate_standard_error_ns": 26.79584612243721,
+      "mean_ns": 18063.824493107266,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18122.935299322304,
-        "upper_bound": 18179.50943459157
+        "lower_bound": 18029.416022013742,
+        "upper_bound": 18100.102339430367
       },
-      "median_ns": 18110.338076416338,
+      "median_ns": 18024.407792207792,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18081.158974358976,
-        "upper_bound": 18145.477780354566
+        "lower_bound": 17983.764026629935,
+        "upper_bound": 18048.051515151514
       },
-      "slope_ns": 18199.06989771216,
+      "slope_ns": 18116.698037051465,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 18159.7696117661,
-        "upper_bound": 18238.032758210156
+        "lower_bound": 18064.857530575675,
+        "upper_bound": 18169.848796964197
       },
-      "slope_standard_error_ns": 19.95082182603772
+      "slope_standard_error_ns": 26.79584612243721
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "body_contains_secret",
       "full_id": "security_engine_cel_evaluate/body_contains_secret",
       "estimate_kind": "slope",
-      "estimate_ns": 41201.6975163785,
+      "estimate_ns": 41921.215986281466,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 41192.814262397675,
-        "upper_bound": 41211.19989642709
+        "lower_bound": 41655.69874559886,
+        "upper_bound": 42263.57106520375
       },
-      "estimate_standard_error_ns": 4.689926733818006,
-      "mean_ns": 41204.27310805852,
+      "estimate_standard_error_ns": 158.7969527743828,
+      "mean_ns": 41918.8850934315,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 41193.72443027246,
-        "upper_bound": 41215.37039298404
+        "lower_bound": 41759.29792390134,
+        "upper_bound": 42111.090026697435
       },
-      "median_ns": 41196.976535652924,
+      "median_ns": 41669.51012731482,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 41187.1196969697,
-        "upper_bound": 41207.601851851854
+        "lower_bound": 41646.483141447374,
+        "upper_bound": 41695.03272468898
       },
-      "slope_ns": 41201.6975163785,
+      "slope_ns": 41921.215986281466,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 41192.814262397675,
-        "upper_bound": 41211.19989642709
+        "lower_bound": 41655.69874559886,
+        "upper_bound": 42263.57106520375
       },
-      "slope_standard_error_ns": 4.689926733818006
+      "slope_standard_error_ns": 158.7969527743828
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "canonical_http_policy",
       "full_id": "security_engine_cel_evaluate/canonical_http_policy",
       "estimate_kind": "slope",
-      "estimate_ns": 65990.81233141225,
+      "estimate_ns": 66437.99908194177,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 65918.10112854908,
-        "upper_bound": 66069.77107624036
+        "lower_bound": 66349.13388980957,
+        "upper_bound": 66533.12978088834
       },
-      "estimate_standard_error_ns": 38.80155654823492,
-      "mean_ns": 66113.69189151708,
+      "estimate_standard_error_ns": 46.784419029525054,
+      "mean_ns": 66557.50633537103,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 65983.17765673569,
-        "upper_bound": 66322.91237671261
+        "lower_bound": 66413.16938455608,
+        "upper_bound": 66747.98245987389
       },
-      "median_ns": 65943.06349206349,
+      "median_ns": 66370.28494318182,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 65897.7358015729,
-        "upper_bound": 66040.55150645625
+        "lower_bound": 66289.25075075075,
+        "upper_bound": 66412.34583333333
       },
-      "slope_ns": 65990.81233141225,
+      "slope_ns": 66437.99908194177,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 65918.10112854908,
-        "upper_bound": 66069.77107624036
+        "lower_bound": 66349.13388980957,
+        "upper_bound": 66533.12978088834
       },
-      "slope_standard_error_ns": 38.80155654823492
+      "slope_standard_error_ns": 46.784419029525054
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "canonical_http_policy_last_match_100_rules",
       "full_id": "security_engine_cel_evaluate/canonical_http_policy_last_match_100_rules",
       "estimate_kind": "mean",
-      "estimate_ns": 3462586.740000001,
+      "estimate_ns": 3482596.1826666673,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 3459769.8854333353,
-        "upper_bound": 3465701.058666666
+        "lower_bound": 3479700.725950001,
+        "upper_bound": 3485709.079666666
       },
-      "estimate_standard_error_ns": 1512.1450880021312,
-      "mean_ns": 3462586.740000001,
+      "estimate_standard_error_ns": 1536.5018663773371,
+      "mean_ns": 3482596.1826666673,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 3459769.8854333353,
-        "upper_bound": 3465701.058666666
+        "lower_bound": 3479700.725950001,
+        "upper_bound": 3485709.079666666
       },
-      "median_ns": 3458507.4333333336,
+      "median_ns": 3476968.8,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 3456549.2,
-        "upper_bound": 3461739.933333333
+        "lower_bound": 3475553.3666666667,
+        "upper_bound": 3480833.0
       }
     },
     {
@@ -271,152 +271,152 @@
       "name": "header_authorization_exists",
       "full_id": "security_engine_cel_evaluate/header_authorization_exists",
       "estimate_kind": "slope",
-      "estimate_ns": 47008.21312156589,
+      "estimate_ns": 47236.967901370095,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 46948.52894307117,
-        "upper_bound": 47079.49694051769
+        "lower_bound": 47174.502871298,
+        "upper_bound": 47303.61551054636
       },
-      "estimate_standard_error_ns": 33.53857727568761,
-      "mean_ns": 47034.829012776485,
+      "estimate_standard_error_ns": 32.88826520031804,
+      "mean_ns": 47228.07785362607,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 46989.62522702713,
-        "upper_bound": 47083.65915738957
+        "lower_bound": 47175.67453251158,
+        "upper_bound": 47284.012426197085
       },
-      "median_ns": 46962.990196078434,
+      "median_ns": 47168.842396169,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 46930.32517482517,
-        "upper_bound": 46997.27736549165
+        "lower_bound": 47108.99318990868,
+        "upper_bound": 47205.36314247921
       },
-      "slope_ns": 47008.21312156589,
+      "slope_ns": 47236.967901370095,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 46948.52894307117,
-        "upper_bound": 47079.49694051769
+        "lower_bound": 47174.502871298,
+        "upper_bound": 47303.61551054636
       },
-      "slope_standard_error_ns": 33.53857727568761
+      "slope_standard_error_ns": 32.88826520031804
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "host_contains_google",
       "full_id": "security_engine_cel_evaluate/host_contains_google",
       "estimate_kind": "slope",
-      "estimate_ns": 39790.18144063839,
+      "estimate_ns": 39847.42501847199,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39729.96186465747,
-        "upper_bound": 39860.65125189667
+        "lower_bound": 39809.73013600161,
+        "upper_bound": 39889.144266504365
       },
-      "estimate_standard_error_ns": 33.47839838953302,
-      "mean_ns": 39803.03349722385,
+      "estimate_standard_error_ns": 20.33914492617932,
+      "mean_ns": 39886.79990301956,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39741.82289530272,
-        "upper_bound": 39869.671353323945
+        "lower_bound": 39845.407514488186,
+        "upper_bound": 39933.04516524178
       },
-      "median_ns": 39687.67057142858,
+      "median_ns": 39823.81067108533,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39653.910476190475,
-        "upper_bound": 39750.3962962963
+        "lower_bound": 39807.46697435898,
+        "upper_bound": 39867.77297619048
       },
-      "slope_ns": 39790.18144063839,
+      "slope_ns": 39847.42501847199,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39729.96186465747,
-        "upper_bound": 39860.65125189667
+        "lower_bound": 39809.73013600161,
+        "upper_bound": 39889.144266504365
       },
-      "slope_standard_error_ns": 33.47839838953302
+      "slope_standard_error_ns": 20.33914492617932
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "path_starts_admin",
       "full_id": "security_engine_cel_evaluate/path_starts_admin",
       "estimate_kind": "slope",
-      "estimate_ns": 39798.78373991429,
+      "estimate_ns": 39929.679641554605,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39751.5758939646,
-        "upper_bound": 39856.230193026284
+        "lower_bound": 39897.03937111204,
+        "upper_bound": 39962.97172223783
       },
-      "estimate_standard_error_ns": 26.676318822859567,
-      "mean_ns": 39905.45355591433,
+      "estimate_standard_error_ns": 16.88727171783761,
+      "mean_ns": 39990.33403708109,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39811.06982632744,
-        "upper_bound": 40018.68515277598
+        "lower_bound": 39934.209519524695,
+        "upper_bound": 40055.546309644065
       },
-      "median_ns": 39734.02548701299,
+      "median_ns": 39881.00111688311,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39677.77609756098,
-        "upper_bound": 39797.42212765957
+        "lower_bound": 39862.462857142855,
+        "upper_bound": 39910.8643225504
       },
-      "slope_ns": 39798.78373991429,
+      "slope_ns": 39929.679641554605,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39751.5758939646,
-        "upper_bound": 39856.230193026284
+        "lower_bound": 39897.03937111204,
+        "upper_bound": 39962.97172223783
       },
-      "slope_standard_error_ns": 26.676318822859567
+      "slope_standard_error_ns": 16.88727171783761
     },
     {
       "group": "security_engine_cel_evaluate",
       "name": "url_contains_google",
       "full_id": "security_engine_cel_evaluate/url_contains_google",
       "estimate_kind": "slope",
-      "estimate_ns": 39901.47261711246,
+      "estimate_ns": 40281.84533837742,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39831.84165806349,
-        "upper_bound": 39974.014812308276
+        "lower_bound": 40023.27746362472,
+        "upper_bound": 40607.31238288624
       },
-      "estimate_standard_error_ns": 36.28502588291847,
-      "mean_ns": 39817.8611914462,
+      "estimate_standard_error_ns": 149.68645433288933,
+      "mean_ns": 40266.256964660875,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39762.966871269986,
-        "upper_bound": 39877.47494538196
+        "lower_bound": 39990.71005204153,
+        "upper_bound": 40591.29601910992
       },
-      "median_ns": 39736.66906114266,
+      "median_ns": 39803.044401913874,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39710.64,
-        "upper_bound": 39771.85705882353
+        "lower_bound": 39778.943184584175,
+        "upper_bound": 39852.07872340426
       },
-      "slope_ns": 39901.47261711246,
+      "slope_ns": 40281.84533837742,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 39831.84165806349,
-        "upper_bound": 39974.014812308276
+        "lower_bound": 40023.27746362472,
+        "upper_bound": 40607.31238288624
       },
-      "slope_standard_error_ns": 36.28502588291847
+      "slope_standard_error_ns": 149.68645433288933
     },
     {
       "group": "security_engine_detection_evaluate",
       "name": "canonical_http_policy_last_match_100_rules",
       "full_id": "security_engine_detection_evaluate/canonical_http_policy_last_match_100_rules",
       "estimate_kind": "mean",
-      "estimate_ns": 3445187.7606666666,
+      "estimate_ns": 3467377.9153333334,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 3440001.818233334,
-        "upper_bound": 3451200.119566667
+        "lower_bound": 3464494.9167333334,
+        "upper_bound": 3470570.7887166645
       },
-      "estimate_standard_error_ns": 2853.446792683575,
-      "mean_ns": 3445187.7606666666,
+      "estimate_standard_error_ns": 1550.818162374867,
+      "mean_ns": 3467377.9153333334,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 3440001.818233334,
-        "upper_bound": 3451200.119566667
+        "lower_bound": 3464494.9167333334,
+        "upper_bound": 3470570.7887166645
       },
-      "median_ns": 3440702.5666666664,
+      "median_ns": 3463024.166666667,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 3437767.4,
-        "upper_bound": 3442331.8666666667
+        "lower_bound": 3461311.533333333,
+        "upper_bound": 3465627.533333333
       }
     },
     {
@@ -424,326 +424,326 @@
       "name": "canonical_http_policy_single_rule",
       "full_id": "security_engine_detection_evaluate/canonical_http_policy_single_rule",
       "estimate_kind": "slope",
-      "estimate_ns": 66862.07566169155,
+      "estimate_ns": 67306.92354544111,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 66754.697817975,
-        "upper_bound": 66999.98342488217
+        "lower_bound": 66794.7649233349,
+        "upper_bound": 68276.87830162096
       },
-      "estimate_standard_error_ns": 63.08003114759443,
-      "mean_ns": 66792.22167737098,
+      "estimate_standard_error_ns": 418.557098118558,
+      "mean_ns": 67107.4426749716,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 66714.88911538043,
-        "upper_bound": 66891.05728649585
+        "lower_bound": 66819.5468531541,
+        "upper_bound": 67572.89304573134
       },
-      "median_ns": 66691.73157847128,
+      "median_ns": 66829.95514337491,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 66635.04797036081,
-        "upper_bound": 66763.41544715448
+        "lower_bound": 66772.01246348588,
+        "upper_bound": 66883.75398918187
       },
-      "slope_ns": 66862.07566169155,
+      "slope_ns": 67306.92354544111,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 66754.697817975,
-        "upper_bound": 66999.98342488217
+        "lower_bound": 66794.7649233349,
+        "upper_bound": 68276.87830162096
       },
-      "slope_standard_error_ns": 63.08003114759443
+      "slope_standard_error_ns": 418.557098118558
     },
     {
       "group": "security_engine_native_lookup",
       "name": "canonical_http_policy",
       "full_id": "security_engine_native_lookup/canonical_http_policy",
       "estimate_kind": "slope",
-      "estimate_ns": 40.34829405430401,
+      "estimate_ns": 40.60054876333673,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 40.3285178101791,
-        "upper_bound": 40.368615758006904
+        "lower_bound": 40.56649216122666,
+        "upper_bound": 40.63411717140537
       },
-      "estimate_standard_error_ns": 0.010201084891952797,
-      "mean_ns": 40.324753451276,
+      "estimate_standard_error_ns": 0.017201773924277745,
+      "mean_ns": 40.52717330414264,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 40.29784462324601,
-        "upper_bound": 40.35102136807558
+        "lower_bound": 40.489873699895625,
+        "upper_bound": 40.5635736367704
       },
-      "median_ns": 40.32385761615623,
+      "median_ns": 40.523809209175916,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 40.28918547626824,
-        "upper_bound": 40.34784893996128
+        "lower_bound": 40.48448883636215,
+        "upper_bound": 40.57123642255493
       },
-      "slope_ns": 40.34829405430401,
+      "slope_ns": 40.60054876333673,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 40.3285178101791,
-        "upper_bound": 40.368615758006904
+        "lower_bound": 40.56649216122666,
+        "upper_bound": 40.63411717140537
       },
-      "slope_standard_error_ns": 0.010201084891952797
+      "slope_standard_error_ns": 0.017201773924277745
     },
     {
       "group": "security_engine_policy_context",
       "name": "project_and_serialize_policy_context",
       "full_id": "security_engine_policy_context/project_and_serialize_policy_context",
       "estimate_kind": "slope",
-      "estimate_ns": 6813.714835088089,
+      "estimate_ns": 6840.903177101858,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 6807.958064389745,
-        "upper_bound": 6820.1293114135115
+        "lower_bound": 6834.347983840417,
+        "upper_bound": 6847.757405902792
       },
-      "estimate_standard_error_ns": 3.1216296501570864,
-      "mean_ns": 6806.197248271388,
+      "estimate_standard_error_ns": 3.422974592876782,
+      "mean_ns": 6837.310858534692,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 6802.278179486773,
-        "upper_bound": 6810.523840264801
+        "lower_bound": 6831.4923215379085,
+        "upper_bound": 6843.61733279942
       },
-      "median_ns": 6801.793971310416,
+      "median_ns": 6826.312922110374,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 6799.071654373024,
-        "upper_bound": 6805.973698630137
+        "lower_bound": 6821.168965517241,
+        "upper_bound": 6841.471238244514
       },
-      "slope_ns": 6813.714835088089,
+      "slope_ns": 6840.903177101858,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 6807.958064389745,
-        "upper_bound": 6820.1293114135115
+        "lower_bound": 6834.347983840417,
+        "upper_bound": 6847.757405902792
       },
-      "slope_standard_error_ns": 3.1216296501570864
+      "slope_standard_error_ns": 3.422974592876782
     },
     {
       "group": "security_engine_policy_context",
       "name": "project_security_event_to_policy_context",
       "full_id": "security_engine_policy_context/project_security_event_to_policy_context",
       "estimate_kind": "slope",
-      "estimate_ns": 911.187149434135,
+      "estimate_ns": 1189.863045183214,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 910.6551716434553,
-        "upper_bound": 911.7482643216897
+        "lower_bound": 1188.7614258605022,
+        "upper_bound": 1191.183865163781
       },
-      "estimate_standard_error_ns": 0.2801850689888216,
-      "mean_ns": 910.9104137774954,
+      "estimate_standard_error_ns": 0.6181541195700454,
+      "mean_ns": 1189.1349415205066,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 910.4308782276973,
-        "upper_bound": 911.422472071416
+        "lower_bound": 1188.2801899361293,
+        "upper_bound": 1190.1075229560133
       },
-      "median_ns": 910.3398468232108,
+      "median_ns": 1188.5313503803886,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 909.7957197501573,
-        "upper_bound": 910.6234995838262
+        "lower_bound": 1187.831352636128,
+        "upper_bound": 1189.6164772727273
       },
-      "slope_ns": 911.187149434135,
+      "slope_ns": 1189.863045183214,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 910.6551716434553,
-        "upper_bound": 911.7482643216897
+        "lower_bound": 1188.7614258605022,
+        "upper_bound": 1191.183865163781
       },
-      "slope_standard_error_ns": 0.2801850689888216
+      "slope_standard_error_ns": 0.6181541195700454
     },
     {
       "group": "security_engine_runtime_registry",
       "name": "add_or_update_single_rule",
       "full_id": "security_engine_runtime_registry/add_or_update_single_rule",
       "estimate_kind": "slope",
-      "estimate_ns": 189.601102166381,
+      "estimate_ns": 188.83527831508925,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 189.5005199238512,
-        "upper_bound": 189.71291016892226
+        "lower_bound": 188.65404417385884,
+        "upper_bound": 189.0433384441826
       },
-      "estimate_standard_error_ns": 0.05411109079522879,
-      "mean_ns": 189.94551897018442,
+      "estimate_standard_error_ns": 0.09897340854383274,
+      "mean_ns": 188.6574663284837,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 189.71016637555365,
-        "upper_bound": 190.23214281714468
+        "lower_bound": 188.45388767615162,
+        "upper_bound": 188.90085058802507
       },
-      "median_ns": 189.59422646784043,
+      "median_ns": 188.40715178820568,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 189.4787356089475,
-        "upper_bound": 189.7013837360546
+        "lower_bound": 188.34494281837564,
+        "upper_bound": 188.5770498158558
       },
-      "slope_ns": 189.601102166381,
+      "slope_ns": 188.83527831508925,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 189.5005199238512,
-        "upper_bound": 189.71291016892226
+        "lower_bound": 188.65404417385884,
+        "upper_bound": 189.0433384441826
       },
-      "slope_standard_error_ns": 0.05411109079522879
+      "slope_standard_error_ns": 0.09897340854383274
     },
     {
       "group": "security_engine_runtime_registry",
       "name": "enabled_enforcement_rules_100_rules",
       "full_id": "security_engine_runtime_registry/enabled_enforcement_rules_100_rules",
       "estimate_kind": "slope",
-      "estimate_ns": 23766.222578831443,
+      "estimate_ns": 23670.150992350835,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 23746.02775071206,
-        "upper_bound": 23790.039633571952
+        "lower_bound": 23641.287108780587,
+        "upper_bound": 23701.819055403314
       },
-      "estimate_standard_error_ns": 11.23260932179515,
-      "mean_ns": 23779.644489209295,
+      "estimate_standard_error_ns": 15.448744254680012,
+      "mean_ns": 23699.303721053744,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 23759.92277205839,
-        "upper_bound": 23801.230341191782
+        "lower_bound": 23658.584782337774,
+        "upper_bound": 23745.815174645035
       },
-      "median_ns": 23764.198953823954,
+      "median_ns": 23638.770635828703,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 23741.64285714286,
-        "upper_bound": 23785.918642718716
+        "lower_bound": 23618.741147741148,
+        "upper_bound": 23651.388365137056
       },
-      "slope_ns": 23766.222578831443,
+      "slope_ns": 23670.150992350835,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 23746.02775071206,
-        "upper_bound": 23790.039633571952
+        "lower_bound": 23641.287108780587,
+        "upper_bound": 23701.819055403314
       },
-      "slope_standard_error_ns": 11.23260932179515
+      "slope_standard_error_ns": 15.448744254680012
     },
     {
       "group": "security_engine_runtime_registry",
       "name": "project_and_compile_detection_100_rules",
       "full_id": "security_engine_runtime_registry/project_and_compile_detection_100_rules",
       "estimate_kind": "slope",
-      "estimate_ns": 533327.08600266,
+      "estimate_ns": 534038.1928269543,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 532546.5351782112,
-        "upper_bound": 534189.440435571
+        "lower_bound": 532985.6034267063,
+        "upper_bound": 535107.4532048549
       },
-      "estimate_standard_error_ns": 419.6714095756196,
-      "mean_ns": 534170.1760341529,
+      "estimate_standard_error_ns": 543.2768639959703,
+      "mean_ns": 533440.1462278789,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 533122.7419211004,
-        "upper_bound": 535587.8051700959
+        "lower_bound": 532725.2742534862,
+        "upper_bound": 534171.7295045728
       },
-      "median_ns": 532785.7085365853,
+      "median_ns": 532826.1607733665,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 532144.4880952381,
-        "upper_bound": 533871.3174603175
+        "lower_bound": 532292.8506944445,
+        "upper_bound": 533708.7569444445
       },
-      "slope_ns": 533327.08600266,
+      "slope_ns": 534038.1928269543,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 532546.5351782112,
-        "upper_bound": 534189.440435571
+        "lower_bound": 532985.6034267063,
+        "upper_bound": 535107.4532048549
       },
-      "slope_standard_error_ns": 419.6714095756196
+      "slope_standard_error_ns": 543.2768639959703
     },
     {
       "group": "security_engine_runtime_registry",
       "name": "project_and_compile_enforcement_100_rules",
       "full_id": "security_engine_runtime_registry/project_and_compile_enforcement_100_rules",
       "estimate_kind": "slope",
-      "estimate_ns": 510564.0687838037,
+      "estimate_ns": 513118.64701640315,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 509977.8647593281,
-        "upper_bound": 511203.768403485
+        "lower_bound": 511604.5476940446,
+        "upper_bound": 514805.5887152307
       },
-      "estimate_standard_error_ns": 312.375006818445,
-      "mean_ns": 510924.75861085847,
+      "estimate_standard_error_ns": 818.0012039472139,
+      "mean_ns": 513878.07611896424,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 510331.7269384296,
-        "upper_bound": 511587.96802459663
+        "lower_bound": 512667.8206512149,
+        "upper_bound": 515165.1867635603
       },
-      "median_ns": 510562.4116666666,
+      "median_ns": 512448.1041666666,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 509791.4411764706,
-        "upper_bound": 511251.17142857146
+        "lower_bound": 511144.9335619919,
+        "upper_bound": 513726.9413235294
       },
-      "slope_ns": 510564.0687838037,
+      "slope_ns": 513118.64701640315,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 509977.8647593281,
-        "upper_bound": 511203.768403485
+        "lower_bound": 511604.5476940446,
+        "upper_bound": 514805.5887152307
       },
-      "slope_standard_error_ns": 312.375006818445
+      "slope_standard_error_ns": 818.0012039472139
     },
     {
       "group": "security_engine_runtime_registry",
       "name": "rebuild_engine_from_100_enforcement_100_detection",
       "full_id": "security_engine_runtime_registry/rebuild_engine_from_100_enforcement_100_detection",
       "estimate_kind": "slope",
-      "estimate_ns": 1047637.1032333382,
+      "estimate_ns": 1050163.6998551795,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 1045431.0102986513,
-        "upper_bound": 1050077.840667016
+        "lower_bound": 1048461.3395146413,
+        "upper_bound": 1052143.4902400817
       },
-      "estimate_standard_error_ns": 1192.4296336156824,
-      "mean_ns": 1049594.541397114,
+      "estimate_standard_error_ns": 944.6671396907171,
+      "mean_ns": 1051927.8016643536,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 1047502.7133129331,
-        "upper_bound": 1051823.1857916112
+        "lower_bound": 1050276.646330756,
+        "upper_bound": 1053693.5582547646
       },
-      "median_ns": 1045965.1692307693,
+      "median_ns": 1049304.581755594,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 1044393.8571428572,
-        "upper_bound": 1048224.8333333334
+        "lower_bound": 1048279.1481481482,
+        "upper_bound": 1050971.2931034483
       },
-      "slope_ns": 1047637.1032333382,
+      "slope_ns": 1050163.6998551795,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 1045431.0102986513,
-        "upper_bound": 1050077.840667016
+        "lower_bound": 1048461.3395146413,
+        "upper_bound": 1052143.4902400817
       },
-      "slope_standard_error_ns": 1192.4296336156824
+      "slope_standard_error_ns": 944.6671396907171
     },
     {
       "group": "security_engine_runtime_registry",
       "name": "update_existing_then_rebuild_100_rule_plan",
       "full_id": "security_engine_runtime_registry/update_existing_then_rebuild_100_rule_plan",
       "estimate_kind": "slope",
-      "estimate_ns": 691098.0863543667,
+      "estimate_ns": 696456.5991340328,
       "estimate_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 690173.8464528567,
-        "upper_bound": 692101.8283897085
+        "lower_bound": 695447.7877597477,
+        "upper_bound": 697534.0392386139
       },
-      "estimate_standard_error_ns": 492.2881971656195,
-      "mean_ns": 690784.692771116,
+      "estimate_standard_error_ns": 530.725262782917,
+      "mean_ns": 699609.589029557,
       "mean_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 689985.5868652712,
-        "upper_bound": 691660.7658000443
+        "lower_bound": 697208.6571443415,
+        "upper_bound": 703219.8288250755
       },
-      "median_ns": 690389.5886113297,
+      "median_ns": 696849.6022012578,
       "median_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 689229.0277777778,
-        "upper_bound": 690956.0789473684
+        "lower_bound": 695608.0254237289,
+        "upper_bound": 697744.4399425287
       },
-      "slope_ns": 691098.0863543667,
+      "slope_ns": 696456.5991340328,
       "slope_ci_ns": {
         "confidence_level": 0.95,
-        "lower_bound": 690173.8464528567,
-        "upper_bound": 692101.8283897085
+        "lower_bound": 695447.7877597477,
+        "upper_bound": 697534.0392386139
       },
-      "slope_standard_error_ns": 492.2881971656195
+      "slope_standard_error_ns": 530.725262782917
     }
   ],
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780088690.1642892,
-  "recorded_at_utc": "2026-05-29T21:04:50.164297+00:00",
+  "recorded_at": 1780095412.0340378,
+  "recorded_at_utc": "2026-05-29T22:56:52.034049+00:00",
   "command": "cargo bench -p capsem-security-engine --bench security_engine_cel",
   "host": {
     "platform": "Linux",
@@ -763,7 +763,7 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "0dbd5099bd084a30b6efd01b7c56513f49b3607c",
+    "commit": "ba8f260e593bc89bdfc70cfb4d67b1452fd8a028",
     "dirty": false,
     "source_dirty": false,
     "dirty_paths": []
