@@ -609,7 +609,7 @@ pub(crate) async fn handle_ipc_connection(
                         {
                             capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
                                 vm_for_stop.blocking_lock().stop()
-                            })?
+                            })
                         }
                         #[cfg(not(target_os = "macos"))]
                         {
