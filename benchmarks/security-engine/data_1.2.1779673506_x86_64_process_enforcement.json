@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "vm_originated_process_enforcement",
   "version": "1.2.1779673506",
-  "source_commit": "e75cacf9",
-  "timestamp": 1780074225.0056825,
+  "source_commit": "0dbd5099",
+  "timestamp": 1780088942.1002984,
   "arch": "x86_64",
   "host": {
     "platform": "Linux",
@@ -32,28 +32,28 @@
   "runs": 8,
   "gate_ms": 750,
   "rule": {
-    "id": "runtime.block-shell-bench.e5cd3ff7",
+    "id": "runtime.block-shell-bench.d9881418",
     "pack_id": "runtime-benchmark",
     "condition": "process.activity.operation == 'exec' && process.activity.command_class == 'shell'",
     "decision": "block"
   },
   "operations": {
     "blocked_process_exec_ms": {
-      "min": 13.758,
-      "mean": 14.308,
-      "median": 14.329,
-      "p95": 14.759,
-      "p99": 14.759,
-      "max": 14.759,
+      "min": 13.851,
+      "mean": 14.547,
+      "median": 14.607,
+      "p95": 15.068,
+      "p99": 15.068,
+      "max": 15.068,
       "values": [
-        14.759,
-        14.511,
-        14.197,
-        14.306,
-        13.758,
-        14.351,
-        14.161,
-        14.425
+        14.563,
+        14.874,
+        14.5,
+        14.754,
+        14.65,
+        15.068,
+        14.117,
+        13.851
       ]
     }
   },
@@ -62,23 +62,23 @@
       "row_count": 8,
       "distinct_event_ids": 8,
       "blocked_count": 8,
-      "vm_id": "secbench-d2d17090",
+      "vm_id": "secbench-80b48a06",
       "profile_id": "profile-asset-boot",
       "user_id": "elieb_google_com",
       "process_operation": "exec",
       "process_command_class": "shell",
-      "rule_id": "runtime.block-shell-bench.e5cd3ff7",
+      "rule_id": "runtime.block-shell-bench.d9881418",
       "reason": "shell exec blocked by security benchmark"
     },
     "runtime_match_count": 8,
-    "runtime_last_event_id": "process-fa5647db6f6b466b",
+    "runtime_last_event_id": "process-de5784e91b165555",
     "logs_exposed_security_decision": true
   },
   "project_version": "1.2.1779673506",
-  "recorded_at": 1780074225.0061026,
-  "recorded_at_utc": "2026-05-29T17:03:45.006105+00:00",
+  "recorded_at": 1780088942.100744,
+  "recorded_at_utc": "2026-05-29T21:09:02.100746+00:00",
   "git": {
-    "commit": "e75cacf92bb3e0c41c14109b0204bd6987c7ed57",
+    "commit": "0dbd5099bd084a30b6efd01b7c56513f49b3607c",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [
@@ -87,10 +87,8 @@
       "benchmarks/host-native/data_1.2.1779673506_x86_64.json",
       "benchmarks/lifecycle/data_1.2.1779673506_x86_64.json",
       "benchmarks/parallel/data_1.2.1779673506_x86_64.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_dns_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_http_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_mcp_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_process_enforcement.json"
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_security_packs_microbench.json"
     ]
   }
 }

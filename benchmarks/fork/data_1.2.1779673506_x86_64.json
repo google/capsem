@@ -1,54 +1,54 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780074151.254175,
+  "timestamp": 1780088829.6700883,
   "runs": 3,
   "fork": {
     "fork_ms": {
-      "min": 114.6,
-      "mean": 115.1,
-      "max": 115.4,
+      "min": 99.4,
+      "mean": 113.6,
+      "max": 127.1,
       "values": [
-        114.6,
-        115.4,
-        115.3
+        127.1,
+        114.3,
+        99.4
       ]
     },
     "image_size_mb": {
-      "min": 91.8,
-      "mean": 101.1,
+      "min": 73.8,
+      "mean": 93.8,
       "max": 105.8,
       "values": [
-        91.79,
         105.79,
-        105.79
+        101.79,
+        73.84
       ]
     },
     "boot_provision_ms": {
-      "min": 1485.6,
-      "mean": 1514.1,
-      "max": 1529.4,
+      "min": 1458.4,
+      "mean": 1492.1,
+      "max": 1533.6,
       "values": [
-        1529.4,
-        1485.6,
-        1527.4
+        1533.6,
+        1484.4,
+        1458.4
       ]
     },
     "boot_ready_ms": {
-      "min": 26.1,
-      "mean": 29.8,
-      "max": 35.3,
+      "min": 35.9,
+      "mean": 47.0,
+      "max": 59.4,
       "values": [
-        26.1,
-        35.3,
-        28.0
+        59.4,
+        35.9,
+        45.8
       ]
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780074151.254563,
-  "recorded_at_utc": "2026-05-29T17:02:31.254566+00:00",
+  "recorded_at": 1780088829.670704,
+  "recorded_at_utc": "2026-05-29T21:07:09.670707+00:00",
   "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs",
   "host": {
     "platform": "Linux",
@@ -68,19 +68,15 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "e75cacf92bb3e0c41c14109b0204bd6987c7ed57",
+    "commit": "0dbd5099bd084a30b6efd01b7c56513f49b3607c",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [
       "benchmarks/capsem-bench/data_1.2.1779673506_x86_64.json",
-      "benchmarks/fork/data_1.2.1779673506_x86_64.json",
       "benchmarks/host-native/data_1.2.1779673506_x86_64.json",
       "benchmarks/lifecycle/data_1.2.1779673506_x86_64.json",
-      "benchmarks/parallel/data_1.2.1779673506_x86_64.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_dns_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_http_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_mcp_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_process_enforcement.json"
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_security_packs_microbench.json"
     ]
   }
 }

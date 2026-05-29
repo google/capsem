@@ -1,52 +1,52 @@
 {
   "kind": "host_native_baseline",
   "version": "0.1.0",
-  "timestamp": 1780074100.7892334,
+  "timestamp": 1780088780.6633916,
   "filesystem": {
-    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmplcmmc0kh",
+    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmp1fcliten",
     "disk_usage": {
       "total_bytes": 519537790976,
-      "used_bytes": 291159887872,
-      "free_bytes": 228361125888
+      "used_bytes": 293828059136,
+      "free_bytes": 225692954624
     },
     "df": {
       "source": "/dev/root",
       "fstype": "ext4",
       "blocks_1k": 507361124,
-      "used_1k": 284335828,
-      "available_1k": 223008912,
+      "used_1k": 286941464,
+      "available_1k": 220403276,
       "capacity": "57%",
       "mount": "/"
     }
   },
   "disk": {
-    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmplcmmc0kh",
+    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmp1fcliten",
     "size_mb": 256,
     "seq_write": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 583.2,
-      "throughput_mbps": 439.0
+      "duration_ms": 576.0,
+      "throughput_mbps": 444.4
     },
     "seq_read": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 40.6,
-      "throughput_mbps": 6298.8
+      "duration_ms": 41.8,
+      "throughput_mbps": 6127.7
     },
     "rand_write_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 15173.8,
-      "iops": 659.0,
-      "throughput_mbps": 2.6
+      "duration_ms": 13921.1,
+      "iops": 718.3,
+      "throughput_mbps": 2.8
     },
     "rand_read_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 28.4,
-      "iops": 351945.7,
-      "throughput_mbps": 1374.8
+      "duration_ms": 26.3,
+      "iops": 380194.0,
+      "throughput_mbps": 1485.1
     }
   },
   "startup": {
@@ -59,11 +59,11 @@
         ],
         "timings_ms": [
           1.7,
-          1.6,
-          1.5
+          1.5,
+          1.4
         ],
-        "min_ms": 1.5,
-        "mean_ms": 1.6,
+        "min_ms": 1.4,
+        "mean_ms": 1.5,
         "max_ms": 1.7
       },
       "node": {
@@ -72,13 +72,13 @@
           "--version"
         ],
         "timings_ms": [
-          64.0,
-          32.3,
-          32.2
+          63.9,
+          32.1,
+          32.1
         ],
-        "min_ms": 32.2,
-        "mean_ms": 42.8,
-        "max_ms": 64.0
+        "min_ms": 32.1,
+        "mean_ms": 42.7,
+        "max_ms": 63.9
       },
       "claude": {
         "command": [
@@ -101,12 +101,12 @@
         ],
         "timings_ms": [
           15.8,
-          16.0,
-          16.0
+          15.9,
+          15.9
         ],
         "min_ms": 15.8,
         "mean_ms": 15.9,
-        "max_ms": 16.0
+        "max_ms": 15.9
       }
     }
   },
@@ -114,17 +114,17 @@
     "count": 5000,
     "files_sampled": 128,
     "bytes_read": 3280000,
-    "duration_ms": 45.8,
-    "ops_per_sec": 109167.0,
-    "throughput_mbps": 68.3
+    "duration_ms": 28.5,
+    "ops_per_sec": 175149.4,
+    "throughput_mbps": 109.6
   },
   "metadata_stat": {
     "entries": 5050,
     "files": 5000,
     "dirs": 50,
     "errors": 0,
-    "duration_ms": 23.2,
-    "stats_per_sec": 217293.8
+    "duration_ms": 22.5,
+    "stats_per_sec": 224792.5
   },
   "io_shape": {
     "sequential_block_size": 1048576,
@@ -134,8 +134,8 @@
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780074117.8641124,
-  "recorded_at_utc": "2026-05-29T17:01:57.864117+00:00",
+  "recorded_at": 1780088796.4384112,
+  "recorded_at_utc": "2026-05-29T21:06:36.438416+00:00",
   "command": "uv run pytest tests/capsem-serial/test_host_native_benchmark.py -xvs",
   "host": {
     "platform": "Linux",
@@ -155,19 +155,13 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "e75cacf92bb3e0c41c14109b0204bd6987c7ed57",
+    "commit": "0dbd5099bd084a30b6efd01b7c56513f49b3607c",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [
       "benchmarks/capsem-bench/data_1.2.1779673506_x86_64.json",
-      "benchmarks/fork/data_1.2.1779673506_x86_64.json",
-      "benchmarks/host-native/data_1.2.1779673506_x86_64.json",
-      "benchmarks/lifecycle/data_1.2.1779673506_x86_64.json",
-      "benchmarks/parallel/data_1.2.1779673506_x86_64.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_dns_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_http_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_mcp_request_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1779673506_x86_64_process_enforcement.json"
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1779673506_x86_64_security_packs_microbench.json"
     ]
   }
 }
