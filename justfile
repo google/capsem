@@ -491,7 +491,7 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
-        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=89
 
     echo "=== Python: Build chain tests (serial) ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ -v --tb=short

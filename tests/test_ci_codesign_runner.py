@@ -91,6 +91,21 @@ def test_ci_python_schema_step_does_not_collect_vm_suites():
     assert "--cov-fail-under=90" not in section
 
 
+def test_local_python_coverage_floor_matches_ci_schema_gate():
+    """Local full-test Python coverage should not drift from CI's Python floor."""
+    justfile = (REPO_ROOT / "justfile").read_text()
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+
+    just_match = re.search(r"--cov-fail-under=(\d+)", justfile)
+    assert just_match, "just test Python coverage floor missing"
+
+    ci_section = workflow.split("      - name: Python schema tests with coverage\n", 1)[1]
+    ci_section = ci_section.split("\n      # Python integration tests that need no VM", 1)[0]
+    ci_match = re.search(r"--cov-fail-under=(\d+)", ci_section)
+    assert ci_match, "CI Python coverage floor missing"
+    assert just_match.group(1) == ci_match.group(1)
+
+
 def test_pr_non_vm_integration_lane_has_no_generated_asset_prereqs():
     """Clean PR runners must not execute suites that require built assets/signing."""
     workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yaml").read_text()

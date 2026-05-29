@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed full-test setup/gateway harness contracts so `/setup/assets` may report
   per-asset download progress and mock terminal WebSocket teardown cannot race
   its shutdown event under parallel pytest.
+- Fixed the local Python coverage gate to match the CI-owned 89% schema floor,
+  with a regression test that prevents local/CI coverage threshold drift.
 - Fixed the Linux full-test gate under current Rust by cleaning KVM, service,
   and app clippy warnings that were promoted to errors.
 - Fixed native guest-agent rebuilds so readonly `target/linux-agent` outputs
