@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `just benchmark-compare` and `scripts/compare_benchmark_artifacts.py`
   to turn committed Linux/macOS benchmark artifacts into ratio and percentage
   comparisons while making missing lanes explicit.
+- Added benchmark contract tests proving the canonical `just benchmark` path
+  includes Criterion archiving plus the required serial artifact lanes,
+  including host-native, lifecycle, fork, and VM-originated security benchmarks.
 
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
