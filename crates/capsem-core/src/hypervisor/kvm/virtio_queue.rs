@@ -213,13 +213,26 @@ impl VirtQueue {
 
     /// Push a used descriptor chain back to the used ring.
     pub fn push_used(&mut self, head: u16, len: u32) {
+        self.push_used_deferred(head, len);
+        self.flush_used();
+    }
+
+    /// Push a used descriptor without publishing the used index yet.
+    ///
+    /// Devices that complete multiple descriptor chains from one notification
+    /// can call this repeatedly and publish them with one `flush_used()`.
+    pub fn push_used_deferred(&mut self, head: u16, len: u32) {
         let used_index = self.next_used % self.size;
         self.write_used_ring(used_index, head, len);
+        self.next_used = self.next_used.wrapping_add(1);
+    }
+
+    /// Publish all deferred used ring entries to the driver.
+    pub fn flush_used(&self) {
         // Release: ensure used ring entry writes are visible to the driver
         // before the used index update. Required by virtio spec when
         // device and driver run on different threads.
         fence(Ordering::Release);
-        self.next_used = self.next_used.wrapping_add(1);
         self.write_used_idx(self.next_used);
     }
 
@@ -607,6 +620,24 @@ mod tests {
         assert_eq!((id, len), (3, 200));
         let (id, len) = read_used_entry(&mem, used_gpa, 2);
         assert_eq!((id, len), (7, 300));
+    }
+
+    #[test]
+    fn push_used_deferred_publishes_idx_only_on_flush() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        q.push_used_deferred(0, 100);
+        q.push_used_deferred(3, 200);
+
+        assert_eq!(read_used_idx(&mem, used_gpa), 0);
+        assert_eq!(read_used_entry(&mem, used_gpa, 0), (0, 100));
+        assert_eq!(read_used_entry(&mem, used_gpa, 1), (3, 200));
+
+        q.flush_used();
+
+        assert_eq!(read_used_idx(&mem, used_gpa), 2);
     }
 
     // -----------------------------------------------------------------------

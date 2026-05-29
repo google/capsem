@@ -30,6 +30,7 @@ const QUEUE_NUM_MAX: u64 = 0x034;
 const QUEUE_NUM: u64 = 0x038;
 const QUEUE_READY: u64 = 0x044;
 const QUEUE_NOTIFY: u64 = 0x050;
+pub(super) const QUEUE_NOTIFY_OFFSET: u64 = QUEUE_NOTIFY;
 const INTERRUPT_STATUS: u64 = 0x060;
 const INTERRUPT_ACK: u64 = 0x064;
 const STATUS: u64 = 0x070;

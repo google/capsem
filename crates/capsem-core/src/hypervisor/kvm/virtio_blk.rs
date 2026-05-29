@@ -5,8 +5,11 @@
 //! and write/discard rejection.
 
 use std::io::{Seek, SeekFrom, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 
@@ -56,6 +59,16 @@ pub(super) struct VirtioBlockDevice {
     device_id: [u8; VIRTIO_BLK_ID_LEN],
     queue: Option<VirtQueue>,
     mem: Option<GuestMemoryRef>,
+    irq_fd: Option<RawFd>,
+    interrupt_status: Option<Arc<AtomicU32>>,
+    notify_fd: Option<OwnedFd>,
+    control_tx: Option<mpsc::Sender<BlockWorkerCommand>>,
+    worker_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+enum BlockWorkerCommand {
+    Drain(mpsc::Sender<()>),
+    Stop,
 }
 
 impl VirtioBlockDevice {
@@ -90,20 +103,34 @@ impl VirtioBlockDevice {
             device_id,
             queue: None,
             mem: None,
+            irq_fd: None,
+            interrupt_status: None,
+            notify_fd: None,
+            control_tx: None,
+            worker_handle: None,
         })
+    }
+
+    pub fn with_async_notify(
+        mut self,
+        irq_fd: RawFd,
+        interrupt_status: Arc<AtomicU32>,
+        notify_fd: OwnedFd,
+    ) -> Self {
+        self.irq_fd = Some(irq_fd);
+        self.interrupt_status = Some(interrupt_status);
+        self.notify_fd = Some(notify_fd);
+        self
     }
 
     /// Process a read request: file -> guest memory.
     fn process_read(
-        &mut self,
+        file: &std::fs::File,
+        mem: &GuestMemoryRef,
+        capacity_sectors: u64,
         sector: u64,
-        data_descs: &[(u64, u32)], // (gpa, len) pairs
+        data_descs: &[(u64, u32)],
     ) -> u8 {
-        let mem = match self.mem.as_ref() {
-            Some(m) => m,
-            None => return VIRTIO_BLK_S_IOERR,
-        };
-
         let offset = match sector.checked_mul(SECTOR_SIZE) {
             Some(o) => o,
             None => return VIRTIO_BLK_S_IOERR,
@@ -112,7 +139,7 @@ impl VirtioBlockDevice {
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
         if offset
             .checked_add(total_len)
-            .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
+            .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
         {
             return VIRTIO_BLK_S_IOERR;
         }
@@ -121,7 +148,7 @@ impl VirtioBlockDevice {
             Some(iovecs) => iovecs,
             None => return VIRTIO_BLK_S_IOERR,
         };
-        if Self::preadv_all(self.file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
+        if Self::preadv_all(file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
             VIRTIO_BLK_S_OK
         } else {
             VIRTIO_BLK_S_IOERR
@@ -129,15 +156,17 @@ impl VirtioBlockDevice {
     }
 
     /// Process a write request: guest memory -> file.
-    fn process_write(&mut self, sector: u64, data_descs: &[(u64, u32)]) -> u8 {
-        if self.read_only {
+    fn process_write(
+        file: &std::fs::File,
+        mem: &GuestMemoryRef,
+        read_only: bool,
+        capacity_sectors: u64,
+        sector: u64,
+        data_descs: &[(u64, u32)],
+    ) -> u8 {
+        if read_only {
             return VIRTIO_BLK_S_IOERR;
         }
-
-        let mem = match self.mem.as_ref() {
-            Some(m) => m,
-            None => return VIRTIO_BLK_S_IOERR,
-        };
 
         let offset = match sector.checked_mul(SECTOR_SIZE) {
             Some(o) => o,
@@ -147,7 +176,7 @@ impl VirtioBlockDevice {
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
         if offset
             .checked_add(total_len)
-            .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
+            .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
         {
             return VIRTIO_BLK_S_IOERR;
         }
@@ -156,7 +185,7 @@ impl VirtioBlockDevice {
             Some(iovecs) => iovecs,
             None => return VIRTIO_BLK_S_IOERR,
         };
-        if Self::pwritev_all(self.file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
+        if Self::pwritev_all(file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
             VIRTIO_BLK_S_OK
         } else {
             VIRTIO_BLK_S_IOERR
@@ -266,17 +295,16 @@ impl VirtioBlockDevice {
     }
 
     /// Process a get-ID request: copy device_id to guest buffer.
-    fn process_get_id(&self, data_descs: &[(u64, u32)]) -> u8 {
-        let mem = match self.mem.as_ref() {
-            Some(m) => m,
-            None => return VIRTIO_BLK_S_IOERR,
-        };
-
+    fn process_get_id(
+        mem: &GuestMemoryRef,
+        device_id: &[u8; VIRTIO_BLK_ID_LEN],
+        data_descs: &[(u64, u32)],
+    ) -> u8 {
         if let Some(&(gpa, len)) = data_descs.first() {
             if let Some(host_ptr) = mem.gpa_to_host(gpa) {
                 let copy_len = (len as usize).min(VIRTIO_BLK_ID_LEN);
                 let buf = unsafe { std::slice::from_raw_parts_mut(host_ptr, copy_len) };
-                buf.copy_from_slice(&self.device_id[..copy_len]);
+                buf.copy_from_slice(&device_id[..copy_len]);
             }
         }
 
@@ -284,12 +312,18 @@ impl VirtioBlockDevice {
     }
 
     /// Process a discard request by punching holes in the backing file.
-    fn process_discard(&mut self, data_descs: &[(u64, u32)]) -> u8 {
-        if self.read_only {
+    fn process_discard(
+        file: &mut std::fs::File,
+        mem: &GuestMemoryRef,
+        read_only: bool,
+        capacity_sectors: u64,
+        data_descs: &[(u64, u32)],
+    ) -> u8 {
+        if read_only {
             return VIRTIO_BLK_S_IOERR;
         }
 
-        let data = match self.read_guest_data(data_descs) {
+        let data = match Self::read_guest_data(mem, data_descs) {
             Some(data) => data,
             None => return VIRTIO_BLK_S_IOERR,
         };
@@ -314,12 +348,12 @@ impl VirtioBlockDevice {
             };
             if offset
                 .checked_add(len)
-                .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
+                .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
             {
                 return VIRTIO_BLK_S_IOERR;
             }
 
-            if self.discard_range(offset, len).is_err() {
+            if Self::discard_range(file, offset, len).is_err() {
                 return VIRTIO_BLK_S_IOERR;
             }
         }
@@ -327,8 +361,7 @@ impl VirtioBlockDevice {
         VIRTIO_BLK_S_OK
     }
 
-    fn read_guest_data(&self, data_descs: &[(u64, u32)]) -> Option<Vec<u8>> {
-        let mem = self.mem.as_ref()?;
+    fn read_guest_data(mem: &GuestMemoryRef, data_descs: &[(u64, u32)]) -> Option<Vec<u8>> {
         let total_len: usize = data_descs.iter().map(|&(_, len)| len as usize).sum();
         let mut data = Vec::with_capacity(total_len);
         for &(gpa, len) in data_descs {
@@ -342,12 +375,10 @@ impl VirtioBlockDevice {
         Some(data)
     }
 
-    fn discard_range(&mut self, offset: u64, len: u64) -> std::io::Result<()> {
-        use std::os::unix::io::AsRawFd;
-
+    fn discard_range(file: &mut std::fs::File, offset: u64, len: u64) -> std::io::Result<()> {
         let ret = unsafe {
             libc::fallocate(
-                self.file.as_raw_fd(),
+                file.as_raw_fd(),
                 libc::FALLOC_FL_KEEP_SIZE | libc::FALLOC_FL_PUNCH_HOLE,
                 offset as libc::off_t,
                 len as libc::off_t,
@@ -362,12 +393,12 @@ impl VirtioBlockDevice {
             // Keep the guest operation functional on filesystems without hole
             // punching; ext4/xfs/btrfs still reclaim blocks through fallocate.
             Some(libc::EOPNOTSUPP | libc::ENOSYS | libc::EINVAL) => {
-                self.file.seek(SeekFrom::Start(offset))?;
+                file.seek(SeekFrom::Start(offset))?;
                 let mut remaining = len;
                 let zeros = [0_u8; 64 * 1024];
                 while remaining > 0 {
                     let n = zeros.len().min(remaining as usize);
-                    self.file.write_all(&zeros[..n])?;
+                    file.write_all(&zeros[..n])?;
                     remaining -= n as u64;
                 }
                 Ok(())
@@ -377,23 +408,20 @@ impl VirtioBlockDevice {
     }
 
     /// Write a status byte to a guest physical address.
-    fn write_status(&self, gpa: u64, status: u8) {
-        if let Some(mem) = self.mem.as_ref() {
-            if let Some(ptr) = mem.gpa_to_host(gpa) {
-                unsafe {
-                    *ptr = status;
-                }
+    fn write_status(mem: &GuestMemoryRef, gpa: u64, status: u8) {
+        if let Some(ptr) = mem.gpa_to_host(gpa) {
+            unsafe {
+                *ptr = status;
             }
         }
     }
 
     /// Parse a request header from guest memory.
     /// Returns (type, sector) or None if the read fails.
-    fn parse_header(&self, gpa: u64, len: u32) -> Option<(u32, u64)> {
+    fn parse_header(mem: &GuestMemoryRef, gpa: u64, len: u32) -> Option<(u32, u64)> {
         if (len as usize) < REQ_HEADER_SIZE {
             return None;
         }
-        let mem = self.mem.as_ref()?;
         let ptr = mem.gpa_to_host(gpa)?;
         unsafe {
             let type_ = u32::from_le(*(ptr as *const u32));
@@ -401,6 +429,118 @@ impl VirtioBlockDevice {
             let sector = u64::from_le(*((ptr as *const u8).add(8) as *const u64));
             Some((type_, sector))
         }
+    }
+
+    fn process_queue(
+        file: &mut std::fs::File,
+        read_only: bool,
+        capacity_sectors: u64,
+        device_id: &[u8; VIRTIO_BLK_ID_LEN],
+        mem: &GuestMemoryRef,
+        queue: &mut VirtQueue,
+    ) -> u32 {
+        let mut processed = 0u32;
+        while let Some(chain) = queue.pop() {
+            let descs = &chain.descriptors;
+            processed += 1;
+
+            if descs.len() < 2 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk descriptor chain too short"
+                );
+                queue.push_used_deferred(chain.head, 0);
+                continue;
+            }
+
+            let header_desc = &descs[0];
+            if header_desc.is_write_only() {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk request header descriptor was write-only"
+                );
+                queue.push_used_deferred(chain.head, 0);
+                continue;
+            }
+
+            let (type_, sector) = match Self::parse_header(mem, header_desc.addr, header_desc.len) {
+                Some(h) => h,
+                None => {
+                    tracing::warn!(
+                        event_name = "virtio.blk.request_malformed",
+                        head = chain.head,
+                        header_addr = format_args!("{:#x}", header_desc.addr),
+                        header_len = header_desc.len,
+                        "virtio-blk request header could not be parsed"
+                    );
+                    queue.push_used_deferred(chain.head, 0);
+                    continue;
+                }
+            };
+
+            let status_desc = &descs[descs.len() - 1];
+            if !status_desc.is_write_only() || status_desc.len < 1 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    status_addr = format_args!("{:#x}", status_desc.addr),
+                    status_len = status_desc.len,
+                    status_write_only = status_desc.is_write_only(),
+                    "virtio-blk status descriptor was invalid"
+                );
+                queue.push_used_deferred(chain.head, 0);
+                continue;
+            }
+
+            let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1]
+                .iter()
+                .map(|d| (d.addr, d.len))
+                .collect();
+            let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
+
+            let status = match type_ {
+                VIRTIO_BLK_T_IN => {
+                    Self::process_read(file, mem, capacity_sectors, sector, &data_descs)
+                }
+                VIRTIO_BLK_T_OUT => {
+                    Self::process_write(file, mem, read_only, capacity_sectors, sector, &data_descs)
+                }
+                VIRTIO_BLK_T_GET_ID => Self::process_get_id(mem, device_id, &data_descs),
+                VIRTIO_BLK_T_DISCARD => {
+                    Self::process_discard(file, mem, read_only, capacity_sectors, &data_descs)
+                }
+                _ => VIRTIO_BLK_S_UNSUPP,
+            };
+            tracing::trace!(
+                event_name = "virtio.blk.request_complete",
+                head = chain.head,
+                request_type = type_,
+                sector,
+                descriptor_count = descs.len(),
+                total_data,
+                status,
+                "virtio-blk request completed"
+            );
+
+            Self::write_status(mem, status_desc.addr, status);
+
+            let used_len = if status == VIRTIO_BLK_S_OK && type_ == VIRTIO_BLK_T_IN {
+                total_data + 1
+            } else {
+                1
+            };
+            queue.push_used_deferred(chain.head, used_len);
+        }
+
+        if processed > 0 {
+            queue.flush_used();
+        }
+
+        processed
     }
 }
 
@@ -445,7 +585,7 @@ impl VirtioDevice for VirtioBlockDevice {
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
         if let Some(q) = queues.first() {
             if q.size > 0 {
-                self.queue = Some(if q.warm_restore {
+                let queue = if q.warm_restore {
                     VirtQueue::new_restored(
                         mem.clone(),
                         q.desc_addr,
@@ -461,7 +601,54 @@ impl VirtioDevice for VirtioBlockDevice {
                         q.device_addr,
                         q.size,
                     )
-                });
+                };
+
+                if let (Some(irq_fd), Some(interrupt_status), Some(notify_fd)) = (
+                    self.irq_fd,
+                    self.interrupt_status.as_ref().cloned(),
+                    self.notify_fd.as_ref(),
+                ) {
+                    match (self.file.try_clone(), dup_owned_fd(notify_fd.as_raw_fd())) {
+                        (Ok(file), Ok(worker_notify_fd)) => {
+                            let (tx, rx) = mpsc::channel();
+                            let read_only = self.read_only;
+                            let capacity_sectors = self.capacity_sectors;
+                            let device_id = self.device_id;
+                            let worker_mem = mem.clone();
+                            let handle = std::thread::Builder::new()
+                                .name("virtio-blk-ioeventfd".into())
+                                .spawn(move || {
+                                    block_worker_loop(
+                                        file,
+                                        read_only,
+                                        capacity_sectors,
+                                        device_id,
+                                        worker_mem,
+                                        queue,
+                                        worker_notify_fd,
+                                        rx,
+                                        irq_fd,
+                                        interrupt_status,
+                                    )
+                                })
+                                .expect("failed to spawn virtio-blk ioeventfd worker");
+                            self.control_tx = Some(tx);
+                            self.worker_handle = Some(handle);
+                            self.queue = None;
+                        }
+                        (file_result, notify_result) => {
+                            tracing::warn!(
+                                event_name = "virtio.blk.worker_disabled",
+                                file_error = ?file_result.err(),
+                                notify_error = ?notify_result.err(),
+                                "virtio-blk ioeventfd worker disabled"
+                            );
+                            self.queue = Some(queue);
+                        }
+                    }
+                } else {
+                    self.queue = Some(queue);
+                }
             }
         }
         self.mem = Some(mem);
@@ -477,8 +664,6 @@ impl VirtioDevice for VirtioBlockDevice {
             return;
         }
 
-        // Take the queue out to avoid split-borrow: queue_notify needs &mut queue
-        // while process_read/write/get_id/write_status need &self/&mut self.
         let mut queue = match self.queue.take() {
             Some(q) => q,
             None => {
@@ -490,103 +675,18 @@ impl VirtioDevice for VirtioBlockDevice {
             }
         };
 
-        // Process all available descriptor chains
-        let mut processed = 0u32;
-        while let Some(chain) = queue.pop() {
-            let descs = &chain.descriptors;
-            processed += 1;
-
-            // Need at least 2 descriptors: header + status
-            if descs.len() < 2 {
-                tracing::warn!(
-                    event_name = "virtio.blk.request_malformed",
-                    head = chain.head,
-                    descriptors = descs.len(),
-                    "virtio-blk descriptor chain too short"
-                );
-                queue.push_used(chain.head, 0);
-                continue;
-            }
-
-            // First descriptor: request header (must be device-readable)
-            let header_desc = &descs[0];
-            if header_desc.is_write_only() {
-                tracing::warn!(
-                    event_name = "virtio.blk.request_malformed",
-                    head = chain.head,
-                    descriptors = descs.len(),
-                    "virtio-blk request header descriptor was write-only"
-                );
-                queue.push_used(chain.head, 0);
-                continue;
-            }
-
-            let (type_, sector) = match self.parse_header(header_desc.addr, header_desc.len) {
-                Some(h) => h,
-                None => {
-                    tracing::warn!(
-                        event_name = "virtio.blk.request_malformed",
-                        head = chain.head,
-                        header_addr = format_args!("{:#x}", header_desc.addr),
-                        header_len = header_desc.len,
-                        "virtio-blk request header could not be parsed"
-                    );
-                    queue.push_used(chain.head, 0);
-                    continue;
-                }
-            };
-
-            // Last descriptor: status (must be device-writable, 1 byte)
-            let status_desc = &descs[descs.len() - 1];
-            if !status_desc.is_write_only() || status_desc.len < 1 {
-                tracing::warn!(
-                    event_name = "virtio.blk.request_malformed",
-                    head = chain.head,
-                    status_addr = format_args!("{:#x}", status_desc.addr),
-                    status_len = status_desc.len,
-                    status_write_only = status_desc.is_write_only(),
-                    "virtio-blk status descriptor was invalid"
-                );
-                queue.push_used(chain.head, 0);
-                continue;
-            }
-
-            // Middle descriptors: data buffers
-            let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1]
-                .iter()
-                .map(|d| (d.addr, d.len))
-                .collect();
-
-            let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
-
-            let status = match type_ {
-                VIRTIO_BLK_T_IN => self.process_read(sector, &data_descs),
-                VIRTIO_BLK_T_OUT => self.process_write(sector, &data_descs),
-                VIRTIO_BLK_T_GET_ID => self.process_get_id(&data_descs),
-                VIRTIO_BLK_T_DISCARD => self.process_discard(&data_descs),
-                _ => VIRTIO_BLK_S_UNSUPP,
-            };
-            tracing::trace!(
-                event_name = "virtio.blk.request_complete",
-                head = chain.head,
-                request_type = type_,
-                sector,
-                descriptor_count = descs.len(),
-                total_data,
-                status,
-                "virtio-blk request completed"
-            );
-
-            self.write_status(status_desc.addr, status);
-
-            // Used len: data bytes transferred + 1 status byte
-            let used_len = if status == VIRTIO_BLK_S_OK && type_ == VIRTIO_BLK_T_IN {
-                total_data + 1
-            } else {
-                1
-            };
-            queue.push_used(chain.head, used_len);
-        }
+        let mem = match self.mem.as_ref() {
+            Some(mem) => mem,
+            None => return,
+        };
+        let processed = Self::process_queue(
+            &mut self.file,
+            self.read_only,
+            self.capacity_sectors,
+            &self.device_id,
+            mem,
+            &mut queue,
+        );
 
         self.queue = Some(queue);
         tracing::trace!(
@@ -596,8 +696,169 @@ impl VirtioDevice for VirtioBlockDevice {
         );
     }
 
+    fn quiesce(&mut self) -> Result<()> {
+        let Some(tx) = self.control_tx.as_ref() else {
+            return Ok(());
+        };
+        let Some(notify_fd) = self.notify_fd.as_ref() else {
+            return Ok(());
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        tx.send(BlockWorkerCommand::Drain(done_tx))
+            .context("send virtio-blk drain command")?;
+        write_eventfd(notify_fd.as_raw_fd()).context("wake virtio-blk worker for drain")?;
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .context("wait for virtio-blk drain")?;
+        Ok(())
+    }
+
     fn uses_mmio_interrupt(&self) -> bool {
-        true
+        self.control_tx.is_none()
+    }
+}
+
+impl Drop for VirtioBlockDevice {
+    fn drop(&mut self) {
+        if let (Some(tx), Some(notify_fd)) = (self.control_tx.take(), self.notify_fd.as_ref()) {
+            let _ = tx.send(BlockWorkerCommand::Stop);
+            let _ = write_eventfd(notify_fd.as_raw_fd());
+        }
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn block_worker_loop(
+    mut file: std::fs::File,
+    read_only: bool,
+    capacity_sectors: u64,
+    device_id: [u8; VIRTIO_BLK_ID_LEN],
+    mem: GuestMemoryRef,
+    mut queue: VirtQueue,
+    notify_fd: OwnedFd,
+    rx: mpsc::Receiver<BlockWorkerCommand>,
+    irq_fd: RawFd,
+    interrupt_status: Arc<AtomicU32>,
+) {
+    loop {
+        if let Err(error) = read_eventfd(notify_fd.as_raw_fd()) {
+            tracing::warn!(
+                event_name = "virtio.blk.ioeventfd_read_failed",
+                %error,
+                "virtio-blk worker failed to read notify eventfd"
+            );
+            return;
+        }
+
+        let mut stop = false;
+        let mut drain_replies = Vec::new();
+        while let Ok(command) = rx.try_recv() {
+            match command {
+                BlockWorkerCommand::Drain(done) => drain_replies.push(done),
+                BlockWorkerCommand::Stop => stop = true,
+            }
+        }
+
+        let processed = VirtioBlockDevice::process_queue(
+            &mut file,
+            read_only,
+            capacity_sectors,
+            &device_id,
+            &mem,
+            &mut queue,
+        );
+        if processed > 0 {
+            signal_irq(irq_fd, &interrupt_status);
+        }
+        for done in drain_replies {
+            let _ = done.send(());
+        }
+        tracing::trace!(
+            event_name = "virtio.blk.queue_drain",
+            processed,
+            "virtio-blk ioeventfd worker drained queue notification"
+        );
+
+        if stop {
+            return;
+        }
+    }
+}
+
+fn dup_owned_fd(fd: RawFd) -> std::io::Result<OwnedFd> {
+    let duped = unsafe { libc::dup(fd) };
+    if duped < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(duped) })
+}
+
+fn read_eventfd(fd: RawFd) -> std::io::Result<u64> {
+    let mut val = 0_u64;
+    loop {
+        let ret = unsafe {
+            libc::read(
+                fd,
+                &mut val as *mut u64 as *mut libc::c_void,
+                std::mem::size_of::<u64>(),
+            )
+        };
+        if ret == std::mem::size_of::<u64>() as isize {
+            return Ok(val);
+        }
+        if ret < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return Err(error);
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "short eventfd read",
+        ));
+    }
+}
+
+fn write_eventfd(fd: RawFd) -> std::io::Result<()> {
+    let val = 1_u64;
+    loop {
+        let ret = unsafe {
+            libc::write(
+                fd,
+                &val as *const u64 as *const libc::c_void,
+                std::mem::size_of::<u64>(),
+            )
+        };
+        if ret == std::mem::size_of::<u64>() as isize {
+            return Ok(());
+        }
+        if ret < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return Err(error);
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::WriteZero,
+            "short eventfd write",
+        ));
+    }
+}
+
+fn signal_irq(irq_fd: RawFd, interrupt_status: &AtomicU32) {
+    interrupt_status.fetch_or(1, Ordering::SeqCst);
+    let val: u64 = 1;
+    let ret = unsafe { libc::write(irq_fd, &val as *const u64 as *const libc::c_void, 8) };
+    if ret < 0 {
+        tracing::warn!(
+            event_name = "virtio.blk.irq_signal_failed",
+            error = %std::io::Error::last_os_error(),
+            "failed to signal virtio-blk interrupt eventfd"
+        );
     }
 }
 
@@ -607,6 +868,8 @@ mod tests {
     use super::super::virtio_queue::{VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
     use super::*;
     use std::io::{Read as IoRead, Write as IoWrite};
+    #[cfg(target_os = "linux")]
+    use std::os::fd::{FromRawFd, OwnedFd};
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -644,6 +907,12 @@ mod tests {
     struct TestHarness {
         dev: VirtioBlockDevice,
         mem: GuestMemory,
+        #[cfg(target_os = "linux")]
+        _irq_fd: Option<OwnedFd>,
+        #[cfg(target_os = "linux")]
+        interrupt_status: Option<Arc<AtomicU32>>,
+        #[cfg(target_os = "linux")]
+        notify_raw_fd: Option<RawFd>,
     }
 
     impl TestHarness {
@@ -662,7 +931,49 @@ mod tests {
             };
             dev.activate(mem.clone_ref(RAM_BASE), &[queue_config]);
 
-            Self { dev, mem }
+            Self {
+                dev,
+                mem,
+                #[cfg(target_os = "linux")]
+                _irq_fd: None,
+                #[cfg(target_os = "linux")]
+                interrupt_status: None,
+                #[cfg(target_os = "linux")]
+                notify_raw_fd: None,
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        fn new_with_async_notify(path: &std::path::Path, read_only: bool) -> Self {
+            let mem_size = 1024 * 1024; // 1MB
+            let mem = GuestMemory::new(mem_size).unwrap();
+            let irq_raw_fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+            assert!(irq_raw_fd >= 0);
+            let irq_fd = unsafe { OwnedFd::from_raw_fd(irq_raw_fd) };
+            let notify_raw_fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC) };
+            assert!(notify_raw_fd >= 0);
+            let notify_fd = unsafe { OwnedFd::from_raw_fd(notify_raw_fd) };
+            let interrupt_status = Arc::new(AtomicU32::new(0));
+            let mut dev = VirtioBlockDevice::new(path, read_only)
+                .unwrap()
+                .with_async_notify(irq_raw_fd, Arc::clone(&interrupt_status), notify_fd);
+
+            let queue_config = QueueConfig {
+                desc_addr: RAM_BASE + DESC_TABLE_OFFSET,
+                driver_addr: RAM_BASE + AVAIL_RING_OFFSET,
+                device_addr: RAM_BASE + USED_RING_OFFSET,
+                size: QUEUE_TEST_SIZE,
+                warm_restore: false,
+            };
+            dev.activate(mem.clone_ref(RAM_BASE), &[queue_config]);
+
+            Self {
+                dev,
+                mem,
+                _irq_fd: Some(irq_fd),
+                interrupt_status: Some(interrupt_status),
+                notify_raw_fd: Some(notify_raw_fd),
+            }
         }
 
         /// Write a descriptor to the descriptor table.
@@ -1243,6 +1554,43 @@ mod tests {
         h.dev.queue_notify(1); // only queue 0 exists
         h.dev.queue_notify(99);
         // no crash, no processing
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn block_async_notify_drains_from_eventfd_worker() {
+        let data: Vec<u8> = (0..512).map(|i| (i % 251) as u8).collect();
+        let path = temp_disk_with_data("async-read.img", &data);
+        let mut h = TestHarness::new_with_async_notify(&path, true);
+
+        assert!(!h.dev.uses_mmio_interrupt());
+        h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
+
+        write_eventfd(h.notify_raw_fd.unwrap()).unwrap();
+        h.dev.quiesce().unwrap();
+
+        let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        assert_eq!(h.read_bytes(data_offset, 512), data);
+        assert_eq!(h.read_status(data_offset + 512), VIRTIO_BLK_S_OK);
+        assert_eq!(h.interrupt_status.unwrap().load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn block_async_quiesce_drains_pending_queue() {
+        let path = temp_disk("async-quiesce.img", 512);
+        let mut h = TestHarness::new_with_async_notify(&path, false);
+        let pattern: Vec<u8> = (0..512).map(|i| ((i * 5) % 251) as u8).collect();
+
+        h.setup_request(VIRTIO_BLK_T_OUT, 0, 512, false);
+        let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        h.write_bytes(data_offset, &pattern);
+
+        h.dev.quiesce().unwrap();
+
+        assert_eq!(h.read_status(data_offset + 512), VIRTIO_BLK_S_OK);
+        assert_eq!(std::fs::read(&path).unwrap(), pattern);
+        assert_eq!(h.interrupt_status.unwrap().load(Ordering::SeqCst), 1);
     }
 
     // -----------------------------------------------------------------------
