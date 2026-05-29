@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sprints/policy-settings-profiles/`.
 
 ### Added
+- Added Linux release-candidate benchmark artifact plumbing with arch-scoped
+  output paths, host/git metadata, optional run IDs, and gross in-VM
+  `capsem-bench` gates for disk, rootfs, CLI startup, HTTP, throughput, and
+  snapshot operations.
 - Added an in-guest `capsem-doctor` SMP diagnostic that compares `nproc` with
   `/proc/cpuinfo` and requires at least two visible vCPUs.
 - Added live x86_64 KVM SMP boot support with synthetic ACPI RSDP/RSDT/MADT

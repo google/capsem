@@ -9,6 +9,7 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 
 ```bash
 just bench                          # Run in-VM, host lifecycle/fork, and Security Engine benchmarks
+just bench-linux-record             # Linux-only release-candidate artifact run
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
 just test                           # Full validation including benchmarks
@@ -249,12 +250,15 @@ projection.
 
 ## Benchmark data directory
 
-Host-side benchmarks save versioned JSON to `benchmarks/` (committed to git):
+Host-side benchmarks save arch-scoped JSON to `benchmarks/` (committed to git
+for release-candidate baselines). Set `CAPSEM_BENCHMARK_RUN_ID` for an
+intentional named run and `CAPSEM_BENCHMARK_OUTPUT_DIR` for exploratory runs
+that should not dirty the checkout:
 
 ```
 benchmarks/
-  fork/data_0.16.1.json          # Fork speed, image size, data survival
-  lifecycle/data_0.16.1.json     # Provision, exec-ready, exec, delete
+  fork/data_1.2.3_x86_64_linux-rc1.json          # Fork speed, image size, data survival
+  lifecycle/data_1.2.3_x86_64_linux-rc1.json     # Provision, exec-ready, exec, delete
   security-engine/data_*.json    # CEL microbench and VM-originated enforcement
 ```
 

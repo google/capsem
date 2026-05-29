@@ -34,6 +34,11 @@ from pathlib import Path
 
 import pytest
 
+from helpers.benchmark_artifacts import (
+    benchmark_arch,
+    benchmark_output_path,
+    enrich_benchmark_artifact,
+)
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -72,10 +77,17 @@ def _source_commit():
 
 def _save_security_engine_benchmark(data, suffix):
     version = _project_version()
-    arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-    out_dir = PROJECT_ROOT / "benchmarks" / "security-engine"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"data_{version}_{arch}_{suffix}.json"
+    arch = benchmark_arch()
+    out_path = benchmark_output_path(PROJECT_ROOT, "security-engine", version, arch)
+    out_path = out_path.with_name(out_path.stem + f"_{suffix}.json")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    data = enrich_benchmark_artifact(
+        data,
+        project_root=PROJECT_ROOT,
+        project_version=version,
+        arch=arch,
+        command=data.get("command"),
+    )
     out_path.write_text(json.dumps(data, indent=2) + "\n")
     print(f"Security Engine benchmark saved to {out_path}")
 

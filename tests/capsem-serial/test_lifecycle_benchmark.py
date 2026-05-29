@@ -16,6 +16,11 @@ from pathlib import Path
 
 import pytest
 
+from helpers.benchmark_artifacts import (
+    benchmark_arch,
+    benchmark_output_path,
+    enrich_benchmark_artifact,
+)
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -31,12 +36,19 @@ def _project_version():
     return m.group(1) if m else "unknown"
 
 
-def _save_benchmark(category, data):
-    """Save benchmark JSON to benchmarks/{category}/data_{version}.json."""
+def _save_benchmark(category, data, command):
+    """Save benchmark JSON to an arch-scoped artifact path."""
     version = _project_version()
-    out_dir = PROJECT_ROOT / "benchmarks" / category
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"data_{version}.json"
+    arch = benchmark_arch()
+    out_path = benchmark_output_path(PROJECT_ROOT, category, version, arch)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    data = enrich_benchmark_artifact(
+        data,
+        project_root=PROJECT_ROOT,
+        project_version=version,
+        arch=arch,
+        command=command,
+    )
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"Benchmark saved to {out_path}")
@@ -245,7 +257,11 @@ def test_lifecycle_benchmark():
         print(f"{label:<16} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms")
 
     # JSON output
-    _save_benchmark("lifecycle", summary)
+    _save_benchmark(
+        "lifecycle",
+        summary,
+        "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
+    )
 
     # Gate: provision is host/backend dependent; steady-state ops stay tight.
     gates = {
@@ -329,7 +345,11 @@ def test_fork_benchmark():
     print(f"{'boot_ready':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {OP_GATE_MS:>9}ms")
 
     # JSON output
-    _save_benchmark("fork", summary)
+    _save_benchmark(
+        "fork",
+        summary,
+        "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs",
+    )
 
     # Gate: fork speed
     fork_mean = summary["fork"]["fork_ms"]["mean"]

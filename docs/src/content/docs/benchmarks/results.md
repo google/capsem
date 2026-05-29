@@ -8,7 +8,9 @@ sidebar:
 Reference results from local benchmark artifacts. Guest measurements come from
 `capsem-bench` 0.3.0; lifecycle and fork measurements are host-side benchmark
 runs. Security Engine artifacts were refreshed on 2026-05-23. Numbers vary
-with host load, network path, and cache state.
+with host load, network path, and cache state. Linux release-candidate runs
+should be recorded with `just bench-linux-record` so artifacts include the
+Linux architecture, host metadata, git commit, and a stable run id.
 
 ## Boot time
 
@@ -371,6 +373,12 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_mcp_re
 
 ```bash
 just bench    # Run all benchmarks (~2 min)
+
+# Linux release-candidate artifact run
+CAPSEM_BENCHMARK_RUN_ID=linux-rc1 just bench-linux-record
 ```
 
-Results are displayed as rich tables in the terminal. JSON output is saved to `/tmp/capsem-benchmark.json` inside the VM.
+Results are displayed as rich tables in the terminal. JSON output is saved to
+`/tmp/capsem-benchmark.json` inside the VM and archived under `benchmarks/`.
+Set `CAPSEM_BENCHMARK_OUTPUT_DIR` to write artifacts somewhere else during
+exploratory runs.
