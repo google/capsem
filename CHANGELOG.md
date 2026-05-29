@@ -78,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Linux host doctor smoke probes for `KVM_GET_API_VERSION` and
   `/dev/vhost-vsock` openability so bootstrap verifies usable KVM devices, not
   just filesystem permissions.
+
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
   leaving snapshot symlink restore scoped to `/root`.
@@ -113,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed a `capsem-process` IPC file-descriptor leak where short-lived
+  status/metrics connections left writer and lifecycle-forwarder tasks alive
+  after the client disconnected.
 - Fixed `capsem-tui` live gateway attention handling so sessions with
   `profile_status=current` are not marked stale, and proved the installed
   terminal WebSocket path against two running service sessions.

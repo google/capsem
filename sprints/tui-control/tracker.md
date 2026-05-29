@@ -121,11 +121,20 @@
 - MCP triage for `tui-proof-a` found no session-level failures. Host triage
   still shows stale gateway terminal reconnect errors for the removed
   `crafty-panda` socket, which are unrelated to the proof sessions.
+- Bug fix: status/metrics IPC polling was leaking per-connection writer and
+  lifecycle-forwarder tasks in `capsem-process`, eventually exhausting file
+  descriptors under the two-VM TUI proof. Teardown now aborts every
+  per-connection helper.
+- Live fd stress after install: 150 service `/list` refreshes across
+  `tui-proof-a` and `tui-proof-b` kept process fd counts flat at 39 and 40.
 
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-tui` (23 tests).
+- Process IPC: `cargo test -p capsem-process` (120 tests), including
+  `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Formatting: `cargo fmt -p capsem-tui -- --check`.
+- Process formatting: `cargo fmt -p capsem-process -- --check`.
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
   `cargo run -p capsem-tui -- --fixture --snapshot --width 120 --height 30`;
   `cargo run -p capsem-tui -- --fixture --snapshot-svg --width 120 --height 30`;
@@ -144,7 +153,8 @@
 - E2E/VM: live installed-gateway empty-service snapshot works; live
   multi-session terminal proof works with MCP-created `tui-proof-a` and
   `tui-proof-b`; installed gateway terminal WebSocket returned VM shell output
-  from `tui-proof-a`.
+  from `tui-proof-a`; post-fix installed fd stress held both VM process fd
+  counts flat through repeated service metrics polling.
 - Telemetry: current gateway `/status` counters mapped; event-stream semantics
   still open.
 - Performance: not measured yet.

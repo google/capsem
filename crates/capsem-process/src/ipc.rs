@@ -102,7 +102,7 @@ pub(crate) async fn handle_ipc_connection(
     // Sender::send() writes header + payload as two separate syscalls with no
     // internal locking, so concurrent use from multiple tasks is unsafe.
     let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(256);
-    tokio::spawn(async move {
+    let writer_task = tokio::spawn(async move {
         while let Some(msg) = ipc_rx_out.recv().await {
             if tx.send(msg).await.is_err() {
                 break;
@@ -115,20 +115,7 @@ pub(crate) async fn handle_ipc_connection(
     // is high-volume and still opt-in via StartTerminalStream. Without this,
     // a suspend-only connection never sees StateChanged { state: "Suspended" }
     // and the service times out waiting for confirmation.
-    {
-        let out_tx = ipc_tx_out.clone();
-        let mut rx_bcast = ipc_tx.subscribe();
-        tokio::spawn(async move {
-            while let Ok(msg) = rx_bcast.recv().await {
-                if matches!(msg, ProcessToService::TerminalOutput { .. }) {
-                    continue;
-                }
-                if out_tx.send(msg).await.is_err() {
-                    break;
-                }
-            }
-        });
-    }
+    let lifecycle_task = spawn_lifecycle_forwarder(&ipc_tx, ipc_tx_out.clone());
 
     // Live stream task spawned by StartTerminalStream. Held here so
     // StopTerminalStream and connection teardown can abort it instead of
@@ -216,7 +203,7 @@ pub(crate) async fn handle_ipc_connection(
                     );
                 } else {
                     debug!("Ping received but VM not ready, closing connection");
-                    return Ok(());
+                    break;
                 }
             }
             ServiceToProcess::GetMetricsSnapshot { id } => {
@@ -658,15 +645,41 @@ pub(crate) async fn handle_ipc_connection(
             }
         }
     }
-    // Connection ended: cancel any in-flight stream task. Without this the
-    // task lives on the runtime, holds its `out_tx`, and may attempt one
-    // more send after the client has already closed the IPC socket --
-    // benign for the underlying mpsc but a leak (the receiver's drop
-    // chain finishes one tick later than necessary).
+    // Connection ended: cancel every per-connection helper. The writer owns
+    // the IPC sender/socket, and the lifecycle forwarder owns an `out_tx`
+    // clone; leaving them alive after request/response clients disconnect
+    // leaks tasks and file descriptors under status/metrics polling.
+    abort_connection_tasks(&mut stream_task, &lifecycle_task, &writer_task);
+    Ok(())
+}
+
+fn spawn_lifecycle_forwarder(
+    ipc_tx: &broadcast::Sender<ProcessToService>,
+    out_tx: mpsc::Sender<ProcessToService>,
+) -> tokio::task::JoinHandle<()> {
+    let mut rx_bcast = ipc_tx.subscribe();
+    tokio::spawn(async move {
+        while let Ok(msg) = rx_bcast.recv().await {
+            if matches!(msg, ProcessToService::TerminalOutput { .. }) {
+                continue;
+            }
+            if out_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    })
+}
+
+fn abort_connection_tasks(
+    stream_task: &mut Option<tokio::task::JoinHandle<()>>,
+    lifecycle_task: &tokio::task::JoinHandle<()>,
+    writer_task: &tokio::task::JoinHandle<()>,
+) {
     if let Some(h) = stream_task.take() {
         h.abort();
     }
-    Ok(())
+    lifecycle_task.abort();
+    writer_task.abort();
 }
 
 /// Maps an IPC ServiceToProcess message to the action category it triggers.
