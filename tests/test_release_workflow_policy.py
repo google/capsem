@@ -602,9 +602,20 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     body = test_install.group("body")
 
     assert 'ASSETS_HOST="$(python3 -c' in body
-    assert 'ASSETS_CONTAINER="/src/{{assets_dir}}"' in body
-    assert 'EXTRA_ASSETS_MOUNT=(-v "$ASSETS_HOST:$ASSETS_CONTAINER")' in body
-    assert '"${EXTRA_ASSETS_MOUNT[@]}"' in body
+    assert 'WORKDIR_CONTAINER="/work/src"' in body
+    assert 'ASSETS_CONTAINER="$WORKDIR_CONTAINER/{{assets_dir}}"' in body
+    assert '-v "$PWD":/checkout:ro' in body
+    assert '-v "$ASSETS_HOST":/asset-source:ro' in body
+    assert "tar -C '$WORKDIR_CONTAINER' -xf -" in body
+    assert "tar -C '$ASSETS_CONTAINER' -xf -" in body
+    assert "chown -R capsem:capsem /work" in body
+    assert "SRC_UID=$(docker exec \"$CONTAINER\" stat -c %u /src)" not in body
+    assert "usermod -o -u" not in body
+    assert "chown -R capsem:capsem /src" not in body
+    assert "UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv" in body
+    assert "large local uid/gid values in .deb ar" in body
+    assert "cd '$WORKDIR_CONTAINER'" in body
+    assert "cd /work/src" in body
     assert 'bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"' in body
     assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"' in body
     assert '-e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER"' in body

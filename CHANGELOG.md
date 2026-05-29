@@ -92,7 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.deb` with CLI/service companion binaries, packaged admin payload, signed
   manifest, payload verification, and Docker vsock permissions instead of the
   raw Tauri desktop package, with the package verifier isolated from the
-  checkout venv, frontend dependencies isolated from the host checkout, and
+  checkout venv, frontend dependencies isolated from the host checkout, install
+  e2e Docker state isolated from host `.venv`/`node_modules` ownership, and
   session validation accepting current `*-tmp` VM names.
 - Fixed the Linux full-test gate under current Rust by cleaning KVM, service,
   and app clippy warnings that were promoted to errors.

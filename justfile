@@ -1189,17 +1189,9 @@ test-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     IMAGE="capsem-install-test"
-    ASSETS_DECLARED="$PWD/{{assets_dir}}"
     ASSETS_HOST="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "{{assets_dir}}")"
-    ASSETS_CONTAINER="/src/{{assets_dir}}"
-    EXTRA_ASSETS_MOUNT=()
-    if [ "$ASSETS_HOST" != "$ASSETS_DECLARED" ]; then
-        # Local dev often symlinks repo assets/ to ~/.capsem/assets. That
-        # absolute symlink is dangling inside the Docker container, so mount
-        # the resolved asset tree separately and point install prep at it.
-        ASSETS_CONTAINER="/src/.capsem-assets"
-        EXTRA_ASSETS_MOUNT=(-v "$ASSETS_HOST:$ASSETS_CONTAINER")
-    fi
+    WORKDIR_CONTAINER="/work/src"
+    ASSETS_CONTAINER="$WORKDIR_CONTAINER/{{assets_dir}}"
     # `cross-compile` runs Docker GC after producing artifacts, which can
     # remove this local base image before the install e2e stage starts.
     if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
@@ -1249,8 +1241,8 @@ test-install:
         --privileged --cgroupns=host \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
-        -v "$PWD":/src \
-        "${EXTRA_ASSETS_MOUNT[@]}" \
+        -v "$PWD":/checkout:ro \
+        -v "$ASSETS_HOST":/asset-source:ro \
         -v capsem-install-target:/cargo-target \
         -v capsem-install-cargo:/usr/local/cargo/registry \
         -v capsem-install-rustup:/usr/local/rustup \
@@ -1262,27 +1254,44 @@ test-install:
         fi
         sleep 0.5
     done
+    # Copy the checkout into container-local storage before building. The
+    # install e2e loop writes frontend output, Python envs, generated assets,
+    # and Debian bundles; keeping those writes off the bind mount prevents
+    # host ownership drift and avoids large local uid/gid values in .deb ar
+    # headers.
+    docker exec "$CONTAINER" bash -c "set -euo pipefail; \
+        rm -rf '$WORKDIR_CONTAINER'; \
+        mkdir -p '$WORKDIR_CONTAINER' '$ASSETS_CONTAINER'; \
+        cd /checkout; \
+        tar \
+            --exclude='./.venv' \
+            --exclude='./target' \
+            --exclude='./frontend/node_modules' \
+            --exclude='./frontend/dist' \
+            --exclude='./frontend/.astro' \
+            --exclude='./dist' \
+            --exclude='./tmp' \
+            --exclude='./coverage' \
+            --exclude='./{{assets_dir}}' \
+            -cf - . | tar -C '$WORKDIR_CONTAINER' -xf -; \
+        cd /asset-source; \
+        tar -cf - . | tar -C '$ASSETS_CONTAINER' -xf -; \
+        chown -R capsem:capsem /work"
     # Fix ownership for capsem user builds. /usr/local/rustup is included
     # because rustup self-updates (triggered by rust-toolchain.toml's
     # channel = "stable") try to write /usr/local/rustup/tmp/, which is
     # root-owned in the baked image -- without this chown, cargo build as
     # the capsem user dies with `Permission denied (os error 13)`.
-    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup"
-    # On GitHub runners the bind-mounted /src is owned by uid 1001
-    # (runner), but the container builds as uid 1000 (capsem). Anything
-    # that tries to write into /src (pnpm/vite temp files, Tauri build.rs
-    # generating context into OUT_DIR but traversing /src, cargo's lock
-    # checks, etc.) hits EACCES. Chown the whole tree once up front.
-    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src 2>/dev/null || true"
+    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target /run/user/1000 && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup /home/capsem /run/user/1000"
     echo "Building host binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && cargo build {{host_crates}}"
+        "cd '$WORKDIR_CONTAINER' && cargo build {{host_crates}}"
     echo "Preparing clean-checkout assets..."
     docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /src && bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
+        'cd /work/src && bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
     echo "Building frontend..."
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
-        "cd /src/frontend && pnpm install && pnpm build"
+        "cd '$WORKDIR_CONTAINER/frontend' && pnpm install && pnpm build"
     echo "Building Tauri .deb..."
     # Clear stale bundles before the build: /cargo-target is a persistent
     # Docker volume, and any previous version's .deb lingers there. The
@@ -1292,16 +1301,16 @@ test-install:
     docker exec -u capsem "$CONTAINER" bash -c \
         "rm -f /cargo-target/debug/bundle/deb/*.deb"
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+        "cd '$WORKDIR_CONTAINER' && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
-    docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && CAPSEM_INSTALL_PROFILE_ASSET_ROOT="$ASSETS_CONTAINER" bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
+    docker exec -u capsem -e UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
+        'cd /work/src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && CAPSEM_INSTALL_PROFILE_ASSET_ROOT="$ASSETS_CONTAINER" bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
     echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
         'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'
     echo "Running install e2e tests..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        "cd /src && uv run --group dev python -m pytest tests/capsem-install/ -v --tb=short"
+    docker exec -u capsem -e UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
+        "cd '$WORKDIR_CONTAINER' && uv run --group dev python -m pytest tests/capsem-install/ -v --tb=short"
 
 # Wait for CI to build and publish a tag.
 # Usage: just release          (uses latest vX.Y.Z tag on HEAD)
