@@ -296,6 +296,7 @@ fn main() -> Result<()> {
     // `session.db-wal`. See /dev-rust-patterns "Signal-driven explicit
     // cleanup for background-thread owners".
     let shutdown_for_sig = Arc::clone(&shutdown);
+    let (signal_exit_tx, signal_exit_rx) = tokio::sync::oneshot::channel::<()>();
     rt.spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
@@ -325,6 +326,7 @@ fn main() -> Result<()> {
             signal = signal_name,
             "background owners drained, stopping run loop"
         );
+        let _ = signal_exit_tx.send(());
 
         #[cfg(target_os = "macos")]
         unsafe {
@@ -339,7 +341,9 @@ fn main() -> Result<()> {
         core_foundation_sys::runloop::CFRunLoopRun();
     }
     #[cfg(not(target_os = "macos"))]
-    rt.block_on(tokio::signal::ctrl_c())?;
+    {
+        let _ = rt.block_on(signal_exit_rx);
+    }
 
     Ok(())
 }

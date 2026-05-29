@@ -68,6 +68,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue state, and by making guest snapshot preparation force a post-resume
   vsock reconnect. The durable process-preserving KVM resume contract still
   fails because restored guests stop making timer-driven forward progress.
+- Fixed Linux `capsem-process` SIGTERM handling so external process death
+  drains telemetry and exits instead of leaving the VM listed until service
+  teardown.
+- Fixed API file-upload observability by recording a synchronous `fs_events`
+  row with ambient trace context, so service-originated writes do not depend
+  solely on the polling filesystem monitor.
+- Fixed Linux fork/snapshot fallback copies to preserve sparse VM disk holes
+  when `FICLONE` is unavailable, avoiding 2 GB physical copies on filesystems
+  without reflink support.
+- Fixed full-test gate assumptions around KVM load by aligning VM-limit tests
+  with the service's default eight-VM cap and giving suspend calls enough
+  timeout budget to queue behind the host-wide save/restore lock.
 - Fixed the Linux full-test gate under current Rust by cleaning KVM, service,
   and app clippy warnings that were promoted to errors.
 - Fixed native guest-agent rebuilds so readonly `target/linux-agent` outputs

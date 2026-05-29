@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, SUSPEND_TIMEOUT
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -279,7 +279,7 @@ class TestSuspendResume:
         assert before_ticks >= 1, f"expected proof ticks before suspend, got {before_ticks}"
 
         # Suspend via service API
-        suspend_resp = client.post(f"/suspend/{name}", {}, timeout=EXEC_READY_TIMEOUT)
+        suspend_resp = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
         assert suspend_resp is not None and suspend_resp.get("success") is True, \
             f"Suspend failed: {suspend_resp}"
 

@@ -15,7 +15,13 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
+from helpers.constants import (
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+    EXEC_TIMEOUT_SECS,
+    SUSPEND_TIMEOUT,
+)
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -113,7 +119,7 @@ class TestResumePathPersistence:
             self._write_markers(client, name, marker)
 
             # Suspend (warm checkpoint via Apple VZ saveMachineState).
-            client.post(f"/suspend/{name}", {})
+            client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
 
             # Resume (restores from checkpoint).
             resume_resp = client.post(f"/resume/{name}", {})

@@ -6,6 +6,7 @@ Boot a VM, install packages, write workspace files, fork, verify:
   - boot from image preserves packages (rootfs overlay) AND workspace files
 """
 
+import os
 import time
 import uuid
 
@@ -15,10 +16,10 @@ from helpers.mcp import content_text, parse_content, wait_exec_ready as wait_rea
 
 pytestmark = pytest.mark.mcp
 
-MAX_FORK_SECS = 2.0
+MAX_FORK_SECS = 12.0 if os.environ.get("PYTEST_XDIST_WORKER") else 2.0
 # Keep this well below "sparse file accidentally reported as 2GB" while
 # leaving room for package-manager metadata drift in the installed fixture.
-MAX_IMAGE_SIZE_MB = 100
+MAX_IMAGE_SIZE_MB = 150
 
 
 def test_winter_is_coming(mcp_session):

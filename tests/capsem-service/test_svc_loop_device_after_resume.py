@@ -25,7 +25,13 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
+from helpers.constants import (
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+    EXEC_TIMEOUT_SECS,
+    SUSPEND_TIMEOUT,
+)
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -99,7 +105,7 @@ class TestLoopDeviceAfterResume:
             r = _exec(client, name, churn)
             assert r.get("exit_code") == 0, f"churn write failed: {r}"
 
-            sus = client.post(f"/suspend/{name}", {})
+            sus = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
             assert sus and sus.get("success"), f"suspend failed: {sus}"
 
             res = client.post(f"/resume/{name}", {})
