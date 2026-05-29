@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
+  in-VM, lifecycle, fork, and security-engine benchmark results.
+
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
   Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,
@@ -34,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inventoried sprint planning docs and moved retired Profile V2, release, and
   legacy boards under `sprints/retired/` so active release planning starts from
   `sprints/policy-settings-profiles/`.
+
+### Fixed
+- Refreshed local profile asset pins during dev service startup so benchmark
+  runs after `_pack-initrd` use matching initrd/rootfs hashes.
 
 ## [1.2.1779673506] - 2026-05-24
 

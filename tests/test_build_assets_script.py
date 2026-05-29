@@ -176,3 +176,13 @@ def test_justfile_exposes_profile_aware_asset_recipes() -> None:
     assert 'uv run capsem-admin image build "{{profile}}"' in justfile
     assert 'bash scripts/build-assets.sh --profile "{{profile}}"' in justfile
     assert "capsem-builder build guest/" not in justfile
+
+
+def test_ensure_service_refreshes_local_profile_after_asset_repack() -> None:
+    justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+
+    assert 'SETUP_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}"' in justfile
+    assert (
+        'CAPSEM_ASSETS_DIR="$SETUP_ASSETS_DIR" {{cli_binary}} setup '
+        "--non-interactive --accept-detected"
+    ) in justfile

@@ -1,0 +1,345 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_http_request_enforcement",
+  "version": "1.2.1779673506",
+  "source_commit": "69bd0e3d",
+  "timestamp": 1780076504.970173,
+  "arch": "arm64",
+  "host": {
+    "sysname": "Darwin",
+    "release": "25.5.0",
+    "machine": "arm64"
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_http_request_enforcement_benchmark_records_vm_originated_path -xvs",
+  "workload": {
+    "event_family": "network",
+    "event_type": "http.request",
+    "source": "vm_originated",
+    "path": "guest_curl_to_mitm_to_security_engine"
+  },
+  "runs": 8,
+  "warmup_runs": 1,
+  "keepalive_runs": 8,
+  "gate_ms": 1000,
+  "rule": {
+    "id": "runtime.block-http-bench.d2c2c716",
+    "pack_id": "runtime-benchmark",
+    "condition": "http.request.host == 'example.com' && http.request.path == '/security-engine-bench-block-6bc405c5'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_http_request_wall_ms": {
+      "min": 5.075,
+      "mean": 5.258,
+      "median": 5.2,
+      "p95": 5.675,
+      "p99": 5.675,
+      "max": 5.675,
+      "values": [
+        5.675,
+        5.337,
+        5.214,
+        5.132,
+        5.075,
+        5.281,
+        5.163,
+        5.186
+      ]
+    },
+    "blocked_http_request_starttransfer_ms": {
+      "min": 2.799,
+      "mean": 2.919,
+      "median": 2.889,
+      "p95": 3.055,
+      "p99": 3.055,
+      "max": 3.055,
+      "values": [
+        3.055,
+        3.033,
+        2.906,
+        2.799,
+        2.838,
+        3.016,
+        2.838,
+        2.871
+      ]
+    },
+    "curl_phase_ms": {
+      "appconnect": {
+        "min": 2.426,
+        "mean": 2.531,
+        "median": 2.514,
+        "p95": 2.642,
+        "p99": 2.642,
+        "max": 2.642,
+        "values": [
+          2.642,
+          2.629,
+          2.534,
+          2.426,
+          2.495,
+          2.605,
+          2.456,
+          2.463
+        ]
+      },
+      "connect": {
+        "min": 0.719,
+        "mean": 0.778,
+        "median": 0.771,
+        "p95": 0.851,
+        "p99": 0.851,
+        "max": 0.851,
+        "values": [
+          0.832,
+          0.851,
+          0.816,
+          0.719,
+          0.787,
+          0.733,
+          0.755,
+          0.729
+        ]
+      },
+      "namelookup": {
+        "min": 0.692,
+        "mean": 0.751,
+        "median": 0.744,
+        "p95": 0.82,
+        "p99": 0.82,
+        "max": 0.82,
+        "values": [
+          0.798,
+          0.82,
+          0.791,
+          0.692,
+          0.759,
+          0.711,
+          0.73,
+          0.704
+        ]
+      },
+      "pretransfer": {
+        "min": 2.441,
+        "mean": 2.549,
+        "median": 2.529,
+        "p95": 2.656,
+        "p99": 2.656,
+        "max": 2.656,
+        "values": [
+          2.656,
+          2.643,
+          2.548,
+          2.441,
+          2.507,
+          2.62,
+          2.468,
+          2.51
+        ]
+      },
+      "starttransfer": {
+        "min": 2.799,
+        "mean": 2.919,
+        "median": 2.889,
+        "p95": 3.055,
+        "p99": 3.055,
+        "max": 3.055,
+        "values": [
+          3.055,
+          3.033,
+          2.906,
+          2.799,
+          2.838,
+          3.016,
+          2.838,
+          2.871
+        ]
+      },
+      "total": {
+        "min": 2.807,
+        "mean": 2.929,
+        "median": 2.899,
+        "p95": 3.066,
+        "p99": 3.066,
+        "max": 3.066,
+        "values": [
+          3.066,
+          3.043,
+          2.916,
+          2.807,
+          2.848,
+          3.026,
+          2.848,
+          2.881
+        ]
+      }
+    },
+    "curl_phase_delta_ms": {
+      "dns": {
+        "min": 0.692,
+        "mean": 0.751,
+        "median": 0.744,
+        "p95": 0.82,
+        "p99": 0.82,
+        "max": 0.82,
+        "values": [
+          0.798,
+          0.82,
+          0.791,
+          0.692,
+          0.759,
+          0.711,
+          0.73,
+          0.704
+        ]
+      },
+      "pretransfer_after_tls": {
+        "min": 0.012,
+        "mean": 0.018,
+        "median": 0.014,
+        "p95": 0.047,
+        "p99": 0.047,
+        "max": 0.047,
+        "values": [
+          0.014,
+          0.014,
+          0.014,
+          0.015,
+          0.012,
+          0.015,
+          0.012,
+          0.047
+        ]
+      },
+      "response_tail_after_first_byte": {
+        "min": 0.008,
+        "mean": 0.01,
+        "median": 0.01,
+        "p95": 0.011,
+        "p99": 0.011,
+        "max": 0.011,
+        "values": [
+          0.011,
+          0.01,
+          0.01,
+          0.008,
+          0.01,
+          0.01,
+          0.01,
+          0.01
+        ]
+      },
+      "server_first_byte_after_pretransfer": {
+        "min": 0.331,
+        "mean": 0.37,
+        "median": 0.365,
+        "p95": 0.399,
+        "p99": 0.399,
+        "max": 0.399,
+        "values": [
+          0.399,
+          0.39,
+          0.358,
+          0.358,
+          0.331,
+          0.396,
+          0.37,
+          0.361
+        ]
+      },
+      "tcp_connect": {
+        "min": 0.022,
+        "mean": 0.027,
+        "median": 0.026,
+        "p95": 0.034,
+        "p99": 0.034,
+        "max": 0.034,
+        "values": [
+          0.034,
+          0.031,
+          0.025,
+          0.027,
+          0.028,
+          0.022,
+          0.025,
+          0.025
+        ]
+      },
+      "tls_appconnect": {
+        "min": 1.701,
+        "mean": 1.754,
+        "median": 1.726,
+        "p95": 1.872,
+        "p99": 1.872,
+        "max": 1.872,
+        "values": [
+          1.81,
+          1.778,
+          1.718,
+          1.707,
+          1.708,
+          1.872,
+          1.701,
+          1.734
+        ]
+      }
+    },
+    "keepalive_http_request_starttransfer_ms": {
+      "min": 0.261,
+      "mean": 0.294,
+      "median": 0.274,
+      "p95": 0.404,
+      "p99": 0.404,
+      "max": 0.404,
+      "values": [
+        0.404,
+        0.313,
+        0.284,
+        0.265,
+        0.261,
+        0.295,
+        0.265,
+        0.262
+      ]
+    },
+    "keepalive_http_request_total_ms": {
+      "min": 0.263,
+      "mean": 0.297,
+      "median": 0.28,
+      "p95": 0.411,
+      "p99": 0.411,
+      "max": 0.411,
+      "values": [
+        0.411,
+        0.316,
+        0.291,
+        0.268,
+        0.263,
+        0.297,
+        0.267,
+        0.263
+      ]
+    },
+    "keepalive_connection_ms": {
+      "connect_ms": 14.111,
+      "tls_handshake_ms": 1.17
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 17,
+      "distinct_event_ids": 17,
+      "blocked_count": 17,
+      "vm_id": "sechttp-057af491",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elie",
+      "process_operation": null,
+      "process_command_class": null,
+      "rule_id": "runtime.block-http-bench.d2c2c716",
+      "reason": "HTTP request blocked by security benchmark"
+    },
+    "runtime_match_count": 17,
+    "runtime_last_event_id": "net-http-c4a3b556b30130ec",
+    "logs_exposed_security_decision": true
+  }
+}

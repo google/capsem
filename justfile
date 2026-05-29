@@ -189,10 +189,12 @@ _ensure-service: _sign
         ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
         echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
     fi
-    if [ -n "${CAPSEM_ASSETS_DIR:-}" ]; then
-        {{cli_binary}} setup --non-interactive --accept-detected
-        cleanup_runtime_processes
-    fi
+    # `_pack-initrd` rewrites initrd.img and regenerates the local asset
+    # manifest. Refresh the local setup profile before starting the service so
+    # the profile catalog pins match the exact assets this dev service will use.
+    SETUP_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}"
+    CAPSEM_ASSETS_DIR="$SETUP_ASSETS_DIR" {{cli_binary}} setup --non-interactive --accept-detected
+    cleanup_runtime_processes
     GATEWAY_ARGS=(--gateway-binary {{gateway_binary}})
     if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
         # Isolated smoke/test services must not contend with a locally
