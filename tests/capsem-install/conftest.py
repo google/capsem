@@ -95,6 +95,7 @@ HOST_CRATES = [
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
+    "capsem-tui",
 ]
 
 CAPSEM_DIR = _resolve_capsem_home()
@@ -111,6 +112,7 @@ BINARIES = [
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
+    "capsem-tui",
 ]
 DEFAULT_TIMEOUT = 30
 _LOCAL_BUILD_DONE = False

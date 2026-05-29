@@ -49,7 +49,7 @@ copy_if_different() {
 }
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui; do
     src="$BIN_SRC/$bin"
     dst="$INSTALL_DIR/$bin"
     if [[ ! -f "$src" ]]; then

@@ -30,6 +30,7 @@ HOST_BINARIES = [
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
+    "capsem-tui",
     "capsem-admin",
 ]
 
@@ -156,7 +157,7 @@ test -f "$root/usr/local/share/capsem/assets/manifest.json.minisig"
 test -f "$root/usr/local/share/capsem/assets/manifest-sign.dev.pub"
 test -f "$root/usr/local/share/capsem/Capsem.app/Contents/Info.plist"
 test -f "$root/usr/local/share/capsem/admin-python/capsem/admin/cli.py"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
   test -x "$root/usr/local/share/capsem/bin/$bin"
 done
 mkdir -p "$(dirname "$out")"
@@ -272,7 +273,7 @@ case "$1" in
     test -f "$root/usr/share/capsem/assets/manifest.json.minisig"
     test -f "$root/usr/share/capsem/assets/manifest-sign.dev.pub"
     test -f "$root/usr/share/capsem/admin-python/capsem/admin/cli.py"
-    for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+    for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
       test -x "$root/usr/bin/$bin"
     done
     printf deb > "$out"

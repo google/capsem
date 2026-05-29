@@ -55,11 +55,11 @@ service_binary := "target/debug/capsem-service"
 process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-tui"
 assets_dir := "assets"
 default_asset_profile := "config/profiles/base/coding.profile.toml"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-tui"
 
 # Stamp version as 1.2.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
@@ -1105,6 +1105,7 @@ install: _pnpm-install _stamp-version _check-assets
     assert_executable "$HOME/.capsem/bin/capsem-mcp-builtin"
     assert_executable "$HOME/.capsem/bin/capsem-gateway"
     assert_executable "$HOME/.capsem/bin/capsem-tray"
+    assert_executable "$HOME/.capsem/bin/capsem-tui"
     if [ ! -f "$HOME/.capsem/assets/manifest.json" ]; then
         echo "ERROR: installed asset manifest missing" >&2
         exit 1

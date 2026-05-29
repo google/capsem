@@ -25,6 +25,7 @@ EXPECTED_BINARIES = [
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
+    "capsem-tui",
 ]
 
 
