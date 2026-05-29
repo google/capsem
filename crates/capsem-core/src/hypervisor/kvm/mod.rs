@@ -79,6 +79,18 @@ fn create_irq_eventfd() -> Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
+#[cfg(target_arch = "x86_64")]
+fn create_notify_eventfd() -> Result<OwnedFd> {
+    let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC) };
+    anyhow::ensure!(
+        fd >= 0,
+        "failed to create virtio-mmio notify eventfd: {}",
+        std::io::Error::last_os_error()
+    );
+    // Safety: fd was just returned by eventfd and is uniquely owned here.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
 /// KVM hypervisor backend.
 pub struct KvmHypervisor;
 
@@ -451,16 +463,34 @@ impl Hypervisor for KvmHypervisor {
             #[cfg(target_arch = "x86_64")]
             let blk_irq_fd = create_irq_eventfd()?;
             #[cfg(target_arch = "x86_64")]
+            let blk_notify_fd = create_notify_eventfd()?;
+            #[cfg(target_arch = "x86_64")]
+            let blk_interrupt_status = Arc::new(AtomicU32::new(0));
+            #[cfg(target_arch = "x86_64")]
             vm.irqfd(
                 blk_irq_fd.as_raw_fd(),
                 irq_to_gsi(memory::virtio_mmio_irq(1)),
             )?;
+            #[cfg(target_arch = "x86_64")]
+            vm.ioeventfd(
+                blk_notify_fd.as_raw_fd(),
+                memory::virtio_mmio_addr(1) + virtio_mmio::QUEUE_NOTIFY_OFFSET,
+                4,
+                Some(0),
+            )?;
             let blk_device = virtio_blk::VirtioBlockDevice::new(disk_path, true)?;
             #[cfg(target_arch = "x86_64")]
-            let blk_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt(
+            let blk_device = blk_device.with_async_notify(
+                blk_irq_fd.as_raw_fd(),
+                Arc::clone(&blk_interrupt_status),
+                blk_notify_fd,
+            );
+            #[cfg(target_arch = "x86_64")]
+            let blk_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(
                 Box::new(blk_device),
                 guest_mem.clone_ref(memory::RAM_BASE),
                 blk_irq_fd,
+                blk_interrupt_status,
             );
             #[cfg(not(target_arch = "x86_64"))]
             let blk_mmio = virtio_mmio::VirtioMmioTransport::new(
@@ -486,16 +516,34 @@ impl Hypervisor for KvmHypervisor {
             #[cfg(target_arch = "x86_64")]
             let scratch_irq_fd = create_irq_eventfd()?;
             #[cfg(target_arch = "x86_64")]
+            let scratch_notify_fd = create_notify_eventfd()?;
+            #[cfg(target_arch = "x86_64")]
+            let scratch_interrupt_status = Arc::new(AtomicU32::new(0));
+            #[cfg(target_arch = "x86_64")]
             vm.irqfd(
                 scratch_irq_fd.as_raw_fd(),
                 irq_to_gsi(memory::virtio_mmio_irq(2)),
             )?;
+            #[cfg(target_arch = "x86_64")]
+            vm.ioeventfd(
+                scratch_notify_fd.as_raw_fd(),
+                memory::virtio_mmio_addr(2) + virtio_mmio::QUEUE_NOTIFY_OFFSET,
+                4,
+                Some(0),
+            )?;
             let scratch_device = virtio_blk::VirtioBlockDevice::new(scratch_path, false)?;
             #[cfg(target_arch = "x86_64")]
-            let scratch_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt(
+            let scratch_device = scratch_device.with_async_notify(
+                scratch_irq_fd.as_raw_fd(),
+                Arc::clone(&scratch_interrupt_status),
+                scratch_notify_fd,
+            );
+            #[cfg(target_arch = "x86_64")]
+            let scratch_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(
                 Box::new(scratch_device),
                 guest_mem.clone_ref(memory::RAM_BASE),
                 scratch_irq_fd,
+                scratch_interrupt_status,
             );
             #[cfg(not(target_arch = "x86_64"))]
             let scratch_mmio = virtio_mmio::VirtioMmioTransport::new(
