@@ -251,6 +251,10 @@ fn gateway_status_json_maps_to_tui_state() {
     assert_eq!(active.stats.duration, std::time::Duration::from_secs(2840));
     assert_eq!(active.stats.tokens, 38_912);
     assert_eq!(active.stats.cost_micros, 215_000);
+    assert!(
+        active.attention.is_empty(),
+        "current profile status should not be marked stale"
+    );
 
     let attention = &state.sessions[1];
     assert_eq!(attention.lifecycle, SessionLifecycle::Suspended);
@@ -434,6 +438,7 @@ fn gateway_status_body() -> &'static str {
                 "persistent": true,
                 "profile_id": "profile-v2",
                 "profile_revision": "main",
+                "profile_status": "current",
                 "uptime_secs": 2840,
                 "total_input_tokens": 30000,
                 "total_output_tokens": 8912,

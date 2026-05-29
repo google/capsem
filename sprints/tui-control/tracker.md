@@ -30,7 +30,7 @@
 - [x] Add confirmed create/resume/suspend/stop/delete actions through the
       installed HTTP gateway.
 - [x] Run live installed-gateway empty-service snapshot.
-- [ ] Run live two-session terminal proof.
+- [x] Run live two-session terminal proof.
 - [x] Commit functional milestone.
 
 ## Notes
@@ -76,15 +76,23 @@
   active session, F7 stops it, and F8 deletes it. Action calls run on a
   background worker so long suspend/stop/provision paths do not freeze terminal
   rendering.
-- Live VM proof is currently blocked by installed asset readiness, not by the
-  TUI route. `capsem_create(name=tui-proof-a)` fails because
-  `/Users/elie/.capsem/assets/arm64/initrd-b2be4ef1b9033569.img` is missing
-  and `assets.capsem.dev` does not resolve on this host while other DNS
-  lookups such as `github.com` do resolve.
+- Live VM proof is unblocked. MCP `capsem_list` reports asset health ready and
+  two running persistent proof sessions, `tui-proof-a` and `tui-proof-b`, on
+  `everyday-work@2026.0529.5`.
+- Live snapshot now renders both proof sessions without false attention markers:
+  `cargo run -p capsem-tui -- --snapshot --width 120 --height 30`.
+- Live terminal WebSocket proof through the installed HTTP gateway succeeded
+  against `tui-proof-a` and returned `TUI_WS_PROOF_A` from the VM shell.
+- Fixed `profile_status=current` handling so healthy profile pins do not render
+  stale/attention markers.
+- MCP triage for `tui-proof-a` found no session-level failures. Host triage
+  still shows stale gateway terminal reconnect errors for the removed
+  `crafty-panda` socket, which are unrelated to the proof sessions.
 
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-tui` (18 tests).
+- Formatting: `cargo fmt -p capsem-tui -- --check`.
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
   `cargo run -p capsem-tui -- --fixture --snapshot --width 120 --height 30`;
   `cargo run -p capsem-tui -- --fixture --snapshot-svg --width 120 --height 30`;
@@ -100,8 +108,9 @@
 - Adversarial: malformed gateway status mapping; action error response body
   surfaced to the status bar instead of being swallowed.
 - E2E/VM: live installed-gateway empty-service snapshot works; live
-  multi-session terminal proof is blocked by missing installed `initrd.img` and
-  asset-host DNS failure.
+  multi-session terminal proof works with MCP-created `tui-proof-a` and
+  `tui-proof-b`; installed gateway terminal WebSocket returned VM shell output
+  from `tui-proof-a`.
 - Telemetry: current gateway `/status` counters mapped; event-stream semantics
   still open.
 - Performance: not measured yet.

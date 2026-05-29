@@ -32,7 +32,7 @@ thin client over typed state and actions exposed by Capsem service/gateway APIs.
 | T07 | Done | Wire installed gateway read-only state | HTTP provider test + live snapshot |
 | T08 | Done | Safe service control actions | confirmation/action tests |
 | T09 | Not Started | Remote transport readiness | reconnect/event cursor tests |
-| T10 | In Progress | Active terminal WebSocket surface | terminal buffer/input tests |
+| T10 | Done | Active terminal WebSocket surface | terminal buffer/input tests + live two-session gateway proof |
 
 ## Current Decision
 
@@ -42,7 +42,10 @@ falls back to `http://127.0.0.1:19222`, fetches `/token`, and then polls
 authenticated `GET /status`. Safe mutating actions go through the same gateway
 with a confirmation overlay and a background worker. `--fixture` keeps the
 two-session demo path for visual iteration; `--gateway-url` turns connection
-failures into explicit errors for focused gateway testing.
+failures into explicit errors for focused gateway testing. The active terminal
+WebSocket path is live-proven against MCP-created `tui-proof-a` and
+`tui-proof-b`; healthy `profile_status=current` sessions no longer render stale
+attention markers.
 
 ## T00 Closeout
 
@@ -95,6 +98,9 @@ failures into explicit errors for focused gateway testing.
 - Added confirmed create/resume/suspend/stop/delete actions through the
   installed gateway, with background execution so long service operations do
   not block terminal rendering.
+- Proved the installed gateway path with two live persistent sessions created
+  through Capsem MCP. `capsem-tui --snapshot` renders both sessions and a direct
+  gateway WebSocket command returned `TUI_WS_PROOF_A` from `tui-proof-a`.
 - Kept richer missing state explicit for future API work: waiting-for-input,
   terminal bell, per-session repo/path metadata, security/enforcement/detection
   totals, and event cursor semantics are not invented by the TUI.
@@ -106,8 +112,8 @@ failures into explicit errors for focused gateway testing.
 - Adversarial: malformed gateway status, authenticated provider parsing, and
   action error propagation.
 - E2E/VM: live empty-service snapshot covered; live multi-VM terminal session
-  proof remains open because the installed service is missing the exact pinned
-  `initrd.img` and `assets.capsem.dev` does not resolve on this host.
+  proof covered with MCP-created `tui-proof-a` and `tui-proof-b`, plus installed
+  gateway terminal WebSocket shell output from `tui-proof-a`.
 - Telemetry: mapped from current counters; event stream/cursor semantics remain
   open.
 - Performance: frame/render timing deferred until interactive loop exists.

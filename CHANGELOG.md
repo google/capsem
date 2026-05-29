@@ -113,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` live gateway attention handling so sessions with
+  `profile_status=current` are not marked stale, and proved the installed
+  terminal WebSocket path against two running service sessions.
 - Fixed macOS release builds of the service debug report by widening filesystem
   block counts before computing disk byte totals.
 - Fixed macOS release builds of `capsem-process` shutdown handling by returning

@@ -206,7 +206,7 @@ fn attention_from_vm(vm: &VmSummary, lifecycle: SessionLifecycle) -> Vec<Attenti
     if vm.profile_status.as_deref().is_some_and(|status| {
         !matches!(
             status.to_ascii_lowercase().as_str(),
-            "ready" | "ok" | "installed" | "active"
+            "ready" | "ok" | "installed" | "active" | "current"
         )
     }) {
         attention.push(Attention::StaleData);

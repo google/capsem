@@ -21,11 +21,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 #[derive(Parser)]
-#[command(
-    author,
-    version,
-    about = "Standalone Capsem terminal control UI prototype"
-)]
+#[command(author, version, about = "Capsem terminal control UI")]
 struct Cli {
     /// Print a deterministic text rendering instead of opening the terminal UI.
     #[arg(long)]
