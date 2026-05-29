@@ -88,6 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed serial benchmark gates for Linux KVM by separating backend-dependent
   provision latency from steady-state exec/delete latency and cleaning transient
   apt metadata out of the fork image-size workload.
+- Fixed the serial log gate to accept early KVM ACPI/PCI boot messages and the
+  guest banner when the log stream starts after the Linux version line.
 - Fixed `just cross-compile` so its Linux boot test installs the repacked
   `.deb` with CLI/service companion binaries, packaged admin payload, signed
   manifest, payload verification, and Docker vsock permissions instead of the
