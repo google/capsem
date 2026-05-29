@@ -8,7 +8,9 @@ static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new
 fn pre_fork_guest_flush_command_trims_before_freezing() {
     let command = pre_fork_guest_flush_command();
 
-    assert!(command.starts_with("fstrim / 2>/dev/null || true; sync;"));
+    assert!(command.starts_with(
+        "fstrim /run/capsem-system 2>/dev/null || fstrim / 2>/dev/null || true; sync;"
+    ));
     assert!(command.contains("fsfreeze -f /"));
     assert!(command.contains("fsfreeze -u /"));
 }
