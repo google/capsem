@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the initial `capsem-tui` crate with a fixture-backed standalone
   terminal control screen, global service light-bar state, per-session desktop
   indicators, and deterministic snapshot rendering for early UI proof.
-- Added a `just dev-tui` standalone TUI prototype with two fixture sessions,
+- Added a `just dev-tui` standalone TUI shell with two fixture sessions,
   SVG snapshot export, and keyboard session switching that does not capture
   plain `q`.
 - Added live `capsem-tui` gateway wiring against the installed Capsem HTTP
@@ -121,9 +121,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redraws instead of a hand-rolled ANSI text flattener.
 - Fixed `capsem-tui` service latency rendering to reserve four digits so the
   bottom status bar does not shift as latency changes.
-- Fixed `capsem-tui` session navigation to use app-owned Alt shortcuts and a
-  `Ctrl-b` prefix fallback instead of relying on terminal-dependent Cmd/Ctrl
-  arrow forwarding.
+- Fixed `capsem-tui` shell controls to use an app-owned Alt namespace:
+  `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`, and `Alt+q`, instead of
+  terminal-dependent Cmd/Ctrl forwarding or prefix fallbacks.
 - Fixed macOS release builds of the service debug report by widening filesystem
   block counts before computing disk byte totals.
 - Fixed macOS release builds of `capsem-process` shutdown handling by returning

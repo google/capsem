@@ -30,8 +30,8 @@
       preserves terminal colors and text attributes.
 - [x] Add client-side terminal output coalescing and dirty-frame redraws.
 - [x] Stabilize service latency width in the bottom bar.
-- [x] Replace terminal-dependent Cmd/Ctrl navigation guesses with app-owned Alt
-      navigation plus a `Ctrl-b` prefix fallback.
+- [x] Replace terminal-dependent Cmd/Ctrl navigation guesses with an app-owned
+      Alt namespace for shell controls.
 - [x] Add `capsem_terminal_snapshot` MCP tool for session terminal inspection.
 - [x] Add confirmed create/resume/suspend/stop/delete actions through the
       installed HTTP gateway.
@@ -55,9 +55,8 @@
 - Product correction after tmux reference review: removed aggregate VM status
   counts from the left, kept only service health/latency, colored only the
   active tab and attention tabs, and tied tab label color to the number tone.
-- Keyboard policy: plain `q` and Ctrl-C belong to the agent/terminal stream, so
-  the standalone shell exits via F10, Ctrl-Esc, or Cmd-Q if the terminal emits
-  it.
+- Keyboard policy: plain `q` and Ctrl-C belong to the agent/terminal stream.
+  The TUI shell exits with `Alt+q` and keeps app-owned controls under Alt.
 - Default `dev-tui` reads the installed HTTP gateway when available. It uses
   `CAPSEM_GATEWAY_URL` when set, otherwise the installed runtime
   `gateway.port`, otherwise `http://127.0.0.1:19222`.
@@ -77,9 +76,10 @@
 - MCP terminal inspection is now a text snapshot from service logs, not a
   bitmap screenshot. It is enough for agent debugging and works through the
   existing service log contract.
-- Safe service actions are now active behind a confirmation overlay. F4 creates
-  an ephemeral session, F5 resumes stopped/suspended sessions, F6 suspends the
-  active session, F7 stops it, and F8 deletes it. Action calls run on a
+- Safe service actions are now active behind a confirmation overlay. `Alt+n`
+  creates an ephemeral session, `Alt+r` resumes stopped/suspended sessions,
+  `Alt+s` suspends the active session, `Alt+t` stops it, and `Alt+d` deletes it.
+  Action calls run on a
   background worker so long suspend/stop/provision paths do not freeze terminal
   rendering.
 - Live VM proof is unblocked. MCP `capsem_list` reports asset health ready and
@@ -99,9 +99,11 @@
   `crossterm::event::poll`; the WebSocket path remains async and event-driven.
 - Service latency reserves four digits before `ms`, preventing the center tab
   strip from shifting when latency changes between one and four digits.
-- Navigation is now app-owned: `Alt+h/l`, `Alt+Left/Right`, and `Alt+1..9`
-  switch sessions; `Ctrl-b` then `h/l/1..9` is a fallback prefix path when a
-  host environment eats Alt chords.
+- Navigation is now app-owned: `Alt+Left/Right` switches sessions and
+  `Alt+1..9` jumps by tab number. `Alt+n/r/s/t/d`, `Alt+q`, `Alt+?`, `Alt+i`,
+  and `Alt+o` cover shell actions, exit, help, stats, and session list.
+- `just dev-tui` documents the same Alt-only shell contract inline so local
+  playback and installed usage do not drift.
 - MCP triage for `tui-proof-a` found no session-level failures. Host triage
   still shows stale gateway terminal reconnect errors for the removed
   `crafty-panda` socket, which are unrelated to the proof sessions.

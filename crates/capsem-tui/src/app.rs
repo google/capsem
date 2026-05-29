@@ -57,7 +57,6 @@ pub struct App {
     active_index: usize,
     overlay: AppOverlay,
     pending_action: Option<ControlAction>,
-    prefix_pending: bool,
 }
 
 impl App {
@@ -72,7 +71,6 @@ impl App {
             active_index,
             overlay: AppOverlay::None,
             pending_action: None,
-            prefix_pending: false,
         }
     }
 
@@ -86,10 +84,6 @@ impl App {
 
     pub fn pending_action(&self) -> Option<&ControlAction> {
         self.pending_action.as_ref()
-    }
-
-    pub fn prefix_pending(&self) -> bool {
-        self.prefix_pending
     }
 
     pub fn replace_state(&mut self, mut state: AppState) {
@@ -122,16 +116,6 @@ impl App {
         if let Some(action) = self.handle_pending_action_key(key) {
             return action;
         }
-        if self.prefix_pending {
-            self.prefix_pending = false;
-            return self.handle_prefix_key(key);
-        }
-        if is_prefix_key(key) {
-            self.prefix_pending = true;
-            self.pending_action = None;
-            self.overlay = AppOverlay::None;
-            return AppAction::Consumed;
-        }
         if self.handle_overlay_key(key) {
             return AppAction::Consumed;
         }
@@ -153,29 +137,6 @@ impl App {
             return AppAction::Consumed;
         }
         AppAction::Forward
-    }
-
-    fn handle_prefix_key(&mut self, key: KeyEvent) -> AppAction {
-        match key.code {
-            KeyCode::Char('h') | KeyCode::Char('p') | KeyCode::Left => {
-                self.previous_session();
-                AppAction::Consumed
-            }
-            KeyCode::Char('l') | KeyCode::Char('n') | KeyCode::Right => {
-                self.next_session();
-                AppAction::Consumed
-            }
-            KeyCode::Char(ch) if ch.is_ascii_digit() => {
-                let index = ch.to_digit(10).unwrap_or_default();
-                if index > 0 {
-                    self.select_session(index as usize - 1);
-                }
-                AppAction::Consumed
-            }
-            KeyCode::Esc => AppAction::Consumed,
-            _ if is_prefix_key(key) => AppAction::Forward,
-            _ => AppAction::Consumed,
-        }
     }
 
     pub fn next_session(&mut self) {
@@ -214,10 +175,13 @@ impl App {
     }
 
     fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
+        if !is_alt_key(key.modifiers) {
+            return false;
+        }
         let next = match key.code {
-            KeyCode::F(1) => AppOverlay::Help,
-            KeyCode::F(2) => AppOverlay::Stats,
-            KeyCode::F(3) => AppOverlay::Home,
+            KeyCode::Char('?') => AppOverlay::Help,
+            KeyCode::Char('i' | 'I') => AppOverlay::Stats,
+            KeyCode::Char('o' | 'O') => AppOverlay::Home,
             _ => return false,
         };
         self.overlay = if self.overlay == next {
@@ -247,12 +211,15 @@ impl App {
     }
 
     fn control_action_for_key(&self, key: KeyEvent) -> Option<ControlAction> {
+        if !is_alt_key(key.modifiers) {
+            return None;
+        }
         match key.code {
-            KeyCode::F(4) => Some(ControlAction::CreateEphemeral),
-            KeyCode::F(5) => self.active_resume_action(),
-            KeyCode::F(6) => self.active_suspend_action(),
-            KeyCode::F(7) => self.active_id().map(|id| ControlAction::Stop { id }),
-            KeyCode::F(8) => self.active_id().map(|id| ControlAction::Delete { id }),
+            KeyCode::Char('n' | 'N') => Some(ControlAction::CreateEphemeral),
+            KeyCode::Char('r' | 'R') => self.active_resume_action(),
+            KeyCode::Char('s' | 'S') => self.active_suspend_action(),
+            KeyCode::Char('t' | 'T') => self.active_id().map(|id| ControlAction::Stop { id }),
+            KeyCode::Char('d' | 'D') => self.active_id().map(|id| ControlAction::Delete { id }),
             _ => None,
         }
     }
@@ -288,36 +255,18 @@ impl App {
 }
 
 fn is_exit_key(key: KeyEvent) -> bool {
-    let modifiers = key.modifiers;
-    matches!(
-        (key.code, modifiers),
-        (KeyCode::Char('q'), KeyModifiers::SUPER)
-            | (KeyCode::Esc, KeyModifiers::CONTROL)
-            | (KeyCode::F(10), KeyModifiers::NONE)
-    )
-}
-
-fn is_prefix_key(key: KeyEvent) -> bool {
     matches!(
         (key.code, key.modifiers),
-        (KeyCode::Char('b'), KeyModifiers::CONTROL)
+        (KeyCode::Char('q' | 'Q'), modifiers) if is_alt_key(modifiers)
     )
 }
 
 fn is_previous_key(key: KeyEvent) -> bool {
-    is_alt_key(key.modifiers)
-        && matches!(
-            key.code,
-            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('p')
-        )
+    is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Left)
 }
 
 fn is_next_key(key: KeyEvent) -> bool {
-    is_alt_key(key.modifiers)
-        && matches!(
-            key.code,
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n')
-        )
+    is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Right)
 }
 
 fn is_alt_key(modifiers: KeyModifiers) -> bool {

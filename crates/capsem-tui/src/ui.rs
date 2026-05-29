@@ -273,12 +273,12 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
 fn help_lines() -> Vec<Line<'static>> {
     vec![
         overlay_title("keys"),
-        overlay_line("F1 help   F2 stats   F3 sessions"),
-        overlay_line("F4 new   F5 resume   F6 suspend   F7 stop   F8 delete"),
-        overlay_line("Alt+h/l or Alt+arrows switch sessions"),
-        overlay_line("Alt+number jumps to a session"),
-        overlay_line("Ctrl-b then h/l/number is the fallback prefix"),
-        overlay_line("F10 exits; q and Ctrl-C pass through"),
+        overlay_line("Alt+Left/Right switch sessions"),
+        overlay_line("Alt+1..9 jumps to a session"),
+        overlay_line("Alt+n new   Alt+r resume   Alt+s suspend"),
+        overlay_line("Alt+t stop   Alt+d delete   Alt+q quit"),
+        overlay_line("Alt+? help   Alt+i stats   Alt+o sessions"),
+        overlay_line("plain q, Ctrl-C, and shell keys pass through"),
     ]
 }
 

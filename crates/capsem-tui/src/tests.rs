@@ -56,13 +56,13 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
     assert_eq!(app.state().active_session_id, "profile-v2");
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::ALT)),
+        app.handle_key(key(KeyCode::Right, KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.state().active_session_id, "linux-os");
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('h'), KeyModifiers::ALT)),
+        app.handle_key(key(KeyCode::Left, KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.state().active_session_id, "profile-v2");
@@ -79,41 +79,37 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
     );
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Esc, KeyModifiers::CONTROL)),
-        AppAction::Exit
-    );
-    assert_eq!(
-        app.handle_key(key(KeyCode::F(10), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('q'), KeyModifiers::ALT)),
         AppAction::Exit
     );
 }
 
 #[test]
-fn prefix_navigation_is_deterministic_without_mac_modifier_arrows() {
+fn shell_commands_are_alt_owned() {
     let mut app = App::new(fixture_state());
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+        app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
-    assert!(app.prefix_pending());
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(app.pending_action(), Some(&ControlAction::CreateEphemeral));
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('1'), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE)),
         AppAction::Consumed
     );
-    assert_eq!(app.state().active_session_id, "profile-v2");
-    assert!(!app.prefix_pending());
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+        app.handle_key(key(KeyCode::Char('t'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::NONE)),
-        AppAction::Consumed
+        app.pending_action(),
+        Some(&ControlAction::Stop {
+            id: "profile-v2".to_string()
+        })
     );
-    assert_eq!(app.state().active_session_id, "linux-os");
 }
 
 #[test]
@@ -142,17 +138,17 @@ fn function_keys_toggle_hidden_overlays() {
 
     assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(
-        app.handle_key(key(KeyCode::F(1), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('?'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::Help);
     assert_eq!(
-        app.handle_key(key(KeyCode::F(2), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('i'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::Stats);
     assert_eq!(
-        app.handle_key(key(KeyCode::F(2), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('i'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::None);
@@ -163,7 +159,7 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
     let mut app = App::new(fixture_state());
 
     assert_eq!(
-        app.handle_key(key(KeyCode::F(7), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('t'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::Confirm);
@@ -195,9 +191,9 @@ fn resume_action_is_only_available_for_stopped_or_suspended_sessions() {
     let mut app = App::new(fixture_state());
 
     assert_eq!(
-        app.handle_key(key(KeyCode::F(5), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
         AppAction::Forward,
-        "running active session should not map F5 to resume"
+        "running active session should not map Alt+r to resume"
     );
 
     let mut state = fixture_state();
@@ -206,7 +202,7 @@ fn resume_action_is_only_available_for_stopped_or_suspended_sessions() {
     app = App::new(state);
 
     assert_eq!(
-        app.handle_key(key(KeyCode::F(5), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(
@@ -221,7 +217,7 @@ fn resume_action_is_only_available_for_stopped_or_suspended_sessions() {
 fn suspend_action_requires_persistent_running_session() {
     let mut app = App::new(fixture_state());
     assert_eq!(
-        app.handle_key(key(KeyCode::F(6), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('s'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(
@@ -235,7 +231,7 @@ fn suspend_action_requires_persistent_running_session() {
     state.sessions[0].persistent = false;
     app = App::new(state);
     assert_eq!(
-        app.handle_key(key(KeyCode::F(6), KeyModifiers::NONE)),
+        app.handle_key(key(KeyCode::Char('s'), KeyModifiers::ALT)),
         AppAction::Forward,
         "ephemeral sessions cannot be suspended through the service"
     );
@@ -244,7 +240,7 @@ fn suspend_action_requires_persistent_running_session() {
 #[test]
 fn stats_overlay_renders_on_demand_without_persistent_help() {
     let mut app = App::new(fixture_state());
-    app.handle_key(key(KeyCode::F(2), KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Char('i'), KeyModifiers::ALT));
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render app snapshot");
 
@@ -254,7 +250,7 @@ fn stats_overlay_renders_on_demand_without_persistent_help() {
     assert!(
         !render_snapshot(&fixture_state(), 100, 24)
             .expect("render base snapshot")
-            .contains("F1 help"),
+            .contains("Alt+?"),
         "help is hidden until requested"
     );
 }

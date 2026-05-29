@@ -62,9 +62,9 @@ attention markers.
   service state on the left, numbered session tabs in the center, and active
   session stats on the right.
 - Added a typed app controller for session switching.
-- Kept plain `q` and Ctrl-C available for the agent/terminal stream; standalone
-  exits on F10, Ctrl-Esc, or Cmd-Q when the terminal delivers it, and switches
-  sessions with modified arrow keys or modified tab numbers.
+- Kept plain `q` and Ctrl-C available for the agent/terminal stream. The TUI
+  shell owns Alt chords: `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`,
+  `Alt+q`, `Alt+?`, `Alt+i`, and `Alt+o`.
 - Added `just dev-tui` for direct local playback.
 
 ## T04-T05 Closeout
