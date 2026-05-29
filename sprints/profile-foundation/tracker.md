@@ -20,7 +20,8 @@ Last updated: 2026-05-27
 - [ ] Execute F08 timeline and workbench foundation.
 - [ ] Execute F09 security plugin, remote decision, and observer alert
       foundation.
-- [ ] Execute F10 product integration and Google/Gemini foundation.
+- [ ] Execute F10 product integration foundation; consume Google-specific work
+      from `../google/`.
 - [ ] Execute F11 quotas, budgets, and rate limits.
 - [ ] Execute F12 docs, site, and Foundation release gate.
 

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Split Google into its own `sprints/google/` meta sprint covering Gmail,
+  Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,
+  and Google AI.
 - Added the Profile Foundation meta sprint with F00-F12 sub-sprints, a
   code-reality check, and a crosswalk from the old Profile V2 S-numbered
   boards.

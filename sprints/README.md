@@ -9,6 +9,9 @@ live under `sprints/retired/`.
 - `profile-foundation/` - active post-ship Profile V2 Foundation meta sprint.
   Enter through `profile-foundation/MASTER.md`; `tracker.md` records code
   checks and execution status. This board owns the current F-numbered order.
+- `google/` - active Google integration meta sprint for Gmail, Drive, gcloud,
+  Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini, and Google AI.
+  It feeds Foundation F06/F07/F09/F10.
 - `policy-settings-profiles/` - active Profile V2 and bedrock release board.
   This is now historical evidence and source material for the Foundation
   sprint. Enter through `policy-settings-profiles/NOW.md` only when tracing old
@@ -27,10 +30,9 @@ The active Profile V2 path is tracked inside
 - `Profile Foundation Sprint` - active parent sprint for all remaining
   foundation work. It exits only when installed Profile V2 behavior, the full
   Security Event system, security plugins, remote decisions, remote alert
-  logging, Google/Gemini integration, Gmail, Drive, gcloud, Firebase, Jet Ski,
-  credentials, product graph, OpenTelemetry, metrics/reporting, dashboard
-  improvements, workbench, integrations, quotas, docs/site, and final release
-  proof are trusted.
+  logging, credentials, product graph, OpenTelemetry, metrics/reporting,
+  dashboard improvements, workbench, integrations, quotas, docs/site, and final
+  release proof are trusted. Google-specific work lives in `google/`.
 - F00-F12 are the execution order. Old S-numbered files remain source material,
   not ordering authority.
 
@@ -43,6 +45,8 @@ The active Profile V2 path is tracked inside
 - Credential release belongs to
   `policy-settings-profiles/S10-credential-brokerage.md`; source discovery and
   inventory stay in `credential-pipeline/`. S10 is carried by Foundation F06.
+- Google integration belongs to `google/`, including Gmail, Drive, gcloud,
+  Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini, and Google AI.
 - Linux, old audit bugs, old forensics, and older service/frontend refactors
   are retired until they are rewritten against the Profile V2 contracts.
 
