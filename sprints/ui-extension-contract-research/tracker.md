@@ -28,6 +28,13 @@
   and `revealLeaf`.
 - Capsem should copy VS Code's isolation and Obsidian's workspace/pane feel.
   Do not copy Obsidian's ambient DOM/app authority.
+- Correction: ArrowJS is a directional renderer reference, not the architecture.
+  The architecture is one host-validated `UiContribution` pipeline used by
+  models, tools, security plugins, and UI plugins alike.
+- Capsem's trusted app shell stays Svelte 5 + Preline tokens/patterns. Extension
+  renderers run behind a sandbox boundary and consume the same contribution
+  objects, whether the chosen runtime is ArrowJS, a lighter Svelte-like runtime,
+  or a Capsem-authored micro renderer.
 - Findings written in `docs/ui-extension-contract-research.md`.
 
 ## Coverage Ledger
@@ -35,6 +42,7 @@
 - Primary source: VS Code source/API, VS Code samples, Obsidian API/sample/docs.
 - Comparative analysis: recorded in `docs/ui-extension-contract-research.md`.
 - Prototype impact: recommends manifest `contributes`, structured chat parts,
-  MIME-style chat renderers, sandboxed side-panel webviews, `postMessage`,
-  `getState`/`setState`, and manifest-gated `fetch`.
+  one `UiContribution` object family, MIME-style chat renderers, sandboxed
+  side-panel webviews, `postMessage`, `getState`/`setState`, and
+  manifest-gated `fetch`.
 - Missing/deferred: no UI implementation in this sprint.

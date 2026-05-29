@@ -11,9 +11,109 @@ Local ignored checkouts live under `private/upstream/`.
 | Obsidian API | `obsidianmd/obsidian-api` | `2e88986` |
 | Obsidian sample plugin | `obsidianmd/obsidian-sample-plugin` | `dc2fa22` |
 | Obsidian developer docs | `obsidianmd/obsidian-developer-docs` | `96e5dae` |
+| ArrowJS | `standardagents/arrow-js` | `f134a77` |
+| Capsem frontend | local `frontend/` | Svelte 5 + Preline |
 
 Obsidian itself is closed source, so the primary executable contract is the
 published TypeScript API, sample plugin, and developer docs.
+
+## Decision Frame
+
+The core design constraint is **one UI contribution path**.
+
+Models, rules, security plugins, tools, and UI plugins should not get separate
+ways to change the application. They should all produce the same host-validated
+UI contribution objects. The host then routes those objects into chat, side
+panels, status items, trace views, or renderer sandboxes.
+
+That means ArrowJS is only a directional reference for authoring ergonomics:
+tiny JavaScript, no heavy compiler, direct DOM rendering, easy for a model to
+write. It is not the architecture. We may choose ArrowJS, a lighter Svelte-like
+runtime, or a Capsem-authored micro renderer later. The architecture is the UI
+contribution protocol.
+
+Capsem already has a trusted app shell:
+
+- Svelte 5 runes own app state and trusted first-party interactivity.
+- Preline is used for CSS tokens and component patterns only.
+- Preline JS plugins are not allowed.
+- The terminal already uses a sandboxed iframe plus typed `postMessage`.
+- Existing views use dense Svelte panels, side panes, detail drawers, Shiki
+  highlighting, LayerChart, and gateway/WebSocket data flows.
+
+So the question is not "ArrowJS versus Svelte for the whole UI." The question
+is what runtime, if any, should execute inside **extension-owned surfaces**
+after the host has accepted a typed UI contribution.
+
+## Design Recommendation
+
+Build a single `UiContribution` pipeline:
+
+```ts
+type UiContribution =
+  | ChatPart
+  | UiPatch
+  | SidePanelContribution
+  | StatusItemContribution
+  | CommandContribution
+  | RendererContribution;
+```
+
+All producers use it:
+
+```ts
+context.ui.emit({
+  surface: "chat",
+  kind: "markdown",
+  body: "Policy found **3 issues**"
+});
+
+context.ui.emit({
+  surface: "side_panel",
+  target: "capsem.gitContext",
+  operation: "upsert_block",
+  block: {
+    kind: "git-context-card",
+    id: "git-context:workspace",
+    title: "workspace",
+    subtitle: "main",
+    body: "stars 123 / forks 45 / issues 6"
+  }
+});
+
+context.ui.render({
+  surface: "chat",
+  mime: "application/vnd.capsem.findings+json",
+  data: findings
+});
+```
+
+The same object shape should be available to:
+
+- model output rendering,
+- security plugin callbacks,
+- tool results,
+- extension UI plugins,
+- built-in Capsem features.
+
+The trusted Svelte app consumes this protocol first. When a contribution needs
+arbitrary rich UI, the host mounts a sandboxed renderer surface that also
+receives the same contribution object. No producer gets to bypass the protocol.
+
+## Runtime Tradeoff
+
+| Option | What It Means | Strengths | Risks | Decision |
+| --- | --- | --- | --- | --- |
+| Svelte-only shell | Plugins/models can only emit objects rendered by first-party Svelte components | Maximum consistency with Capsem Svelte/Preline; smallest attack surface | Too slow for third-party rich UI; every new renderer requires Capsem code | Use for default built-in blocks |
+| Declarative schema only | Contributions are JSON UI trees, no plugin JS renderer | Very auditable; easy to validate; remote UI friendly | Can become a bad private UI language; limited for charts/interactive output | Good MVP floor, not enough long term |
+| ArrowJS sandbox renderer | Approved renderer runtime inside iframe/webview | Tiny runtime; plain JS; model-friendly; no build step; good analogy for rich printing | Another reactive model beside Svelte; must constrain `.innerHTML`, network, storage, and messages | Viable first renderer experiment, not core architecture |
+| Lighter Svelte-like runtime | Capsem-authored or Svelte-compiled minimal renderer for extensions | Closer to our app mental model; one syntax family | Compiler/runtime work; may be heavier than needed; harder for models to generate | Worth a spike if ArrowJS ergonomics are not enough |
+| Full Svelte plugins | Third-party/plugin UI compiled as Svelte components | Best fit with current app stack | Trust boundary is harder; bundle/version coupling; app-shell integration risk | Avoid for untrusted plugins initially |
+
+Recommendation: start with **declarative blocks plus one sandbox renderer
+runtime**. The renderer runtime is behind the `RendererContribution` contract,
+so choosing ArrowJS now does not fork the product. It is replaceable if a
+lighter Svelte-like runtime proves better.
 
 ## VS Code Findings
 
@@ -102,6 +202,7 @@ Capsem should use one extension package model with multiple contributions:
     "chatParticipants": [],
     "menus": [],
     "statusItems": [],
+    "renderers": [],
     "plugins": [],
     "rules": [],
     "tools": [],
@@ -133,28 +234,29 @@ Code:
 Default chat output should be structured parts, not arbitrary HTML:
 
 ```ts
-context.chat.stream.markdown("Policy found **3 issues**");
-context.chat.stream.button({ command: "capsem.openFindings", title: "Open findings" });
-context.chat.stream.filetree(files, "capsem://workspace");
-context.chat.stream.render("application/vnd.capsem.findings+json", findings);
+context.ui.emit({ surface: "chat", kind: "markdown", body: "Policy found **3 issues**" });
+context.ui.emit({ surface: "chat", kind: "button", command: "capsem.openFindings", title: "Open findings" });
+context.ui.emit({ surface: "chat", kind: "filetree", files, baseUri: "capsem://workspace" });
+context.ui.render({ surface: "chat", mime: "application/vnd.capsem.findings+json", data: findings });
 ```
 
-For rich printing, a plugin can contribute a renderer for a MIME-like payload:
+For rich printing, an extension can contribute a renderer for a MIME-like
+payload. ArrowJS is an example runtime, not a special path:
 
 ```ts
-UI("capsem.findings.renderer").chat_output_renderer({
+UI("capsem.findings.renderer").renderer({
   mimeTypes: ["application/vnd.capsem.findings+json"],
   render(data, webview, context) {
-    const app = arrow(document.body);
-    app.render(FindingTable(data));
+    renderFindingTable(data, document.body);
     webview.postMessage({ type: "ready" });
   },
 });
 ```
 
 The renderer runs in a sandboxed webview/iframe with a `capsemApi` object,
-similar to VS Code's `acquireVsCodeApi()`. Arrow-like libraries are fine inside
-that UI sandbox; they should not grant more host authority.
+similar to VS Code's `acquireVsCodeApi()`. The runtime may be ArrowJS, a
+lighter Svelte-like runtime, or a Capsem runtime, but it receives the same
+`UiContribution` and has the same `postMessage`/state constraints.
 
 ### Side Panels
 
@@ -178,11 +280,13 @@ content inside its surface.
 
 ### UI Mutation Channel
 
-Security plugins should not touch UI directly. They emit data:
+Security plugins, model output handlers, and tools should not touch UI
+directly. They emit data:
 
 ```ts
 context.ui.emit({
-  channel: "workspace.context",
+  surface: "side_panel",
+  target: "workspace.context",
   operation: "upsert_block",
   block: {
     kind: "git-context-card",
@@ -203,7 +307,8 @@ status item, or a trace view.
 | --- | --- | --- |
 | Extension package | Static manifest with `contributes`, `permissions`, `host_permissions` | Chrome, VS Code |
 | Security logic | WASM callback receives copied object/context and returns object | Current prototype |
-| UI renderer | Sandboxed webview/iframe JS with `postMessage` and state API | VS Code |
+| UI protocol | One host-validated `UiContribution` object family for models and plugins | Capsem |
+| UI renderer | Replaceable sandbox runtime behind `RendererContribution` | VS Code + ArrowJS direction |
 | Side panel | Declared view + provider/resolver + host-owned placement | VS Code + Obsidian |
 | Chat rich output | Structured stream parts plus MIME renderer escape hatch | VS Code chat |
 | Workspace panes | Leaf/sidebar ergonomics, reveal existing view before creating | Obsidian |
@@ -212,9 +317,11 @@ status item, or a trace view.
 
 ## Hard Design Questions Next
 
-- Do UI renderers run as plain browser JS bundles while enforcement callbacks
-  run as WASM, or do we require UI renderer logic to be compiled through the
-  same TypeScript-to-WASM path and only generate declarative UI?
+- What is the smallest `UiContribution` schema that can serve both models and
+  plugins without becoming a bad private UI language?
+- Is ArrowJS good enough as the first sandbox renderer runtime, or should we
+  build a lighter Svelte-like runtime that keeps the Capsem frontend mental
+  model intact?
 - What is the minimum safe "rich print" data model before allowing full
   webview renderers?
 - Which surfaces are available in remote UI where the gateway may not have a
