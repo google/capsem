@@ -105,6 +105,10 @@ attention markers.
   screen state, SGR colors, and text attributes. Client-side adjacent output
   coalescing and dirty-frame redraws now mirror the existing `capsem shell`
   speed contract instead of repainting on every loop.
+- Tightened interactive control polish: help opens on both `Alt+?` and
+  terminal-encoded `Alt+/`, overlays render as Ratatui modal blocks, service
+  latency renders as a glued `####ms●` segment, and active terminal geometry is
+  resent whenever the real terminal size changes.
 - Kept richer missing state explicit for future API work: waiting-for-input,
   terminal bell, per-session repo/path metadata, security/enforcement/detection
   totals, and event cursor semantics are not invented by the TUI.

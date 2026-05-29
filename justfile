@@ -258,7 +258,7 @@ dev-frontend: _pnpm-install
 # Standalone terminal control-plane shell.
 # App-owned controls: Alt+Left/Right switch sessions; Alt+1..9 jumps;
 # Alt+n new, Alt+r resume, Alt+s suspend, Alt+t stop, Alt+d delete, Alt+q quit;
-# Alt+? help, Alt+i stats, Alt+o sessions. Plain q/Ctrl-C pass to the VM.
+# Alt+?/Alt+/ help, Alt+i stats, Alt+o sessions. Plain q/Ctrl-C pass to the VM.
 # Pass extra args after `--`: `just dev-tui -- --snapshot`.
 dev-tui *ARGS:
     cargo run -p capsem-tui {{ARGS}}

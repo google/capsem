@@ -161,7 +161,7 @@ fn run_loop(
 ) -> Result<()> {
     let mut last_refresh = Instant::now();
     let mut surface = TerminalSurface::new();
-    let mut connected_session_id = String::new();
+    let mut connected_terminal = None;
     let mut needs_draw = true;
     let input_events = spawn_input_reader();
     loop {
@@ -197,15 +197,16 @@ fn run_loop(
             }
             let size = terminal.size()?;
             let active_id = app.state().active_session_id.clone();
+            let surface_rows = terminal_rows(size.height);
             if !active_id.is_empty() {
-                surface.resize(&active_id, size.width, size.height.saturating_sub(1));
+                surface.resize(&active_id, size.width.max(1), surface_rows);
             }
             needs_draw |= sync_terminal_connection(
                 app,
                 bridge,
-                &mut connected_session_id,
-                size.width,
-                size.height.saturating_sub(1),
+                &mut connected_terminal,
+                size.width.max(1),
+                surface_rows,
             );
         }
         if last_refresh.elapsed() >= refresh_interval {
@@ -271,7 +272,7 @@ fn handle_terminal_event(
         },
         Event::Resize(width, height) => {
             if let Some(bridge) = terminal_bridge {
-                bridge.resize(width, height.saturating_sub(1));
+                bridge.resize(width.max(1), terminal_rows(height));
             }
         }
         _ => {}
@@ -322,20 +323,46 @@ enum ControlEvent {
     Finished(std::result::Result<ActionOutcome, String>),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ConnectedTerminal {
+    session_id: String,
+    cols: u16,
+    rows: u16,
+}
+
 fn sync_terminal_connection(
     app: &App,
     bridge: &TerminalBridge,
-    connected_session_id: &mut String,
+    connected: &mut Option<ConnectedTerminal>,
     cols: u16,
     rows: u16,
 ) -> bool {
     let active_id = &app.state().active_session_id;
-    if active_id.is_empty() || active_id == connected_session_id {
+    if active_id.is_empty() {
         return false;
     }
-    bridge.connect(active_id.clone(), cols, rows);
-    connected_session_id.clone_from(active_id);
-    true
+    let cols = cols.max(1);
+    let rows = rows.max(1);
+    match connected {
+        Some(current) if current.session_id == *active_id => {
+            if current.cols == cols && current.rows == rows {
+                return false;
+            }
+            bridge.resize(cols, rows);
+            current.cols = cols;
+            current.rows = rows;
+            true
+        }
+        _ => {
+            bridge.connect(active_id.clone(), cols, rows);
+            *connected = Some(ConnectedTerminal {
+                session_id: active_id.clone(),
+                cols,
+                rows,
+            });
+            true
+        }
+    }
 }
 
 fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) -> bool {
@@ -362,4 +389,8 @@ fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) -> bool {
             true
         }
     }
+}
+
+fn terminal_rows(height: u16) -> u16 {
+    height.saturating_sub(1).max(1)
 }

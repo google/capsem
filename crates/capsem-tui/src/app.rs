@@ -179,7 +179,7 @@ impl App {
             return false;
         }
         let next = match key.code {
-            KeyCode::Char('?') => AppOverlay::Help,
+            KeyCode::Char('?' | '/') => AppOverlay::Help,
             KeyCode::Char('i' | 'I') => AppOverlay::Stats,
             KeyCode::Char('o' | 'O') => AppOverlay::Home,
             _ => return false,

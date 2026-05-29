@@ -99,9 +99,17 @@
   `crossterm::event::poll`; the WebSocket path remains async and event-driven.
 - Service latency reserves four digits before `ms`, preventing the center tab
   strip from shifting when latency changes between one and four digits.
+- Service latency now renders as `####ms●`, with the status dot glued to the
+  reserved latency field so it reads as one service-health segment.
 - Navigation is now app-owned: `Alt+Left/Right` switches sessions and
-  `Alt+1..9` jumps by tab number. `Alt+n/r/s/t/d`, `Alt+q`, `Alt+?`, `Alt+i`,
-  and `Alt+o` cover shell actions, exit, help, stats, and session list.
+  `Alt+1..9` jumps by tab number. `Alt+n/r/s/t/d`, `Alt+q`, `Alt+?`/`Alt+/`,
+  `Alt+i`, and `Alt+o` cover shell actions, exit, help, stats, and session
+  list.
+- Interactive terminal resize now tracks the active session and geometry
+  together, so a pure terminal resize resends the guest PTY size even when the
+  selected VM did not change.
+- Help, stats, sessions, and confirmation overlays now use Ratatui `Clear` and
+  bordered modal blocks instead of drawing loose text over terminal output.
 - `just dev-tui` documents the same Alt-only shell contract inline so local
   playback and installed usage do not drift.
 - MCP triage for `tui-proof-a` found no session-level failures. Host triage
@@ -110,7 +118,7 @@
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (18 tests).
+- Unit/contract: `cargo test -p capsem-tui` (21 tests).
 - Formatting: `cargo fmt -p capsem-tui -- --check`.
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
   `cargo run -p capsem-tui -- --fixture --snapshot --width 120 --height 30`;

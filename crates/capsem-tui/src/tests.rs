@@ -27,7 +27,7 @@ fn fixture_models_global_service_state_and_session_indicators() {
 fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
-    assert!(snapshot.contains("●   18ms"));
+    assert!(snapshot.contains("   18ms●"));
     assert!(snapshot.contains("1  profile-v2"));
     assert!(snapshot.contains("2  linux-os!"));
     assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21"));
@@ -138,10 +138,15 @@ fn function_keys_toggle_hidden_overlays() {
 
     assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('?'), KeyModifiers::ALT)),
+        app.handle_key(key(KeyCode::Char('/'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::Help);
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('?'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(
         app.handle_key(key(KeyCode::Char('i'), KeyModifiers::ALT)),
         AppAction::Consumed
@@ -168,6 +173,13 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
         Some(&ControlAction::Stop {
             id: "profile-v2".to_string()
         })
+    );
+    let modal_snapshot = render_app_snapshot(&app, 100, 24).expect("render confirmation");
+    assert!(modal_snapshot.contains("confirm"));
+    assert!(modal_snapshot.contains("Enter confirms"));
+    assert!(
+        modal_snapshot.contains("┌"),
+        "confirmation should render as a modal block"
     );
 
     assert_eq!(

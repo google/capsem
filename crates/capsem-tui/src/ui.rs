@@ -4,7 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::app::{App, AppOverlay, ControlAction};
@@ -95,11 +95,12 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
 
     let mut left = vec![
         Span::styled(" ", base),
+        Span::styled(format!("{:>4}ms", service.latency.as_millis()), base),
         Span::styled(
             service_dot(service.status),
             service_style(service.status, service.latency.as_millis()),
         ),
-        Span::styled(format!(" {:>4}ms  ", service.latency.as_millis()), base),
+        Span::styled("  ", base),
     ];
     if let Some(attempt) = service.reconnect_attempt {
         left.push(Span::styled(format!(" reconnect {attempt}"), muted_style()));
@@ -231,7 +232,21 @@ fn render_overlay(
         return;
     }
     let popup = centered_rect(area, 72, overlay_height(state, overlay));
-    frame.render_widget(Paragraph::new("").style(status_base_style()), popup);
+    frame.render_widget(Clear, popup);
+    let title = match overlay {
+        AppOverlay::Help => " help ",
+        AppOverlay::Stats => " stats ",
+        AppOverlay::Home => " sessions ",
+        AppOverlay::Confirm => " confirm ",
+        AppOverlay::None => "",
+    };
+    let block = Block::new()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(muted_style())
+        .style(status_base_style())
+        .padding(Padding::horizontal(1));
+    frame.render_widget(block, popup);
     let lines = match overlay {
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
@@ -262,9 +277,9 @@ fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
 
 fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
     match overlay {
-        AppOverlay::Help => 8,
-        AppOverlay::Stats => 9,
-        AppOverlay::Home => (state.sessions.len() as u16).saturating_add(4).clamp(6, 14),
+        AppOverlay::Help => 10,
+        AppOverlay::Stats => 10,
+        AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
     }
@@ -278,6 +293,7 @@ fn help_lines() -> Vec<Line<'static>> {
         overlay_line("Alt+n new   Alt+r resume   Alt+s suspend"),
         overlay_line("Alt+t stop   Alt+d delete   Alt+q quit"),
         overlay_line("Alt+? help   Alt+i stats   Alt+o sessions"),
+        overlay_line("Alt+/ also opens help when the terminal sends slash"),
         overlay_line("plain q, Ctrl-C, and shell keys pass through"),
     ]
 }

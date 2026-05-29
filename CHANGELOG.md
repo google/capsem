@@ -121,9 +121,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redraws instead of a hand-rolled ANSI text flattener.
 - Fixed `capsem-tui` service latency rendering to reserve four digits so the
   bottom status bar does not shift as latency changes.
+- Fixed `capsem-tui` service latency rendering to keep the status dot glued to
+  the latency field, making the service block read as one unit.
 - Fixed `capsem-tui` shell controls to use an app-owned Alt namespace:
   `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`, and `Alt+q`, instead of
   terminal-dependent Cmd/Ctrl forwarding or prefix fallbacks.
+- Fixed `capsem-tui` help and modal handling by accepting both `Alt+?` and
+  `Alt+/`, rendering overlays through Ratatui modal widgets, and resending the
+  active terminal geometry whenever the real terminal size changes.
 - Fixed macOS release builds of the service debug report by widening filesystem
   block counts before computing disk byte totals.
 - Fixed macOS release builds of `capsem-process` shutdown handling by returning
