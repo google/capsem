@@ -21,6 +21,9 @@ live under `sprints/retired/`.
 - `credential-pipeline/` - standalone precursor for spec-driven credential,
   MCP, and skills detection. It feeds Profile V2 S10 credential brokerage,
   which is owned by the S24 meta sprint inside `policy-settings-profiles/`.
+- `virtio-block-firecracker-path/` - active virtio block performance sprint
+  tracking the Firecracker-shaped KVM path, shared virtio/rootfs improvements,
+  canonical benchmark artifacts, and macOS comparison reruns.
 
 ## Next Profile V2 Work
 

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the Virtio Block Firecracker Path sprint to track KVM block
+  notification suppression, async I/O depth, shared rootfs/benchmark work, and
+  macOS comparison reruns as one measured performance stack.
 - Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
   in-VM, lifecycle, fork, and security-engine benchmark results.
 - Added `just benchmark-compare` and `scripts/compare_benchmark_artifacts.py`
