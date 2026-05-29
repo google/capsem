@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Google AI.
 - Switched the KVM virtio-blk read/write data path from seek plus per-descriptor
   host I/O to `preadv`/`pwritev` over GPA-translated guest memory iovecs.
+- Moved x86_64 KVM virtio-blk queue processing onto a device worker thread with
+  worker-owned IRQ signaling and quiesce/drain support, keeping host block I/O
+  out of the vCPU MMIO notify path.
 - Added the Profile Foundation meta sprint with F00-F12 sub-sprints, a
   code-reality check, and a crosswalk from the old Profile V2 S-numbered
   boards.
