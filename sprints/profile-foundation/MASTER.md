@@ -80,7 +80,7 @@ What this does not prove yet:
 | S14, S15, S17 | Rules, ask, capabilities UX | F05 |
 | S16a | Timeline and workbench | F08 |
 | S13, S23 plugins | Security plugin system, remote decisions, observer alerts | F09 |
-| S20, S21, Google/Gemini providers | Product integrations | F10 |
+| S20, S21, Gmail, Drive, gcloud, Firebase, Jet Ski, Google/Gemini providers | Product integrations | F10 |
 | S22 | Quotas, budgets, rate limits | F11 |
 | S19, S19a | Docs, site, release story | F12 |
 | S24 | Meta sprint glue | This board |
@@ -98,11 +98,11 @@ runtime into that ledger, then layer product and extension systems on top.
 | 3 | [F03 - Runtime Engine And Journal Wiring](F03-runtime-engine-and-journal-wiring.md) | Not Started | Wire network/file/process/model/MCP/profile/conversation/snapshot events through the Security Engine and canonical session journal. | S08b, S11 |
 | 4 | [F04 - Policy Packs Detection And Benchmarks](F04-policy-packs-detection-and-benchmarks.md) | Not Started | Close CEL enforcement, detection packs, backtest/hunt, corpus parity, and benchmark/release artifact proof. | S08a, S08c, S08d |
 | 5 | [F05 - Rules Confirm And Capability UX](F05-rules-confirm-capability-ux.md) | Not Started | Build rule editors, ask/confirm resolver UX, CLI parity, capability controls, and detection finding/backtest views. | S14, S15, S17 |
-| 6 | [F06 - Credential Brokerage Foundation](F06-credential-brokerage-foundation.md) | Not Started | Broker credentials from service/profile settings into sessions with audit, policy, UI/status, source discovery handoff, and Google account integration for Drive/Gemini/Google-backed providers. | S10, `credential-pipeline` |
+| 6 | [F06 - Credential Brokerage Foundation](F06-credential-brokerage-foundation.md) | Not Started | Broker credentials from service/profile settings into sessions with audit, policy, UI/status, source discovery handoff, and Google account integration for Gmail, Drive, gcloud, Firebase, Jet Ski, Gemini, and Google-backed providers. | S10, `credential-pipeline` |
 | 7 | [F07 - Graph Dashboard And Observability Foundation](F07-graph-dashboard-observability-foundation.md) | Not Started | Finish the product graph, dashboard improvements, live metrics, OTel/export surfaces, status/debug truth, remote alert logging, dashboard counters, and reporting setup. | S11, S12, S19b |
 | 8 | [F08 - Timeline And Workbench Foundation](F08-timeline-workbench-foundation.md) | Not Started | Define conversation/timeline engine and everyday-work review UI over canonical resolved events. | S16a |
 | 9 | [F09 - Plugin System Foundation](F09-plugin-system-foundation.md) | Not Started | Implement deterministic signed security plugins, remote/WASM enforcement decisions, observer extensions, and remote alert event contracts. | S13, S23 |
-| 10 | [F10 - Product Integration Foundation](F10-product-integration-foundation.md) | Not Started | Bring OpenAPI-to-MCP, Local LLM, and deeper Google/Gemini provider integration under profile-owned security, diagnostics, audit, and UI contracts. | S20, S21, Google/Gemini |
+| 10 | [F10 - Product Integration Foundation](F10-product-integration-foundation.md) | Not Started | Bring OpenAPI-to-MCP, Local LLM, Gmail, Drive, gcloud, Firebase, Jet Ski, Gemini, and deeper Google provider integration under profile-owned security, diagnostics, audit, and UI contracts. | S20, S21, Google/Gemini |
 | 11 | [F11 - Quotas Budgets And Rate Limits](F11-quotas-budgets-rate-limits.md) | Not Started | Implement quota dimensions into enforceable HTTP/MCP/model/token/cost/request limits with UI/status/docs. | S22 |
 | 12 | [F12 - Docs Site And Foundation Release](F12-docs-site-foundation-release.md) | Not Started | Align docs/site/marketing/release notes with proved foundation capabilities and final gates. | S19, S19a, release process |
 
@@ -126,7 +126,8 @@ Not trusted until Foundation proves it:
 - remote decision and remote alert logging paths;
 - production ask/confirm;
 - credential release into sessions;
-- Google deep integration beyond first-slice account brokerage and Gemini proof;
+- Google deep integration beyond first-slice account brokerage and Gemini proof,
+  including Gmail, Drive, gcloud, Firebase, and Jet Ski;
 - product graph, dashboard, live metrics/export/reporting completeness;
 - timeline/workbench product workflow;
 - quotas/budgets enforcement.

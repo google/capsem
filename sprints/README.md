@@ -27,9 +27,10 @@ The active Profile V2 path is tracked inside
 - `Profile Foundation Sprint` - active parent sprint for all remaining
   foundation work. It exits only when installed Profile V2 behavior, the full
   Security Event system, security plugins, remote decisions, remote alert
-  logging, Google/Gemini integration, credentials, product graph,
-  OpenTelemetry, metrics/reporting, dashboard improvements, workbench,
-  integrations, quotas, docs/site, and final release proof are trusted.
+  logging, Google/Gemini integration, Gmail, Drive, gcloud, Firebase, Jet Ski,
+  credentials, product graph, OpenTelemetry, metrics/reporting, dashboard
+  improvements, workbench, integrations, quotas, docs/site, and final release
+  proof are trusted.
 - F00-F12 are the execution order. Old S-numbered files remain source material,
   not ordering authority.
 
