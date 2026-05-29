@@ -88,6 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed serial benchmark gates for Linux KVM by separating backend-dependent
   provision latency from steady-state exec/delete latency and cleaning transient
   apt metadata out of the fork image-size workload.
+- Fixed `just cross-compile` so its Linux boot test installs the repacked
+  `.deb` with CLI/service companion binaries, packaged admin payload, signed
+  manifest, payload verification, and Docker vsock permissions instead of the
+  raw Tauri desktop package, with the package verifier isolated from the
+  checkout venv and session validation accepting current `*-tmp` VM names.
 - Fixed the Linux full-test gate under current Rust by cleaning KVM, service,
   and app clippy warnings that were promoted to errors.
 - Fixed native guest-agent rebuilds so readonly `target/linux-agent` outputs

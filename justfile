@@ -634,10 +634,21 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
-    # KVM boot test: pass /dev/kvm if available (Linux host) or skip (macOS)
+    # KVM boot test: pass host virtualization devices if available (Linux host)
+    # or skip on macOS/cross-arch builds.
     KVM_FLAG=""
     if [ -e /dev/kvm ]; then
         KVM_FLAG="--device /dev/kvm"
+    fi
+    VSOCK_FLAG=""
+    if [ -e /dev/vhost-vsock ]; then
+        VSOCK_FLAG="--device /dev/vhost-vsock"
+        # Docker's default seccomp profile denies AF_VSOCK bind even when the
+        # vhost-vsock device is passed through, so the KVM boot test cannot
+        # accept guest vsock connections without this.
+        VSOCK_SECURITY_FLAG="--security-opt seccomp=unconfined"
+    else
+        VSOCK_SECURITY_FLAG=""
     fi
     # macOS ships Bash 3.2, where expanding an empty array under nounset
     # raises "unbound variable". The signing args are intentionally optional.
@@ -645,6 +656,8 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     docker run --rm \
         $KVM_FLAG \
         "${SIGNING_ARGS[@]}" \
+        $VSOCK_FLAG \
+        $VSOCK_SECURITY_FLAG \
         -e "TARGET_ARCH=$TARGET_ARCH" \
         -e "RUST_TARGET=$RUST_TARGET" \
         -e "DPKG_ARCH=$DPKG_ARCH" \
@@ -661,6 +674,9 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                cargo build --release --target \$RUST_TARGET -p capsem-agent && \
                mkdir -p /cargo-target/linux-agent/\$TARGET_ARCH && \
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-dns-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
+               echo '--- Build host binaries ---' && \
+               cargo build --release --target \$RUST_TARGET {{host_crates}} && \
+               UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv bash scripts/prepare-admin-cli.sh /cargo-target/\$RUST_TARGET/release && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Resolve Tauri signing key ---' && \
@@ -689,6 +705,9 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                    exit 1; \
                fi && \
                DEB=\"\${DEBS[0]}\" && \
+               PACKAGE_VERSION=\$(sed -n 's/^version = \"\\(.*\\)\"/\\1/p' Cargo.toml | head -1) && \
+               bash scripts/repack-deb.sh \"\$DEB\" /cargo-target/\$RUST_TARGET/release assets \"\$DEB\" && \
+               UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv uv run python scripts/verify_deb_payload.py \"\$DEB\" --version \"\$PACKAGE_VERSION\" --architecture \"\$DPKG_ARCH\" --minisign-pubkey assets/manifest-sign.dev.pub && \
                dpkg-deb --info \"\$DEB\" && \
                rm -f /src/dist/Capsem_*_\"\$DPKG_ARCH\".deb && \
                cp \"\$DEB\" /src/dist/ && \
@@ -696,8 +715,8 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                echo '--- Boot test ---' && \
                if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
                    echo 'KVM available + native arch: running boot test' && \
-                   dpkg -i \"\$DEB\" 2>/dev/null || apt-get install -f -y && \
-                   timeout 120 python3 scripts/doctor_session_test.py --binary capsem --assets assets; \
+                   dpkg --unpack \"\$DEB\" && \
+                   timeout 120 python3 scripts/doctor_session_test.py --binary /usr/bin/capsem --assets assets; \
                else \
                    echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
                fi"
