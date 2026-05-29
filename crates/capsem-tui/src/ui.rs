@@ -9,7 +9,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::app::{App, AppOverlay, ControlAction};
 use crate::model::{AppState, ServiceStatus, SessionSummary};
-use crate::terminal::TerminalSurface;
+use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
 
 const MAX_VISIBLE_TABS: usize = 4;
 const PREVIEW_BG: Color = Color::Rgb(17, 18, 29);
@@ -159,9 +159,9 @@ fn render_terminal_surface(
     };
     let active_id = state.active_session_id.as_str();
     let mut lines = terminal
-        .lines_for(active_id, area.height as usize)
+        .styled_lines_for(active_id, area.height as usize)
         .into_iter()
-        .map(|line| Line::from(Span::styled(line, Style::default().fg(TEXT))))
+        .map(terminal_line_to_ratatui)
         .collect::<Vec<_>>();
     if lines.is_empty() {
         let status = terminal
@@ -173,6 +173,51 @@ fn render_terminal_surface(
         )));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn terminal_line_to_ratatui(line: TerminalLine) -> Line<'static> {
+    let spans = line
+        .spans()
+        .iter()
+        .map(|span| Span::styled(span.text.clone(), terminal_style_to_ratatui(span.style)))
+        .collect::<Vec<_>>();
+    Line::from(spans)
+}
+
+fn terminal_style_to_ratatui(style: TerminalStyle) -> Style {
+    let mut result = Style::default();
+    let (fg, bg) = if style.inverse {
+        (style.bg, style.fg)
+    } else {
+        (style.fg, style.bg)
+    };
+    if let Some(fg) = terminal_color_to_ratatui(fg) {
+        result = result.fg(fg);
+    }
+    if let Some(bg) = terminal_color_to_ratatui(bg) {
+        result = result.bg(bg);
+    }
+    if style.bold {
+        result = result.add_modifier(Modifier::BOLD);
+    }
+    if style.dim {
+        result = result.add_modifier(Modifier::DIM);
+    }
+    if style.italic {
+        result = result.add_modifier(Modifier::ITALIC);
+    }
+    if style.underline {
+        result = result.add_modifier(Modifier::UNDERLINED);
+    }
+    result
+}
+
+fn terminal_color_to_ratatui(color: TerminalColor) -> Option<Color> {
+    match color {
+        TerminalColor::Default => None,
+        TerminalColor::Indexed(index) => Some(Color::Indexed(index)),
+        TerminalColor::Rgb(red, green, blue) => Some(Color::Rgb(red, green, blue)),
+    }
 }
 
 fn render_overlay(

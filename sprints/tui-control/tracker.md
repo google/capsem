@@ -26,6 +26,9 @@
 - [x] Preserve plain `q` and Ctrl-C for the agent/terminal stream.
 - [x] Render active terminal output in the main Ratatui surface.
 - [x] Add terminal buffer, ANSI cleanup, and key encoding tests.
+- [x] Replace the hand-rolled ANSI text flattener with a VT/xterm parser that
+      preserves terminal colors and text attributes.
+- [x] Add client-side terminal output coalescing and dirty-frame redraws.
 - [x] Add `capsem_terminal_snapshot` MCP tool for session terminal inspection.
 - [x] Add confirmed create/resume/suspend/stop/delete actions through the
       installed HTTP gateway.
@@ -85,6 +88,12 @@
   against `tui-proof-a` and returned `TUI_WS_PROOF_A` from the VM shell.
 - Fixed `profile_status=current` handling so healthy profile pins do not render
   stale/attention markers.
+- Terminal rendering now uses `vt100` for screen state and SGR styles. The TUI
+  no longer keeps a parallel ANSI parser, coalesces adjacent terminal output
+  events before parsing, and draws only when state/input/output marks the frame
+  dirty.
+- Keyboard input is read by a blocking input reader thread instead of
+  `crossterm::event::poll`; the WebSocket path remains async and event-driven.
 - MCP triage for `tui-proof-a` found no session-level failures. Host triage
   still shows stale gateway terminal reconnect errors for the removed
   `crafty-panda` socket, which are unrelated to the proof sessions.
@@ -101,7 +110,8 @@
   plus live local snapshot through the installed gateway.
 - Service actions: confirmed action key tests plus authenticated mock gateway
   tests for successful stop and surfaced service error bodies.
-- Terminal wiring: `TerminalSurface` output/ANSI tests and key-encoding tests.
+- Terminal wiring: `TerminalSurface` output, xterm color/style preservation,
+  adjacent output coalescing, and key-encoding tests.
 - MCP wiring: `capsem_terminal_snapshot` router registration and rendering
   tests.
 - Overlay wiring: function-key state tests and stats overlay render test.

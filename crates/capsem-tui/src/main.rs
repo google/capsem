@@ -20,6 +20,8 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
+const UI_TICK_INTERVAL: Duration = Duration::from_millis(16);
+
 #[derive(Parser)]
 #[command(author, version, about = "Capsem terminal control UI")]
 struct Cli {
@@ -160,10 +162,13 @@ fn run_loop(
     let mut last_refresh = Instant::now();
     let mut surface = TerminalSurface::new();
     let mut connected_session_id = String::new();
+    let mut needs_draw = true;
+    let input_events = spawn_input_reader();
     loop {
         if let Some(bridge) = &control_bridge {
             let mut should_refresh = false;
             for event in bridge.drain_events() {
+                needs_draw = true;
                 match event {
                     ControlEvent::Started(label) => {
                         app.set_control_message(format!("{label}..."));
@@ -179,56 +184,99 @@ fn run_loop(
                 }
             }
             if should_refresh {
-                refresh_state(app, live_provider.as_ref());
+                needs_draw |= refresh_state(app, live_provider.as_ref());
             }
         }
         if let Some(bridge) = &terminal_bridge {
-            for event in bridge.drain_events() {
+            let events = bridge.drain_events();
+            if !events.is_empty() {
+                needs_draw = true;
+            }
+            for event in events {
                 surface.apply(event);
             }
-            sync_terminal_connection(
+            let size = terminal.size()?;
+            let active_id = app.state().active_session_id.clone();
+            if !active_id.is_empty() {
+                surface.resize(&active_id, size.width, size.height.saturating_sub(1));
+            }
+            needs_draw |= sync_terminal_connection(
                 app,
                 bridge,
                 &mut connected_session_id,
-                terminal.size()?.width,
-                terminal.size()?.height.saturating_sub(1),
+                size.width,
+                size.height.saturating_sub(1),
             );
         }
         if last_refresh.elapsed() >= refresh_interval {
-            refresh_state(app, live_provider.as_ref());
+            needs_draw |= refresh_state(app, live_provider.as_ref());
             last_refresh = Instant::now();
         }
-        terminal.draw(|frame| render_app(frame, app, Some(&surface)))?;
-        if event::poll(Duration::from_millis(250))? {
-            match event::read()? {
-                Event::Key(key) => match app.handle_key(key) {
-                    AppAction::Exit => break,
-                    AppAction::Consumed => {}
-                    AppAction::Invoke(action) => {
-                        if let Some(bridge) = &control_bridge {
-                            bridge.invoke(action);
-                        } else {
-                            app.set_control_message("fixture action ignored");
-                        }
-                    }
-                    AppAction::Forward => {
-                        if let (Some(bridge), Some(bytes)) =
-                            (&terminal_bridge, key_to_terminal_bytes(key))
-                        {
-                            bridge.input(bytes);
-                        }
-                    }
-                },
-                Event::Resize(width, height) => {
-                    if let Some(bridge) = &terminal_bridge {
-                        bridge.resize(width, height.saturating_sub(1));
-                    }
+        if needs_draw {
+            terminal.draw(|frame| render_app(frame, app, Some(&surface)))?;
+            needs_draw = false;
+        }
+        match input_events.recv_timeout(UI_TICK_INTERVAL) {
+            Ok(Ok(event)) => {
+                if handle_terminal_event(
+                    event,
+                    app,
+                    terminal_bridge.as_ref(),
+                    control_bridge.as_ref(),
+                )? {
+                    break;
                 }
-                _ => {}
+                needs_draw = true;
             }
+            Ok(Err(error)) => return Err(error).context("read terminal input event"),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
     Ok(())
+}
+
+fn spawn_input_reader() -> mpsc::Receiver<io::Result<Event>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || loop {
+        if tx.send(event::read()).is_err() {
+            break;
+        }
+    });
+    rx
+}
+
+fn handle_terminal_event(
+    event: Event,
+    app: &mut App,
+    terminal_bridge: Option<&TerminalBridge>,
+    control_bridge: Option<&ControlBridge>,
+) -> Result<bool> {
+    match event {
+        Event::Key(key) => match app.handle_key(key) {
+            AppAction::Exit => return Ok(true),
+            AppAction::Consumed => {}
+            AppAction::Invoke(action) => {
+                if let Some(bridge) = control_bridge {
+                    bridge.invoke(action);
+                } else {
+                    app.set_control_message("fixture action ignored");
+                }
+            }
+            AppAction::Forward => {
+                if let (Some(bridge), Some(bytes)) = (terminal_bridge, key_to_terminal_bytes(key)) {
+                    bridge.input(bytes);
+                }
+            }
+        },
+        Event::Resize(width, height) => {
+            if let Some(bridge) = terminal_bridge {
+                bridge.resize(width, height.saturating_sub(1));
+            }
+        }
+        _ => {}
+    }
+    Ok(false)
 }
 
 struct ControlBridge {
@@ -280,21 +328,25 @@ fn sync_terminal_connection(
     connected_session_id: &mut String,
     cols: u16,
     rows: u16,
-) {
+) -> bool {
     let active_id = &app.state().active_session_id;
     if active_id.is_empty() || active_id == connected_session_id {
-        return;
+        return false;
     }
     bridge.connect(active_id.clone(), cols, rows);
     connected_session_id.clone_from(active_id);
+    true
 }
 
-fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) {
+fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) -> bool {
     let Some(provider) = provider else {
-        return;
+        return false;
     };
     match provider.load() {
-        Ok(state) => app.replace_state(state),
+        Ok(state) => {
+            app.replace_state(state);
+            true
+        }
         Err(_) => {
             let mut state = app.state().clone();
             state.service.status = ServiceStatus::Offline;
@@ -307,6 +359,7 @@ fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) {
                     .saturating_add(1),
             );
             app.replace_state(state);
+            true
         }
     }
 }

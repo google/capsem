@@ -52,7 +52,7 @@ impl TerminalBridge {
     pub fn drain_events(&self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.events.try_recv() {
-            events.push(event);
+            push_coalesced_event(&mut events, event);
         }
         events
     }
@@ -83,6 +83,21 @@ enum TerminalCommand {
 pub enum TerminalEvent {
     Output { session_id: String, bytes: Vec<u8> },
     Status { session_id: String, status: String },
+}
+
+fn push_coalesced_event(events: &mut Vec<TerminalEvent>, event: TerminalEvent) {
+    match (events.last_mut(), event) {
+        (
+            Some(TerminalEvent::Output {
+                session_id: previous_id,
+                bytes: previous_bytes,
+            }),
+            TerminalEvent::Output { session_id, bytes },
+        ) if previous_id == &session_id => {
+            previous_bytes.extend_from_slice(&bytes);
+        }
+        (_, event) => events.push(event),
+    }
 }
 
 async fn run_terminal_manager(
@@ -281,7 +296,6 @@ fn send_status(events: &mpsc::Sender<TerminalEvent>, session_id: &str, status: i
     });
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalSurface {
     buffers: BTreeMap<String, TerminalBuffer>,
 }
@@ -305,10 +319,21 @@ impl TerminalSurface {
     }
 
     pub fn lines_for(&self, session_id: &str, height: usize) -> Vec<String> {
+        self.styled_lines_for(session_id, height)
+            .into_iter()
+            .map(|line| line.plain_text())
+            .collect()
+    }
+
+    pub fn styled_lines_for(&self, session_id: &str, height: usize) -> Vec<TerminalLine> {
         self.buffers
             .get(session_id)
             .map(|buffer| buffer.visible_lines(height))
             .unwrap_or_default()
+    }
+
+    pub fn resize(&mut self, session_id: &str, cols: u16, rows: u16) {
+        self.buffer_mut(session_id).resize(cols, rows);
     }
 
     pub fn status_for(&self, session_id: &str) -> Option<&str> {
@@ -328,104 +353,152 @@ impl Default for TerminalSurface {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 struct TerminalBuffer {
-    lines: Vec<String>,
-    parser_state: ParserState,
+    parser: vt100::Parser,
     status: Option<String>,
 }
 
 impl TerminalBuffer {
     fn append(&mut self, bytes: &[u8]) {
-        let text = String::from_utf8_lossy(bytes);
-        for ch in text.chars() {
-            self.process_char(ch);
-        }
-        self.truncate();
+        self.parser.process(bytes);
     }
 
-    fn process_char(&mut self, ch: char) {
-        match self.parser_state {
-            ParserState::Ground => self.process_ground(ch),
-            ParserState::Escape => {
-                self.parser_state = if ch == '[' {
-                    ParserState::Csi(String::new())
-                } else {
-                    ParserState::Ground
-                };
-            }
-            ParserState::Csi(ref mut params) => {
-                if ('@'..='~').contains(&ch) {
-                    let command = std::mem::take(params);
-                    self.parser_state = ParserState::Ground;
-                    self.apply_csi(&command, ch);
-                } else {
-                    params.push(ch);
-                }
-            }
-        }
+    fn visible_lines(&self, height: usize) -> Vec<TerminalLine> {
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        let start_row = usize::from(rows).saturating_sub(height);
+        (start_row..usize::from(rows))
+            .map(|row| line_from_screen_row(screen, row as u16, cols))
+            .collect()
     }
 
-    fn process_ground(&mut self, ch: char) {
-        match ch {
-            '\u{1b}' => self.parser_state = ParserState::Escape,
-            '\r' => {}
-            '\n' => self.lines.push(String::new()),
-            '\u{8}' | '\u{7f}' => {
-                let _ = self.current_line().pop();
-            }
-            '\t' => self.current_line().push_str("    "),
-            ch if !ch.is_control() => self.current_line().push(ch),
-            _ => {}
-        }
-    }
-
-    fn apply_csi(&mut self, params: &str, command: char) {
-        match command {
-            'J' if params.ends_with('2') || params.is_empty() => {
-                self.lines.clear();
-                self.lines.push(String::new());
-            }
-            'K' => self.current_line().clear(),
-            _ => {}
-        }
-    }
-
-    fn current_line(&mut self) -> &mut String {
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
-        }
-        self.lines.last_mut().expect("line exists")
-    }
-
-    fn visible_lines(&self, height: usize) -> Vec<String> {
-        let start = self.lines.len().saturating_sub(height);
-        self.lines[start..].to_vec()
-    }
-
-    fn truncate(&mut self) {
-        let overflow = self.lines.len().saturating_sub(MAX_SCROLLBACK_LINES);
-        if overflow > 0 {
-            self.lines.drain(..overflow);
-        }
+    fn resize(&mut self, cols: u16, rows: u16) {
+        self.parser.screen_mut().set_size(rows.max(1), cols.max(1));
     }
 }
 
 impl Default for TerminalBuffer {
     fn default() -> Self {
         Self {
-            lines: vec![String::new()],
-            parser_state: ParserState::Ground,
+            parser: vt100::Parser::new(24, 80, MAX_SCROLLBACK_LINES),
             status: None,
         }
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TerminalLine {
+    spans: Vec<TerminalSpan>,
+}
+
+impl TerminalLine {
+    pub fn spans(&self) -> &[TerminalSpan] {
+        &self.spans
+    }
+
+    pub fn plain_text(&self) -> String {
+        self.spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum ParserState {
-    Ground,
-    Escape,
-    Csi(String),
+pub struct TerminalSpan {
+    pub text: String,
+    pub style: TerminalStyle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TerminalStyle {
+    pub fg: TerminalColor,
+    pub bg: TerminalColor,
+    pub bold: bool,
+    pub dim: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub inverse: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalColor {
+    Default,
+    Indexed(u8),
+    Rgb(u8, u8, u8),
+}
+
+impl Default for TerminalColor {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+fn line_from_screen_row(screen: &vt100::Screen, row: u16, cols: u16) -> TerminalLine {
+    let mut line = TerminalLine::default();
+    for col in 0..cols {
+        let Some(cell) = screen.cell(row, col) else {
+            continue;
+        };
+        if cell.is_wide_continuation() {
+            continue;
+        }
+        let text = if cell.has_contents() {
+            cell.contents()
+        } else {
+            " "
+        };
+        push_screen_text(&mut line, text, style_from_cell(cell));
+    }
+    trim_terminal_line(&mut line);
+    line
+}
+
+fn push_screen_text(line: &mut TerminalLine, text: &str, style: TerminalStyle) {
+    if let Some(span) = line.spans.last_mut().filter(|span| span.style == style) {
+        span.text.push_str(text);
+        return;
+    }
+    line.spans.push(TerminalSpan {
+        text: text.to_string(),
+        style,
+    });
+}
+
+fn trim_terminal_line(line: &mut TerminalLine) {
+    while let Some(span) = line.spans.last_mut() {
+        let trimmed = span.text.trim_end_matches(' ');
+        if trimmed.len() == span.text.len() {
+            break;
+        }
+        span.text.truncate(trimmed.len());
+        if !span.text.is_empty() {
+            break;
+        }
+        line.spans.pop();
+    }
+}
+
+fn style_from_cell(cell: &vt100::Cell) -> TerminalStyle {
+    TerminalStyle {
+        fg: color_from_vt100(cell.fgcolor()),
+        bg: color_from_vt100(cell.bgcolor()),
+        bold: cell.bold(),
+        dim: cell.dim(),
+        italic: cell.italic(),
+        underline: cell.underline(),
+        inverse: cell.inverse(),
+    }
+}
+
+fn color_from_vt100(color: vt100::Color) -> TerminalColor {
+    match color {
+        vt100::Color::Default => TerminalColor::Default,
+        vt100::Color::Idx(index) => TerminalColor::Indexed(index),
+        vt100::Color::Rgb(red, green, blue) => TerminalColor::Rgb(red, green, blue),
+    }
 }
 
 pub fn key_to_terminal_bytes(key: KeyEvent) -> Option<Vec<u8>> {

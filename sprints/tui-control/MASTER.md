@@ -101,6 +101,10 @@ attention markers.
 - Proved the installed gateway path with two live persistent sessions created
   through Capsem MCP. `capsem-tui --snapshot` renders both sessions and a direct
   gateway WebSocket command returned `TUI_WS_PROOF_A` from `tui-proof-a`.
+- Replaced the temporary terminal text parser with `vt100`, preserving xterm
+  screen state, SGR colors, and text attributes. Client-side adjacent output
+  coalescing and dirty-frame redraws now mirror the existing `capsem shell`
+  speed contract instead of repainting on every loop.
 - Kept richer missing state explicit for future API work: waiting-for-input,
   terminal bell, per-session repo/path metadata, security/enforcement/detection
   totals, and event cursor semantics are not invented by the TUI.
