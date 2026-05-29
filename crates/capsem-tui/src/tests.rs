@@ -27,7 +27,7 @@ fn fixture_models_global_service_state_and_session_indicators() {
 fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
-    assert!(snapshot.contains("● 18ms"));
+    assert!(snapshot.contains("●   18ms"));
     assert!(snapshot.contains("1  profile-v2"));
     assert!(snapshot.contains("2  linux-os!"));
     assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21"));
@@ -56,19 +56,19 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
     assert_eq!(app.state().active_session_id, "profile-v2");
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Right, KeyModifiers::CONTROL)),
+        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.state().active_session_id, "linux-os");
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Left, KeyModifiers::CONTROL)),
+        app.handle_key(key(KeyCode::Char('h'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.state().active_session_id, "profile-v2");
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('2'), KeyModifiers::CONTROL)),
+        app.handle_key(key(KeyCode::Char('2'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.state().active_session_id, "linux-os");
@@ -86,6 +86,34 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
         app.handle_key(key(KeyCode::F(10), KeyModifiers::NONE)),
         AppAction::Exit
     );
+}
+
+#[test]
+fn prefix_navigation_is_deterministic_without_mac_modifier_arrows() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+        AppAction::Consumed
+    );
+    assert!(app.prefix_pending());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('1'), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.state().active_session_id, "profile-v2");
+    assert!(!app.prefix_pending());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.state().active_session_id, "linux-os");
 }
 
 #[test]

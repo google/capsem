@@ -29,6 +29,9 @@
 - [x] Replace the hand-rolled ANSI text flattener with a VT/xterm parser that
       preserves terminal colors and text attributes.
 - [x] Add client-side terminal output coalescing and dirty-frame redraws.
+- [x] Stabilize service latency width in the bottom bar.
+- [x] Replace terminal-dependent Cmd/Ctrl navigation guesses with app-owned Alt
+      navigation plus a `Ctrl-b` prefix fallback.
 - [x] Add `capsem_terminal_snapshot` MCP tool for session terminal inspection.
 - [x] Add confirmed create/resume/suspend/stop/delete actions through the
       installed HTTP gateway.
@@ -94,6 +97,11 @@
   dirty.
 - Keyboard input is read by a blocking input reader thread instead of
   `crossterm::event::poll`; the WebSocket path remains async and event-driven.
+- Service latency reserves four digits before `ms`, preventing the center tab
+  strip from shifting when latency changes between one and four digits.
+- Navigation is now app-owned: `Alt+h/l`, `Alt+Left/Right`, and `Alt+1..9`
+  switch sessions; `Ctrl-b` then `h/l/1..9` is a fallback prefix path when a
+  host environment eats Alt chords.
 - MCP triage for `tui-proof-a` found no session-level failures. Host triage
   still shows stale gateway terminal reconnect errors for the removed
   `crafty-panda` socket, which are unrelated to the proof sessions.

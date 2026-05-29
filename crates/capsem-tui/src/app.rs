@@ -57,6 +57,7 @@ pub struct App {
     active_index: usize,
     overlay: AppOverlay,
     pending_action: Option<ControlAction>,
+    prefix_pending: bool,
 }
 
 impl App {
@@ -71,6 +72,7 @@ impl App {
             active_index,
             overlay: AppOverlay::None,
             pending_action: None,
+            prefix_pending: false,
         }
     }
 
@@ -84,6 +86,10 @@ impl App {
 
     pub fn pending_action(&self) -> Option<&ControlAction> {
         self.pending_action.as_ref()
+    }
+
+    pub fn prefix_pending(&self) -> bool {
+        self.prefix_pending
     }
 
     pub fn replace_state(&mut self, mut state: AppState) {
@@ -116,6 +122,16 @@ impl App {
         if let Some(action) = self.handle_pending_action_key(key) {
             return action;
         }
+        if self.prefix_pending {
+            self.prefix_pending = false;
+            return self.handle_prefix_key(key);
+        }
+        if is_prefix_key(key) {
+            self.prefix_pending = true;
+            self.pending_action = None;
+            self.overlay = AppOverlay::None;
+            return AppAction::Consumed;
+        }
         if self.handle_overlay_key(key) {
             return AppAction::Consumed;
         }
@@ -137,6 +153,29 @@ impl App {
             return AppAction::Consumed;
         }
         AppAction::Forward
+    }
+
+    fn handle_prefix_key(&mut self, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Char('p') | KeyCode::Left => {
+                self.previous_session();
+                AppAction::Consumed
+            }
+            KeyCode::Char('l') | KeyCode::Char('n') | KeyCode::Right => {
+                self.next_session();
+                AppAction::Consumed
+            }
+            KeyCode::Char(ch) if ch.is_ascii_digit() => {
+                let index = ch.to_digit(10).unwrap_or_default();
+                if index > 0 {
+                    self.select_session(index as usize - 1);
+                }
+                AppAction::Consumed
+            }
+            KeyCode::Esc => AppAction::Consumed,
+            _ if is_prefix_key(key) => AppAction::Forward,
+            _ => AppAction::Consumed,
+        }
     }
 
     pub fn next_session(&mut self) {
@@ -258,20 +297,35 @@ fn is_exit_key(key: KeyEvent) -> bool {
     )
 }
 
+fn is_prefix_key(key: KeyEvent) -> bool {
+    matches!(
+        (key.code, key.modifiers),
+        (KeyCode::Char('b'), KeyModifiers::CONTROL)
+    )
+}
+
 fn is_previous_key(key: KeyEvent) -> bool {
-    is_control_key(key.modifiers) && matches!(key.code, KeyCode::Left)
+    is_alt_key(key.modifiers)
+        && matches!(
+            key.code,
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('p')
+        )
 }
 
 fn is_next_key(key: KeyEvent) -> bool {
-    is_control_key(key.modifiers) && matches!(key.code, KeyCode::Right)
+    is_alt_key(key.modifiers)
+        && matches!(
+            key.code,
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n')
+        )
 }
 
-fn is_control_key(modifiers: KeyModifiers) -> bool {
-    modifiers.intersects(KeyModifiers::SUPER | KeyModifiers::CONTROL | KeyModifiers::ALT)
+fn is_alt_key(modifiers: KeyModifiers) -> bool {
+    modifiers.contains(KeyModifiers::ALT)
 }
 
 fn select_index(key: KeyEvent) -> Option<usize> {
-    if !is_control_key(key.modifiers) {
+    if !is_alt_key(key.modifiers) {
         return None;
     }
     let KeyCode::Char(value) = key.code else {

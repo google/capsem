@@ -99,7 +99,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
             service_dot(service.status),
             service_style(service.status, service.latency.as_millis()),
         ),
-        Span::styled(format!(" {}ms  ", service.latency.as_millis()), base),
+        Span::styled(format!(" {:>4}ms  ", service.latency.as_millis()), base),
     ];
     if let Some(attempt) = service.reconnect_attempt {
         left.push(Span::styled(format!(" reconnect {attempt}"), muted_style()));
@@ -275,8 +275,9 @@ fn help_lines() -> Vec<Line<'static>> {
         overlay_title("keys"),
         overlay_line("F1 help   F2 stats   F3 sessions"),
         overlay_line("F4 new   F5 resume   F6 suspend   F7 stop   F8 delete"),
-        overlay_line("Cmd/Ctrl/Alt arrows switch sessions"),
-        overlay_line("Cmd/Ctrl/Alt number jumps to a session"),
+        overlay_line("Alt+h/l or Alt+arrows switch sessions"),
+        overlay_line("Alt+number jumps to a session"),
+        overlay_line("Ctrl-b then h/l/number is the fallback prefix"),
         overlay_line("F10 exits; q and Ctrl-C pass through"),
     ]
 }

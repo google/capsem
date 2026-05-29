@@ -119,6 +119,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `capsem-tui` terminal rendering to use a real VT/xterm parser with
   color/style preservation, adjacent output coalescing, and dirty-frame
   redraws instead of a hand-rolled ANSI text flattener.
+- Fixed `capsem-tui` service latency rendering to reserve four digits so the
+  bottom status bar does not shift as latency changes.
+- Fixed `capsem-tui` session navigation to use app-owned Alt shortcuts and a
+  `Ctrl-b` prefix fallback instead of relying on terminal-dependent Cmd/Ctrl
+  arrow forwarding.
 - Fixed macOS release builds of the service debug report by widening filesystem
   block counts before computing disk byte totals.
 - Fixed macOS release builds of `capsem-process` shutdown handling by returning
