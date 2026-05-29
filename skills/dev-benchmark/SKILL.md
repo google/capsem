@@ -34,7 +34,7 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles) |
 | throughput | `capsem-bench throughput` | 100MB download through MITM proxy (end-to-end MB/s) |
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
-| all | `capsem-bench` | Default production suite; excludes opt-in storage and load diagnostics |
+| all | `capsem-bench` | Default production suite including storage split diagnostics; excludes long-running load diagnostics |
 
 `just benchmark` also records a host-native artifact under
 `benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file
@@ -44,6 +44,10 @@ against the hardware that produced the run. The default host I/O directory is
 `target/host-native-benchmark`, not `/tmp`, so Linux tmpfs does not become the
 accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
 disk.
+
+`capsem-bench all` includes the `storage` section. Keep that in the canonical
+path so Linux and macOS artifacts both capture rootfs/workspace/tmpfs
+attribution data; only the long-running load diagnostics stay opt-in.
 
 ### Cross-platform comparison
 

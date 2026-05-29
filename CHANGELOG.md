@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added benchmark contract tests proving the canonical `just benchmark` path
   includes Criterion archiving plus the required serial artifact lanes,
   including host-native, lifecycle, fork, and VM-originated security benchmarks.
+- Included `capsem-bench storage` in the default `capsem-bench all` path so
+  canonical Linux and macOS benchmark artifacts both record storage attribution
+  for rootfs, workspace, tmpfs, overlay, and queue/FUSE metadata.
 
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,

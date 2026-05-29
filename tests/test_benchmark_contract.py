@@ -17,6 +17,13 @@ def test_just_benchmark_runs_full_canonical_artifact_suite():
     assert "-m benchmark" in recipe
 
 
+def test_capsem_bench_all_includes_storage_split_diagnostics():
+    entrypoint = (PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "__main__.py").read_text()
+
+    assert 'if mode in ("storage", "all"):' in entrypoint
+    assert 'output["storage"] = storage_bench()' in entrypoint
+
+
 def test_serial_benchmark_marker_collects_required_artifact_lanes():
     output = subprocess.check_output(
         [

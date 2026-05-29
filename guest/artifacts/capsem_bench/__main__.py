@@ -28,7 +28,7 @@ def main():
         console.print("  mitm-load           MITM proxy load test at 1/10/50/200 concurrency")
         console.print("  mcp-load            MCP path load test (echo tool) at 1/10/50/200 concurrency")
         console.print("  dns-load            DNS proxy load test at 1/10/50/200 concurrency")
-        console.print("  all                 Run default benchmarks")
+        console.print("  all                 Run standard benchmarks, including storage split diagnostics")
         console.print()
         console.print("Environment:")
         console.print("  CAPSEM_BENCH_DIR                Test directory (default: /root)")
@@ -58,7 +58,7 @@ def main():
         from .rootfs import rootfs_bench
         output["rootfs"] = rootfs_bench()
 
-    if mode == "storage":
+    if mode in ("storage", "all"):
         from .storage import storage_bench
         output["storage"] = storage_bench()
 

@@ -6,6 +6,8 @@ sidebar:
 ---
 
 Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the VM. It outputs rich tables to stderr for humans and saves structured JSON to `/tmp/capsem-benchmark.json` for machine consumption.
+The default `capsem-bench all` run includes storage split diagnostics so Linux
+and macOS artifacts carry the same rootfs/workspace/tmpfs attribution data.
 
 ## Running benchmarks
 
@@ -101,6 +103,9 @@ Measures rootfs reads plus writable-path I/O across `/root`, `/tmp`,
 `/var/tmp`, `/var/log`, and `/run` by default. Use it when Linux and macOS
 benchmarks diverge and you need to separate VirtioFS workspace costs from
 tmpfs, overlayfs, squashfs/rootfs reads, and host filesystem behavior.
+This section is recorded by the canonical `just benchmark` path because
+`capsem-bench all` includes `storage`; the long-running load tests remain
+explicit opt-ins.
 
 The path set is configurable via `CAPSEM_STORAGE_BENCH_PATHS`; write test size
 is configurable via `CAPSEM_STORAGE_BENCH_SIZE_MB` (default: 64). The detailed
