@@ -118,6 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed macOS release builds of `capsem-process` shutdown handling by returning
   the VM stop result from the main-thread stop task and avoiding a macOS-only
   unused signal receiver.
+- Fixed install profile materialization so manifest aliases without local asset
+  directories do not make package assembly look for non-existent VM assets.
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
 - Expanded x86_64 KVM warm-restore groundwork by checkpointing VM interrupt

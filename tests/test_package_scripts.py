@@ -77,6 +77,11 @@ def _seed_assets(assets_dir: Path) -> None:
                                     "vmlinuz": {"hash": "1" * 64, "size": 6},
                                     "initrd.img": {"hash": "2" * 64, "size": 6},
                                     "rootfs.squashfs": {"hash": "3" * 64, "size": 6},
+                                },
+                                "current": {
+                                    "vmlinuz": {"hash": "1" * 64, "size": 6},
+                                    "initrd.img": {"hash": "2" * 64, "size": 6},
+                                    "rootfs.squashfs": {"hash": "3" * 64, "size": 6},
                                 }
                             },
                         }
