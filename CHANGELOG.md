@@ -113,6 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed macOS release builds of the service debug report by widening filesystem
+  block counts before computing disk byte totals.
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
 - Expanded x86_64 KVM warm-restore groundwork by checkpointing VM interrupt
