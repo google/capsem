@@ -36,6 +36,7 @@ CONTENT_TYPES = {
     "initrd": "application/octet-stream",
     "rootfs": "application/vnd.squashfs",
 }
+SUPPORTED_ARCHES = {"arm64", "x86_64"}
 
 
 def _usage() -> str:
@@ -162,6 +163,8 @@ def main() -> int:
 
     available_arches: dict[str, dict[str, dict[str, object]]] = {}
     for arch, arch_assets in arches.items():
+        if arch not in SUPPORTED_ARCHES:
+            continue
         arch_dir = assets_dir / arch
         if not arch_dir.is_dir():
             continue

@@ -55,6 +55,9 @@ def _seed_assets(assets_dir: Path) -> None:
     assets_dir.mkdir(parents=True)
     arch_dir = assets_dir / "arm64"
     arch_dir.mkdir()
+    alias_dir = assets_dir / "current"
+    alias_dir.mkdir()
+    (alias_dir / "vmlinuz").write_bytes(b"legacy-alias")
     for name, body in {
         "vmlinuz": b"kernel",
         "initrd.img": b"initrd",
