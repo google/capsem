@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages, and basic ANSI cleanup for the Ratatui surface.
 - Added hidden `capsem-tui` overlays for help, active-session statistics, and
   the session list so the normal terminal surface stays minimal.
+- Added confirmed `capsem-tui` service actions for creating, resuming,
+  suspending, stopping, and deleting sessions through the installed HTTP
+  gateway without blocking the terminal UI.
 - Added `capsem_terminal_snapshot` to the Capsem MCP server so agents can
   inspect a session terminal/log surface through MCP with ANSI cleanup, grep,
   source selection, and tailing.

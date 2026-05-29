@@ -1,11 +1,12 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::model::AppState;
+use crate::model::{AppState, SessionLifecycle};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppAction {
     Consumed,
     Forward,
+    Invoke(ControlAction),
     Exit,
 }
 
@@ -16,6 +17,38 @@ pub enum AppOverlay {
     Help,
     Stats,
     Home,
+    Confirm,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ControlAction {
+    CreateEphemeral,
+    Resume { name: String },
+    Suspend { id: String },
+    Stop { id: String },
+    Delete { id: String },
+}
+
+impl ControlAction {
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::CreateEphemeral => "create",
+            Self::Resume { .. } => "resume",
+            Self::Suspend { .. } => "suspend",
+            Self::Stop { .. } => "stop",
+            Self::Delete { .. } => "delete",
+        }
+    }
+
+    pub fn target(&self) -> &str {
+        match self {
+            Self::CreateEphemeral => "new ephemeral session",
+            Self::Resume { name }
+            | Self::Suspend { id: name }
+            | Self::Stop { id: name }
+            | Self::Delete { id: name } => name,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +56,7 @@ pub struct App {
     state: AppState,
     active_index: usize,
     overlay: AppOverlay,
+    pending_action: Option<ControlAction>,
 }
 
 impl App {
@@ -36,6 +70,7 @@ impl App {
             state,
             active_index,
             overlay: AppOverlay::None,
+            pending_action: None,
         }
     }
 
@@ -47,7 +82,12 @@ impl App {
         self.overlay
     }
 
+    pub fn pending_action(&self) -> Option<&ControlAction> {
+        self.pending_action.as_ref()
+    }
+
     pub fn replace_state(&mut self, mut state: AppState) {
+        state.service.control_message = self.state.service.control_message.clone();
         let previous_active_id = self.state.active_session_id.clone();
         if state
             .sessions
@@ -65,11 +105,23 @@ impl App {
         self.sync_active_session();
     }
 
+    pub fn set_control_message(&mut self, message: impl Into<String>) {
+        self.state.service.control_message = Some(message.into());
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> AppAction {
         if is_exit_key(key) {
             return AppAction::Exit;
         }
+        if let Some(action) = self.handle_pending_action_key(key) {
+            return action;
+        }
         if self.handle_overlay_key(key) {
+            return AppAction::Consumed;
+        }
+        if let Some(action) = self.control_action_for_key(key) {
+            self.pending_action = Some(action);
+            self.overlay = AppOverlay::Confirm;
             return AppAction::Consumed;
         }
         if is_previous_key(key) {
@@ -134,7 +186,65 @@ impl App {
         } else {
             next
         };
+        self.pending_action = None;
         true
+    }
+
+    fn handle_pending_action_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+        let pending = self.pending_action.clone()?;
+        match key.code {
+            KeyCode::Enter => {
+                self.pending_action = None;
+                self.overlay = AppOverlay::None;
+                Some(AppAction::Invoke(pending))
+            }
+            KeyCode::Esc => {
+                self.pending_action = None;
+                self.overlay = AppOverlay::None;
+                Some(AppAction::Consumed)
+            }
+            _ => Some(AppAction::Consumed),
+        }
+    }
+
+    fn control_action_for_key(&self, key: KeyEvent) -> Option<ControlAction> {
+        match key.code {
+            KeyCode::F(4) => Some(ControlAction::CreateEphemeral),
+            KeyCode::F(5) => self.active_resume_action(),
+            KeyCode::F(6) => self.active_suspend_action(),
+            KeyCode::F(7) => self.active_id().map(|id| ControlAction::Stop { id }),
+            KeyCode::F(8) => self.active_id().map(|id| ControlAction::Delete { id }),
+            _ => None,
+        }
+    }
+
+    fn active_resume_action(&self) -> Option<ControlAction> {
+        let session = self.state.active_session()?;
+        if !matches!(
+            session.lifecycle,
+            SessionLifecycle::Idle | SessionLifecycle::Suspended | SessionLifecycle::Failed
+        ) {
+            return None;
+        }
+        Some(ControlAction::Resume {
+            name: session.id.clone(),
+        })
+    }
+
+    fn active_suspend_action(&self) -> Option<ControlAction> {
+        let session = self.state.active_session()?;
+        if !session.persistent || !matches!(session.lifecycle, SessionLifecycle::Working) {
+            return None;
+        }
+        Some(ControlAction::Suspend {
+            id: session.id.clone(),
+        })
+    }
+
+    fn active_id(&self) -> Option<String> {
+        self.state
+            .active_session()
+            .map(|session| session.id.clone())
     }
 }
 

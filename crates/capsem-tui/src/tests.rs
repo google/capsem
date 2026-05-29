@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::app::{App, AppAction, AppOverlay};
+use crate::app::{App, AppAction, AppOverlay, ControlAction};
 use crate::fixture::fixture_state;
 use crate::gateway_provider::{state_from_status_json_for_test, GatewayProvider};
 use crate::model::{Attention, ServiceStatus, SessionLifecycle};
@@ -131,6 +131,89 @@ fn function_keys_toggle_hidden_overlays() {
 }
 
 #[test]
+fn control_keys_require_confirmation_before_invoking_service_actions() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(7), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Stop {
+            id: "profile-v2".to_string()
+        })
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('x'), KeyModifiers::NONE)),
+        AppAction::Consumed,
+        "confirmation overlay owns keys until confirmed or cancelled"
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Stop {
+            id: "profile-v2".to_string()
+        })
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
+    assert_eq!(app.pending_action(), None);
+}
+
+#[test]
+fn resume_action_is_only_available_for_stopped_or_suspended_sessions() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(5), KeyModifiers::NONE)),
+        AppAction::Forward,
+        "running active session should not map F5 to resume"
+    );
+
+    let mut state = fixture_state();
+    state.active_session_id = "linux-os".to_string();
+    state.sessions[1].lifecycle = SessionLifecycle::Suspended;
+    app = App::new(state);
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(5), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Resume {
+            name: "linux-os".to_string()
+        })
+    );
+}
+
+#[test]
+fn suspend_action_requires_persistent_running_session() {
+    let mut app = App::new(fixture_state());
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(6), KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Suspend {
+            id: "profile-v2".to_string()
+        })
+    );
+
+    let mut state = fixture_state();
+    state.sessions[0].persistent = false;
+    app = App::new(state);
+    assert_eq!(
+        app.handle_key(key(KeyCode::F(6), KeyModifiers::NONE)),
+        AppAction::Forward,
+        "ephemeral sessions cannot be suspended through the service"
+    );
+}
+
+#[test]
 fn stats_overlay_renders_on_demand_without_persistent_help() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::F(2), KeyModifiers::NONE));
@@ -224,6 +307,83 @@ async fn gateway_provider_loads_status_over_http_gateway() {
     server.await.expect("server task");
 }
 
+#[tokio::test]
+async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /stop/vm-1 "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(
+                    request.contains("authorization: Bearer test-token")
+                        || request.contains("Authorization: Bearer test-token"),
+                    "missing bearer auth: {request:?}"
+                );
+                write_json_response(&mut stream, r#"{"success":true}"#).await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Stop {
+            id: "vm-1".to_string(),
+        })
+        .await
+        .expect("invoke stop");
+
+    assert_eq!(outcome.message, "stopped vm-1");
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_surfaces_action_error_body() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("DELETE /delete/vm-1 "),
+                    "unexpected request: {request:?}"
+                );
+                write_response(
+                    &mut stream,
+                    "500 Internal Server Error",
+                    r#"{"error":"boom"}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let error = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Delete {
+            id: "vm-1".to_string(),
+        })
+        .await
+        .expect_err("delete should fail");
+
+    assert!(error.to_string().contains("500"));
+    assert!(error.to_string().contains("boom"));
+    server.await.expect("server task");
+}
+
 fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
 }
@@ -245,8 +405,12 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
 }
 
 async fn write_json_response(stream: &mut tokio::net::TcpStream, body: &str) {
+    write_response(stream, "200 OK", body).await;
+}
+
+async fn write_response(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
     let response = format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
         body.len(),
         body
     );
@@ -267,6 +431,7 @@ fn gateway_status_body() -> &'static str {
                 "id": "vm-1",
                 "name": "profile-main",
                 "status": "Running",
+                "persistent": true,
                 "profile_id": "profile-v2",
                 "profile_revision": "main",
                 "uptime_secs": 2840,
@@ -280,6 +445,7 @@ fn gateway_status_body() -> &'static str {
             {
                 "id": "vm-2",
                 "status": "Suspended",
+                "persistent": true,
                 "profile_id": "linux-os",
                 "uptime_secs": 7860,
                 "total_input_tokens": 10000,

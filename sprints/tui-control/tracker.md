@@ -27,7 +27,11 @@
 - [x] Render active terminal output in the main Ratatui surface.
 - [x] Add terminal buffer, ANSI cleanup, and key encoding tests.
 - [x] Add `capsem_terminal_snapshot` MCP tool for session terminal inspection.
-- [ ] Commit functional milestone.
+- [x] Add confirmed create/resume/suspend/stop/delete actions through the
+      installed HTTP gateway.
+- [x] Run live installed-gateway empty-service snapshot.
+- [ ] Run live two-session terminal proof.
+- [x] Commit functional milestone.
 
 ## Notes
 
@@ -67,23 +71,37 @@
 - MCP terminal inspection is now a text snapshot from service logs, not a
   bitmap screenshot. It is enough for agent debugging and works through the
   existing service log contract.
+- Safe service actions are now active behind a confirmation overlay. F4 creates
+  an ephemeral session, F5 resumes stopped/suspended sessions, F6 suspends the
+  active session, F7 stops it, and F8 deletes it. Action calls run on a
+  background worker so long suspend/stop/provision paths do not freeze terminal
+  rendering.
+- Live VM proof is currently blocked by installed asset readiness, not by the
+  TUI route. `capsem_create(name=tui-proof-a)` fails because
+  `/Users/elie/.capsem/assets/arm64/initrd-b2be4ef1b9033569.img` is missing
+  and `assets.capsem.dev` does not resolve on this host while other DNS
+  lookups such as `github.com` do resolve.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui`.
+- Unit/contract: `cargo test -p capsem-tui` (18 tests).
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
   `cargo run -p capsem-tui -- --fixture --snapshot --width 120 --height 30`;
   `cargo run -p capsem-tui -- --fixture --snapshot-svg --width 120 --height 30`;
   `just dev-tui`.
 - Gateway wiring: `GatewayProvider::load_async` authenticated HTTP mock test
   plus live local snapshot through the installed gateway.
+- Service actions: confirmed action key tests plus authenticated mock gateway
+  tests for successful stop and surfaced service error bodies.
 - Terminal wiring: `TerminalSurface` output/ANSI tests and key-encoding tests.
 - MCP wiring: `capsem_terminal_snapshot` router registration and rendering
   tests.
 - Overlay wiring: function-key state tests and stats overlay render test.
-- Adversarial: malformed gateway status mapping.
-- E2E/VM: live multi-session terminal proof still open; current installed
-  gateway has no live sessions.
+- Adversarial: malformed gateway status mapping; action error response body
+  surfaced to the status bar instead of being swallowed.
+- E2E/VM: live installed-gateway empty-service snapshot works; live
+  multi-session terminal proof is blocked by missing installed `initrd.img` and
+  asset-host DNS failure.
 - Telemetry: current gateway `/status` counters mapped; event-stream semantics
   still open.
 - Performance: not measured yet.

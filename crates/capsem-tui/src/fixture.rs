@@ -24,6 +24,7 @@ pub fn fixture_state() -> AppState {
             latency: Duration::from_millis(18),
             last_event_age: Duration::from_millis(240),
             reconnect_attempt: None,
+            control_message: None,
         },
         active_session_id: "profile-v2".to_string(),
         sessions: vec![
@@ -33,6 +34,7 @@ pub fn fixture_state() -> AppState {
                 repo_path: Some("github.com/google/capsem".to_string()),
                 profile: "corp-default".to_string(),
                 branch: Some("codex/tui-control".to_string()),
+                persistent: true,
                 lifecycle: SessionLifecycle::Working,
                 attention: Vec::new(),
                 stats: SessionStats {
@@ -49,6 +51,7 @@ pub fn fixture_state() -> AppState {
                 repo_path: Some("github.com/google/capsem-linux".to_string()),
                 profile: "linux-builder".to_string(),
                 branch: Some("resume-fix".to_string()),
+                persistent: true,
                 lifecycle: SessionLifecycle::WaitingForInput,
                 attention: vec![Attention::Bell],
                 stats: SessionStats {

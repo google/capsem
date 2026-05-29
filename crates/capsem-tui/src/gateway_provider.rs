@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::app::ControlAction;
 use crate::model::{
     AppState, Attention, ServiceState, ServiceStatus, SessionLifecycle, SessionStats,
     SessionSummary,
@@ -40,6 +41,20 @@ impl GatewayProvider {
         let token = fetch_token(&client, &self.base_url).await?;
         let status = fetch_status(&client, &self.base_url, &token).await?;
         Ok(status_response_to_state(status, started.elapsed()))
+    }
+
+    pub fn invoke(&self, action: &ControlAction) -> Result<ActionOutcome> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("build capsem-tui gateway action runtime")?;
+        runtime.block_on(self.invoke_async(action))
+    }
+
+    pub async fn invoke_async(&self, action: &ControlAction) -> Result<ActionOutcome> {
+        let client = reqwest::Client::new();
+        let token = fetch_token(&client, &self.base_url).await?;
+        invoke_action(&client, &self.base_url, &token, action).await
     }
 }
 
@@ -121,6 +136,7 @@ fn status_response_to_state(status: StatusResponse, latency: Duration) -> AppSta
             latency,
             last_event_age: Duration::ZERO,
             reconnect_attempt: None,
+            control_message: None,
         },
         active_session_id,
         sessions,
@@ -143,6 +159,7 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         repo_path: None,
         profile: vm.profile_id.unwrap_or_else(|| "default".to_string()),
         branch: vm.profile_revision,
+        persistent: vm.persistent,
         lifecycle,
         attention,
         stats: SessionStats {
@@ -207,6 +224,107 @@ fn cost_to_micros(cost: Option<f64>) -> u64 {
     (cost * 1_000_000.0).round().clamp(0.0, u64::MAX as f64) as u64
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionOutcome {
+    pub message: String,
+}
+
+async fn invoke_action(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    action: &ControlAction,
+) -> Result<ActionOutcome> {
+    match action {
+        ControlAction::CreateEphemeral => {
+            let response = client
+                .post(join_url(base_url, &["provision"])?)
+                .bearer_auth(token)
+                .json(&serde_json::json!({ "persistent": false }))
+                .send()
+                .await
+                .context("create capsem session")?;
+            let body = response_json(response).await?;
+            let id = body
+                .get("id")
+                .and_then(|value| value.as_str())
+                .unwrap_or("session");
+            Ok(ActionOutcome {
+                message: format!("created {id}"),
+            })
+        }
+        ControlAction::Resume { name } => {
+            post_empty(client, base_url, token, &["resume", name]).await?;
+            Ok(ActionOutcome {
+                message: format!("resumed {name}"),
+            })
+        }
+        ControlAction::Suspend { id } => {
+            post_empty(client, base_url, token, &["suspend", id]).await?;
+            Ok(ActionOutcome {
+                message: format!("suspended {id}"),
+            })
+        }
+        ControlAction::Stop { id } => {
+            post_empty(client, base_url, token, &["stop", id]).await?;
+            Ok(ActionOutcome {
+                message: format!("stopped {id}"),
+            })
+        }
+        ControlAction::Delete { id } => {
+            let response = client
+                .delete(join_url(base_url, &["delete", id])?)
+                .bearer_auth(token)
+                .send()
+                .await
+                .with_context(|| format!("delete capsem session {id}"))?;
+            response_json(response).await?;
+            Ok(ActionOutcome {
+                message: format!("deleted {id}"),
+            })
+        }
+    }
+}
+
+async fn post_empty(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    path_segments: &[&str],
+) -> Result<serde_json::Value> {
+    let response = client
+        .post(join_url(base_url, path_segments)?)
+        .bearer_auth(token)
+        .send()
+        .await
+        .with_context(|| format!("post gateway action /{}", path_segments.join("/")))?;
+    response_json(response).await
+}
+
+async fn response_json(response: reqwest::Response) -> Result<serde_json::Value> {
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .context("read gateway action response body")?;
+    if !status.is_success() {
+        return Err(anyhow::anyhow!("gateway action failed ({status}): {text}"));
+    }
+    if text.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    serde_json::from_str(&text).context("parse gateway action response")
+}
+
+fn join_url(base_url: &str, path_segments: &[&str]) -> Result<reqwest::Url> {
+    let mut url = reqwest::Url::parse(&format!("{}/", base_url.trim_end_matches('/')))
+        .context("parse capsem gateway base URL")?;
+    url.path_segments_mut()
+        .map_err(|_| anyhow::anyhow!("capsem gateway URL cannot be a base"))?
+        .extend(path_segments);
+    Ok(url)
+}
+
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
     token: String,
@@ -224,6 +342,8 @@ struct VmSummary {
     #[serde(default)]
     name: Option<String>,
     status: String,
+    #[serde(default)]
+    persistent: bool,
     #[serde(default)]
     profile_id: Option<String>,
     #[serde(default)]

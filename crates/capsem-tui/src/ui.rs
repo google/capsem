@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
-use crate::app::{App, AppOverlay};
+use crate::app::{App, AppOverlay, ControlAction};
 use crate::model::{AppState, ServiceStatus, SessionSummary};
 use crate::terminal::TerminalSurface;
 
@@ -30,11 +30,17 @@ pub fn render_with_terminal(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
 ) {
-    render_layout(frame, state, terminal, AppOverlay::None);
+    render_layout(frame, state, terminal, AppOverlay::None, None);
 }
 
 pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSurface>) {
-    render_layout(frame, app.state(), terminal, app.overlay());
+    render_layout(
+        frame,
+        app.state(),
+        terminal,
+        app.overlay(),
+        app.pending_action(),
+    );
 }
 
 fn render_layout(
@@ -42,6 +48,7 @@ fn render_layout(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
     overlay: AppOverlay,
+    pending_action: Option<&ControlAction>,
 ) {
     let root = frame.area();
     let chunks = Layout::default()
@@ -51,7 +58,7 @@ fn render_layout(
 
     render_terminal_surface(frame, chunks[0], state, terminal);
     render_status_bar(frame, state, chunks[1]);
-    render_overlay(frame, chunks[0], state, overlay);
+    render_overlay(frame, chunks[0], state, overlay, pending_action);
 }
 
 pub fn render_snapshot(state: &AppState, width: u16, height: u16) -> Result<String> {
@@ -96,6 +103,12 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     ];
     if let Some(attempt) = service.reconnect_attempt {
         left.push(Span::styled(format!(" reconnect {attempt}"), muted_style()));
+    }
+    if let Some(message) = &service.control_message {
+        left.push(Span::styled(
+            format!(" {}", truncate(message, 28)),
+            muted_style(),
+        ));
     }
 
     let right = state
@@ -162,7 +175,13 @@ fn render_terminal_surface(
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState, overlay: AppOverlay) {
+fn render_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    overlay: AppOverlay,
+    pending_action: Option<&ControlAction>,
+) {
     if overlay == AppOverlay::None {
         return;
     }
@@ -172,6 +191,7 @@ fn render_overlay(frame: &mut Frame<'_>, area: Rect, state: &AppState, overlay: 
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
         AppOverlay::Home => home_lines(state),
+        AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
     };
     let inner = Rect::new(
@@ -200,6 +220,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Help => 8,
         AppOverlay::Stats => 9,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(4).clamp(6, 14),
+        AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
     }
 }
@@ -208,9 +229,22 @@ fn help_lines() -> Vec<Line<'static>> {
     vec![
         overlay_title("keys"),
         overlay_line("F1 help   F2 stats   F3 sessions"),
+        overlay_line("F4 new   F5 resume   F6 suspend   F7 stop   F8 delete"),
         overlay_line("Cmd/Ctrl/Alt arrows switch sessions"),
         overlay_line("Cmd/Ctrl/Alt number jumps to a session"),
         overlay_line("F10 exits; q and Ctrl-C pass through"),
+    ]
+}
+
+fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
+    let Some(action) = action else {
+        return vec![overlay_title("confirm"), overlay_line("no pending action")];
+    };
+    vec![
+        overlay_title("confirm"),
+        overlay_pair("action", action.label()),
+        overlay_pair("target", action.target()),
+        overlay_line("Enter confirms; Esc cancels"),
     ]
 }
 

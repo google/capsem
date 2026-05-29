@@ -21,6 +21,7 @@ pub struct ServiceState {
     pub latency: Duration,
     pub last_event_age: Duration,
     pub reconnect_attempt: Option<u32>,
+    pub control_message: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +54,7 @@ pub struct SessionSummary {
     pub repo_path: Option<String>,
     pub profile: String,
     pub branch: Option<String>,
+    pub persistent: bool,
     pub lifecycle: SessionLifecycle,
     pub attention: Vec<Attention>,
     pub stats: SessionStats,

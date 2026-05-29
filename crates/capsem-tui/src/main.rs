@@ -1,10 +1,12 @@
 use std::io;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use capsem_tui::app::{App, AppAction};
+use capsem_tui::app::{App, AppAction, ControlAction};
 use capsem_tui::fixture::FixtureProvider;
-use capsem_tui::gateway_provider::GatewayProvider;
+use capsem_tui::gateway_provider::{ActionOutcome, GatewayProvider};
 use capsem_tui::model::{AppState, ServiceStatus};
 use capsem_tui::provider::StateProvider;
 use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalSurface};
@@ -138,8 +140,9 @@ fn run_interactive(
     let result = run_loop(
         &mut terminal,
         &mut app,
-        live_provider,
+        live_provider.clone(),
         terminal_bridge,
+        live_provider.map(ControlBridge::spawn),
         refresh_interval,
     );
 
@@ -155,12 +158,34 @@ fn run_loop(
     app: &mut App,
     live_provider: Option<GatewayProvider>,
     terminal_bridge: Option<TerminalBridge>,
+    control_bridge: Option<ControlBridge>,
     refresh_interval: Duration,
 ) -> Result<()> {
     let mut last_refresh = Instant::now();
     let mut surface = TerminalSurface::new();
     let mut connected_session_id = String::new();
     loop {
+        if let Some(bridge) = &control_bridge {
+            let mut should_refresh = false;
+            for event in bridge.drain_events() {
+                match event {
+                    ControlEvent::Started(label) => {
+                        app.set_control_message(format!("{label}..."));
+                    }
+                    ControlEvent::Finished(Ok(outcome)) => {
+                        app.set_control_message(outcome.message);
+                        should_refresh = true;
+                    }
+                    ControlEvent::Finished(Err(error)) => {
+                        app.set_control_message(error);
+                        should_refresh = true;
+                    }
+                }
+            }
+            if should_refresh {
+                refresh_state(app, live_provider.as_ref());
+            }
+        }
         if let Some(bridge) = &terminal_bridge {
             for event in bridge.drain_events() {
                 surface.apply(event);
@@ -183,6 +208,13 @@ fn run_loop(
                 Event::Key(key) => match app.handle_key(key) {
                     AppAction::Exit => break,
                     AppAction::Consumed => {}
+                    AppAction::Invoke(action) => {
+                        if let Some(bridge) = &control_bridge {
+                            bridge.invoke(action);
+                        } else {
+                            app.set_control_message("fixture action ignored");
+                        }
+                    }
                     AppAction::Forward => {
                         if let (Some(bridge), Some(bytes)) =
                             (&terminal_bridge, key_to_terminal_bytes(key))
@@ -201,6 +233,49 @@ fn run_loop(
         }
     }
     Ok(())
+}
+
+struct ControlBridge {
+    commands: mpsc::Sender<ControlAction>,
+    events: mpsc::Receiver<ControlEvent>,
+}
+
+impl ControlBridge {
+    fn spawn(provider: GatewayProvider) -> Self {
+        let (command_tx, command_rx) = mpsc::channel::<ControlAction>();
+        let (event_tx, event_rx) = mpsc::channel::<ControlEvent>();
+        thread::spawn(move || {
+            while let Ok(action) = command_rx.recv() {
+                let label = action.label().to_string();
+                let _ = event_tx.send(ControlEvent::Started(label));
+                let result = provider
+                    .invoke(&action)
+                    .map_err(|error| format!("{} failed: {error}", action.label()));
+                let _ = event_tx.send(ControlEvent::Finished(result));
+            }
+        });
+        Self {
+            commands: command_tx,
+            events: event_rx,
+        }
+    }
+
+    fn invoke(&self, action: ControlAction) {
+        let _ = self.commands.send(action);
+    }
+
+    fn drain_events(&self) -> Vec<ControlEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.events.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+}
+
+enum ControlEvent {
+    Started(String),
+    Finished(std::result::Result<ActionOutcome, String>),
 }
 
 fn sync_terminal_connection(

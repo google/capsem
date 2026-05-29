@@ -30,18 +30,19 @@ thin client over typed state and actions exposed by Capsem service/gateway APIs.
 | T05 | Done | Home/resume screen with profile/session list | fixture render tests |
 | T06 | Done | Typed HTTP gateway model inventory and API gaps | `/status` schema mapped into TUI model |
 | T07 | Done | Wire installed gateway read-only state | HTTP provider test + live snapshot |
-| T08 | Not Started | Safe service control actions | confirmation/action tests |
+| T08 | Done | Safe service control actions | confirmation/action tests |
 | T09 | Not Started | Remote transport readiness | reconnect/event cursor tests |
 | T10 | In Progress | Active terminal WebSocket surface | terminal buffer/input tests |
 
 ## Current Decision
 
-The standalone shell is now wired read-only to the installed Capsem HTTP
+The standalone shell is now wired to the installed Capsem HTTP
 gateway. Default mode discovers the installed gateway port from runtime files,
 falls back to `http://127.0.0.1:19222`, fetches `/token`, and then polls
-authenticated `GET /status`; `--fixture` keeps the two-session demo path for
-visual iteration; `--gateway-url` turns connection failures into explicit errors
-for focused gateway testing.
+authenticated `GET /status`. Safe mutating actions go through the same gateway
+with a confirmation overlay and a background worker. `--fixture` keeps the
+two-session demo path for visual iteration; `--gateway-url` turns connection
+failures into explicit errors for focused gateway testing.
 
 ## T00 Closeout
 
@@ -91,17 +92,22 @@ for focused gateway testing.
   forwarding, and output buffering for the Ratatui surface.
 - Added `capsem_terminal_snapshot` to the host MCP server so agents can inspect
   session terminal/log state without needing an image-capable screenshot tool.
+- Added confirmed create/resume/suspend/stop/delete actions through the
+  installed gateway, with background execution so long service operations do
+  not block terminal rendering.
 - Kept richer missing state explicit for future API work: waiting-for-input,
   terminal bell, per-session repo/path metadata, security/enforcement/detection
   totals, and event cursor semantics are not invented by the TUI.
 
 ## Testing Gate
 
-- Unit/contract: required for state and render logic.
+- Unit/contract: required for state, render, confirmation, and action wiring.
 - Functional: standalone demo, text snapshot, and SVG render output.
-- Adversarial: malformed gateway status and authenticated provider parsing.
+- Adversarial: malformed gateway status, authenticated provider parsing, and
+  action error propagation.
 - E2E/VM: live empty-service snapshot covered; live multi-VM terminal session
-  proof remains open.
+  proof remains open because the installed service is missing the exact pinned
+  `initrd.img` and `assets.capsem.dev` does not resolve on this host.
 - Telemetry: mapped from current counters; event stream/cursor semantics remain
   open.
 - Performance: frame/render timing deferred until interactive loop exists.
