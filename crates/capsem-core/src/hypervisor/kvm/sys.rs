@@ -71,7 +71,6 @@ pub(super) const KVM_SET_DEVICE_ATTR: u64 = _iow(KVMIO, 0xE1, 24); // sizeof kvm
 // ---------------------------------------------------------------------------
 
 pub(super) const KVM_CAP_IRQFD: u32 = 32;
-pub(super) const KVM_CAP_IOEVENTFD: u32 = 36;
 pub(super) const KVM_CAP_NR_VCPUS: u32 = 9;
 pub(super) const KVM_CAP_MAX_VCPUS: u32 = 66;
 #[cfg(target_arch = "x86_64")]
@@ -267,17 +266,6 @@ pub(super) struct KvmIrqfd {
     pub pad: [u8; 16],
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub(super) struct KvmIoeventfd {
-    pub datamatch: u64,
-    pub addr: u64,
-    pub len: u32,
-    pub fd: i32,
-    pub flags: u32,
-    pub pad: [u8; 36],
-}
-
 /// kvm_run MMIO exit data (at offset 32 in the kvm_run mmap'd region).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -311,7 +299,6 @@ const _: () = {
     assert!(std::mem::size_of::<KvmCreateDevice>() == 12);
     assert!(std::mem::size_of::<KvmDeviceAttr>() == 24);
     assert!(std::mem::size_of::<KvmIrqfd>() == 32);
-    assert!(std::mem::size_of::<KvmIoeventfd>() == 64);
 };
 
 #[cfg(target_arch = "aarch64")]
@@ -649,39 +636,6 @@ impl VmFd {
         if ret < 0 {
             bail!(
                 "KVM_IRQFD(gsi={gsi}) failed: {}",
-                std::io::Error::last_os_error()
-            );
-        }
-        Ok(())
-    }
-
-    /// Bind an eventfd to an MMIO write via KVM_IOEVENTFD.
-    pub fn ioeventfd(
-        &self,
-        eventfd: RawFd,
-        addr: u64,
-        len: u32,
-        datamatch: Option<u64>,
-    ) -> Result<()> {
-        let flags = datamatch.map_or(0, |_| 1);
-        let ioeventfd = KvmIoeventfd {
-            datamatch: datamatch.unwrap_or(0),
-            addr,
-            len,
-            fd: eventfd,
-            flags,
-            pad: [0; 36],
-        };
-        let ret = unsafe {
-            libc::ioctl(
-                self.fd.as_raw_fd(),
-                KVM_IOEVENTFD as libc::c_ulong,
-                &ioeventfd as *const _ as u64,
-            )
-        };
-        if ret < 0 {
-            bail!(
-                "KVM_IOEVENTFD(addr={addr:#x}, len={len}, datamatch={datamatch:?}) failed: {}",
                 std::io::Error::last_os_error()
             );
         }
@@ -2273,13 +2227,6 @@ mod tests {
         let Some(kvm) = require_kvm() else { return };
         let val = kvm.check_extension(KVM_CAP_IRQFD).unwrap();
         assert!(val > 0, "KVM_CAP_IRQFD should be supported");
-    }
-
-    #[test]
-    fn kvm_check_ioeventfd_extension() {
-        let Some(kvm) = require_kvm() else { return };
-        let val = kvm.check_extension(KVM_CAP_IOEVENTFD).unwrap();
-        assert!(val > 0, "KVM_CAP_IOEVENTFD should be supported");
     }
 
     #[test]

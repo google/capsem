@@ -26,9 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
   Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,
   and Google AI.
-- Routed x86_64 KVM virtio-blk queue notifications through `KVM_IOEVENTFD`
-  with a dedicated block worker, so guest queue kicks no longer require vCPU
-  MMIO exits while preserving synchronous fallback tests.
 - Switched the KVM virtio-blk read/write data path from seek plus per-descriptor
   host I/O to `preadv`/`pwritev` over GPA-translated guest memory iovecs.
 - Added the Profile Foundation meta sprint with F00-F12 sub-sprints, a
