@@ -11,3 +11,5 @@
 
 - Updated the UI preview to show the actual A2UI Basic `Card` component with
   Preline card tokens, and cross-check Rust messages with `a2ui-types`.
+- Moved the rendered preview above the A2UI JSON and restyled the shell around
+  Preline's docs/card theme.

@@ -33,6 +33,10 @@
   Rust messages against its v0.9 `ServerToClientMessage`. The crate leaves
   catalog component bodies as JSON values, so Capsem still needs its strict
   Basic component enum port for component-level type safety.
+- Preline correction: rendering now appears above the serialized A2UI JSON,
+  and the shell follows Preline docs/card patterns: max-width page container,
+  stone canvas, blue primary tabs, semantic card tokens, card headers, and
+  Svelte-owned state.
 
 ## Coverage Ledger
 
