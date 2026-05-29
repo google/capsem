@@ -1,0 +1,198 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1780076537.2817547,
+  "hostname": "bright-ridge-tmp",
+  "disk": {
+    "directory": "/root",
+    "size_mb": 256,
+    "seq_write": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 153.1,
+      "throughput_mbps": 1672.5
+    },
+    "seq_read": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 69.4,
+      "throughput_mbps": 3689.2
+    },
+    "rand_write_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 1375.1,
+      "iops": 7272.2,
+      "throughput_mbps": 28.4
+    },
+    "rand_read_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 170.9,
+      "iops": 58509.0,
+      "throughput_mbps": 228.6
+    }
+  },
+  "rootfs": {
+    "scan_dirs": [
+      "/usr/bin",
+      "/usr/lib",
+      "/opt/ai-clis"
+    ],
+    "largest_file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    "largest_file_size": 238401160,
+    "seq_read": {
+      "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+      "size_bytes": 238401160,
+      "block_size": 1048576,
+      "duration_ms": 284.8,
+      "throughput_mbps": 798.4
+    },
+    "files_found": 3326,
+    "rand_read_4k": {
+      "count": 5000,
+      "files_sampled": 2576,
+      "block_size": 4096,
+      "duration_ms": 654.2,
+      "iops": 7643.4,
+      "throughput_mbps": 29.9
+    }
+  },
+  "startup": {
+    "runs_per_command": 3,
+    "commands": {
+      "python3": {
+        "command": [
+          "python3",
+          "--version"
+        ],
+        "timings_ms": [
+          7.9,
+          5.8,
+          9.4
+        ],
+        "min_ms": 5.8,
+        "mean_ms": 7.7,
+        "max_ms": 9.4
+      },
+      "node": {
+        "command": [
+          "node",
+          "--version"
+        ],
+        "timings_ms": [
+          79.4,
+          130.5,
+          126.5
+        ],
+        "min_ms": 79.4,
+        "mean_ms": 112.1,
+        "max_ms": 130.5
+      },
+      "claude": {
+        "command": [
+          "claude",
+          "--version"
+        ],
+        "timings_ms": [
+          334.6,
+          336.0,
+          340.1
+        ],
+        "min_ms": 334.6,
+        "mean_ms": 336.9,
+        "max_ms": 340.1
+      },
+      "gemini": {
+        "command": [
+          "gemini",
+          "--version"
+        ],
+        "timings_ms": [
+          760.1,
+          757.4,
+          757.6
+        ],
+        "min_ms": 757.4,
+        "mean_ms": 758.4,
+        "max_ms": 760.1
+      },
+      "codex": {
+        "command": [
+          "codex",
+          "--version"
+        ],
+        "timings_ms": [
+          285.1,
+          236.7,
+          228.1
+        ],
+        "min_ms": 228.1,
+        "mean_ms": 250.0,
+        "max_ms": 285.1
+      }
+    }
+  },
+  "http": {
+    "url": "https://www.google.com/",
+    "total_requests": 50,
+    "concurrency": 5,
+    "successful": 50,
+    "failed": 0,
+    "total_duration_ms": 930.6,
+    "requests_per_sec": 53.7,
+    "transfer_bytes": 4012481,
+    "latency_ms": {
+      "min": 59.5,
+      "max": 248.9,
+      "mean": 88.9,
+      "p50": 68.4,
+      "p95": 227.8,
+      "p99": 240.1
+    }
+  },
+  "throughput": {
+    "url": "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf",
+    "http_code": 200,
+    "size_bytes": 9984968,
+    "duration_s": 0.498,
+    "throughput_mbps": 19.12
+  },
+  "snapshot": {
+    "10_files": {
+      "create_ms": 633.1,
+      "create_ok": true,
+      "list_ms": 266.6,
+      "list_ok": true,
+      "changes_ms": 284.1,
+      "changes_ok": true,
+      "revert_ms": 283.1,
+      "revert_ok": true,
+      "delete_ms": 274.5,
+      "delete_ok": true
+    },
+    "100_files": {
+      "create_ms": 256.4,
+      "create_ok": true,
+      "list_ms": 243.4,
+      "list_ok": true,
+      "changes_ms": 248.1,
+      "changes_ok": true,
+      "revert_ms": 253.9,
+      "revert_ok": true,
+      "delete_ms": 249.1,
+      "delete_ok": true
+    },
+    "500_files": {
+      "create_ms": 252.1,
+      "create_ok": true,
+      "list_ms": 249.0,
+      "list_ok": true,
+      "changes_ms": 262.8,
+      "changes_ok": true,
+      "revert_ms": 251.8,
+      "revert_ok": true,
+      "delete_ms": 258.5,
+      "delete_ok": true
+    }
+  }
+}

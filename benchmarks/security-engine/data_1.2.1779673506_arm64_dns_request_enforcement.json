@@ -1,0 +1,74 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_dns_request_enforcement",
+  "version": "1.2.1779673506",
+  "source_commit": "69bd0e3d",
+  "timestamp": 1780076507.2018209,
+  "arch": "arm64",
+  "host": {
+    "sysname": "Darwin",
+    "release": "25.5.0",
+    "machine": "arm64"
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_dns_request_enforcement_benchmark_records_vm_originated_path -xvs",
+  "workload": {
+    "event_family": "dns",
+    "event_type": "dns.request",
+    "source": "vm_originated",
+    "path": "guest_resolver_to_dns_proxy_to_security_engine"
+  },
+  "runs": 8,
+  "gate_ms": 1000,
+  "rule": {
+    "id": "runtime.block-dns-bench.c12f32c0",
+    "pack_id": "runtime-benchmark",
+    "condition": "dns.request.qname == 'security-engine-bench-8eb16058.example.com'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_dns_request_ms": {
+      "min": 0.451,
+      "mean": 0.67,
+      "median": 0.483,
+      "p95": 1.994,
+      "p99": 1.994,
+      "max": 1.994,
+      "values": [
+        1.994,
+        0.535,
+        0.491,
+        0.476,
+        0.51,
+        0.451,
+        0.455,
+        0.451
+      ]
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 16,
+      "distinct_event_ids": 16,
+      "blocked_count": 16,
+      "vm_id": "secdns-f6273b1c",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elie",
+      "process_operation": null,
+      "process_command_class": null,
+      "rule_id": "runtime.block-dns-bench.c12f32c0",
+      "reason": "DNS request blocked by security benchmark"
+    },
+    "session_db_dns_events": {
+      "row_count": 16,
+      "denied_count": 16,
+      "qname": "security-engine-bench-8eb16058.example.com",
+      "policy_mode": "runtime",
+      "policy_action": "block",
+      "policy_rule": "runtime.block-dns-bench.c12f32c0",
+      "policy_reason": "DNS request blocked by security benchmark"
+    },
+    "runtime_match_count": 16,
+    "runtime_last_event_id": "dns-094f6541704920aa",
+    "logs_exposed_security_decision": true
+  }
+}
