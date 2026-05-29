@@ -899,6 +899,10 @@ benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
 # Backward-compatible alias for the canonical benchmark suite.
 bench: benchmark
 
+# Compare committed benchmark artifacts across Linux x86_64 and macOS arm64.
+benchmark-compare:
+    uv run python scripts/compare_benchmark_artifacts.py
+
 # Build package, runtime-clean local install, use the install.sh native command,
 # then verify installed status, service, gateway, and guest DNS/HTTPS.
 install: _pnpm-install _stamp-version _check-assets

@@ -12,6 +12,7 @@ Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the 
 ```bash
 just benchmark                      # Standard artifact-recording benchmark suite
 just bench                          # Alias for just benchmark
+just benchmark-compare              # Compare committed Linux/macOS artifacts
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
 just run "capsem-bench storage"     # Rootfs/workspace/tmpfs split
@@ -63,6 +64,14 @@ produced by `capsem-bench` inside the guest. By default the temporary host I/O
 workload runs under `target/host-native-benchmark` so it measures the project
 filesystem rather than `/tmp` tmpfs; override with
 `CAPSEM_HOST_NATIVE_BENCH_DIR` when comparing a specific disk.
+
+### Cross-platform artifact comparison
+
+Use `just benchmark-compare` after Linux and macOS have committed artifacts
+from the same benchmark version. The command reads `benchmarks/`, compares
+Linux `x86_64` against macOS `arm64`, reports ratios and percentages for common
+lanes, and lists missing lanes such as host-native or Criterion artifacts when
+one side has not rerun the current `just benchmark` suite yet.
 
 ### Disk I/O (`disk`)
 

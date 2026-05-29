@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
   in-VM, lifecycle, fork, and security-engine benchmark results.
+- Added `just benchmark-compare` and `scripts/compare_benchmark_artifacts.py`
+  to turn committed Linux/macOS benchmark artifacts into ratio and percentage
+  comparisons while making missing lanes explicit.
 
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,

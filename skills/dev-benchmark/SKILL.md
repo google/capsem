@@ -10,6 +10,7 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 ```bash
 just benchmark                      # Run the standard artifact-recording benchmark suite, including host-native baseline
 just bench                          # Alias for just benchmark
+just benchmark-compare              # Compare committed Linux/macOS benchmark artifacts
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench storage"     # Storage split diagnostics
@@ -43,6 +44,13 @@ against the hardware that produced the run. The default host I/O directory is
 `target/host-native-benchmark`, not `/tmp`, so Linux tmpfs does not become the
 accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
 disk.
+
+### Cross-platform comparison
+
+`just benchmark-compare` reads committed artifacts under `benchmarks/`, compares
+Linux `x86_64` against macOS `arm64`, prints ratios and percentage deltas for
+shared lanes, and lists missing lanes. Use it after both platforms rerun
+`just benchmark`; do not create platform-specific benchmark shortcuts.
 
 ### Snapshot benchmarks
 
