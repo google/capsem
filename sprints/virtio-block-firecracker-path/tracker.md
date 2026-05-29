@@ -65,25 +65,26 @@
   - `just exec "echo ok"`
   - `just benchmark`
 - Result versus `9d4c1f2a` Linux artifact:
-  - disk sequential write: +2.9%
-  - disk sequential read: +0.0%
-  - disk random write IOPS: -8.1%
-  - disk random read IOPS: +1.5%
-  - rootfs sequential read: -13.1%
-  - rootfs random 4K IOPS: -0.6%
-  - large binary cold read: +1.7%
-  - large binary warm read: -2.6%
-  - small JS reads: -2.3%
-  - metadata stats: -0.8%
-  - python startup: +3.9% faster
-  - node startup: -1.6% slower
-  - claude startup: -9.3% slower
-  - gemini startup: -4.0% slower
-  - codex startup: -2.3% slower
+  - disk sequential write: +3.6%
+  - disk sequential read: +11.8%
+  - disk random write IOPS: -0.1%
+  - disk random read IOPS: +1.9%
+  - rootfs sequential read: -10.4%
+  - rootfs random 4K IOPS: -3.7%
+  - large binary cold read: -0.6%
+  - large binary warm read: -3.1%
+  - small JS reads: +2.6%
+  - metadata stats: +2.2%
+  - python startup: +0.7% faster
+  - node startup: -0.6% slower
+  - claude startup: +0.1% faster
+  - gemini startup: +0.9% faster
+  - codex startup: -1.9% slower
 - Follow-up:
   - Focused rootfs reruns with and without event-index advertised both landed
-    around 141-142 MB/s sequential read, so the rootfs sequential artifact
-    regression is not explained by event-index negotiation alone.
+    around 141-142 MB/s sequential read, while the clean canonical artifact
+    landed at 179.7 MB/s, so rootfs sequential read is still volatile and not
+    explained by event-index negotiation alone.
   - Next slice should add queue/backend telemetry before more tuning so we can
     distinguish fewer interrupts from queue-depth, cache, and host I/O effects.
 
