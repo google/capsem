@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 
-from helpers.benchmark_artifacts import benchmark_output_path, enrich_benchmark_artifact
+from helpers.benchmark_artifacts import (
+    _git_status_paths,
+    benchmark_output_path,
+    enrich_benchmark_artifact,
+)
 
 
 def test_benchmark_output_path_defaults_to_project_benchmarks(monkeypatch, tmp_path):
@@ -73,3 +77,19 @@ def test_enriched_benchmark_artifact_is_json_serializable(tmp_path):
     )
 
     json.loads(json.dumps(data))
+
+
+def test_git_status_paths_supports_short_status_variants():
+    status = "\n".join([
+        " M benchmarks/capsem-bench/data.json",
+        "M  src/lib.rs",
+        "?? benchmarks/host-native/data.json",
+        "R  old/path.json -> benchmarks/new/path.json",
+    ])
+
+    assert _git_status_paths(status) == [
+        "benchmarks/capsem-bench/data.json",
+        "src/lib.rs",
+        "benchmarks/host-native/data.json",
+        "benchmarks/new/path.json",
+    ]

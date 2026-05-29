@@ -95,7 +95,7 @@ def _git_status_paths(status: str) -> list[str]:
     for line in status.splitlines():
         if len(line) < 4:
             continue
-        path = line[3:].strip()
+        path = line[2:].strip()
         if " -> " in path:
             path = path.rsplit(" -> ", 1)[1]
         if path:
