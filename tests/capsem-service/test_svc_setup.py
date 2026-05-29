@@ -124,7 +124,7 @@ class TestSetupAssets:
                 f"unexpected asset names: {names}"
             )
             for asset in resp["assets"]:
-                assert asset["status"] in ("present", "missing")
+                assert asset["status"] in ("present", "missing", "downloading")
 
     def test_assets_reports_ready_when_all_present(self, client):
         """ready=true iff every listed asset has status=present.
