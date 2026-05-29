@@ -89,6 +89,8 @@ for focused gateway testing.
 - Added active-session terminal WebSocket wiring through the gateway:
   `/token`, `/terminal/{id}?token=...`, resize messages, terminal input
   forwarding, and output buffering for the Ratatui surface.
+- Added `capsem_terminal_snapshot` to the host MCP server so agents can inspect
+  session terminal/log state without needing an image-capable screenshot tool.
 - Kept richer missing state explicit for future API work: waiting-for-input,
   terminal bell, per-session repo/path metadata, security/enforcement/detection
   totals, and event cursor semantics are not invented by the TUI.

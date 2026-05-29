@@ -62,6 +62,106 @@ fn grep_log_fields(val: &mut Value, pattern: &str) {
     }
 }
 
+fn terminal_snapshot_from_logs(
+    val: Value,
+    params: &TerminalSnapshotParams,
+) -> Result<String, String> {
+    if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+        return Err(err.to_string());
+    }
+    let source = params.source.as_deref().unwrap_or("serial");
+    let raw = match source {
+        "serial" => val
+            .get("serial_logs")
+            .or_else(|| val.get("logs"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        "process" => val
+            .get("process_logs")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        "combined" => {
+            let serial = val
+                .get("serial_logs")
+                .or_else(|| val.get("logs"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let process = val
+                .get("process_logs")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            format!("{serial}\n{process}")
+        }
+        other => {
+            return Err(format!(
+                "unsupported source {other:?}; expected serial, process, or combined"
+            ));
+        }
+    };
+
+    let mut text = strip_terminal_control_sequences(&raw);
+    if let Some(pattern) = &params.grep {
+        text = grep_lines(&text, pattern);
+    }
+    let tail = params.tail.unwrap_or(80);
+    text = tail_lines(&text, tail);
+    let lines = text.lines().map(str::to_string).collect::<Vec<_>>();
+    Ok(serde_json::to_string_pretty(&json!({
+        "id": params.id,
+        "source": source,
+        "line_count": lines.len(),
+        "lines": lines,
+        "text": text,
+    }))
+    .unwrap_or_else(|_| "{\"text\":\"\"}".to_string()))
+}
+
+fn strip_terminal_control_sequences(input: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Ground,
+        Escape,
+        Csi,
+        Osc,
+        OscEscape,
+    }
+
+    let mut output = String::with_capacity(input.len());
+    let mut state = State::Ground;
+    for ch in input.chars() {
+        match state {
+            State::Ground => match ch {
+                '\u{1b}' => state = State::Escape,
+                '\r' => {}
+                '\n' | '\t' => output.push(ch),
+                ch if ch.is_control() => {}
+                ch => output.push(ch),
+            },
+            State::Escape => match ch {
+                '[' => state = State::Csi,
+                ']' => state = State::Osc,
+                _ => state = State::Ground,
+            },
+            State::Csi => {
+                if ('@'..='~').contains(&ch) {
+                    state = State::Ground;
+                }
+            }
+            State::Osc => match ch {
+                '\u{7}' => state = State::Ground,
+                '\u{1b}' => state = State::OscEscape,
+                _ => {}
+            },
+            State::OscEscape => {
+                state = State::Ground;
+            }
+        }
+    }
+    output
+}
+
 /// Render a service response to the shape MCP expects.
 ///
 /// If the underlying request failed, returns the error string. Otherwise,
@@ -551,6 +651,17 @@ struct LogsParams {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct TerminalSnapshotParams {
+    id: String,
+    /// Source to render: serial (default), process, or combined.
+    source: Option<String>,
+    /// Case-insensitive substring filter applied after ANSI cleanup.
+    grep: Option<String>,
+    /// Return only the last N rendered terminal lines. Default 80.
+    tail: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct ServiceLogsParams {
     /// Case-insensitive substring filter applied to each log line
     grep: Option<String>,
@@ -693,6 +804,24 @@ impl CapsemHandler {
                 }
                 Ok(serde_json::to_string_pretty(&val).unwrap_or_else(|_| format!("{:?}", val)))
             }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tool(
+        name = "capsem_terminal_snapshot",
+        description = "Render a text snapshot of a session terminal/log surface from service logs. Uses serial logs by default, strips ANSI/control sequences, supports grep and tail. This is the MCP-visible terminal inspection tool for agents when an image screenshot is not needed."
+    )]
+    async fn terminal_snapshot(
+        &self,
+        Parameters(params): Parameters<TerminalSnapshotParams>,
+    ) -> Result<String, String> {
+        match self
+            .client
+            .request::<Value, Value>("GET", &format!("/logs/{}", params.id), None)
+            .await
+        {
+            Ok(val) => terminal_snapshot_from_logs(val, &params),
             Err(e) => Err(e.to_string()),
         }
     }

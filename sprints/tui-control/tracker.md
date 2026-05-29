@@ -26,6 +26,7 @@
 - [x] Preserve plain `q` and Ctrl-C for the agent/terminal stream.
 - [x] Render active terminal output in the main Ratatui surface.
 - [x] Add terminal buffer, ANSI cleanup, and key encoding tests.
+- [x] Add `capsem_terminal_snapshot` MCP tool for session terminal inspection.
 - [ ] Commit functional milestone.
 
 ## Notes
@@ -63,6 +64,9 @@
   background session multiplexing belongs in the later virtual-desktop sprint.
 - New-session creation is deliberately not in the hidden sessions overlay yet
   because it mutates service state and belongs with safe action confirmation.
+- MCP terminal inspection is now a text snapshot from service logs, not a
+  bitmap screenshot. It is enough for agent debugging and works through the
+  existing service log contract.
 
 ## Coverage Ledger
 
@@ -74,6 +78,8 @@
 - Gateway wiring: `GatewayProvider::load_async` authenticated HTTP mock test
   plus live local snapshot through the installed gateway.
 - Terminal wiring: `TerminalSurface` output/ANSI tests and key-encoding tests.
+- MCP wiring: `capsem_terminal_snapshot` router registration and rendering
+  tests.
 - Overlay wiring: function-key state tests and stats overlay render test.
 - Adversarial: malformed gateway status mapping.
 - E2E/VM: live multi-session terminal proof still open; current installed

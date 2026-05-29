@@ -451,6 +451,7 @@ fn tool_router_registers_all_tools() {
         "capsem_purge",
         "capsem_run",
         "capsem_vm_logs",
+        "capsem_terminal_snapshot",
         "capsem_service_logs",
         "capsem_version",
         "capsem_fork",
@@ -474,6 +475,21 @@ fn tool_router_registers_all_tools() {
 }
 
 #[test]
+fn terminal_snapshot_tool_description_mentions_terminal_inspection() {
+    let tools = CapsemHandler::tool_router();
+    let all_tools = tools.list_all();
+    let tool = all_tools
+        .iter()
+        .find(|tool| tool.name == "capsem_terminal_snapshot")
+        .expect("capsem_terminal_snapshot registered");
+    let description = tool.description.as_deref().unwrap_or_default();
+    assert!(
+        description.contains("terminal") && description.contains("ANSI"),
+        "terminal snapshot description should explain terminal inspection: {description}"
+    );
+}
+
+#[test]
 fn vm_logs_tool_description_mentions_security_logs() {
     let tools = CapsemHandler::tool_router();
     let all_tools = tools.list_all();
@@ -486,6 +502,63 @@ fn vm_logs_tool_description_mentions_security_logs() {
         description.contains("security"),
         "capsem_vm_logs description should mention security logs: {description}"
     );
+}
+
+#[test]
+fn terminal_snapshot_strips_ansi_and_tails_serial_log() {
+    let params = TerminalSnapshotParams {
+        id: "vm-1".into(),
+        tail: Some(2),
+        ..Default::default()
+    };
+    let out = terminal_snapshot_from_logs(
+        json!({
+            "serial_logs": "boot\n\u{1b}[31mred\u{1b}[0m\nready\r\nprompt$ "
+        }),
+        &params,
+    )
+    .unwrap();
+    let json: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(json["id"], "vm-1");
+    assert_eq!(json["source"], "serial");
+    assert_eq!(json["lines"][0], "ready");
+    assert_eq!(json["lines"][1], "prompt$ ");
+    assert!(
+        !json["text"].as_str().unwrap().contains('\u{1b}'),
+        "ANSI escapes should be stripped"
+    );
+}
+
+#[test]
+fn terminal_snapshot_supports_grep_and_process_source() {
+    let params = TerminalSnapshotParams {
+        id: "vm-1".into(),
+        source: Some("process".into()),
+        grep: Some("error".into()),
+        tail: Some(10),
+    };
+    let out = terminal_snapshot_from_logs(
+        json!({
+            "serial_logs": "serial ok",
+            "process_logs": "info\nerror: failed\nwarn"
+        }),
+        &params,
+    )
+    .unwrap();
+    let json: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(json["source"], "process");
+    assert_eq!(json["lines"], json!(["error: failed"]));
+}
+
+#[test]
+fn terminal_snapshot_rejects_unknown_source() {
+    let params = TerminalSnapshotParams {
+        id: "vm-1".into(),
+        source: Some("cosmic".into()),
+        ..Default::default()
+    };
+    let err = terminal_snapshot_from_logs(json!({"serial_logs": "ok"}), &params).unwrap_err();
+    assert!(err.contains("unsupported source"));
 }
 
 // -----------------------------------------------------------------------
