@@ -59,7 +59,10 @@ on every run. It uses the same artifact envelope as VM benchmarks and records
 UTC time, host CPU/RAM/OS metadata, git state, filesystem context, local disk
 I/O, CLI startup, synthetic small-file reads, and metadata-stat throughput. Use
 this artifact as the local bare-host reference for VM comparison; it is not
-produced by `capsem-bench` inside the guest.
+produced by `capsem-bench` inside the guest. By default the temporary host I/O
+workload runs under `target/host-native-benchmark` so it measures the project
+filesystem rather than `/tmp` tmpfs; override with
+`CAPSEM_HOST_NATIVE_BENCH_DIR` when comparing a specific disk.
 
 ### Disk I/O (`disk`)
 

@@ -58,6 +58,12 @@ def _save(data):
     print(f"Host-native benchmark saved to {out_path}")
 
 
+def _default_bench_dir() -> Path:
+    path = PROJECT_ROOT / "target" / "host-native-benchmark"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _df_context(directory: Path) -> dict:
     context = {
         "directory": str(directory),
@@ -156,7 +162,9 @@ def test_host_native_benchmark():
             os.environ.get("CAPSEM_BENCH_SIZE_MB", "256"),
         )
     )
-    base_dir = os.environ.get("CAPSEM_HOST_NATIVE_BENCH_DIR")
+    base_dir_env = os.environ.get("CAPSEM_HOST_NATIVE_BENCH_DIR")
+    base_dir = Path(base_dir_env) if base_dir_env else _default_bench_dir()
+    base_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=base_dir) as tmp:
         bench_dir = Path(tmp)
         data = {

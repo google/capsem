@@ -39,7 +39,10 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 `benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file
 reads, metadata-stat throughput, filesystem context, UTC timestamp, host
 hardware/OS metadata, and git state. Use this when comparing VM performance
-against the hardware that produced the run.
+against the hardware that produced the run. The default host I/O directory is
+`target/host-native-benchmark`, not `/tmp`, so Linux tmpfs does not become the
+accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
+disk.
 
 ### Snapshot benchmarks
 
