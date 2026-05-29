@@ -129,6 +129,36 @@ export function resolveChildren(children: unknown, data: unknown, scope: unknown
   return [];
 }
 
+export function staticChildIds(component: A2uiComponent | undefined): string[] {
+  if (!component || !Array.isArray(component.children)) return [];
+  return component.children.filter((id): id is string => typeof id === "string");
+}
+
+export function childComponent(
+  surface: SurfaceModel,
+  component: A2uiComponent | undefined,
+  index: number,
+): A2uiComponent | undefined {
+  const id = staticChildIds(component)[index];
+  return id ? surface.components.get(id) : undefined;
+}
+
+export function textValue(
+  surface: SurfaceModel,
+  component: A2uiComponent | undefined,
+  scope: unknown = surface.data,
+): string {
+  if (!component || component.component !== "Text") return "";
+  return resolveDynamic(component.text, surface.data, scope);
+}
+
+export function componentById(
+  surface: SurfaceModel,
+  id: unknown,
+): A2uiComponent | undefined {
+  return typeof id === "string" ? surface.components.get(id) : undefined;
+}
+
 export function lookupPath(path: string, data: unknown, scope: unknown): unknown {
   const source = path.startsWith("/") ? data : scope;
   const parts = path.replace(/^\//, "").split("/").filter(Boolean);
@@ -140,21 +170,25 @@ export function lookupPath(path: string, data: unknown, scope: unknown): unknown
   return cursor;
 }
 
-export function textClass(variant: unknown): string {
+export function textClass(variant: unknown, tone = "default"): string {
+  if (tone === "alert") {
+    return "text-sm text-primary-800";
+  }
+
   switch (variant) {
     case "h1":
       return "text-4xl font-semibold tracking-normal text-foreground";
     case "h2":
       return "text-2xl font-semibold tracking-normal text-foreground";
     case "h3":
-      return "text-lg font-semibold tracking-normal text-foreground";
+      return "font-semibold text-foreground";
     case "h4":
       return "text-sm font-semibold tracking-normal text-foreground";
     case "caption":
-      return "text-xs text-muted-foreground-1";
+      return "mt-1 text-xs font-medium uppercase text-muted-foreground-1";
     case "body":
     default:
-      return "text-sm leading-6 text-muted-foreground-1";
+      return "mt-1 text-sm text-muted-foreground-1";
   }
 }
 

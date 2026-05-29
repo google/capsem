@@ -44,22 +44,17 @@
 </script>
 
 <main class="min-h-screen bg-background">
-  <div class="mx-auto flex max-w-[85rem] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-    <header class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+  <div class="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+    <header class="flex flex-col gap-3">
       <div class="max-w-2xl">
         <span class="inline-flex items-center gap-x-1.5 rounded-full border border-primary/15 bg-primary-100 px-3 py-1.5 text-xs font-medium text-primary">
           A2UI v0.9 Basic
         </span>
-        <h1 class="mt-4 text-3xl font-semibold tracking-normal text-foreground">Capsem UI renderer</h1>
+        <h1 class="mt-4 text-2xl font-semibold tracking-normal text-foreground">Capsem UI renderer</h1>
         <p class="mt-2 text-sm leading-6 text-muted-foreground-1">
-          Rust emits validated A2UI Basic messages; Svelte renders them with Preline component patterns.
+          Rust emits validated A2UI Basic messages; Svelte maps their fields into Preline component recipes.
         </p>
       </div>
-      {#if payload}
-        <div class="rounded-xl border border-layer-line bg-layer px-4 py-3 text-xs text-muted-foreground-1 shadow-2xs">
-          {payload.generatedBy}
-        </div>
-      {/if}
     </header>
 
     {#if error}
@@ -71,14 +66,17 @@
         Loading preview...
       </section>
     {:else}
-      <div class="rounded-xl border border-layer-line bg-layer p-1.5 shadow-2xs">
-        <div class="flex flex-wrap gap-1.5">
+      <div class="border-b border-line-2">
+        <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+        <nav class="flex gap-x-2 overflow-x-auto" aria-label="Tabs" role="tablist" aria-orientation="horizontal">
           {#each examples as example, index}
             <button
               type="button"
+              role="tab"
+              aria-selected={index === selected}
               class={index === selected
-                ? "rounded-lg border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-2xs"
-                : "rounded-lg border border-transparent px-3 py-2 text-sm font-medium text-layer-foreground hover:bg-layer-hover"}
+                ? "active -mb-px py-3 px-4 inline-flex items-center gap-x-2 bg-layer text-sm font-medium text-center border border-line-2 border-b-transparent text-primary-active rounded-t-lg focus:outline-hidden focus:text-primary-focus disabled:opacity-50 disabled:pointer-events-none"
+                : "-mb-px py-3 px-4 inline-flex items-center gap-x-2 bg-muted text-sm font-medium text-center border border-line-2 text-muted-foreground-1 rounded-t-lg hover:text-foreground focus:outline-hidden focus:text-foreground disabled:opacity-50 disabled:pointer-events-none"}
               onclick={() => {
                 selected = index;
                 actions = [];
@@ -87,36 +85,34 @@
               {example.name}
             </button>
           {/each}
-        </div>
+        </nav>
       </div>
 
-      <section class="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.75fr)]">
-        <article class="rounded-xl border border-card-line bg-card shadow-2xs">
-          <div class="border-b border-card-divider px-4 py-3 md:px-5">
-            <div class="flex items-center justify-between gap-3">
-              <h2 class="text-sm font-semibold tracking-normal text-foreground">Svelte/Preline renderer</h2>
-              <span class="inline-flex items-center gap-x-1.5 rounded-full bg-primary-100 px-2.5 py-1 text-xs font-medium text-primary">
-                rendered first
-              </span>
-            </div>
+      <section class="rounded-xl border border-card-line bg-card shadow-2xs">
+        <div class="border-b border-card-divider px-4 py-3">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-sm font-semibold tracking-normal text-foreground">Preline recipe render</h2>
+            <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-primary text-primary-foreground">
+              {current.surface}
+            </span>
           </div>
-          <div class="bg-surface p-4 md:p-5">
-            <div class="mx-auto max-w-xl">
-              <A2Node id="root" {surface} scope={surface.data} onAction={recordAction} />
-            </div>
+        </div>
+        <div class="p-6">
+          <div class="mx-auto w-full max-w-xl">
+            <A2Node id="root" {surface} scope={surface.data} onAction={recordAction} />
           </div>
-        </article>
+        </div>
+      </section>
 
-        <article class="rounded-xl border border-card-line bg-card p-4 shadow-2xs md:p-5">
+      <section class="grid gap-5 lg:grid-cols-2">
+        <article class="rounded-xl border border-card-line bg-card p-4 shadow-2xs">
           <div class="mb-3 flex items-center justify-between gap-3">
             <h2 class="text-sm font-semibold tracking-normal text-foreground">Rust API</h2>
-            <span class="rounded-lg bg-surface px-2 py-1 text-xs text-muted-foreground-1">{current.surface}</span>
+            <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+              {payload?.generatedBy}
+            </span>
           </div>
           <pre class="overflow-auto rounded-lg bg-surface p-3 text-xs leading-5 text-foreground">{current.api}</pre>
-          <div class="mt-4 rounded-lg border border-card-line bg-surface p-3">
-            <p class="text-xs font-semibold text-foreground">Catalog</p>
-            <p class="mt-1 break-all text-xs text-muted-foreground-1">{payload?.catalogId}</p>
-          </div>
           {#if actions.length}
             <div class="mt-4">
               <h3 class="mb-2 text-xs font-semibold text-foreground">Client actions</h3>
@@ -130,15 +126,20 @@
             </div>
           {/if}
         </article>
-      </section>
 
-      <section class="rounded-xl border border-card-line bg-card shadow-2xs">
-        <div class="border-b border-card-divider px-4 py-3 md:px-5">
-          <h2 class="text-sm font-semibold tracking-normal text-foreground">A2UI Basic format</h2>
-        </div>
-        <div class="p-4 md:p-5">
-          <pre class="max-h-[520px] overflow-auto rounded-lg bg-surface p-4 text-xs leading-5 text-foreground">{serialized}</pre>
-        </div>
+        <article class="rounded-xl border border-card-line bg-card shadow-2xs">
+          <div class="border-b border-card-divider px-4 py-3">
+            <div class="flex items-center justify-between gap-3">
+              <h2 class="text-sm font-semibold tracking-normal text-foreground">A2UI Basic format</h2>
+              <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-layer border border-layer-line text-layer-foreground">
+                validated
+              </span>
+            </div>
+          </div>
+          <div class="p-4">
+            <pre class="max-h-[360px] overflow-auto rounded-lg bg-surface p-4 text-xs leading-5 text-foreground">{serialized}</pre>
+          </div>
+        </article>
       </section>
     {/if}
   </div>

@@ -15,3 +15,6 @@
   Preline's docs/card theme.
 - Replaced the preview's Tailwind CDN/token mimic with the real `preline`
   package processed through the Tailwind v4 Vite pipeline.
+- Remapped the UI preview renderer from generic A2UI tree dumping to
+  Preline recipe adapters for alerts, cards, card-style tabs, buttons, badges,
+  and modal shells.

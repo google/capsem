@@ -3,10 +3,14 @@
   import {
     actionContext,
     actionName,
+    childComponent,
+    componentById,
     iconText,
     resolveChildren,
     resolveDynamic,
+    staticChildIds,
     textClass,
+    textValue,
     type RenderAction,
     type SurfaceModel,
   } from "./a2ui";
@@ -15,11 +19,13 @@
     id,
     surface,
     scope = surface.data,
+    tone = "default",
     onAction = () => {},
   }: {
     id: string;
     surface: SurfaceModel;
     scope?: unknown;
+    tone?: string;
     onAction?: (action: RenderAction) => void;
   } = $props();
 
@@ -29,6 +35,8 @@
   let childItems = $derived(
     component ? resolveChildren(component.children, surface.data, scope) : [],
   );
+  let cardChild = $derived(component?.component === "Card" ? componentById(surface, prop("child")) : undefined);
+  let modalContent = $derived(component?.component === "Modal" ? componentById(surface, prop("content")) : undefined);
 
   function prop(name: string): string {
     const value = component?.[name];
@@ -62,26 +70,58 @@
   function buttonClass(): string {
     const variant = component?.variant;
     if (variant === "primary") {
-      return "inline-flex min-h-9 items-center justify-center rounded-lg border border-primary bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover";
+      return "py-3 px-4 inline-flex justify-center items-center gap-x-2 text-sm font-medium rounded-lg bg-primary border border-primary-line text-primary-foreground hover:bg-primary-hover focus:outline-hidden focus:bg-primary-focus disabled:opacity-50 disabled:pointer-events-none";
     }
     if (variant === "borderless") {
-      return "inline-flex min-h-9 items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-layer-foreground hover:bg-layer-hover";
+      return "py-3 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-transparent text-primary hover:text-primary-hover focus:outline-hidden focus:text-primary-hover disabled:opacity-50 disabled:pointer-events-none";
     }
-    return "inline-flex min-h-9 items-center justify-center rounded-lg border border-layer-line bg-layer px-3 py-2 text-sm font-medium text-layer-foreground hover:bg-layer-hover";
+    return "py-3 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-layer-line bg-layer text-layer-foreground shadow-2xs hover:bg-layer-hover focus:outline-hidden focus:bg-layer-focus disabled:opacity-50 disabled:pointer-events-none";
+  }
+
+  function isAlertCard(): boolean {
+    return component?.component === "Card" && prop("child") === "alert-row";
+  }
+
+  function isStatusCard(): boolean {
+    return component?.component === "Card" && prop("child") === "status-column";
+  }
+
+  function isSimpleCard(): boolean {
+    return component?.component === "Card" && prop("child") === "card-body";
+  }
+
+  function iconName(): unknown {
+    return component?.name;
+  }
+
+  function renderableIconName(): string {
+    return iconText(iconName());
   }
 </script>
 
 {#if component}
   {#if component.component === "Text"}
-    <p class={textClass(component.variant)}>
+    <p class={textClass(component.variant, tone)}>
       {resolveDynamic(component.text, surface.data, scope)}
     </p>
   {:else if component.component === "Icon"}
     <span
-      class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-layer-line bg-surface text-sm font-semibold text-muted-foreground-1"
+      class="inline-flex justify-center items-center size-8 rounded-full border-4 border-primary-200 bg-primary-100 text-primary-800"
       aria-hidden="true"
     >
-      {iconText(component.name)}
+      {#if renderableIconName() === "!"}
+        <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 9v4"></path>
+          <path d="M12 17h.01"></path>
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"></path>
+        </svg>
+      {:else}
+        <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 16v-4"></path>
+          <path d="M12 8h.01"></path>
+        </svg>
+      {/if}
     </span>
   {:else if component.component === "Image"}
     <img
@@ -103,12 +143,95 @@
         <A2Node id={child.id} {surface} scope={child.scope} {onAction} />
       {/each}
     </div>
+  {:else if component.component === "Card" && isAlertCard()}
+    {@const icon = childComponent(surface, cardChild, 0)}
+    {@const message = childComponent(surface, cardChild, 1)}
+    <div
+      class="bg-primary-100 border border-primary-200 text-sm text-primary-800 rounded-lg p-4"
+      role="alert"
+      tabindex="-1"
+      aria-labelledby={`${surface.surfaceId}-alert-label`}
+    >
+      <div class="flex">
+        <div class="shrink-0">
+          {#if icon}
+            <A2Node id={icon.id} {surface} {scope} {onAction} />
+          {/if}
+        </div>
+        <div class="ms-3">
+          <p id={`${surface.surfaceId}-alert-label`} class="font-semibold text-primary-900">
+            Security notice
+          </p>
+          {#if message}
+            <A2Node id={message.id} {surface} {scope} tone="alert" {onAction} />
+          {/if}
+        </div>
+      </div>
+    </div>
+  {:else if component.component === "Card" && isStatusCard()}
+    {@const statusRow = childComponent(surface, cardChild, 0)}
+    {@const statusMessage = childComponent(surface, cardChild, 1)}
+    {@const statusIcon = childComponent(surface, statusRow, 0)}
+    {@const statusTitle = childComponent(surface, statusRow, 1)}
+    <div class="bg-card border-t-2 border-primary rounded-lg p-4 shadow-2xs" role="status">
+      <div class="flex">
+        <div class="shrink-0">
+          {#if statusIcon}
+            <A2Node id={statusIcon.id} {surface} {scope} {onAction} />
+          {/if}
+        </div>
+        <div class="ms-3">
+          {#if statusTitle}
+            <h3 class="font-semibold text-foreground">
+              {textValue(surface, statusTitle, scope)}
+            </h3>
+          {/if}
+          {#if statusMessage}
+            <p class="mt-1 text-sm text-muted-foreground-1">
+              {textValue(surface, statusMessage, scope)}
+            </p>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {:else if component.component === "Card" && isSimpleCard()}
+    {@const title = childComponent(surface, cardChild, 0)}
+    {@const description = childComponent(surface, cardChild, 1)}
+    {@const meta = childComponent(surface, cardChild, 2)}
+    <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl">
+      <div class="p-4">
+        {#if title}
+          <h3 class="font-semibold text-foreground">
+            {textValue(surface, title, scope)}
+          </h3>
+        {/if}
+        {#if meta}
+          {@const metaCaption = childComponent(surface, meta, 1)}
+          {#if metaCaption}
+            <p class="mt-1 text-xs font-medium uppercase text-muted-foreground-1">
+              {textValue(surface, metaCaption, scope)}
+            </p>
+          {/if}
+        {/if}
+        {#if description}
+          <p class="mt-1 text-sm text-muted-foreground-1">
+            {textValue(surface, description, scope)}
+          </p>
+        {/if}
+        <span class="mt-3 inline-flex items-center gap-x-1 text-sm font-semibold rounded-lg border border-transparent text-primary">
+          Validated A2UI
+          <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m9 18 6-6-6-6"></path>
+          </svg>
+        </span>
+      </div>
+    </div>
   {:else if component.component === "Card"}
-    <section class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl">
-      <div class="p-4 md:p-5">
+    <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl">
+      <div class="p-4">
         <A2Node id={prop("child")} {surface} {scope} {onAction} />
       </div>
-    </section>
+    </div>
   {:else if component.component === "Button"}
     <button class={buttonClass()} type="button" onclick={runButton}>
       <A2Node id={prop("child")} {surface} {scope} {onAction} />
@@ -125,29 +248,52 @@
         }}
       />
       {#if open}
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4">
-          <section class="w-full max-w-md rounded-xl border border-overlay-line bg-overlay p-5 shadow-xl">
-            <div class="mb-4 flex items-center justify-between gap-4">
-              <p class="text-sm font-semibold text-foreground">Ask</p>
-              <button
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground-1 hover:bg-layer-hover"
-                type="button"
-                aria-label="Close"
-                onclick={() => (open = false)}
-              >
-                x
-              </button>
-            </div>
-            <A2Node
-              id={prop("content")}
-              {surface}
-              {scope}
-              onAction={(action) => {
-                open = false;
-                onAction(action);
-              }}
-            />
-          </section>
+        <div class="fixed inset-0 z-50 overflow-y-auto bg-foreground/40">
+          <div class="flex min-h-full items-center justify-center p-4">
+            <section class="w-full max-w-lg flex flex-col bg-overlay border border-overlay-line shadow-2xs rounded-xl">
+              <div class="flex justify-between items-center py-3 px-4 border-b border-overlay-divider">
+                <h3 class="font-bold text-foreground">Question</h3>
+                <button
+                  class="size-8 inline-flex justify-center items-center gap-x-2 rounded-full border border-transparent bg-layer text-muted-foreground-1 hover:bg-layer-hover focus:outline-hidden focus:bg-layer-focus disabled:opacity-50 disabled:pointer-events-none"
+                  type="button"
+                  aria-label="Close"
+                  onclick={() => (open = false)}
+                >
+                  <span class="sr-only">Close</span>
+                  <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 6 6 18"></path>
+                    <path d="m6 6 12 12"></path>
+                  </svg>
+                </button>
+              </div>
+              <div class="overflow-y-auto p-4">
+                {#if modalContent}
+                  {@const message = childComponent(surface, modalContent, 0)}
+                  {@const actions = childComponent(surface, modalContent, 1)}
+                  {#if message}
+                    <p class="text-sm text-muted-foreground-1">
+                      {textValue(surface, message, scope)}
+                    </p>
+                  {/if}
+                  {#if actions}
+                    <div class="mt-4 flex justify-end gap-x-2">
+                      {#each staticChildIds(actions) as actionId}
+                        <A2Node
+                          id={actionId}
+                          {surface}
+                          {scope}
+                          onAction={(action) => {
+                            open = false;
+                            onAction(action);
+                          }}
+                        />
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            </section>
+          </div>
         </div>
       {/if}
     </div>

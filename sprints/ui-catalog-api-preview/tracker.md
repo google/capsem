@@ -42,6 +42,11 @@
   `@source "../../node_modules/preline"`, and the packaged theme CSS). Browser
   verification shows no Tailwind CDN and live Preline runtime tokens such as
   `--card-line`, `--primary`, and `--primary-hover`.
+- Preline renderer correction: the Svelte renderer now maps A2UI fields into
+  Preline recipe slots instead of recursively dumping every node as generic
+  boxes. Examples implemented against the docs recipes: soft alert, simple
+  card, top-border status callout, card-style tabs, pill badges, Preline
+  button classes, and Svelte-owned modal shell/body/actions.
 
 ## Coverage Ledger
 
@@ -54,9 +59,10 @@
 - Adversarial: Rust tests reject invented component names, non-Basic catalogs,
   and updates before create.
 - E2E/VM: in-app browser preview loaded from the Rust server, confirmed the
-  rendered section appears before the A2UI JSON, no Tailwind CDN is loaded, and
-  real Preline tokens drive rendered card/button styles. VM path deferred for
-  this isolated prototype.
+  rendered section appears before the A2UI JSON, no Tailwind CDN is loaded, real
+  Preline tokens drive rendered card/button styles, all five tabs render, and
+  the ask modal opens with mapped body/actions. VM path deferred for this
+  isolated prototype.
 - Telemetry: deferred.
 - Performance: `npm run ui:build` produced the preview bundle in ~150ms on this
   machine after the real Preline/Tailwind v4 pipeline landed; no runtime
