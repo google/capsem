@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added the initial `capsem-tui` crate with a fixture-backed standalone
+  terminal control screen, global service light-bar state, per-session desktop
+  indicators, and deterministic snapshot rendering for early UI proof.
+
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
   Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,

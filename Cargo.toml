@@ -13,6 +13,7 @@ members = [
     "crates/capsem-process",
     "crates/capsem-service",
     "crates/capsem",
+    "crates/capsem-tui",
     "crates/capsem-mcp",
     "crates/capsem-mcp-aggregator",
     "crates/capsem-mcp-builtin",
@@ -102,6 +103,8 @@ base64 = "0.22"
 bytes = "1"
 regex = "1"
 clap = { version = "4", features = ["derive"] }
+ratatui = "0.30.0"
+crossterm = "0.29.0"
 tokio-unix-ipc = "0.4"
 rmcp = { version = "1.3", features = ["client", "server"] }
 # Low-level DNS protocol (wire-format codec). Used host-side by the

@@ -1,0 +1,24 @@
+[package]
+name = "capsem-tui"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "capsem-tui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+
+[lints]
+workspace = true
+
