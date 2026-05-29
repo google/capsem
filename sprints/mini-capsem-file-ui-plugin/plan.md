@@ -34,11 +34,13 @@ const plugin = Plugin("capsem.git-context")
         ? parse_github_stats(context.fetch(github_api_url))
         : "github stats unavailable";
 
-      context.ui.emit(new UiMutation(
-        "workspace.context",
-        "upsert_block",
-        new UiBlock("git-context-card", "git-context", "Git", head, github_stats),
-      ));
+      context.ui.sidePanel("workspace.context").replace({
+        scope: { workspaceId: context.workspace.id },
+        title: "Git Context",
+        blocks: [
+          new UiBlock("git-context-card", "git-context", "Git", head, github_stats),
+        ],
+      });
     }
     return file_event;
   });
@@ -79,7 +81,8 @@ emission are ABI calls.
 - The plugin reads `.git/HEAD` through `context.fs.read(...)`.
 - The plugin reads `.git/config`, derives a GitHub API URL, and calls
   `context.fetch(...)`.
-- The plugin emits a typed UI mutation through `context.ui.emit(...)`.
+- The plugin updates a named UI surface through
+  `context.ui.sidePanel(...).replace(...)`.
 - The Rust host enforces capability-gated fs, fetch, and UI ABI calls.
 - A Rust acceptance test compiles the plugin, runs it, and asserts:
   - git branch fact is present,

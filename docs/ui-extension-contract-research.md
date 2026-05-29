@@ -1,5 +1,12 @@
 # UI Extension Contract Research
 
+> Authoring correction: this research doc originally used
+> `context.ui.emit(...)` as if it were public API. That is now superseded.
+> Public authoring must use named UI surfaces such as `ui.sidePanel(...)`,
+> `ui.modal(...)`, `ui.tab(...)`, `ui.chat(...)`, `ui.statusItem(...)`, and
+> `ui.renderer(...)`. Internally those calls lower into host-validated UI
+> operations.
+
 ## Source Snapshot
 
 Local ignored checkouts live under `private/upstream/`.
@@ -12,6 +19,10 @@ Local ignored checkouts live under `private/upstream/`.
 | Obsidian sample plugin | `obsidianmd/obsidian-sample-plugin` | `dc2fa22` |
 | Obsidian developer docs | `obsidianmd/obsidian-developer-docs` | `96e5dae` |
 | ArrowJS | `standardagents/arrow-js` | `f134a77` |
+| A2UI | `google/A2UI` | `cba34e4` |
+| assistant-ui | `assistant-ui/assistant-ui` | `9040b7c` |
+| prompt-kit | `ibelick/prompt-kit` | `de80375` |
+| motion-primitives | `ibelick/motion-primitives` | `92586e6` |
 | Capsem frontend | local `frontend/` | Svelte 5 + Preline |
 
 Obsidian itself is closed source, so the primary executable contract is the
@@ -47,7 +58,7 @@ after the host has accepted a typed UI contribution.
 
 ## Design Recommendation
 
-Build a single `UiContribution` pipeline:
+Build a single internal UI operation pipeline:
 
 ```ts
 type UiContribution =
@@ -59,32 +70,25 @@ type UiContribution =
   | RendererContribution;
 ```
 
-All producers use it:
+All producers lower into it through surface APIs:
 
 ```ts
-context.ui.emit({
-  surface: "chat",
-  kind: "markdown",
-  body: "Policy found **3 issues**"
+await context.ui.chat(threadId).append({
+  parts: [
+    { kind: "markdown", text: "Policy found **3 issues**" },
+  ],
 });
 
-context.ui.emit({
-  surface: "side_panel",
-  target: "capsem.gitContext",
-  operation: "upsert_block",
-  block: {
+await context.ui.sidePanel("capsem.gitContext").replace({
+  scope: { workspaceId: context.workspace.id },
+  title: "Git Context",
+  blocks: [{
     kind: "git-context-card",
     id: "git-context:workspace",
     title: "workspace",
     subtitle: "main",
     body: "stars 123 / forks 45 / issues 6"
-  }
-});
-
-context.ui.render({
-  surface: "chat",
-  mime: "application/vnd.capsem.findings+json",
-  data: findings
+  }],
 });
 ```
 
@@ -193,10 +197,17 @@ Capsem should use one extension package model with multiple contributions:
 {
   "manifest_version": 1,
   "name": "capsem.git-context",
-  "permissions": ["fs.read", "fetch", "ui.emit"],
+  "permissions": ["fs.read", "fetch", "ui.sidePanel"],
   "host_permissions": ["https://api.github.com/*"],
   "contributes": {
     "commands": [],
+    "ui": {
+      "sidePanels": [],
+      "tabs": [],
+      "modals": [],
+      "statusItems": [],
+      "renderers": []
+    },
     "views": [],
     "chatRenderers": [],
     "chatParticipants": [],
@@ -234,10 +245,18 @@ Code:
 Default chat output should be structured parts, not arbitrary HTML:
 
 ```ts
-context.ui.emit({ surface: "chat", kind: "markdown", body: "Policy found **3 issues**" });
-context.ui.emit({ surface: "chat", kind: "button", command: "capsem.openFindings", title: "Open findings" });
-context.ui.emit({ surface: "chat", kind: "filetree", files, baseUri: "capsem://workspace" });
-context.ui.render({ surface: "chat", mime: "application/vnd.capsem.findings+json", data: findings });
+await context.ui.chat(threadId).append({
+  parts: [
+    { kind: "markdown", text: "Policy found **3 issues**" },
+    { kind: "button", command: "capsem.openFindings", label: "Open findings" },
+    { kind: "filetree", files, baseUri: "capsem://workspace" },
+    {
+      kind: "data",
+      mime: "application/vnd.capsem.findings+json",
+      data: findings,
+    },
+  ],
+});
 ```
 
 For rich printing, an extension can contribute a renderer for a MIME-like
@@ -278,23 +297,22 @@ UI("capsem.git-context").view({
 The host owns placement, reveal, persistence, and disposal. The extension owns
 content inside its surface.
 
-### UI Mutation Channel
+### UI Surface Calls
 
 Security plugins, model output handlers, and tools should not touch UI
-directly. They emit data:
+directly. They call named UI surfaces:
 
 ```ts
-context.ui.emit({
-  surface: "side_panel",
-  target: "workspace.context",
-  operation: "upsert_block",
-  block: {
+await context.ui.sidePanel("workspace.context").replace({
+  scope: { workspaceId: context.workspace.id },
+  title: "Workspace Context",
+  blocks: [{
     kind: "git-context-card",
     id: "git-context:workspace",
     title: "workspace",
     subtitle: "main",
     body: "stars 123 / forks 45 / issues 6"
-  }
+  }],
 });
 ```
 

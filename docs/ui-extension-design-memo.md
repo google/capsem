@@ -1,5 +1,12 @@
 # UI Extension Design Memo
 
+> Superseded authoring correction: this memo originally used
+> `context.ui.emit(...)` as a visible API. That is now wrong. `emit` is only an
+> internal lowering/transport concept. The public authoring API is surface-first:
+> `ui.sidePanel(...)`, `ui.modal(...)`, `ui.tab(...)`, `ui.chat(...)`,
+> `ui.statusItem(...)`, and `ui.renderer(...)`. See
+> `docs/ui-api-authoring-synthesis.md`.
+
 ## The Question
 
 We need one way for models, plugins, tools, and built-ins to affect the UI.
@@ -82,7 +89,7 @@ into an extension renderer model.
 
 ## Proposed Design
 
-Use one UI object family:
+Use one UI object family internally:
 
 ```ts
 type UiContribution =
@@ -94,7 +101,7 @@ type UiContribution =
   | RendererContribution;
 ```
 
-Every producer emits this:
+Every producer lowers to this:
 
 - model output
 - tool result
@@ -120,10 +127,13 @@ producer
 Chat should accept structured parts first:
 
 ```ts
-context.ui.emit({ surface: "chat", kind: "markdown", body: "Found **3** issues" });
-context.ui.emit({ surface: "chat", kind: "button", title: "Open findings", command: "capsem.findings.open" });
-context.ui.emit({ surface: "chat", kind: "filetree", baseUri: "capsem://workspace", files });
-context.ui.render({ surface: "chat", mime: "application/vnd.capsem.findings+json", data: findings });
+await context.ui.chat(threadId).append({
+  parts: [
+    { kind: "markdown", text: "Found **3** issues" },
+    { kind: "button", label: "Open findings", command: "capsem.findings.open" },
+    { kind: "filetree", baseUri: "capsem://workspace", files },
+  ],
+});
 ```
 
 This matches VS Code chat: markdown, buttons, file trees, references, progress,
@@ -146,17 +156,16 @@ UI("capsem.git-context").view({
 At runtime:
 
 ```ts
-context.ui.emit({
-  surface: "side_panel",
-  target: "capsem.gitContext",
-  operation: "upsert_block",
-  block: {
+await context.ui.sidePanel("capsem.gitContext").replace({
+  scope: { workspaceId: context.workspace.id },
+  title: "Git Context",
+  blocks: [{
     kind: "git-context-card",
     id: "git-context:workspace",
     title: "workspace",
     subtitle: "main",
     body: "stars 123 / forks 45 / issues 6"
-  }
+  }],
 });
 ```
 

@@ -32,9 +32,9 @@
 - Focused acceptance test passes: the AssemblyScript plugin compiles, handles
   `on_file_create`, reads `workspace/.git/HEAD` and `workspace/.git/config`
   through `context.fs.read`, calls `context.fetch(...)` for GitHub repo
-  statistics, returns the `FileCreate` object, emits a typed
-  `workspace.context` UI mutation through `context.ui.emit`, and fails when
-  `fs.read` or `fetch` is not declared.
+  statistics, returns the `FileCreate` object, updates the
+  `workspace.context` side panel through `context.ui.sidePanel(...).replace`,
+  and fails when `fs.read` or `fetch` is not declared.
 - Deterministic fetch proof uses `context.fetch.responses` fixture data so the
   acceptance test does not depend on GitHub availability.
 - Live proof exists as an ignored test that hits `https://api.github.com` and

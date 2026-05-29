@@ -18,9 +18,10 @@ cross back. Context is read-only input and is never returned.
 Host capabilities that need real Capsem authority are exposed as explicit ABI
 calls. For example, a file-create plugin can read `.git/HEAD` and `.git/config`
 through ABI-backed `context.fs.read(...)`, fetch GitHub repository statistics
-through ABI-backed `context.fetch(...)`, and emit a UI block through
-`context.ui.emit(...)`, but it still returns the `FileCreate` object as its
-callback result.
+through ABI-backed `context.fetch(...)`, and update a UI surface through
+`context.ui.sidePanel(...)`, but it still returns the `FileCreate` object as
+its callback result. Internally, the host may lower that surface call to a
+logged UI operation; `emit` is not the public authoring API.
 
 ## Extension Package Model
 
@@ -64,11 +65,19 @@ const plugin = Plugin("capsem.git-context").on_file_create((file_event, context)
     ? parse_github_stats(context.fetch(github_api_url))
     : "github stats unavailable";
 
-  context.ui.emit(new UiMutation(
-    "workspace.context",
-    "upsert_block",
-    new UiBlock("git-context-card", "git-context", "Git", head, github_stats),
-  ));
+  context.ui.sidePanel("capsem.gitContext").replace({
+    scope: { workspaceId: context.workspace.id },
+    title: "Git Context",
+    blocks: [
+      {
+        kind: "git-context-card",
+        id: "git-context",
+        title: "Git",
+        subtitle: head,
+        body: github_stats,
+      },
+    ],
+  });
   return file_event;
 });
 ```
