@@ -455,19 +455,12 @@ impl Hypervisor for KvmHypervisor {
                 blk_irq_fd.as_raw_fd(),
                 irq_to_gsi(memory::virtio_mmio_irq(1)),
             )?;
-            #[cfg(target_arch = "x86_64")]
-            let blk_interrupt_status = Arc::new(AtomicU32::new(0));
-            #[cfg(target_arch = "x86_64")]
-            let blk_device = virtio_blk::VirtioBlockDevice::new(disk_path, true)?
-                .with_interrupt(blk_irq_fd.as_raw_fd(), Arc::clone(&blk_interrupt_status));
-            #[cfg(not(target_arch = "x86_64"))]
             let blk_device = virtio_blk::VirtioBlockDevice::new(disk_path, true)?;
             #[cfg(target_arch = "x86_64")]
-            let blk_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(
+            let blk_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt(
                 Box::new(blk_device),
                 guest_mem.clone_ref(memory::RAM_BASE),
                 blk_irq_fd,
-                blk_interrupt_status,
             );
             #[cfg(not(target_arch = "x86_64"))]
             let blk_mmio = virtio_mmio::VirtioMmioTransport::new(
@@ -497,22 +490,12 @@ impl Hypervisor for KvmHypervisor {
                 scratch_irq_fd.as_raw_fd(),
                 irq_to_gsi(memory::virtio_mmio_irq(2)),
             )?;
-            #[cfg(target_arch = "x86_64")]
-            let scratch_interrupt_status = Arc::new(AtomicU32::new(0));
-            #[cfg(target_arch = "x86_64")]
-            let scratch_device = virtio_blk::VirtioBlockDevice::new(scratch_path, false)?
-                .with_interrupt(
-                    scratch_irq_fd.as_raw_fd(),
-                    Arc::clone(&scratch_interrupt_status),
-                );
-            #[cfg(not(target_arch = "x86_64"))]
             let scratch_device = virtio_blk::VirtioBlockDevice::new(scratch_path, false)?;
             #[cfg(target_arch = "x86_64")]
-            let scratch_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(
+            let scratch_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt(
                 Box::new(scratch_device),
                 guest_mem.clone_ref(memory::RAM_BASE),
                 scratch_irq_fd,
-                scratch_interrupt_status,
             );
             #[cfg(not(target_arch = "x86_64"))]
             let scratch_mmio = virtio_mmio::VirtioMmioTransport::new(
