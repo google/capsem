@@ -53,7 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an opt-in `capsem-bench storage` diagnostic that records mount metadata
   and splits rootfs reads from writable-path I/O across workspace, tmpfs,
   overlay, and runtime directories for Linux/macOS performance comparisons,
-  including detailed sequential and random IOPS/latency profiles per path.
+  including detailed sequential and random IOPS/latency profiles per path and
+  the booted squashfs compression/block-size, kernel cmdline, block queue, and
+  FUSE connection metadata.
 - Added Linux release-candidate benchmark artifact plumbing with arch-scoped
   output paths, host/git metadata, optional run IDs, and gross in-VM
   `capsem-bench` gates for disk, rootfs, CLI startup, HTTP, throughput, and

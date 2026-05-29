@@ -110,12 +110,7 @@ pub fn boot_vm(
         virtiofs_shares.len()
     );
 
-    // In VirtioFS mode, append storage flag to kernel cmdline.
-    let effective_cmdline = if virtiofs_shares.is_empty() {
-        cmdline.to_string()
-    } else {
-        format!("{cmdline} capsem.storage=virtiofs")
-    };
+    let effective_cmdline = effective_cmdline_for_storage(cmdline, !virtiofs_shares.is_empty());
 
     let config = {
         let _span = debug_span!("config_build").entered();
@@ -277,6 +272,18 @@ pub fn boot_vm(
     sm.transition(HostState::Booting, "vm_started")?;
 
     Ok((vm, vsock_rx, sm))
+}
+
+fn effective_cmdline_for_storage(cmdline: &str, has_virtiofs: bool) -> String {
+    if !has_virtiofs
+        || cmdline
+            .split_whitespace()
+            .any(|arg| arg == "capsem.storage=virtiofs")
+    {
+        cmdline.to_string()
+    } else {
+        format!("{cmdline} capsem.storage=virtiofs")
+    }
 }
 
 /// Read one guest-to-host control message from an fd (blocking).
@@ -566,23 +573,29 @@ mod tests {
             host_path: "/tmp/session".into(),
             read_only: false,
         }];
-        let effective = if shares.is_empty() {
-            base.to_string()
-        } else {
-            format!("{base} capsem.storage=virtiofs")
-        };
+        let effective = effective_cmdline_for_storage(base, !shares.is_empty());
         assert!(effective.contains("capsem.storage=virtiofs"));
+    }
+
+    #[test]
+    fn virtiofs_cmdline_does_not_duplicate_storage_arg() {
+        let base = "console=hvc0 ro capsem.storage=virtiofs";
+        let effective = effective_cmdline_for_storage(base, true);
+
+        assert_eq!(
+            effective
+                .split_whitespace()
+                .filter(|arg| *arg == "capsem.storage=virtiofs")
+                .count(),
+            1
+        );
     }
 
     #[test]
     fn virtiofs_cmdline_no_shares() {
         let base = "console=hvc0 ro loglevel=1";
         let shares: Vec<VirtioFsShare> = vec![];
-        let effective = if shares.is_empty() {
-            base.to_string()
-        } else {
-            format!("{base} capsem.storage=virtiofs")
-        };
+        let effective = effective_cmdline_for_storage(base, !shares.is_empty());
         assert!(!effective.contains("capsem.storage=virtiofs"));
     }
 }

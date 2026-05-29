@@ -86,6 +86,10 @@ I/O profile also records sequential 4K/64K/1M read/write IOPS and random 4K
 read plus sync-write IOPS with latency percentiles. Its file size and random
 operation count are configurable via `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`
 (default: 64) and `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS` (default: 2000).
+The rootfs section reports the booted squashfs compression and block/chunk size
+from `/dev/vda`, plus overlay lower/upper/work directories when visible. The
+top-level `kernel` section records `/proc/cmdline`, virtio block queue settings,
+FUSE connection backpressure knobs, and known host-side KVM queue sizes.
 
 ### CLI cold-start (`startup`)
 

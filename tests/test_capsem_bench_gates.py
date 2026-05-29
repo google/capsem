@@ -77,6 +77,15 @@ def _valid_result():
             },
         },
         "storage": {
+            "kernel": {
+                "cmdline": {"raw": "root=/dev/vda ro", "args": ["root=/dev/vda", "ro"]},
+                "block_queues": {"vda": {"read_ahead_kb": 4096}},
+                "fuse_connections": {},
+                "known_host_queue_sizes": {
+                    "kvm_virtio_blk": 256,
+                    "kvm_virtio_fs": [256, 256],
+                },
+            },
             "mounts": [
                 {
                     "mount_point": "/",
@@ -89,6 +98,12 @@ def _valid_result():
                 "/root": {"exists": True, "writable": True},
             },
             "rootfs": {
+                "backing": {
+                    "squashfs_superblock": {
+                        "compression": "zstd",
+                        "block_size_bytes": 65_536,
+                    },
+                },
                 "seq_reads": [
                     {
                         "label": "largest",

@@ -16,6 +16,7 @@ mount -t devpts   devpts   /dev/pts
 for dev in /sys/block/vd*; do
     if [ -d "$dev" ]; then
         echo none > "$dev/queue/scheduler" 2>/dev/null || true
+        echo 0 > "$dev/queue/rotational" 2>/dev/null || true
         echo 4096 > "$dev/queue/read_ahead_kb" 2>/dev/null || true
         echo 256 > "$dev/queue/nr_requests" 2>/dev/null || true
     fi

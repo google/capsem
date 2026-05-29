@@ -3,6 +3,7 @@
 import os
 import random
 import stat
+import struct
 import time
 
 from rich.table import Table
@@ -32,6 +33,15 @@ DEFAULT_IO_PROFILE_RANDOM_OPS = 2000
 IO_PROFILE_BLOCK_SIZES = (BLOCK_4K, 64 * 1024, BLOCK_1M)
 ROOTFS_READ_FILES = ["/bin/bash", "/usr/bin/python3", "/usr/bin/node"]
 ROOTFS_RAND_COUNT = 2000
+SQUASHFS_MAGIC = 0x73717368
+SQUASHFS_COMPRESSIONS = {
+    1: "gzip",
+    2: "lzma",
+    3: "lzo",
+    4: "xz",
+    5: "lz4",
+    6: "zstd",
+}
 
 
 def parse_mountinfo(text):
@@ -75,6 +85,14 @@ def find_mount_for_path(path, mounts):
                 best = mount
                 best_len = len(mount_point)
     return best or {}
+
+
+def parse_mount_options(options):
+    parsed = {}
+    for option in options.split(","):
+        key, sep, value = option.partition("=")
+        parsed[key] = value if sep else True
+    return parsed
 
 
 def path_stat(path, mounts):
@@ -189,6 +207,182 @@ def io_profile_bench(
     return result
 
 
+def parse_squashfs_superblock(data, device="/dev/vda"):
+    if len(data) < 32:
+        return {"device": device, "error": "short squashfs superblock"}
+
+    (
+        magic,
+        inodes,
+        mkfs_time,
+        block_size,
+        fragments,
+        compression_id,
+        block_log,
+        flags,
+        no_ids,
+        major,
+        minor,
+    ) = struct.unpack_from("<IIIIIHHHHHH", data, 0)
+
+    if magic != SQUASHFS_MAGIC:
+        return {
+            "device": device,
+            "magic": f"0x{magic:08x}",
+            "error": "not squashfs",
+        }
+
+    return {
+        "device": device,
+        "magic": f"0x{magic:08x}",
+        "version": f"{major}.{minor}",
+        "compression_id": compression_id,
+        "compression": SQUASHFS_COMPRESSIONS.get(
+            compression_id, f"unknown:{compression_id}"
+        ),
+        "block_size_bytes": block_size,
+        "block_size": fmt_bytes(block_size),
+        "block_log": block_log,
+        "flags": flags,
+        "inodes": inodes,
+        "fragments": fragments,
+        "mkfs_time": mkfs_time,
+        "id_count": no_ids,
+    }
+
+
+def read_squashfs_superblock(device="/dev/vda"):
+    try:
+        with open(device, "rb") as f:
+            info = parse_squashfs_superblock(f.read(96), device=device)
+    except OSError as exc:
+        info = {"device": device, "error": str(exc)}
+
+    sys_name = os.path.basename(device)
+    read_ahead = f"/sys/block/{sys_name}/queue/read_ahead_kb"
+    try:
+        with open(read_ahead) as f:
+            info["read_ahead_kb"] = int(f.read().strip())
+    except (OSError, ValueError):
+        pass
+    return info
+
+
+def _read_text(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _read_int(path):
+    value = _read_text(path)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
+
+def rootfs_backing_metadata(mounts):
+    root_mount = find_mount_for_path("/", mounts)
+    root_options = parse_mount_options(root_mount.get("options", ""))
+    squashfs_mounts = [
+        mount for mount in mounts if mount.get("fs_type") == "squashfs"
+    ]
+    return {
+        "root_mount": root_mount,
+        "overlay_lowerdir": root_options.get("lowerdir"),
+        "overlay_upperdir": root_options.get("upperdir"),
+        "overlay_workdir": root_options.get("workdir"),
+        "squashfs_mounts": squashfs_mounts,
+        "squashfs_superblock": read_squashfs_superblock("/dev/vda"),
+    }
+
+
+def read_kernel_cmdline(path="/proc/cmdline"):
+    text = _read_text(path) or ""
+    return {
+        "raw": text,
+        "args": text.split(),
+    }
+
+
+def read_block_queues(sys_block="/sys/block"):
+    queues = {}
+    try:
+        devices = sorted(os.listdir(sys_block))
+    except OSError:
+        return queues
+
+    fields = (
+        "scheduler",
+        "read_ahead_kb",
+        "nr_requests",
+        "rotational",
+        "logical_block_size",
+        "physical_block_size",
+        "max_sectors_kb",
+        "nomerges",
+        "rq_affinity",
+        "io_poll",
+    )
+    for device in devices:
+        if not device.startswith("vd"):
+            continue
+        queue_dir = os.path.join(sys_block, device, "queue")
+        info = {}
+        for field in fields:
+            value = _read_int(os.path.join(queue_dir, field))
+            if value is not None:
+                info[field] = value
+        if "scheduler" in info:
+            selected = _selected_scheduler(str(info["scheduler"]))
+            if selected:
+                info["selected_scheduler"] = selected
+        queues[device] = info
+    return queues
+
+
+def _selected_scheduler(value):
+    for part in value.split():
+        if part.startswith("[") and part.endswith("]"):
+            return part[1:-1]
+    return None
+
+
+def read_fuse_connections(sys_fuse="/sys/fs/fuse/connections"):
+    connections = {}
+    try:
+        conn_ids = sorted(os.listdir(sys_fuse), key=lambda item: int(item))
+    except (OSError, ValueError):
+        return connections
+
+    for conn_id in conn_ids:
+        conn_dir = os.path.join(sys_fuse, conn_id)
+        info = {}
+        for field in ("max_background", "congestion_threshold", "waiting"):
+            value = _read_int(os.path.join(conn_dir, field))
+            if value is not None:
+                info[field] = value
+        connections[conn_id] = info
+    return connections
+
+
+def kernel_storage_context():
+    return {
+        "cmdline": read_kernel_cmdline(),
+        "block_queues": read_block_queues(),
+        "fuse_connections": read_fuse_connections(),
+        "known_host_queue_sizes": {
+            "kvm_virtio_blk": 256,
+            "kvm_virtio_fs": [256, 256],
+        },
+    }
+
+
 def rootfs_storage_bench():
     mounts = read_mountinfo()
     largest_path, largest_size = find_largest_file(ROOTFS_SCAN_DIRS)
@@ -198,6 +392,7 @@ def rootfs_storage_bench():
         "files_found": len(files),
         "largest_file": largest_path,
         "largest_file_size": largest_size,
+        "backing": rootfs_backing_metadata(mounts),
     }
     candidates = []
     if largest_path:
@@ -388,6 +583,7 @@ def storage_bench():
     mounts = read_mountinfo()
     paths = storage_paths()
     results = {
+        "kernel": kernel_storage_context(),
         "mounts": mounts,
         "paths": {
             path: path_stat(path, mounts) for path in ["/", *paths, *ROOTFS_SCAN_DIRS]

@@ -113,6 +113,15 @@ class TestRootfsValidationContract:
         assert 'init_stage "starting-agent"' in init_script
         assert 'init_stage "agent-exited-$AGENT_STATUS"' in init_script
 
+    def test_capsem_init_marks_virtio_block_devices_non_rotational(self):
+        """Virtio block disks must advertise non-rotational behavior to Linux."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert 'echo none > "$dev/queue/scheduler"' in init_script
+        assert 'echo 0 > "$dev/queue/rotational"' in init_script
+        assert 'echo 4096 > "$dev/queue/read_ahead_kb"' in init_script
+        assert 'echo 256 > "$dev/queue/nr_requests"' in init_script
+
     def test_capsem_init_keeps_network_proxies_alive_or_fails(self):
         """Network proxy launch must survive shell transitions and fail closed."""
         init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
