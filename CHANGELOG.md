@@ -19,11 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Included `capsem-bench storage` in the default `capsem-bench all` path so
   canonical Linux and macOS benchmark artifacts both record storage attribution
   for rootfs, workspace, tmpfs, overlay, and queue/FUSE metadata.
+- Added scatter/gather virtio-blk tests proving KVM block requests preserve
+  multi-descriptor guest payload order.
 
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
   Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,
   and Google AI.
+- Switched the KVM virtio-blk read/write data path from seek plus per-descriptor
+  host I/O to `preadv`/`pwritev` over GPA-translated guest memory iovecs.
 - Added the Profile Foundation meta sprint with F00-F12 sub-sprints, a
   code-reality check, and a crosswalk from the old Profile V2 S-numbered
   boards.

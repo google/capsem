@@ -4,7 +4,8 @@
 //! get-ID, and discard operations. Read-only mode enforced via feature bit
 //! and write/discard rejection.
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -116,25 +117,15 @@ impl VirtioBlockDevice {
             return VIRTIO_BLK_S_IOERR;
         }
 
-        if self.file.seek(SeekFrom::Start(offset)).is_err() {
-            return VIRTIO_BLK_S_IOERR;
+        let iovecs = match Self::guest_iovecs(mem, data_descs) {
+            Some(iovecs) => iovecs,
+            None => return VIRTIO_BLK_S_IOERR,
+        };
+        if Self::preadv_all(self.file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
+            VIRTIO_BLK_S_OK
+        } else {
+            VIRTIO_BLK_S_IOERR
         }
-
-        for &(gpa, len) in data_descs {
-            if len == 0 {
-                continue;
-            }
-            let host_ptr = match mem.gpa_to_host(gpa) {
-                Some(p) => p,
-                None => return VIRTIO_BLK_S_IOERR,
-            };
-            let buf = unsafe { std::slice::from_raw_parts_mut(host_ptr, len as usize) };
-            if self.file.read_exact(buf).is_err() {
-                return VIRTIO_BLK_S_IOERR;
-            }
-        }
-
-        VIRTIO_BLK_S_OK
     }
 
     /// Process a write request: guest memory -> file.
@@ -161,25 +152,117 @@ impl VirtioBlockDevice {
             return VIRTIO_BLK_S_IOERR;
         }
 
-        if self.file.seek(SeekFrom::Start(offset)).is_err() {
-            return VIRTIO_BLK_S_IOERR;
+        let iovecs = match Self::guest_iovecs(mem, data_descs) {
+            Some(iovecs) => iovecs,
+            None => return VIRTIO_BLK_S_IOERR,
+        };
+        if Self::pwritev_all(self.file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
+            VIRTIO_BLK_S_OK
+        } else {
+            VIRTIO_BLK_S_IOERR
         }
+    }
 
+    fn guest_iovecs(mem: &GuestMemoryRef, data_descs: &[(u64, u32)]) -> Option<Vec<libc::iovec>> {
+        let mut iovecs = Vec::with_capacity(data_descs.len());
         for &(gpa, len) in data_descs {
             if len == 0 {
                 continue;
             }
-            let host_ptr = match mem.gpa_to_host(gpa) {
-                Some(p) => p,
-                None => return VIRTIO_BLK_S_IOERR,
-            };
-            let buf = unsafe { std::slice::from_raw_parts(host_ptr, len as usize) };
-            if self.file.write_all(buf).is_err() {
-                return VIRTIO_BLK_S_IOERR;
-            }
+            let host_ptr = mem.gpa_to_host(gpa)?;
+            iovecs.push(libc::iovec {
+                iov_base: host_ptr.cast(),
+                iov_len: len as usize,
+            });
         }
+        Some(iovecs)
+    }
 
-        VIRTIO_BLK_S_OK
+    fn iovecs_after(iovecs: &[libc::iovec], mut consumed: u64) -> Vec<libc::iovec> {
+        let mut adjusted = Vec::with_capacity(iovecs.len());
+        for iov in iovecs {
+            if consumed >= iov.iov_len as u64 {
+                consumed -= iov.iov_len as u64;
+                continue;
+            }
+            let skip = consumed as usize;
+            adjusted.push(libc::iovec {
+                iov_base: unsafe { (iov.iov_base as *mut u8).add(skip).cast() },
+                iov_len: iov.iov_len - skip,
+            });
+            consumed = 0;
+        }
+        adjusted
+    }
+
+    fn preadv_all(
+        fd: std::os::fd::RawFd,
+        iovecs: &[libc::iovec],
+        offset: u64,
+        total_len: u64,
+    ) -> std::io::Result<()> {
+        let mut done = 0_u64;
+        while done < total_len {
+            let adjusted = Self::iovecs_after(iovecs, done);
+            let ret = unsafe {
+                libc::preadv(
+                    fd,
+                    adjusted.as_ptr(),
+                    adjusted.len() as libc::c_int,
+                    (offset + done) as libc::off_t,
+                )
+            };
+            if ret < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                return Err(err);
+            }
+            if ret == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "short virtio-blk read",
+                ));
+            }
+            done += ret as u64;
+        }
+        Ok(())
+    }
+
+    fn pwritev_all(
+        fd: std::os::fd::RawFd,
+        iovecs: &[libc::iovec],
+        offset: u64,
+        total_len: u64,
+    ) -> std::io::Result<()> {
+        let mut done = 0_u64;
+        while done < total_len {
+            let adjusted = Self::iovecs_after(iovecs, done);
+            let ret = unsafe {
+                libc::pwritev(
+                    fd,
+                    adjusted.as_ptr(),
+                    adjusted.len() as libc::c_int,
+                    (offset + done) as libc::off_t,
+                )
+            };
+            if ret < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                return Err(err);
+            }
+            if ret == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "short virtio-blk write",
+                ));
+            }
+            done += ret as u64;
+        }
+        Ok(())
     }
 
     /// Process a get-ID request: copy device_id to guest buffer.
@@ -523,7 +606,7 @@ mod tests {
     use super::super::memory::{GuestMemory, RAM_BASE};
     use super::super::virtio_queue::{VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
     use super::*;
-    use std::io::Write as IoWrite;
+    use std::io::{Read as IoRead, Write as IoWrite};
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -861,6 +944,50 @@ mod tests {
     }
 
     #[test]
+    fn block_read_scattered_data_descriptors() {
+        let data: Vec<u8> = (0..512).map(|i| (i % 251) as u8).collect();
+        let path = temp_disk_with_data("read-scattered.img", &data);
+        let mut h = TestHarness::new(&path, true);
+
+        let header_offset = DATA_AREA_OFFSET;
+        let data_a_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        let data_b_offset = data_a_offset + 128;
+        let status_offset = data_b_offset + 384;
+
+        h.write_header(header_offset, VIRTIO_BLK_T_IN, 0);
+        h.write_desc(
+            0,
+            RAM_BASE + header_offset,
+            REQ_HEADER_SIZE as u32,
+            VRING_DESC_F_NEXT,
+            1,
+        );
+        h.write_desc(
+            1,
+            RAM_BASE + data_a_offset,
+            128,
+            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            2,
+        );
+        h.write_desc(
+            2,
+            RAM_BASE + data_b_offset,
+            384,
+            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            3,
+        );
+        h.write_desc(3, RAM_BASE + status_offset, 1, VRING_DESC_F_WRITE, 0);
+        h.push_avail(0, 0, 1);
+
+        h.dev.queue_notify(0);
+
+        let mut read_back = h.read_bytes(data_a_offset, 128);
+        read_back.extend_from_slice(&h.read_bytes(data_b_offset, 384));
+        assert_eq!(read_back, data);
+        assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_OK);
+    }
+
+    #[test]
     fn block_write_single_sector() {
         let path = temp_disk("write-1.img", 512);
         let mut h = TestHarness::new(&path, false);
@@ -883,6 +1010,38 @@ mod tests {
         let mut f = std::fs::File::open(&path).unwrap();
         f.read_exact(&mut file_data).unwrap();
         assert_eq!(file_data, pattern);
+    }
+
+    #[test]
+    fn block_write_scattered_data_descriptors() {
+        let path = temp_disk("write-scattered.img", 512);
+        let mut h = TestHarness::new(&path, false);
+
+        let header_offset = DATA_AREA_OFFSET;
+        let data_a_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        let data_b_offset = data_a_offset + 128;
+        let status_offset = data_b_offset + 384;
+        let pattern: Vec<u8> = (0..512).map(|i| ((i * 3) % 251) as u8).collect();
+
+        h.write_header(header_offset, VIRTIO_BLK_T_OUT, 0);
+        h.write_bytes(data_a_offset, &pattern[..128]);
+        h.write_bytes(data_b_offset, &pattern[128..]);
+        h.write_desc(
+            0,
+            RAM_BASE + header_offset,
+            REQ_HEADER_SIZE as u32,
+            VRING_DESC_F_NEXT,
+            1,
+        );
+        h.write_desc(1, RAM_BASE + data_a_offset, 128, VRING_DESC_F_NEXT, 2);
+        h.write_desc(2, RAM_BASE + data_b_offset, 384, VRING_DESC_F_NEXT, 3);
+        h.write_desc(3, RAM_BASE + status_offset, 1, VRING_DESC_F_WRITE, 0);
+        h.push_avail(0, 0, 1);
+
+        h.dev.queue_notify(0);
+
+        assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_OK);
+        assert_eq!(std::fs::read(&path).unwrap(), pattern);
     }
 
     #[test]
