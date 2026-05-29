@@ -78,6 +78,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue state, and by making guest snapshot preparation force a post-resume
   vsock reconnect. The durable process-preserving KVM resume contract still
   fails because restored guests stop making timer-driven forward progress.
+- Improved Linux KVM VirtioFS read/write handling by using positional host I/O
+  for FUSE file operations, removing an extra seek from the hot path and
+  keeping shared host file cursors stable across guest offset reads and writes.
 - Fixed Linux `capsem-process` SIGTERM handling so external process death
   drains telemetry and exits instead of leaving the VM listed until service
   teardown.

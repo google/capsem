@@ -1,4 +1,5 @@
 use super::*;
+use std::io::{Seek, SeekFrom};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
@@ -509,6 +510,67 @@ fn read_past_eof_returns_empty() {
         OUT_HDR_SIZE,
         "read past EOF should return empty body"
     );
+}
+
+#[test]
+fn read_write_use_positional_io_without_moving_handle_cursor() {
+    let dir = temp_share("positional-io");
+    std::fs::write(dir.join("data.txt"), b"abcdefghij").unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "data.txt").unwrap();
+    let fh = open_file(&mut proc, ino, libc::O_RDWR as u32).unwrap();
+
+    proc.file_handles
+        .get_file(fh)
+        .unwrap()
+        .seek(SeekFrom::Start(7))
+        .unwrap();
+
+    let read_in = FuseReadIn {
+        fh,
+        offset: 0,
+        size: 3,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let h = make_header(FUSE_READ, ino, 20);
+    let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(&resp[OUT_HDR_SIZE..], b"abc");
+    assert_eq!(
+        proc.file_handles
+            .get_file(fh)
+            .unwrap()
+            .stream_position()
+            .unwrap(),
+        7
+    );
+
+    let write_in = FuseWriteIn {
+        fh,
+        offset: 1,
+        size: 3,
+        write_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let h = make_header(FUSE_WRITE, ino, 21);
+    let mut body = fuse::as_bytes(&write_in).to_vec();
+    body.extend_from_slice(b"XYZ");
+    let resp = proc.handle_request(&build_request(&h, &body));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(
+        proc.file_handles
+            .get_file(fh)
+            .unwrap()
+            .stream_position()
+            .unwrap(),
+        7
+    );
+    assert_eq!(std::fs::read(dir.join("data.txt")).unwrap(), b"aXYZefghij");
 }
 
 #[test]
