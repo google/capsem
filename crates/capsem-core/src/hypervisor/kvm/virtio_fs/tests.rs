@@ -106,6 +106,41 @@ fn init_response_version() {
     assert!(init_out.max_write > 0);
 }
 
+#[test]
+fn init_response_advertises_large_request_pages() {
+    let dir = temp_share("init-pages");
+    let mut proc = test_processor(&dir);
+    let header = FuseInHeader {
+        len: 56,
+        opcode: FUSE_INIT,
+        unique: 2,
+        nodeid: 0,
+        uid: 0,
+        gid: 0,
+        pid: 0,
+        padding: 0,
+    };
+    let init_in = FuseInitIn {
+        major: 7,
+        minor: 38,
+        max_readahead: 1024 * 1024,
+        flags: FUSE_BIG_WRITES | FUSE_MAX_PAGES | FUSE_ASYNC_READ,
+    };
+    let mut req = fuse::as_bytes(&header).to_vec();
+    req.extend_from_slice(fuse::as_bytes(&init_in));
+
+    let resp = proc.handle_request(&req);
+    let out: FuseOutHeader = fuse::read_struct(&resp).unwrap();
+    assert_eq!(out.error, 0);
+    let init_out: FuseInitOut = fuse::read_struct(&resp[16..]).unwrap();
+    assert_eq!(init_out.max_readahead, 1024 * 1024);
+    assert_eq!(init_out.max_write, 1024 * 1024);
+    assert_eq!(init_out.max_pages, 256);
+    assert!(init_out.flags & FUSE_BIG_WRITES != 0);
+    assert!(init_out.flags & FUSE_MAX_PAGES != 0);
+    assert!(init_out.flags & FUSE_ASYNC_READ != 0);
+}
+
 // ── Test helpers ─────────────────────────────────────────────────
 
 const HDR_SIZE: usize = std::mem::size_of::<FuseInHeader>();
