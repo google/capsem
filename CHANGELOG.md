@@ -28,8 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Google AI.
 - Switched the KVM virtio-blk read/write data path from seek plus per-descriptor
   host I/O to `preadv`/`pwritev` over GPA-translated guest memory iovecs.
-- Batched KVM virtio-blk used-ring publication so one queue notification writes
-  `used.idx` once after draining all completed block descriptors.
 - Added the Profile Foundation meta sprint with F00-F12 sub-sprints, a
   code-reality check, and a crosswalk from the old Profile V2 S-numbered
   boards.
