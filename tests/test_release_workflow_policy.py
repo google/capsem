@@ -384,6 +384,7 @@ def test_local_dev_manifest_signing_is_bootstrap_and_doctor_prereq():
     doctor = (REPO_ROOT / "scripts" / "doctor-common.sh").read_text()
     doctor_macos = (REPO_ROOT / "scripts" / "doctor-macos.sh").read_text()
     install_test_dockerfile = (REPO_ROOT / "docker" / "Dockerfile.install-test").read_text()
+    host_builder_dockerfile = (REPO_ROOT / "docker" / "Dockerfile.host-builder").read_text()
     preflight = (REPO_ROOT / "scripts" / "preflight.sh").read_text()
     sync_dev_assets = (REPO_ROOT / "scripts" / "sync-dev-assets.sh").read_text()
     justfile = (REPO_ROOT / "justfile").read_text()
@@ -403,6 +404,7 @@ def test_local_dev_manifest_signing_is_bootstrap_and_doctor_prereq():
     assert "just doctor-fix" not in doctor
     assert "minisign" in re.search(r"local tools=\((?P<tools>.*?)\)", preflight, re.S).group("tools")
     assert "minisign" in install_test_dockerfile
+    assert "minisign" in host_builder_dockerfile
     assert "ERROR: minisign not installed; cannot sign local asset manifest." in sync_dev_assets
     assert "scripts/sync-dev-assets.sh" in justfile
     assert "scripts/verify-local-manifest-signature.sh" in justfile
@@ -422,14 +424,24 @@ def test_local_cross_compile_validates_one_fresh_deb_artifact():
     assert "python3 scripts/gen_manifest.py assets Cargo.toml" in body
     assert "bash scripts/sync-dev-assets.sh assets assets" in body
     assert "bash scripts/verify-local-manifest-signature.sh assets config/manifest-sign.pub" in body
+    assert 'VSOCK_FLAG="--device /dev/vhost-vsock"' in body
+    assert 'VSOCK_SECURITY_FLAG="--security-opt seccomp=unconfined"' in body
+    assert "$VSOCK_FLAG" in body
+    assert "$VSOCK_SECURITY_FLAG" in body
+    assert 'capsem-frontend-node-modules-$TARGET_ARCH:/src/frontend/node_modules' in body
     assert 'DEB_DIR=/cargo-target/\\$RUST_TARGET/release/bundle/deb' in body
     assert 'rm -f \\"\\$DEB_DIR\\"/*.deb' in body
     assert 'DEBS=(\\"\\$DEB_DIR\\"/*.deb)' in body
     assert 'expected exactly one deb artifact' in body
+    assert "cargo build --release --target \\$RUST_TARGET {{host_crates}}" in body
+    assert "UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv bash scripts/prepare-admin-cli.sh /cargo-target/\\$RUST_TARGET/release" in body
+    assert 'bash scripts/repack-deb.sh \\"\\$DEB\\" /cargo-target/\\$RUST_TARGET/release assets \\"\\$DEB\\"' in body
+    assert 'UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv uv run python scripts/verify_deb_payload.py \\"\\$DEB\\" --version \\"\\$PACKAGE_VERSION\\" --architecture \\"\\$DPKG_ARCH\\" --minisign-pubkey assets/manifest-sign.dev.pub' in body
     assert 'dpkg-deb --info \\"\\$DEB\\"' in body
     assert 'rm -f /src/dist/Capsem_*_\\"\\$DPKG_ARCH\\".deb' in body
     assert 'dpkg-deb --info /cargo-target/\\$RUST_TARGET/release/bundle/deb/*.deb' not in body
-    assert 'dpkg -i \\"\\$DEB\\"' in body
+    assert 'dpkg --unpack \\"\\$DEB\\"' in body
+    assert '--binary /usr/bin/capsem' in body
 
 
 def test_check_assets_requires_profile_image_inventory():
@@ -590,9 +602,20 @@ def test_install_e2e_prepares_clean_checkout_assets_before_repack():
     body = test_install.group("body")
 
     assert 'ASSETS_HOST="$(python3 -c' in body
-    assert 'ASSETS_CONTAINER="/src/{{assets_dir}}"' in body
-    assert 'EXTRA_ASSETS_MOUNT=(-v "$ASSETS_HOST:$ASSETS_CONTAINER")' in body
-    assert '"${EXTRA_ASSETS_MOUNT[@]}"' in body
+    assert 'WORKDIR_CONTAINER="/work/src"' in body
+    assert 'ASSETS_CONTAINER="$WORKDIR_CONTAINER/{{assets_dir}}"' in body
+    assert '-v "$PWD":/checkout:ro' in body
+    assert '-v "$ASSETS_HOST":/asset-source:ro' in body
+    assert "tar -C '$WORKDIR_CONTAINER' -xf -" in body
+    assert "tar -C '$ASSETS_CONTAINER' -xf -" in body
+    assert "chown -R capsem:capsem /work" in body
+    assert "SRC_UID=$(docker exec \"$CONTAINER\" stat -c %u /src)" not in body
+    assert "usermod -o -u" not in body
+    assert "chown -R capsem:capsem /src" not in body
+    assert "UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv" in body
+    assert "large local uid/gid values in .deb ar" in body
+    assert "cd '$WORKDIR_CONTAINER'" in body
+    assert "cd /work/src" in body
     assert 'bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"' in body
     assert 'bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"' in body
     assert '-e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER"' in body

@@ -10,9 +10,11 @@ Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the 
 ## Running benchmarks
 
 ```bash
-just bench                          # In-VM, lifecycle/fork, and Security Engine benchmarks
+just benchmark                      # Standard artifact-recording benchmark suite
+just bench                          # Alias for just benchmark
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
+just run "capsem-bench storage"     # Rootfs/workspace/tmpfs split
 just run "capsem-bench startup"     # CLI cold-start only
 just run "capsem-bench http"        # HTTP through proxy
 just run "capsem-bench throughput"  # 100MB download
@@ -50,6 +52,18 @@ The diagnostic suite enforces that total boot time stays under 1 second (`test_e
 
 ## Benchmark categories
 
+### Host-native baseline
+
+`just benchmark` records a host-native artifact under `benchmarks/host-native/`
+on every run. It uses the same artifact envelope as VM benchmarks and records
+UTC time, host CPU/RAM/OS metadata, git state, filesystem context, local disk
+I/O, CLI startup, synthetic small-file reads, and metadata-stat throughput. Use
+this artifact as the local bare-host reference for VM comparison; it is not
+produced by `capsem-bench` inside the guest. By default the temporary host I/O
+workload runs under `target/host-native-benchmark` so it measures the project
+filesystem rather than `/tmp` tmpfs; override with
+`CAPSEM_HOST_NATIVE_BENCH_DIR` when comparing a specific disk.
+
 ### Disk I/O (`disk`)
 
 Measures scratch disk performance in `/root` (VirtioFS-backed workspace).
@@ -71,6 +85,24 @@ Measures read performance on the compressed squashfs rootfs where binaries and l
 |------|--------|--------|
 | Sequential read | Read the largest file in `/usr/bin`, `/usr/lib`, `/opt/ai-clis` in 1MB blocks | Throughput (MB/s) |
 | Random 4K read | 5,000 random `pread` calls across all rootfs files (>4KB) | IOPS, throughput |
+
+### Storage split diagnostics (`storage`)
+
+Measures rootfs reads plus writable-path I/O across `/root`, `/tmp`,
+`/var/tmp`, `/var/log`, and `/run` by default. Use it when Linux and macOS
+benchmarks diverge and you need to separate VirtioFS workspace costs from
+tmpfs, overlayfs, squashfs/rootfs reads, and host filesystem behavior.
+
+The path set is configurable via `CAPSEM_STORAGE_BENCH_PATHS`; write test size
+is configurable via `CAPSEM_STORAGE_BENCH_SIZE_MB` (default: 64). The detailed
+I/O profile also records sequential 4K/64K/1M read/write IOPS and random 4K
+read plus sync-write IOPS with latency percentiles. Its file size and random
+operation count are configurable via `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`
+(default: 64) and `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS` (default: 2000).
+The rootfs section reports the booted squashfs compression and block/chunk size
+from `/dev/vda`, plus overlay lower/upper/work directories when visible. The
+top-level `kernel` section records `/proc/cmdline`, virtio block queue settings,
+FUSE connection backpressure knobs, and known host-side KVM queue sizes.
 
 ### CLI cold-start (`startup`)
 
@@ -126,9 +158,10 @@ operations, compiled-plan rebuild cost, policy-context projection/
 materialization, 100-rule last-match evaluation, Detection IR parse/lowering,
 and a native Rust lookup comparator for the same HTTP policy. These numbers
 explain runtime hot-path and rule-pack costs; they do not replace
-VM-originated benchmark artifacts. Committed host-side artifacts live under
-`benchmarks/security-engine/`. The `just bench` recipe runs both Criterion
-harnesses before the VM-originated security benchmark.
+VM-originated benchmark artifacts. `just benchmark` runs both Criterion
+harnesses, archives their `target/criterion` estimates as JSON under
+`benchmarks/security-engine/`, and then runs the VM-originated security
+benchmark.
 
 ### Security Engine VM-originated benchmarks
 

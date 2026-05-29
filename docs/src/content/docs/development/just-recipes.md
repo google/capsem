@@ -31,7 +31,8 @@ quick checks. After frontend changes intended for the desktop app, use
 | `just test-gateway` | Gateway unit and mock-UDS tests | No |
 | `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
 | `just test-install` | Installer E2E in Docker/systemd | No host VM |
-| `just bench` | In-VM, host lifecycle/fork, and Security Engine benchmarks | Yes |
+| `just benchmark` | Standard artifact-recording benchmark suite | Yes |
+| `just bench` | Alias for `just benchmark` | Yes |
 
 `just test` is the source of truth. Targeted commands are for iteration, not
 for declaring a sprint done.

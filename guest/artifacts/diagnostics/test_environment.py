@@ -68,6 +68,23 @@ def test_architecture():
         f"unexpected arch: {arch}"
 
 
+def test_smp_vcpus_visible():
+    """The guest must see the configured SMP topology, not only the boot CPU."""
+    nproc_result = run("nproc")
+    assert nproc_result.returncode == 0, \
+        f"nproc failed: {nproc_result.stdout}\n{nproc_result.stderr}"
+    nproc = int(nproc_result.stdout.strip())
+
+    cpuinfo_result = run("grep -c '^processor[[:space:]]*:' /proc/cpuinfo")
+    assert cpuinfo_result.returncode == 0, \
+        f"/proc/cpuinfo processor count failed: {cpuinfo_result.stdout}\n{cpuinfo_result.stderr}"
+    cpuinfo_count = int(cpuinfo_result.stdout.strip())
+
+    assert nproc == cpuinfo_count, \
+        f"nproc={nproc}, /proc/cpuinfo processors={cpuinfo_count}"
+    assert nproc >= 2, f"expected at least 2 vCPUs, got {nproc}"
+
+
 # -- Mount points --
 
 
@@ -122,6 +139,24 @@ def test_tmp_is_writable():
     assert result.returncode == 0, "/tmp is not writable"
     assert "writable" in result.stdout
     run(f"rm -f {test_file}")
+
+
+def test_tmp_symlink_support():
+    """/tmp must support symlinks for tools that keep link-heavy caches off /root."""
+    result = run(
+        "rm -f /tmp/capsem_link /tmp/capsem_target && "
+        "echo tmp-link > /tmp/capsem_target && "
+        "ln -s /tmp/capsem_target /tmp/capsem_link && "
+        "test -L /tmp/capsem_link && "
+        "readlink /tmp/capsem_link && "
+        "cat /tmp/capsem_link"
+    )
+    assert result.returncode == 0, (
+        f"/tmp symlink support failed: {result.stdout}\n{result.stderr}"
+    )
+    assert "/tmp/capsem_target" in result.stdout
+    assert "tmp-link" in result.stdout
+    run("rm -f /tmp/capsem_link /tmp/capsem_target")
 
 
 def test_rootfs_is_overlay():

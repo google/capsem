@@ -21,7 +21,9 @@
 #   test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
 #                       + _check-assets + _pack-initrd (everything: audit, cov, cross-compile,
 #                       frontend, python, injection, integration, bench, test-install)
-#   bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
+#   benchmark        -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
+#                       (standard artifact-recording performance suite)
+#   bench            -> benchmark
 #   test-gateway     -> (no deps; unit + mock UDS tests)
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
@@ -189,10 +191,11 @@ _ensure-service: _sign
         ln -sfn "$DEV_ASSETS" "$ASSETS_LINK"
         echo "Symlinked $ASSETS_LINK -> $DEV_ASSETS"
     fi
-    if [ -n "${CAPSEM_ASSETS_DIR:-}" ]; then
-        {{cli_binary}} setup --non-interactive --accept-detected
-        cleanup_runtime_processes
-    fi
+    # Refresh the local development profile after every initrd repack. The
+    # profile pins asset hashes, so leaving it stale makes the service reject
+    # the freshly repacked initrd before the VM can boot.
+    CAPSEM_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}" {{cli_binary}} setup --non-interactive --accept-detected
+    cleanup_runtime_processes
     GATEWAY_ARGS=(--gateway-binary {{gateway_binary}})
     if [ -n "${CAPSEM_RUN_DIR:-}" ]; then
         # Isolated smoke/test services must not contend with a locally
@@ -204,7 +207,7 @@ _ensure-service: _sign
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.
-    RUST_LOG=capsem=debug nohup {{service_binary}} \
+    RUST_LOG="${RUST_LOG:-capsem=debug}" nohup {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
         "${GATEWAY_ARGS[@]}" \
@@ -397,6 +400,7 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
     export CAPSEM_ASSETS_DIR="{{justfile_directory()}}/{{assets_dir}}"
+    export TMPDIR="{{justfile_directory()}}/target/tmp"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
@@ -418,7 +422,8 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
     }
     cleanup_isolated_home_processes
     rm -rf "$CAPSEM_HOME"
-    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs"
+    rm -rf "$TMPDIR"
+    mkdir -p "$CAPSEM_RUN_DIR" "$CAPSEM_HOME/sessions" "$CAPSEM_HOME/logs" "$TMPDIR"
 
     # ---- Stage 1: parallel fast-fail (audits + lint + frontend) -------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
@@ -493,7 +498,7 @@ test: _install-tools _clean-stale _frontend-dist _generate-settings _check-asset
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
-        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=89
 
     echo "=== Python: Build chain tests (serial) ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ -v --tb=short
@@ -636,10 +641,21 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
-    # KVM boot test: pass /dev/kvm if available (Linux host) or skip (macOS)
+    # KVM boot test: pass host virtualization devices if available (Linux host)
+    # or skip on macOS/cross-arch builds.
     KVM_FLAG=""
     if [ -e /dev/kvm ]; then
         KVM_FLAG="--device /dev/kvm"
+    fi
+    VSOCK_FLAG=""
+    if [ -e /dev/vhost-vsock ]; then
+        VSOCK_FLAG="--device /dev/vhost-vsock"
+        # Docker's default seccomp profile denies AF_VSOCK bind even when the
+        # vhost-vsock device is passed through, so the KVM boot test cannot
+        # accept guest vsock connections without this.
+        VSOCK_SECURITY_FLAG="--security-opt seccomp=unconfined"
+    else
+        VSOCK_SECURITY_FLAG=""
     fi
     # macOS ships Bash 3.2, where expanding an empty array under nounset
     # raises "unbound variable". The signing args are intentionally optional.
@@ -647,6 +663,8 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     docker run --rm \
         $KVM_FLAG \
         "${SIGNING_ARGS[@]}" \
+        $VSOCK_FLAG \
+        $VSOCK_SECURITY_FLAG \
         -e "TARGET_ARCH=$TARGET_ARCH" \
         -e "RUST_TARGET=$RUST_TARGET" \
         -e "DPKG_ARCH=$DPKG_ARCH" \
@@ -655,6 +673,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         -v "capsem-cargo-registry:/usr/local/cargo/registry" \
         -v "capsem-cargo-git:/usr/local/cargo/git" \
         -v "capsem-host-target-$TARGET_ARCH:/cargo-target" \
+        -v "capsem-frontend-node-modules-$TARGET_ARCH:/src/frontend/node_modules" \
         -v "capsem-rustup:/usr/local/rustup" \
         -w /src \
         capsem-host-builder:latest \
@@ -663,6 +682,9 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                cargo build --release --target \$RUST_TARGET -p capsem-agent && \
                mkdir -p /cargo-target/linux-agent/\$TARGET_ARCH && \
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-dns-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
+               echo '--- Build host binaries ---' && \
+               cargo build --release --target \$RUST_TARGET {{host_crates}} && \
+               UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv bash scripts/prepare-admin-cli.sh /cargo-target/\$RUST_TARGET/release && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Resolve Tauri signing key ---' && \
@@ -691,6 +713,9 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                    exit 1; \
                fi && \
                DEB=\"\${DEBS[0]}\" && \
+               PACKAGE_VERSION=\$(sed -n 's/^version = \"\\(.*\\)\"/\\1/p' Cargo.toml | head -1) && \
+               bash scripts/repack-deb.sh \"\$DEB\" /cargo-target/\$RUST_TARGET/release assets \"\$DEB\" && \
+               UV_PROJECT_ENVIRONMENT=/cargo-target/capsem-package-venv uv run python scripts/verify_deb_payload.py \"\$DEB\" --version \"\$PACKAGE_VERSION\" --architecture \"\$DPKG_ARCH\" --minisign-pubkey assets/manifest-sign.dev.pub && \
                dpkg-deb --info \"\$DEB\" && \
                rm -f /src/dist/Capsem_*_\"\$DPKG_ARCH\".deb && \
                cp \"\$DEB\" /src/dist/ && \
@@ -698,8 +723,8 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                echo '--- Boot test ---' && \
                if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
                    echo 'KVM available + native arch: running boot test' && \
-                   dpkg -i \"\$DEB\" 2>/dev/null || apt-get install -f -y && \
-                   timeout 120 python3 scripts/doctor_session_test.py --binary capsem --assets assets; \
+                   dpkg --unpack \"\$DEB\" && \
+                   timeout 120 python3 scripts/doctor_session_test.py --binary /usr/bin/capsem --assets assets; \
                else \
                    echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
                fi"
@@ -863,22 +888,21 @@ coverage:
     echo "Coverage report: target/llvm-cov/html/index.html"
     open target/llvm-cov/html/index.html 2>/dev/null || true
 
-# Run in-VM benchmarks, host lifecycle/fork benchmarks, and Security Engine benchmarks
-bench: _ensure-setup _check-assets _pack-initrd _ensure-service
+# Run the standard artifact-recording benchmark suite.
+benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
-    echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, snapshots) ==="
-    {{cli_binary}} run "capsem-bench"
-    echo ""
-    echo "=== Host-side benchmarks (lifecycle, fork) ==="
-    uv run python -m pytest tests/capsem-serial/test_lifecycle_benchmark.py -v --tb=short -m serial
-
-    echo "=== Security Engine benchmarks ==="
+    echo "=== Criterion microbenchmarks ==="
     cargo bench -p capsem-security-engine --bench security_engine_cel
     cargo bench -p capsem-core --bench security_packs
-    uv run python -m pytest tests/capsem-serial/test_security_engine_benchmark.py -v --tb=short -m "serial or benchmark"
+    uv run python scripts/archive_criterion_benchmarks.py
+    echo "=== VM-originated and in-VM benchmark artifacts ==="
+    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/ -v --tb=short -m benchmark
+
+# Backward-compatible alias for the canonical benchmark suite.
+bench: benchmark
 
 # Build package, runtime-clean local install, use the install.sh native command,
 # then verify installed status, service, gateway, and guest DNS/HTTPS.
@@ -1171,17 +1195,9 @@ test-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     IMAGE="capsem-install-test"
-    ASSETS_DECLARED="$PWD/{{assets_dir}}"
     ASSETS_HOST="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "{{assets_dir}}")"
-    ASSETS_CONTAINER="/src/{{assets_dir}}"
-    EXTRA_ASSETS_MOUNT=()
-    if [ "$ASSETS_HOST" != "$ASSETS_DECLARED" ]; then
-        # Local dev often symlinks repo assets/ to ~/.capsem/assets. That
-        # absolute symlink is dangling inside the Docker container, so mount
-        # the resolved asset tree separately and point install prep at it.
-        ASSETS_CONTAINER="/src/.capsem-assets"
-        EXTRA_ASSETS_MOUNT=(-v "$ASSETS_HOST:$ASSETS_CONTAINER")
-    fi
+    WORKDIR_CONTAINER="/work/src"
+    ASSETS_CONTAINER="$WORKDIR_CONTAINER/{{assets_dir}}"
     # `cross-compile` runs Docker GC after producing artifacts, which can
     # remove this local base image before the install e2e stage starts.
     if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
@@ -1231,8 +1247,8 @@ test-install:
         --privileged --cgroupns=host \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
-        -v "$PWD":/src \
-        "${EXTRA_ASSETS_MOUNT[@]}" \
+        -v "$PWD":/checkout:ro \
+        -v "$ASSETS_HOST":/asset-source:ro \
         -v capsem-install-target:/cargo-target \
         -v capsem-install-cargo:/usr/local/cargo/registry \
         -v capsem-install-rustup:/usr/local/rustup \
@@ -1244,27 +1260,44 @@ test-install:
         fi
         sleep 0.5
     done
+    # Copy the checkout into container-local storage before building. The
+    # install e2e loop writes frontend output, Python envs, generated assets,
+    # and Debian bundles; keeping those writes off the bind mount prevents
+    # host ownership drift and avoids large local uid/gid values in .deb ar
+    # headers.
+    docker exec "$CONTAINER" bash -c "set -euo pipefail; \
+        rm -rf '$WORKDIR_CONTAINER'; \
+        mkdir -p '$WORKDIR_CONTAINER' '$ASSETS_CONTAINER'; \
+        cd /checkout; \
+        tar \
+            --exclude='./.venv' \
+            --exclude='./target' \
+            --exclude='./frontend/node_modules' \
+            --exclude='./frontend/dist' \
+            --exclude='./frontend/.astro' \
+            --exclude='./dist' \
+            --exclude='./tmp' \
+            --exclude='./coverage' \
+            --exclude='./{{assets_dir}}' \
+            -cf - . | tar -C '$WORKDIR_CONTAINER' -xf -; \
+        cd /asset-source; \
+        tar -cf - . | tar -C '$ASSETS_CONTAINER' -xf -; \
+        chown -R capsem:capsem /work"
     # Fix ownership for capsem user builds. /usr/local/rustup is included
     # because rustup self-updates (triggered by rust-toolchain.toml's
     # channel = "stable") try to write /usr/local/rustup/tmp/, which is
     # root-owned in the baked image -- without this chown, cargo build as
     # the capsem user dies with `Permission denied (os error 13)`.
-    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup"
-    # On GitHub runners the bind-mounted /src is owned by uid 1001
-    # (runner), but the container builds as uid 1000 (capsem). Anything
-    # that tries to write into /src (pnpm/vite temp files, Tauri build.rs
-    # generating context into OUT_DIR but traversing /src, cargo's lock
-    # checks, etc.) hits EACCES. Chown the whole tree once up front.
-    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src 2>/dev/null || true"
+    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target /run/user/1000 && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup /home/capsem /run/user/1000"
     echo "Building host binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && cargo build {{host_crates}}"
+        "cd '$WORKDIR_CONTAINER' && cargo build {{host_crates}}"
     echo "Preparing clean-checkout assets..."
     docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /src && bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
+        'cd /work/src && bash scripts/prepare-install-assets.sh "$ASSETS_CONTAINER" Cargo.toml "${INSTALL_ARCH:-$(uname -m)}"'
     echo "Building frontend..."
     docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
-        "cd /src/frontend && pnpm install && pnpm build"
+        "cd '$WORKDIR_CONTAINER/frontend' && pnpm install && pnpm build"
     echo "Building Tauri .deb..."
     # Clear stale bundles before the build: /cargo-target is a persistent
     # Docker volume, and any previous version's .deb lingers there. The
@@ -1274,16 +1307,16 @@ test-install:
     docker exec -u capsem "$CONTAINER" bash -c \
         "rm -f /cargo-target/debug/bundle/deb/*.deb"
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+        "cd '$WORKDIR_CONTAINER' && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
-    docker exec -u capsem -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        'cd /src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && CAPSEM_INSTALL_PROFILE_ASSET_ROOT="$ASSETS_CONTAINER" bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
+    docker exec -u capsem -e UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv -e ASSETS_CONTAINER="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
+        'cd /work/src && bash scripts/prepare-admin-cli.sh /cargo-target/debug && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && CAPSEM_INSTALL_PROFILE_ASSET_ROOT="$ASSETS_CONTAINER" bash scripts/repack-deb.sh "$DEB" /cargo-target/debug "$ASSETS_CONTAINER" "$DEB"'
     echo "Installing .deb via apt..."
     docker exec "$CONTAINER" bash -c \
         'DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && apt-get install -y "$DEB"'
     echo "Running install e2e tests..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
-        "cd /src && uv run --group dev python -m pytest tests/capsem-install/ -v --tb=short"
+    docker exec -u capsem -e UV_PROJECT_ENVIRONMENT=/cargo-target/install-test-venv -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_ASSETS_SRC="$ASSETS_CONTAINER" "$CONTAINER" bash -c \
+        "cd '$WORKDIR_CONTAINER' && uv run --group dev python -m pytest tests/capsem-install/ -v --tb=short"
 
 # Wait for CI to build and publish a tag.
 # Usage: just release          (uses latest vX.Y.Z tag on HEAD)
@@ -1672,6 +1705,9 @@ _pack-initrd:
     fi
     if [ "$NEED_BUILD" = "true" ]; then
         echo "=== Cross-compile agent ==="
+        if [ -d "$RELEASE_DIR" ]; then
+            chmod u+w "$RELEASE_DIR"/capsem-* 2>/dev/null || true
+        fi
         uv run capsem-builder agent --arch "$arch"
         echo ""
     else

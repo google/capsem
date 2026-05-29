@@ -384,6 +384,12 @@ class TestRenderKernel:
         )
         assert "defconfig.x86_64" in result
 
+    def test_x86_64_kernel_supports_kvm_virtio_mmio_cmdline_devices(self, real_config):
+        """KVM backend exposes virtio devices through cmdline-described MMIO."""
+        defconfig = (PROJECT_ROOT / "guest/config/kernel/defconfig.x86_64").read_text()
+        assert "CONFIG_VIRTIO_MMIO=y" in defconfig
+        assert "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" in defconfig
+
     def test_x86_64_kernel_image(self, real_config):
         result = render_dockerfile(
             "Dockerfile.kernel.j2", real_config, "x86_64", kernel_version="6.6.127"
@@ -1081,6 +1087,7 @@ class TestCreateSquashfs:
         assert "mksquashfs" in cmd_str
         assert "-comp zstd" in cmd_str
         assert "-Xcompression-level 15" in cmd_str
+        assert "-b 128K" in cmd_str
 
     @patch("capsem.builder.docker.run_cmd")
     def test_gzip_no_level_flag(self, mock_run):
@@ -1596,3 +1603,31 @@ class TestCrossCompileAgent:
         assert len(cargo_calls) == 1
         assert "build" in cargo_calls[0][0][0]
         assert "--target" in cargo_calls[0][0][0]
+
+    @patch("capsem.builder.docker.container_compile_agent")
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.run_cmd")
+    def test_native_replaces_existing_readonly_outputs(
+        self, mock_run, mock_sys, mock_container, tmp_path,
+    ):
+        mock_sys.platform = "linux"
+        mock_run.return_value = MagicMock(stdout="aarch64-unknown-linux-musl")
+
+        release_dir = tmp_path / "target" / "aarch64-unknown-linux-musl" / "release"
+        release_dir.mkdir(parents=True)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        for b in GUEST_BINARIES:
+            (release_dir / b).write_bytes(f"new-{b}".encode())
+            existing = out_dir / b
+            existing.write_bytes(b"old")
+            existing.chmod(0o555)
+
+        copied = cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, out_dir)
+
+        mock_container.assert_not_called()
+        assert {p.name for p in copied} == set(GUEST_BINARIES)
+        for b in GUEST_BINARIES:
+            dst = out_dir / b
+            assert dst.read_bytes() == f"new-{b}".encode()
+            assert dst.stat().st_mode & 0o777 == 0o555

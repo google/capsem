@@ -168,6 +168,7 @@ class TestBuildConfig:
         b = _build()
         assert b.compression is Compression.ZSTD
         assert b.compression_level == 15
+        assert b.squashfs_block_size == "128K"
 
     def test_compression_level_min(self):
         b = _build(compression_level=1)
@@ -184,6 +185,16 @@ class TestBuildConfig:
     def test_compression_level_too_high(self):
         with pytest.raises(ValidationError):
             _build(compression_level=23)
+
+    @pytest.mark.parametrize("block_size", ["64K", "128K", "256K", "1M"])
+    def test_squashfs_block_size_valid(self, block_size):
+        b = _build(squashfs_block_size=block_size)
+        assert b.squashfs_block_size == block_size
+
+    @pytest.mark.parametrize("block_size", ["96K", "2M", "128KB", "banana"])
+    def test_squashfs_block_size_invalid(self, block_size):
+        with pytest.raises(ValidationError):
+            _build(squashfs_block_size=block_size)
 
     def test_empty_architectures_rejected(self):
         with pytest.raises(ValidationError):

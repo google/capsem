@@ -160,6 +160,7 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
         "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+        "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
     ] {
         assert!(
             PROCESS_ENV_ALLOWLIST.contains(&key),
@@ -1074,6 +1075,7 @@ fn make_test_state() -> Arc<ServiceState> {
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(FsPath::new("/tmp/capsem-test-svc")),
+        service_settings_path: PathBuf::from("/tmp/capsem-test-svc/service.toml"),
         run_dir: PathBuf::from("/tmp/capsem-test-svc"),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
@@ -1534,6 +1536,7 @@ fn saved_vm_current_base_assets_from_profile_records_boot_hashes() {
 
 #[test]
 fn vm_profile_pin_hashes_effective_package_contract_and_assets() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions/profile-pin");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -1573,6 +1576,7 @@ fn vm_profile_pin_hashes_effective_package_contract_and_assets() {
 
 #[test]
 fn vm_profile_pin_uses_installed_profile_revision_sidecar() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions/profile-pin-installed");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -1623,6 +1627,7 @@ fn vm_profile_pin_uses_installed_profile_revision_sidecar() {
 
 #[test]
 fn vm_profile_pin_requires_signed_catalog_revision() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions/profile-pin-no-revision");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -1645,6 +1650,7 @@ fn vm_profile_pin_requires_signed_catalog_revision() {
 
 #[test]
 fn vm_profile_pin_requires_profile_payload_hash() {
+    let _env_lock = SETTINGS_ENV_LOCK.blocking_lock();
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = dir.path().join("sessions/profile-pin-no-payload-hash");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -2441,6 +2447,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(&run_dir),
+        service_settings_path: run_dir.join("service.toml"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
@@ -2999,6 +3006,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(dir.path()),
+        service_settings_path: dir.path().join("service.toml"),
         run_dir: dir.path().to_path_buf(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),
@@ -3449,6 +3457,7 @@ fn make_test_state_with_profile_assets_and_process(
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(dir.path()),
+        service_settings_path: dir.path().join("service.toml"),
         run_dir: dir.path().to_path_buf(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_profile_asset_supervisor(assets_dir, base_url),
@@ -3539,7 +3548,7 @@ fn profile_asset_operator_flow_chains_reconcile_status_debug_and_logs() {
     let log_writer_path = log_path.clone();
     let subscriber = tracing_subscriber::fmt()
         .json()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_env_filter(tracing_subscriber::EnvFilter::new("capsem_service=debug"))
         .with_writer(move || {
             std::fs::OpenOptions::new()
                 .create(true)
@@ -3899,6 +3908,7 @@ async fn telemetry_identity_env_uses_attached_profile_and_user_id() {
 
 #[tokio::test]
 async fn handle_fork_creates_persistent_sandbox() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let (state, _dir) = make_test_state_with_tempdir();
     // Create a real session dir for the fake instance
     let session_dir = state.run_dir.join("sessions/fork-src");
@@ -3965,6 +3975,7 @@ async fn handle_fork_creates_persistent_sandbox() {
 
 #[tokio::test]
 async fn handle_fork_preserves_profile_and_fork_exec_works() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let (state, dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("sessions/fork-exec-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
@@ -4078,6 +4089,7 @@ async fn handle_fork_preserves_profile_and_fork_exec_works() {
 
 #[tokio::test]
 async fn handle_fork_rejects_profile_string_drift_after_clone() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let (state, _dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("sessions/fork-profile-drift");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
@@ -4209,6 +4221,7 @@ async fn handle_fork_not_found() {
 
 #[tokio::test]
 async fn handle_fork_duplicate_returns_conflict() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let (state, _dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("sessions/dup-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
@@ -4270,6 +4283,7 @@ async fn handle_fork_duplicate_returns_conflict() {
 
 #[tokio::test]
 async fn handle_fork_from_persistent_registry() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let (state, _dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("persistent/pers-vm");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
@@ -4356,6 +4370,7 @@ async fn handle_fork_from_persistent_registry() {
 
 #[tokio::test]
 async fn handle_fork_uses_profile_pin_assets_when_registry_side_field_is_absent() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let (state, _dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("persistent/pers-pin-only");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
@@ -4644,6 +4659,14 @@ async fn handle_suspend_returns_not_found_for_missing_vm() {
     let result = handle_suspend(State(state), Path("nonexistent".into())).await;
     let err = result.unwrap_err();
     assert_eq!(err.0, StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn suspend_confirm_timeout_allows_kvm_checkpoint_io() {
+    assert!(
+        SUSPEND_CONFIRM_TIMEOUT >= std::time::Duration::from_secs(60),
+        "KVM suspend writes guest memory and can exceed short API timeouts under parallel test I/O"
+    );
 }
 
 #[test]
@@ -9455,6 +9478,7 @@ fn make_test_state_with_tempdir_at(
         assets_dir: assets_dir.clone(),
         asset_locations: test_asset_locations(assets_dir.clone()),
         service_settings: test_service_settings(&run_dir),
+        service_settings_path: run_dir.join("service.toml"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         asset_supervisor: test_asset_supervisor(assets_dir),

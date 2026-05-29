@@ -106,7 +106,7 @@ impl VirtioBlockDevice {
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
         if offset
             .checked_add(total_len)
-            .map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE)
+            .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
         {
             return VIRTIO_BLK_S_IOERR;
         }
@@ -151,7 +151,7 @@ impl VirtioBlockDevice {
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
         if offset
             .checked_add(total_len)
-            .map_or(true, |end| end > self.capacity_sectors * SECTOR_SIZE)
+            .is_none_or(|end| end > self.capacity_sectors * SECTOR_SIZE)
         {
             return VIRTIO_BLK_S_IOERR;
         }
@@ -260,13 +260,23 @@ impl VirtioDevice for VirtioBlockDevice {
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
         if let Some(q) = queues.first() {
             if q.size > 0 {
-                self.queue = Some(VirtQueue::new(
-                    mem.clone(),
-                    q.desc_addr,
-                    q.driver_addr,
-                    q.device_addr,
-                    q.size,
-                ));
+                self.queue = Some(if q.warm_restore {
+                    VirtQueue::new_restored(
+                        mem.clone(),
+                        q.desc_addr,
+                        q.driver_addr,
+                        q.device_addr,
+                        q.size,
+                    )
+                } else {
+                    VirtQueue::new(
+                        mem.clone(),
+                        q.desc_addr,
+                        q.driver_addr,
+                        q.device_addr,
+                        q.size,
+                    )
+                });
             }
         }
         self.mem = Some(mem);
@@ -274,6 +284,11 @@ impl VirtioDevice for VirtioBlockDevice {
 
     fn queue_notify(&mut self, queue_index: u32) {
         if queue_index != 0 {
+            tracing::warn!(
+                event_name = "virtio.blk.queue_notify_ignored",
+                queue_index,
+                "virtio-blk ignored notification for unknown queue"
+            );
             return;
         }
 
@@ -281,15 +296,29 @@ impl VirtioDevice for VirtioBlockDevice {
         // while process_read/write/get_id/write_status need &self/&mut self.
         let mut queue = match self.queue.take() {
             Some(q) => q,
-            None => return,
+            None => {
+                tracing::warn!(
+                    event_name = "virtio.blk.queue_notify_unconfigured",
+                    "virtio-blk notified before queue was configured"
+                );
+                return;
+            }
         };
 
         // Process all available descriptor chains
+        let mut processed = 0u32;
         while let Some(chain) = queue.pop() {
             let descs = &chain.descriptors;
+            processed += 1;
 
             // Need at least 2 descriptors: header + status
             if descs.len() < 2 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk descriptor chain too short"
+                );
                 queue.push_used(chain.head, 0);
                 continue;
             }
@@ -297,6 +326,12 @@ impl VirtioDevice for VirtioBlockDevice {
             // First descriptor: request header (must be device-readable)
             let header_desc = &descs[0];
             if header_desc.is_write_only() {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk request header descriptor was write-only"
+                );
                 queue.push_used(chain.head, 0);
                 continue;
             }
@@ -304,6 +339,13 @@ impl VirtioDevice for VirtioBlockDevice {
             let (type_, sector) = match self.parse_header(header_desc.addr, header_desc.len) {
                 Some(h) => h,
                 None => {
+                    tracing::warn!(
+                        event_name = "virtio.blk.request_malformed",
+                        head = chain.head,
+                        header_addr = format_args!("{:#x}", header_desc.addr),
+                        header_len = header_desc.len,
+                        "virtio-blk request header could not be parsed"
+                    );
                     queue.push_used(chain.head, 0);
                     continue;
                 }
@@ -312,6 +354,14 @@ impl VirtioDevice for VirtioBlockDevice {
             // Last descriptor: status (must be device-writable, 1 byte)
             let status_desc = &descs[descs.len() - 1];
             if !status_desc.is_write_only() || status_desc.len < 1 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    status_addr = format_args!("{:#x}", status_desc.addr),
+                    status_len = status_desc.len,
+                    status_write_only = status_desc.is_write_only(),
+                    "virtio-blk status descriptor was invalid"
+                );
                 queue.push_used(chain.head, 0);
                 continue;
             }
@@ -330,6 +380,16 @@ impl VirtioDevice for VirtioBlockDevice {
                 VIRTIO_BLK_T_GET_ID => self.process_get_id(&data_descs),
                 _ => VIRTIO_BLK_S_UNSUPP,
             };
+            tracing::trace!(
+                event_name = "virtio.blk.request_complete",
+                head = chain.head,
+                request_type = type_,
+                sector,
+                descriptor_count = descs.len(),
+                total_data,
+                status,
+                "virtio-blk request completed"
+            );
 
             self.write_status(status_desc.addr, status);
 
@@ -343,6 +403,15 @@ impl VirtioDevice for VirtioBlockDevice {
         }
 
         self.queue = Some(queue);
+        tracing::trace!(
+            event_name = "virtio.blk.queue_drain",
+            processed,
+            "virtio-blk queue notification drained"
+        );
+    }
+
+    fn uses_mmio_interrupt(&self) -> bool {
+        true
     }
 }
 
@@ -403,6 +472,7 @@ mod tests {
                 driver_addr: RAM_BASE + AVAIL_RING_OFFSET,
                 device_addr: RAM_BASE + USED_RING_OFFSET,
                 size: QUEUE_TEST_SIZE,
+                warm_restore: false,
             };
             dev.activate(mem.clone_ref(RAM_BASE), &[queue_config]);
 
@@ -630,8 +700,8 @@ mod tests {
     #[test]
     fn block_read_single_sector() {
         let mut data = vec![0u8; 512];
-        for i in 0..512 {
-            data[i] = (i % 256) as u8;
+        for (i, byte) in data.iter_mut().enumerate().take(512) {
+            *byte = (i % 256) as u8;
         }
         let path = temp_disk_with_data("read-1.img", &data);
         let mut h = TestHarness::new(&path, true);
@@ -652,8 +722,8 @@ mod tests {
     #[test]
     fn block_read_multiple_sectors() {
         let mut data = vec![0u8; 1024]; // 2 sectors
-        for i in 0..1024 {
-            data[i] = ((i * 7) % 256) as u8;
+        for (i, byte) in data.iter_mut().enumerate().take(1024) {
+            *byte = ((i * 7) % 256) as u8;
         }
         let path = temp_disk_with_data("read-multi.img", &data);
         let mut h = TestHarness::new(&path, true);
@@ -770,8 +840,8 @@ mod tests {
     #[test]
     fn block_multiple_requests_in_batch() {
         let mut data = vec![0u8; 1024]; // 2 sectors
-        for i in 0..1024 {
-            data[i] = (i % 256) as u8;
+        for (i, byte) in data.iter_mut().enumerate().take(1024) {
+            *byte = (i % 256) as u8;
         }
         let path = temp_disk_with_data("batch.img", &data);
         let mut h = TestHarness::new(&path, true);
@@ -823,7 +893,7 @@ mod tests {
         // Both in avail ring
         h.push_avail(0, 0, 2); // desc head 0 at ring[0], avail_idx=2
                                // Write ring entry for second request
-        let entry_offset = AVAIL_RING_OFFSET + 4 + 1 * 2; // ring[1]
+        let entry_offset = AVAIL_RING_OFFSET + 4 + 2; // ring[1]
         h.mem.write_at(entry_offset, &3u16.to_le_bytes()).unwrap();
 
         h.dev.queue_notify(0);

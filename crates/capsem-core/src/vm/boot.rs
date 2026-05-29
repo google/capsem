@@ -102,20 +102,22 @@ pub fn boot_vm(
     let mut sm = HostStateMachine::new_host();
 
     info!(
+        event_name = "vm.boot.start",
+        cpu_count,
+        ram_bytes,
+        virtiofs_shares = virtiofs_shares.len(),
         "[boot-audit] boot_vm: cpu={cpu_count} ram_bytes={ram_bytes} virtiofs_shares={}",
         virtiofs_shares.len()
     );
 
-    // In VirtioFS mode, append storage flag to kernel cmdline.
-    let effective_cmdline = if virtiofs_shares.is_empty() {
-        cmdline.to_string()
-    } else {
-        format!("{cmdline} capsem.storage=virtiofs")
-    };
+    let effective_cmdline = effective_cmdline_for_storage(cmdline, !virtiofs_shares.is_empty());
 
     let config = {
         let _span = debug_span!("config_build").entered();
-        info!("[boot-audit] building VmConfig");
+        info!(
+            event_name = "vm.boot.config_build_start",
+            "[boot-audit] building VmConfig"
+        );
 
         let kernel_path = kernel_override
             .map(|p| p.to_path_buf())
@@ -216,10 +218,16 @@ pub fn boot_vm(
             builder = builder.virtio_fs_share(&share.tag, &share.host_path, share.read_only);
         }
 
-        info!("[boot-audit] calling VmConfig::build()");
+        info!(
+            event_name = "vm.boot.config_build_call",
+            "[boot-audit] calling VmConfig::build()"
+        );
         builder.build().context("failed to build VmConfig")?
     };
-    info!("[boot-audit] VmConfig built successfully");
+    info!(
+        event_name = "vm.boot.config_build_ok",
+        "[boot-audit] VmConfig built successfully"
+    );
 
     let vsock_ports = [
         VSOCK_PORT_CONTROL,
@@ -236,7 +244,18 @@ pub fn boot_vm(
         VSOCK_PORT_DNS_PROXY,
     ];
 
-    info!("[boot-audit] calling hypervisor boot");
+    #[cfg(target_os = "linux")]
+    let hypervisor_name = "kvm";
+    #[cfg(target_os = "macos")]
+    let hypervisor_name = "apple_vz";
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let hypervisor_name = "unsupported";
+
+    info!(
+        event_name = "vm.boot.hypervisor_start",
+        hypervisor = hypervisor_name,
+        "[boot-audit] calling hypervisor boot"
+    );
     let (vm, vsock_rx) = {
         let _span = debug_span!("hypervisor_boot").entered();
         #[cfg(target_os = "macos")]
@@ -245,11 +264,26 @@ pub fn boot_vm(
         let result = KvmHypervisor.boot(&config, &vsock_ports);
         result.context("failed to boot VM")?
     };
-    info!("[boot-audit] hypervisor boot returned OK");
+    info!(
+        event_name = "vm.boot.hypervisor_ok",
+        "[boot-audit] hypervisor boot returned OK"
+    );
 
     sm.transition(HostState::Booting, "vm_started")?;
 
     Ok((vm, vsock_rx, sm))
+}
+
+fn effective_cmdline_for_storage(cmdline: &str, has_virtiofs: bool) -> String {
+    if !has_virtiofs
+        || cmdline
+            .split_whitespace()
+            .any(|arg| arg == "capsem.storage=virtiofs")
+    {
+        cmdline.to_string()
+    } else {
+        format!("{cmdline} capsem.storage=virtiofs")
+    }
 }
 
 /// Read one guest-to-host control message from an fd (blocking).
@@ -539,23 +573,29 @@ mod tests {
             host_path: "/tmp/session".into(),
             read_only: false,
         }];
-        let effective = if shares.is_empty() {
-            base.to_string()
-        } else {
-            format!("{base} capsem.storage=virtiofs")
-        };
+        let effective = effective_cmdline_for_storage(base, !shares.is_empty());
         assert!(effective.contains("capsem.storage=virtiofs"));
+    }
+
+    #[test]
+    fn virtiofs_cmdline_does_not_duplicate_storage_arg() {
+        let base = "console=hvc0 ro capsem.storage=virtiofs";
+        let effective = effective_cmdline_for_storage(base, true);
+
+        assert_eq!(
+            effective
+                .split_whitespace()
+                .filter(|arg| *arg == "capsem.storage=virtiofs")
+                .count(),
+            1
+        );
     }
 
     #[test]
     fn virtiofs_cmdline_no_shares() {
         let base = "console=hvc0 ro loglevel=1";
         let shares: Vec<VirtioFsShare> = vec![];
-        let effective = if shares.is_empty() {
-            base.to_string()
-        } else {
-            format!("{base} capsem.storage=virtiofs")
-        };
+        let effective = effective_cmdline_for_storage(base, !shares.is_empty());
         assert!(!effective.contains("capsem.storage=virtiofs"));
     }
 }

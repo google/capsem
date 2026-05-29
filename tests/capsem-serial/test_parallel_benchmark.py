@@ -12,6 +12,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from helpers.benchmark_artifacts import (
+    benchmark_arch,
+    benchmark_output_path,
+    enrich_benchmark_artifact,
+)
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -21,16 +26,32 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 RUNS = 1  # Long lasting test, 1 run is enough for now
 NUM_VMS = 4
 
+
 def _save_benchmark(category, data):
-    """Save benchmark JSON to benchmarks/{category}/data_{version}.json."""
-    # Minimal version reading for now
-    version = "1.0"
-    out_dir = PROJECT_ROOT / "benchmarks" / category
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"data_{version}.json"
+    """Save benchmark JSON to an arch-scoped artifact path."""
+    version = _project_version()
+    arch = benchmark_arch()
+    out_path = benchmark_output_path(PROJECT_ROOT, category, version, arch)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    data = enrich_benchmark_artifact(
+        data,
+        project_root=PROJECT_ROOT,
+        project_version=version,
+        arch=arch,
+        command="uv run pytest tests/capsem-serial/test_parallel_benchmark.py -xvs",
+    )
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"Benchmark saved to {out_path}")
+
+
+def _project_version():
+    cargo = PROJECT_ROOT / "Cargo.toml"
+    for line in cargo.read_text().splitlines():
+        if line.startswith("version = "):
+            return line.split('"', 2)[1]
+    return "unknown"
+
 
 def _run_benchmark_in_vm(client, vm_name):
     """Run capsem-bench all in the VM and return the output."""

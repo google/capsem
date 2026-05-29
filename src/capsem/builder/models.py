@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from capsem.builder.schema import McpTransport
 
@@ -64,8 +64,20 @@ class BuildConfig(BaseModel):
 
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
+    squashfs_block_size: str = "128K"
     architectures: dict[str, ArchConfig]
     version_commands: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("squashfs_block_size")
+    @classmethod
+    def _valid_squashfs_block_size(cls, value: str) -> str:
+        valid = {"4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1M"}
+        if value not in valid:
+            raise ValueError(
+                "squashfs_block_size must be one of "
+                "4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M"
+            )
+        return value
 
     @model_validator(mode="after")
     def _architectures_non_empty(self):

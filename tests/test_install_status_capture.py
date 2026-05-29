@@ -145,7 +145,14 @@ def test_capture_install_status_preserves_typed_status_failure(tmp_path):
     metadata = json.loads((bundle / "capture.meta.json").read_text(encoding="utf-8"))
     assert metadata["commands"]["debug"]["returncode"] == 0
     tree = json.loads((bundle / "capsem-home-tree.json").read_text(encoding="utf-8"))
-    assert {"path": "bin/capsem", "kind": "file", "mode": "0o644", "size": 10} in tree
+    installed_capsem = tmp_path / "capsem-home" / "bin" / "capsem"
+    installed_capsem_mode = oct(installed_capsem.lstat().st_mode & 0o7777)
+    assert {
+        "path": "bin/capsem",
+        "kind": "file",
+        "mode": installed_capsem_mode,
+        "size": 10,
+    } in tree
     run_state = json.loads((bundle / "run-state.json").read_text(encoding="utf-8"))
     entries = {entry["path"]: entry for entry in run_state["entries"]}
     assert entries["service.pid"]["contents"] == "1234"

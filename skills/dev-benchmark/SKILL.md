@@ -1,6 +1,6 @@
 ---
 name: dev-benchmark
-description: Capsem benchmarking with capsem-bench. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers all 7 benchmark categories (disk, rootfs, startup, http, throughput, snapshot, all), the JSON output format, and how to add new benchmarks.
+description: Capsem benchmarking with capsem-bench. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers benchmark categories (disk, rootfs, storage, startup, http, throughput, snapshot, all), the JSON output format, and how to add new benchmarks.
 ---
 
 # Benchmarking
@@ -8,9 +8,11 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 ## Quick start
 
 ```bash
-just bench                          # Run in-VM, host lifecycle/fork, and Security Engine benchmarks
+just benchmark                      # Run the standard artifact-recording benchmark suite, including host-native baseline
+just bench                          # Alias for just benchmark
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
+just run "capsem-bench storage"     # Storage split diagnostics
 just test                           # Full validation including benchmarks
 ```
 
@@ -25,12 +27,22 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | Category | Command | What it measures |
 |----------|---------|-----------------|
 | disk | `capsem-bench disk` | Sequential/random I/O on scratch disk (write/read throughput, IOPS) |
-| rootfs | `capsem-bench rootfs` | Read-only rootfs performance (sequential + random 4K reads) |
+| rootfs | `capsem-bench rootfs` | Read-only rootfs performance: largest-file sequential read, random 4K reads, large-binary sequential reads, small JS/package reads, and metadata stat-walk throughput |
+| storage | `capsem-bench storage` | Diagnostic split across rootfs reads and writable paths such as `/root`, `/tmp`, `/var/tmp`, `/var/log`, and `/run` |
 | startup | `capsem-bench startup` | Cold-start latency for python3, node, claude, gemini, codex |
 | http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles) |
 | throughput | `capsem-bench throughput` | 100MB download through MITM proxy (end-to-end MB/s) |
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
-| all | `capsem-bench` | All of the above |
+| all | `capsem-bench` | Default production suite; excludes opt-in storage and load diagnostics |
+
+`just benchmark` also records a host-native artifact under
+`benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file
+reads, metadata-stat throughput, filesystem context, UTC timestamp, host
+hardware/OS metadata, and git state. Use this when comparing VM performance
+against the hardware that produced the run. The default host I/O directory is
+`target/host-native-benchmark`, not `/tmp`, so Linux tmpfs does not become the
+accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
+disk.
 
 ### Snapshot benchmarks
 
@@ -68,6 +80,10 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 
 - `CAPSEM_BENCH_DIR`: Test directory for disk benchmarks (default: `/root`)
 - `CAPSEM_BENCH_SIZE_MB`: Write test size in MB (default: 256)
+- `CAPSEM_STORAGE_BENCH_PATHS`: Colon-separated writable paths for storage split diagnostics (default: `/root:/tmp:/var/tmp:/var/log:/run`)
+- `CAPSEM_STORAGE_BENCH_SIZE_MB`: Write test size in MB for each storage split writable path (default: 64)
+- `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`: File size in MB for detailed sequential/random storage IOPS profiling (default: 64)
+- `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS`: Random read/write operation count for storage IOPS profiling (default: 2000)
 
 ## Investigating slowness
 
@@ -88,6 +104,24 @@ Common causes:
 1. Run: `just run "capsem-bench disk"`
 2. Compare sequential write/read throughput against baseline
 3. Check if VirtioFS mode changed (block mode has different I/O characteristics)
+
+### Storage split regression
+
+1. Run: `just run "capsem-bench storage"`
+2. Compare `/root` against `/tmp`, `/var/tmp`, `/var/log`, and `/run` to separate VirtioFS workspace costs from tmpfs, overlay, and rootfs read costs
+3. Check `storage.kernel` for `/proc/cmdline`, virtio block queue settings, FUSE connection backpressure knobs, and known host-side KVM queue sizes
+4. Check `storage.rootfs.backing.squashfs_superblock` for the booted rootfs compression and block/chunk size before comparing Linux/macOS rootfs reads
+5. Compare the detailed I/O profile: sequential 4K/64K/1M IOPS/MB/s, random 4K read IOPS, and random 4K sync-write IOPS with p95 latency
+6. Use the reported mount table to confirm which filesystem backs each path before assigning blame to KVM, VirtioFS, overlayfs, or the host filesystem
+
+### Rootfs read regression
+
+1. Run: `just run "capsem-bench rootfs"`
+2. Compare `rootfs.seq_read` for the historical largest-file sequential read gate
+3. Compare `rootfs.large_binary_seq_read` to isolate large CLI binary reads
+4. Compare `rootfs.small_js_read` for loader-style reads across many small JS/JSON/package files
+5. Compare `rootfs.metadata_stat` for thousands of `lstat` calls across the rootfs tree
+6. Keep `rootfs.rand_read_4k` as the broad mixed-file random-read signal
 
 ### Adding a new benchmark
 
@@ -181,6 +215,11 @@ compiled-plan rebuilds, policy-context projection/materialization, 100-rule
 last-match paths, and native lookup comparators. The `capsem-core` security-pack
 harness measures Detection IR V1 JSON parse/validate, Detection IR to CEL
 detection-rule lowering, and lower-plus-compile costs.
+`just benchmark` archives both Criterion harnesses from
+`target/criterion/**/new/{benchmark,estimates}.json` into
+`benchmarks/security-engine/data_{version}_{arch}_cel_microbench.json` and
+`benchmarks/security-engine/data_{version}_{arch}_security_packs_microbench.json`;
+do not rely on terminal output as the durable record.
 
 Profiles VM-originated Security Engine enforcement through real service,
 process, and network transport paths. This is outside the guest via pytest, not
@@ -245,16 +284,19 @@ projection.
 - Host-side fork: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
 - Host-side Security Engine: `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs`
 - Both host-side: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
-- Full run: `just bench` or `just test`
+- Full run: `just benchmark` (or alias `just bench`) or `just test`
 
 ## Benchmark data directory
 
-Host-side benchmarks save versioned JSON to `benchmarks/` (committed to git):
+Host-side benchmarks save arch-scoped JSON to `benchmarks/` (committed to git
+for performance baselines). Set `CAPSEM_BENCHMARK_RUN_ID` for an
+intentional named run and `CAPSEM_BENCHMARK_OUTPUT_DIR` for exploratory runs
+that should not dirty the checkout:
 
 ```
 benchmarks/
-  fork/data_0.16.1.json          # Fork speed, image size, data survival
-  lifecycle/data_0.16.1.json     # Provision, exec-ready, exec, delete
+  fork/data_1.2.3_x86_64_linux-rc1.json          # Fork speed, image size, data survival
+  lifecycle/data_1.2.3_x86_64_linux-rc1.json     # Provision, exec-ready, exec, delete
   security-engine/data_*.json    # CEL microbench and VM-originated enforcement
 ```
 

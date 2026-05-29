@@ -440,7 +440,7 @@ def create_squashfs(
     output_path: Path,
     compression: str,
     compression_level: int,
-    block_size: str = "64K",
+    block_size: str = "128K",
 ) -> None:
     """Create a squashfs image from a tar archive using a container."""
     abs_dir = str(tar_path.parent.resolve())
@@ -577,6 +577,8 @@ def cross_compile_agent(
         if not src.exists():
             raise RuntimeError(f"Expected binary not found: {src}")
         dst = output_dir / binary
+        if dst.exists():
+            dst.unlink()
         shutil.copy2(str(src), str(dst))
         if dst.stat().st_size == 0:
             raise RuntimeError(f"Binary is empty: {dst}")
@@ -1106,6 +1108,7 @@ def build_image(
                 runtime, tar_path, squashfs_path,
                 config.build.compression.value,
                 config.build.compression_level,
+                config.build.squashfs_block_size,
             )
             tar_path.unlink(missing_ok=True)
 

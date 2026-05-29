@@ -257,6 +257,7 @@ class TestLoadGuestConfigMinimal:
         cfg = load_guest_config(guest_minimal)
         assert cfg.build.compression is Compression.ZSTD
         assert cfg.build.compression_level == 15
+        assert cfg.build.squashfs_block_size == "128K"
 
     def test_build_has_arm64(self, guest_minimal):
         cfg = load_guest_config(guest_minimal)

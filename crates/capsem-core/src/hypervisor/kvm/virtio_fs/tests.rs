@@ -1,5 +1,8 @@
 use super::*;
+use std::io::{Seek, SeekFrom};
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::AtomicU32;
+use std::sync::Arc;
 
 fn temp_share(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("capsem-virtfs-test").join(name);
@@ -18,36 +21,27 @@ fn test_processor(dir: &Path) -> FuseProcessor {
     }
 }
 
+fn test_device(dir: &Path) -> VirtioFsDevice {
+    VirtioFsDevice::new("capsem", dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap()
+}
+
 #[test]
 fn fs_device_type() {
     let dir = temp_share("dev-type");
-    assert_eq!(
-        VirtioFsDevice::new("capsem", &dir, false, -1)
-            .unwrap()
-            .device_type(),
-        VIRTIO_ID_FS
-    );
+    assert_eq!(test_device(&dir).device_type(), VIRTIO_ID_FS);
 }
 
 #[test]
 fn fs_features() {
     let dir = temp_share("features");
-    assert_ne!(
-        VirtioFsDevice::new("capsem", &dir, false, -1)
-            .unwrap()
-            .features()
-            & VIRTIO_F_VERSION_1,
-        0
-    );
+    assert_ne!(test_device(&dir).features() & VIRTIO_F_VERSION_1, 0);
 }
 
 #[test]
 fn fs_two_queues() {
     let dir = temp_share("queues");
     assert_eq!(
-        VirtioFsDevice::new("capsem", &dir, false, -1)
-            .unwrap()
-            .queue_max_sizes(),
+        test_device(&dir).queue_max_sizes(),
         &[QUEUE_SIZE, QUEUE_SIZE]
     );
 }
@@ -55,7 +49,7 @@ fn fs_two_queues() {
 #[test]
 fn fs_config_tag() {
     let dir = temp_share("cfg-tag");
-    let dev = VirtioFsDevice::new("capsem", &dir, false, -1).unwrap();
+    let dev = test_device(&dir);
     let mut data = [0u8; 36];
     dev.read_config(0, &mut data);
     assert_eq!(&data[..6], b"capsem");
@@ -65,7 +59,7 @@ fn fs_config_tag() {
 #[test]
 fn fs_config_nrq() {
     let dir = temp_share("cfg-nrq");
-    let dev = VirtioFsDevice::new("capsem", &dir, false, -1).unwrap();
+    let dev = test_device(&dir);
     let mut data = [0u8; 4];
     dev.read_config(36, &mut data);
     assert_eq!(u32::from_le_bytes(data), 1);
@@ -74,7 +68,7 @@ fn fs_config_nrq() {
 #[test]
 fn fs_config_past_end() {
     let dir = temp_share("cfg-past");
-    let dev = VirtioFsDevice::new("capsem", &dir, false, -1).unwrap();
+    let dev = test_device(&dir);
     let mut data = [0xFFu8; 4];
     dev.read_config(40, &mut data);
     assert!(data.iter().all(|&b| b == 0));
@@ -110,6 +104,41 @@ fn init_response_version() {
     assert_eq!(init_out.major, 7);
     assert_eq!(init_out.minor, 31);
     assert!(init_out.max_write > 0);
+}
+
+#[test]
+fn init_response_advertises_large_request_pages() {
+    let dir = temp_share("init-pages");
+    let mut proc = test_processor(&dir);
+    let header = FuseInHeader {
+        len: 56,
+        opcode: FUSE_INIT,
+        unique: 2,
+        nodeid: 0,
+        uid: 0,
+        gid: 0,
+        pid: 0,
+        padding: 0,
+    };
+    let init_in = FuseInitIn {
+        major: 7,
+        minor: 38,
+        max_readahead: 1024 * 1024,
+        flags: FUSE_BIG_WRITES | FUSE_MAX_PAGES | FUSE_ASYNC_READ,
+    };
+    let mut req = fuse::as_bytes(&header).to_vec();
+    req.extend_from_slice(fuse::as_bytes(&init_in));
+
+    let resp = proc.handle_request(&req);
+    let out: FuseOutHeader = fuse::read_struct(&resp).unwrap();
+    assert_eq!(out.error, 0);
+    let init_out: FuseInitOut = fuse::read_struct(&resp[16..]).unwrap();
+    assert_eq!(init_out.max_readahead, 1024 * 1024);
+    assert_eq!(init_out.max_write, 1024 * 1024);
+    assert_eq!(init_out.max_pages, 256);
+    assert!(init_out.flags & FUSE_BIG_WRITES != 0);
+    assert!(init_out.flags & FUSE_MAX_PAGES != 0);
+    assert!(init_out.flags & FUSE_ASYNC_READ != 0);
 }
 
 // ── Test helpers ─────────────────────────────────────────────────
@@ -516,6 +545,67 @@ fn read_past_eof_returns_empty() {
         OUT_HDR_SIZE,
         "read past EOF should return empty body"
     );
+}
+
+#[test]
+fn read_write_use_positional_io_without_moving_handle_cursor() {
+    let dir = temp_share("positional-io");
+    std::fs::write(dir.join("data.txt"), b"abcdefghij").unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "data.txt").unwrap();
+    let fh = open_file(&mut proc, ino, libc::O_RDWR as u32).unwrap();
+
+    proc.file_handles
+        .get_file(fh)
+        .unwrap()
+        .seek(SeekFrom::Start(7))
+        .unwrap();
+
+    let read_in = FuseReadIn {
+        fh,
+        offset: 0,
+        size: 3,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let h = make_header(FUSE_READ, ino, 20);
+    let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(&resp[OUT_HDR_SIZE..], b"abc");
+    assert_eq!(
+        proc.file_handles
+            .get_file(fh)
+            .unwrap()
+            .stream_position()
+            .unwrap(),
+        7
+    );
+
+    let write_in = FuseWriteIn {
+        fh,
+        offset: 1,
+        size: 3,
+        write_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let h = make_header(FUSE_WRITE, ino, 21);
+    let mut body = fuse::as_bytes(&write_in).to_vec();
+    body.extend_from_slice(b"XYZ");
+    let resp = proc.handle_request(&build_request(&h, &body));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(
+        proc.file_handles
+            .get_file(fh)
+            .unwrap()
+            .stream_position()
+            .unwrap(),
+        7
+    );
+    assert_eq!(std::fs::read(dir.join("data.txt")).unwrap(), b"aXYZefghij");
 }
 
 #[test]
@@ -941,6 +1031,38 @@ fn rename_file() {
 }
 
 #[test]
+fn rename_over_existing_rebinds_source_inode_to_target_path() {
+    let dir = temp_share("rename-over-existing");
+    std::fs::write(dir.join("config.json"), b"old").unwrap();
+    std::fs::write(dir.join("config.json.tmp"), b"new").unwrap();
+    let mut proc = test_processor(&dir);
+    let _target_ino = lookup(&mut proc, 1, "config.json").unwrap();
+    let temp_ino = lookup(&mut proc, 1, "config.json.tmp").unwrap();
+
+    let rename_in = FuseRenameIn { newdir: 1 };
+    let h = make_header(FUSE_RENAME, 1, 1);
+    let mut body = fuse::as_bytes(&rename_in).to_vec();
+    body.extend_from_slice(b"config.json.tmp\0config.json\0");
+    let resp = proc.handle_request(&build_request(&h, &body));
+    assert_eq!(response_error(&resp), 0);
+
+    let fh = open_file(&mut proc, temp_ino, libc::O_RDONLY as u32).unwrap();
+    let read_in = FuseReadIn {
+        fh,
+        offset: 0,
+        size: 1024,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let h = make_header(FUSE_READ, temp_ino, 2);
+    let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&read_in)));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(&resp[OUT_HDR_SIZE..], b"new");
+}
+
+#[test]
 fn rename_readonly_rejected() {
     let dir = temp_share("rename-ro");
     std::fs::write(dir.join("a.txt"), b"x").unwrap();
@@ -977,6 +1099,27 @@ fn symlink_and_readlink() {
 }
 
 #[test]
+fn linux_readlink_opcode_is_five_not_getxattr() {
+    let dir = temp_share("symlink-opcode");
+    std::fs::write(dir.join("target.txt"), b"real").unwrap();
+    let mut proc = test_processor(&dir);
+
+    let h = make_header(FUSE_SYMLINK, 1, 1);
+    let resp = proc.handle_request(&build_request(&h, b"link.txt\0target.txt\0"));
+    assert_eq!(response_error(&resp), 0);
+    let entry: FuseEntryOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
+
+    let h = make_header(5, entry.nodeid, 2);
+    let resp = proc.handle_request(&build_request(&h, &[]));
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(&resp[OUT_HDR_SIZE..], b"target.txt");
+
+    let h = make_header(22, entry.nodeid, 3);
+    let resp = proc.handle_request(&build_request(&h, &[]));
+    assert_eq!(response_error(&resp), -libc::ENOSYS);
+}
+
+#[test]
 fn symlink_readonly_rejected() {
     let dir = temp_share("symlink-ro");
     let mut proc = test_processor(&dir);
@@ -985,6 +1128,17 @@ fn symlink_readonly_rejected() {
     let h = make_header(FUSE_SYMLINK, 1, 1);
     let resp = proc.handle_request(&build_request(&h, b"link\0target\0"));
     assert_eq!(response_error(&resp), -libc::EROFS);
+}
+
+#[test]
+fn symlink_escape_rejected_and_removed() {
+    let dir = temp_share("symlink-escape");
+    let mut proc = test_processor(&dir);
+
+    let h = make_header(FUSE_SYMLINK, 1, 1);
+    let resp = proc.handle_request(&build_request(&h, b"escape\0/etc/passwd\0"));
+    assert_eq!(response_error(&resp), -libc::EINVAL);
+    assert!(!dir.join("escape").exists());
 }
 
 #[test]

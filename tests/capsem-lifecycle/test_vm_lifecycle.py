@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, SUSPEND_TIMEOUT
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -232,7 +232,7 @@ class TestStopResumeE2E:
 class TestSuspendResume:
 
     def test_suspend_resume_round_trip(self, client):
-        """Suspend a persistent VM, resume it, verify file survives."""
+        """Suspend a persistent VM, resume it, verify memory/process state survives."""
         name = vm_name("susp")
         client.post("/provision", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
@@ -244,8 +244,42 @@ class TestSuspendResume:
         marker = f"suspend-test-{uuid.uuid4().hex[:8]}"
         client.write_file(name, f"/root/{marker}", f"hello from {marker}")
 
+        proof_prefix = f"/root/suspend-proof-{uuid.uuid4().hex[:8]}"
+        start_resp = client.post(f"/exec/{name}", {
+            "command": (
+                f"rm -f {proof_prefix}.pid {proof_prefix}.ticks; "
+                "python3 - <<'PY'\n"
+                "import subprocess\n"
+                f"prefix = {proof_prefix!r}\n"
+                "open(prefix + '.ticks', 'w').close()\n"
+                "cmd = f\"i=0; while true; do i=$((i+1)); echo $i >> {prefix}.ticks; sleep 1; done\"\n"
+                "proc = subprocess.Popen(\n"
+                "    ['sh', '-c', cmd],\n"
+                "    stdin=subprocess.DEVNULL,\n"
+                "    stdout=subprocess.DEVNULL,\n"
+                "    stderr=subprocess.DEVNULL,\n"
+                "    start_new_session=True,\n"
+                ")\n"
+                "open(prefix + '.pid', 'w').write(str(proc.pid))\n"
+                "print(proc.pid)\n"
+                "PY"
+            ),
+        })
+        assert start_resp and start_resp.get("exit_code") == 0, \
+            f"failed to start suspend proof process: {start_resp}"
+        proof_pid = start_resp["stdout"].strip()
+        assert proof_pid.isdigit(), f"invalid proof pid: {start_resp}"
+
+        before_resp = client.post(f"/exec/{name}", {
+            "command": f"sleep 2; wc -l < {proof_prefix}.ticks",
+        })
+        assert before_resp and before_resp.get("exit_code") == 0, \
+            f"proof process did not write ticks before suspend: {before_resp}"
+        before_ticks = int(before_resp["stdout"].strip())
+        assert before_ticks >= 1, f"expected proof ticks before suspend, got {before_ticks}"
+
         # Suspend via service API
-        suspend_resp = client.post(f"/suspend/{name}", {}, timeout=EXEC_READY_TIMEOUT)
+        suspend_resp = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
         assert suspend_resp is not None and suspend_resp.get("success") is True, \
             f"Suspend failed: {suspend_resp}"
 
@@ -266,6 +300,21 @@ class TestSuspendResume:
         read_resp = client.read_file(resumed_id, f"/root/{marker}")
         assert marker in str(read_resp), \
             f"File did not survive suspend + resume: {read_resp}"
+
+        process_resp = client.post(f"/exec/{resumed_id}", {
+            "command": (
+                f"test -d /proc/{proof_pid} && "
+                f"test \"$(cat {proof_prefix}.pid)\" = \"{proof_pid}\" && "
+                f"sleep 2; wc -l < {proof_prefix}.ticks"
+            ),
+        })
+        assert process_resp and process_resp.get("exit_code") == 0, \
+            f"proof process did not survive suspend + resume: {process_resp}"
+        after_ticks = int(process_resp["stdout"].strip())
+        assert after_ticks > before_ticks, (
+            f"proof process did not continue after resume: "
+            f"before_ticks={before_ticks}, after_ticks={after_ticks}, pid={proof_pid}"
+        )
 
         client.delete(f"/delete/{resumed_id}")
 

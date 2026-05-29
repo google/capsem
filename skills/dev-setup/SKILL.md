@@ -215,9 +215,9 @@ Virtualization.framework calls crash. The justfile handles this automatically vi
 the entitlements, and verifies the operation succeeds. Run `just doctor` after initial setup to
 confirm signing works.
 
-**Linux developers**: codesign is not available and not needed on Linux. VM features (`just run`,
-`just dev`, `just bench`) require macOS. You can use `just test`, `just build-assets`, and
-`just audit` on Linux.
+**Linux developers**: codesign is not available and not needed on Linux. VM features use the
+KVM backend when `/dev/kvm` and `/dev/vhost-vsock` are available. Use `just benchmark`
+for the same artifact-recording performance suite as macOS.
 
 ## Troubleshooting
 

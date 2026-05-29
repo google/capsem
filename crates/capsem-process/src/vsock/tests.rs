@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::io::RawFd;
 
 // -----------------------------------------------------------------------
 // Vsock port classification
@@ -59,9 +60,13 @@ fn classify_port_zero_unknown() {
 // -----------------------------------------------------------------------
 
 fn make_conn(port: u32) -> VsockConnection {
+    make_conn_with_fd(port, -1)
+}
+
+fn make_conn_with_fd(port: u32, fd: RawFd) -> VsockConnection {
     // Dummy fd value (-1) is fine: these tests never read/write the fd,
     // they only exercise the collection and classification logic.
-    VsockConnection::new(-1, port, Box::new(()))
+    VsockConnection::new(fd, port, Box::new(()))
 }
 
 #[test]
@@ -106,6 +111,14 @@ fn not_found_not_retryable() {
     assert!(!is_retryable_handshake_error(&err));
 }
 
+#[test]
+fn suspend_reconnect_grace_covers_guest_snapshot_delay() {
+    assert!(
+        SUSPEND_RECONNECT_GRACE >= std::time::Duration::from_secs(2),
+        "guest agent sleeps for SNAPSHOT_RECONNECT_DELAY before reconnecting after SnapshotReady"
+    );
+}
+
 // -----------------------------------------------------------------------
 // collect_terminal_control_pair
 // -----------------------------------------------------------------------
@@ -123,6 +136,44 @@ async fn collect_returns_terminal_and_control_in_any_order() {
         .expect("pair collected");
     assert_eq!(terminal.port, capsem_core::VSOCK_PORT_TERMINAL);
     assert_eq!(control.port, capsem_core::VSOCK_PORT_CONTROL);
+    assert!(deferred.is_empty());
+}
+
+#[tokio::test]
+async fn collect_keeps_first_terminal_when_duplicates_arrive_before_control() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_TERMINAL, 101))
+        .unwrap();
+    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_TERMINAL, 102))
+        .unwrap();
+    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_CONTROL, 201))
+        .unwrap();
+
+    let mut deferred = Vec::new();
+    let (terminal, control) = collect_terminal_control_pair(&mut rx, &mut deferred)
+        .await
+        .expect("pair collected");
+    assert_eq!(terminal.fd, 101);
+    assert_eq!(control.fd, 201);
+    assert!(deferred.is_empty());
+}
+
+#[tokio::test]
+async fn collect_keeps_first_control_when_duplicates_arrive_before_terminal() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_CONTROL, 201))
+        .unwrap();
+    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_CONTROL, 202))
+        .unwrap();
+    tx.send(make_conn_with_fd(capsem_core::VSOCK_PORT_TERMINAL, 101))
+        .unwrap();
+
+    let mut deferred = Vec::new();
+    let (terminal, control) = collect_terminal_control_pair(&mut rx, &mut deferred)
+        .await
+        .expect("pair collected");
+    assert_eq!(terminal.fd, 101);
+    assert_eq!(control.fd, 201);
     assert!(deferred.is_empty());
 }
 

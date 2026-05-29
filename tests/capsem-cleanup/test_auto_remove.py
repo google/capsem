@@ -48,13 +48,14 @@ def test_ephemeral_cleaned_on_process_death(cleanup_env):
 
     os.kill(pid, signal.SIGTERM)
 
-    # Wait for service to notice via stale-instance cleanup
-    for _ in range(10):
+    # Wait for the capsem-process SIGTERM handler to drain telemetry and exit.
+    # Under the four-worker VM gate this can be CPU-starved for more than 10s.
+    for _ in range(30):
         time.sleep(1)
         if not _vm_in_list(client, name):
             break
     else:
-        pytest.fail(f"Ephemeral VM {name} still in list 10s after process kill")
+        pytest.fail(f"Ephemeral VM {name} still in list 30s after process kill")
 
     if sessions_dir.exists():
         pytest.fail(f"Session dir {sessions_dir} still exists after ephemeral cleanup")

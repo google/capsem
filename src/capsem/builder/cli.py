@@ -153,6 +153,7 @@ def build(
                 "template": template,
                 "compression": config.build.compression.value,
                 "compression_level": config.build.compression_level,
+                "squashfs_block_size": config.build.squashfs_block_size,
             }
             for arch_name in arches:
                 rendered = render_dockerfile(template_name, config, arch_name)
@@ -301,6 +302,7 @@ def inspect(guest_dir: str, json_output: bool) -> None:
 
     click.echo("Build")
     click.echo(f"  compression: {config.build.compression.value} (level {config.build.compression_level})")
+    click.echo(f"  squashfs block size: {config.build.squashfs_block_size}")
     click.echo("  architectures:")
     for name, arch in config.build.architectures.items():
         click.echo(f"    {name}: {arch.docker_platform} ({arch.rust_target})")

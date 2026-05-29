@@ -78,7 +78,12 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     // E2E-only: lets capsem-process dial a local fixture while preserving
     // the guest-visible upstream host for MITM policy/provider detection.
     "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+    // Debug-build-only: allows targeted kernel boot diagnostics without
+    // making release boots noisy.
+    "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
 ];
+
+const SUSPEND_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -93,6 +98,7 @@ struct ServiceState {
     assets_dir: PathBuf,
     asset_locations: capsem_core::settings_profiles::ResolvedServiceAssetLocations,
     service_settings: capsem_core::settings_profiles::ServiceSettings,
+    service_settings_path: PathBuf,
     run_dir: PathBuf,
     job_counter: AtomicU64,
     /// Service-owned asset state machine and background reconciler.
@@ -375,11 +381,11 @@ impl ServiceState {
     }
 
     fn current_service_settings(&self) -> capsem_core::settings_profiles::ServiceSettings {
-        let settings_path = service_settings_path();
+        let settings_path = &self.service_settings_path;
         if !settings_path.exists() {
             return self.service_settings.clone();
         }
-        capsem_core::settings_profiles::load_service_settings(&settings_path).unwrap_or_else(
+        capsem_core::settings_profiles::load_service_settings(settings_path).unwrap_or_else(
             |error| {
                 warn!(
                     error = %error,
@@ -1678,29 +1684,29 @@ use capsem_service::fs_utils::{identify_file_sync, sanitize_file_path};
 /// Resolve a sanitized relative path to an absolute workspace path on the host.
 /// Returns (workspace_root, resolved_path). Verifies the resolved path is
 /// inside the workspace via canonicalize + starts_with.
+fn resolve_session_dir_for_workspace(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
+    let instances = state.instances.lock().unwrap();
+    if let Some(info) = instances.get(id) {
+        return Ok(info.session_dir.clone());
+    }
+    drop(instances);
+
+    // Check persistent registry for stopped VMs.
+    let reg = state.persistent_registry.lock().unwrap();
+    reg.data
+        .vms
+        .get(id)
+        .or_else(|| reg.data.vms.values().find(|e| e.name == id))
+        .map(|e| e.session_dir.clone())
+        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+}
+
 fn resolve_workspace_path(
     state: &ServiceState,
     id: &str,
     sanitized: &str,
 ) -> Result<(PathBuf, PathBuf), AppError> {
-    let session_dir = {
-        let instances = state.instances.lock().unwrap();
-        if let Some(info) = instances.get(id) {
-            info.session_dir.clone()
-        } else {
-            drop(instances);
-            // Check persistent registry for stopped VMs
-            let reg = state.persistent_registry.lock().unwrap();
-            reg.data
-                .vms
-                .get(id)
-                .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-                .map(|e| e.session_dir.clone())
-                .ok_or_else(|| {
-                    AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))
-                })?
-        }
-    };
+    let session_dir = resolve_session_dir_for_workspace(state, id)?;
     let workspace_root = capsem_core::guest_share_dir(&session_dir).join("workspace");
     let target = workspace_root.join(sanitized);
 
@@ -1755,6 +1761,60 @@ fn resolve_workspace_path(
         ));
     }
     Ok((workspace_root, canonical))
+}
+
+async fn record_api_file_event(
+    state: &ServiceState,
+    id: &str,
+    sanitized: &str,
+    size: u64,
+    existed_before: bool,
+) {
+    let session_dir = match resolve_session_dir_for_workspace(state, id) {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(id, error = %error.1, "failed to resolve session dir for file event");
+            return;
+        }
+    };
+    let db_path = session_dir.join("session.db");
+    let path = sanitized.trim_start_matches('/').to_string();
+    let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
+    let action = if existed_before {
+        capsem_logger::FileAction::Modified
+    } else {
+        capsem_logger::FileAction::Created
+    };
+
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let writer = capsem_logger::DbWriter::open(&db_path, 16)?;
+        let event = capsem_logger::FileEvent {
+            timestamp: std::time::SystemTime::now(),
+            action,
+            path,
+            size: Some(size),
+            trace_id,
+        };
+        if !writer.try_write(capsem_logger::WriteOp::FileEvent(event)) {
+            tracing::warn!(
+                path = %db_path.display(),
+                "file event writer queue was closed before API upload event was recorded"
+            );
+        }
+        writer.shutdown_blocking();
+        Ok(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(id, path = %sanitized, error = %error, "failed to record API file event");
+        }
+        Err(error) => {
+            tracing::warn!(id, path = %sanitized, error = %error, "file event task failed");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2006,6 +2066,7 @@ async fn handle_upload_file(
     let (_ws_root, target) = resolve_workspace_path(&state, &id, &sanitized)?;
 
     let size = body.len() as u64;
+    let existed_before = target.exists();
 
     // Write file in spawn_blocking (blocking I/O)
     tokio::task::spawn_blocking(move || {
@@ -2031,6 +2092,8 @@ async fn handle_upload_file(
     })
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+
+    record_api_file_event(&state, &id, &sanitized, size, existed_before).await;
 
     Ok(Json(UploadResponse {
         success: true,
@@ -11425,7 +11488,7 @@ async fn handle_suspend(
     // a subsequent resume request fails with permission denied because the old process
     // hasn't released the checkpoint file yet.
     let mut suspended = false;
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+    let _ = tokio::time::timeout(SUSPEND_CONFIRM_TIMEOUT, async {
         while let Ok(msg) = rx.recv().await {
             if let ProcessToService::StateChanged { state, .. } = msg {
                 if state == "Suspended" {
@@ -12238,6 +12301,7 @@ async fn main() -> Result<()> {
         assets_dir: assets_base_dir,
         asset_locations,
         service_settings,
+        service_settings_path,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
         asset_supervisor,
@@ -12833,14 +12897,14 @@ fn ensure_tray_running(manager: &mut CompanionManager) -> (StatusCode, EnsureTra
     #[cfg(not(target_os = "macos"))]
     {
         let _ = manager;
-        return (
+        (
             StatusCode::OK,
             EnsureTrayResponse {
                 tray: "unsupported",
                 pid: None,
                 reason: Some("capsem-tray is only supported on macOS".into()),
             },
-        );
+        )
     }
 
     #[cfg(target_os = "macos")]

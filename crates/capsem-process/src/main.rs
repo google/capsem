@@ -121,6 +121,29 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
 
 const AGGREGATOR_PARENT_ENV_ALLOWLIST: &[&str] = &["PATH", "RUST_LOG", "RUST_BACKTRACE"];
 
+fn process_kernel_cmdline() -> String {
+    let append = if cfg!(debug_assertions) {
+        std::env::var("CAPSEM_DEV_KERNEL_CMDLINE_APPEND").ok()
+    } else {
+        None
+    };
+    process_kernel_cmdline_with_append(append.as_deref())
+}
+
+fn process_kernel_cmdline_with_append(append: Option<&str>) -> String {
+    #[cfg(target_arch = "x86_64")]
+    let base = "console=ttyS0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1 capsem.storage=virtiofs";
+    #[cfg(target_arch = "aarch64")]
+    let base = "console=hvc0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1 capsem.storage=virtiofs";
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let base = "console=hvc0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1 capsem.storage=virtiofs";
+
+    match append.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(extra) => format!("{base} {extra}"),
+        None => base.to_string(),
+    }
+}
+
 fn aggregator_parent_env_from<F>(lookup: F) -> std::collections::HashMap<String, String>
 where
     F: Fn(&str) -> Option<String>,
@@ -195,6 +218,7 @@ fn main() -> Result<()> {
     let system_img = guest_dir.join("system").join("rootfs.img");
     let machine_identifier_path = session_dir.join("machine_identifier");
     let serial_log_path = session_dir.join("serial.log");
+    let kernel_cmdline = process_kernel_cmdline();
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),
@@ -203,15 +227,18 @@ fn main() -> Result<()> {
         expected_kernel_hash: args.expected_kernel_hash.as_deref(),
         expected_initrd_hash: args.expected_initrd_hash.as_deref(),
         expected_rootfs_hash: args.expected_rootfs_hash.as_deref(),
-        cmdline: "console=hvc0 ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1",
+        cmdline: &kernel_cmdline,
         system_overlay_disk: Some(&system_img),
         virtiofs_shares: &virtiofs_shares,
         cpu_count: args.cpus,
         ram_bytes: args.ram_mb * 1024 * 1024,
-        checkpoint_path: args
-            .checkpoint_path
-            .clone()
-            .map(|p| if p.is_absolute() { p } else { session_dir.join(p) }),
+        checkpoint_path: args.checkpoint_path.clone().map(|p| {
+            if p.is_absolute() {
+                p
+            } else {
+                session_dir.join(p)
+            }
+        }),
         machine_identifier_path: Some(&machine_identifier_path),
         serial_log_path: Some(&serial_log_path),
     })?;
@@ -269,6 +296,7 @@ fn main() -> Result<()> {
     // `session.db-wal`. See /dev-rust-patterns "Signal-driven explicit
     // cleanup for background-thread owners".
     let shutdown_for_sig = Arc::clone(&shutdown);
+    let (signal_exit_tx, signal_exit_rx) = tokio::sync::oneshot::channel::<()>();
     rt.spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
@@ -298,6 +326,7 @@ fn main() -> Result<()> {
             signal = signal_name,
             "background owners drained, stopping run loop"
         );
+        let _ = signal_exit_tx.send(());
 
         #[cfg(target_os = "macos")]
         unsafe {
@@ -312,7 +341,9 @@ fn main() -> Result<()> {
         core_foundation_sys::runloop::CFRunLoopRun();
     }
     #[cfg(not(target_os = "macos"))]
-    rt.block_on(tokio::signal::ctrl_c())?;
+    {
+        let _ = rt.block_on(signal_exit_rx);
+    }
 
     Ok(())
 }
@@ -614,6 +645,8 @@ async fn run_async_main_loop(
     let vm_ready_vsock = Arc::clone(&vm_ready);
     let uds_path_vsock = uds_path.clone();
     let db_for_vsock = Arc::clone(&db);
+    let vm_id_for_vsock = args.id.clone();
+    let session_dir_for_vsock = session_dir.clone();
     let pty_log = match pty_log::PtyLog::open(&session_dir.join("pty.log")) {
         Ok(pl) => Some(Arc::new(pl)),
         Err(e) => {
@@ -623,7 +656,7 @@ async fn run_async_main_loop(
     };
     tokio::spawn(async move {
         if let Err(e) = vsock::setup_vsock(VsockOptions {
-            vm_id: args.id.clone(),
+            vm_id: vm_id_for_vsock,
             vm: vm_for_vsock,
             vsock_rx,
             ipc_tx: ipc_tx_clone,
@@ -631,7 +664,7 @@ async fn run_async_main_loop(
             ctrl_rx,
             terminal_output: terminal_output_clone,
             job_store: job_store_clone,
-            session_dir: session_dir.clone(),
+            session_dir: session_dir_for_vsock,
             cli_env,
             guest_config,
             mitm_config: mitm_config_clone,
@@ -722,7 +755,13 @@ async fn run_async_main_loop(
         let mcp_c = Arc::clone(&mcp_runtime);
         let db_c = Arc::clone(&db);
         let ready_c = Arc::clone(&vm_ready);
+        let vm_c = Arc::clone(&vm);
         let vm_id_c = vm_id_ws.clone();
+        let resource_metrics = ipc::ResourceMetricsContext {
+            configured_vcpus: args.cpus,
+            configured_ram_mb: args.ram_mb,
+            session_dir: session_dir.clone(),
+        };
 
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
@@ -734,7 +773,9 @@ async fn run_async_main_loop(
                 mcp_c,
                 db_c,
                 ready_c,
+                vm_c,
                 vm_id_c,
+                resource_metrics,
             )
             .await
             {
@@ -1221,6 +1262,24 @@ mod tests {
         let session = PathBuf::from("/tmp/some-session");
         let log = aggregator_log_path(&session);
         assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
+    }
+
+    #[test]
+    fn process_kernel_cmdline_has_root_disk_and_arch_console() {
+        let cmdline = process_kernel_cmdline_with_append(None);
+        assert!(cmdline.contains(" root=/dev/vda "));
+        assert!(cmdline.contains(" capsem.storage=virtiofs"));
+        #[cfg(target_arch = "x86_64")]
+        assert!(cmdline.starts_with("console=ttyS0 "));
+        #[cfg(target_arch = "aarch64")]
+        assert!(cmdline.starts_with("console=hvc0 "));
+    }
+
+    #[test]
+    fn process_kernel_cmdline_can_append_dev_diagnostics() {
+        let cmdline = process_kernel_cmdline_with_append(Some(" ignore_loglevel loglevel=7 "));
+        assert!(cmdline.ends_with("ignore_loglevel loglevel=7"));
+        assert!(cmdline.contains(" capsem.storage=virtiofs "));
     }
 
     #[test]

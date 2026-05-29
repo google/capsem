@@ -65,7 +65,8 @@ class TestGuestBinaries:
             binary = agent_dir / name
             assert binary.exists(), f"Guest binary not found: {binary}"
             result = subprocess.run(["file", str(binary)], capture_output=True, text=True)
-            assert "statically linked" in result.stdout, (
+            output = result.stdout.lower()
+            assert "statically linked" in output or "static-pie linked" in output, (
                 f"{name} should be statically linked (musl): {result.stdout}"
             )
 

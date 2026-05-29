@@ -208,7 +208,7 @@ fn capsem_home_dir() -> PathBuf {
     PathBuf::from(home).join(".capsem")
 }
 
-#[cfg(all(unix, any(target_os = "macos", test)))]
+#[cfg(all(unix, target_os = "macos"))]
 fn service_socket_path() -> PathBuf {
     capsem_home_dir().join("run/service.sock")
 }
@@ -227,7 +227,7 @@ fn parse_http_status(response: &str) -> Option<u16> {
         .and_then(|raw| raw.parse::<u16>().ok())
 }
 
-#[cfg(all(unix, any(target_os = "macos", test)))]
+#[cfg(all(unix, target_os = "macos"))]
 fn ensure_tray_once(sock: &Path) -> Result<u16, String> {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;

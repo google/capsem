@@ -26,6 +26,7 @@ const SETUP_HEADER_OFFSET: usize = 0x1F1;
 const MIN_BOOT_PROTOCOL: u16 = 0x0206;
 
 /// Kernel load info returned after loading.
+#[derive(Debug)]
 pub(super) struct KernelLoadInfo {
     pub entry_addr: u64,
     pub kernel_end: u64,
@@ -125,7 +126,9 @@ pub(super) fn load_initrd(
         .with_context(|| format!("reading initrd: {}", initrd_path.display()))?;
 
     let initrd_size = initrd_data.len() as u64;
-    let ram_end = RAM_BASE + mem.size();
+    // Keep the initrd below the 32-bit boot protocol limit and below the
+    // x86 PCI/MMIO hole. Linux can later use RAM above 4 GiB from E820.
+    let ram_end = RAM_BASE + mem.size().min(memory::PCI_HOLE_START);
 
     // Place initrd at end of RAM, page-aligned
     let initrd_addr = memory::page_align_down(ram_end - initrd_size);
@@ -133,8 +136,7 @@ pub(super) fn load_initrd(
         bail!("initrd overlaps kernel (initrd@{initrd_addr:#x}, kernel_end@{kernel_end:#x})");
     }
 
-    let offset = initrd_addr - RAM_BASE;
-    mem.write_at(offset, &initrd_data)?;
+    mem.write_gpa(initrd_addr, &initrd_data)?;
 
     Ok(InitrdLoadInfo {
         addr: initrd_addr,
@@ -221,6 +223,106 @@ pub(super) fn write_boot_params(
 }
 
 // ---------------------------------------------------------------------------
+// ACPI tables
+// ---------------------------------------------------------------------------
+
+const ACPI_OEM_ID: &[u8; 6] = b"CAPSEM";
+const ACPI_OEM_TABLE_ID: &[u8; 8] = b"CAPSEMKV";
+const ACPI_CREATOR_ID: &[u8; 4] = b"CAPS";
+
+/// Write a minimal ACPI v1 RSDP/RSDT/MADT table set for x86 SMP discovery.
+///
+/// Without MADT, Linux boots on CPU0 only even when KVM has additional vCPUs.
+/// The application processors remain parked in KVM until Linux reads MADT,
+/// discovers their LAPIC IDs, and starts them through INIT/SIPI.
+pub(super) fn write_acpi_tables(mem: &GuestMemory, cpu_count: u32) -> Result<()> {
+    if cpu_count == 0 || cpu_count > u8::MAX as u32 {
+        bail!("ACPI MADT supports 1..=255 vCPUs, got {cpu_count}");
+    }
+
+    let madt = build_madt(cpu_count)?;
+    let rsdt = build_rsdt(memory::ACPI_MADT_ADDR as u32);
+    let rsdp = build_rsdp(memory::ACPI_RSDT_ADDR as u32);
+    let ebda_segment = (memory::EBDA_START >> 4) as u16;
+
+    mem.write_gpa(memory::BDA_EBDA_SEGMENT_ADDR, &ebda_segment.to_le_bytes())?;
+    mem.write_gpa(memory::ACPI_RSDP_ADDR, &rsdp)?;
+    mem.write_gpa(memory::BIOS_RSDP_ADDR, &rsdp)?;
+    mem.write_gpa(memory::ACPI_RSDT_ADDR, &rsdt)?;
+    mem.write_gpa(memory::ACPI_MADT_ADDR, &madt)?;
+    Ok(())
+}
+
+fn build_rsdp(rsdt_addr: u32) -> [u8; 20] {
+    let mut rsdp = [0u8; 20];
+    rsdp[0..8].copy_from_slice(b"RSD PTR ");
+    rsdp[9..15].copy_from_slice(ACPI_OEM_ID);
+    rsdp[15] = 0; // ACPI 1.0
+    rsdp[16..20].copy_from_slice(&rsdt_addr.to_le_bytes());
+    fill_checksum(&mut rsdp, 8);
+    rsdp
+}
+
+fn build_rsdt(madt_addr: u32) -> Vec<u8> {
+    let mut rsdt = acpi_table_header(b"RSDT", 36 + 4, 1);
+    rsdt.extend_from_slice(&madt_addr.to_le_bytes());
+    fill_checksum(&mut rsdt, 9);
+    rsdt
+}
+
+fn build_madt(cpu_count: u32) -> Result<Vec<u8>> {
+    let ioapic_id = cpu_count as u8;
+    let entry_bytes = cpu_count as usize * 8 + 12 + 6;
+    let mut madt = acpi_table_header(b"APIC", 36 + 8 + entry_bytes, 1);
+    madt.extend_from_slice(&memory::LOCAL_APIC_ADDR.to_le_bytes());
+    madt.extend_from_slice(&1u32.to_le_bytes()); // PC-AT compatible dual-PIC flag
+
+    for cpu_id in 0..cpu_count {
+        madt.push(0); // Processor Local APIC
+        madt.push(8);
+        madt.push(cpu_id as u8); // ACPI processor UID
+        madt.push(cpu_id as u8); // APIC ID
+        madt.extend_from_slice(&1u32.to_le_bytes()); // enabled
+    }
+
+    madt.push(1); // IOAPIC
+    madt.push(12);
+    madt.push(ioapic_id);
+    madt.push(0);
+    madt.extend_from_slice(&memory::IO_APIC_ADDR.to_le_bytes());
+    madt.extend_from_slice(&0u32.to_le_bytes()); // GSI base
+
+    madt.push(4); // Local APIC NMI
+    madt.push(6);
+    madt.push(0xFF); // all processors
+    madt.extend_from_slice(&0u16.to_le_bytes()); // polarity/trigger conforming
+    madt.push(1); // LINT1
+
+    fill_checksum(&mut madt, 9);
+    Ok(madt)
+}
+
+fn acpi_table_header(signature: &[u8; 4], length: usize, revision: u8) -> Vec<u8> {
+    let mut table = Vec::with_capacity(length);
+    table.extend_from_slice(signature);
+    table.extend_from_slice(&(length as u32).to_le_bytes());
+    table.push(revision);
+    table.push(0); // checksum, filled after body is appended
+    table.extend_from_slice(ACPI_OEM_ID);
+    table.extend_from_slice(ACPI_OEM_TABLE_ID);
+    table.extend_from_slice(&1u32.to_le_bytes());
+    table.extend_from_slice(ACPI_CREATOR_ID);
+    table.extend_from_slice(&1u32.to_le_bytes());
+    table
+}
+
+fn fill_checksum(bytes: &mut [u8], checksum_offset: usize) {
+    bytes[checksum_offset] = 0;
+    let sum = bytes.iter().fold(0u8, |acc, b| acc.wrapping_add(*b));
+    bytes[checksum_offset] = 0u8.wrapping_sub(sum);
+}
+
+// ---------------------------------------------------------------------------
 // GDT and page tables
 // ---------------------------------------------------------------------------
 
@@ -245,7 +347,7 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
 
     // 1 PDPT entry = 1 GB (maps to 1 PD page)
     // 1 PD page = 512 PD entries = 512 * 2MB = 1GB
-    let gb_count = (ram_size + 0x3FFF_FFFF) / 0x4000_0000;
+    let gb_count = ram_size.div_ceil(0x4000_0000);
 
     let mut pdpt = vec![0u8; 4096];
     for i in 0..gb_count {
@@ -257,7 +359,7 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
     mem.write_at(PDPT_ADDR - RAM_BASE, &pdpt)?;
 
     let mut pd = vec![0u8; (gb_count * 4096) as usize];
-    let total_pages = (ram_size + 0x1F_FFFF) / 0x20_0000;
+    let total_pages = ram_size.div_ceil(0x20_0000);
 
     for i in 0..total_pages {
         let entry: u64 = (i << 21) | 0x83; // present + writable + huge page (PS bit)
@@ -313,7 +415,7 @@ pub(super) fn setup_boot_regs(
         padding: 0,
     };
 
-    let mut sregs = sys::KvmSregs::default();
+    let mut sregs = vcpu.get_sregs()?;
     sregs.cs = code_seg;
     sregs.ds = data_seg;
     sregs.es = data_seg;
@@ -345,15 +447,54 @@ pub(super) fn setup_boot_regs(
         ..Default::default()
     };
     vcpu.set_regs(&regs)?;
+    vcpu.set_mp_state(sys::KvmMpState {
+        mp_state: sys::KVM_MP_STATE_RUNNABLE,
+    })?;
 
     Ok(())
 }
 
-/// Set up CPUID for a vCPU (passthrough host CPUID entries).
-pub(super) fn setup_cpuid(vm: &sys::VmFd, vcpu: &sys::VcpuFd) -> Result<()> {
-    let entries = vm.get_supported_cpuid()?;
+/// Park an application processor until the guest sends INIT/SIPI via LAPIC.
+pub(super) fn setup_application_processor(vcpu: &sys::VcpuFd) -> Result<()> {
+    vcpu.set_mp_state(sys::KvmMpState {
+        mp_state: sys::KVM_MP_STATE_UNINITIALIZED,
+    })
+}
+
+/// Set up CPUID for a vCPU.
+pub(super) fn setup_cpuid(
+    kvm: &sys::KvmFd,
+    vcpu: &sys::VcpuFd,
+    vcpu_id: u32,
+    cpu_count: u32,
+) -> Result<()> {
+    let mut entries = kvm.get_supported_cpuid()?;
+    configure_cpuid_topology(&mut entries, vcpu_id, cpu_count);
     vcpu.set_cpuid2(&entries)?;
     Ok(())
+}
+
+fn configure_cpuid_topology(entries: &mut [sys::KvmCpuidEntry2], vcpu_id: u32, cpu_count: u32) {
+    let logical_processors = cpu_count.clamp(1, u8::MAX as u32);
+    let apic_id = vcpu_id.min(u8::MAX as u32);
+
+    for entry in entries {
+        match entry.function {
+            0x1 => {
+                entry.ebx &= !0x00FF_0000;
+                entry.ebx |= logical_processors << 16;
+                entry.ebx &= !0xFF00_0000;
+                entry.ebx |= apic_id << 24;
+            }
+            0xB | 0x1F => {
+                entry.edx = vcpu_id;
+                if entry.index > 0 && entry.ebx != 0 {
+                    entry.ebx = cpu_count;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +620,8 @@ mod tests {
         let mem = GuestMemory::new(4096 * 256).unwrap();
         let mut fake_header = vec![0u8; 0x2b9 - 0x1f1];
         fake_header[0] = 0xAA;
-        fake_header[fake_header.len() - 1] = 0xBB;
+        let last_idx = fake_header.len() - 1;
+        fake_header[last_idx] = 0xBB;
 
         let e820 = memory::build_e820_map(256 * 4096);
         write_boot_params(&mem, "test", None, &e820, &fake_header).unwrap();
@@ -511,6 +653,114 @@ mod tests {
             buf[0], 0x81,
             "loadflags must be 0x81 (LOADED_HIGH | CAN_USE_HEAP)"
         );
+    }
+
+    #[test]
+    fn acpi_tables_advertise_all_vcpus_in_madt() {
+        let mem = GuestMemory::new(1024 * 1024).unwrap();
+        write_acpi_tables(&mem, 4).unwrap();
+
+        let mut rsdp = [0u8; 20];
+        mem.read_at(memory::ACPI_RSDP_ADDR - RAM_BASE, &mut rsdp)
+            .unwrap();
+        assert_eq!(&rsdp[0..8], b"RSD PTR ");
+        assert_eq!(checksum(&rsdp), 0);
+        assert_eq!(
+            u32::from_le_bytes(rsdp[16..20].try_into().unwrap()),
+            memory::ACPI_RSDT_ADDR as u32
+        );
+
+        let mut ebda_segment = [0u8; 2];
+        mem.read_at(memory::BDA_EBDA_SEGMENT_ADDR - RAM_BASE, &mut ebda_segment)
+            .unwrap();
+        assert_eq!(
+            u16::from_le_bytes(ebda_segment),
+            (memory::EBDA_START >> 4) as u16
+        );
+        let mut bios_rsdp = [0u8; 20];
+        mem.read_at(memory::BIOS_RSDP_ADDR - RAM_BASE, &mut bios_rsdp)
+            .unwrap();
+        assert_eq!(bios_rsdp, rsdp);
+
+        let mut rsdt_header = [0u8; 40];
+        mem.read_at(memory::ACPI_RSDT_ADDR - RAM_BASE, &mut rsdt_header)
+            .unwrap();
+        assert_eq!(&rsdt_header[0..4], b"RSDT");
+        assert_eq!(checksum(&rsdt_header), 0);
+        assert_eq!(
+            u32::from_le_bytes(rsdt_header[36..40].try_into().unwrap()),
+            memory::ACPI_MADT_ADDR as u32
+        );
+
+        let mut madt_header = [0u8; 36];
+        mem.read_at(memory::ACPI_MADT_ADDR - RAM_BASE, &mut madt_header)
+            .unwrap();
+        let madt_len = u32::from_le_bytes(madt_header[4..8].try_into().unwrap()) as usize;
+        let mut madt = vec![0u8; madt_len];
+        mem.read_at(memory::ACPI_MADT_ADDR - RAM_BASE, &mut madt)
+            .unwrap();
+        assert_eq!(&madt[0..4], b"APIC");
+        assert_eq!(checksum(&madt), 0);
+        assert_eq!(
+            u32::from_le_bytes(madt[36..40].try_into().unwrap()),
+            memory::LOCAL_APIC_ADDR
+        );
+
+        let lapic_entries = madt[44..]
+            .chunks_exact(8)
+            .take_while(|entry| entry[0] == 0)
+            .collect::<Vec<_>>();
+        assert_eq!(lapic_entries.len(), 4);
+        for (idx, entry) in lapic_entries.iter().enumerate() {
+            assert_eq!(entry[1], 8);
+            assert_eq!(entry[2], idx as u8);
+            assert_eq!(entry[3], idx as u8);
+            assert_eq!(u32::from_le_bytes(entry[4..8].try_into().unwrap()), 1);
+        }
+    }
+
+    #[test]
+    fn acpi_tables_reject_zero_vcpus() {
+        let mem = GuestMemory::new(1024 * 1024).unwrap();
+        assert!(write_acpi_tables(&mem, 0).is_err());
+    }
+
+    #[test]
+    fn cpuid_topology_uses_guest_vcpu_ids() {
+        let mut entries = vec![
+            sys::KvmCpuidEntry2 {
+                function: 0x1,
+                ebx: 0x0900_0000,
+                ..Default::default()
+            },
+            sys::KvmCpuidEntry2 {
+                function: 0xB,
+                index: 0,
+                ebx: 2,
+                edx: 9,
+                ..Default::default()
+            },
+            sys::KvmCpuidEntry2 {
+                function: 0xB,
+                index: 1,
+                ebx: 8,
+                edx: 9,
+                ..Default::default()
+            },
+        ];
+
+        configure_cpuid_topology(&mut entries, 2, 4);
+
+        assert_eq!((entries[0].ebx >> 24) & 0xFF, 2);
+        assert_eq!((entries[0].ebx >> 16) & 0xFF, 4);
+        assert_eq!(entries[1].edx, 2);
+        assert_eq!(entries[1].ebx, 2);
+        assert_eq!(entries[2].edx, 2);
+        assert_eq!(entries[2].ebx, 4);
+    }
+
+    fn checksum(bytes: &[u8]) -> u8 {
+        bytes.iter().fold(0u8, |acc, b| acc.wrapping_add(*b))
     }
 
     fn create_fake_bzimage() -> Vec<u8> {

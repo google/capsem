@@ -1,0 +1,65 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_process_enforcement",
+  "version": "1.2.1779673506",
+  "source_commit": "69bd0e3d",
+  "timestamp": 1780076502.590691,
+  "arch": "arm64",
+  "host": {
+    "sysname": "Darwin",
+    "release": "25.5.0",
+    "machine": "arm64"
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs",
+  "workload": {
+    "event_family": "process",
+    "event_type": "process.exec",
+    "source": "vm_originated",
+    "path": "service_api_to_capsem_process_to_security_engine"
+  },
+  "runs": 8,
+  "gate_ms": 750,
+  "rule": {
+    "id": "runtime.block-shell-bench.0c50ba9d",
+    "pack_id": "runtime-benchmark",
+    "condition": "process.activity.operation == 'exec' && process.activity.command_class == 'shell'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_process_exec_ms": {
+      "min": 6.776,
+      "mean": 7.315,
+      "median": 7.123,
+      "p95": 8.658,
+      "p99": 8.658,
+      "max": 8.658,
+      "values": [
+        8.658,
+        7.351,
+        7.22,
+        7.027,
+        6.948,
+        7.542,
+        6.776,
+        6.994
+      ]
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 8,
+      "distinct_event_ids": 8,
+      "blocked_count": 8,
+      "vm_id": "secbench-631fed04",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elie",
+      "process_operation": "exec",
+      "process_command_class": "shell",
+      "rule_id": "runtime.block-shell-bench.0c50ba9d",
+      "reason": "shell exec blocked by security benchmark"
+    },
+    "runtime_match_count": 8,
+    "runtime_last_event_id": "process-4b19ec510dba73ae",
+    "logs_exposed_security_decision": true
+  }
+}

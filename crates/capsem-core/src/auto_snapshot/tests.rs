@@ -224,6 +224,36 @@ fn workspace_hash_is_deterministic() {
     assert_eq!(h1.len(), 64); // blake3 hex
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn sparse_copy_fallback_preserves_holes() {
+    use std::io::{Seek, SeekFrom, Write};
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("rootfs.img");
+    let dst = tmp.path().join("rootfs-copy.img");
+
+    let mut file = std::fs::File::create(&src).unwrap();
+    file.write_all(b"head").unwrap();
+    file.seek(SeekFrom::Start(128 * 1024 * 1024)).unwrap();
+    file.write_all(b"tail").unwrap();
+    file.set_len(256 * 1024 * 1024).unwrap();
+    drop(file);
+
+    copy_sparse_file(&src, &dst).unwrap();
+
+    let src_meta = std::fs::metadata(&src).unwrap();
+    let dst_meta = std::fs::metadata(&dst).unwrap();
+    assert_eq!(dst_meta.len(), src_meta.len());
+    assert!(
+        dst_meta.blocks() <= src_meta.blocks() + 16,
+        "sparse fallback expanded allocation: src_blocks={}, dst_blocks={}",
+        src_meta.blocks(),
+        dst_meta.blocks()
+    );
+}
+
 #[test]
 fn workspace_hash_changes_on_modification() {
     let tmp = tempfile::tempdir().unwrap();
@@ -584,7 +614,6 @@ fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     let result = ReflinkSnapshot::try_reflink(&src_path, &dst_path).unwrap();
     // On tmpfs/ext4, FICLONE is not supported so this should be false.
     // On btrfs/xfs, it would be true. Either way, no error.
-    assert!(result == true || result == false);
     // If reflink failed, dst was cleaned up and caller does byte copy.
     if !result {
         assert!(!dst_path.exists());

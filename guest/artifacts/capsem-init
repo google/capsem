@@ -16,6 +16,7 @@ mount -t devpts   devpts   /dev/pts
 for dev in /sys/block/vd*; do
     if [ -d "$dev" ]; then
         echo none > "$dev/queue/scheduler" 2>/dev/null || true
+        echo 0 > "$dev/queue/rotational" 2>/dev/null || true
         echo 4096 > "$dev/queue/read_ahead_kb" 2>/dev/null || true
         echo 256 > "$dev/queue/nr_requests" 2>/dev/null || true
     fi
@@ -36,8 +37,36 @@ while [ ! -e /dev/console ] && [ "$_i" -lt 200 ]; do
     _i=$((_i + 1))
 done
 
-# Send all output to console so we can see what happens
-exec 0</dev/console 1>/dev/console 2>/dev/console
+# Some minimal Linux/KVM boots do not populate /dev/console in devtmpfs early
+# enough for PID 1. Create the standard console node before redirecting so init
+# logs remain visible instead of exiting on a failed redirection.
+if [ ! -e /dev/console ]; then
+    mknod -m 600 /dev/console c 5 1 2>/dev/null || true
+fi
+
+# Send all output to the concrete kernel console when possible so serial.log
+# captures PID 1 stages on both KVM (ttyS0) and Apple VZ (hvc0).
+CONSOLE_DEV=/dev/console
+if grep -q 'console=ttyS0' /proc/cmdline; then
+    if [ ! -e /dev/ttyS0 ]; then
+        mknod -m 600 /dev/ttyS0 c 4 64 2>/dev/null || true
+    fi
+    if [ -e /dev/ttyS0 ]; then
+        CONSOLE_DEV=/dev/ttyS0
+    fi
+elif grep -q 'console=hvc0' /proc/cmdline; then
+    if [ -e /dev/hvc0 ]; then
+        CONSOLE_DEV=/dev/hvc0
+    fi
+fi
+
+# If no console is available, keep PID 1 running and silent rather than
+# panicking the VM on a failed redirection.
+if [ -e "$CONSOLE_DEV" ]; then
+    exec 0<"$CONSOLE_DEV" 1>"$CONSOLE_DEV" 2>"$CONSOLE_DEV"
+else
+    exec 0</dev/null 1>/dev/null 2>/dev/null
+fi
 
 # Boot timing: record stage durations as JSONL for the PTY agent to send via vsock.
 TIMING_FILE=/tmp/capsem-boot-timing
@@ -47,6 +76,13 @@ boot_mark() {
     local now=$(boot_ms)
     printf '{"name":"%s","duration_ms":%d}\n' "$1" "$(( now - _LAST_MARK ))" >> "$TIMING_FILE"
     _LAST_MARK=$now
+}
+INIT_STAGE_FILE=""
+init_stage() {
+    echo "[capsem-init] stage: $1"
+    if [ -n "$INIT_STAGE_FILE" ]; then
+        printf '%s\n' "$1" >> "$INIT_STAGE_FILE" 2>/dev/null || true
+    fi
 }
 
 echo "[capsem-init] listing block devices..."
@@ -89,6 +125,10 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         exit 1
     }
     echo "[capsem-init] VirtioFS share mounted"
+    mkdir -p /mnt/shared/system
+    INIT_STAGE_FILE=/mnt/shared/system/capsem-init-stage.log
+    : > "$INIT_STAGE_FILE" 2>/dev/null || true
+    init_stage "virtiofs-mounted"
     boot_mark "virtiofs"
 
     # The system-overlay rootfs.img is attached as a virtio-blk device
@@ -104,6 +144,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
     fi
     SYSTEM_DEV=/dev/vdb
     mkdir -p /mnt/system
+    init_stage "system-device-ready"
 
     # Format if unformatted (first boot). Uses mke2fs from the squashfs rootfs
     # since busybox doesn't include it. Check ext4 magic (0xEF53) at offset
@@ -132,9 +173,11 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         echo "[capsem-init] FATAL: cannot mount system image -- aborting"
         exit 1
     }
+    init_stage "system-mounted"
     mkdir -p /mnt/system/upper /mnt/system/work
 
     # Stack overlayfs: squashfs (lower) + ext4 virtio-blk (upper).
+    init_stage "overlay-mount-start"
     mount -t overlay overlay \
       -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,redirect_dir=on,metacopy=on \
       /newroot || \
@@ -145,6 +188,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         exit 1
     }
     echo "[capsem-init] overlayfs mounted (virtio-blk upper /dev/vdb)"
+    init_stage "overlay-mounted"
     boot_mark "overlayfs"
 else
     # === Block mode (legacy) ===
@@ -189,6 +233,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         exit 1
     }
     echo "[capsem-init] /root bind-mounted from VirtioFS workspace"
+    init_stage "workspace-mounted"
     boot_mark "workspace"
 else
     # Block mode: scratch disk provides ~8GB of workspace.
@@ -323,20 +368,29 @@ elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
     NET_PROXY_PATH=/usr/local/bin/capsem-net-proxy
 fi
 if [ -n "$NET_PROXY_PATH" ]; then
-    chroot /newroot "$NET_PROXY_PATH" &
+    chroot /newroot sh -c "nohup '$NET_PROXY_PATH' </dev/null >/run/capsem-net-proxy.log 2>&1 &"
     # Poll for net-proxy readiness on BOTH the HTTPS (10443) and
     # plain-HTTP (10080) listen ports. T2.2 added the second.
     _i=0
+    _net_ready=0
     while [ "$_i" -lt 20 ]; do
         if chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10443 "' \
             && chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10080 "'; then
+            _net_ready=1
             break
         fi
         _i=$((_i + 1))
+        sleep 0.1
     done
+    if [ "$_net_ready" != "1" ]; then
+        echo "[capsem-init] FATAL: capsem-net-proxy did not become ready"
+        cat /newroot/run/capsem-net-proxy.log 2>/dev/null || true
+        exit 1
+    fi
     echo "[capsem-init] net-proxy started"
 else
-    echo "[capsem-init] WARNING: capsem-net-proxy not found, no proxy"
+    echo "[capsem-init] FATAL: capsem-net-proxy not found"
+    exit 1
 fi
 boot_mark "net_proxy"
 
@@ -352,20 +406,29 @@ elif [ -x /newroot/usr/local/bin/capsem-dns-proxy ]; then
     DNS_PROXY_PATH=/usr/local/bin/capsem-dns-proxy
 fi
 if [ -n "$DNS_PROXY_PATH" ]; then
-    chroot /newroot "$DNS_PROXY_PATH" &
+    chroot /newroot sh -c "nohup '$DNS_PROXY_PATH' </dev/null >/run/capsem-dns-proxy.log 2>&1 &"
     # Poll for dns-proxy readiness on UDP + TCP :1053. ss(8) shows
     # UDP listeners with `-lu` and TCP with `-ltn`; check both.
     _i=0
+    _dns_ready=0
     while [ "$_i" -lt 40 ]; do
         if chroot /newroot sh -c 'ss -lun 2>/dev/null | grep -q ":1053 "' \
             && chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":1053 "'; then
+            _dns_ready=1
             break
         fi
         _i=$((_i + 1))
+        sleep 0.1
     done
+    if [ "$_dns_ready" != "1" ]; then
+        echo "[capsem-init] FATAL: capsem-dns-proxy did not become ready"
+        cat /newroot/run/capsem-dns-proxy.log 2>/dev/null || true
+        exit 1
+    fi
     echo "[capsem-init] dns-proxy started"
 else
-    echo "[capsem-init] WARNING: capsem-dns-proxy not found, DNS will fail"
+    echo "[capsem-init] FATAL: capsem-dns-proxy not found"
+    exit 1
 fi
 boot_mark "dns_proxy"
 
@@ -457,12 +520,15 @@ export NPM_CONFIG_UPDATE_NOTIFIER=false
 export NPM_CONFIG_FUND=false
 export NPM_CONFIG_AUDIT=false
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export UV_CACHE_DIR=/var/cache/capsem/uv
 
 # Create Python virtualenv in the background so it doesn't block the PTY agent.
-# The venv is only needed when the user runs Python, not for the initial shell prompt.
+# Keep it on the guest overlay, not /root: /root is the VirtioFS workspace on
+# Linux KVM and cannot reliably execute venv interpreter copies/symlinks.
 # uv venv is ~100ms; fall back to stdlib venv if uv is missing.
-(chroot /newroot uv venv --system-site-packages /root/.venv 2>/dev/null || \
-    chroot /newroot python3 -m venv --system-site-packages /root/.venv 2>/dev/null || true
+chroot /newroot mkdir -p /var/lib/capsem /var/cache/capsem/uv
+(chroot /newroot uv venv --system-site-packages /var/lib/capsem/venv 2>/dev/null || \
+    chroot /newroot python3 -m venv --system-site-packages /var/lib/capsem/venv 2>/dev/null || true
  touch /newroot/run/capsem-venv-ready) &
 boot_mark "venv"
 
@@ -473,20 +539,31 @@ cat > /newroot/etc/profile.d/capsem.sh << 'PROFILE'
 # Prepend dirs that the host injects via BootConfig but /etc/profile drops.
 case ":$PATH:" in
     *:/opt/ai-clis/bin:*) ;;
-    *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
+    *) export PATH="/root/.local/bin:/opt/ai-clis/bin:$PATH" ;;
 esac
 # Wait briefly for background venv creation if not ready yet.
-if [ ! -f /run/capsem-venv-ready ] && [ ! -f /root/.venv/bin/activate ]; then
+if [ ! -f /run/capsem-venv-ready ] && [ ! -f /var/lib/capsem/venv/bin/activate ]; then
     _i=0
     while [ ! -f /run/capsem-venv-ready ] && [ "$_i" -lt 30 ]; do
         sleep 0.1
         _i=$((_i + 1))
     done
 fi
-if [ -f /root/.venv/bin/activate ]; then
-    . /root/.venv/bin/activate
+if [ -f /var/lib/capsem/venv/bin/activate ]; then
+    . /var/lib/capsem/venv/bin/activate
 fi
+export UV_CACHE_DIR=/var/cache/capsem/uv
 PROFILE
+
+# VirtioFS exposes workspace files with the host uid/gid while guest commands
+# run as root. Trust guest Git workspaces explicitly so `git status/config/add`
+# works in repos created under /root.
+cat > /newroot/etc/gitconfig << 'GITCONFIG'
+[safe]
+	directory = *
+[init]
+	defaultBranch = main
+GITCONFIG
 
 # Copy boot timing data into chroot for the PTY agent to send via vsock.
 boot_mark "agent_start"
@@ -520,7 +597,12 @@ else
 fi
 
 echo "[capsem-init] starting PTY agent (vsock mode)"
-chroot /newroot "$AGENT_PATH"
+init_stage "starting-agent"
+AGENT_LOG=/mnt/shared/system/capsem-agent.log
+chroot /newroot "$AGENT_PATH" > "$AGENT_LOG" 2>&1
+AGENT_STATUS=$?
+init_stage "agent-exited-$AGENT_STATUS"
+echo "[capsem-init] PTY agent exited with status $AGENT_STATUS"
 
 # If bash exits (e.g. user types 'exit'), keep PID 1 alive to prevent kernel panic.
 while true; do sleep 1; done

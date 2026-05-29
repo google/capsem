@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem_terminal_snapshot` to the Capsem MCP server so agents can
   inspect a session terminal/log surface through MCP with ANSI cleanup, grep,
   source selection, and tailing.
+- Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
+  in-VM, lifecycle, fork, and security-engine benchmark results.
 
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
@@ -47,12 +49,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Made `just benchmark` archive Rust Criterion microbenchmarks into
+  `benchmarks/security-engine/` JSON artifacts, removed superseded historical
+  benchmark JSONs, and refreshed benchmark docs so the repo only points at the
+  current canonical artifact path.
+- Extended benchmark artifacts with UTC timestamps plus richer host hardware and
+  OS metadata, and added a host-native benchmark artifact to the canonical
+  `just benchmark` path so VM performance is recorded beside the machine's
+  local disk, startup, small-file read, and metadata-stat baselines.
+- Split benchmark artifact git metadata into overall dirty state and
+  `source_dirty`, so artifacts generated earlier in the same run do not hide
+  whether the measured source tree itself was clean.
+- Standardized benchmark execution around `just benchmark`, with `just bench`
+  as an alias and no Linux-only benchmark recipe, so performance artifacts use
+  one cross-platform recording path.
+- Changed the guest rootfs build default to a configurable 128K squashfs block
+  size, improving measured CLI startup and sequential rootfs reads while
+  recording the chunk-size choice in `guest/config/build.toml`.
+- Strengthened the suspend/resume lifecycle integration test so it now proves
+  a background guest process keeps the same PID and continues writing after
+  warm resume, giving Apple VZ and KVM the same long-term state-preservation
+  contract.
+- Added Linux host doctor smoke probes for `KVM_GET_API_VERSION` and
+  `/dev/vhost-vsock` openability so bootstrap verifies usable KVM devices, not
+  just filesystem permissions.
+- Added Linux KVM doctor coverage that creates and resolves symlinks under
+  `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
+  leaving snapshot symlink restore scoped to `/root`.
 - Reduced the top-level sprint inventory to active Profile V2 work plus the
   credential detection pipeline, moving completed boards to `sprints/done/` and
   stale or superseded boards to `sprints/retired/`.
 - Inventoried sprint planning docs and moved retired Profile V2, release, and
   legacy boards under `sprints/retired/` so active release planning starts from
   `sprints/policy-settings-profiles/`.
+
+### Added
+- Added rootfs benchmark sub-metrics for large binary sequential reads, small
+  JS/package file reads, and metadata-heavy `lstat` walks so Linux/macOS rootfs
+  gaps can be attributed to data reads versus loader-style metadata pressure.
+- Added an opt-in `capsem-bench storage` diagnostic that records mount metadata
+  and splits rootfs reads from writable-path I/O across workspace, tmpfs,
+  overlay, and runtime directories for Linux/macOS performance comparisons,
+  including detailed sequential and random IOPS/latency profiles per path and
+  the booted squashfs compression/block-size, kernel cmdline, block queue, and
+  FUSE connection metadata.
+- Added Linux release-candidate benchmark artifact plumbing with arch-scoped
+  output paths, host/git metadata, optional run IDs, and gross in-VM
+  `capsem-bench` gates for disk, rootfs, CLI startup, HTTP, throughput, and
+  snapshot operations.
+- Added an in-guest `capsem-doctor` SMP diagnostic that compares `nproc` with
+  `/proc/cpuinfo` and requires at least two visible vCPUs.
+- Added live x86_64 KVM SMP boot support with synthetic ACPI RSDP/RSDT/MADT
+  tables and guest CPUID topology so Linux discovers all configured vCPUs.
+- Added x86_64 KVM checkpoint trait support for cooperative pause/resume,
+  atomic guest-memory checkpoint writes, and checkpoint restore of guest RAM
+  plus vCPU regs/sregs, with targeted vCPU kicks for blocking `KVM_RUN` pause
+  and unsupported KVM restore paths failing closed instead of silently
+  cold-booting.
+
+### Fixed
+- Refreshed local profile asset pins during dev service startup so benchmark
+  runs after `_pack-initrd` use matching initrd/rootfs hashes.
+- Expanded x86_64 KVM warm-restore groundwork by checkpointing VM interrupt
+  controller, PIT, clock, extended vCPU, Virtio-MMIO transport, and vhost-vsock
+  queue state, and by making guest snapshot preparation force a post-resume
+  vsock reconnect. The durable process-preserving KVM resume contract still
+  fails because restored guests stop making timer-driven forward progress.
+- Improved Linux KVM VirtioFS throughput by negotiating 1 MB FUSE request
+  pages and matching read-ahead when the guest kernel supports `FUSE_MAX_PAGES`,
+  with structured init logging for the negotiated FUSE limits.
+- Improved Linux KVM VirtioFS read/write handling by using positional host I/O
+  for FUSE file operations, removing an extra seek from the hot path and
+  keeping shared host file cursors stable across guest offset reads and writes.
+- Fixed Linux `capsem-process` SIGTERM handling so external process death
+  drains telemetry and exits instead of leaving the VM listed until service
+  teardown.
+- Fixed API file-upload observability by recording a synchronous `fs_events`
+  row with ambient trace context, so service-originated writes do not depend
+  solely on the polling filesystem monitor.
+- Fixed Linux fork/snapshot fallback copies to preserve sparse VM disk holes
+  when `FICLONE` is unavailable, avoiding 2 GB physical copies on filesystems
+  without reflink support.
+- Fixed full-test gate assumptions around KVM load by aligning VM-limit tests
+  with the service's default eight-VM cap and giving suspend calls enough
+  timeout budget to queue behind the host-wide save/restore lock.
+- Fixed full-test setup/gateway harness contracts so `/setup/assets` may report
+  per-asset download progress and mock terminal WebSocket teardown cannot race
+  its shutdown event under parallel pytest.
+- Fixed the local Python coverage gate to match the CI-owned 89% schema floor,
+  with a regression test that prevents local/CI coverage threshold drift.
+- Fixed serial benchmark gates for Linux KVM by separating backend-dependent
+  provision latency from steady-state exec/delete latency and cleaning transient
+  apt metadata out of the fork image-size workload.
+- Fixed the serial log gate to accept early KVM ACPI/PCI boot messages and the
+  guest banner when the log stream starts after the Linux version line.
+- Fixed `just cross-compile` so its Linux boot test installs the repacked
+  `.deb` with CLI/service companion binaries, packaged admin payload, signed
+  manifest, payload verification, and Docker vsock permissions instead of the
+  raw Tauri desktop package, with the package verifier isolated from the
+  checkout venv, frontend dependencies isolated from the host checkout, install
+  e2e Docker state isolated from host `.venv`/`node_modules` ownership, and
+  session validation accepting current `*-tmp` VM names.
+- Fixed the Linux full-test gate under current Rust by cleaning KVM, service,
+  and app clippy warnings that were promoted to errors.
+- Fixed native guest-agent rebuilds so readonly `target/linux-agent` outputs
+  are replaced atomically instead of failing with `Permission denied`.
+- Fixed host-side `capsem-pty-agent` exec tests by avoiding inaccessible
+  `/root` working directories outside the guest.
+- Fixed the PTY/vsock bridge to use nonblocking bidirectional polling with
+  bounded buffers, preventing full-duplex terminal traffic from deadlocking or
+  dropping queued bytes during peer shutdown.
+- Fixed the full test harness to put pytest and VM temporary files under
+  `target/tmp` instead of the host `/tmp` tmpfs, avoiding disk-pressure
+  cascades during the four-worker VM integration phase.
+- Fixed service settings reload isolation by pinning each service instance to
+  its startup `service.toml` path, so tests and running services do not follow
+  later `CAPSEM_HOME` environment changes.
+- Fixed Linux KVM multi-VM vsock boot by allocating a per-VM host port block
+  and passing the offset to guest agents through the kernel command line,
+  preventing concurrent VMs from racing on fixed host ports 5000-5007.
+- Fixed KVM suspend timing by giving the guest agent time to leave the
+  pre-checkpoint vsock bridge and enter its post-resume reconnect loop before
+  VM state is saved.
+- Fixed x86_64 KVM process-preserving warm resume by checkpointing VM interrupt
+  controller, PIT, clock, extended vCPU state, selected timer/paravirtual MSRs,
+  Virtio-MMIO transport state, vhost-vsock queue state, and by restoring timer
+  MSRs after LAPIC state so resumed guests keep making forward progress.
+- Added warm-restore Virtio queue reconstruction and a pre-checkpoint
+  VirtioFS quiesce hook with structured queue/IRQ telemetry so KVM checkpoints
+  do not replay pre-suspend userspace FUSE work through fresh device workers.
+- Improved x86_64 KVM checkpoint restore correctness by preserving vCPU MP
+  state and avoiding cold-boot x86 setup writes over restored guest RAM.
+- Fixed the Linux KVM full `capsem-doctor -x -v` gate, which now passes on the
+  nested-KVM proving host after the SMP, VirtioFS, runtime cache, Git trust, and
+  network proxy fixes.
+- Fixed Git workflows in Linux KVM workspaces by adding guest system Git trust
+  for VirtioFS-owned `/root` repositories, avoiding dubious-ownership failures
+  when commands run as guest root.
+- Fixed Linux KVM guest `uv pip install` by moving the uv cache off the
+  VirtioFS workspace to `/var/cache/capsem/uv`, avoiding wheel/archive symlink
+  failures under `/root/.cache/uv`.
+- Fixed Linux KVM VirtioFS symlink reads by correcting the FUSE `READLINK`
+  opcode from the `GETXATTR` slot to Linux opcode 5, which also stops xattr
+  probes from being misrouted as symlink reads.
+- Fixed Linux KVM VirtioFS rename-over-existing semantics so atomic CLI config
+  rewrites keep the moved inode bound to the target path instead of making the
+  rewritten file disappear from the guest dentry cache.
+- Fixed KVM vCPU run-loop handling so application processors continue across
+  guest HLT exits and transient `KVM_RUN` `EAGAIN` responses instead of
+  silently dropping out of the VM.
+- Fixed guest doctor readiness on Linux KVM by keeping the DNS and MITM network
+  proxies alive across init shell transitions, failing closed when either proxy
+  cannot start, and moving the Python virtualenv off the VirtioFS workspace to
+  `/var/lib/capsem/venv`.
+- Fixed the Gemini doctor wrapper lookup to use portable POSIX `command -v`
+  instead of a shell-specific `type -P`.
+- Fixed Linux developer bootstrap so fresh hosts install the C toolchain,
+  Node/npm, and sqlite before cargo tool setup, and so pnpm is pinned to the
+  lockfile-compatible 10.x installer path instead of picking up stale pnpm 11
+  shims.
+- Fixed `doctor --fix` VM asset setup to build the host architecture instead
+  of requiring cross-architecture Docker emulation during first setup.
+- Fixed KVM pure-logic regressions by correcting the vhost-vsock vring ioctl
+  size and tightening VirtioFS namespace path handling.
 
 ## [1.2.1779673506] - 2026-05-24
 

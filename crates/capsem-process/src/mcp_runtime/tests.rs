@@ -1009,13 +1009,43 @@ fn load_runtime_policy_state_builds_guest_boot_contract_from_v2_effective_settin
             .unwrap_or(false),
         "PATH must include /opt/ai-clis/bin for npm-installed AI CLIs"
     );
+    assert_eq!(
+        env.get("VIRTUAL_ENV").map(String::as_str),
+        Some("/var/lib/capsem/venv")
+    );
+    assert_eq!(
+        env.get("UV_CACHE_DIR").map(String::as_str),
+        Some("/var/cache/capsem/uv"),
+        "uv cache must stay off the VirtioFS workspace"
+    );
     assert!(
         env.get("PATH")
             .map(|path| {
-                let mut entries = path.split(':');
-                matches!(entries.next(), Some("/root/.local/bin"))
+                path.split(':')
+                    .any(|entry| entry == "/var/lib/capsem/venv/bin")
             })
             .unwrap_or(false),
+        "PATH must include /var/lib/capsem/venv/bin for non-interactive Python workflows"
+    );
+    let path_entries = env
+        .get("PATH")
+        .map(|path| path.split(':').collect::<Vec<_>>())
+        .unwrap_or_default();
+    assert_eq!(
+        path_entries.first().copied(),
+        Some("/var/lib/capsem/venv/bin"),
+        "PATH must prefer the Python venv"
+    );
+    let root_local = path_entries
+        .iter()
+        .position(|entry| *entry == "/root/.local/bin")
+        .expect("PATH must include /root/.local/bin");
+    let opt_ai = path_entries
+        .iter()
+        .position(|entry| *entry == "/opt/ai-clis/bin")
+        .expect("PATH must include /opt/ai-clis/bin");
+    assert!(
+        root_local < opt_ai,
         "PATH must prefer /root/.local/bin so Capsem wrappers win in non-interactive exec"
     );
     assert_eq!(

@@ -6,9 +6,12 @@ sidebar:
 ---
 
 Reference results from local benchmark artifacts. Guest measurements come from
-`capsem-bench` 0.3.0; lifecycle and fork measurements are host-side benchmark
-runs. Security Engine artifacts were refreshed on 2026-05-23. Numbers vary
-with host load, network path, and cache state.
+`capsem-bench` 0.3.0; lifecycle, fork, host-native, Criterion, and
+VM-originated Security Engine measurements are host-side benchmark artifacts.
+The current Linux artifact set was refreshed on 2026-05-29 with
+`just benchmark`. Numbers vary with host load, network path, and cache state.
+Performance runs should be recorded with `just benchmark` so artifacts include
+architecture, host metadata, git commit, and an optional stable run id.
 
 ## Boot time
 
@@ -36,12 +39,12 @@ Scratch disk performance on the VirtioFS-backed workspace (`/root`). Test size: 
 
 | Test | Throughput | IOPS | Duration |
 |------|-----------|------|----------|
-| Sequential write (1MB blocks) | 1,854 MB/s | - | 138ms |
-| Sequential read (1MB blocks) | 3,754 MB/s | - | 68ms |
-| Random 4K write (fdatasync) | 33 MB/s | 8,353 | 1,197ms |
-| Random 4K read | 279 MB/s | 71,440 | 140ms |
+| Sequential write (1MB blocks) | 156.9 MB/s | - | 1,631.6ms |
+| Sequential read (1MB blocks) | 352.8 MB/s | - | 725.5ms |
+| Random 4K write (fdatasync) | 10.8 MB/s | 2,777 | 3,601.1ms |
+| Random 4K read | 29.1 MB/s | 7,440 | 1,344.2ms |
 
-Sequential I/O benefits from VirtioFS pass-through to APFS. Random write IOPS are limited by per-write `fdatasync` -- this reflects the worst case for database-style workloads.
+Sequential I/O reflects the active host filesystem and hypervisor backend. Random write IOPS are limited by per-write `fdatasync` -- this reflects the worst case for database-style workloads.
 
 ## Rootfs reads
 
@@ -49,8 +52,11 @@ Read-only squashfs rootfs where binaries and libraries live.
 
 | Test | Detail | Throughput | IOPS | Duration |
 |------|--------|-----------|------|----------|
-| Sequential read (1MB) | codex binary (193MB) | 693 MB/s | - | 266ms |
-| Random 4K read | 2,588 files sampled | 38 MB/s | 9,783 | 511ms |
+| Sequential read (1MB) | Claude binary (228.5MB) | 189.1 MB/s | - | 1,208.6ms |
+| Random 4K read | 2,612 files sampled | 6.3 MB/s | 1,620 | 3,086.0ms |
+| Large binary cold reads | 3 binaries, 668.8MB total | 188.1 MB/s | - | 3,556.6ms |
+| Small JS/package reads | 113 files sampled | 671.0 MB/s | 79,606 ops/s | 62.8ms |
+| Metadata stat walk | 6,573 entries | - | 42,384 stats/s | 155.1ms |
 
 Squashfs decompression adds overhead compared to the scratch disk. Random reads across many small files show the cost of decompression + inode lookup on a compressed filesystem.
 
@@ -60,11 +66,11 @@ Wall-clock time to run `<cli> --version` with page cache dropped (3 runs, best/m
 
 | CLI | Min | Mean | Max |
 |-----|-----|------|-----|
-| python3 | 7ms | 9ms | 11ms |
-| node | 126ms | 128ms | 132ms |
-| claude | 335ms | 337ms | 340ms |
-| gemini | 594ms | 599ms | 605ms |
-| codex | 293ms | 293ms | 293ms |
+| python3 | 31.1ms | 36.6ms | 47.1ms |
+| node | 295.7ms | 298.1ms | 299.6ms |
+| claude | 1,287.4ms | 1,388.7ms | 1,439.6ms |
+| gemini | 2,976.6ms | 3,092.2ms | 3,279.6ms |
+| codex | 817.1ms | 835.6ms | 872.5ms |
 
 Python starts near-instantly. Node-based CLIs and native agent CLIs generally start in the low hundreds of milliseconds.
 
@@ -75,17 +81,17 @@ Python starts near-instantly. Node-based CLIs and native agent CLIs generally st
 | Metric | Value |
 |--------|-------|
 | Requests | 50/50 |
-| Requests/sec | 19.6 |
+| Requests/sec | 61.4 |
 | Transfer | 3.8MB |
-| Total duration | 2,557ms |
+| Total duration | 814.2ms |
 
 | Latency percentile | Value |
 |--------------------|-------|
-| min | 107ms |
-| p50 | 162ms |
-| p95 | 659ms |
-| p99 | 713ms |
-| max | 732ms |
+| min | 47.4ms |
+| p50 | 54.3ms |
+| p95 | 281.5ms |
+| p99 | 287.0ms |
+| max | 290.0ms |
 
 Latency includes the full path: guest -> net-proxy -> vsock -> host MITM proxy -> TLS termination -> internet -> re-encryption -> response. The tail mostly reflects upstream internet latency and TLS/session setup.
 
@@ -96,44 +102,44 @@ Reference file download through the MITM proxy.
 | Metric | Value |
 |--------|-------|
 | Downloaded | 9.98MB |
-| Duration | 4.56s |
-| Throughput | 2.09 MB/s |
+| Duration | 0.532s |
+| Throughput | 17.89 MB/s |
 
 This is the sustained bandwidth ceiling for the proxy pipeline (TLS termination + body inspection + re-encryption). Actual throughput varies with internet connection speed.
 
 ## Snapshot operations
 
-End-to-end latency for snapshot operations via the guest MCP endpoint at 3 workspace sizes. Each operation is a full round-trip: guest CLI -> framed vsock -> host endpoint -> APFS filesystem -> response.
+End-to-end latency for snapshot operations via the guest MCP endpoint at 3 workspace sizes. Each operation is a full round-trip: guest CLI -> framed vsock -> host endpoint -> host filesystem -> response.
 
 ### 10 files
 
 | Operation | Latency |
 |-----------|---------|
-| create | 1,217ms |
-| list | 514ms |
-| changes | 463ms |
-| revert | 457ms |
-| delete | 444ms |
+| create | 2,945.6ms |
+| list | 935.2ms |
+| changes | 934.1ms |
+| revert | 933.5ms |
+| delete | 945.3ms |
 
 ### 100 files
 
 | Operation | Latency |
 |-----------|---------|
-| create | 507ms |
-| list | 463ms |
-| changes | 439ms |
-| revert | 417ms |
-| delete | 370ms |
+| create | 1,052.9ms |
+| list | 946.4ms |
+| changes | 946.7ms |
+| revert | 943.5ms |
+| delete | 974.2ms |
 
 ### 500 files
 
 | Operation | Latency |
 |-----------|---------|
-| create | 377ms |
-| list | 372ms |
-| changes | 402ms |
-| revert | 420ms |
-| delete | 430ms |
+| create | 1,030.6ms |
+| list | 957.8ms |
+| changes | 995.8ms |
+| revert | 956.4ms |
+| delete | 980.3ms |
 
 The 10-file `create` is slower than 100/500 because it includes the first MCP handshake (JSON-RPC initialize). Subsequent operations reuse the connection. List and changes scale modestly with file count. The host gateway-side latency is typically 3-20ms -- the rest is vsock + MCP protocol overhead.
 
@@ -143,11 +149,11 @@ Host-side latency for individual VM operations. Measured over 3 provision/exec/d
 
 | Operation | Min | Mean | Max | Description |
 |-----------|-----|------|-----|-------------|
-| provision | 895ms | 931ms | 951ms | Create and boot a temporary VM |
-| exec_ready | 11.5ms | 12.1ms | 12.9ms | First ready check after provisioning |
-| exec | 10.7ms | 10.9ms | 11.3ms | Simple `echo ok` on running VM |
-| delete | 60.1ms | 60.6ms | 61.5ms | VM teardown request |
-| **total** | **980ms** | **1,015ms** | **1,033ms** | |
+| provision | 2,238.2ms | 2,240.3ms | 2,243.4ms | Create and boot a temporary VM |
+| exec_ready | 23.3ms | 25.0ms | 28.3ms | First ready check after provisioning |
+| exec | 23.0ms | 23.7ms | 24.2ms | Simple `echo ok` on running VM |
+| delete | 166.8ms | 167.2ms | 167.5ms | VM teardown request |
+| **total** | **2,454.2ms** | **2,456.2ms** | **2,457.3ms** | |
 
 Provision includes the boot path, so it carries the bulk of lifecycle latency. Exec and ready checks are low-latency once the VM is running.
 
@@ -159,12 +165,12 @@ Host-side latency for fork (image creation) and boot-from-image. Measured over 3
 
 | Metric | Min | Mean | Max | Gate | Description |
 |--------|-----|------|-----|------|-------------|
-| fork | 83ms | 88ms | 93ms | 500ms | APFS clonefile of rootfs overlay + workspace |
-| image_size | 7.5MB | 7.5MB | 7.5MB | 16MB | Actual disk (blocks), not logical sparse size |
-| boot_provision | 744ms | 747ms | 752ms | 1,200ms | Clone image into new session + boot |
-| boot_ready | 11ms | 11ms | 12ms | 1,200ms | First ready check after provisioning |
+| fork | 114.6ms | 115.1ms | 115.4ms | 500ms | Reflink/sparse-preserving copy of rootfs overlay + workspace |
+| image_size | 91.8MB | 101.1MB | 105.8MB | 128MB | Actual disk (blocks), not logical sparse size |
+| boot_provision | 1,485.6ms | 1,514.1ms | 1,529.4ms | 1,200ms | Clone image into new session + boot |
+| boot_ready | 26.1ms | 29.8ms | 35.3ms | 1,200ms | First ready check after provisioning |
 
-Fork is fast because APFS `clonefile()` is copy-on-write -- no actual data copying. Image size reports actual allocated blocks, not the logical 2GB sparse file size. Both rootfs overlay changes (installed packages) and workspace files (`/root/`) survive fork.
+Fork is fast because the backend uses copy-on-write or sparse-preserving copy paths where available. Image size reports actual allocated blocks, not the logical sparse file size. Both rootfs overlay changes (installed packages) and workspace files (`/root/`) survive fork.
 
 **Regression gates**: fork < 500ms, image < 16MB, packages + workspace must survive every run.
 
@@ -172,10 +178,10 @@ Run: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_b
 
 ## Security Engine CEL microbench (host-side)
 
-First S08d host-side microbenchmark artifact:
-`benchmarks/security-engine/data_1.1.1778860037_arm64_cel_microbench.json`.
+Current host-side microbenchmark artifact:
+`benchmarks/security-engine/data_1.2.1779673506_x86_64_cel_microbench.json`.
 Detection IR parse/lowering artifact:
-`benchmarks/security-engine/data_1.1.1778860037_arm64_security_packs_microbench.json`.
+`benchmarks/security-engine/data_1.2.1779673506_x86_64_security_packs_microbench.json`.
 
 These are Rust Criterion microbenchmarks for canonical policy-context CEL paths
 and Detection IR pack parsing/lowering. They are not VM-originated benchmarks
@@ -183,41 +189,40 @@ and should not be used as end-to-end latency claims.
 
 | Benchmark | Slope |
 |-----------|-------|
-| Compile `http.request.host.contains("google")` | 8.7us |
-| Compile full HTTP policy | 39.8us |
-| Evaluate `http.request.host.contains("google")` | 14.3us |
-| Evaluate `http.request.header("authorization").exists()` | 16.1us |
-| Evaluate full HTTP policy | 22.9us |
-| Evaluate full HTTP policy as last match across 100 rules | 1.28ms |
-| Detection finding for full HTTP policy | 23.2us |
-| Detection finding as last match across 100 rules | 1.27ms |
-| Dedupe 100 backtest rows / 100 unique signatures | 19.4us |
-| Dedupe 1,000 backtest rows / 100 unique signatures | 160.9us |
-| Runtime registry install/update of one rule | 145ns |
-| Runtime registry projection of 100 enabled rules | 7.5us |
-| Runtime projection and compile of 100 enforcement rules | 307.7us |
-| Runtime projection and compile of 100 detection rules | 312.9us |
-| Rebuild engine from 100 enforcement and 100 detection rules | 628.5us |
-| Update one existing rule and rebuild 100-rule plan | 355.3us |
-| Project `SecurityEvent` to `PolicyContext` | 538ns |
-| Project and serialize `PolicyContext` | 2.6us |
-| Native Rust lookup for equivalent HTTP policy | 12ns |
-| Parse and validate Detection IR Google-secret fixture | 122.6us |
-| Lower Detection IR Google-secret fixture to CEL rules | 1.1us |
-| Lower 100 Detection IR HTTP rules to CEL rules | 96.6us |
-| Lower and compile 100 Detection IR HTTP rules | 2.8ms |
+| Compile `http.request.host.contains("google")` | 18.1us |
+| Compile full HTTP policy | 109.0us |
+| Evaluate `http.request.host.contains("google")` | 39.8us |
+| Evaluate `http.request.header("authorization").exists()` | 46.8us |
+| Evaluate full HTTP policy | 66.1us |
+| Evaluate full HTTP policy as last match across 100 rules | 3.47ms |
+| Detection finding for full HTTP policy | 66.5us |
+| Detection finding as last match across 100 rules | 3.46ms |
+| Dedupe 100 backtest rows / 100 unique signatures | 67.1us |
+| Dedupe 1,000 backtest rows / 100 unique signatures | 584.4us |
+| Runtime registry install/update of one rule | 202.6ns |
+| Runtime registry projection of 100 enabled rules | 23.6us |
+| Runtime projection and compile of 100 enforcement rules | 512.3us |
+| Runtime projection and compile of 100 detection rules | 534.4us |
+| Rebuild engine from 100 enforcement and 100 detection rules | 1.05ms |
+| Update one existing rule and rebuild 100-rule plan | 688.8us |
+| Project `SecurityEvent` to `PolicyContext` | 903.1ns |
+| Project and serialize `PolicyContext` | 6.8us |
+| Native Rust lookup for equivalent HTTP policy | 40.4ns |
+| Parse and validate Detection IR Google-secret fixture | 409.9us |
+| Lower Detection IR Google-secret fixture to CEL rules | 1.5us |
+| Lower 100 Detection IR HTTP rules to CEL rules | 190.2us |
+| Lower and compile 100 Detection IR HTTP rules | 7.2ms |
 
 Run:
 
 ```bash
-cargo bench -p capsem-security-engine --bench security_engine_cel
-cargo bench -p capsem-core --bench security_packs
+just benchmark
 ```
 
 ## Security Engine process enforcement (VM-originated)
 
-First S08d VM-originated benchmark artifact:
-`benchmarks/security-engine/data_1.1.1778860037_arm64_process_enforcement.json`.
+Current VM-originated benchmark artifact:
+`benchmarks/security-engine/data_1.2.1779673506_x86_64_process_enforcement.json`.
 
 This host-side serial benchmark runs a live service and VM, installs a runtime
 CEL rule that blocks shell process exec, sends eight blocked exec requests, and
@@ -228,12 +233,12 @@ events, and `logs` exposure.
 |--------|-------|
 | Runs | 8 |
 | Gate | 750ms mean |
-| Min blocked exec latency | 8.925ms |
-| Mean blocked exec latency | 9.356ms |
-| Median blocked exec latency | 9.265ms |
-| p95 blocked exec latency | 9.992ms |
-| p99 blocked exec latency | 9.992ms |
-| Max blocked exec latency | 9.992ms |
+| Min blocked exec latency | 13.758ms |
+| Mean blocked exec latency | 14.308ms |
+| Median blocked exec latency | 14.329ms |
+| p95 blocked exec latency | 14.759ms |
+| p99 blocked exec latency | 14.759ms |
+| Max blocked exec latency | 14.759ms |
 | Runtime matches | 8 |
 | Session DB security events | 8 |
 
@@ -245,8 +250,8 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 
 ## Security Engine HTTP request enforcement (VM-originated)
 
-First S08d network-transport benchmark artifact:
-`benchmarks/security-engine/data_1.1.1778860037_arm64_http_request_enforcement.json`.
+Current network-transport benchmark artifact:
+`benchmarks/security-engine/data_1.2.1779673506_x86_64_http_request_enforcement.json`.
 
 This host-side serial benchmark runs a live service and VM, installs a runtime
 CEL rule that blocks a specific HTTPS request before upstream dispatch, warms
@@ -269,22 +274,15 @@ is below 1ms on this run.
 | Runs | 8 |
 | Warmup runs | 1 |
 | Gate | 1,000ms mean |
-| Mean wall-clock blocked request | 9.091ms |
-| Median wall-clock blocked request | 8.149ms |
-| p95 wall-clock blocked request | 12.672ms |
-| Mean `time_starttransfer` | 3.997ms |
-| Median `time_starttransfer` | 3.939ms |
-| p95 `time_starttransfer` | 4.525ms |
-| Mean DNS | 0.911ms |
-| Mean TCP connect after DNS | 0.238ms |
-| Mean TLS appconnect | 2.145ms |
-| Mean server first byte after pretransfer | 0.683ms |
-| Mean response tail after first byte | 0.015ms |
-| Mean keep-alive first byte | 0.549ms |
-| Median keep-alive first byte | 0.462ms |
-| p95 keep-alive first byte | 1.041ms |
-| Mean keep-alive total response | 0.556ms |
-| Keep-alive TLS handshake | 1.560ms |
+| Mean wall-clock blocked request | 19.220ms |
+| Median wall-clock blocked request | 18.751ms |
+| p95 wall-clock blocked request | 22.104ms |
+| Mean `time_starttransfer` | 9.523ms |
+| Median `time_starttransfer` | 9.217ms |
+| p95 `time_starttransfer` | 11.818ms |
+| Mean DNS | 2.615ms |
+| Mean TCP connect | 2.718ms |
+| Mean TLS appconnect | 7.675ms |
 | Runtime matches | 17 |
 | Session DB security events | 17 |
 
@@ -296,8 +294,8 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_http_r
 
 ## Security Engine DNS request enforcement (VM-originated)
 
-First S08d DNS-transport benchmark artifact:
-`benchmarks/security-engine/data_1.1.1778860037_arm64_dns_request_enforcement.json`.
+Current DNS-transport benchmark artifact:
+`benchmarks/security-engine/data_1.2.1779673506_x86_64_dns_request_enforcement.json`.
 
 This host-side serial benchmark runs a live service and VM, installs a runtime
 CEL rule that blocks one DNS qname, triggers repeated guest resolver lookups,
@@ -309,12 +307,12 @@ attribution.
 |--------|-------|
 | Runs | 8 |
 | Gate | 1,000ms mean |
-| Min blocked DNS lookup | 0.611ms |
-| Mean blocked DNS lookup | 1.109ms |
-| Median blocked DNS lookup | 0.830ms |
-| p95 blocked DNS lookup | 3.508ms |
-| p99 blocked DNS lookup | 3.508ms |
-| Max blocked DNS lookup | 3.508ms |
+| Min blocked DNS lookup | 1.221ms |
+| Mean blocked DNS lookup | 2.305ms |
+| Median blocked DNS lookup | 1.566ms |
+| p95 blocked DNS lookup | 7.655ms |
+| p99 blocked DNS lookup | 7.655ms |
+| Max blocked DNS lookup | 7.655ms |
 | Runtime matches | 16 |
 | Session DB security events | 16 |
 | Session DB DNS events | 16 |
@@ -327,8 +325,8 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_dns_re
 
 ## Security Engine MCP request enforcement (VM-originated)
 
-First S08d framed-MCP benchmark artifact:
-`benchmarks/security-engine/data_1.1.1778860037_arm64_mcp_request_enforcement.json`.
+Current framed-MCP benchmark artifact:
+`benchmarks/security-engine/data_1.2.1779673506_x86_64_mcp_request_enforcement.json`.
 
 This host-side serial benchmark runs a live service and VM, installs a runtime
 CEL rule that blocks the guest `local__echo` MCP tool, sends repeated
@@ -340,12 +338,12 @@ denial, runtime match counters, canonical `session.db` security events,
 |--------|-------|
 | Runs | 8 |
 | Gate | 1,000ms mean |
-| Min blocked MCP request | 0.222ms |
-| Mean blocked MCP request | 0.312ms |
-| Median blocked MCP request | 0.264ms |
-| p95 blocked MCP request | 0.543ms |
-| p99 blocked MCP request | 0.543ms |
-| Max blocked MCP request | 0.543ms |
+| Min blocked MCP request | 0.846ms |
+| Mean blocked MCP request | 1.173ms |
+| Median blocked MCP request | 1.026ms |
+| p95 blocked MCP request | 2.270ms |
+| p99 blocked MCP request | 2.270ms |
+| Max blocked MCP request | 2.270ms |
 | Runtime matches | 8 |
 | Session DB security events | 8 |
 | Session DB MCP calls | 8 |
@@ -360,17 +358,23 @@ uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_mcp_re
 
 | Component | Version |
 |-----------|---------|
-| Host | Apple Silicon macOS local benchmark host |
-| Capsem | 1.0 benchmark artifact |
+| Host | Linux x86_64, Intel Xeon @ 2.80GHz, 16 logical CPUs, 62.79GB RAM |
+| Capsem | 1.2.1779673506 benchmark artifact |
 | Guest kernel | Linux 6.x (custom allnoconfig) |
-| Storage | VirtioFS mode (APFS backing) |
+| Storage | KVM/VirtioFS workspace, ext4 host backing |
 | Python | 3.x (rootfs) |
 | Node | v22.x (rootfs) |
 
 ## Reproducing
 
 ```bash
-just bench    # Run all benchmarks (~2 min)
+just benchmark
+
+# Optional named artifact run
+CAPSEM_BENCHMARK_RUN_ID=rc1 just benchmark
 ```
 
-Results are displayed as rich tables in the terminal. JSON output is saved to `/tmp/capsem-benchmark.json` inside the VM.
+Results are displayed as rich tables in the terminal. JSON output is saved to
+`/tmp/capsem-benchmark.json` inside the VM and archived under `benchmarks/`.
+Set `CAPSEM_BENCHMARK_OUTPUT_DIR` to write artifacts somewhere else during
+exploratory runs.

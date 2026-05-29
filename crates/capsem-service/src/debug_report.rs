@@ -775,10 +775,8 @@ fn disk_path_report(path: &Path) -> DiskPathReport {
             DiskPathReport {
                 path: redact_path_for_report(path),
                 exists,
-                total_bytes: Some(u64::from(stat.blocks()).saturating_mul(fragment_size)),
-                available_bytes: Some(
-                    u64::from(stat.blocks_available()).saturating_mul(fragment_size),
-                ),
+                total_bytes: Some(stat.blocks().saturating_mul(fragment_size)),
+                available_bytes: Some(stat.blocks_available().saturating_mul(fragment_size)),
                 error: None,
             }
         }
