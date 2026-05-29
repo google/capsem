@@ -129,6 +129,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `capsem-tui` help and modal handling by accepting both `Alt+?` and
   `Alt+/`, rendering overlays through Ratatui modal widgets, and resending the
   active terminal geometry whenever the real terminal size changes.
+- Fixed `capsem-tui` modal input ownership so `Esc` closes non-confirmation
+  overlays, visible modals consume normal keys, and plain VM input resumes
+  forwarding as soon as the modal closes.
+- Fixed `capsem-tui` tab colors so the selected VM is yellow and every other
+  VM tab is blue, removing the previous gray/attention color ambiguity.
 - Fixed macOS release builds of the service debug report by widening filesystem
   block counts before computing disk byte totals.
 - Fixed macOS release builds of `capsem-process` shutdown handling by returning

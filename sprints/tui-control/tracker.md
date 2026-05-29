@@ -105,11 +105,17 @@
   `Alt+1..9` jumps by tab number. `Alt+n/r/s/t/d`, `Alt+q`, `Alt+?`/`Alt+/`,
   `Alt+i`, and `Alt+o` cover shell actions, exit, help, stats, and session
   list.
+- Tab colors now use one semantic: selected is yellow, every other VM tab is
+  blue. Bell/attention state keeps its text marker but no longer changes the
+  tab color.
 - Interactive terminal resize now tracks the active session and geometry
   together, so a pure terminal resize resends the guest PTY size even when the
   selected VM did not change.
 - Help, stats, sessions, and confirmation overlays now use Ratatui `Clear` and
   bordered modal blocks instead of drawing loose text over terminal output.
+- Help, stats, and sessions are real modals: `Esc` closes them, visible modals
+  consume normal keys, and plain VM input forwards again immediately after
+  close. Key-release events are ignored in the interactive loop.
 - `just dev-tui` documents the same Alt-only shell contract inline so local
   playback and installed usage do not drift.
 - MCP triage for `tui-proof-a` found no session-level failures. Host triage
@@ -118,7 +124,7 @@
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (21 tests).
+- Unit/contract: `cargo test -p capsem-tui` (23 tests).
 - Formatting: `cargo fmt -p capsem-tui -- --check`.
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
   `cargo run -p capsem-tui -- --fixture --snapshot --width 120 --height 30`;

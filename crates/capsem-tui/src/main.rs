@@ -12,7 +12,7 @@ use capsem_tui::provider::StateProvider;
 use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalSurface};
 use capsem_tui::ui::{render_app, render_snapshot, render_svg_snapshot};
 use clap::Parser;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -254,6 +254,7 @@ fn handle_terminal_event(
     control_bridge: Option<&ControlBridge>,
 ) -> Result<bool> {
     match event {
+        Event::Key(key) if matches!(key.kind, KeyEventKind::Release) => {}
         Event::Key(key) => match app.handle_key(key) {
             AppAction::Exit => return Ok(true),
             AppAction::Consumed => {}

@@ -1,11 +1,12 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::{Color, Modifier};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::app::{App, AppAction, AppOverlay, ControlAction};
 use crate::fixture::fixture_state;
 use crate::gateway_provider::{state_from_status_json_for_test, GatewayProvider};
 use crate::model::{Attention, ServiceStatus, SessionLifecycle};
-use crate::ui::{render_app_snapshot, render_snapshot};
+use crate::ui::{render_app_snapshot, render_snapshot, render_test_buffer};
 
 #[test]
 fn fixture_models_global_service_state_and_session_indicators() {
@@ -42,6 +43,31 @@ fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     assert!(
         !snapshot.contains("? help"),
         "help belongs in a popup, not persistent chrome"
+    );
+}
+
+#[test]
+fn tab_colors_use_selected_yellow_and_unselected_blue_only() {
+    let buffer = render_test_buffer(&fixture_state(), 100, 24).expect("render buffer");
+    let row = buffer.area.height - 1;
+    let selected_number = find_cell_x(&buffer, row, "1  profile-v2");
+    let selected_label = selected_number + 3;
+    let other_number = find_cell_x(&buffer, row, "2  linux-os!");
+    let other_label = other_number + 3;
+
+    assert_eq!(buffer_cell(&buffer, selected_number, row).bg, yellow());
+    assert_eq!(buffer_cell(&buffer, selected_label, row).fg, yellow());
+    assert!(buffer_cell(&buffer, selected_number, row)
+        .modifier
+        .contains(Modifier::BOLD));
+
+    assert_eq!(buffer_cell(&buffer, other_number, row).bg, blue());
+    assert_eq!(buffer_cell(&buffer, other_label, row).fg, blue());
+    assert!(
+        !buffer_cell(&buffer, other_label, row)
+            .modifier
+            .contains(Modifier::BOLD),
+        "only the selected tab label should be bold"
     );
 }
 
@@ -157,6 +183,32 @@ fn function_keys_toggle_hidden_overlays() {
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::None);
+}
+
+#[test]
+fn esc_closes_modal_overlays_and_restores_vm_input() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('/'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Help);
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('x'), KeyModifiers::NONE)),
+        AppAction::Consumed,
+        "modal overlays should own keys while visible"
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('x'), KeyModifiers::NONE)),
+        AppAction::Forward,
+        "plain VM input must forward after the modal closes"
+    );
 }
 
 #[test]
@@ -426,6 +478,30 @@ async fn gateway_provider_surfaces_action_error_body() {
 
 fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
+}
+
+fn find_cell_x(buffer: &ratatui::buffer::Buffer, row: u16, needle: &str) -> u16 {
+    let width = buffer.area.width as usize;
+    let row_start = row as usize * width;
+    let line = buffer.content()[row_start..row_start + width]
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    let byte_index = line.find(needle).expect("needle in rendered row");
+    line[..byte_index].chars().count() as u16
+}
+
+fn buffer_cell(buffer: &ratatui::buffer::Buffer, x: u16, y: u16) -> &ratatui::buffer::Cell {
+    let width = buffer.area.width as usize;
+    &buffer.content()[y as usize * width + x as usize]
+}
+
+fn yellow() -> Color {
+    Color::Rgb(249, 226, 175)
+}
+
+fn blue() -> Color {
+    Color::Rgb(137, 180, 250)
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {

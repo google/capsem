@@ -83,6 +83,11 @@ fn render_buffer(state: &AppState, width: u16, height: u16) -> Result<Buffer> {
     Ok(terminal.backend().buffer().clone())
 }
 
+#[cfg(test)]
+pub(crate) fn render_test_buffer(state: &AppState, width: u16, height: u16) -> Result<Buffer> {
+    render_buffer(state, width, height)
+}
+
 fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     let service = &state.service;
     let active_index = state
@@ -427,7 +432,7 @@ fn push_tab(
     max_width: usize,
     used: &mut usize,
 ) -> bool {
-    let tone = TabTone::from_session(session, active);
+    let tone = TabTone::from_active(active);
     let number = format!(" {} ", index + 1);
     let label = format!(
         " {}{} ",
@@ -506,27 +511,23 @@ fn stats_style() -> Style {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TabTone {
-    Active,
-    Attention,
-    Normal,
+    Selected,
+    Unselected,
 }
 
 impl TabTone {
-    fn from_session(session: &SessionSummary, active: bool) -> Self {
+    const fn from_active(active: bool) -> Self {
         if active {
-            Self::Active
-        } else if session.attention.is_empty() {
-            Self::Normal
+            Self::Selected
         } else {
-            Self::Attention
+            Self::Unselected
         }
     }
 
     const fn color(self) -> Color {
         match self {
-            Self::Active => ACTIVE,
-            Self::Attention => ATTENTION,
-            Self::Normal => MUTED,
+            Self::Selected => ATTENTION,
+            Self::Unselected => ACTIVE,
         }
     }
 }

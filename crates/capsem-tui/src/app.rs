@@ -119,6 +119,12 @@ impl App {
         if self.handle_overlay_key(key) {
             return AppAction::Consumed;
         }
+        if self.overlay != AppOverlay::None {
+            if key.code == KeyCode::Esc {
+                self.overlay = AppOverlay::None;
+            }
+            return AppAction::Consumed;
+        }
         if let Some(action) = self.control_action_for_key(key) {
             self.pending_action = Some(action);
             self.overlay = AppOverlay::Confirm;
