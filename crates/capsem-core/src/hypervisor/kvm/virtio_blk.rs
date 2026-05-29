@@ -504,7 +504,7 @@ impl VirtioDevice for VirtioBlockDevice {
                     descriptors = descs.len(),
                     "virtio-blk descriptor chain too short"
                 );
-                queue.push_used(chain.head, 0);
+                queue.push_used_deferred(chain.head, 0);
                 continue;
             }
 
@@ -517,7 +517,7 @@ impl VirtioDevice for VirtioBlockDevice {
                     descriptors = descs.len(),
                     "virtio-blk request header descriptor was write-only"
                 );
-                queue.push_used(chain.head, 0);
+                queue.push_used_deferred(chain.head, 0);
                 continue;
             }
 
@@ -531,7 +531,7 @@ impl VirtioDevice for VirtioBlockDevice {
                         header_len = header_desc.len,
                         "virtio-blk request header could not be parsed"
                     );
-                    queue.push_used(chain.head, 0);
+                    queue.push_used_deferred(chain.head, 0);
                     continue;
                 }
             };
@@ -547,7 +547,7 @@ impl VirtioDevice for VirtioBlockDevice {
                     status_write_only = status_desc.is_write_only(),
                     "virtio-blk status descriptor was invalid"
                 );
-                queue.push_used(chain.head, 0);
+                queue.push_used_deferred(chain.head, 0);
                 continue;
             }
 
@@ -585,7 +585,11 @@ impl VirtioDevice for VirtioBlockDevice {
             } else {
                 1
             };
-            queue.push_used(chain.head, used_len);
+            queue.push_used_deferred(chain.head, used_len);
+        }
+
+        if processed > 0 {
+            queue.flush_used();
         }
 
         self.queue = Some(queue);
