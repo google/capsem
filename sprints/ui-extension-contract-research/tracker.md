@@ -36,11 +36,15 @@
   objects, whether the chosen runtime is ArrowJS, a lighter Svelte-like runtime,
   or a Capsem-authored micro renderer.
 - Findings written in `docs/ui-extension-contract-research.md`.
+- Decision memo written in `docs/ui-extension-design-memo.md` because the
+  research summary alone was not enough to make the architecture tradeoffs
+  explicit.
 
 ## Coverage Ledger
 
 - Primary source: VS Code source/API, VS Code samples, Obsidian API/sample/docs.
 - Comparative analysis: recorded in `docs/ui-extension-contract-research.md`.
+- Decision analysis: recorded in `docs/ui-extension-design-memo.md`.
 - Prototype impact: recommends manifest `contributes`, structured chat parts,
   one `UiContribution` object family, MIME-style chat renderers, sandboxed
   side-panel webviews, `postMessage`, `getState`/`setState`, and
