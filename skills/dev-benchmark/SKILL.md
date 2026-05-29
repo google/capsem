@@ -215,6 +215,11 @@ compiled-plan rebuilds, policy-context projection/materialization, 100-rule
 last-match paths, and native lookup comparators. The `capsem-core` security-pack
 harness measures Detection IR V1 JSON parse/validate, Detection IR to CEL
 detection-rule lowering, and lower-plus-compile costs.
+`just benchmark` archives both Criterion harnesses from
+`target/criterion/**/new/{benchmark,estimates}.json` into
+`benchmarks/security-engine/data_{version}_{arch}_cel_microbench.json` and
+`benchmarks/security-engine/data_{version}_{arch}_security_packs_microbench.json`;
+do not rely on terminal output as the durable record.
 
 Profiles VM-originated Security Engine enforcement through real service,
 process, and network transport paths. This is outside the guest via pytest, not

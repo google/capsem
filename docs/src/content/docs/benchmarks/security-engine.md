@@ -16,7 +16,7 @@ VM-originated latency numbers as proof of CEL expression speed.
 | CEL microbench | `cargo bench -p capsem-security-engine --bench security_engine_cel` | compile/evaluate cost, rule-count scaling, policy context projection, dedupe cost. |
 | Detection pack microbench | `cargo bench -p capsem-core --bench security_packs` | Detection IR parse/lowering and pack compile cost. |
 | VM-originated serial path | `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs` | real service + VM + transport + telemetry/log/status path. |
-| Full benchmark gate | `just benchmark` | standard artifact-recording suite across in-VM, lifecycle/fork/parallel, and Security Engine lanes. |
+| Full benchmark gate | `just benchmark` | standard artifact-recording suite across host-native, in-VM, lifecycle/fork/parallel, Criterion, and VM-originated Security Engine lanes. |
 
 ## What To Record
 
@@ -31,6 +31,10 @@ Every artifact must name:
 - decision type: allow, ask, block, rewrite, detect;
 - latency percentiles or Criterion slope;
 - artifact path under `benchmarks/security-engine/`.
+
+Criterion artifacts are archived automatically by `just benchmark` from
+`target/criterion/**/new/{benchmark,estimates}.json`; do not copy terminal
+output by hand.
 
 ## VM-Originated Path
 

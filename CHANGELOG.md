@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a current Profile V2 sprint snapshot and reconciled the active board so
   S18 is the explicit release gate while S09, S11, S16, and S19 are marked
   closed for the bedrock release.
+- Made `just benchmark` archive Rust Criterion microbenchmarks into
+  `benchmarks/security-engine/` JSON artifacts, removed superseded historical
+  benchmark JSONs, and refreshed benchmark docs so the repo only points at the
+  current canonical artifact path.
 - Extended benchmark artifacts with UTC timestamps plus richer host hardware and
   OS metadata, and added a host-native benchmark artifact to the canonical
   `just benchmark` path so VM performance is recorded beside the machine's

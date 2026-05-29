@@ -158,9 +158,10 @@ operations, compiled-plan rebuild cost, policy-context projection/
 materialization, 100-rule last-match evaluation, Detection IR parse/lowering,
 and a native Rust lookup comparator for the same HTTP policy. These numbers
 explain runtime hot-path and rule-pack costs; they do not replace
-VM-originated benchmark artifacts. Committed host-side artifacts live under
-`benchmarks/security-engine/`. The `just benchmark` recipe runs both Criterion
-harnesses before the VM-originated security benchmark.
+VM-originated benchmark artifacts. `just benchmark` runs both Criterion
+harnesses, archives their `target/criterion` estimates as JSON under
+`benchmarks/security-engine/`, and then runs the VM-originated security
+benchmark.
 
 ### Security Engine VM-originated benchmarks
 
