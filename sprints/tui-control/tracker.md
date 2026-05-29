@@ -21,6 +21,9 @@
   current tool surface.
 - T00 snapshot at 100x24 confirms the basic layout and also shows light-bar
   clipping pressure for long repo/session metadata.
+- Product correction after visual review: removed boxes and persistent help,
+  moved global service latency plus cumulative session status into the single
+  bottom bar, and kept tabs as a compact sliding strip.
 
 ## Coverage Ledger
 

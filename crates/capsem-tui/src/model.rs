@@ -102,8 +102,9 @@ impl Attention {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionStats {
+    pub duration: Duration,
     pub jobs: u16,
     pub events: u32,
-    pub cpu_percent: u8,
-    pub memory_mb: u32,
+    pub tokens: u64,
+    pub cost_micros: u64,
 }

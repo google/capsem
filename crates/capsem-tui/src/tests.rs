@@ -22,9 +22,17 @@ fn fixture_models_global_service_state_and_session_indicators() {
 fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
-    assert!(snapshot.contains("svc=online latency=18ms"));
+    assert!(snapshot.contains("● 18ms [w/r/i 1/1/1] [terminals 3]"));
     assert!(snapshot.contains("Profile V2"));
-    assert!(snapshot.contains("Linux OS !"));
-    assert!(snapshot.contains("repo: github.com/google/capsem"));
-    assert!(snapshot.contains("< > switch desktop"));
+    assert!(snapshot.contains("w!:Linux OS"));
+    assert!(snapshot.contains("github.com/google/capsem"));
+    assert!(snapshot.contains("duration=47m tokens=38.4k cost=$0.21"));
+    assert!(
+        !snapshot.contains("┌"),
+        "minimal UI should not render boxes"
+    );
+    assert!(
+        !snapshot.contains("? help"),
+        "help belongs in a popup, not persistent chrome"
+    );
 }

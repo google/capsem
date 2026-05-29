@@ -36,10 +36,11 @@ pub fn fixture_state() -> AppState {
                 lifecycle: SessionLifecycle::Working,
                 attention: Vec::new(),
                 stats: SessionStats {
+                    duration: Duration::from_secs(47 * 60),
                     jobs: 2,
                     events: 148,
-                    cpu_percent: 18,
-                    memory_mb: 768,
+                    tokens: 38_420,
+                    cost_micros: 214_000,
                 },
             },
             SessionSummary {
@@ -51,10 +52,11 @@ pub fn fixture_state() -> AppState {
                 lifecycle: SessionLifecycle::WaitingForInput,
                 attention: vec![Attention::Bell],
                 stats: SessionStats {
+                    duration: Duration::from_secs(2 * 60 * 60 + 11 * 60),
                     jobs: 1,
                     events: 62,
-                    cpu_percent: 4,
-                    memory_mb: 512,
+                    tokens: 12_900,
+                    cost_micros: 76_000,
                 },
             },
             SessionSummary {
@@ -66,10 +68,11 @@ pub fn fixture_state() -> AppState {
                 lifecycle: SessionLifecycle::Suspended,
                 attention: vec![Attention::ApprovalRequired, Attention::StaleData],
                 stats: SessionStats {
+                    duration: Duration::from_secs(19 * 60),
                     jobs: 0,
                     events: 311,
-                    cpu_percent: 0,
-                    memory_mb: 256,
+                    tokens: 91_250,
+                    cost_micros: 488_000,
                 },
             },
         ],

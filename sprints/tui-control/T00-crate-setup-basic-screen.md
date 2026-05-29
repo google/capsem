@@ -36,6 +36,8 @@ Create `crates/capsem-tui` as a Rust binary/library crate with:
 - `cargo test -p capsem-tui` passes.
 - `cargo run -p capsem-tui -- --snapshot` prints a stable standalone screen.
 - `cargo run -p capsem-tui` opens an interactive fixture demo.
+- The screen uses minimal chrome: no boxes, no persistent help footer, a compact
+  tab strip, quiet terminal space, and one bottom status bar.
 
 ## Coverage Ledger
 
