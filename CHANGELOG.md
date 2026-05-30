@@ -22,9 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages, and basic ANSI cleanup for the Ratatui surface.
 - Added hidden `capsem-tui` overlays for help, active-session statistics, and
   the session list so the normal terminal surface stays minimal.
-- Added confirmed `capsem-tui` service actions for creating, resuming,
-  suspending, stopping, and deleting sessions through the installed HTTP
-  gateway without blocking the terminal UI.
+- Added confirmed `capsem-tui` service actions for resuming, suspending,
+  stopping, and deleting sessions through the installed HTTP gateway without
+  blocking the terminal UI.
+- Added a profile-aware `capsem-tui` new-session dialog with an editable
+  prefilled `tmp-*` session name and live profile selection before
+  provisioning.
 - Added `capsem-tui` to local install/package payloads so the TUI is available
   from `~/.capsem/bin/capsem-tui` after installation.
 - Added `capsem_terminal_snapshot` to the Capsem MCP server so agents can

@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::model::{
-    AppState, Attention, ServiceState, ServiceStatus, SessionLifecycle, SessionStats,
-    SessionSummary,
+    AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle,
+    SessionStats, SessionSummary,
 };
 use crate::provider::StateProvider;
 
@@ -27,6 +27,20 @@ pub fn fixture_state() -> AppState {
             control_message: None,
         },
         active_session_id: "profile-v2".to_string(),
+        profiles: vec![
+            ProfileOption {
+                id: "corp-default".to_string(),
+                name: "Corp Default".to_string(),
+                description: Some("default profile".to_string()),
+                is_default: true,
+            },
+            ProfileOption {
+                id: "linux-builder".to_string(),
+                name: "Linux Builder".to_string(),
+                description: Some("kernel and distro work".to_string()),
+                is_default: false,
+            },
+        ],
         sessions: vec![
             SessionSummary {
                 id: "profile-v2".to_string(),

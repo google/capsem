@@ -7,8 +7,8 @@ use serde::Deserialize;
 
 use crate::app::ControlAction;
 use crate::model::{
-    AppState, Attention, ServiceState, ServiceStatus, SessionLifecycle, SessionStats,
-    SessionSummary,
+    AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle,
+    SessionStats, SessionSummary,
 };
 use crate::provider::StateProvider;
 
@@ -78,7 +78,9 @@ impl GatewayProvider {
         let token = self.token().await?;
         let started = Instant::now();
         let status = fetch_status(&self.client, &self.base_url, &token).await?;
-        Ok(status_response_to_state(status, started.elapsed()))
+        let mut state = status_response_to_state(status, started.elapsed());
+        state.profiles = self.profile_options(&token, &state).await;
+        Ok(state)
     }
 
     pub fn invoke(&self, action: &ControlAction) -> Result<ActionOutcome> {
@@ -92,6 +94,13 @@ impl GatewayProvider {
     pub async fn invoke_async(&self, action: &ControlAction) -> Result<ActionOutcome> {
         let token = self.token().await?;
         invoke_action(&self.client, &self.base_url, &token, action).await
+    }
+
+    async fn profile_options(&self, token: &str, state: &AppState) -> Vec<ProfileOption> {
+        match fetch_profiles(&self.client, &self.base_url, token).await {
+            Ok(profiles) if !profiles.is_empty() => profiles,
+            _ => profiles_from_sessions(state),
+        }
     }
 }
 
@@ -138,6 +147,25 @@ async fn fetch_status(
         .context("parse capsem gateway status response")
 }
 
+async fn fetch_profiles(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+) -> Result<Vec<ProfileOption>> {
+    let response: ProfilesResponse = client
+        .get(format!("{base_url}/profiles"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("fetch capsem gateway profiles")?
+        .error_for_status()
+        .context("capsem gateway profiles request failed")?
+        .json()
+        .await
+        .context("parse capsem gateway profiles response")?;
+    Ok(response.into_options())
+}
+
 fn gateway_port() -> Option<u16> {
     let path = run_dir().join("gateway.port");
     let raw = std::fs::read_to_string(path).ok()?;
@@ -177,7 +205,36 @@ fn status_response_to_state(status: StatusResponse, latency: Duration) -> AppSta
         },
         active_session_id,
         sessions,
+        profiles: Vec::new(),
     }
+}
+
+fn profiles_from_sessions(state: &AppState) -> Vec<ProfileOption> {
+    let mut profiles = Vec::new();
+    for session in &state.sessions {
+        if session.profile.is_empty()
+            || profiles
+                .iter()
+                .any(|profile: &ProfileOption| profile.id == session.profile)
+        {
+            continue;
+        }
+        profiles.push(ProfileOption {
+            id: session.profile.clone(),
+            name: session.profile.clone(),
+            description: None,
+            is_default: profiles.is_empty(),
+        });
+    }
+    if profiles.is_empty() {
+        profiles.push(ProfileOption {
+            id: "default".to_string(),
+            name: "default".to_string(),
+            description: None,
+            is_default: true,
+        });
+    }
+    profiles
 }
 
 fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
@@ -273,11 +330,15 @@ async fn invoke_action(
     action: &ControlAction,
 ) -> Result<ActionOutcome> {
     match action {
-        ControlAction::CreateEphemeral => {
+        ControlAction::CreateSession { name, profile_id } => {
             let response = client
                 .post(join_url(base_url, &["provision"])?)
                 .bearer_auth(token)
-                .json(&serde_json::json!({ "persistent": false }))
+                .json(&serde_json::json!({
+                    "name": name,
+                    "persistent": true,
+                    "profile_id": profile_id,
+                }))
                 .send()
                 .await
                 .context("create capsem session")?;
@@ -403,6 +464,48 @@ struct VmSummary {
     denied_requests: Option<u64>,
     #[serde(default)]
     total_file_events: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfilesResponse {
+    #[serde(default)]
+    default_profile: Option<String>,
+    #[serde(default)]
+    profiles: Vec<ProfileRecordResponse>,
+}
+
+impl ProfilesResponse {
+    fn into_options(self) -> Vec<ProfileOption> {
+        let default = self.default_profile.unwrap_or_default();
+        self.profiles
+            .into_iter()
+            .filter_map(|record| {
+                let id = record.profile.id?;
+                let name = record.profile.name.unwrap_or_else(|| id.clone());
+                Some(ProfileOption {
+                    is_default: id == default,
+                    id,
+                    name,
+                    description: record.profile.best_for,
+                })
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileRecordResponse {
+    profile: ProfileResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileResponse {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    best_for: Option<String>,
 }
 
 #[cfg(test)]

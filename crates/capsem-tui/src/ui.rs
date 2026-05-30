@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
 use ratatui::{Frame, Terminal};
 
-use crate::app::{App, AppOverlay, ControlAction};
+use crate::app::{App, AppOverlay, ControlAction, CreateDraft};
 use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
 use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
 
@@ -30,7 +30,7 @@ pub fn render_with_terminal(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
 ) {
-    render_layout(frame, state, terminal, AppOverlay::None, None);
+    render_layout(frame, state, terminal, AppOverlay::None, None, None);
 }
 
 pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSurface>) {
@@ -40,6 +40,7 @@ pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSu
         terminal,
         app.overlay(),
         app.pending_action(),
+        app.create_draft(),
     );
 }
 
@@ -49,6 +50,7 @@ fn render_layout(
     terminal: Option<&TerminalSurface>,
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
+    create_draft: Option<&CreateDraft>,
 ) {
     let root = frame.area();
     let chunks = Layout::default()
@@ -58,7 +60,14 @@ fn render_layout(
 
     render_terminal_surface(frame, chunks[0], state, terminal);
     render_status_bar(frame, state, chunks[1]);
-    render_overlay(frame, chunks[0], state, overlay, pending_action);
+    render_overlay(
+        frame,
+        chunks[0],
+        state,
+        overlay,
+        pending_action,
+        create_draft,
+    );
 }
 
 pub fn render_snapshot(state: &AppState, width: u16, height: u16) -> Result<String> {
@@ -290,6 +299,7 @@ fn render_overlay(
     state: &AppState,
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
+    create_draft: Option<&CreateDraft>,
 ) {
     if overlay == AppOverlay::None {
         return;
@@ -300,6 +310,7 @@ fn render_overlay(
         AppOverlay::Help => " help ",
         AppOverlay::Stats => " stats ",
         AppOverlay::Home => " sessions ",
+        AppOverlay::Create => " new session ",
         AppOverlay::Confirm => " confirm ",
         AppOverlay::None => "",
     };
@@ -314,6 +325,7 @@ fn render_overlay(
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
         AppOverlay::Home => home_lines(state),
+        AppOverlay::Create => create_lines(state, create_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
     };
@@ -343,6 +355,9 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Help => 10,
         AppOverlay::Stats => 10,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
+        AppOverlay::Create => (state.profiles.len() as u16)
+            .saturating_add(8)
+            .clamp(10, 18),
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
     }
@@ -371,6 +386,42 @@ fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
         overlay_pair("target", action.target()),
         overlay_line("Enter confirms; Esc cancels"),
     ]
+}
+
+fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
+    let mut lines = vec![overlay_title("new session")];
+    let name = draft
+        .map(|draft| draft.name.as_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(" ");
+    lines.push(overlay_pair("name", name));
+    lines.push(overlay_line("type to edit; Backspace deletes"));
+    lines.push(overlay_line(
+        "Up/Down selects profile; Enter creates; Esc cancels",
+    ));
+    lines.push(overlay_line(""));
+    lines.push(overlay_title("profiles"));
+
+    if state.profiles.is_empty() {
+        lines.push(overlay_line("* default"));
+        return lines;
+    }
+
+    let selected = draft
+        .map(|draft| draft.selected_profile)
+        .unwrap_or_default()
+        .min(state.profiles.len().saturating_sub(1));
+    for (index, profile) in state.profiles.iter().take(8).enumerate() {
+        let marker = if index == selected { "*" } else { " " };
+        let default = if profile.is_default { " default" } else { "" };
+        lines.push(overlay_line(&format!(
+            "{marker} {}  {}{}",
+            truncate(&profile.id, 20),
+            truncate(&profile.name, 22),
+            default
+        )));
+    }
+    lines
 }
 
 fn stats_lines(state: &AppState) -> Vec<Line<'static>> {

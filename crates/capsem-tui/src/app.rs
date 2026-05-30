@@ -17,12 +17,13 @@ pub enum AppOverlay {
     Help,
     Stats,
     Home,
+    Create,
     Confirm,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
-    CreateEphemeral,
+    CreateSession { name: String, profile_id: String },
     Resume { name: String },
     Suspend { id: String },
     Stop { id: String },
@@ -32,7 +33,7 @@ pub enum ControlAction {
 impl ControlAction {
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::CreateEphemeral => "create",
+            Self::CreateSession { .. } => "create",
             Self::Resume { .. } => "resume",
             Self::Suspend { .. } => "suspend",
             Self::Stop { .. } => "stop",
@@ -42,7 +43,7 @@ impl ControlAction {
 
     pub fn target(&self) -> &str {
         match self {
-            Self::CreateEphemeral => "new ephemeral session",
+            Self::CreateSession { name, .. } => name,
             Self::Resume { name }
             | Self::Suspend { id: name }
             | Self::Stop { id: name }
@@ -57,6 +58,13 @@ pub struct App {
     active_index: usize,
     overlay: AppOverlay,
     pending_action: Option<ControlAction>,
+    create_draft: Option<CreateDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateDraft {
+    pub name: String,
+    pub selected_profile: usize,
 }
 
 impl App {
@@ -71,6 +79,7 @@ impl App {
             active_index,
             overlay: AppOverlay::None,
             pending_action: None,
+            create_draft: None,
         }
     }
 
@@ -84,6 +93,10 @@ impl App {
 
     pub fn pending_action(&self) -> Option<&ControlAction> {
         self.pending_action.as_ref()
+    }
+
+    pub fn create_draft(&self) -> Option<&CreateDraft> {
+        self.create_draft.as_ref()
     }
 
     pub fn replace_state(&mut self, mut state: AppState) {
@@ -116,6 +129,9 @@ impl App {
         if let Some(action) = self.handle_pending_action_key(key) {
             return action;
         }
+        if self.overlay == AppOverlay::Create {
+            return self.handle_create_key(key);
+        }
         if self.handle_overlay_key(key) {
             return AppAction::Consumed;
         }
@@ -123,6 +139,10 @@ impl App {
             if key.code == KeyCode::Esc {
                 self.overlay = AppOverlay::None;
             }
+            return AppAction::Consumed;
+        }
+        if is_new_key(key) {
+            self.open_create();
             return AppAction::Consumed;
         }
         if let Some(action) = self.control_action_for_key(key) {
@@ -201,6 +221,7 @@ impl App {
             next
         };
         self.pending_action = None;
+        self.create_draft = None;
         true
     }
 
@@ -226,7 +247,6 @@ impl App {
             return None;
         }
         match key.code {
-            KeyCode::Char('n' | 'N') => Some(ControlAction::CreateEphemeral),
             KeyCode::Char('r' | 'R') => self.active_resume_action(),
             KeyCode::Char('s' | 'S') => self.active_suspend_action(),
             KeyCode::Char('t' | 'T') => self.active_id().map(|id| ControlAction::Stop { id }),
@@ -263,6 +283,70 @@ impl App {
             .active_session()
             .map(|session| session.id.clone())
     }
+
+    fn open_create(&mut self) {
+        self.pending_action = None;
+        self.create_draft = Some(CreateDraft {
+            name: next_tmp_name(&self.state),
+            selected_profile: default_profile_index(&self.state),
+        });
+        self.overlay = AppOverlay::Create;
+    }
+
+    fn handle_create_key(&mut self, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.create_draft = None;
+                self.overlay = AppOverlay::None;
+                AppAction::Consumed
+            }
+            KeyCode::Enter => {
+                let Some(draft) = self.create_draft.clone() else {
+                    self.overlay = AppOverlay::None;
+                    return AppAction::Consumed;
+                };
+                let name = draft.name.trim().to_string();
+                if name.is_empty() {
+                    return AppAction::Consumed;
+                }
+                let profile_id = selected_profile_id(&self.state, draft.selected_profile);
+                self.create_draft = None;
+                self.overlay = AppOverlay::None;
+                AppAction::Invoke(ControlAction::CreateSession { name, profile_id })
+            }
+            KeyCode::Up => {
+                if let Some(draft) = &mut self.create_draft {
+                    draft.selected_profile = draft.selected_profile.saturating_sub(1);
+                }
+                AppAction::Consumed
+            }
+            KeyCode::Down => {
+                let max_index = self.state.profiles.len().saturating_sub(1);
+                if let Some(draft) = &mut self.create_draft {
+                    draft.selected_profile =
+                        draft.selected_profile.saturating_add(1).min(max_index);
+                }
+                AppAction::Consumed
+            }
+            KeyCode::Backspace => {
+                if let Some(draft) = &mut self.create_draft {
+                    draft.name.pop();
+                }
+                AppAction::Consumed
+            }
+            KeyCode::Char(ch)
+                if !key.modifiers.intersects(
+                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                ) =>
+            {
+                if let Some(draft) = &mut self.create_draft {
+                    draft.name.push(ch);
+                }
+                AppAction::Consumed
+            }
+            _ => AppAction::Consumed,
+        }
+    }
 }
 
 fn is_exit_key(key: KeyEvent) -> bool {
@@ -280,8 +364,39 @@ fn is_next_key(key: KeyEvent) -> bool {
     is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Right)
 }
 
+fn is_new_key(key: KeyEvent) -> bool {
+    is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Char('n' | 'N'))
+}
+
 fn is_alt_key(modifiers: KeyModifiers) -> bool {
     modifiers.contains(KeyModifiers::ALT)
+}
+
+fn default_profile_index(state: &AppState) -> usize {
+    state
+        .profiles
+        .iter()
+        .position(|profile| profile.is_default)
+        .unwrap_or_default()
+}
+
+fn selected_profile_id(state: &AppState, index: usize) -> String {
+    state
+        .profiles
+        .get(index)
+        .or_else(|| state.profiles.first())
+        .map(|profile| profile.id.clone())
+        .unwrap_or_else(|| "default".to_string())
+}
+
+fn next_tmp_name(state: &AppState) -> String {
+    for index in 1..1000 {
+        let candidate = format!("tmp-{index}");
+        if state.sessions.iter().all(|session| session.id != candidate) {
+            return candidate;
+        }
+    }
+    "tmp".to_string()
 }
 
 fn select_index(key: KeyEvent) -> Option<usize> {

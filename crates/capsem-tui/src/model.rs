@@ -5,6 +5,7 @@ pub struct AppState {
     pub service: ServiceState,
     pub active_session_id: String,
     pub sessions: Vec<SessionSummary>,
+    pub profiles: Vec<ProfileOption>,
 }
 
 impl AppState {
@@ -13,6 +14,14 @@ impl AppState {
             .iter()
             .find(|session| session.id == self.active_session_id)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProfileOption {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub is_default: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

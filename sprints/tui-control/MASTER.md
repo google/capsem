@@ -127,6 +127,10 @@ attention markers.
   to stopped VM sockets.
 - Added a far-left `help: alt+s` hint before service latency/status so suspend
   is discoverable without adding back the old full-width help strip.
+- Corrected `Alt+n` from one-key ephemeral provisioning into a profile-aware
+  new-session modal. The flow pre-fills the next unused `tmp-*` name, supports
+  typing/backspace, lets Up/Down choose a live `/profiles` entry, and sends a
+  named persistent `/provision` request with the selected `profile_id`.
 
 ## Testing Gate
 
@@ -150,3 +154,6 @@ attention markers.
   blank pane.
 - UI polish: `cargo test -p capsem-tui` and snapshot output cover the far-left
   `help: alt+s` status-bar hint.
+- New-session regression: `cargo test -p capsem-tui` covers create-modal
+  rendering, profile selection, name editing, and authenticated named-profile
+  provision request payloads.

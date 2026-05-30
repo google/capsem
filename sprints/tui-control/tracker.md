@@ -154,14 +154,21 @@
 - Discoverability polish: the persistent status segment now starts with
   `help: alt+s` before service latency/status. The full command list remains
   in the help overlay.
+- New-session flow correction: `Alt+n` now opens a `new session` modal instead
+  of immediately provisioning an ephemeral VM. The modal pre-fills the name as
+  the next unused `tmp-*`, lets the user type a name, lets Up/Down choose from
+  the live `/profiles` list, and provisions a named persistent session with
+  the selected `profile_id`.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (27 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (29 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
-  far-left `help: alt+s` status-bar hint.
-- TUI latency/provider: `cargo test -p capsem-tui` (27 tests), including
-  token reuse and raw local latency preservation coverage.
+  far-left `help: alt+s` status-bar hint, plus the create modal profile/name
+  flow.
+- TUI latency/provider: `cargo test -p capsem-tui` (29 tests), including
+  token reuse, live profile-list refresh, and raw local latency preservation
+  coverage.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Service/core/logger hot paths: `cargo test -p capsem-service`,
@@ -179,7 +186,8 @@
 - Gateway wiring: `GatewayProvider::load_async` authenticated HTTP mock test
   plus live local snapshot through the installed gateway.
 - Service actions: confirmed action key tests plus authenticated mock gateway
-  tests for successful stop and surfaced service error bodies.
+  tests for successful stop, named profile create, and surfaced service error
+  bodies.
 - Terminal wiring: `TerminalSurface` output, xterm color/style preservation,
   adjacent output coalescing, and key-encoding tests.
 - MCP wiring: `capsem_terminal_snapshot` router registration and rendering

@@ -176,8 +176,7 @@ fn shell_commands_are_alt_owned() {
         app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
-    assert_eq!(app.overlay(), AppOverlay::Confirm);
-    assert_eq!(app.pending_action(), Some(&ControlAction::CreateEphemeral));
+    assert_eq!(app.overlay(), AppOverlay::Create);
 
     assert_eq!(
         app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE)),
@@ -192,6 +191,41 @@ fn shell_commands_are_alt_owned() {
         app.pending_action(),
         Some(&ControlAction::Stop {
             id: "profile-v2".to_string()
+        })
+    );
+}
+
+#[test]
+fn create_overlay_selects_profile_and_edits_prefilled_name() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render create dialog");
+    assert!(snapshot.contains("new session"));
+    assert!(snapshot.contains("name"));
+    assert!(snapshot.contains("tmp-1"));
+    assert!(snapshot.contains("corp-default"));
+    assert!(snapshot.contains("linux-builder"));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Down, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    for ch in ['-', 'p', 'r', 'o', 'o', 'f'] {
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char(ch), KeyModifiers::NONE)),
+            AppAction::Consumed
+        );
+    }
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::CreateSession {
+            name: "tmp-1-proof".to_string(),
+            profile_id: "linux-builder".to_string()
         })
     );
 }
@@ -467,12 +501,16 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
     let server = tokio::spawn(async move {
         let mut token_requests = 0;
         let mut status_requests = 0;
-        for _ in 0..3 {
+        let mut profile_requests = 0;
+        for _ in 0..5 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
                 token_requests += 1;
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else if request.contains("GET /profiles ") {
+                profile_requests += 1;
+                write_json_response(&mut stream, gateway_profiles_body()).await;
             } else {
                 status_requests += 1;
                 assert!(
@@ -489,11 +527,18 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         }
         assert_eq!(token_requests, 1, "token should be cached across refreshes");
         assert_eq!(status_requests, 2);
+        assert_eq!(
+            profile_requests, 2,
+            "profile list should stay live across refreshes"
+        );
     });
 
     let provider = GatewayProvider::new(format!("http://{addr}"));
     provider.load_async().await.expect("initial load");
-    provider.load_async().await.expect("refresh load");
+    let refreshed = provider.load_async().await.expect("refresh load");
+    assert_eq!(refreshed.profiles.len(), 2);
+    assert_eq!(refreshed.profiles[0].id, "corp-default");
+    assert!(refreshed.profiles[0].is_default);
 
     server.await.expect("server task");
 }
@@ -533,6 +578,43 @@ async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
         .expect("invoke stop");
 
     assert_eq!(outcome.message, "stopped vm-1");
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_invokes_named_profile_create_over_authenticated_gateway() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /provision "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(request.contains(r#""name":"tmp-1-proof""#));
+                assert!(request.contains(r#""persistent":true"#));
+                assert!(request.contains(r#""profile_id":"linux-builder""#));
+                write_json_response(&mut stream, r#"{"id":"tmp-1-proof"}"#).await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::CreateSession {
+            name: "tmp-1-proof".to_string(),
+            profile_id: "linux-builder".to_string(),
+        })
+        .await
+        .expect("invoke create");
+
+    assert_eq!(outcome.message, "created tmp-1-proof");
     server.await.expect("server task");
 }
 
@@ -620,6 +702,29 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
             break;
         }
     }
+    let header_end = request
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .unwrap_or(request.len());
+    let headers = String::from_utf8_lossy(&request[..header_end]);
+    let content_length = headers
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .or_else(|| {
+            headers
+                .lines()
+                .find_map(|line| line.strip_prefix("Content-Length:"))
+        })
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or_default();
+    while request.len().saturating_sub(header_end) < content_length {
+        let bytes_read = stream.read(&mut buffer).await.expect("read request body");
+        if bytes_read == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..bytes_read]);
+    }
     String::from_utf8_lossy(&request).into_owned()
 }
 
@@ -672,6 +777,31 @@ fn gateway_status_body() -> &'static str {
                 "total_output_tokens": 2900,
                 "total_estimated_cost": 0.076,
                 "denied_requests": 1
+            }
+        ]
+    }"#
+}
+
+fn gateway_profiles_body() -> &'static str {
+    r#"{
+        "mode": "settings_profiles_v2",
+        "default_profile": "corp-default",
+        "profiles": [
+            {
+                "profile": {
+                    "id": "corp-default",
+                    "name": "Corp Default",
+                    "best_for": "default profile"
+                },
+                "source": "corp"
+            },
+            {
+                "profile": {
+                    "id": "linux-builder",
+                    "name": "Linux Builder",
+                    "best_for": "kernel and distro work"
+                },
+                "source": "user"
             }
         ]
     }"#
