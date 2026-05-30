@@ -188,6 +188,94 @@ impl QueueState {
         }
     }
 
+    fn config(&self, warm_restore: bool, event_idx: bool) -> QueueConfig {
+        QueueConfig {
+            desc_addr: self.desc_addr(),
+            driver_addr: self.driver_addr(),
+            device_addr: self.device_addr(),
+            size: self.num,
+            warm_restore,
+            event_idx,
+        }
+    }
+
+    fn validate(
+        &self,
+        queue_index: usize,
+        max_size: u16,
+        mem: &GuestMemoryRef,
+    ) -> Result<(), String> {
+        if !self.ready {
+            return Ok(());
+        }
+        if self.num == 0 || !self.num.is_power_of_two() || self.num > max_size {
+            return Err(format!(
+                "queue {queue_index} invalid size: num={}, max={max_size}",
+                self.num
+            ));
+        }
+        if self.desc_addr() % 16 != 0 {
+            return Err(format!(
+                "queue {queue_index} descriptor table is not 16-byte aligned: {:#x}",
+                self.desc_addr()
+            ));
+        }
+        if self.driver_addr() % 2 != 0 {
+            return Err(format!(
+                "queue {queue_index} available ring is not 2-byte aligned: {:#x}",
+                self.driver_addr()
+            ));
+        }
+        if self.device_addr() % 4 != 0 {
+            return Err(format!(
+                "queue {queue_index} used ring is not 4-byte aligned: {:#x}",
+                self.device_addr()
+            ));
+        }
+
+        let size = self.num as u64;
+        let desc_len = size
+            .checked_mul(16)
+            .ok_or_else(|| format!("queue {queue_index} descriptor table length overflow"))?;
+        let avail_len = size
+            .checked_mul(2)
+            .and_then(|ring_len| 4_u64.checked_add(ring_len))
+            .and_then(|base_len| base_len.checked_add(2))
+            .ok_or_else(|| format!("queue {queue_index} available ring length overflow"))?;
+        let used_len = size
+            .checked_mul(8)
+            .and_then(|ring_len| 4_u64.checked_add(ring_len))
+            .and_then(|base_len| base_len.checked_add(2))
+            .ok_or_else(|| format!("queue {queue_index} used ring length overflow"))?;
+
+        if mem.gpa_range_to_host(self.desc_addr(), desc_len).is_none() {
+            return Err(format!(
+                "queue {queue_index} descriptor table is outside guest RAM: addr={:#x}, len={desc_len}",
+                self.desc_addr()
+            ));
+        }
+        if mem
+            .gpa_range_to_host(self.driver_addr(), avail_len)
+            .is_none()
+        {
+            return Err(format!(
+                "queue {queue_index} available ring is outside guest RAM: addr={:#x}, len={avail_len}",
+                self.driver_addr()
+            ));
+        }
+        if mem
+            .gpa_range_to_host(self.device_addr(), used_len)
+            .is_none()
+        {
+            return Err(format!(
+                "queue {queue_index} used ring is outside guest RAM: addr={:#x}, len={used_len}",
+                self.device_addr()
+            ));
+        }
+
+        Ok(())
+    }
+
     fn restore(snapshot: &QueueSnapshot) -> Self {
         Self {
             num: snapshot.num,
@@ -200,6 +288,21 @@ impl QueueState {
             device_hi: snapshot.device_hi,
         }
     }
+}
+
+fn validate_ready_queues(
+    queues: &[QueueState],
+    max_sizes: &[u16],
+    mem: &GuestMemoryRef,
+) -> Result<(), String> {
+    for (index, queue) in queues.iter().enumerate() {
+        let max_size = max_sizes
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("queue {index} has no device maximum"))?;
+        queue.validate(index, max_size, mem)?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -326,18 +429,14 @@ impl VirtioMmioTransport {
         state.activated = snapshot.activated;
 
         if state.activated {
+            validate_ready_queues(&state.queues, state.device.queue_max_sizes(), &state.mem)
+                .map_err(|err| anyhow::anyhow!("invalid restored virtio queue: {err}"))?;
             let mem = state.mem.clone();
+            let event_idx = snapshot.driver_features & VIRTIO_RING_F_EVENT_IDX != 0;
             let queue_configs: Vec<QueueConfig> = state
                 .queues
                 .iter()
-                .map(|q| QueueConfig {
-                    desc_addr: q.desc_addr(),
-                    driver_addr: q.driver_addr(),
-                    device_addr: q.device_addr(),
-                    size: q.num,
-                    warm_restore: true,
-                    event_idx: snapshot.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
-                })
+                .map(|q| q.config(true, event_idx))
                 .collect();
             state.device.activate(mem, &queue_configs);
             tracing::info!(
@@ -527,19 +626,27 @@ impl MmioDevice for VirtioMmioTransport {
                 );
                 // Check if DRIVER_OK was just set
                 if val & STATUS_DRIVER_OK != 0 && !state.activated {
+                    if let Err(error) = validate_ready_queues(
+                        &state.queues,
+                        state.device.queue_max_sizes(),
+                        &state.mem,
+                    ) {
+                        state.status |= STATUS_FAILED;
+                        tracing::warn!(
+                            event_name = "virtio.mmio.activate_failed",
+                            device_type,
+                            error,
+                            "virtio-mmio device activation rejected invalid queue configuration"
+                        );
+                        return;
+                    }
                     state.activated = true;
                     let mem = state.mem.clone();
+                    let event_idx = state.driver_features & VIRTIO_RING_F_EVENT_IDX != 0;
                     let queue_configs: Vec<QueueConfig> = state
                         .queues
                         .iter()
-                        .map(|q| QueueConfig {
-                            desc_addr: q.desc_addr(),
-                            driver_addr: q.driver_addr(),
-                            device_addr: q.device_addr(),
-                            size: q.num,
-                            warm_restore: false,
-                            event_idx: state.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
-                        })
+                        .map(|q| q.config(false, event_idx))
                         .collect();
                     state.device.activate(mem, &queue_configs);
                     tracing::info!(
@@ -665,7 +772,7 @@ mod tests {
         std::sync::Arc<std::sync::atomic::AtomicBool>,
         std::sync::Arc<std::sync::atomic::AtomicU32>,
     ) {
-        let mem = GuestMemory::new(4096).unwrap();
+        let mem = GuestMemory::new(64 * 1024).unwrap();
         let (dev, activated, notify_count) = DummyDevice::new();
         let transport = VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(RAM_BASE));
         (transport, activated, notify_count)
@@ -676,7 +783,7 @@ mod tests {
         OwnedFd,
         std::sync::Arc<std::sync::atomic::AtomicU32>,
     ) {
-        let mem = GuestMemory::new(4096).unwrap();
+        let mem = GuestMemory::new(64 * 1024).unwrap();
         let (mut dev, _, notify_count) = DummyDevice::new();
         dev.use_interrupt = true;
         let raw_fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
@@ -699,6 +806,16 @@ mod tests {
 
     fn write_u32(dev: &dyn MmioDevice, offset: u64, val: u32) {
         dev.write(offset, &val.to_le_bytes());
+    }
+
+    fn configure_valid_queue(dev: &dyn MmioDevice, queue: u32, size: u32) {
+        let base = 0x1000 + (queue * 0x3000);
+        write_u32(dev, QUEUE_SEL, queue);
+        write_u32(dev, QUEUE_NUM, size);
+        write_u32(dev, QUEUE_DESC_LOW, base);
+        write_u32(dev, QUEUE_DRIVER_LOW, base + 0x1000);
+        write_u32(dev, QUEUE_DEVICE_LOW, base + 0x2000);
+        write_u32(dev, QUEUE_READY, 1);
     }
 
     // -----------------------------------------------------------------------
@@ -772,6 +889,58 @@ mod tests {
         assert_eq!(read_u32(&t, QUEUE_READY), 0);
         write_u32(&t, QUEUE_READY, 1);
         assert_eq!(read_u32(&t, QUEUE_READY), 1);
+    }
+
+    #[test]
+    fn driver_ok_rejects_ready_queue_with_zero_size() {
+        let (t, activated, _) = make_transport();
+
+        write_u32(&t, QUEUE_SEL, 0);
+        write_u32(&t, QUEUE_READY, 1);
+        write_u32(
+            &t,
+            STATUS,
+            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+        );
+
+        assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+        assert_ne!(read_u32(&t, STATUS) & STATUS_FAILED, 0);
+    }
+
+    #[test]
+    fn driver_ok_rejects_ready_queue_outside_guest_ram() {
+        let (t, activated, _) = make_transport();
+
+        write_u32(&t, QUEUE_SEL, 0);
+        write_u32(&t, QUEUE_NUM, 16);
+        write_u32(&t, QUEUE_DESC_LOW, 0xF000);
+        write_u32(&t, QUEUE_DRIVER_LOW, 0x1_0000);
+        write_u32(&t, QUEUE_DEVICE_LOW, 0x1_1000);
+        write_u32(&t, QUEUE_READY, 1);
+        write_u32(
+            &t,
+            STATUS,
+            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+        );
+
+        assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+        assert_ne!(read_u32(&t, STATUS) & STATUS_FAILED, 0);
+    }
+
+    #[test]
+    fn driver_ok_accepts_valid_ready_queues() {
+        let (t, activated, _) = make_transport();
+
+        configure_valid_queue(&t, 0, 16);
+        configure_valid_queue(&t, 1, 16);
+        write_u32(
+            &t,
+            STATUS,
+            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+        );
+
+        assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(read_u32(&t, STATUS) & STATUS_FAILED, 0);
     }
 
     // -----------------------------------------------------------------------

@@ -210,6 +210,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Validated Linux KVM split-ring layout alignment and guest-memory coverage so
   malformed descriptor, available, or used ring placements fail closed instead
   of reaching modulo arithmetic or raw ring accesses.
+- Hardened Linux KVM virtio-mmio activation so ready queues with invalid size,
+  alignment, max-size, or guest-memory layout set device `FAILED` and do not
+  start device workers with malformed queue state.
 - Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
   `suspending...` state while the suspend action runs instead of only updating
   the bottom status bar.

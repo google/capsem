@@ -10,6 +10,7 @@
   - [x] Add full guest-memory range validation before raw host pointers.
   - [x] Reject malformed virtqueue descriptor indices and cycles.
   - [x] Validate split-ring size, alignment, and guest-memory coverage.
+  - [x] Reject invalid ready queues during virtio-mmio activation/restore.
 - [ ] H03: observability, status, and OTel resource counters.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
@@ -63,6 +64,10 @@
   non-zero power-of-two size, descriptor-table 16-byte alignment, available-ring
   2-byte alignment, used-ring 4-byte alignment, and full guest-memory coverage
   for descriptor, available, and used rings before touching ring memory.
+- H01 activation slice landed locally: virtio-mmio validates ready queue size,
+  max-size, split-ring alignment, and full guest-memory coverage before
+  `DRIVER_OK` activation or warm-restore reactivation. Invalid activation sets
+  `STATUS_FAILED` and does not start device workers.
 
 ## Coverage Ledger
 
@@ -71,7 +76,8 @@
   `cargo test -p capsem-core guest_memory_ref --lib`,
   `cargo test -p capsem-core block_guest_iovecs_reject_range_that_crosses_ram_end --lib`,
   `cargo test -p capsem-core virtio_blk --lib`,
-  `cargo test -p capsem-core virtio_queue --lib`.
+  `cargo test -p capsem-core virtio_queue --lib`,
+  `cargo test -p capsem-core virtio_mmio --lib`.
 - Functional: pending per sub-sprint.
 - Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
   a descriptor whose start GPA is valid but whose length crosses RAM end is
@@ -81,6 +87,9 @@
   closed. `zero_size_queue_operations_fail_closed` and
   `misaligned_descriptor_table_fails_closed` prove bad queue layout does not
   panic or parse misaligned descriptor memory.
+  `driver_ok_rejects_ready_queue_with_zero_size` and
+  `driver_ok_rejects_ready_queue_outside_guest_ram` prove malformed ready
+  queues are rejected at transport activation.
 - E2E/VM: pending per sub-sprint.
 - Telemetry: pending per sub-sprint.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
