@@ -11,6 +11,7 @@
   - [x] Reject malformed virtqueue descriptor indices and cycles.
   - [x] Validate split-ring size, alignment, and guest-memory coverage.
   - [x] Reject invalid ready queues during virtio-mmio activation/restore.
+  - [x] Make guest-memory offset arithmetic overflow-safe.
 - [ ] H03: observability, status, and OTel resource counters.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
@@ -68,6 +69,9 @@
   max-size, split-ring alignment, and full guest-memory coverage before
   `DRIVER_OK` activation or warm-restore reactivation. Invalid activation sets
   `STATUS_FAILED` and does not start device workers.
+- H01 memory-helper slice landed locally: `GuestMemory` and `GuestMemoryRef`
+  read/write helpers use checked offset arithmetic so invalid offsets produce
+  errors rather than debug panics.
 
 ## Coverage Ledger
 
@@ -77,7 +81,9 @@
   `cargo test -p capsem-core block_guest_iovecs_reject_range_that_crosses_ram_end --lib`,
   `cargo test -p capsem-core virtio_blk --lib`,
   `cargo test -p capsem-core virtio_queue --lib`,
-  `cargo test -p capsem-core virtio_mmio --lib`.
+  `cargo test -p capsem-core virtio_mmio --lib`,
+  `cargo test -p capsem-core offset_overflow_fails --lib`,
+  `cargo test -p capsem-core guest_memory --lib`.
 - Functional: pending per sub-sprint.
 - Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
   a descriptor whose start GPA is valid but whose length crosses RAM end is
@@ -89,7 +95,8 @@
   panic or parse misaligned descriptor memory.
   `driver_ok_rejects_ready_queue_with_zero_size` and
   `driver_ok_rejects_ready_queue_outside_guest_ram` prove malformed ready
-  queues are rejected at transport activation.
+  queues are rejected at transport activation. `guest_memory_*_offset_overflow_fails`
+  tests prove hostile offset arithmetic returns errors instead of panicking.
 - E2E/VM: pending per sub-sprint.
 - Telemetry: pending per sub-sprint.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts

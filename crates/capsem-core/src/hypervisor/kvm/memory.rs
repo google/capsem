@@ -360,7 +360,9 @@ impl GuestMemory {
     /// The offset is relative to the start of the mmap'd region (i.e., guest
     /// physical address = RAM_BASE + offset).
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<()> {
-        let end = offset + data.len() as u64;
+        let end = offset
+            .checked_add(data.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("guest memory write offset overflow"))?;
         if end > self.size {
             bail!(
                 "guest memory write out of bounds: offset={offset:#x}, len={}, size={:#x}",
@@ -383,7 +385,9 @@ impl GuestMemory {
 
     /// Read bytes from guest memory at a given offset from RAM_BASE.
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        let end = offset + buf.len() as u64;
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("guest memory read offset overflow"))?;
         if end > self.size {
             bail!(
                 "guest memory read out of bounds: offset={offset:#x}, len={}, size={:#x}",
@@ -502,7 +506,9 @@ impl GuestMemoryRef {
     }
 
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<()> {
-        let end = offset + data.len() as u64;
+        let end = offset
+            .checked_add(data.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("guest memory write offset overflow"))?;
         if end > self.size {
             bail!("guest memory write out of bounds");
         }
@@ -513,7 +519,9 @@ impl GuestMemoryRef {
     }
 
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
-        let end = offset + buf.len() as u64;
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("guest memory read offset overflow"))?;
         if end > self.size {
             bail!("guest memory read out of bounds");
         }
@@ -690,6 +698,19 @@ mod tests {
     }
 
     #[test]
+    fn guest_memory_write_offset_overflow_fails() {
+        let mem = GuestMemory::new(4096).unwrap();
+        assert!(mem.write_at(u64::MAX, &[0]).is_err());
+    }
+
+    #[test]
+    fn guest_memory_read_offset_overflow_fails() {
+        let mem = GuestMemory::new(4096).unwrap();
+        let mut buf = [0u8; 1];
+        assert!(mem.read_at(u64::MAX, &mut buf).is_err());
+    }
+
+    #[test]
     fn guest_memory_read_out_of_bounds() {
         let mem = GuestMemory::new(4096).unwrap();
         let mut buf = vec![0u8; 4097];
@@ -764,6 +785,21 @@ mod tests {
         let mut buf = vec![0u8; 7];
         memref.read_at(0, &mut buf).unwrap();
         assert_eq!(buf, b"via ref");
+    }
+
+    #[test]
+    fn guest_memory_ref_write_offset_overflow_fails() {
+        let mem = GuestMemory::new(4096).unwrap();
+        let memref = mem.clone_ref(RAM_BASE);
+        assert!(memref.write_at(u64::MAX, &[0]).is_err());
+    }
+
+    #[test]
+    fn guest_memory_ref_read_offset_overflow_fails() {
+        let mem = GuestMemory::new(4096).unwrap();
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut buf = [0u8; 1];
+        assert!(memref.read_at(u64::MAX, &mut buf).is_err());
     }
 
     #[test]

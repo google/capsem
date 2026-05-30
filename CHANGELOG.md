@@ -213,6 +213,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened Linux KVM virtio-mmio activation so ready queues with invalid size,
   alignment, max-size, or guest-memory layout set device `FAILED` and do not
   start device workers with malformed queue state.
+- Hardened Linux KVM guest-memory read/write helpers so hostile offsets that
+  overflow `offset + len` return bounds errors instead of panicking before the
+  bounds check.
 - Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
   `suspending...` state while the suspend action runs instead of only updating
   the bottom status bar.
