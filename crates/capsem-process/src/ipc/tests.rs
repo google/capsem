@@ -4,6 +4,38 @@ use super::*;
 use tokio::sync::oneshot;
 
 #[tokio::test]
+async fn connection_teardown_aborts_writer_and_lifecycle_tasks() {
+    let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(1);
+    let (ipc_tx, _) = broadcast::channel::<ProcessToService>(1);
+    let writer_task = tokio::spawn(async move { while ipc_rx_out.recv().await.is_some() {} });
+    let lifecycle_task = spawn_lifecycle_forwarder(&ipc_tx, ipc_tx_out.clone());
+    drop(ipc_tx_out);
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert!(
+        !writer_task.is_finished(),
+        "writer task should stay alive while lifecycle forwarder holds out_tx"
+    );
+    assert!(
+        !lifecycle_task.is_finished(),
+        "lifecycle forwarder should stay alive until connection teardown"
+    );
+
+    let mut stream_task = None;
+    abort_connection_tasks(&mut stream_task, &lifecycle_task, &writer_task);
+
+    let writer_result = tokio::time::timeout(Duration::from_secs(1), writer_task)
+        .await
+        .expect("writer task should finish after teardown");
+    assert!(writer_result.unwrap_err().is_cancelled());
+
+    let lifecycle_result = tokio::time::timeout(Duration::from_secs(1), lifecycle_task)
+        .await
+        .expect("lifecycle task should finish after teardown");
+    assert!(lifecycle_result.unwrap_err().is_cancelled());
+}
+
+#[tokio::test]
 async fn exec_wait_has_no_internal_deadline() {
     let (_tx, rx) = oneshot::channel();
 
@@ -76,23 +108,9 @@ fn classify_drain_runtime_rule_matches() {
 #[test]
 fn metrics_snapshot_is_process_owned_and_versioned() {
     let writer = capsem_logger::DbWriter::open_in_memory(16).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("guest").join("workspace")).unwrap();
-    std::fs::create_dir_all(dir.path().join("guest").join("system")).unwrap();
-    std::fs::write(
-        dir.path().join("guest").join("workspace").join("work.txt"),
-        b"work",
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("guest").join("system").join("rootfs.img"),
-        b"overlay",
-    )
-    .unwrap();
     let resources = ResourceMetricsContext {
         configured_vcpus: 4,
         configured_ram_mb: 8192,
-        session_dir: dir.path().to_path_buf(),
     };
     let snapshot = metrics_snapshot(&writer, "vm-s07", &resources);
 
@@ -108,11 +126,17 @@ fn metrics_snapshot_is_process_owned_and_versioned() {
     assert_eq!(snapshot.resources.configured_vcpus, 4);
     assert_eq!(snapshot.resources.configured_ram_mb, 8192);
     assert_eq!(snapshot.resources.host_pid, Some(std::process::id()));
+    #[cfg(target_os = "linux")]
     assert!(snapshot.resources.host_process_rss_bytes.unwrap_or(0) > 0);
+    #[cfg(not(target_os = "linux"))]
+    assert!(snapshot.resources.host_process_rss_bytes.is_none());
+    #[cfg(target_os = "linux")]
     assert!(snapshot.resources.host_cpu_time_micros.is_some());
-    assert_eq!(snapshot.resources.workspace_disk_bytes, Some(4));
-    assert_eq!(snapshot.resources.rootfs_overlay_bytes, Some(7));
-    assert_eq!(snapshot.resources.session_disk_bytes, Some(11));
+    #[cfg(not(target_os = "linux"))]
+    assert!(snapshot.resources.host_cpu_time_micros.is_none());
+    assert_eq!(snapshot.resources.workspace_disk_bytes, None);
+    assert_eq!(snapshot.resources.rootfs_overlay_bytes, None);
+    assert_eq!(snapshot.resources.session_disk_bytes, None);
     assert!(snapshot.captured_at_unix_ms > 0);
 }
 

@@ -9,7 +9,7 @@
 #   _ensure-service kills any running service, launches a fresh one, waits for socket
 #
 # User-facing recipe chains:
-#   shell            -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
+#   shell            -> _check-assets + _pack-initrd + _ensure-service + TUI
 #   ui               -> _ensure-setup + _pnpm-install + run-service (service + Tauri dev hot-reload)
 #   run-service      -> _check-assets + _pack-initrd + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
@@ -36,7 +36,7 @@
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
 #   just build-assets (builds kernel + rootfs -- needs docker via Colima on macOS)
 #
-# Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
+# Daily dev:          just shell         (service daemon + TUI, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
 # Local install:      just install       (hard clean + native package install + status/VM network gate)
@@ -55,11 +55,11 @@ service_binary := "target/debug/capsem-service"
 process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-tui"
 assets_dir := "assets"
 default_asset_profile := "config/profiles/base/coding.profile.toml"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-tui"
 
 # Stamp version as 1.2.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
@@ -255,6 +255,15 @@ ui: _ensure-setup _pnpm-install run-service
 dev-frontend: _pnpm-install
     cd frontend && pnpm run dev
 
+# Standalone terminal control-plane shell.
+# App-owned controls: Alt+Left/Right switch sessions; Alt+1..9 jumps;
+# Alt+n new, Alt+f fork, Alt+r resume, Alt+s suspend, Alt+c checkpoint,
+# Alt+t stop, Alt+d delete, Alt+q quit;
+# Alt+? help, Alt+i session info, Alt+l sessions. Plain q/Ctrl-C pass to the VM.
+# Pass extra args after `--`: `just dev-tui -- --snapshot`.
+dev-tui *ARGS:
+    cargo run -p capsem-tui {{ARGS}}
+
 # Build the Tauri desktop app (capsem-app) with a fresh frontend bundle.
 # IMPORTANT: the Tauri binary embeds frontend/dist at cargo compile time via
 # tauri::generate_context!(), so rebuilding only the frontend has no effect
@@ -284,7 +293,7 @@ run-ui *ARGS: build-ui
     sleep 1
     ./target/debug/capsem-app {{ARGS}}
 
-# Start service daemon + boot temporary VM + shell (~10s after first build)
+# Start service daemon + open the TUI (~10s after first build)
 shell: _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail
@@ -1108,6 +1117,7 @@ install: _pnpm-install _stamp-version _check-assets
     assert_executable "$HOME/.capsem/bin/capsem-mcp-builtin"
     assert_executable "$HOME/.capsem/bin/capsem-gateway"
     assert_executable "$HOME/.capsem/bin/capsem-tray"
+    assert_executable "$HOME/.capsem/bin/capsem-tui"
     if [ ! -f "$HOME/.capsem/assets/manifest.json" ]; then
         echo "ERROR: installed asset manifest missing" >&2
         exit 1

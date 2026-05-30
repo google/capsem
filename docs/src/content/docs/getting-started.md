@@ -57,13 +57,15 @@ After setup, the Capsem service runs in the background (like Docker). It starts 
 
 ## First session
 
-Boot a sandboxed VM and get a shell:
+Open the Capsem TUI:
 
 ```sh
 capsem shell
 ```
 
-This creates a temporary Linux session with an air-gapped network. You get a terminal inside the VM session with Python 3, Node.js, git, and 30+ packages pre-installed. The session is destroyed when you exit.
+The TUI lets you start the service if it is offline, create or resume sessions,
+and switch between VM terminals. New Linux sessions run with an air-gapped
+network and include Python 3, Node.js, git, and 30+ packages pre-installed.
 
 For a persistent session that survives suspend/resume cycles:
 

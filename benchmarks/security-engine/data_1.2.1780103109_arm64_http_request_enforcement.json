@@ -1,0 +1,374 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_http_request_enforcement",
+  "version": "1.2.1780103109",
+  "source_commit": "0a425541",
+  "timestamp": 1780149906.213564,
+  "arch": "arm64",
+  "host": {
+    "platform": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:12 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6050",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.4",
+    "cpu_count": 18,
+    "cpu_count_logical": 18,
+    "cpu_model": "Apple M5 Max",
+    "cpu_count_physical": 18,
+    "memory_total_bytes": 137438953472,
+    "os_product_version": "26.5",
+    "memory_total_gb": 128.0
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_http_request_enforcement_benchmark_records_vm_originated_path -xvs",
+  "workload": {
+    "event_family": "network",
+    "event_type": "http.request",
+    "source": "vm_originated",
+    "path": "guest_curl_to_mitm_to_security_engine"
+  },
+  "runs": 8,
+  "warmup_runs": 1,
+  "keepalive_runs": 8,
+  "gate_ms": 1000,
+  "rule": {
+    "id": "runtime.block-http-bench.4be78026",
+    "pack_id": "runtime-benchmark",
+    "condition": "http.request.host == 'example.com' && http.request.path == '/security-engine-bench-block-dca4f33f'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_http_request_wall_ms": {
+      "min": 5.378,
+      "mean": 7.142,
+      "median": 5.858,
+      "p95": 12.245,
+      "p99": 12.245,
+      "max": 12.245,
+      "values": [
+        10.628,
+        12.245,
+        6.012,
+        6.192,
+        5.704,
+        5.448,
+        5.531,
+        5.378
+      ]
+    },
+    "blocked_http_request_starttransfer_ms": {
+      "min": 2.788,
+      "mean": 3.199,
+      "median": 3.097,
+      "p95": 3.668,
+      "p99": 3.668,
+      "max": 3.668,
+      "values": [
+        3.668,
+        3.596,
+        3.083,
+        3.418,
+        3.067,
+        2.788,
+        3.111,
+        2.861
+      ]
+    },
+    "curl_phase_ms": {
+      "appconnect": {
+        "min": 2.263,
+        "mean": 2.732,
+        "median": 2.635,
+        "p95": 3.156,
+        "p99": 3.156,
+        "max": 3.156,
+        "values": [
+          3.156,
+          3.133,
+          2.587,
+          3.016,
+          2.618,
+          2.263,
+          2.651,
+          2.43
+        ]
+      },
+      "connect": {
+        "min": 0.815,
+        "mean": 1.002,
+        "median": 0.956,
+        "p95": 1.383,
+        "p99": 1.383,
+        "max": 1.383,
+        "values": [
+          0.958,
+          1.383,
+          0.955,
+          0.961,
+          0.955,
+          0.815,
+          1.112,
+          0.874
+        ]
+      },
+      "namelookup": {
+        "min": 0.788,
+        "mean": 0.925,
+        "median": 0.919,
+        "p95": 1.079,
+        "p99": 1.079,
+        "max": 1.079,
+        "values": [
+          0.918,
+          1.045,
+          0.92,
+          0.924,
+          0.902,
+          0.788,
+          1.079,
+          0.822
+        ]
+      },
+      "pretransfer": {
+        "min": 2.278,
+        "mean": 2.749,
+        "median": 2.647,
+        "p95": 3.178,
+        "p99": 3.178,
+        "max": 3.178,
+        "values": [
+          3.178,
+          3.153,
+          2.61,
+          3.034,
+          2.633,
+          2.278,
+          2.661,
+          2.446
+        ]
+      },
+      "starttransfer": {
+        "min": 2.788,
+        "mean": 3.199,
+        "median": 3.097,
+        "p95": 3.668,
+        "p99": 3.668,
+        "max": 3.668,
+        "values": [
+          3.668,
+          3.596,
+          3.083,
+          3.418,
+          3.067,
+          2.788,
+          3.111,
+          2.861
+        ]
+      },
+      "total": {
+        "min": 2.797,
+        "mean": 3.209,
+        "median": 3.106,
+        "p95": 3.68,
+        "p99": 3.68,
+        "max": 3.68,
+        "values": [
+          3.68,
+          3.607,
+          3.094,
+          3.429,
+          3.078,
+          2.797,
+          3.119,
+          2.871
+        ]
+      }
+    },
+    "curl_phase_delta_ms": {
+      "dns": {
+        "min": 0.788,
+        "mean": 0.925,
+        "median": 0.919,
+        "p95": 1.079,
+        "p99": 1.079,
+        "max": 1.079,
+        "values": [
+          0.918,
+          1.045,
+          0.92,
+          0.924,
+          0.902,
+          0.788,
+          1.079,
+          0.822
+        ]
+      },
+      "pretransfer_after_tls": {
+        "min": 0.01,
+        "mean": 0.017,
+        "median": 0.017,
+        "p95": 0.023,
+        "p99": 0.023,
+        "max": 0.023,
+        "values": [
+          0.022,
+          0.02,
+          0.023,
+          0.018,
+          0.015,
+          0.015,
+          0.01,
+          0.016
+        ]
+      },
+      "response_tail_after_first_byte": {
+        "min": 0.008,
+        "mean": 0.01,
+        "median": 0.011,
+        "p95": 0.012,
+        "p99": 0.012,
+        "max": 0.012,
+        "values": [
+          0.012,
+          0.011,
+          0.011,
+          0.011,
+          0.011,
+          0.009,
+          0.008,
+          0.01
+        ]
+      },
+      "server_first_byte_after_pretransfer": {
+        "min": 0.384,
+        "mean": 0.45,
+        "median": 0.446,
+        "p95": 0.51,
+        "p99": 0.51,
+        "max": 0.51,
+        "values": [
+          0.49,
+          0.443,
+          0.473,
+          0.384,
+          0.434,
+          0.51,
+          0.45,
+          0.415
+        ]
+      },
+      "tcp_connect": {
+        "min": 0.027,
+        "mean": 0.077,
+        "median": 0.039,
+        "p95": 0.338,
+        "p99": 0.338,
+        "max": 0.338,
+        "values": [
+          0.04,
+          0.338,
+          0.035,
+          0.037,
+          0.053,
+          0.027,
+          0.033,
+          0.052
+        ]
+      },
+      "tls_appconnect": {
+        "min": 1.448,
+        "mean": 1.73,
+        "median": 1.647,
+        "p95": 2.198,
+        "p99": 2.198,
+        "max": 2.198,
+        "values": [
+          2.198,
+          1.75,
+          1.632,
+          2.055,
+          1.663,
+          1.448,
+          1.539,
+          1.556
+        ]
+      }
+    },
+    "keepalive_http_request_starttransfer_ms": {
+      "min": 0.315,
+      "mean": 0.364,
+      "median": 0.339,
+      "p95": 0.588,
+      "p99": 0.588,
+      "max": 0.588,
+      "values": [
+        0.588,
+        0.339,
+        0.315,
+        0.315,
+        0.339,
+        0.338,
+        0.344,
+        0.331
+      ]
+    },
+    "keepalive_http_request_total_ms": {
+      "min": 0.321,
+      "mean": 0.37,
+      "median": 0.342,
+      "p95": 0.598,
+      "p99": 0.598,
+      "max": 0.598,
+      "values": [
+        0.598,
+        0.343,
+        0.324,
+        0.321,
+        0.344,
+        0.342,
+        0.35,
+        0.335
+      ]
+    },
+    "keepalive_connection_ms": {
+      "connect_ms": 12.394,
+      "tls_handshake_ms": 1.155
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 17,
+      "distinct_event_ids": 17,
+      "blocked_count": 17,
+      "vm_id": "sechttp-b082fd18",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elie",
+      "process_operation": null,
+      "process_command_class": null,
+      "rule_id": "runtime.block-http-bench.4be78026",
+      "reason": "HTTP request blocked by security benchmark"
+    },
+    "runtime_match_count": 17,
+    "runtime_last_event_id": "net-http-6a748a70b8613fba",
+    "logs_exposed_security_decision": true
+  },
+  "project_version": "1.2.1780103109",
+  "recorded_at": 1780149906.21412,
+  "recorded_at_utc": "2026-05-30T14:05:06.214122+00:00",
+  "git": {
+    "commit": "0a425541fbdc03cc9821aafb238a0dd4b26ccdcd",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
+      "benchmarks/capsem-bench/data_1.2.1780103109_arm64.json",
+      "benchmarks/fork/data_1.2.1780103109_arm64.json",
+      "benchmarks/host-native/data_1.2.1780103109_arm64.json",
+      "benchmarks/lifecycle/data_1.2.1780103109_arm64.json",
+      "benchmarks/parallel/data_1.2.1780103109_arm64.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_process_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_security_packs_microbench.json"
+    ]
+  }
+}

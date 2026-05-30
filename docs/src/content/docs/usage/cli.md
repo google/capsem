@@ -69,17 +69,18 @@ capsem create -e API_KEY=sk-...        # with environment variables
 
 ### shell
 
-Open an interactive shell. With no arguments, creates a temporary session that is destroyed on exit.
+Open the Capsem TUI. With no arguments, opens the home/create flow. Pass a
+session name or ID to focus the TUI on that session.
 
 ```sh
-capsem shell              # temp session (destroyed on exit)
-capsem shell mybox        # attach to existing session
-capsem shell abc123       # find by ID
+capsem shell              # open the TUI
+capsem shell mybox        # open focused on a named session
+capsem shell abc123       # open focused on an ID
 ```
 
 | Arg | Description |
 |-----|-------------|
-| `[SESSION]` | Name or ID of an existing session |
+| `[SESSION]` | Optional name or ID to focus in the TUI |
 
 ### resume
 

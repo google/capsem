@@ -18,6 +18,7 @@
 #   /usr/bin/capsem-mcp-builtin
 #   /usr/bin/capsem-gateway
 #   /usr/bin/capsem-tray
+#   /usr/bin/capsem-tui
 #   /usr/bin/capsem-admin
 #   /usr/share/capsem/admin-python/
 #   /usr/share/capsem/profiles/base/*.profile.toml
@@ -54,7 +55,7 @@ dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$WORK_DIR/deb/usr/bin/$bin"

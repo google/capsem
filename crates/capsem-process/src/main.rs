@@ -296,7 +296,7 @@ fn main() -> Result<()> {
     // `session.db-wal`. See /dev-rust-patterns "Signal-driven explicit
     // cleanup for background-thread owners".
     let shutdown_for_sig = Arc::clone(&shutdown);
-    let (signal_exit_tx, signal_exit_rx) = tokio::sync::oneshot::channel::<()>();
+    let (signal_exit_tx, _signal_exit_rx) = tokio::sync::oneshot::channel::<()>();
     rt.spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
@@ -342,7 +342,7 @@ fn main() -> Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = rt.block_on(signal_exit_rx);
+        let _ = rt.block_on(_signal_exit_rx);
     }
 
     Ok(())
@@ -760,7 +760,6 @@ async fn run_async_main_loop(
         let resource_metrics = ipc::ResourceMetricsContext {
             configured_vcpus: args.cpus,
             configured_ram_mb: args.ram_mb,
-            session_dir: session_dir.clone(),
         };
 
         tokio::spawn(async move {

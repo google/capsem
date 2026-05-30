@@ -60,7 +60,7 @@ seed_base_profiles() {
 mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
 
 # Symlink system binaries into user dir
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
     if [ -f "/usr/bin/$bin" ]; then
         ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"
     fi

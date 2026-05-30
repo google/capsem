@@ -1,0 +1,106 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_mcp_request_enforcement",
+  "version": "1.2.1780103109",
+  "source_commit": "0a425541",
+  "timestamp": 1780149910.48114,
+  "arch": "arm64",
+  "host": {
+    "platform": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:12 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6050",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.4",
+    "cpu_count": 18,
+    "cpu_count_logical": 18,
+    "cpu_model": "Apple M5 Max",
+    "cpu_count_physical": 18,
+    "memory_total_bytes": 137438953472,
+    "os_product_version": "26.5",
+    "memory_total_gb": 128.0
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_mcp_request_enforcement_benchmark_records_vm_originated_path -xvs",
+  "workload": {
+    "event_family": "mcp",
+    "event_type": "mcp.request",
+    "source": "vm_originated",
+    "path": "guest_mcp_server_to_framed_vsock_to_security_engine"
+  },
+  "runs": 8,
+  "gate_ms": 1000,
+  "rule": {
+    "id": "runtime.block-mcp-bench.22a9c133",
+    "pack_id": "runtime-benchmark",
+    "condition": "mcp.request.server_id == 'local' && mcp.request.tool_name == 'echo'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_mcp_request_ms": {
+      "min": 0.174,
+      "mean": 0.251,
+      "median": 0.189,
+      "p95": 0.661,
+      "p99": 0.661,
+      "max": 0.661,
+      "values": [
+        0.661,
+        0.236,
+        0.186,
+        0.189,
+        0.18,
+        0.174,
+        0.189,
+        0.189
+      ]
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 8,
+      "distinct_event_ids": 8,
+      "blocked_count": 8,
+      "vm_id": "secmcp-2f6cb4ed",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elie",
+      "process_operation": null,
+      "process_command_class": null,
+      "rule_id": "runtime.block-mcp-bench.22a9c133",
+      "reason": "MCP request blocked by security benchmark"
+    },
+    "session_db_mcp_calls": {
+      "row_count": 8,
+      "denied_count": 8,
+      "server_name": "local",
+      "tool_name": "local__echo",
+      "policy_mode": "enforce",
+      "policy_action": "block",
+      "policy_rule": "runtime.block-mcp-bench.22a9c133",
+      "policy_reason": "MCP request blocked by security benchmark"
+    },
+    "runtime_match_count": 8,
+    "runtime_last_event_id": "mcp-b93ff5c5aa69107e",
+    "logs_exposed_security_decision": true
+  },
+  "project_version": "1.2.1780103109",
+  "recorded_at": 1780149910.48156,
+  "recorded_at_utc": "2026-05-30T14:05:10.481562+00:00",
+  "git": {
+    "commit": "0a425541fbdc03cc9821aafb238a0dd4b26ccdcd",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
+      "benchmarks/capsem-bench/data_1.2.1780103109_arm64.json",
+      "benchmarks/fork/data_1.2.1780103109_arm64.json",
+      "benchmarks/host-native/data_1.2.1780103109_arm64.json",
+      "benchmarks/lifecycle/data_1.2.1780103109_arm64.json",
+      "benchmarks/parallel/data_1.2.1780103109_arm64.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_dns_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_http_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_process_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_security_packs_microbench.json"
+    ]
+  }
+}

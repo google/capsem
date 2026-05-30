@@ -2,7 +2,7 @@ use anyhow::Result;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::metrics::VmMetricsSnapshot;
 use nix::libc;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +43,6 @@ const READY_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 pub(crate) struct ResourceMetricsContext {
     pub(crate) configured_vcpus: u32,
     pub(crate) configured_ram_mb: u64,
-    pub(crate) session_dir: PathBuf,
 }
 
 fn shutdown_grace_period(vm_ready: bool) -> Duration {
@@ -102,7 +101,7 @@ pub(crate) async fn handle_ipc_connection(
     // Sender::send() writes header + payload as two separate syscalls with no
     // internal locking, so concurrent use from multiple tasks is unsafe.
     let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(256);
-    tokio::spawn(async move {
+    let writer_task = tokio::spawn(async move {
         while let Some(msg) = ipc_rx_out.recv().await {
             if tx.send(msg).await.is_err() {
                 break;
@@ -115,20 +114,7 @@ pub(crate) async fn handle_ipc_connection(
     // is high-volume and still opt-in via StartTerminalStream. Without this,
     // a suspend-only connection never sees StateChanged { state: "Suspended" }
     // and the service times out waiting for confirmation.
-    {
-        let out_tx = ipc_tx_out.clone();
-        let mut rx_bcast = ipc_tx.subscribe();
-        tokio::spawn(async move {
-            while let Ok(msg) = rx_bcast.recv().await {
-                if matches!(msg, ProcessToService::TerminalOutput { .. }) {
-                    continue;
-                }
-                if out_tx.send(msg).await.is_err() {
-                    break;
-                }
-            }
-        });
-    }
+    let lifecycle_task = spawn_lifecycle_forwarder(&ipc_tx, ipc_tx_out.clone());
 
     // Live stream task spawned by StartTerminalStream. Held here so
     // StopTerminalStream and connection teardown can abort it instead of
@@ -216,7 +202,7 @@ pub(crate) async fn handle_ipc_connection(
                     );
                 } else {
                     debug!("Ping received but VM not ready, closing connection");
-                    return Ok(());
+                    break;
                 }
             }
             ServiceToProcess::GetMetricsSnapshot { id } => {
@@ -609,7 +595,7 @@ pub(crate) async fn handle_ipc_connection(
                         {
                             capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
                                 vm_for_stop.blocking_lock().stop()
-                            })?
+                            })
                         }
                         #[cfg(not(target_os = "macos"))]
                         {
@@ -658,15 +644,41 @@ pub(crate) async fn handle_ipc_connection(
             }
         }
     }
-    // Connection ended: cancel any in-flight stream task. Without this the
-    // task lives on the runtime, holds its `out_tx`, and may attempt one
-    // more send after the client has already closed the IPC socket --
-    // benign for the underlying mpsc but a leak (the receiver's drop
-    // chain finishes one tick later than necessary).
+    // Connection ended: cancel every per-connection helper. The writer owns
+    // the IPC sender/socket, and the lifecycle forwarder owns an `out_tx`
+    // clone; leaving them alive after request/response clients disconnect
+    // leaks tasks and file descriptors under status/metrics polling.
+    abort_connection_tasks(&mut stream_task, &lifecycle_task, &writer_task);
+    Ok(())
+}
+
+fn spawn_lifecycle_forwarder(
+    ipc_tx: &broadcast::Sender<ProcessToService>,
+    out_tx: mpsc::Sender<ProcessToService>,
+) -> tokio::task::JoinHandle<()> {
+    let mut rx_bcast = ipc_tx.subscribe();
+    tokio::spawn(async move {
+        while let Ok(msg) = rx_bcast.recv().await {
+            if matches!(msg, ProcessToService::TerminalOutput { .. }) {
+                continue;
+            }
+            if out_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    })
+}
+
+fn abort_connection_tasks(
+    stream_task: &mut Option<tokio::task::JoinHandle<()>>,
+    lifecycle_task: &tokio::task::JoinHandle<()>,
+    writer_task: &tokio::task::JoinHandle<()>,
+) {
     if let Some(h) = stream_task.take() {
         h.abort();
     }
-    Ok(())
+    lifecycle_task.abort();
+    writer_task.abort();
 }
 
 /// Maps an IPC ServiceToProcess message to the action category it triggers.
@@ -712,11 +724,6 @@ fn metrics_snapshot(
         snapshot.resources.host_process_rss_bytes = Some(proc_stats.rss_bytes);
         snapshot.resources.host_cpu_time_micros = Some(proc_stats.cpu_time_micros);
     }
-    snapshot.resources.session_disk_bytes = dir_size_bytes(&resources.session_dir).ok();
-    snapshot.resources.workspace_disk_bytes =
-        dir_size_bytes(&resources.session_dir.join("guest").join("workspace")).ok();
-    snapshot.resources.rootfs_overlay_bytes =
-        dir_size_bytes(&resources.session_dir.join("guest").join("system")).ok();
     snapshot
 }
 
@@ -755,35 +762,6 @@ fn parse_proc_stat(stat: &str) -> Option<ProcStats> {
             .saturating_mul(1_000_000)
             / ticks_per_second as u64,
     })
-}
-
-fn dir_size_bytes(path: &Path) -> std::io::Result<u64> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(e),
-    };
-    if metadata.is_file() {
-        return Ok(metadata.len());
-    }
-    if !metadata.is_dir() {
-        return Ok(0);
-    }
-
-    let mut total = 0u64;
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            total = total.saturating_add(dir_size_bytes(&entry.path())?);
-        } else if file_type.is_file() {
-            total = total.saturating_add(entry.metadata()?.len());
-        }
-    }
-    Ok(total)
 }
 
 #[cfg(test)]

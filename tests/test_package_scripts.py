@@ -30,6 +30,7 @@ HOST_BINARIES = [
     "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
+    "capsem-tui",
     "capsem-admin",
 ]
 
@@ -54,6 +55,9 @@ def _seed_assets(assets_dir: Path) -> None:
     assets_dir.mkdir(parents=True)
     arch_dir = assets_dir / "arm64"
     arch_dir.mkdir()
+    alias_dir = assets_dir / "current"
+    alias_dir.mkdir()
+    (alias_dir / "vmlinuz").write_bytes(b"legacy-alias")
     for name, body in {
         "vmlinuz": b"kernel",
         "initrd.img": b"initrd",
@@ -73,6 +77,11 @@ def _seed_assets(assets_dir: Path) -> None:
                             "min_binary": "1.0.0",
                             "arches": {
                                 "arm64": {
+                                    "vmlinuz": {"hash": "1" * 64, "size": 6},
+                                    "initrd.img": {"hash": "2" * 64, "size": 6},
+                                    "rootfs.squashfs": {"hash": "3" * 64, "size": 6},
+                                },
+                                "current": {
                                     "vmlinuz": {"hash": "1" * 64, "size": 6},
                                     "initrd.img": {"hash": "2" * 64, "size": 6},
                                     "rootfs.squashfs": {"hash": "3" * 64, "size": 6},
@@ -156,7 +165,7 @@ test -f "$root/usr/local/share/capsem/assets/manifest.json.minisig"
 test -f "$root/usr/local/share/capsem/assets/manifest-sign.dev.pub"
 test -f "$root/usr/local/share/capsem/Capsem.app/Contents/Info.plist"
 test -f "$root/usr/local/share/capsem/admin-python/capsem/admin/cli.py"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
   test -x "$root/usr/local/share/capsem/bin/$bin"
 done
 mkdir -p "$(dirname "$out")"
@@ -272,7 +281,7 @@ case "$1" in
     test -f "$root/usr/share/capsem/assets/manifest.json.minisig"
     test -f "$root/usr/share/capsem/assets/manifest-sign.dev.pub"
     test -f "$root/usr/share/capsem/admin-python/capsem/admin/cli.py"
-    for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+    for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
       test -x "$root/usr/bin/$bin"
     done
     printf deb > "$out"

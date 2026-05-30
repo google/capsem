@@ -36,6 +36,7 @@ CONTENT_TYPES = {
     "initrd": "application/octet-stream",
     "rootfs": "application/vnd.squashfs",
 }
+SUPPORTED_ARCHES = {"arm64", "x86_64"}
 
 
 def _usage() -> str:
@@ -160,17 +161,26 @@ def main() -> int:
     asset_release = manifest["assets"]["current"]
     arches = manifest["assets"]["releases"][asset_release]["arches"]
 
+    available_arches: dict[str, dict[str, dict[str, object]]] = {}
     for arch, arch_assets in arches.items():
+        if arch not in SUPPORTED_ARCHES:
+            continue
+        arch_dir = assets_dir / arch
+        if not arch_dir.is_dir():
+            continue
         for logical_name in ("vmlinuz", "initrd.img", "rootfs.squashfs"):
             if logical_name not in arch_assets:
                 raise ValueError(f"manifest missing {arch}/{logical_name}")
-            source_asset = assets_dir / arch / logical_name
+            source_asset = arch_dir / logical_name
             if not source_asset.is_file():
                 raise ValueError(f"asset file missing: {source_asset}")
+        available_arches[arch] = arch_assets
+    if not available_arches:
+        raise ValueError(f"manifest has no arches with local asset files under {assets_dir}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     for profile in sorted(profile_src_dir.glob("*.profile.toml")):
-        rendered = _rewrite_profile(profile, asset_release, arches, asset_source_root)
+        rendered = _rewrite_profile(profile, asset_release, available_arches, asset_source_root)
         (out_dir / profile.name).write_text(rendered, encoding="utf-8")
         print(f"  Materialized: {profile.name}")
 

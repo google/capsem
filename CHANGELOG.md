@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   macOS comparison reruns as one measured performance stack.
 - Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
   in-VM, lifecycle, fork, and security-engine benchmark results.
+- Recorded fresh macOS arm64 canonical `just benchmark` data for
+  `1.2.1780103109` after merging the Linux support branch, including in-VM,
+  endpoint-latency, host-native, lifecycle, fork, parallel, Criterion, and
+  VM-originated security-engine benchmark artifacts.
 - Added `just benchmark-compare` and `scripts/compare_benchmark_artifacts.py`
   to turn committed Linux/macOS benchmark artifacts into ratio and percentage
   comparisons while making missing lanes explicit.
@@ -43,6 +47,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for rootfs, workspace, tmpfs, overlay, and queue/FUSE metadata.
 - Added scatter/gather virtio-blk tests proving KVM block requests preserve
   multi-descriptor guest payload order.
+- Added the initial `capsem-tui` crate with a fixture-backed standalone
+  terminal control screen, global service light-bar state, per-session desktop
+  indicators, and deterministic snapshot rendering for early UI proof.
+- Added a `just dev-tui` standalone TUI shell with two fixture sessions,
+  SVG snapshot export, and keyboard session switching that does not capture
+  plain `q`.
+- Added live `capsem-tui` gateway wiring against the installed Capsem HTTP
+  gateway with token auth, periodic refresh, typed session mapping, fixture
+  fallback, and HTTP provider tests.
+- Added active-session terminal WebSocket wiring for `capsem-tui`, including
+  gateway token reuse, terminal input forwarding, output buffering, resize
+  messages, and basic ANSI cleanup for the Ratatui surface.
+- Added hidden `capsem-tui` overlays for help, active-session statistics, and
+  the session list so the normal terminal surface stays minimal.
+- Added confirmed `capsem-tui` service actions for resuming, suspending,
+  stopping, and deleting sessions through the installed HTTP gateway without
+  blocking the terminal UI.
+- Added a profile-aware `capsem-tui` new-session dialog with an editable
+  prefilled `tmp-*` session name and live profile selection before
+  provisioning.
+- Added a `capsem-tui` fork dialog on `Alt+f` that asks for a fork name and
+  sends the request through the installed gateway.
+- Added `Alt+c` checkpoint/save as an explicit `capsem-tui` action, leaving
+  `Alt+s` to mean suspend.
+- Added `capsem-tui` to local install/package payloads so the TUI is available
+  from `~/.capsem/bin/capsem-tui` after installation.
+- Added `capsem_terminal_snapshot` to the Capsem MCP server so agents can
+  inspect a session terminal/log surface through MCP with ANSI cleanup, grep,
+  source selection, and tailing.
+- Added an 8-live-VM host endpoint latency benchmark under
+  `tests/capsem-serial/test_endpoint_latency_benchmark.py`, covering global
+  service reads, per-VM detail/history/file/policy-context reads, and gateway
+  health/token/status reads with committed `benchmarks/endpoint-latency/`
+  results.
 
 ### Changed
 - Gated the Linux KVM virtio-blk io_uring backend to writable block devices
@@ -97,6 +135,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed the guest rootfs build default to a configurable 128K squashfs block
   size, improving measured CLI startup and sequential rootfs reads while
   recording the chunk-size choice in `guest/config/build.toml`.
+- Changed `capsem-tui` gateway refreshes to reuse the HTTP client and cached
+  gateway token, so status polling measures the local status request instead of
+  redoing auth bootstrap on every tick.
+- Changed `capsem-process` live metrics snapshots to stay on in-memory
+  counters instead of recursively scanning VM session directories on the
+  service `/list` hot path.
+- Changed service read hot paths so `/list` no longer calls per-VM live metrics,
+  `/stats` uses an empty/read-only fast path, raw session DB queries use
+  SQLite progress handlers instead of a 100ms watchdog-thread floor, and
+  policy-context exports no longer duplicate one security event across multiple
+  joined detail rows.
 - Strengthened the suspend/resume lifecycle integration test so it now proves
   a background guest process keeps the same PID and continues writing after
   warm resume, giving Apple VZ and KVM the same long-term state-preservation
@@ -104,6 +153,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Linux host doctor smoke probes for `KVM_GET_API_VERSION` and
   `/dev/vhost-vsock` openability so bootstrap verifies usable KVM devices, not
   just filesystem permissions.
+- Added structured `capsem-tui` help and session-list tables, an explicit
+  `Alt+l` sessions overlay, and clearer `Alt+i` session info.
+- Added focused-field highlighting to `capsem-tui` create and fork dialogs so
+  the active input and selected profile are visible.
+- Added an empty-state `capsem-tui` startup path that opens the new-session
+  modal directly and brands it with a compact gradient CAPSEM wordmark.
+- Changed the `capsem-tui` status hint to `help: alt+?` and moved it to the
+  far right after active-session statistics, including the empty-session state.
+- Changed `capsem shell` to launch `capsem-tui` as the single interactive VM
+  control surface; `capsem shell <session>` now opens the TUI focused on that
+  session instead of using the legacy direct PTY bridge.
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
   leaving snapshot symlink restore scoped to `/root`.
@@ -139,6 +199,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
+  `suspending...` state while the suspend action runs instead of only updating
+  the bottom status bar.
+- Fixed `capsem-tui` terminal input after suspend/resume so a failed or closed
+  terminal WebSocket clears the connected marker, reconnects the active session
+  after resume, and does not drop typed input into a stale terminal task.
+- Fixed `capsem-tui` create flow focus so a newly provisioned VM becomes the
+  active tab even when the first gateway refresh after `/provision` does not
+  list the VM yet.
+- Fixed `capsem-tui` corrupted profile-pin handling so non-resumable sessions
+  are hidden from the bottom VM tab strip, still appear in the full `Alt+l`
+  session inventory, and explain that the VM must be recreated from a signed
+  profile if explicitly selected.
+- Fixed `capsem-tui` service-offline startup so the TUI shows an offline
+  service surface and asks to start Capsem before opening the new-session flow;
+  confirming the prompt runs the local `capsem start` command and refreshes
+  with a fresh gateway token.
+- Fixed `capsem-tui` empty-session creation so the TUI no longer invents a
+  `default` profile when `/profiles` is unavailable; the new-session modal now
+  blocks Enter until a real profile list is loaded and has unit plus gateway
+  E2E coverage for the profile-backed create contract.
+- Fixed `capsem-tui` stopped-session rendering so stopped/suspended/failed
+  tabs are greyed, the main pane shows a `Press Enter to resume` affordance
+  instead of going blank, and the terminal bridge disconnects instead of trying
+  to attach a WebSocket to an inactive VM.
+- Fixed a `capsem-process` IPC file-descriptor leak where short-lived
+  status/metrics connections left writer and lifecycle-forwarder tasks alive
+  after the client disconnected.
+- Fixed `capsem-tui` live gateway attention handling so sessions with
+  `profile_status=current` are not marked stale, and proved the installed
+  terminal WebSocket path against two running service sessions.
+- Fixed `capsem-tui` terminal rendering to use a real VT/xterm parser with
+  color/style preservation, adjacent output coalescing, and dirty-frame
+  redraws instead of a hand-rolled ANSI text flattener.
+- Fixed `capsem-tui` service latency rendering to reserve four digits so the
+  bottom status bar does not shift as latency changes.
+- Fixed `capsem-tui` service latency rendering to keep the status dot glued to
+  the latency field, making the service block read as one unit.
+- Fixed `capsem-tui` shell controls to use an app-owned Alt namespace:
+  `Alt+Left/Right`, `Alt+1..9`, `Alt+n/f/r/s/c/t/d`, `Alt+?`, `Alt+i`,
+  `Alt+l`, and `Alt+q`, instead of terminal-dependent Cmd/Ctrl forwarding or
+  prefix fallbacks.
+- Fixed `capsem-tui` help and modal handling by using `Alt+?` for help,
+  rendering overlays through Ratatui modal widgets, and resending the active
+  terminal geometry whenever the real terminal size changes.
+- Fixed `capsem-tui` modal input ownership so `Esc` closes non-confirmation
+  overlays, visible modals consume normal keys, and plain VM input resumes
+  forwarding as soon as the modal closes.
+- Fixed `capsem-tui` tab colors so the selected VM is yellow and every other
+  VM tab is blue, removing the previous gray/attention color ambiguity.
+- Fixed macOS release builds of the service debug report by widening filesystem
+  block counts before computing disk byte totals.
+- Fixed macOS release builds of `capsem-process` shutdown handling by returning
+  the VM stop result from the main-thread stop task and avoiding a macOS-only
+  unused signal receiver.
+- Fixed install profile materialization so manifest aliases and legacy local
+  alias directories do not make package assembly look for non-existent VM
+  assets.
 - Added Linux KVM virtio-blk discard handling so explicit guest discard/trim
   requests can punch holes in writable virtio block backing files.
 - Refreshed local profile asset pins during dev service startup so benchmark

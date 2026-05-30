@@ -100,7 +100,7 @@ chown -R "$USER" "$CAPSEM_DIR"
 install_app_bundle
 
 # Copy companion binaries from pkg payload
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
     src="$PKG_SHARE/bin/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$CAPSEM_DIR/bin/$bin"

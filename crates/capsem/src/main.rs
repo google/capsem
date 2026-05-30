@@ -5,7 +5,6 @@ mod platform;
 mod profile_catalog_source;
 mod service_install;
 mod setup;
-mod shell_exit;
 mod status;
 mod support;
 mod support_bundle;
@@ -17,7 +16,7 @@ use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use client::{
     ApiResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
@@ -57,7 +56,7 @@ const fn cli_styles() -> Styles {
 const GROUPED_HELP: &str = "\
 \x1b[36;1;4mSession Commands:\x1b[0m
   \x1b[32;1mcreate\x1b[0m       Create and boot a new session
-  \x1b[32;1mshell\x1b[0m        Open an interactive shell in a session
+  \x1b[32;1mshell\x1b[0m        Open the Capsem TUI
   \x1b[32;1mresume\x1b[0m       Resume a suspended session or attach to a running one
   \x1b[32;1msuspend\x1b[0m      Suspend a running session to disk
   \x1b[32;1mrestart\x1b[0m      Restart a persistent session (reboot)
@@ -963,10 +962,10 @@ enum SessionCommands {
         #[arg(long = "profile-revision")]
         profile_revision: Option<String>,
     },
-    /// Open an interactive shell in a session
+    /// Open the Capsem TUI
     ///
-    /// With no arguments, creates a temporary session (destroyed on exit).
-    /// Pass a session name/ID to attach to an existing running session.
+    /// With no arguments, opens the TUI home/create flow.
+    /// Pass a session name/ID to focus the TUI on that session.
     Shell {
         /// Name or ID of the session (positional)
         #[arg(value_name = "SESSION")]
@@ -2036,193 +2035,43 @@ fn print_session_info(info: &SessionInfo) {
     }
 }
 
-async fn run_shell(id: &str, run_dir: &std::path::Path) -> Result<()> {
-    use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
-    use nix::sys::termios::{tcgetattr, tcsetattr, SetArg};
-    use std::sync::Arc;
-    use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
+fn capsem_shell_tui_args(session: Option<&str>) -> Vec<String> {
+    session
+        .map(|session| vec!["--session".to_string(), session.to_string()])
+        .unwrap_or_default()
+}
 
-    client::validate_id(id)?;
-    let sock_path = run_dir.join("instances").join(format!("{}.sock", id));
-    if !sock_path.exists() {
-        anyhow::bail!("Session socket not found at: {}", sock_path.display());
+fn resolve_capsem_tui_binary() -> PathBuf {
+    if let Ok(path) = std::env::var("CAPSEM_SHELL_TUI_BINARY") {
+        return PathBuf::from(path);
     }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            let sibling = parent.join("capsem-tui");
+            if sibling.exists() {
+                return sibling;
+            }
+        }
+    }
+    PathBuf::from("capsem-tui")
+}
 
-    let stream = tokio::net::UnixStream::connect(&sock_path)
+async fn run_tui_shell(session: Option<&str>) -> Result<()> {
+    if let Some(session) = session {
+        client::validate_id(session)?;
+    }
+    let binary = resolve_capsem_tui_binary();
+    let status = tokio::process::Command::new(&binary)
+        .args(capsem_shell_tui_args(session))
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
         .await
-        .context("failed to connect to VM session")?;
-    let mut std_stream = stream.into_std()?;
-    capsem_core::ipc_handshake::negotiate_initiator(
-        &mut std_stream,
-        "capsem-cli",
-        capsem_core::telemetry::current_parent_traceparent(),
-    )
-    .context("IPC handshake failed")?;
-    #[allow(unused_variables)]
-    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
-        channel_from_std(std_stream)?;
-    let tx = Arc::new(tx);
-
-    // Request terminal streaming
-    tx.send(ServiceToProcess::StartTerminalStream).await?;
-
-    use std::os::unix::io::{AsRawFd, BorrowedFd};
-
-    let stdin_fd = std::io::stdin().as_raw_fd();
-    let is_tty = nix::unistd::isatty(stdin_fd).unwrap_or(false);
-
-    let get_terminal_size = || -> Option<(u16, u16)> {
-        let mut ws: nix::libc::winsize = unsafe { std::mem::zeroed() };
-        if unsafe { nix::libc::ioctl(stdin_fd, nix::libc::TIOCGWINSZ, &mut ws) } == 0 {
-            Some((ws.ws_col, ws.ws_row))
-        } else {
-            None
-        }
-    };
-
-    // Send initial window size
-    if is_tty {
-        if let Some((cols, rows)) = get_terminal_size() {
-            capsem_core::try_send!(
-                "cli_terminal_resize_init",
-                tx.send(ServiceToProcess::TerminalResize { cols, rows })
-                    .await
-            );
-        }
+        .with_context(|| format!("launch {}", binary.display()))?;
+    if !status.success() {
+        anyhow::bail!("{} exited with {}", binary.display(), status);
     }
-
-    struct RawModeGuard {
-        fd: std::os::unix::io::RawFd,
-        original: Option<nix::sys::termios::Termios>,
-    }
-    impl Drop for RawModeGuard {
-        fn drop(&mut self) {
-            if let Some(ref original) = self.original {
-                let borrowed = unsafe { std::os::unix::io::BorrowedFd::borrow_raw(self.fd) };
-                let _ = tcsetattr(borrowed, SetArg::TCSANOW, original);
-            }
-        }
-    }
-
-    let original_termios = if is_tty {
-        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-        let orig = tcgetattr(borrowed_fd).ok();
-        if let Some(ref o) = orig {
-            let mut raw_termios = o.clone();
-            nix::sys::termios::cfmakeraw(&mut raw_termios);
-            let _ = tcsetattr(borrowed_fd, SetArg::TCSANOW, &raw_termios);
-        }
-        orig
-    } else {
-        None
-    };
-
-    let _guard = RawModeGuard {
-        fd: stdin_fd,
-        original: original_termios,
-    };
-
-    let mut stdin = tokio::io::stdin();
-    let mut buf = vec![0u8; 65536];
-
-    // Spawn a task to read from IPC and write to stdout
-    let mut output_task = tokio::spawn(async move {
-        let mut stdout = tokio::io::stdout();
-        while let Ok(msg) = rx.recv().await {
-            match msg {
-                ProcessToService::TerminalOutput { data } => {
-                    // Smoking-gun trace mirrored from capsem-process. If a
-                    // payload prefix looks like an IPC frame, dump the
-                    // first 16 bytes to stderr (visible to the user, also
-                    // capturable via `capsem shell 2>shell.log`). Catches
-                    // the leak even when process.log isn't being tailed.
-                    if shell_exit::looks_like_msgpack_ipc_frame(&data) {
-                        let preview: Vec<String> =
-                            data.iter().take(16).map(|b| format!("{:02x}", b)).collect();
-                        eprintln!(
-                            "\r\n[capsem-shell] WARN: PTY stream starts with IPC-frame-shaped bytes \
-                             (len={}, first16={})\r",
-                            data.len(),
-                            preview.join(" "),
-                        );
-                    }
-                    let _ = stdout.write_all(&data).await;
-                    let _ = stdout.flush().await;
-                }
-                ProcessToService::Pong => {}
-                ProcessToService::ReloadConfigResult { .. } => {}
-                ProcessToService::StateChanged { .. } => {}
-                ProcessToService::ExecResult { .. } => {}
-                ProcessToService::WriteFileResult { .. } => {}
-                ProcessToService::ReadFileResult { .. } => {}
-                ProcessToService::ShutdownRequested { .. }
-                | ProcessToService::SuspendRequested { .. }
-                | ProcessToService::SnapshotReady { .. }
-                | ProcessToService::MetricsSnapshot { .. }
-                | ProcessToService::RuntimeRuleMatches { .. } => {}
-            }
-        }
-    });
-
-    let mut sigwinch =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
-
-    // Read from stdin and send over IPC.
-    // Also watch for output_task completion (VM connection closed).
-    loop {
-        tokio::select! {
-            _ = sigwinch.recv() => {
-                if is_tty {
-                    if let Some((cols, rows)) = get_terminal_size() {
-                        capsem_core::try_send!("cli_terminal_resize", tx.send(ServiceToProcess::TerminalResize { cols, rows }).await);
-                    }
-                }
-            }
-            _ = &mut output_task => {
-                // VM connection closed (shutdown, process exit, etc.)
-                break;
-            }
-            res = stdin.read(&mut buf) => {
-                match res {
-                    Ok(0) => break, // EOF
-                    Ok(n) => {
-                        // Exit on Ctrl+D (0x04) explicitly if needed, but since we map raw input,
-                        // usually we let the guest handle Ctrl+D. For a clean local exit, we can
-                        // trap Ctrl+] (0x1D) as the disconnect signal.
-                        if n == 1 && buf[0] == 0x1D {
-                            break;
-                        }
-                        capsem_core::try_send!("cli_terminal_input", tx.send(ServiceToProcess::TerminalInput { data: buf[..n].to_vec() }).await);
-                    }
-                    Err(_) => break,
-                }
-            }
-        }
-    }
-
-    // ---- Clean shell exit ----
-    // Order matters and is asserted by tests in shell_exit::tests:
-    //  1. Tell the host to stop streaming so no new TerminalOutput frames
-    //     get queued for this connection.
-    //  2. Abort the local output task. tokio JoinHandle drop does NOT
-    //     cancel; without abort the task lives on, holds stdout, and any
-    //     in-flight TerminalOutput frame will write to the user's parent
-    //     shell after raw mode is restored. This is the symptom that
-    //     manifested as "MessagePack-shaped garbage in my terminal after
-    //     `capsem shell`".
-    //  3. Drop tx to close the IPC writer half (defensive; the next read
-    //     loop will hit ECONNRESET and the connection winds down cleanly).
-    //  4. Reset the terminal: SGR reset + show cursor + move to col 0.
-    //     RawModeGuard restores termios on Drop right after this, but
-    //     in-flight escape sequences from the guest can leave the terminal
-    //     in a weird state (alt screen, scroll region, cursor hidden).
-    capsem_core::try_send!(
-        "cli_stop_terminal_stream",
-        tx.send(ServiceToProcess::StopTerminalStream).await
-    );
-    output_task.abort();
-    drop(tx);
-    shell_exit::reset_user_terminal(is_tty).await;
     Ok(())
 }
 
@@ -2705,6 +2554,11 @@ async fn main() -> Result<()> {
         }
     }
 
+    if let Commands::Session(SessionCommands::Shell { session }) = cli.command.as_ref().unwrap() {
+        run_tui_shell(session.as_deref()).await?;
+        return Ok(());
+    }
+
     let client = UdsClient::new(uds_path, auto_launch);
 
     match cli.command.as_ref().unwrap() {
@@ -2776,57 +2630,7 @@ async fn main() -> Result<()> {
             resp.into_result()?;
             println!("Session suspended.");
         }
-        Commands::Session(SessionCommands::Shell { session }) => {
-            match session {
-                Some(t) => {
-                    client::validate_id(t.as_str())?;
-                    run_shell(t.as_str(), &run_dir).await?;
-                }
-                None => {
-                    // No args: create ephemeral session, attach, destroy on exit
-                    println!("[!] Temporary session. Use `capsem create <name>` for persistent.");
-                    let req = ProvisionRequest {
-                        name: None,
-                        ram_mb: 4 * 1024,
-                        cpus: 4,
-                        persistent: false,
-                        env: None,
-                        from: None,
-                        profile_id: None,
-                        profile_revision: None,
-                    };
-                    let resp: ApiResponse<ProvisionResponse> =
-                        client.post("/provision", &req).await?;
-                    let info = resp.into_result()?;
-
-                    // Poll until the socket is connectable (not just present on disk).
-                    let socket_path = run_dir.join("instances").join(format!("{}.sock", info.id));
-                    let sp = socket_path.clone();
-                    let _ = capsem_core::poll::poll_until(
-                        capsem_core::poll::PollOpts::new(
-                            "shell-socket",
-                            std::time::Duration::from_secs(10),
-                        ),
-                        || {
-                            let sp = sp.clone();
-                            async move {
-                                match tokio::net::UnixStream::connect(&sp).await {
-                                    Ok(_) => Some(()),
-                                    Err(_) => None,
-                                }
-                            }
-                        },
-                    )
-                    .await;
-
-                    let shell_result = run_shell(&info.id, &run_dir).await;
-                    // Ephemeral: auto-destroy on disconnect
-                    let _: Result<ApiResponse<serde_json::Value>, _> =
-                        client.delete(&format!("/delete/{}", info.id)).await;
-                    shell_result?;
-                }
-            }
-        }
+        Commands::Session(SessionCommands::Shell { .. }) => unreachable!("handled before client"),
         Commands::Session(SessionCommands::List { quiet }) => {
             let resp: ApiResponse<ListResponse> = client.get("/list").await?;
             let resp = resp.into_result()?;
@@ -4393,7 +4197,7 @@ mod tests {
 
     #[test]
     fn parse_shell_bare() {
-        // Bare `capsem shell` = temp session + auto-destroy
+        // Bare `capsem shell` = TUI home/create flow.
         let cli = Cli::parse_from(["capsem", "shell"]);
         match cli.command.unwrap() {
             Commands::Session(SessionCommands::Shell { session }) => {
@@ -4401,6 +4205,19 @@ mod tests {
             }
             _ => panic!("expected Shell"),
         }
+    }
+
+    #[test]
+    fn shell_without_session_launches_tui_without_args() {
+        assert_eq!(capsem_shell_tui_args(None), Vec::<String>::new());
+    }
+
+    #[test]
+    fn shell_session_maps_to_tui_session_arg() {
+        assert_eq!(
+            capsem_shell_tui_args(Some("my-vm")),
+            vec!["--session".to_string(), "my-vm".to_string()]
+        );
     }
 
     #[test]

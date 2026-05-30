@@ -238,6 +238,7 @@ def test_linux_deb_contents_validation_checks_each_required_payload():
         "usr/bin/capsem-mcp-builtin",
         "usr/bin/capsem-gateway",
         "usr/bin/capsem-tray",
+        "usr/bin/capsem-tui",
         "usr/bin/capsem-admin",
         "usr/share/capsem/admin-python/capsem/admin/cli.py",
         "usr/share/capsem/assets/manifest.json",
@@ -567,6 +568,7 @@ def test_local_install_verifies_fresh_install_and_guest_network():
         "capsem-mcp-builtin",
         "capsem-gateway",
         "capsem-tray",
+        "capsem-tui",
     ):
         assert f'assert_executable "$HOME/.capsem/bin/{binary}"' in body
 
@@ -651,6 +653,7 @@ def test_simulate_install_copies_only_arch_asset_files(tmp_path):
         "capsem-mcp-builtin",
         "capsem-gateway",
         "capsem-tray",
+        "capsem-tui",
     )
     for binary in binaries:
         path = bin_src / binary

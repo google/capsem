@@ -30,6 +30,7 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_read_file` | id, path | Read file content from guest |
 | `capsem_write_file` | id, path, content | Write file into guest |
 | `capsem_vm_logs` | id, grep?, tail? | Serial + process logs. grep filters lines, tail limits to last N. |
+| `capsem_terminal_snapshot` | id, source?, grep?, tail? | Render a text snapshot of a session terminal/log surface from serial/process logs with ANSI cleanup. |
 | `capsem_service_logs` | grep?, tail? | Service daemon logs (last ~100KB). grep + tail filters. |
 | `capsem_inspect_schema` | -- | session.db CREATE TABLE statements |
 | `capsem_inspect` | id, sql | Raw SQL against session.db |
