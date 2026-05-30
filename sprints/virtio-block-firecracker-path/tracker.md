@@ -11,6 +11,7 @@
 - [x] Benchmark virtio-blk telemetry slice against current accepted stack.
 - [x] Prototype Linux async block engine with io_uring completion eventfd.
 - [x] Benchmark async engine slice against current accepted stack.
+- [ ] Gate io_uring away from read-only rootfs and benchmark the gated slice.
 - [ ] Recover or explain scratch sequential read regression.
 - [x] Add async-path telemetry counters for io_uring submissions/completions.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
@@ -178,6 +179,21 @@
     scratch I/O benefits, and keep the synchronous vectored path for rootfs or
     small/random read-heavy traffic unless further tuning reverses the loss.
 
+### Candidate: writable-device io_uring gate
+- Code: this milestone commit.
+- Bench: pending clean-source `just benchmark` artifact after code commit.
+- Hypothesis:
+  - Rootfs is read-only and regressed badly under unconditional io_uring.
+  - Scratch disk sequential read improved under io_uring.
+  - Gating io_uring to writable block devices should recover rootfs/startup
+    while preserving the scratch sequential-read gain.
+- Proof target:
+  - Unit test documents the gate: read-only devices stay on the synchronous
+    vectored path, writable devices remain eligible for io_uring.
+  - `cargo test -p capsem-core hypervisor::kvm --lib`
+  - `just exec "echo ok"`
+  - `just benchmark`
+
 ## Coverage Ledger
 - Unit/contract:
   - Current accepted stack passed focused KVM block, queue, MMIO, and broader
@@ -205,12 +221,11 @@
   - macOS rerun for the event-index shared virtqueue/benchmark state.
   - clear explanation or recovery of scratch sequential read regression.
 
-## Active Slice: io_uring gating
+## Active Slice: writable-device io_uring gate
 - Build:
-  - Keep the io_uring implementation available but avoid using it as the
-    unconditional block backend.
-  - Decide the first clean gate: device role, read/write mix, request size, or
-    explicit config.
+  - Keep the io_uring implementation available but only enable it for writable
+    block devices.
+  - Keep read-only rootfs on the synchronous vectored worker.
   - Benchmark the gate as its own change before adding deeper queue tuning.
 - Do not build:
   - More io_uring tuning in the same commit as the gate. The measured candidate

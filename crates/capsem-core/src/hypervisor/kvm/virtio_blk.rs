@@ -1432,6 +1432,22 @@ fn block_worker_loop(
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
 ) {
+    if !should_use_io_uring(read_only) {
+        block_worker_loop_sync(
+            file,
+            read_only,
+            capacity_sectors,
+            device_id,
+            mem,
+            queue,
+            notify_fd,
+            rx,
+            irq_fd,
+            interrupt_status,
+        );
+        return;
+    }
+
     match BlockIoUring::new(file.as_raw_fd()) {
         Ok(uring) => block_worker_loop_uring(
             file,
@@ -1466,6 +1482,13 @@ fn block_worker_loop(
             );
         }
     }
+}
+
+fn should_use_io_uring(read_only: bool) -> bool {
+    // The first measured io_uring slice improved scratch sequential reads but
+    // regressed read-only rootfs and AI CLI startup. Keep rootfs on the
+    // synchronous vectored path until a rootfs-specific async tune proves out.
+    !read_only
 }
 
 fn block_worker_loop_sync(
@@ -2702,6 +2725,19 @@ mod tests {
         assert_eq!(h.read_status(data_offset + 512), VIRTIO_BLK_S_OK);
         assert_eq!(std::fs::read(&path).unwrap(), pattern);
         assert_eq!(h.interrupt_status.unwrap().load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn block_io_uring_gate_keeps_read_only_rootfs_on_sync_path() {
+        assert!(
+            !should_use_io_uring(true),
+            "read-only rootfs should stay on the synchronous vectored path"
+        );
+        assert!(
+            should_use_io_uring(false),
+            "writable scratch disks remain eligible for io_uring experiments"
+        );
     }
 
     // -----------------------------------------------------------------------

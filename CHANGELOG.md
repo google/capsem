@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-descriptor guest payload order.
 
 ### Changed
+- Gated the Linux KVM virtio-blk io_uring backend to writable block devices
+  after the first benchmark showed scratch sequential-read gains but rootfs and
+  AI CLI startup regressions when io_uring was used unconditionally.
 - Added KVM virtio-blk event-index negotiation and shared virtqueue
   notification-suppression helpers, with canonical Linux benchmark artifacts
   recording the mixed performance result for the Firecracker-path sprint.
