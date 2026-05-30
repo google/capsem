@@ -11,7 +11,7 @@
 - [x] Benchmark virtio-blk telemetry slice against current accepted stack.
 - [x] Prototype Linux async block engine with io_uring completion eventfd.
 - [x] Benchmark async engine slice against current accepted stack.
-- [ ] Gate io_uring away from read-only rootfs and benchmark the gated slice.
+- [x] Gate io_uring away from read-only rootfs and benchmark the gated slice.
 - [ ] Recover or explain scratch sequential read regression.
 - [x] Add async-path telemetry counters for io_uring submissions/completions.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
@@ -179,9 +179,9 @@
     scratch I/O benefits, and keep the synchronous vectored path for rootfs or
     small/random read-heavy traffic unless further tuning reverses the loss.
 
-### Candidate: writable-device io_uring gate
-- Code: this milestone commit.
-- Bench: pending clean-source `just benchmark` artifact after code commit.
+### Measured Candidate: writable-device io_uring gate
+- Code: `c2422adf perf: gate kvm io_uring block to writable disks`
+- Bench: this milestone benchmark artifact commit.
 - Hypothesis:
   - Rootfs is read-only and regressed badly under unconditional io_uring.
   - Scratch disk sequential read improved under io_uring.
@@ -193,6 +193,38 @@
   - `cargo test -p capsem-core hypervisor::kvm --lib`
   - `just exec "echo ok"`
   - `just benchmark`
+- Result versus previous Linux telemetry artifact:
+  - disk sequential write: -3.0%
+  - disk sequential read: -14.7%
+  - disk random write IOPS: -0.4%
+  - disk random read IOPS: -2.6%
+  - rootfs sequential read: +4.9%
+  - rootfs random 4K IOPS: -4.5%
+  - large binary cold read: -0.1%
+  - large binary warm read: +1.4%
+  - small JS reads: -3.3%
+  - metadata stats: +3.7%
+  - python startup: +12.6% faster
+  - node startup: +0.9% faster
+  - claude startup: +0.1% faster
+  - gemini startup: -1.8% slower
+  - codex startup: -3.9% slower
+- Recovery versus unconditional io_uring:
+  - rootfs sequential read: +25.3%
+  - rootfs random 4K IOPS: +17.5%
+  - large binary cold read: +22.8%
+  - small JS reads: +7.7%
+  - metadata stats: +9.5%
+  - node startup: +6.3% faster
+  - claude startup: +6.4% faster
+  - gemini startup: +4.5% faster
+- Interpretation:
+  - The gate fixed the worst rootfs/startup damage from unconditional io_uring,
+    but it is still not a clean overall win against the telemetry baseline
+    because disk sequential read regressed materially.
+  - Next step should either disable io_uring by default while keeping the
+    implementation for future tuning, or find a narrower request-shape gate
+    that can recover disk sequential read without losing rootfs/startup.
 
 ## Coverage Ledger
 - Unit/contract:
@@ -217,19 +249,20 @@
   - io_uring candidate artifact is recorded separately and currently rejected
     as the default backend because rootfs/startup regressions outweigh scratch
     sequential read gains.
+  - Writable-device io_uring gate recovered rootfs/startup versus unconditional
+    io_uring but remains mixed versus telemetry because disk sequential read
+    regressed.
 - Missing/deferred:
   - macOS rerun for the event-index shared virtqueue/benchmark state.
   - clear explanation or recovery of scratch sequential read regression.
 
-## Active Slice: writable-device io_uring gate
+## Active Slice: io_uring default decision
 - Build:
-  - Keep the io_uring implementation available but only enable it for writable
-    block devices.
-  - Keep read-only rootfs on the synchronous vectored worker.
-  - Benchmark the gate as its own change before adding deeper queue tuning.
+  - Decide whether io_uring should be default-off after the mixed gated result,
+    or whether a narrower request-shape gate is worth one more measured slice.
+  - Preserve the implementation and telemetry so future tuning is not lost.
 - Do not build:
-  - More io_uring tuning in the same commit as the gate. The measured candidate
-    proved that compound changes hide what moved the numbers.
+  - Additional queue tuning in the same commit as the default decision.
 - Proof target:
   - `cargo test -p capsem-core hypervisor::kvm --lib`
   - `just exec "echo ok"`

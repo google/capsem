@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "vm_originated_process_enforcement",
   "version": "1.2.1779673506",
-  "source_commit": "7037bac3",
-  "timestamp": 1780104049.0103986,
+  "source_commit": "c2422adf",
+  "timestamp": 1780104955.8653064,
   "arch": "x86_64",
   "host": {
     "platform": "Linux",
@@ -32,28 +32,28 @@
   "runs": 8,
   "gate_ms": 750,
   "rule": {
-    "id": "runtime.block-shell-bench.3925c710",
+    "id": "runtime.block-shell-bench.e0152fc6",
     "pack_id": "runtime-benchmark",
     "condition": "process.activity.operation == 'exec' && process.activity.command_class == 'shell'",
     "decision": "block"
   },
   "operations": {
     "blocked_process_exec_ms": {
-      "min": 15.405,
-      "mean": 15.849,
-      "median": 15.745,
-      "p95": 16.475,
-      "p99": 16.475,
-      "max": 16.475,
+      "min": 15.201,
+      "mean": 15.794,
+      "median": 15.748,
+      "p95": 16.281,
+      "p99": 16.281,
+      "max": 16.281,
       "values": [
-        15.72,
-        15.405,
-        16.188,
-        16.475,
-        15.769,
-        15.626,
-        15.908,
-        15.704
+        16.281,
+        15.766,
+        15.667,
+        16.05,
+        15.674,
+        15.729,
+        15.201,
+        15.98
       ]
     }
   },
@@ -62,23 +62,23 @@
       "row_count": 8,
       "distinct_event_ids": 8,
       "blocked_count": 8,
-      "vm_id": "secbench-8ffa86a2",
+      "vm_id": "secbench-a92c7b30",
       "profile_id": "profile-asset-boot",
       "user_id": "elieb_google_com",
       "process_operation": "exec",
       "process_command_class": "shell",
-      "rule_id": "runtime.block-shell-bench.3925c710",
+      "rule_id": "runtime.block-shell-bench.e0152fc6",
       "reason": "shell exec blocked by security benchmark"
     },
     "runtime_match_count": 8,
-    "runtime_last_event_id": "process-5f5d3d20ca4a0183",
+    "runtime_last_event_id": "process-eefe54c14270f482",
     "logs_exposed_security_decision": true
   },
   "project_version": "1.2.1779673506",
-  "recorded_at": 1780104049.010867,
-  "recorded_at_utc": "2026-05-30T01:20:49.010870+00:00",
+  "recorded_at": 1780104955.8657553,
+  "recorded_at_utc": "2026-05-30T01:35:55.865757+00:00",
   "git": {
-    "commit": "7037bac31ca8a8da09930c4149fe2feb78f8094c",
+    "commit": "c2422adfa541131ece0851b14863c2bf99d7b248",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [
