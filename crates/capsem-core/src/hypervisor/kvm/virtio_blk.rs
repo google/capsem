@@ -221,7 +221,7 @@ impl VirtioBlockDevice {
             if len == 0 {
                 continue;
             }
-            let host_ptr = mem.gpa_to_host(gpa)?;
+            let host_ptr = mem.gpa_range_to_host(gpa, len as u64)?;
             iovecs.push(libc::iovec {
                 iov_base: host_ptr.cast(),
                 iov_len: len as usize,
@@ -342,10 +342,15 @@ impl VirtioBlockDevice {
         data_descs: &[(u64, u32)],
     ) -> u8 {
         if let Some(&(gpa, len)) = data_descs.first() {
-            if let Some(host_ptr) = mem.gpa_to_host(gpa) {
-                let copy_len = (len as usize).min(VIRTIO_BLK_ID_LEN);
+            let copy_len = (len as usize).min(VIRTIO_BLK_ID_LEN);
+            if copy_len == 0 {
+                return VIRTIO_BLK_S_OK;
+            }
+            if let Some(host_ptr) = mem.gpa_range_to_host(gpa, copy_len as u64) {
                 let buf = unsafe { std::slice::from_raw_parts_mut(host_ptr, copy_len) };
                 buf.copy_from_slice(&device_id[..copy_len]);
+            } else {
+                return VIRTIO_BLK_S_IOERR;
             }
         }
 
@@ -409,7 +414,7 @@ impl VirtioBlockDevice {
             if len == 0 {
                 continue;
             }
-            let host_ptr = mem.gpa_to_host(gpa)?;
+            let host_ptr = mem.gpa_range_to_host(gpa, len as u64)?;
             let buf = unsafe { std::slice::from_raw_parts(host_ptr, len as usize) };
             data.extend_from_slice(buf);
         }
@@ -450,7 +455,7 @@ impl VirtioBlockDevice {
 
     /// Write a status byte to a guest physical address.
     fn write_status(mem: &GuestMemoryRef, gpa: u64, status: u8) {
-        if let Some(ptr) = mem.gpa_to_host(gpa) {
+        if let Some(ptr) = mem.gpa_range_to_host(gpa, 1) {
             unsafe {
                 *ptr = status;
             }
@@ -463,11 +468,12 @@ impl VirtioBlockDevice {
         if (len as usize) < REQ_HEADER_SIZE {
             return None;
         }
-        let ptr = mem.gpa_to_host(gpa)?;
+        let ptr = mem.gpa_range_to_host(gpa, REQ_HEADER_SIZE as u64)?;
         unsafe {
-            let type_ = u32::from_le(*(ptr as *const u32));
+            let header = std::slice::from_raw_parts(ptr, REQ_HEADER_SIZE);
+            let type_ = u32::from_le_bytes(header[0..4].try_into().ok()?);
             // skip 4 bytes reserved
-            let sector = u64::from_le(*((ptr as *const u8).add(8) as *const u64));
+            let sector = u64::from_le_bytes(header[8..16].try_into().ok()?);
             Some((type_, sector))
         }
     }
@@ -2813,6 +2819,17 @@ mod tests {
         h.dev.queue_notify(0);
 
         assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_IOERR);
+    }
+
+    #[test]
+    fn block_guest_iovecs_reject_range_that_crosses_ram_end() {
+        let mem = GuestMemory::new(4096).unwrap();
+        let memref = mem.clone_ref(RAM_BASE);
+
+        assert!(
+            VirtioBlockDevice::guest_iovecs(&memref, &[(RAM_BASE + 4095, 2)]).is_none(),
+            "zero-copy iovecs must validate the full guest range before exposing raw host pointers"
+        );
     }
 
     #[test]

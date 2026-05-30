@@ -56,8 +56,8 @@ Capsem strengths we should preserve:
 
 | # | Sub-sprint | Status | Purpose | Depends On |
 | --- | --- | --- | --- | --- |
-| H00 | [Reality And Wrap-Up](H00-reality-and-wrap-up.md) | Active | Close current KVM/block context, preserve benchmark truth, identify the 2-3 pre-flight items before deeper work. | none |
-| H01 | [Safety And Queue Contracts](H01-safety-and-queue-contracts.md) | Not Started | Fix guest-memory range validation, descriptor validation, queue invariants, and adversarial tests. | H00 |
+| H00 | [Reality And Wrap-Up](H00-reality-and-wrap-up.md) | Done | Close current KVM/block context, preserve benchmark truth, identify the 2-3 pre-flight items before deeper work. | none |
+| H01 | [Safety And Queue Contracts](H01-safety-and-queue-contracts.md) | Active | Fix guest-memory range validation, descriptor validation, queue invariants, and adversarial tests. | H00 |
 | H02 | [Event Delivery And Backpressure](H02-event-delivery-and-backpressure.md) | Not Started | Generalize worker/event-loop patterns, widen ioeventfd/event_idx where safe, add queue-full backpressure. | H01 |
 | H03 | [Observability Status And OTel](H03-observability-status-and-otel.md) | Not Started | Make CPU, memory, IO, queue, backend, and lifecycle counters visible in status and exportable to OTel. | H00 |
 | H04 | [CPU SMP And Lifecycle](H04-cpu-smp-and-lifecycle.md) | Not Started | Improve vCPU lifecycle, `immediate_exit`, SMP topology, exit metrics, timer confidence, and pause/resume control. | H01, H03 |
@@ -116,4 +116,3 @@ Before starting H01-H07 implementation, close these:
 3. Decide the first execution slice: safety/range validation first, or
    observability/status first. The recommended order is H01 then H03 because
    unsafe counters over weak contracts can make bad states look official.
-

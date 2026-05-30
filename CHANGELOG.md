@@ -199,6 +199,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Hardened Linux KVM virtio-blk guest-memory handling so zero-copy block I/O,
+  discard reads, request header parsing, get-id writes, and status writes
+  validate the full `gpa + len` range before exposing guest pointers to host
+  code.
 - Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
   `suspending...` state while the suspend action runs instead of only updating
   the bottom status bar.

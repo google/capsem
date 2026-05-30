@@ -468,6 +468,39 @@ impl GuestMemoryRef {
         }
     }
 
+    /// Convert a complete guest physical range to a host pointer.
+    ///
+    /// This is stricter than `gpa_to_host`: callers that expose guest memory
+    /// to host syscalls must prove the whole range is backed by one contiguous
+    /// RAM span, not just that the first byte has a valid translation.
+    pub fn gpa_range_to_host(&self, gpa: u64, len: u64) -> Option<*mut u8> {
+        if len == 0 {
+            return self.gpa_to_host(gpa);
+        }
+
+        let last_gpa = gpa.checked_add(len.checked_sub(1)?)?;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let start_offset = gpa_to_ram_offset(gpa, self.size)?;
+            let last_offset = gpa_to_ram_offset(last_gpa, self.size)?;
+            if last_offset.checked_sub(start_offset)? != len - 1 {
+                return None;
+            }
+            Some(unsafe { self.ptr.add(start_offset as usize) })
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let start_offset = gpa.checked_sub(self.ram_base)?;
+            let last_offset = last_gpa.checked_sub(self.ram_base)?;
+            if last_offset >= self.size || last_offset.checked_sub(start_offset)? != len - 1 {
+                return None;
+            }
+            Some(unsafe { self.ptr.add(start_offset as usize) })
+        }
+    }
+
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<()> {
         let end = offset + data.len() as u64;
         if end > self.size {
@@ -709,6 +742,17 @@ mod tests {
         // Address past end
         let ptr = memref.gpa_to_host(RAM_BASE + 4096);
         assert!(ptr.is_none());
+    }
+
+    #[test]
+    fn guest_memory_ref_gpa_range_to_host_validates_full_range() {
+        let mem = GuestMemory::new(4096).unwrap();
+        let memref = mem.clone_ref(RAM_BASE);
+
+        assert!(memref.gpa_range_to_host(RAM_BASE + 4095, 1).is_some());
+        assert!(memref.gpa_range_to_host(RAM_BASE + 4095, 2).is_none());
+        assert!(memref.gpa_range_to_host(RAM_BASE + 4096, 0).is_none());
+        assert!(memref.gpa_range_to_host(u64::MAX - 1, 8).is_none());
     }
 
     #[test]

@@ -6,6 +6,8 @@
 - [x] H00: close current KVM/block context and benchmark truth.
 - [x] H00: make benchmark artifact retention part of `just benchmark`.
 - [ ] H01: safety and queue contracts.
+  - [x] Record main merge and refreshed macOS benchmark comparison baseline.
+  - [x] Add full guest-memory range validation before raw host pointers.
 - [ ] H03: observability, status, and OTel resource counters.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
@@ -36,18 +38,40 @@
   scratch read 0.11x, rootfs read 0.24x, startup python3 4.03x slower,
   startup node 2.68x slower, startup claude 4.13x slower, startup gemini
   4.21x slower, lifecycle total 2.44x slower, fork create 2.77x slower.
+- `hypervisor-improvement` fast-forwarded to `origin/main` commit `238001fb`
+  after the Linux support, TUI control, bug-fix, and refreshed macOS benchmark
+  merges landed.
+- Refreshed comparison after the macOS rerun now includes rootfs large-binary,
+  small-JS, and metadata-stat lanes. Current Linux/macOS gap: scratch seq read
+  0.10x, rootfs seq read 0.21x, rootfs metadata stat 0.21x, python startup
+  3.83x slower, node startup 3.88x slower, lifecycle total 2.62x slower, fork
+  create 3.16x slower.
+- H01 is active first. Initial implementation slice: prove and fix complete
+  `gpa + len` range validation before KVM virtio-blk zero-copy paths hand raw
+  guest pointers to host syscalls.
+- H01 first slice landed locally: `GuestMemoryRef::gpa_range_to_host` rejects
+  overflow, RAM-end crossing, and x86_64 PCI-hole discontinuities; virtio-blk
+  now uses it for zero-copy iovecs, discard reads, request header parsing,
+  get-id writes, and status writes.
 
 ## Coverage Ledger
 
 - Unit/contract: `tests/test_archive_superseded_benchmark_artifacts.py`,
-  `tests/test_benchmark_contract.py`, `tests/test_benchmark_artifacts.py`.
+  `tests/test_benchmark_contract.py`, `tests/test_benchmark_artifacts.py`,
+  `cargo test -p capsem-core guest_memory_ref --lib`,
+  `cargo test -p capsem-core block_guest_iovecs_reject_range_that_crosses_ram_end --lib`,
+  `cargo test -p capsem-core virtio_blk --lib`.
 - Functional: pending per sub-sprint.
-- Adversarial: pending per sub-sprint.
+- Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
+  a descriptor whose start GPA is valid but whose length crosses RAM end is
+  rejected before raw iovecs reach host I/O.
 - E2E/VM: pending per sub-sprint.
 - Telemetry: pending per sub-sprint.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
-  produced Linux/macOS ratios for shared lanes.
-- Missing/deferred: implementation has not started; this commit is planning
-  only.
+  produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
+  `1.2.1780103109` are now present on main and compared successfully.
+- Missing/deferred: H01 implementation has started; functional VM smoke,
+  telemetry/status, and full benchmark reruns are deferred until a functional
+  H01 milestone lands.
