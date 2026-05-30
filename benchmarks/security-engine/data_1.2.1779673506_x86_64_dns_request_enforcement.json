@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "vm_originated_dns_request_enforcement",
   "version": "1.2.1779673506",
-  "source_commit": "4ca0fb0a",
-  "timestamp": 1780102539.3771744,
+  "source_commit": "7037bac3",
+  "timestamp": 1780104058.193997,
   "arch": "x86_64",
   "host": {
     "platform": "Linux",
@@ -32,28 +32,28 @@
   "runs": 8,
   "gate_ms": 1000,
   "rule": {
-    "id": "runtime.block-dns-bench.d12234a9",
+    "id": "runtime.block-dns-bench.1043442c",
     "pack_id": "runtime-benchmark",
-    "condition": "dns.request.qname == 'security-engine-bench-1171cc05.example.com'",
+    "condition": "dns.request.qname == 'security-engine-bench-0af562af.example.com'",
     "decision": "block"
   },
   "operations": {
     "blocked_dns_request_ms": {
-      "min": 1.467,
-      "mean": 2.465,
-      "median": 1.621,
-      "p95": 8.237,
-      "p99": 8.237,
-      "max": 8.237,
+      "min": 1.79,
+      "mean": 3.117,
+      "median": 1.916,
+      "p95": 11.6,
+      "p99": 11.6,
+      "max": 11.6,
       "values": [
-        8.237,
-        1.823,
-        1.579,
-        1.467,
-        1.59,
-        1.592,
-        1.786,
-        1.649
+        11.6,
+        1.79,
+        2.065,
+        1.916,
+        1.856,
+        1.804,
+        1.985,
+        1.917
       ]
     }
   },
@@ -62,32 +62,32 @@
       "row_count": 16,
       "distinct_event_ids": 16,
       "blocked_count": 16,
-      "vm_id": "secdns-e563e113",
+      "vm_id": "secdns-ab07231d",
       "profile_id": "profile-asset-boot",
       "user_id": "elieb_google_com",
       "process_operation": null,
       "process_command_class": null,
-      "rule_id": "runtime.block-dns-bench.d12234a9",
+      "rule_id": "runtime.block-dns-bench.1043442c",
       "reason": "DNS request blocked by security benchmark"
     },
     "session_db_dns_events": {
       "row_count": 16,
       "denied_count": 16,
-      "qname": "security-engine-bench-1171cc05.example.com",
+      "qname": "security-engine-bench-0af562af.example.com",
       "policy_mode": "runtime",
       "policy_action": "block",
-      "policy_rule": "runtime.block-dns-bench.d12234a9",
+      "policy_rule": "runtime.block-dns-bench.1043442c",
       "policy_reason": "DNS request blocked by security benchmark"
     },
     "runtime_match_count": 16,
-    "runtime_last_event_id": "dns-12fdab57dbfb7bb8",
+    "runtime_last_event_id": "dns-eef6df21dcb2498e",
     "logs_exposed_security_decision": true
   },
   "project_version": "1.2.1779673506",
-  "recorded_at": 1780102539.3775582,
-  "recorded_at_utc": "2026-05-30T00:55:39.377561+00:00",
+  "recorded_at": 1780104058.1943617,
+  "recorded_at_utc": "2026-05-30T01:20:58.194364+00:00",
   "git": {
-    "commit": "4ca0fb0aee80891f149a3bd5245cd89e8b0c524f",
+    "commit": "7037bac31ca8a8da09930c4149fe2feb78f8094c",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [

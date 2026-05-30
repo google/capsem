@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "vm_originated_mcp_request_enforcement",
   "version": "1.2.1779673506",
-  "source_commit": "4ca0fb0a",
-  "timestamp": 1780102543.520266,
+  "source_commit": "7037bac3",
+  "timestamp": 1780104062.49227,
   "arch": "x86_64",
   "host": {
     "platform": "Linux",
@@ -32,28 +32,28 @@
   "runs": 8,
   "gate_ms": 1000,
   "rule": {
-    "id": "runtime.block-mcp-bench.b7f91e9d",
+    "id": "runtime.block-mcp-bench.2fac1e91",
     "pack_id": "runtime-benchmark",
     "condition": "mcp.request.server_id == 'local' && mcp.request.tool_name == 'echo'",
     "decision": "block"
   },
   "operations": {
     "blocked_mcp_request_ms": {
-      "min": 0.934,
-      "mean": 1.208,
-      "median": 0.992,
-      "p95": 2.603,
-      "p99": 2.603,
-      "max": 2.603,
+      "min": 0.799,
+      "mean": 1.067,
+      "median": 0.948,
+      "p95": 2.047,
+      "p99": 2.047,
+      "max": 2.047,
       "values": [
-        2.603,
-        1.198,
-        0.984,
-        0.934,
-        1.001,
-        0.961,
-        1.004,
-        0.98
+        2.047,
+        0.952,
+        0.974,
+        0.799,
+        0.943,
+        1.03,
+        0.918,
+        0.872
       ]
     }
   },
@@ -62,12 +62,12 @@
       "row_count": 8,
       "distinct_event_ids": 8,
       "blocked_count": 8,
-      "vm_id": "secmcp-72fd921b",
+      "vm_id": "secmcp-3aef80d1",
       "profile_id": "profile-asset-boot",
       "user_id": "elieb_google_com",
       "process_operation": null,
       "process_command_class": null,
-      "rule_id": "runtime.block-mcp-bench.b7f91e9d",
+      "rule_id": "runtime.block-mcp-bench.2fac1e91",
       "reason": "MCP request blocked by security benchmark"
     },
     "session_db_mcp_calls": {
@@ -77,18 +77,18 @@
       "tool_name": "local__echo",
       "policy_mode": "enforce",
       "policy_action": "block",
-      "policy_rule": "runtime.block-mcp-bench.b7f91e9d",
+      "policy_rule": "runtime.block-mcp-bench.2fac1e91",
       "policy_reason": "MCP request blocked by security benchmark"
     },
     "runtime_match_count": 8,
-    "runtime_last_event_id": "mcp-d996e5cd19211643",
+    "runtime_last_event_id": "mcp-b46e55a22190f3f2",
     "logs_exposed_security_decision": true
   },
   "project_version": "1.2.1779673506",
-  "recorded_at": 1780102543.5206532,
-  "recorded_at_utc": "2026-05-30T00:55:43.520655+00:00",
+  "recorded_at": 1780104062.4926825,
+  "recorded_at_utc": "2026-05-30T01:21:02.492685+00:00",
   "git": {
-    "commit": "4ca0fb0aee80891f149a3bd5245cd89e8b0c524f",
+    "commit": "7037bac31ca8a8da09930c4149fe2feb78f8094c",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [

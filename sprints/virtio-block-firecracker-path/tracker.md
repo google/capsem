@@ -10,7 +10,7 @@
 - [x] Verify virtio-blk metrics with a local metrics recorder unit test.
 - [x] Benchmark virtio-blk telemetry slice against current accepted stack.
 - [x] Prototype Linux async block engine with io_uring completion eventfd.
-- [ ] Benchmark async engine slice against current accepted stack.
+- [x] Benchmark async engine slice against current accepted stack.
 - [ ] Recover or explain scratch sequential read regression.
 - [x] Add async-path telemetry counters for io_uring submissions/completions.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
@@ -31,9 +31,8 @@
 - Handoff rule from user: do the best Linux implementation, keep commits clean
   and documented, and let the macOS team pull the branch/main and validate with
   canonical `just benchmark`.
-- Active next slice: benchmark the Linux io_uring async block backend against
-  the current telemetry artifact, using queue/backend/request metrics to
-  attribute any wins or regressions.
+- Active next slice: gate the Linux io_uring async block backend so scratch
+  sequential-read gains do not regress rootfs and AI CLI startup.
 
 ## Experiment Ledger
 
@@ -105,8 +104,6 @@
   - `cargo test -p capsem-core hypervisor::kvm::virtio_mmio --lib`
   - `cargo test -p capsem-core hypervisor::kvm --lib`
   - `just exec "echo ok"`
-  - `cargo test -p capsem-core hypervisor::kvm --lib`
-  - `just exec "echo ok"`
   - `just benchmark`
 - Result versus `3b2c7390` Linux event-index artifact:
   - disk sequential write: -3.9%
@@ -132,15 +129,18 @@
   - Keep the new metrics low overhead and use them to attribute the next async
     engine benchmark instead of tuning blind.
 
-### Candidate: KVM virtio-blk io_uring async backend
-- Code: this milestone commit.
-- Bench: pending clean-source `just benchmark` artifact after the code commit.
-- Proof so far:
+### Measured Candidate: KVM virtio-blk io_uring async backend
+- Code: `7037bac3 perf: add kvm virtio block io_uring backend`
+- Bench: this milestone benchmark artifact commit.
+- Proof:
   - `cargo test -p capsem-core hypervisor::kvm::virtio_blk::tests::block_async_notify_drains_from_eventfd_worker --lib`
   - `cargo test -p capsem-core hypervisor::kvm::virtio_blk::tests::block_io_uring_records_async_metrics --lib`
   - `cargo test -p capsem-core hypervisor::kvm::virtio_blk --lib`
   - `cargo test -p capsem-core hypervisor::kvm::virtio_queue --lib`
   - `cargo test -p capsem-core hypervisor::kvm::virtio_mmio --lib`
+  - `cargo test -p capsem-core hypervisor::kvm --lib`
+  - `just exec "echo ok"`
+  - `just benchmark`
 - Implementation notes:
   - The KVM ioeventfd worker now tries an io_uring backend first and falls back
     to the synchronous vectored worker when io_uring setup is unavailable.
@@ -153,8 +153,30 @@
     checkpoint/suspend remains deterministic.
   - Metrics now cover async submissions, completions, fallback count, and
     in-flight depth.
-- Result:
-  - No performance claim until the clean-source benchmark artifact is recorded.
+- Result versus previous Linux telemetry artifact:
+  - disk sequential write: -0.6%
+  - disk sequential read: +12.3%
+  - disk random write IOPS: -0.1%
+  - disk random read IOPS: -3.3%
+  - rootfs sequential read: -16.3%
+  - rootfs random 4K IOPS: -18.7%
+  - large binary cold read: -18.7%
+  - large binary warm read: -3.7%
+  - small JS reads: -10.2%
+  - metadata stats: -5.3%
+  - python startup: +11.5% faster
+  - node startup: -5.8% slower
+  - claude startup: -6.8% slower
+  - gemini startup: -6.6% slower
+  - codex startup: -5.5% slower
+- Interpretation:
+  - As a default backend, this is not accepted yet. It improves scratch
+    sequential reads and Python startup, but regresses rootfs reads, metadata,
+    and AI CLI startup, which are higher-priority for the Linux landing.
+  - Next experiment should keep the io_uring machinery but gate it, likely by
+    device role or request shape: use io_uring where queue depth/sequential
+    scratch I/O benefits, and keep the synchronous vectored path for rootfs or
+    small/random read-heavy traffic unless further tuning reverses the loss.
 
 ## Coverage Ledger
 - Unit/contract:
@@ -176,19 +198,23 @@
     completions, fallback count, and in-flight depth.
 - Performance:
   - Current accepted benchmark artifact included with the telemetry slice.
+  - io_uring candidate artifact is recorded separately and currently rejected
+    as the default backend because rootfs/startup regressions outweigh scratch
+    sequential read gains.
 - Missing/deferred:
   - macOS rerun for the event-index shared virtqueue/benchmark state.
-  - io_uring VM proof and benchmark artifact.
   - clear explanation or recovery of scratch sequential read regression.
 
-## Active Slice: io_uring benchmark
+## Active Slice: io_uring gating
 - Build:
-  - Clean-source code commit for the io_uring backend.
-  - Canonical `just benchmark` artifact recorded against that commit.
-  - Sprint-local percent deltas versus `0bbd5397`.
+  - Keep the io_uring implementation available but avoid using it as the
+    unconditional block backend.
+  - Decide the first clean gate: device role, read/write mix, request size, or
+    explicit config.
+  - Benchmark the gate as its own change before adding deeper queue tuning.
 - Do not build:
-  - Additional tuning until this io_uring slice has its own benchmark. The user
-    explicitly asked to benchmark each change separately.
+  - More io_uring tuning in the same commit as the gate. The measured candidate
+    proved that compound changes hide what moved the numbers.
 - Proof target:
   - `cargo test -p capsem-core hypervisor::kvm --lib`
   - `just exec "echo ok"`
