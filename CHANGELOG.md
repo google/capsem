@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
+  source commit `b6f9b6e2`, including refreshed active artifacts and a
+  pre-rerun archive of the prior Linux artifacts for provenance.
 - Added canonical `just benchmark` retention so same-architecture active
   artifacts are copied to `benchmarks/archive/` before reruns, superseded
   generated benchmark artifacts are zipped afterward, and active benchmark
