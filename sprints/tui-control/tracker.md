@@ -53,6 +53,8 @@
       them in the full `Alt+l` inventory.
 - [x] Focus newly created sessions after the gateway provision refresh.
 - [x] Add regression tests for corrupt-tab filtering and create focus targets.
+- [x] Fix suspend/resume terminal reconnect so typing works after Enter resume.
+- [x] Add regression tests for stale terminal connection cleanup.
 
 ## Notes
 
@@ -215,18 +217,26 @@
 - Create focus fix: gateway action outcomes now carry an optional session id
   to select after refresh. `/provision`, `/fork`, resume, suspend, stop, and
   checkpoint preserve focus on the affected session when it still exists.
+- Suspend/resume input fix: a failed or closed terminal WebSocket now clears
+  the UI connected marker and sends a disconnect to the bridge. The terminal
+  manager also observes finished connection tasks, so a same-session reconnect
+  after resume starts a fresh WebSocket instead of writing keystrokes to a
+  stale input channel.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (45 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (46 lib tests, 2 binary tests),
+  including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
   modal profile/name flow, selected-field highlighting, named fork modal/action
   coverage, empty-state auto-create, service-offline start prompt, gradient
   logo rendering, no-fake-default profile failure handling, corrupt-profile
-  tab filtering plus inventory visibility, create focus targets, `Alt+l`
-  sessions table, `Alt+i` session info, and `Alt+c` checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (45 tests), including
+  tab filtering plus inventory visibility, create focus targets,
+  suspend/resume stale-terminal reconnect cleanup, `Alt+l` sessions table,
+  `Alt+i` session info, and `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (46 lib tests, 2 binary
+  tests), including
   token reuse, live profile-list refresh, named fork request payloads,
   checkpoint-over-suspend payloads, raw local latency preservation coverage,
   profile discovery failure behavior for empty services, and local

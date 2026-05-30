@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    key_to_terminal_bytes, push_coalesced_event, TerminalColor, TerminalEvent, TerminalSurface,
+    key_to_terminal_bytes, push_coalesced_event, run_terminal_manager, TerminalColor,
+    TerminalCommand, TerminalEvent, TerminalSurface,
 };
 
 #[test]
@@ -106,4 +107,62 @@ fn key_encoding_does_not_forward_super_shortcuts() {
         key_to_terminal_bytes(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::SUPER)),
         None
     );
+}
+
+#[tokio::test]
+async fn terminal_manager_reconnects_same_session_after_connection_task_exits() {
+    let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (event_tx, event_rx) = std::sync::mpsc::channel();
+    let event_rx = std::sync::Arc::new(std::sync::Mutex::new(event_rx));
+    let manager = tokio::spawn(run_terminal_manager(
+        "http://127.0.0.1:9".to_string(),
+        command_rx,
+        event_tx,
+    ));
+
+    command_tx
+        .send(TerminalCommand::Connect {
+            session_id: "vm-1".to_string(),
+            cols: 80,
+            rows: 23,
+        })
+        .expect("send first connect");
+    let first = recv_status(event_rx.clone()).await;
+    assert!(first.contains("token failed"), "{first}");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    command_tx
+        .send(TerminalCommand::Connect {
+            session_id: "vm-1".to_string(),
+            cols: 80,
+            rows: 23,
+        })
+        .expect("send reconnect");
+    let second = recv_status(event_rx.clone()).await;
+    assert!(second.contains("token failed"), "{second}");
+
+    command_tx
+        .send(TerminalCommand::Shutdown)
+        .expect("send shutdown");
+    manager.await.expect("terminal manager exits cleanly");
+}
+
+async fn recv_status(
+    rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<TerminalEvent>>>,
+) -> String {
+    let event = tokio::task::spawn_blocking(move || {
+        rx.lock()
+            .expect("lock terminal event receiver")
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("terminal status event")
+    })
+    .await
+    .expect("receive terminal status");
+    match event {
+        TerminalEvent::Status { session_id, status } => {
+            assert_eq!(session_id, "vm-1");
+            status
+        }
+        event => panic!("expected status event, got {event:?}"),
+    }
 }

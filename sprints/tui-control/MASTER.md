@@ -167,6 +167,10 @@ attention markers.
 - Fixed post-create focus by carrying a `focus_session` id out of gateway
   control actions and selecting it after the refreshed status includes the new
   VM.
+- Fixed the suspend/resume terminal input regression by treating terminal
+  failure/disconnect statuses as connection teardown in the UI loop and by
+  clearing finished terminal tasks inside the bridge manager before reconnecting
+  the same session.
 
 ## Testing Gate
 
@@ -216,3 +220,7 @@ attention markers.
   corrupt sessions being filtered from tabs but retained in `Alt+l`, blocked
   resume messaging, and `/provision` returning a focus target for newly
   created VMs.
+- Suspend/resume input regression: `cargo test -p capsem-tui` covers stale
+  terminal-task cleanup and UI connected-marker teardown after terminal failure
+  statuses, preventing keystrokes from being sent to a dead WebSocket after
+  Enter resume.

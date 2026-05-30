@@ -114,7 +114,27 @@ async fn run_terminal_manager(
     let mut active_input: Option<tokio_mpsc::UnboundedSender<TerminalInput>> = None;
     let mut active_task: Option<tokio::task::JoinHandle<()>> = None;
 
-    while let Some(command) = commands.recv().await {
+    loop {
+        let command = if let Some(task) = &mut active_task {
+            tokio::select! {
+                command = commands.recv() => command,
+                result = task => {
+                    let _ = result;
+                    active_task = None;
+                    active_input = None;
+                    active_session_id.clear();
+                    continue;
+                }
+            }
+        } else {
+            commands.recv().await
+        };
+        let Some(command) = command else {
+            if let Some(task) = active_task.take() {
+                task.abort();
+            }
+            break;
+        };
         match command {
             TerminalCommand::Connect {
                 session_id,
@@ -122,10 +142,15 @@ async fn run_terminal_manager(
                 rows,
             } => {
                 if session_id == active_session_id && active_input.is_some() {
-                    if let Some(input) = &active_input {
-                        let _ = input.send(TerminalInput::Resize { cols, rows });
+                    let resize_sent = active_input.as_ref().is_some_and(|input| {
+                        input.send(TerminalInput::Resize { cols, rows }).is_ok()
+                    });
+                    if resize_sent {
+                        continue;
                     }
-                    continue;
+                    if let Some(task) = active_task.take() {
+                        task.abort();
+                    }
                 }
                 if let Some(task) = active_task.take() {
                     task.abort();

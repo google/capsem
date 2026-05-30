@@ -9,7 +9,7 @@ use capsem_tui::fixture::{offline_state, FixtureProvider};
 use capsem_tui::gateway_provider::{ActionOutcome, GatewayProvider};
 use capsem_tui::model::{AppState, ServiceStatus, SessionLifecycle};
 use capsem_tui::provider::StateProvider;
-use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalSurface};
+use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalEvent, TerminalSurface};
 use capsem_tui::ui::{render_app, render_app_snapshot, render_app_svg_snapshot};
 use clap::Parser;
 use crossterm::event::{self, Event, KeyEventKind};
@@ -201,6 +201,10 @@ fn run_loop(
                 needs_draw = true;
             }
             for event in events {
+                if terminal_event_closes_connection(&event, connected_terminal.as_ref()) {
+                    bridge.disconnect();
+                    connected_terminal = None;
+                }
                 surface.apply(event);
             }
             let size = terminal.size()?;
@@ -392,6 +396,27 @@ fn active_terminal_session_id(state: &AppState) -> Option<&str> {
     }
 }
 
+fn terminal_event_closes_connection(
+    event: &TerminalEvent,
+    connected: Option<&ConnectedTerminal>,
+) -> bool {
+    let Some(connected) = connected else {
+        return false;
+    };
+    let TerminalEvent::Status { session_id, status } = event else {
+        return false;
+    };
+    session_id == &connected.session_id && terminal_status_is_closed(status)
+}
+
+fn terminal_status_is_closed(status: &str) -> bool {
+    status == "disconnected"
+        || status.starts_with("token failed:")
+        || status.starts_with("connect failed:")
+        || status.starts_with("send failed:")
+        || status.starts_with("read failed:")
+}
+
 fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) -> bool {
     let Some(provider) = provider else {
         return false;
@@ -421,3 +446,6 @@ fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) -> bool {
 fn terminal_rows(height: u16) -> u16 {
     height.saturating_sub(1).max(1)
 }
+
+#[cfg(test)]
+mod main_tests;

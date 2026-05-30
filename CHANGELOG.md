@@ -199,6 +199,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` terminal input after suspend/resume so a failed or closed
+  terminal WebSocket clears the connected marker, reconnects the active session
+  after resume, and does not drop typed input into a stale terminal task.
 - Fixed `capsem-tui` create flow focus so a newly provisioned VM becomes the
   active tab after the gateway refresh instead of leaving focus on the previous
   session.
