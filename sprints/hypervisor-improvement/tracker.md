@@ -25,6 +25,12 @@
   - [ ] Real OTLP exporter process/configuration remains deferred to the
         broader telemetry sprint.
 - [ ] H02: event delivery and backpressure.
+  - [x] Make KVM virtio-blk io_uring submission-queue saturation explicit
+        backpressure instead of synchronous fallback.
+  - [x] Add and surface `async_queue_full_total` through VM block metrics,
+        service `/info`, `capsem info`, and the OTel metric-point contract.
+  - [ ] Extend the same backpressure/event-loop audit to other KVM devices and
+        completion paths.
 - [ ] H04: CPU, SMP, and lifecycle.
 - [ ] H05: storage, rootfs, and filesystem experiments.
 - [ ] H06: benchmark and product proof.
@@ -115,6 +121,11 @@
   metric points with explicit units, counter/gauge kinds, source metadata, and
   bounded attributes (`component`, `backend`). This makes the counters
   exporter-ready without adding a half-wired OTLP runtime in this sprint.
+- H02 first slice landed locally: KVM virtio-blk io_uring submission queue
+  saturation now backpressures instead of falling back to synchronous I/O. The
+  worker records one queue-full event, rewinds the popped descriptor, leaves
+  used/status untouched, and retries the same request when the async queue has
+  capacity again.
 
 ## Coverage Ledger
 
@@ -142,7 +153,11 @@
   `cargo test -p capsem-tui gateway_status_json_maps_to_tui_state --lib`,
   `cargo test -p capsem-tui stats_overlay_renders_on_demand_without_persistent_help --lib`,
   `cargo test -p capsem-tui --lib`,
-  `cargo test -p capsem-proto metrics::tests --lib`.
+  `cargo test -p capsem-proto metrics::tests --lib`,
+  `cargo test -p capsem-core undo_pop_retries_last_chain --lib`,
+  `cargo test -p capsem-core block_io_uring_queue_full_backpressures_without_sync_fallback --lib`,
+  `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
+  `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
   A live named VM smoke with `capsem info --json` passed for H03 and reported
   `metrics_schema_version=1`, `configured_ram_mb=2048`, `configured_vcpus=2`,
@@ -161,6 +176,9 @@
   tests prove hostile offset arithmetic returns errors instead of panicking.
   `block_data_length_overflow_returns_ioerr` proves aggregate descriptor length
   overflow fails the request instead of panicking.
+  `block_io_uring_queue_full_backpressures_without_sync_fallback` proves a full
+  io_uring submission queue does not burn CPU in the synchronous fallback path,
+  does not complete the request, and can retry the same descriptor later.
 - E2E/VM: `just exec "echo ok"` passed for the KVM one-shot VM path. H03
   resource projection was also checked against a live named VM via
   `capsem info --json`; the second H03 live check confirmed KVM block counters
@@ -174,11 +192,15 @@
   those fields through gateway `/status` and the TUI model. H03 fourth slice
   adds OTel-compatible metric-point mapping with bounded attributes. Real OTLP
   exporter process/configuration remains open for the broader telemetry sprint.
+  H02 first slice adds `async_queue_full_total` to the KVM block snapshot and
+  OTel-compatible block metric points.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
-  `1.2.1780103109` are now present on main and compared successfully.
+  `1.2.1780103109` are now present on main and compared successfully. H02 first
+  slice is correctness/backpressure for the opt-in io_uring path; no canonical
+  benchmark was rerun because the default block backend is unchanged.
 - Missing/deferred: Real OTLP exporter process/configuration is deferred to the
   broader telemetry sprint; full benchmark rerun is deferred until a
   performance-affecting H02/H03 milestone lands.

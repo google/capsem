@@ -70,6 +70,7 @@ const METRIC_QUIESCE_DRAIN_DURATION_MS: &str = "virtio.blk.quiesce_drain_duratio
 const METRIC_ASYNC_SUBMISSIONS_TOTAL: &str = "virtio.blk.async_submissions_total";
 const METRIC_ASYNC_COMPLETIONS_TOTAL: &str = "virtio.blk.async_completions_total";
 const METRIC_ASYNC_FALLBACKS_TOTAL: &str = "virtio.blk.async_fallbacks_total";
+const METRIC_ASYNC_QUEUE_FULL_TOTAL: &str = "virtio.blk.async_queue_full_total";
 const METRIC_ASYNC_IN_FLIGHT: &str = "virtio.blk.async_in_flight";
 
 static DESCRIBE_METRICS: Once = Once::new();
@@ -89,6 +90,7 @@ pub(super) struct BlockDeviceMetrics {
     async_submissions_total: AtomicU64,
     async_completions_total: AtomicU64,
     async_fallbacks_total: AtomicU64,
+    async_queue_full_total: AtomicU64,
     async_in_flight: AtomicU64,
 }
 
@@ -108,6 +110,7 @@ impl BlockDeviceMetrics {
             async_submissions_total: self.async_submissions_total.load(Ordering::Relaxed),
             async_completions_total: self.async_completions_total.load(Ordering::Relaxed),
             async_fallbacks_total: self.async_fallbacks_total.load(Ordering::Relaxed),
+            async_queue_full_total: self.async_queue_full_total.load(Ordering::Relaxed),
             async_in_flight: self.async_in_flight.load(Ordering::Relaxed),
         }
     }
@@ -141,6 +144,8 @@ impl BlockDeviceMetrics {
             .fetch_add(result.submitted as u64, Ordering::Relaxed);
         self.async_fallbacks_total
             .fetch_add(result.async_fallbacks as u64, Ordering::Relaxed);
+        self.async_queue_full_total
+            .fetch_add(result.async_queue_full as u64, Ordering::Relaxed);
     }
 
     fn record_async_completion(&self, completion: &CompletionResult, in_flight: usize) {
@@ -740,6 +745,7 @@ impl VirtioBlockDevice {
             processed,
             submitted: 0,
             async_fallbacks: 0,
+            async_queue_full: 0,
             used_entries,
             should_interrupt,
             read_ops,
@@ -868,24 +874,41 @@ impl VirtioBlockDevice {
                             }
                         };
 
-                    if uring
-                        .submit_rw(
-                            chain.head,
-                            type_,
-                            total_data,
-                            status_desc.addr,
-                            offset,
-                            iovecs,
-                        )
-                        .is_ok()
-                    {
-                        result.submitted += 1;
-                        if type_ == VIRTIO_BLK_T_IN {
-                            result.read_ops += 1;
-                        } else {
-                            result.write_ops += 1;
+                    match uring.submit_rw(
+                        chain.head,
+                        type_,
+                        total_data,
+                        status_desc.addr,
+                        offset,
+                        iovecs,
+                    ) {
+                        Ok(()) => {
+                            result.submitted += 1;
+                            if type_ == VIRTIO_BLK_T_IN {
+                                result.read_ops += 1;
+                            } else {
+                                result.write_ops += 1;
+                            }
+                            continue;
                         }
-                        continue;
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            ::metrics::counter!(
+                                METRIC_ASYNC_QUEUE_FULL_TOTAL,
+                                "operation" => request_operation_label(type_),
+                            )
+                            .increment(1);
+                            result.async_queue_full += 1;
+                            queue.undo_pop();
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                event_name = "virtio.blk.io_uring_submit_failed",
+                                %error,
+                                operation = request_operation_label(type_),
+                                "virtio-blk io_uring submit failed; using synchronous fallback"
+                            );
+                        }
                     }
 
                     ::metrics::counter!(
@@ -969,6 +992,7 @@ struct QueueProcessResult {
     processed: u32,
     submitted: u32,
     async_fallbacks: u32,
+    async_queue_full: u32,
     used_entries: u32,
     should_interrupt: bool,
     read_ops: u32,
@@ -984,6 +1008,7 @@ impl QueueProcessResult {
             processed: 0,
             submitted: 0,
             async_fallbacks: 0,
+            async_queue_full: 0,
             used_entries: 0,
             should_interrupt: false,
             read_ops: 0,
@@ -1271,6 +1296,11 @@ fn describe_metrics_once() {
             METRIC_ASYNC_FALLBACKS_TOTAL,
             Unit::Count,
             "Virtio block requests handled by synchronous fallback from the async path."
+        );
+        describe_counter!(
+            METRIC_ASYNC_QUEUE_FULL_TOTAL,
+            Unit::Count,
+            "Virtio block io_uring submissions deferred because the submission queue was full."
         );
         describe_histogram!(
             METRIC_ASYNC_IN_FLIGHT,
@@ -1826,6 +1856,7 @@ fn block_worker_loop_uring(
                         notify_count,
                         processed = result.processed,
                         submitted = result.submitted,
+                        async_queue_full = result.async_queue_full,
                         used_entries = result.used_entries,
                         in_flight = uring.pending_len(),
                         should_interrupt = result.should_interrupt,
@@ -2501,6 +2532,86 @@ mod tests {
         assert_eq!(counter_total(METRIC_REQUEST_BYTES_TOTAL), 512);
         assert!(histogram_present(METRIC_ASYNC_IN_FLIGHT));
         assert!(histogram_present(METRIC_REQUEST_DURATION_MS));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn block_io_uring_queue_full_backpressures_without_sync_fallback() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter: Snapshotter = recorder.snapshotter();
+        let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+        let data = vec![0xA5u8; 512];
+        let path = temp_disk_with_data("read-uring-full.img", &data);
+        let mut h = TestHarness::new(&path, false);
+        let mut file = h.dev.file.try_clone().unwrap();
+        let Ok(mut uring) = BlockIoUring::new(file.as_raw_fd()) else {
+            return;
+        };
+        let mut queue = h.dev.queue.take().unwrap();
+        let mem = h.dev.mem.as_ref().unwrap().clone();
+
+        h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
+        let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        let status_offset = data_offset + 512;
+        h.write_bytes(status_offset, &[0xAA]);
+
+        let entry = opcode::Nop::new().build().user_data(u64::MAX);
+        let mut filled_entries = 0;
+        while unsafe { uring.ring.submission().push(&entry) }.is_ok() {
+            filled_entries += 1;
+        }
+        assert!(filled_entries > 0, "test must fill the io_uring SQ");
+
+        let result = VirtioBlockDevice::process_queue_uring(
+            &mut file,
+            false,
+            h.dev.capacity_sectors,
+            &h.dev.device_id,
+            &mem,
+            &mut queue,
+            &mut uring,
+        );
+        assert_eq!(result.processed, 1);
+        assert_eq!(result.submitted, 0);
+        assert_eq!(result.async_queue_full, 1);
+        assert_eq!(result.async_fallbacks, 0);
+        assert_eq!(result.used_entries, 0);
+        assert_eq!(h.read_status(status_offset), 0xAA);
+        assert_eq!(h.read_used_idx(), 0);
+        let metrics = BlockDeviceMetrics::default();
+        metrics.record_queue_drain(&result);
+        assert_eq!(metrics.snapshot().async_queue_full_total, 1);
+
+        let snap = snapshotter.snapshot().into_vec();
+        let counter_total = |name: &str| -> u64 {
+            snap.iter()
+                .filter_map(|(key, _, _, value)| match (key.key().name(), value) {
+                    (metric, DebugValue::Counter(count)) if metric == name => Some(*count),
+                    _ => None,
+                })
+                .sum()
+        };
+        assert_eq!(counter_total(METRIC_ASYNC_QUEUE_FULL_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_ASYNC_FALLBACKS_TOTAL), 0);
+
+        drop(uring);
+        let Ok(mut retry_uring) = BlockIoUring::new(file.as_raw_fd()) else {
+            return;
+        };
+        let retry = VirtioBlockDevice::process_queue_uring(
+            &mut file,
+            false,
+            h.dev.capacity_sectors,
+            &h.dev.device_id,
+            &mem,
+            &mut queue,
+            &mut retry_uring,
+        );
+        assert_eq!(retry.processed, 1);
+        assert_eq!(retry.submitted, 1);
     }
 
     #[test]

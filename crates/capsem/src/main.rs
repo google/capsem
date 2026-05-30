@@ -1367,6 +1367,9 @@ fn format_session_hypervisor_lines(info: &client::SessionInfo) -> Vec<String> {
     if let Some(count) = info.block_async_fallbacks_total {
         lines.push(format!("  Async Fallbacks:           {}", count));
     }
+    if let Some(count) = info.block_async_queue_full_total {
+        lines.push(format!("  Async Queue Full:          {}", count));
+    }
     if let Some(count) = info.block_async_in_flight {
         lines.push(format!("  Async In Flight:           {}", count));
     }
@@ -5983,6 +5986,7 @@ best_for = "Testing typed profile TOML parsing."
             block_async_submissions_total: None,
             block_async_completions_total: None,
             block_async_fallbacks_total: None,
+            block_async_queue_full_total: None,
             block_async_in_flight: None,
             last_error: None,
         };
@@ -6052,7 +6056,8 @@ best_for = "Testing typed profile TOML parsing."
             block_async_submissions_total: Some(14),
             block_async_completions_total: Some(15),
             block_async_fallbacks_total: Some(16),
-            block_async_in_flight: Some(17),
+            block_async_queue_full_total: Some(17),
+            block_async_in_flight: Some(18),
             last_error: None,
         };
 
@@ -6126,7 +6131,8 @@ best_for = "Testing typed profile TOML parsing."
             block_async_submissions_total: Some(14),
             block_async_completions_total: Some(15),
             block_async_fallbacks_total: Some(16),
-            block_async_in_flight: Some(17),
+            block_async_queue_full_total: Some(17),
+            block_async_in_flight: Some(18),
             last_error: None,
         };
 
@@ -6143,7 +6149,8 @@ best_for = "Testing typed profile TOML parsing."
                 "  Async Submissions:         14",
                 "  Async Completions:         15",
                 "  Async Fallbacks:           16",
-                "  Async In Flight:           17",
+                "  Async Queue Full:          17",
+                "  Async In Flight:           18",
             ]
         );
     }
@@ -6276,6 +6283,7 @@ best_for = "Testing typed profile TOML parsing."
             block_async_submissions_total: None,
             block_async_completions_total: None,
             block_async_fallbacks_total: None,
+            block_async_queue_full_total: None,
             block_async_in_flight: None,
             last_error: None,
         };

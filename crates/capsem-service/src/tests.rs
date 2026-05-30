@@ -1944,7 +1944,8 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
     snapshot.hypervisor.block.async_submissions_total = 15;
     snapshot.hypervisor.block.async_completions_total = 16;
     snapshot.hypervisor.block.async_fallbacks_total = 17;
-    snapshot.hypervisor.block.async_in_flight = 18;
+    snapshot.hypervisor.block.async_queue_full_total = 18;
+    snapshot.hypervisor.block.async_in_flight = 19;
     snapshot.mcp.mcp_tool_invocations_total = 6;
     snapshot.filesystem.fs_reads_total = 1;
     snapshot.filesystem.fs_writes_total = 2;
@@ -1992,7 +1993,8 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
     assert_eq!(info.block_async_submissions_total, Some(15));
     assert_eq!(info.block_async_completions_total, Some(16));
     assert_eq!(info.block_async_fallbacks_total, Some(17));
-    assert_eq!(info.block_async_in_flight, Some(18));
+    assert_eq!(info.block_async_queue_full_total, Some(18));
+    assert_eq!(info.block_async_in_flight, Some(19));
     assert_eq!(info.total_requests, Some(5));
     assert_eq!(info.allowed_requests, Some(4));
     assert_eq!(info.denied_requests, Some(1));

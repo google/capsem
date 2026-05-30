@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an OTel-compatible metric-point contract for VM metrics snapshots with
   stable Capsem metric names, units, counter/gauge kinds, and bounded
   attributes for resource and KVM block counters.
+- Added explicit KVM virtio-blk io_uring submission-queue backpressure: full
+  async queues now rewind the descriptor for retry instead of falling back to
+  synchronous I/O, with queue-full counters exposed through VM metrics,
+  `capsem info`, and the OTel metric-point contract.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.

@@ -216,6 +216,14 @@ impl VmMetricsSnapshot {
             attrs.clone(),
             source,
         );
+        push_counter(
+            points,
+            "capsem.vm.block.async_queue_full",
+            "1",
+            block.async_queue_full_total as f64,
+            attrs.clone(),
+            source,
+        );
         push_gauge(
             points,
             "capsem.vm.block.async_in_flight",
@@ -464,6 +472,7 @@ pub struct VmBlockMetrics {
     pub async_submissions_total: u64,
     pub async_completions_total: u64,
     pub async_fallbacks_total: u64,
+    pub async_queue_full_total: u64,
     pub async_in_flight: u64,
 }
 

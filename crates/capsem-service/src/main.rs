@@ -2789,6 +2789,7 @@ fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot)
     info.block_async_submissions_total = Some(snapshot.hypervisor.block.async_submissions_total);
     info.block_async_completions_total = Some(snapshot.hypervisor.block.async_completions_total);
     info.block_async_fallbacks_total = Some(snapshot.hypervisor.block.async_fallbacks_total);
+    info.block_async_queue_full_total = Some(snapshot.hypervisor.block.async_queue_full_total);
     info.block_async_in_flight = Some(snapshot.hypervisor.block.async_in_flight);
     info.total_requests = Some(snapshot.http.http_requests_total);
     info.allowed_requests = Some(snapshot.http.http_requests_allowed_total);

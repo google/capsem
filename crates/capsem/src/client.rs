@@ -173,6 +173,8 @@ pub struct SessionInfo {
     #[serde(default)]
     pub block_async_fallbacks_total: Option<u64>,
     #[serde(default)]
+    pub block_async_queue_full_total: Option<u64>,
+    #[serde(default)]
     pub block_async_in_flight: Option<u64>,
     /// Tail of `process.log` from the last failed boot when
     /// `status == "Defunct"`. Rendered inline by `capsem list` so a

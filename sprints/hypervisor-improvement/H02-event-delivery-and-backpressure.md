@@ -35,3 +35,11 @@ without collapsing all blocking work onto one loop.
 - io_uring full-queue tests.
 - VM smoke and focused benchmarks for each converted device path.
 
+## Progress
+
+- First slice complete: KVM virtio-blk io_uring submission-queue saturation no
+  longer falls back to synchronous I/O. The worker rewinds the popped
+  descriptor with `VirtQueue::undo_pop()`, records
+  `async_queue_full_total`, leaves the request uncompleted, and retries it on a
+  later drain. The counter flows through VM metrics, `capsem info`, and the
+  OTel metric-point contract.

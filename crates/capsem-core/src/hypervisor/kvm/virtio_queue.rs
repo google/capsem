@@ -402,6 +402,12 @@ impl VirtQueue {
         self.pop()
     }
 
+    /// Rewind the last successful descriptor-chain pop so a device can retry it
+    /// after transient backpressure without completing it synchronously.
+    pub fn undo_pop(&mut self) {
+        self.next_avail = self.next_avail.wrapping_sub(1);
+    }
+
     /// Push a used descriptor chain back to the used ring.
     pub fn push_used(&mut self, head: u16, len: u32) {
         self.push_used_deferred(head, len);
@@ -853,6 +859,33 @@ mod tests {
         assert_eq!(chain2.head, 1);
         assert_eq!(chain2.descriptors[0].len, 200);
 
+        assert!(q.pop().is_none());
+    }
+
+    #[test]
+    fn undo_pop_retries_last_chain() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 100,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 0, 0);
+        write_avail_idx(&mem, avail_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        assert_eq!(q.pop().unwrap().head, 0);
+        q.undo_pop();
+        assert_eq!(q.pop().unwrap().head, 0);
         assert!(q.pop().is_none());
     }
 

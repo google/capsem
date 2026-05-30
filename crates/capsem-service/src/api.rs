@@ -222,6 +222,8 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_async_fallbacks_total: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_async_queue_full_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_async_in_flight: Option<u64>,
     /// Short tail of `process.log` from the last failed boot. Populated
     /// only when `status == "Defunct"`. Renders in `capsem list` /
@@ -304,6 +306,7 @@ impl SandboxInfo {
             block_async_submissions_total: None,
             block_async_completions_total: None,
             block_async_fallbacks_total: None,
+            block_async_queue_full_total: None,
             block_async_in_flight: None,
             last_error: None,
         }

@@ -20,6 +20,7 @@ fn otel_metric_points_include_resource_and_block_counters() {
     snapshot.hypervisor.block.used_entries_total = 25_264;
     snapshot.hypervisor.block.read_ops_total = 8_578;
     snapshot.hypervisor.block.bytes_read_total = 31_394_816;
+    snapshot.hypervisor.block.async_queue_full_total = 2;
     snapshot.hypervisor.block.async_in_flight = 3;
 
     let points = snapshot.otel_metric_points();
@@ -44,6 +45,10 @@ fn otel_metric_points_include_resource_and_block_counters() {
     let in_flight = point(&points, "capsem.vm.block.async_in_flight");
     assert_eq!(in_flight.kind, OtelMetricKind::Gauge);
     assert_eq!(in_flight.value, 3.0);
+
+    let queue_full = point(&points, "capsem.vm.block.async_queue_full");
+    assert_eq!(queue_full.kind, OtelMetricKind::Counter);
+    assert_eq!(queue_full.value, 2.0);
 
     assert!(points.iter().all(|point| point.source_vm_id == "vm-otel"
         && point.persistent

@@ -846,6 +846,7 @@ impl VmHandle for KvmHandle {
             block.async_submissions_total += snapshot.async_submissions_total;
             block.async_completions_total += snapshot.async_completions_total;
             block.async_fallbacks_total += snapshot.async_fallbacks_total;
+            block.async_queue_full_total += snapshot.async_queue_full_total;
             block.async_in_flight += snapshot.async_in_flight;
         }
         VmHypervisorMetrics { block }
