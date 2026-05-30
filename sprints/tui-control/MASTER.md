@@ -64,7 +64,7 @@ attention markers.
 - Added a typed app controller for session switching.
 - Kept plain `q` and Ctrl-C available for the agent/terminal stream. The TUI
   shell owns Alt chords: `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`,
-  `Alt+q`, `Alt+?`, `Alt+i`, and `Alt+o`.
+  `Alt+f`, `Alt+q`, `Alt+?`, `Alt+i`, and `Alt+o`.
 - Added `just dev-tui` for direct local playback.
 
 ## T04-T05 Closeout
@@ -131,6 +131,10 @@ attention markers.
   new-session modal. The flow pre-fills the next unused `tmp-*` name, supports
   typing/backspace, lets Up/Down choose a live `/profiles` entry, and sends a
   named persistent `/provision` request with the selected `profile_id`.
+- Added `Alt+f` as a fork modal. The flow pre-fills the next unused
+  `<source>-fork` name, supports typing/backspace, and sends authenticated
+  `POST /fork/{id}` with the chosen `name`. Help now explicitly lists
+  `Alt+s save`, `Alt+o sessions/status`, and `Alt+f fork`.
 
 ## Testing Gate
 
@@ -149,11 +153,13 @@ attention markers.
   `/status` p95 0.223ms. Concurrent boot pressure remains a separate follow-up
   because endpoint speed should not depend on parallel provisioning setup.
 - Regression: `cargo test -p capsem-tui` covers stopped-session prompt,
-  greyed inactive tab tone, and Enter-to-resume behavior. Live snapshot against
-  the installed stopped `tui-proof-*` sessions shows the prompt instead of a
-  blank pane.
+  greyed inactive tab tone, Enter-to-resume behavior, and the named fork
+  modal/action path. Live snapshot against the installed stopped
+  `tui-proof-*` sessions shows the prompt instead of a blank pane.
 - UI polish: `cargo test -p capsem-tui` and snapshot output cover the far-left
   `help: alt+s` status-bar hint.
 - New-session regression: `cargo test -p capsem-tui` covers create-modal
   rendering, profile selection, name editing, and authenticated named-profile
   provision request payloads.
+- Fork regression: `cargo test -p capsem-tui` covers fork-modal rendering,
+  name editing, help discoverability, and authenticated gateway fork payloads.

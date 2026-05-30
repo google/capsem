@@ -18,12 +18,14 @@ pub enum AppOverlay {
     Stats,
     Home,
     Create,
+    Fork,
     Confirm,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
     CreateSession { name: String, profile_id: String },
+    Fork { id: String, name: String },
     Resume { name: String },
     Suspend { id: String },
     Stop { id: String },
@@ -34,8 +36,9 @@ impl ControlAction {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::CreateSession { .. } => "create",
+            Self::Fork { .. } => "fork",
             Self::Resume { .. } => "resume",
-            Self::Suspend { .. } => "suspend",
+            Self::Suspend { .. } => "save",
             Self::Stop { .. } => "stop",
             Self::Delete { .. } => "delete",
         }
@@ -44,6 +47,7 @@ impl ControlAction {
     pub fn target(&self) -> &str {
         match self {
             Self::CreateSession { name, .. } => name,
+            Self::Fork { name, .. } => name,
             Self::Resume { name }
             | Self::Suspend { id: name }
             | Self::Stop { id: name }
@@ -59,12 +63,19 @@ pub struct App {
     overlay: AppOverlay,
     pending_action: Option<ControlAction>,
     create_draft: Option<CreateDraft>,
+    fork_draft: Option<ForkDraft>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateDraft {
     pub name: String,
     pub selected_profile: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForkDraft {
+    pub source_id: String,
+    pub name: String,
 }
 
 impl App {
@@ -80,6 +91,7 @@ impl App {
             overlay: AppOverlay::None,
             pending_action: None,
             create_draft: None,
+            fork_draft: None,
         }
     }
 
@@ -97,6 +109,10 @@ impl App {
 
     pub fn create_draft(&self) -> Option<&CreateDraft> {
         self.create_draft.as_ref()
+    }
+
+    pub fn fork_draft(&self) -> Option<&ForkDraft> {
+        self.fork_draft.as_ref()
     }
 
     pub fn replace_state(&mut self, mut state: AppState) {
@@ -132,6 +148,9 @@ impl App {
         if self.overlay == AppOverlay::Create {
             return self.handle_create_key(key);
         }
+        if self.overlay == AppOverlay::Fork {
+            return self.handle_fork_key(key);
+        }
         if self.handle_overlay_key(key) {
             return AppAction::Consumed;
         }
@@ -144,6 +163,11 @@ impl App {
         if is_new_key(key) {
             self.open_create();
             return AppAction::Consumed;
+        }
+        if is_fork_key(key) {
+            if self.open_fork() {
+                return AppAction::Consumed;
+            }
         }
         if let Some(action) = self.control_action_for_key(key) {
             self.pending_action = Some(action);
@@ -222,6 +246,7 @@ impl App {
         };
         self.pending_action = None;
         self.create_draft = None;
+        self.fork_draft = None;
         true
     }
 
@@ -286,11 +311,26 @@ impl App {
 
     fn open_create(&mut self) {
         self.pending_action = None;
+        self.fork_draft = None;
         self.create_draft = Some(CreateDraft {
             name: next_tmp_name(&self.state),
             selected_profile: default_profile_index(&self.state),
         });
         self.overlay = AppOverlay::Create;
+    }
+
+    fn open_fork(&mut self) -> bool {
+        let Some(source_id) = self.active_id() else {
+            return false;
+        };
+        self.pending_action = None;
+        self.create_draft = None;
+        self.fork_draft = Some(ForkDraft {
+            name: next_fork_name(&self.state, &source_id),
+            source_id,
+        });
+        self.overlay = AppOverlay::Fork;
+        true
     }
 
     fn handle_create_key(&mut self, key: KeyEvent) -> AppAction {
@@ -347,6 +387,49 @@ impl App {
             _ => AppAction::Consumed,
         }
     }
+
+    fn handle_fork_key(&mut self, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.fork_draft = None;
+                self.overlay = AppOverlay::None;
+                AppAction::Consumed
+            }
+            KeyCode::Enter => {
+                let Some(draft) = self.fork_draft.clone() else {
+                    self.overlay = AppOverlay::None;
+                    return AppAction::Consumed;
+                };
+                let name = draft.name.trim().to_string();
+                if name.is_empty() {
+                    return AppAction::Consumed;
+                }
+                self.fork_draft = None;
+                self.overlay = AppOverlay::None;
+                AppAction::Invoke(ControlAction::Fork {
+                    id: draft.source_id,
+                    name,
+                })
+            }
+            KeyCode::Backspace => {
+                if let Some(draft) = &mut self.fork_draft {
+                    draft.name.pop();
+                }
+                AppAction::Consumed
+            }
+            KeyCode::Char(ch)
+                if !key.modifiers.intersects(
+                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                ) =>
+            {
+                if let Some(draft) = &mut self.fork_draft {
+                    draft.name.push(ch);
+                }
+                AppAction::Consumed
+            }
+            _ => AppAction::Consumed,
+        }
+    }
 }
 
 fn is_exit_key(key: KeyEvent) -> bool {
@@ -366,6 +449,10 @@ fn is_next_key(key: KeyEvent) -> bool {
 
 fn is_new_key(key: KeyEvent) -> bool {
     is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Char('n' | 'N'))
+}
+
+fn is_fork_key(key: KeyEvent) -> bool {
+    is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Char('f' | 'F'))
 }
 
 fn is_alt_key(modifiers: KeyModifiers) -> bool {
@@ -397,6 +484,20 @@ fn next_tmp_name(state: &AppState) -> String {
         }
     }
     "tmp".to_string()
+}
+
+fn next_fork_name(state: &AppState, source_id: &str) -> String {
+    let base = format!("{source_id}-fork");
+    if state.sessions.iter().all(|session| session.id != base) {
+        return base;
+    }
+    for index in 2..1000 {
+        let candidate = format!("{base}-{index}");
+        if state.sessions.iter().all(|session| session.id != candidate) {
+            return candidate;
+        }
+    }
+    base
 }
 
 fn select_index(key: KeyEvent) -> Option<usize> {

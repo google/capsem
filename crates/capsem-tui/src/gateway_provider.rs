@@ -351,6 +351,23 @@ async fn invoke_action(
                 message: format!("created {id}"),
             })
         }
+        ControlAction::Fork { id, name } => {
+            let response = client
+                .post(join_url(base_url, &["fork", id])?)
+                .bearer_auth(token)
+                .json(&serde_json::json!({ "name": name }))
+                .send()
+                .await
+                .with_context(|| format!("fork capsem session {id}"))?;
+            let body = response_json(response).await?;
+            let fork_name = body
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or(name);
+            Ok(ActionOutcome {
+                message: format!("forked {fork_name}"),
+            })
+        }
         ControlAction::Resume { name } => {
             post_empty(client, base_url, token, &["resume", name]).await?;
             Ok(ActionOutcome {

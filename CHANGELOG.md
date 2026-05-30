@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a profile-aware `capsem-tui` new-session dialog with an editable
   prefilled `tmp-*` session name and live profile selection before
   provisioning.
+- Added a `capsem-tui` fork dialog on `Alt+f` that asks for a fork name and
+  sends the request through the installed gateway.
 - Added `capsem-tui` to local install/package payloads so the TUI is available
   from `~/.capsem/bin/capsem-tui` after installation.
 - Added `capsem_terminal_snapshot` to the Capsem MCP server so agents can
@@ -106,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a far-left `help: alt+s` suspend hint to the `capsem-tui` status bar
   so the primary lifecycle shortcut is visible without reopening the full help
   overlay.
+- Clarified the `capsem-tui` help overlay so `Alt+s` is labeled as save,
+  `Alt+o` as sessions/status, and `Alt+f` as fork.
 
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while

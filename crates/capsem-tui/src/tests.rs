@@ -231,6 +231,49 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
 }
 
 #[test]
+fn help_lists_save_sessions_status_and_fork_shortcuts() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('/'), KeyModifiers::ALT));
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render help");
+
+    assert!(snapshot.contains("Alt+s save"));
+    assert!(snapshot.contains("Alt+o sessions/status"));
+    assert!(snapshot.contains("Alt+f fork"));
+}
+
+#[test]
+fn fork_overlay_asks_for_name_and_invokes_fork_action() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('f'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Fork);
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render fork dialog");
+    assert!(snapshot.contains("fork session"));
+    assert!(snapshot.contains("source"));
+    assert!(snapshot.contains("profile-v2"));
+    assert!(snapshot.contains("profile-v2-fork"));
+
+    for ch in ['-', 'c', 'o', 'p', 'y'] {
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char(ch), KeyModifiers::NONE)),
+            AppAction::Consumed
+        );
+    }
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Fork {
+            id: "profile-v2".to_string(),
+            name: "profile-v2-fork-copy".to_string()
+        })
+    );
+}
+
+#[test]
 fn refresh_preserves_active_session_when_it_still_exists() {
     let mut app = App::new(fixture_state());
     app.select_session(1);
@@ -615,6 +658,45 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
         .expect("invoke create");
 
     assert_eq!(outcome.message, "created tmp-1-proof");
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /fork/profile-v2 "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(request.contains(r#""name":"profile-v2-fork-copy""#));
+                write_json_response(
+                    &mut stream,
+                    r#"{"name":"profile-v2-fork-copy","size_bytes":1024}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Fork {
+            id: "profile-v2".to_string(),
+            name: "profile-v2-fork-copy".to_string(),
+        })
+        .await
+        .expect("invoke fork");
+
+    assert_eq!(outcome.message, "forked profile-v2-fork-copy");
     server.await.expect("server task");
 }
 

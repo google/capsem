@@ -35,6 +35,7 @@
 - [x] Add `capsem_terminal_snapshot` MCP tool for session terminal inspection.
 - [x] Add confirmed create/resume/suspend/stop/delete actions through the
       installed HTTP gateway.
+- [x] Add named fork action through the installed HTTP gateway.
 - [x] Run live installed-gateway empty-service snapshot.
 - [x] Run live two-session terminal proof.
 - [x] Commit functional milestone.
@@ -77,8 +78,9 @@
   bitmap screenshot. It is enough for agent debugging and works through the
   existing service log contract.
 - Safe service actions are now active behind a confirmation overlay. `Alt+n`
-  creates an ephemeral session, `Alt+r` resumes stopped/suspended sessions,
-  `Alt+s` suspends the active session, `Alt+t` stops it, and `Alt+d` deletes it.
+  opens the new-session dialog, `Alt+f` opens the fork dialog, `Alt+r` resumes
+  stopped/suspended sessions, `Alt+s` saves/suspends the active session,
+  `Alt+t` stops it, and `Alt+d` deletes it.
   Action calls run on a
   background worker so long suspend/stop/provision paths do not freeze terminal
   rendering.
@@ -159,16 +161,20 @@
   the next unused `tmp-*`, lets the user type a name, lets Up/Down choose from
   the live `/profiles` list, and provisions a named persistent session with
   the selected `profile_id`.
+- Fork flow correction: `Alt+f` now opens a `fork session` modal, pre-fills
+  the next unused `<source>-fork` name, lets the user type/backspace, and sends
+  `POST /fork/{id}` with the chosen `name`. Full help now calls out
+  `Alt+s save`, `Alt+o sessions/status`, and `Alt+f fork`.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (29 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (32 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   far-left `help: alt+s` status-bar hint, plus the create modal profile/name
-  flow.
-- TUI latency/provider: `cargo test -p capsem-tui` (29 tests), including
-  token reuse, live profile-list refresh, and raw local latency preservation
-  coverage.
+  flow and named fork modal/action coverage.
+- TUI latency/provider: `cargo test -p capsem-tui` (32 tests), including
+  token reuse, live profile-list refresh, named fork request payloads, and raw
+  local latency preservation coverage.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Service/core/logger hot paths: `cargo test -p capsem-service`,
@@ -186,8 +192,8 @@
 - Gateway wiring: `GatewayProvider::load_async` authenticated HTTP mock test
   plus live local snapshot through the installed gateway.
 - Service actions: confirmed action key tests plus authenticated mock gateway
-  tests for successful stop, named profile create, and surfaced service error
-  bodies.
+  tests for successful stop, named profile create, named fork, and surfaced
+  service error bodies.
 - Terminal wiring: `TerminalSurface` output, xterm color/style preservation,
   adjacent output coalescing, and key-encoding tests.
 - MCP wiring: `capsem_terminal_snapshot` router registration and rendering

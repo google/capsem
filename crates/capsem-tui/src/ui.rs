@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
 use ratatui::{Frame, Terminal};
 
-use crate::app::{App, AppOverlay, ControlAction, CreateDraft};
+use crate::app::{App, AppOverlay, ControlAction, CreateDraft, ForkDraft};
 use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
 use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
 
@@ -30,7 +30,7 @@ pub fn render_with_terminal(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
 ) {
-    render_layout(frame, state, terminal, AppOverlay::None, None, None);
+    render_layout(frame, state, terminal, AppOverlay::None, None, None, None);
 }
 
 pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSurface>) {
@@ -41,6 +41,7 @@ pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSu
         app.overlay(),
         app.pending_action(),
         app.create_draft(),
+        app.fork_draft(),
     );
 }
 
@@ -51,6 +52,7 @@ fn render_layout(
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
     create_draft: Option<&CreateDraft>,
+    fork_draft: Option<&ForkDraft>,
 ) {
     let root = frame.area();
     let chunks = Layout::default()
@@ -67,6 +69,7 @@ fn render_layout(
         overlay,
         pending_action,
         create_draft,
+        fork_draft,
     );
 }
 
@@ -300,6 +303,7 @@ fn render_overlay(
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
     create_draft: Option<&CreateDraft>,
+    fork_draft: Option<&ForkDraft>,
 ) {
     if overlay == AppOverlay::None {
         return;
@@ -311,6 +315,7 @@ fn render_overlay(
         AppOverlay::Stats => " stats ",
         AppOverlay::Home => " sessions ",
         AppOverlay::Create => " new session ",
+        AppOverlay::Fork => " fork session ",
         AppOverlay::Confirm => " confirm ",
         AppOverlay::None => "",
     };
@@ -326,6 +331,7 @@ fn render_overlay(
         AppOverlay::Stats => stats_lines(state),
         AppOverlay::Home => home_lines(state),
         AppOverlay::Create => create_lines(state, create_draft),
+        AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
     };
@@ -358,6 +364,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Create => (state.profiles.len() as u16)
             .saturating_add(8)
             .clamp(10, 18),
+        AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
     }
@@ -368,9 +375,10 @@ fn help_lines() -> Vec<Line<'static>> {
         overlay_title("keys"),
         overlay_line("Alt+Left/Right switch sessions"),
         overlay_line("Alt+1..9 jumps to a session"),
-        overlay_line("Alt+n new   Alt+r resume   Alt+s suspend"),
-        overlay_line("Alt+t stop   Alt+d delete   Alt+q quit"),
-        overlay_line("Alt+? help   Alt+i stats   Alt+o sessions"),
+        overlay_line("Alt+n new   Alt+f fork   Alt+s save"),
+        overlay_line("Alt+r resume   Alt+t stop   Alt+d delete"),
+        overlay_line("Alt+? help   Alt+i stats   Alt+o sessions/status"),
+        overlay_line("Alt+q quit"),
         overlay_line("Alt+/ also opens help when the terminal sends slash"),
         overlay_line("plain q, Ctrl-C, and shell keys pass through"),
     ]
@@ -422,6 +430,26 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
         )));
     }
     lines
+}
+
+fn fork_lines(state: &AppState, draft: Option<&ForkDraft>) -> Vec<Line<'static>> {
+    let Some(session) = state.active_session() else {
+        return vec![
+            overlay_title("fork session"),
+            overlay_line("no active session"),
+        ];
+    };
+    let name = draft
+        .map(|draft| draft.name.as_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(" ");
+    vec![
+        overlay_title("fork session"),
+        overlay_pair("source", &session.id),
+        overlay_pair("name", name),
+        overlay_line("type to edit; Backspace deletes"),
+        overlay_line("Enter forks; Esc cancels"),
+    ]
 }
 
 fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
