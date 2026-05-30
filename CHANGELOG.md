@@ -207,6 +207,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available heads, out-of-range `next` indices, cyclic chains, and
   non-power-of-two queue sizes fail closed before devices parse guest
   descriptors.
+- Validated Linux KVM split-ring layout alignment and guest-memory coverage so
+  malformed descriptor, available, or used ring placements fail closed instead
+  of reaching modulo arithmetic or raw ring accesses.
 - Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
   `suspending...` state while the suspend action runs instead of only updating
   the bottom status bar.

@@ -9,6 +9,7 @@
   - [x] Record main merge and refreshed macOS benchmark comparison baseline.
   - [x] Add full guest-memory range validation before raw host pointers.
   - [x] Reject malformed virtqueue descriptor indices and cycles.
+  - [x] Validate split-ring size, alignment, and guest-memory coverage.
 - [ ] H03: observability, status, and OTel resource counters.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
@@ -58,6 +59,10 @@
   queue sizes, available-ring heads outside the queue, descriptor `next`
   indices outside the queue, and descriptor cycles instead of returning a
   partial or misparsed chain.
+- H01 ring-layout slice landed locally: virtqueue operations now validate
+  non-zero power-of-two size, descriptor-table 16-byte alignment, available-ring
+  2-byte alignment, used-ring 4-byte alignment, and full guest-memory coverage
+  for descriptor, available, and used rings before touching ring memory.
 
 ## Coverage Ledger
 
@@ -73,7 +78,9 @@
   rejected before raw iovecs reach host I/O. `avail_head_outside_queue_fails_closed`,
   `descriptor_next_outside_queue_fails_closed`, and
   `cycle_in_descriptor_chain_terminates` prove malformed split-ring chains fail
-  closed.
+  closed. `zero_size_queue_operations_fail_closed` and
+  `misaligned_descriptor_table_fails_closed` prove bad queue layout does not
+  panic or parse misaligned descriptor memory.
 - E2E/VM: pending per sub-sprint.
 - Telemetry: pending per sub-sprint.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts

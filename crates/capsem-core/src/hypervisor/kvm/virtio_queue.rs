@@ -251,11 +251,14 @@ impl VirtQueue {
     ///
     /// Returns None if no descriptors are available (ring empty).
     pub fn pop(&mut self) -> Option<DescriptorChain> {
-        if !self.has_valid_size() {
+        if !self.has_valid_layout() {
             warn!(
-                event_name = "virtio.queue.invalid_size",
+                event_name = "virtio.queue.invalid_layout",
                 size = self.size,
-                "virtqueue size must be non-zero and power-of-two"
+                desc_table_gpa = self.desc_table_gpa,
+                avail_ring_gpa = self.avail_ring_gpa,
+                used_ring_gpa = self.used_ring_gpa,
+                "virtqueue layout failed size, alignment, or guest-memory range validation"
             );
             return None;
         }
@@ -337,6 +340,46 @@ impl VirtQueue {
         self.size != 0 && self.size.is_power_of_two()
     }
 
+    fn has_valid_layout(&self) -> bool {
+        if !self.has_valid_size() {
+            return false;
+        }
+        if self.desc_table_gpa % 16 != 0
+            || self.avail_ring_gpa % 2 != 0
+            || self.used_ring_gpa % 4 != 0
+        {
+            return false;
+        }
+
+        let size = self.size as u64;
+        let desc_len = size.checked_mul(16);
+        let avail_len = size
+            .checked_mul(2)
+            .and_then(|ring_len| 4_u64.checked_add(ring_len))
+            .and_then(|base_len| base_len.checked_add(2));
+        let used_len = size
+            .checked_mul(8)
+            .and_then(|ring_len| 4_u64.checked_add(ring_len))
+            .and_then(|base_len| base_len.checked_add(2));
+
+        match (desc_len, avail_len, used_len) {
+            (Some(desc_len), Some(avail_len), Some(used_len)) => {
+                self.mem
+                    .gpa_range_to_host(self.desc_table_gpa, desc_len)
+                    .is_some()
+                    && self
+                        .mem
+                        .gpa_range_to_host(self.avail_ring_gpa, avail_len)
+                        .is_some()
+                    && self
+                        .mem
+                        .gpa_range_to_host(self.used_ring_gpa, used_len)
+                        .is_some()
+            }
+            _ => false,
+        }
+    }
+
     /// Pop a descriptor chain, or arm driver notifications if the queue is empty.
     ///
     /// With event-index negotiated, this follows the Firecracker/Linux pattern:
@@ -370,6 +413,14 @@ impl VirtQueue {
     /// Devices that complete multiple descriptor chains from one notification
     /// can call this repeatedly and publish them with one `flush_used()`.
     pub fn push_used_deferred(&mut self, head: u16, len: u32) {
+        if !self.has_valid_layout() {
+            warn!(
+                event_name = "virtio.queue.invalid_layout",
+                size = self.size,
+                "skipping used-ring write for invalid virtqueue layout"
+            );
+            return;
+        }
         let used_index = self.next_used % self.size;
         self.write_used_ring(used_index, head, len);
         self.next_used = self.next_used.wrapping_add(1);
@@ -378,6 +429,9 @@ impl VirtQueue {
 
     /// Publish all deferred used ring entries to the driver.
     pub fn flush_used(&mut self) {
+        if !self.has_valid_layout() {
+            return;
+        }
         // Release: ensure used ring entry writes are visible to the driver
         // before the used index update. Required by virtio spec when
         // device and driver run on different threads.
@@ -392,6 +446,11 @@ impl VirtQueue {
     /// driver-owned `used_event` field tells the device which used index should
     /// trigger the next interrupt.
     pub fn prepare_kick(&mut self) -> bool {
+        if !self.has_valid_layout() {
+            self.num_added = 0;
+            return false;
+        }
+
         if self.num_added == 0 {
             return false;
         }
@@ -496,7 +555,8 @@ mod tests {
         // Place structures at offsets within guest RAM
         let desc_table_gpa = RAM_BASE;
         let avail_ring_gpa = RAM_BASE + (size as u64) * 16; // after descriptor table
-        let used_ring_gpa = avail_ring_gpa + 6 + (size as u64) * 2; // after avail ring
+        let avail_end = avail_ring_gpa + 6 + (size as u64) * 2;
+        let used_ring_gpa = (avail_end + 3) & !3; // used ring is 4-byte aligned
 
         (mem, desc_table_gpa, avail_ring_gpa, used_ring_gpa)
     }
@@ -1044,6 +1104,45 @@ mod tests {
         assert!(
             q.pop().is_none(),
             "descriptor next indices must be less than queue size"
+        );
+    }
+
+    #[test]
+    fn zero_size_queue_operations_fail_closed() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 0);
+
+        assert!(q.pop().is_none());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| q.push_used(0, 0))).is_ok(),
+            "invalid queue sizes must not panic through modulo-by-zero used-ring paths"
+        );
+    }
+
+    #[test]
+    fn misaligned_descriptor_table_fails_closed() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 64,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 0, 0);
+        write_avail_idx(&mem, avail_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa + 1, avail_gpa, used_gpa, 16);
+
+        assert!(
+            q.pop().is_none(),
+            "descriptor table GPA must satisfy split-ring descriptor alignment"
         );
     }
 
