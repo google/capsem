@@ -5,6 +5,7 @@
 
   type ChatSurface = {
     label: string;
+    surfaceId: string;
     recipe: PreviewRecipe;
     messages: A2uiMessage[];
   };
@@ -28,34 +29,41 @@
   let darkMode = $state(false);
   let refreshTimer: number | undefined;
 
-  let chatSurface = $derived.by<ChatSurface | null>(() => {
-    const authored = payload?.authored?.surfaces[0];
-    if (authored) {
-      return {
+  let chatSurfaces = $derived.by<ChatSurface[]>(() => {
+    const authored = payload?.authored?.surfaces ?? [];
+    if (authored.length > 0) {
+      return authored.map((surface) => ({
         label: payload?.authored?.ok ? "live" : "invalid",
-        recipe: authored.recipe ?? {
+        surfaceId: surface.surfaceId,
+        recipe: surface.recipe ?? {
           component: "card",
           variant: "simple",
           docsUrl: "https://preline.co/docs/components/card.html",
         },
-        messages: authored.messages,
-      };
+        messages: surface.messages,
+      }));
     }
 
     const fallback = payload?.toolAcceptance.surfaces[0];
-    if (!fallback) return null;
-    return {
+    if (!fallback) return [];
+    return [{
       label: "demo",
+      surfaceId: fallback.surfaceId,
       recipe: {
         component: "alert",
         variant: "discovery",
         docsUrl: "https://preline.co/docs/components/alerts.html#discovery",
       },
       messages: fallback.messages,
-    };
+    }];
   });
 
-  let surface = $derived(chatSurface ? buildSurface(chatSurface.messages) : null);
+  let renderedSurfaces = $derived(
+    chatSurfaces.map((chatSurface) => ({
+      ...chatSurface,
+      surface: buildSurface(chatSurface.messages),
+    })),
+  );
 
   onMount(() => {
     selectedTheme = window.localStorage.getItem("capsem-chat-theme") ?? "default";
@@ -140,9 +148,9 @@
           />
           <span>Dark</span>
         </label>
-        {#if chatSurface}
+        {#if chatSurfaces.length}
           <span class="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground">
-            {chatSurface.label}
+            {chatSurfaces[0].label}
           </span>
         {/if}
       </div>
@@ -152,7 +160,7 @@
       <div class="m-4 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive">
         {error}
       </div>
-    {:else if !chatSurface || !surface}
+    {:else if renderedSurfaces.length === 0}
       <div class="flex flex-1 items-center justify-center text-sm text-muted-foreground-1">
         Loading chat...
       </div>
@@ -171,8 +179,12 @@
           <div class="min-w-0 flex-1">
             <div class="mb-2 text-xs font-medium text-muted-foreground-1">assistant</div>
             <div class="rounded-2xl rounded-tl-sm border border-card-line bg-card p-4 shadow-2xs">
-              <div class="rounded-xl border border-card-line bg-surface p-4">
-                <A2Node id="root" {surface} recipe={chatSurface.recipe} scope={surface.data} onAction={recordAction} />
+              <div class="grid gap-4">
+                {#each renderedSurfaces as item (item.surfaceId)}
+                  <div class="rounded-xl border border-card-line bg-surface p-4">
+                    <A2Node id="root" surface={item.surface} recipe={item.recipe} scope={item.surface.data} onAction={recordAction} />
+                  </div>
+                {/each}
               </div>
             </div>
           </div>

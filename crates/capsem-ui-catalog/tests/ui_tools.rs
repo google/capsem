@@ -114,8 +114,13 @@ fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
                     "surfaceId": "model",
                     "title": "model",
                     "description": "Gemini",
+                    "imageUrl": "https://example.test/gemini.png",
+                    "imageAlt": "Gemini product mark",
                     "linkLabel": "visit homepage",
-                    "linkHref": "https://gemini.google.com/"
+                    "linkHref": "https://gemini.google.com/",
+                    "actions": [
+                        { "label": "Use model", "action": "model.use", "variant": "primary" }
+                    ]
                 }),
             },
         ],
@@ -133,6 +138,70 @@ fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
         !serialized.contains("A2UI Basic component"),
         "user-facing card output leaked internal protocol label: {serialized}"
     );
+    assert!(serialized.contains("https://example.test/gemini.png"));
+    assert!(serialized.contains("model.use"));
+}
+
+#[test]
+fn ui_pack_01_lowers_notice_facts_and_choice_modal() {
+    let result = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "pack" }),
+            },
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.notice".to_owned(),
+                args: json!({
+                    "surfaceId": "pack",
+                    "id": "notice",
+                    "title": "Review required",
+                    "message": "This model call needs approval.",
+                    "tone": "warning",
+                    "actions": [{ "label": "Review", "action": "notice.review" }]
+                }),
+            },
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.facts".to_owned(),
+                args: json!({
+                    "surfaceId": "pack",
+                    "id": "facts",
+                    "title": "Repository",
+                    "items": [
+                        { "label": "Project", "value": "capsem" },
+                        { "label": "Branch", "value": "main" }
+                    ]
+                }),
+            },
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.ask".to_owned(),
+                args: json!({
+                    "surfaceId": "pack",
+                    "id": "choice",
+                    "title": "Policy decision",
+                    "text": "How should this call proceed?",
+                    "buttonLabel": "Choose policy",
+                    "choices": [
+                        { "label": "Allow once", "action": "policy.allow_once", "variant": "primary" },
+                        { "label": "Deny", "action": "policy.deny", "variant": "default" },
+                        { "label": "Open details", "action": "policy.details", "variant": "borderless" }
+                    ]
+                }),
+            },
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.surface.validate".to_owned(),
+                args: json!({ "surfaceId": "pack" }),
+            },
+        ],
+    });
+
+    assert!(result.ok, "{:#?}", result.observations);
+    let serialized = serde_json::to_string(&result.surfaces[0].messages).unwrap();
+    assert!(serialized.contains("Review required"));
+    assert!(serialized.contains("Repository"));
+    assert!(serialized.contains("policy.allow_once"));
+    assert!(serialized.contains("policy.details"));
+    assert!(!serialized.contains("<"));
 }
 
 #[test]
@@ -171,6 +240,9 @@ fn ui_table_lowers_to_conformant_a2ui_and_recipe() {
                     "id": "houses",
                     "title": "Great Houses of Westeros",
                     "columns": ["House", "Motto", "Arms"],
+                    "searchable": true,
+                    "filterable": true,
+                    "pageSize": 2,
                     "rows": [
                         ["Stark", "Winter Is Coming", "Direwolf"],
                         ["Lannister", "Hear Me Roar!", "Golden lion"],
@@ -194,6 +266,14 @@ fn ui_table_lowers_to_conformant_a2ui_and_recipe() {
             .map(|recipe| recipe.component.as_str()),
         Some("table")
     );
+    let table = surface
+        .recipe
+        .as_ref()
+        .and_then(|recipe| recipe.table.as_ref())
+        .expect("table options survive");
+    assert!(table.searchable);
+    assert!(table.filterable);
+    assert_eq!(table.page_size, 2);
     let serialized = serde_json::to_string(&surface.messages).unwrap();
     assert!(serialized.contains("Winter Is Coming"));
     assert!(serialized.contains("Golden lion"));

@@ -71,6 +71,33 @@ describe("a2uiClient", () => {
     expect(parsed.surfaces[0].recipe?.tone).toBe("warning");
   });
 
+  it("parses table control metadata", () => {
+    const parsed = parseA2uiRenderResponse({
+      ...conformantResponse,
+      surfaces: [
+        {
+          ...conformantResponse.surfaces[0],
+          recipe: {
+            component: "table",
+            variant: "basic",
+            docsUrl: "https://preline.co/docs/components/tables.html#basic-table",
+            table: {
+              searchable: true,
+              filterable: true,
+              pageSize: 5,
+            },
+          },
+        },
+      ],
+    });
+
+    expect(parsed.surfaces[0].recipe?.table).toEqual({
+      searchable: true,
+      filterable: true,
+      pageSize: 5,
+    });
+  });
+
   it("rejects malformed response shapes", () => {
     expect(() => parseA2uiRenderResponse({ ok: true })).toThrow(/conformance/);
     expect(() =>

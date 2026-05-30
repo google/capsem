@@ -95,6 +95,7 @@ function parseRecipe(value: unknown): PreviewRecipe {
     docsUrl: value.docsUrl,
     tone: value.tone === undefined ? undefined : requireString(value.tone, "recipe.tone"),
     link: value.link === undefined ? undefined : parseLink(value.link),
+    table: value.table === undefined ? undefined : parseTable(value.table),
   };
 }
 
@@ -103,6 +104,18 @@ function parseLink(value: unknown): { label: string; href: string } {
   return {
     label: requireString(value.label, "recipe.link.label"),
     href: requireString(value.href, "recipe.link.href"),
+  };
+}
+
+function parseTable(value: unknown): { searchable: boolean; filterable: boolean; pageSize: number } {
+  assertRecord(value, "recipe.table");
+  if (typeof value.searchable !== "boolean") throw new Error("recipe.table.searchable must be boolean");
+  if (typeof value.filterable !== "boolean") throw new Error("recipe.table.filterable must be boolean");
+  if (typeof value.pageSize !== "number") throw new Error("recipe.table.pageSize must be number");
+  return {
+    searchable: value.searchable,
+    filterable: value.filterable,
+    pageSize: value.pageSize,
   };
 }
 

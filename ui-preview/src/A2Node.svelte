@@ -33,6 +33,9 @@
   } = $props();
 
   let open = $state(false);
+  let tableQuery = $state("");
+  let tableFilter = $state("all");
+  let tablePage = $state(0);
 
   let component = $derived(surface.components.get(id));
   let childItems = $derived(
@@ -93,6 +96,14 @@
     return component?.component === "Card" && recipe?.component === "card" && recipe?.variant === "simple";
   }
 
+  function isNoticeCard(): boolean {
+    return component?.component === "Card" && recipe?.component === "notice";
+  }
+
+  function isFactsCard(): boolean {
+    return component?.component === "Card" && recipe?.component === "facts";
+  }
+
   function isTableCard(): boolean {
     return component?.component === "Card" && recipe?.component === "table" && recipe?.variant === "basic";
   }
@@ -123,11 +134,79 @@
       .filter((child): child is NonNullable<typeof component> => Boolean(child));
   }
 
+  function cardBodyChildren(): Array<NonNullable<typeof component>> {
+    if (!cardChild) return [];
+    return staticChildIds(cardChild)
+      .map((childId) => surface.components.get(childId))
+      .filter((child): child is NonNullable<typeof component> => Boolean(child));
+  }
+
+  function firstCardChildByComponent(name: string): NonNullable<typeof component> | undefined {
+    return cardBodyChildren().find((child) => child.component === name);
+  }
+
+  function cardTextChildren(): Array<NonNullable<typeof component>> {
+    return cardBodyChildren().filter((child) => child.component === "Text");
+  }
+
+  function cardActionRows(): Array<NonNullable<typeof component>> {
+    return cardBodyChildren().filter((child) => child.component === "Row");
+  }
+
+  function tablePageSize(): number {
+    return Math.max(1, recipe?.table?.pageSize ?? 5);
+  }
+
+  function tableFilterOptions(rows: Array<NonNullable<typeof component>>): string[] {
+    return Array.from(new Set(rows.map((row) => textValue(surface, tableCells(row)[0], scope)).filter(Boolean)));
+  }
+
+  function tableVisibleRows(rows: Array<NonNullable<typeof component>>): Array<NonNullable<typeof component>> {
+    const normalizedQuery = tableQuery.trim().toLowerCase();
+    return rows.filter((row) => {
+      const cells = tableCells(row).map((cell) => textValue(surface, cell, scope));
+      const matchesFilter = tableFilter === "all" || cells[0] === tableFilter;
+      const matchesQuery = !normalizedQuery || cells.join(" ").toLowerCase().includes(normalizedQuery);
+      return matchesFilter && matchesQuery;
+    });
+  }
+
+  function tablePageCount(rows: Array<NonNullable<typeof component>>): number {
+    return Math.max(1, Math.ceil(rows.length / tablePageSize()));
+  }
+
+  function tablePagedRows(rows: Array<NonNullable<typeof component>>): Array<NonNullable<typeof component>> {
+    const pageCount = tablePageCount(rows);
+    const safePage = Math.min(tablePage, pageCount - 1);
+    const start = safePage * tablePageSize();
+    return rows.slice(start, start + tablePageSize());
+  }
+
+  function setTableQuery(value: string): void {
+    tableQuery = value;
+    tablePage = 0;
+  }
+
+  function setTableFilter(value: string): void {
+    tableFilter = value;
+    tablePage = 0;
+  }
+
   function alertClass(): string {
     if (recipe?.tone === "warning") {
       return "bg-warning/10 border border-warning/20 rounded-lg shadow-2xs p-4";
     }
     return "bg-layer border border-layer-line rounded-lg shadow-lg p-4";
+  }
+
+  function noticeClass(): string {
+    if (recipe?.tone === "warning") {
+      return "bg-warning/10 border border-warning/20";
+    }
+    if (recipe?.tone === "danger") {
+      return "bg-destructive/10 border border-destructive/20";
+    }
+    return "bg-card border border-card-line";
   }
 
   function iconName(): unknown {
@@ -162,6 +241,8 @@
     <img
       class={component.variant === "avatar"
         ? "h-10 w-10 rounded-full object-cover"
+        : component.variant === "header"
+          ? "h-48 w-full object-cover"
         : "max-h-56 w-full rounded-md object-cover"}
       src={resolveDynamic(component.url, surface.data, scope)}
       alt={resolveDynamic(component.description, surface.data, scope)}
@@ -233,36 +314,85 @@
         </div>
       </div>
     </div>
+  {:else if component.component === "Card" && isNoticeCard()}
+    {@const title = cardTextChildren()[0]}
+    {@const message = cardTextChildren()[1]}
+    {@const actions = cardActionRows()[0]}
+    <div class={`rounded-xl shadow-2xs p-4 ${noticeClass()}`} role="status">
+      <div class="flex flex-col gap-3">
+        {#if title}
+          <h3 class="font-semibold text-foreground">{textValue(surface, title, scope)}</h3>
+        {/if}
+        {#if message}
+          <p class="text-sm text-muted-foreground-1">{textValue(surface, message, scope)}</p>
+        {/if}
+        {#if actions}
+          <div class="flex flex-wrap gap-2">
+            {#each staticChildIds(actions) as actionId}
+              <A2Node id={actionId} {surface} {recipe} {scope} {onAction} />
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {:else if component.component === "Card" && isFactsCard()}
+    {@const title = cardTextChildren()[0]}
+    {@const rows = cardActionRows()}
+    <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl overflow-hidden">
+      {#if title}
+        <div class="px-4 py-3 border-b border-card-line bg-surface">
+          <h3 class="font-semibold text-foreground">{textValue(surface, title, scope)}</h3>
+        </div>
+      {/if}
+      <dl class="divide-y divide-card-line">
+        {#each rows as row (row.id)}
+          {@const cells = tableCells(row)}
+          <div class="grid gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
+            <dt class="text-xs font-semibold uppercase text-muted-foreground-1">
+              {textValue(surface, cells[0], scope)}
+            </dt>
+            <dd class="text-sm font-medium text-foreground sm:col-span-2">
+              {textValue(surface, cells[1], scope)}
+            </dd>
+          </div>
+        {/each}
+      </dl>
+    </div>
   {:else if component.component === "Card" && isSimpleCard()}
-    {@const title = childComponent(surface, cardChild, 0)}
-    {@const description = childComponent(surface, cardChild, 1)}
-    {@const meta = childComponent(surface, cardChild, 2)}
-    <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl">
+    {@const image = firstCardChildByComponent("Image")}
+    {@const title = cardTextChildren()[0]}
+    {@const description = cardTextChildren()[1]}
+    {@const actions = cardActionRows()[0]}
+    <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl overflow-hidden">
+      {#if image}
+        <A2Node id={image.id} {surface} {recipe} {scope} {onAction} />
+      {/if}
       <div class="p-4">
         {#if title}
           <h3 class="font-semibold text-foreground">
             {textValue(surface, title, scope)}
           </h3>
         {/if}
-        {#if meta}
-          {@const metaCaption = childComponent(surface, meta, 1)}
-          {#if metaCaption}
-            <p class="mt-1 text-xs font-medium uppercase text-muted-foreground-1">
-              {textValue(surface, metaCaption, scope)}
-            </p>
-          {/if}
-        {/if}
         {#if description}
           <p class="mt-1 text-sm text-muted-foreground-1">
             {textValue(surface, description, scope)}
           </p>
         {/if}
-        <a class="mt-3 inline-flex items-center gap-x-1 text-sm font-semibold rounded-lg border border-transparent text-primary decoration-2 hover:text-primary-hover hover:underline focus:underline focus:outline-hidden focus:text-primary-focus disabled:opacity-50 disabled:pointer-events-none" href={recipe?.link?.href ?? recipe?.docsUrl ?? "#"}>
-          {recipe?.link?.label ?? "Card link"}
-          <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m9 18 6-6-6-6"></path>
-          </svg>
-        </a>
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          {#if actions}
+            {#each staticChildIds(actions) as actionId}
+              <A2Node id={actionId} {surface} {recipe} {scope} {onAction} />
+            {/each}
+          {/if}
+          {#if recipe?.link}
+            <a class="inline-flex items-center gap-x-1 text-sm font-semibold rounded-lg border border-transparent text-primary decoration-2 hover:text-primary-hover hover:underline focus:underline focus:outline-hidden focus:text-primary-focus disabled:opacity-50 disabled:pointer-events-none" href={recipe.link.href}>
+              {recipe.link.label}
+              <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m9 18 6-6-6-6"></path>
+              </svg>
+            </a>
+          {/if}
+        </div>
       </div>
     </div>
   {:else if component.component === "Card" && isTableCard()}
@@ -270,10 +400,45 @@
     {@const rows = tableRows()}
     {@const header = rows[0]}
     {@const bodyRows = rows.slice(1)}
+    {@const visibleRows = tableVisibleRows(bodyRows)}
+    {@const pageCount = tablePageCount(visibleRows)}
+    {@const pagedRows = tablePagedRows(visibleRows)}
+    {@const filterOptions = tableFilterOptions(bodyRows)}
     <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl overflow-hidden">
       {#if title}
         <div class="px-6 py-4 border-b border-card-line">
           <h3 class="font-semibold text-foreground">{title}</h3>
+        </div>
+      {/if}
+      {#if recipe?.table?.searchable || recipe?.table?.filterable}
+        <div class="flex flex-col gap-3 border-b border-card-line bg-surface px-4 py-3 sm:flex-row">
+          {#if recipe?.table?.searchable}
+            <label class="flex-1 text-xs font-medium text-muted-foreground-1">
+              <span class="sr-only">Search table</span>
+              <input
+                class="block w-full rounded-lg border border-line-2 bg-layer px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground-1 focus:border-primary focus:ring-primary"
+                type="search"
+                placeholder="Search rows"
+                value={tableQuery}
+                oninput={(event) => setTableQuery(event.currentTarget.value)}
+              />
+            </label>
+          {/if}
+          {#if recipe?.table?.filterable}
+            <label class="w-full text-xs font-medium text-muted-foreground-1 sm:w-56">
+              <span class="sr-only">Filter table</span>
+              <select
+                class="block w-full rounded-lg border border-line-2 bg-layer px-3 py-2 text-sm text-foreground focus:border-primary focus:ring-primary"
+                value={tableFilter}
+                onchange={(event) => setTableFilter(event.currentTarget.value)}
+              >
+                <option value="all">All rows</option>
+                {#each filterOptions as option}
+                  <option value={option}>{option}</option>
+                {/each}
+              </select>
+            </label>
+          {/if}
         </div>
       {/if}
       <div class="overflow-x-auto">
@@ -290,7 +455,7 @@
             </thead>
           {/if}
           <tbody class="divide-y divide-card-line">
-            {#each bodyRows as row (row.id)}
+            {#each pagedRows as row (row.id)}
               <tr class="bg-card hover:bg-surface">
                 {#each tableCells(row) as cell, cellIndex (cell.id)}
                   {#if cellIndex === 0}
@@ -304,9 +469,41 @@
                   {/if}
                 {/each}
               </tr>
+            {:else}
+              <tr>
+                <td class="px-6 py-6 text-sm text-muted-foreground-1" colspan={header ? tableCells(header).length : 1}>
+                  No rows match the current filters.
+                </td>
+              </tr>
             {/each}
           </tbody>
         </table>
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-card-line px-4 py-3 text-sm text-muted-foreground-1">
+        <div>
+          Showing {visibleRows.length === 0 ? 0 : Math.min(tablePage * tablePageSize() + 1, visibleRows.length)}
+          - {Math.min((tablePage + 1) * tablePageSize(), visibleRows.length)}
+          of {visibleRows.length}
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg bg-layer border border-layer-line text-layer-foreground shadow-2xs hover:bg-layer-hover focus:outline-hidden focus:bg-layer-focus disabled:opacity-50 disabled:pointer-events-none"
+            disabled={tablePage <= 0}
+            onclick={() => (tablePage = Math.max(0, tablePage - 1))}
+          >
+            Previous
+          </button>
+          <span>Page {Math.min(tablePage + 1, pageCount)} of {pageCount}</span>
+          <button
+            type="button"
+            class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg bg-layer border border-layer-line text-layer-foreground shadow-2xs hover:bg-layer-hover focus:outline-hidden focus:bg-layer-focus disabled:opacity-50 disabled:pointer-events-none"
+            disabled={tablePage >= pageCount - 1}
+            onclick={() => (tablePage = Math.min(pageCount - 1, tablePage + 1))}
+          >
+            Next
+          </button>
+        </div>
       </div>
     </div>
   {:else if component.component === "Card"}

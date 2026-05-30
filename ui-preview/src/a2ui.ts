@@ -57,6 +57,11 @@ export type PreviewRecipe = {
     label: string;
     href: string;
   };
+  table?: {
+    searchable: boolean;
+    filterable: boolean;
+    pageSize: number;
+  };
 };
 
 export type UiToolProgramResult = {

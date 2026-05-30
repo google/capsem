@@ -14,9 +14,19 @@ ahead of the full plugin contract work and be reused by:
 
 - `ui`: A2UI v0.9 Basic message model, typed helper builders, and message
   validation against `a2ui-types`.
-- `ui_tools`: Capsem-authored tool program API (`ui.alert`, `ui.card`,
-  `ui.table`, `ui.ask`), recipe metadata, renderer-drift checks, and Preline
-  template binding checks.
+- `ui_tools`: Capsem-authored tool program API (`ui.alert`, `ui.notice`,
+  `ui.card`, `ui.facts`, `ui.table`, `ui.ask`), recipe metadata,
+  renderer-drift checks, and Preline template binding checks.
+
+## Pack 01 Blocks
+
+- `ui.notice`: title, message, tone, optional actions.
+- `ui.card`: title, description, optional image, optional link, optional
+  actions.
+- `ui.facts`: titled key/value facts panel.
+- `ui.table`: columns, rows, search, first-column filtering, and pagination
+  metadata.
+- `ui.ask`: yes/no defaults or typed choice actions.
 
 ## Boundary
 

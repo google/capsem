@@ -50,6 +50,10 @@ async fn hyper_render_preserves_card_link_contract() {
                         "id": "model-card",
                         "title": "model",
                         "description": "Gemini",
+                        "imageUrl": "https://example.test/gemini.png",
+                        "actions": [
+                            { "label": "Use model", "action": "model.use", "variant": "primary" }
+                        ],
                         "linkLabel": "visit homepage",
                         "linkHref": "https://gemini.google.com/"
                     }
@@ -68,6 +72,63 @@ async fn hyper_render_preserves_card_link_contract() {
     assert_eq!(recipe.component, "card");
     assert_eq!(link.label, "visit homepage");
     assert_eq!(link.href, "https://gemini.google.com/");
+    let serialized = serde_json::to_string(&surface.messages).unwrap();
+    assert!(serialized.contains("https://example.test/gemini.png"));
+    assert!(serialized.contains("model.use"));
+}
+
+#[tokio::test]
+async fn hyper_render_outputs_pack_01_notice_facts_and_choices() {
+    let server = TestServer::start().await;
+    let response = server
+        .post(json!({
+            "calls": [
+                { "tool": "ui.surface.create", "args": { "id": "agent-draft" } },
+                {
+                    "tool": "ui.notice",
+                    "args": {
+                        "surfaceId": "agent-draft",
+                        "title": "Review required",
+                        "message": "This model call needs approval.",
+                        "tone": "warning",
+                        "actions": [{ "label": "Review", "action": "notice.review" }]
+                    }
+                },
+                {
+                    "tool": "ui.facts",
+                    "args": {
+                        "surfaceId": "agent-draft",
+                        "title": "Repository",
+                        "items": [
+                            { "label": "Project", "value": "capsem" },
+                            { "label": "Branch", "value": "main" }
+                        ]
+                    }
+                },
+                {
+                    "tool": "ui.ask",
+                    "args": {
+                        "surfaceId": "agent-draft",
+                        "title": "Policy decision",
+                        "text": "How should this call proceed?",
+                        "choices": [
+                            { "label": "Allow once", "action": "policy.allow_once", "variant": "primary" },
+                            { "label": "Deny", "action": "policy.deny", "variant": "default" }
+                        ]
+                    }
+                },
+                { "tool": "ui.surface.validate", "args": { "surfaceId": "agent-draft" } }
+            ]
+        }))
+        .await;
+
+    assert!(response.ok, "{response:#?}");
+    let surface = response.surfaces.first().expect("surface exists");
+    validate_messages(&surface.messages).expect("A2UI messages conform");
+    let serialized = serde_json::to_string(&surface.messages).unwrap();
+    assert!(serialized.contains("Review required"));
+    assert!(serialized.contains("Repository"));
+    assert!(serialized.contains("policy.allow_once"));
 }
 
 #[tokio::test]
@@ -84,6 +145,9 @@ async fn hyper_render_outputs_conformant_table() {
                         "id": "houses",
                         "title": "Great Houses of Westeros",
                         "columns": ["House", "Motto", "Arms"],
+                        "searchable": true,
+                        "filterable": true,
+                        "pageSize": 2,
                         "rows": [
                             ["Stark", "Winter Is Coming", "Direwolf"],
                             ["Lannister", "Hear Me Roar!", "Golden lion"],
@@ -104,6 +168,7 @@ async fn hyper_render_outputs_conformant_table() {
     let recipe = surface.recipe.as_ref().expect("recipe exists");
     assert_eq!(recipe.component, "table");
     assert_eq!(recipe.variant, "basic");
+    assert_eq!(recipe.table.as_ref().expect("table options").page_size, 2);
     let serialized = serde_json::to_string(&surface.messages).unwrap();
     assert!(serialized.contains("Winter Is Coming"));
     assert!(serialized.contains("Three-headed dragon"));
