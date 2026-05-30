@@ -83,6 +83,45 @@ fn offline_empty_state_asks_to_start_service_instead_of_create() {
 }
 
 #[test]
+fn gateway_unavailable_clears_stale_sessions_instead_of_reusing_tabs() {
+    let mut app = App::new(fixture_state());
+
+    app.mark_gateway_unavailable();
+
+    assert!(app.state().sessions.is_empty());
+    assert!(app.state().profiles.is_empty());
+    assert_eq!(app.state().active_session_id, "");
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(app.pending_action(), Some(&ControlAction::StartService));
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render unavailable app");
+    assert!(snapshot.contains("service offline"));
+    assert!(snapshot.contains("start service"));
+    assert!(
+        !snapshot.contains("profile-v2"),
+        "stale VM tabs must disappear when the gateway list is unavailable"
+    );
+}
+
+#[test]
+fn control_error_renders_full_popup_detail() {
+    let mut app = App::new(fixture_state());
+
+    app.show_control_error("suspend failed", "service unavailable");
+
+    assert_eq!(app.overlay(), AppOverlay::Error);
+    assert_eq!(
+        app.control_error().expect("control error").message,
+        "service unavailable"
+    );
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render control error");
+    assert!(snapshot.contains("action failed"));
+    assert!(snapshot.contains("suspend failed"));
+    assert!(snapshot.contains("service unavailable"));
+    assert!(snapshot.contains("Esc closes this message"));
+}
+
+#[test]
 fn degraded_empty_state_asks_to_start_service_instead_of_create() {
     let mut state = offline_state();
     state.service.status = ServiceStatus::Degraded;
@@ -1284,8 +1323,7 @@ async fn gateway_provider_surfaces_action_error_body() {
         .await
         .expect_err("delete should fail");
 
-    assert!(error.to_string().contains("500"));
-    assert!(error.to_string().contains("boom"));
+    assert_eq!(error.to_string(), "boom");
     server.await.expect("server task");
 }
 

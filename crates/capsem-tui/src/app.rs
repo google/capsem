@@ -20,6 +20,7 @@ pub enum AppOverlay {
     Create,
     Fork,
     Confirm,
+    Error,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,8 +89,15 @@ pub struct App {
     pending_action: Option<ControlAction>,
     pending_focus_session: Option<String>,
     control_progress: Option<String>,
+    control_error: Option<ControlError>,
     create_draft: Option<CreateDraft>,
     fork_draft: Option<ForkDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlError {
+    pub title: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,6 +126,7 @@ impl App {
             pending_action: None,
             pending_focus_session: None,
             control_progress: None,
+            control_error: None,
             create_draft: None,
             fork_draft: None,
         };
@@ -140,6 +149,10 @@ impl App {
 
     pub fn control_progress(&self) -> Option<&str> {
         self.control_progress.as_deref()
+    }
+
+    pub fn control_error(&self) -> Option<&ControlError> {
+        self.control_error.as_ref()
     }
 
     pub fn create_draft(&self) -> Option<&CreateDraft> {
@@ -185,6 +198,35 @@ impl App {
         self.control_progress = None;
     }
 
+    pub fn show_control_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.pending_action = None;
+        self.create_draft = None;
+        self.fork_draft = None;
+        self.control_error = Some(ControlError {
+            title: title.into(),
+            message: message.into(),
+        });
+        self.overlay = AppOverlay::Error;
+    }
+
+    pub fn mark_gateway_unavailable(&mut self) {
+        let reconnect_attempt = self
+            .state
+            .service
+            .reconnect_attempt
+            .unwrap_or_default()
+            .saturating_add(1);
+        self.state.service.status = ServiceStatus::Offline;
+        self.state.service.latency = std::time::Duration::ZERO;
+        self.state.service.reconnect_attempt = Some(reconnect_attempt);
+        self.state.sessions.clear();
+        self.state.profiles.clear();
+        self.state.active_session_id.clear();
+        self.active_index = 0;
+        self.pending_focus_session = None;
+        self.sync_empty_state_prompt();
+    }
+
     pub fn focus_session_when_available(&mut self, id: impl Into<String>) {
         let id = id.into();
         if self.select_session_by_id(&id) {
@@ -212,6 +254,7 @@ impl App {
         if self.overlay != AppOverlay::None {
             if key.code == KeyCode::Esc {
                 self.overlay = AppOverlay::None;
+                self.sync_empty_state_prompt();
             }
             return AppAction::Consumed;
         }
@@ -350,6 +393,12 @@ impl App {
     }
 
     fn sync_empty_state_prompt(&mut self) {
+        if self.overlay == AppOverlay::Error {
+            self.pending_action = None;
+            self.create_draft = None;
+            self.fork_draft = None;
+            return;
+        }
         if service_needs_start(self.state.service.status) {
             self.create_draft = None;
             self.fork_draft = None;

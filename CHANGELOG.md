@@ -205,6 +205,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` gateway refresh failure handling so unavailable live
+  status clears stale VM tabs instead of preserving old sessions as actionable
+  suspend/stop/delete targets, and now shows failed control actions in a popup
+  with the full gateway error detail.
 - Fixed `/profiles` so create surfaces only receive profiles with verified VM
   assets, and added `ui`/`tui`/`web` capability flags so terminal and web
   launchers can hide profiles that do not belong on that surface.

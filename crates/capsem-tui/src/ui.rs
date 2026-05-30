@@ -4,12 +4,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::app::{
-    resume_blocked_reason, session_visible_in_tabs, App, AppOverlay, ControlAction, CreateDraft,
-    ForkDraft,
+    resume_blocked_reason, session_visible_in_tabs, App, AppOverlay, ControlAction, ControlError,
+    CreateDraft, ForkDraft,
 };
 use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
 use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
@@ -51,6 +51,7 @@ pub fn render_with_terminal(
         None,
         None,
         None,
+        None,
     );
 }
 
@@ -62,6 +63,7 @@ pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSu
         app.overlay(),
         app.pending_action(),
         app.control_progress(),
+        app.control_error(),
         app.create_draft(),
         app.fork_draft(),
     );
@@ -74,6 +76,7 @@ fn render_layout(
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
     control_progress: Option<&str>,
+    control_error: Option<&ControlError>,
     create_draft: Option<&CreateDraft>,
     fork_draft: Option<&ForkDraft>,
 ) {
@@ -95,6 +98,7 @@ fn render_layout(
         state,
         overlay,
         pending_action,
+        control_error,
         create_draft,
         fork_draft,
     );
@@ -410,6 +414,7 @@ fn render_overlay(
     state: &AppState,
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
+    control_error: Option<&ControlError>,
     create_draft: Option<&CreateDraft>,
     fork_draft: Option<&ForkDraft>,
 ) {
@@ -425,6 +430,7 @@ fn render_overlay(
         AppOverlay::Create => " new session ",
         AppOverlay::Fork => " fork session ",
         AppOverlay::Confirm => " confirm ",
+        AppOverlay::Error => " action failed ",
         AppOverlay::None => "",
     };
     let block = Block::new()
@@ -441,6 +447,7 @@ fn render_overlay(
         AppOverlay::Create => create_lines(state, create_draft),
         AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
+        AppOverlay::Error => error_lines(control_error),
         AppOverlay::None => Vec::new(),
     };
     let inner = Rect::new(
@@ -449,7 +456,7 @@ fn render_overlay(
         popup.width.saturating_sub(4),
         popup.height.saturating_sub(2),
     );
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
@@ -474,6 +481,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
             .clamp(12, 18),
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
+        AppOverlay::Error => 8,
         AppOverlay::None => 0,
     }
 }
@@ -509,6 +517,20 @@ fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
         overlay_pair("action", action.label()),
         overlay_pair("target", action.target()),
         overlay_line("Enter confirms; Esc cancels"),
+    ]
+}
+
+fn error_lines(error: Option<&ControlError>) -> Vec<Line<'static>> {
+    let Some(error) = error else {
+        return vec![
+            overlay_title("action failed"),
+            overlay_line("unknown error"),
+        ];
+    };
+    vec![
+        overlay_title(error.title.clone()),
+        overlay_line(error.message.clone()),
+        overlay_line("Esc closes this message"),
     ]
 }
 
@@ -656,9 +678,9 @@ fn profile_inventory_label(session: &SessionSummary) -> String {
     session.profile.clone()
 }
 
-fn overlay_title(title: &'static str) -> Line<'static> {
+fn overlay_title(title: impl Into<String>) -> Line<'static> {
     Line::from(Span::styled(
-        format!(" {title}"),
+        format!(" {}", title.into()),
         Style::default()
             .fg(ACTIVE)
             .bg(BAR_BG)
@@ -680,8 +702,8 @@ fn logo_line() -> Line<'static> {
     Line::from(spans)
 }
 
-fn overlay_line(text: &str) -> Line<'static> {
-    Line::from(Span::styled(text.to_string(), status_base_style()))
+fn overlay_line(text: impl Into<String>) -> Line<'static> {
+    Line::from(Span::styled(text.into(), status_base_style()))
 }
 
 fn focus_line(text: &str) -> Line<'static> {

@@ -517,12 +517,28 @@ async fn response_json(response: reqwest::Response) -> Result<serde_json::Value>
         .await
         .context("read gateway action response body")?;
     if !status.is_success() {
-        return Err(anyhow::anyhow!("gateway action failed ({status}): {text}"));
+        return Err(anyhow::anyhow!(gateway_action_error_detail(status, &text)));
     }
     if text.trim().is_empty() {
         return Ok(serde_json::json!({}));
     }
     serde_json::from_str(&text).context("parse gateway action response")
+}
+
+fn gateway_action_error_detail(status: reqwest::StatusCode, text: &str) -> String {
+    if let Ok(body) = serde_json::from_str::<serde_json::Value>(text) {
+        if let Some(error) = body.get("error").and_then(serde_json::Value::as_str) {
+            return error.to_string();
+        }
+        if let Some(message) = body.get("message").and_then(serde_json::Value::as_str) {
+            return message.to_string();
+        }
+    }
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return status.to_string();
+    }
+    format!("{status}: {trimmed}")
 }
 
 fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
