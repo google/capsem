@@ -5,17 +5,19 @@ A2UI-to-Preline preview. Treat it as the board for the next UI sprint.
 
 ## Current Direction
 
-Capsem should use Preline as the component recipe source of truth.
+Capsem UI should emit A2UI v0.9 messages and validate them against a Capsem
+A2UI catalog JSON Schema. Preline is not the protocol. Preline is the trusted
+Svelte renderer template layer.
 
 The intended path is:
 
 ```text
-Typed Capsem UI API -> A2UI Basic object graph -> renderer adapter
-  -> exact Preline component recipe classes with A2UI fields inserted in slots
+Typed Capsem UI API -> A2UI v0.9 message -> Capsem catalog validation
+  -> checked Preline template -> Svelte renderer
 ```
 
-The renderer can own behavior in Svelte, but it should not invent a parallel
-visual system when the component claims to be Preline.
+The renderer owns behavior in Svelte, but exact Preline recipes must be tracked
+as templates with machine-checkable bindings.
 
 ## Errors To Fix
 
@@ -50,7 +52,7 @@ visual system when the component claims to be Preline.
 
 ## A2UI Constraint Check
 
-A2UI Basic gives us portable primitives:
+A2UI gives us a portable envelope and basic primitives:
 
 - `Card`
 - `Modal`
@@ -62,20 +64,14 @@ A2UI Basic gives us portable primitives:
 - `List`
 - form controls and media primitives
 
-It does not appear to encode every Preline visual variant directly. That is not
-automatically a blocker, but it means Capsem needs a typed authoring layer that
-knows:
+It does not encode every Preline visual variant directly. That is not a
+blocker, but it means Capsem needs an A2UI-compatible catalog schema and a
+checked template layer that knows:
 
-- the desired Preline recipe;
-- the recipe variant;
+- the component and variant enum;
 - which A2UI child maps to which Preline slot;
-- which choices are lost when serializing through Basic.
-
-If A2UI Basic cannot carry a variant, we must either:
-
-- add a Capsem-side catalogue convention around Basic composition; or
-- define a richer Capsem UI catalogue that still renders through the same safe
-  renderer engine.
+- which properties are structural versus directly rendered;
+- which exact Preline template implements the component.
 
 ## API Shape We Should Move Toward
 
@@ -110,10 +106,9 @@ falling back to a fake generic box.
 
 ## Immediate Next Steps
 
-1. Replace remaining local approximations in the preview renderer with exact
-   Preline docs classes for supported recipes.
-2. Add typed Rust enums for alert, card, modal, badge, and button variants.
-3. Move preview-only recipe metadata into the real Rust authoring API.
-4. Add tests that snapshot the renderer adapter contract at the data/slot level.
-5. Decide whether variants live as Capsem metadata around A2UI Basic or require
-   a richer Capsem UI catalogue.
+1. Vendor/pin upstream A2UI v0.9 schemas.
+2. Scrape exact Preline docs snippets into ignored `private/todo/preline`.
+3. Define the Capsem A2UI catalog JSON Schema slice.
+4. Define checked Preline template metadata and checker tests.
+5. Replace the cramped preview with a Svelte/Preline workbench with sidebar,
+   rendered preview, source panes, and checker reports.
