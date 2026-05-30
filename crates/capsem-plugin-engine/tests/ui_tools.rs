@@ -127,6 +127,12 @@ fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
         .expect("link survives");
     assert_eq!(link.label, "visit homepage");
     assert_eq!(link.href, "https://gemini.google.com/");
+
+    let serialized = serde_json::to_string(&card.surfaces[0].messages).unwrap();
+    assert!(
+        !serialized.contains("A2UI Basic component"),
+        "user-facing card output leaked internal protocol label: {serialized}"
+    );
 }
 
 #[test]

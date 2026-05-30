@@ -58,6 +58,21 @@ fn typed_helpers_emit_valid_a2ui_basic_messages() {
 }
 
 #[test]
+fn typed_card_helper_does_not_leak_internal_protocol_labels() {
+    let document = Ui::card(
+        "card-surface",
+        "Codex",
+        "A focused engineering agent for working code.",
+    );
+    validate_messages(&document.messages).expect("typed UI helper emits valid A2UI Basic");
+    let serialized = serde_json::to_string(&document.messages).unwrap();
+    assert!(
+        !serialized.contains("A2UI Basic component"),
+        "card helper leaked internal protocol label: {serialized}"
+    );
+}
+
+#[test]
 fn rejects_invented_component_names_before_renderer() {
     let payload = json!({
         "version": "v0.9",

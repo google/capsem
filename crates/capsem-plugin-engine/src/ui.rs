@@ -834,23 +834,9 @@ impl Ui {
             surface_id,
             vec![
                 card("root", "card-body"),
-                column("card-body", ["card-title", "card-description", "card-meta"]),
+                column("card-body", ["card-title", "card-description"]),
                 text("card-title", title, Some(TextVariant::H3)),
                 text("card-description", description, Some(TextVariant::Body)),
-                row(
-                    "card-meta",
-                    ["card-icon", "card-caption"],
-                    Some(Align::Center),
-                ),
-                BasicComponent::Icon(Icon {
-                    id: "card-icon".to_owned(),
-                    name: IconName::Known(KnownIcon::Info),
-                }),
-                text(
-                    "card-caption",
-                    "A2UI Basic component: Card",
-                    Some(TextVariant::Caption),
-                ),
             ],
         )
     }

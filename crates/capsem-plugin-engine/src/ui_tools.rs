@@ -387,18 +387,12 @@ impl UiToolRunner {
         let body_id = format!("{id}-body");
         let title_id = format!("{id}-title");
         let description_id = format!("{id}-description");
-        let meta_id = format!("{id}-meta");
-        let icon_id = format!("{id}-icon");
-        let caption_id = format!("{id}-caption");
         surface
             .components
             .insert("root".to_owned(), card_component("root", &body_id));
         surface.components.insert(
             body_id.clone(),
-            column_component(
-                &body_id,
-                [title_id.clone(), description_id.clone(), meta_id.clone()],
-            ),
+            column_component(&body_id, [title_id.clone(), description_id.clone()]),
         );
         surface.components.insert(
             title_id.clone(),
@@ -407,29 +401,6 @@ impl UiToolRunner {
         surface.components.insert(
             description_id.clone(),
             text_component(&description_id, description, Some(TextVariant::Body)),
-        );
-        surface.components.insert(
-            meta_id.clone(),
-            row_component(
-                &meta_id,
-                [icon_id.clone(), caption_id.clone()],
-                Some(Align::Center),
-            ),
-        );
-        surface.components.insert(
-            icon_id.clone(),
-            BasicComponent::Icon(Icon {
-                id: icon_id,
-                name: IconName::Known(KnownIcon::Info),
-            }),
-        );
-        surface.components.insert(
-            caption_id.clone(),
-            text_component(
-                &caption_id,
-                "A2UI Basic component: Card",
-                Some(TextVariant::Caption),
-            ),
         );
 
         ok(call.tool, "card lowered to A2UI Basic components")
