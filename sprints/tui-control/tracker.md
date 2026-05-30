@@ -40,6 +40,8 @@
 - [x] Rework help, session list, and session info into structured readable
       tables.
 - [x] Highlight active modal fields and selected profile rows.
+- [x] Open the new-session modal automatically when no sessions exist.
+- [x] Add gradient CAPSEM wordmark to the new-session modal.
 - [x] Run live installed-gateway empty-service snapshot.
 - [x] Run live two-session terminal proof.
 - [x] Commit functional milestone.
@@ -173,16 +175,20 @@
 - Usability correction: full help is now a structured table, `Alt+l` opens the
   session list table, `Alt+i` opens session info, and create/fork modals
   highlight the active input plus the selected profile row.
+- Empty-state correction: startup with no sessions now opens the `new session`
+  modal directly, and text/SVG snapshots use the same app renderer so the empty
+  service proof matches the interactive path. The modal carries a compact
+  gradient CAPSEM wordmark.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (36 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (37 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
   modal profile/name flow, selected-field highlighting, named fork modal/action
-  coverage, `Alt+l` sessions table, `Alt+i` session info, and `Alt+c`
-  checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (36 tests), including
+  coverage, empty-state auto-create, gradient logo rendering, `Alt+l` sessions
+  table, `Alt+i` session info, and `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (37 tests), including
   token reuse, live profile-list refresh, named fork request payloads,
   checkpoint-over-suspend payloads, and raw local latency preservation
   coverage.

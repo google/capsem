@@ -88,14 +88,18 @@ impl App {
             .iter()
             .position(|session| session.id == state.active_session_id)
             .unwrap_or_default();
-        Self {
+        let mut app = Self {
             state,
             active_index,
             overlay: AppOverlay::None,
             pending_action: None,
             create_draft: None,
             fork_draft: None,
+        };
+        if app.state.sessions.is_empty() {
+            app.open_create();
         }
+        app
     }
 
     pub fn state(&self) -> &AppState {

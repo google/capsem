@@ -58,6 +58,32 @@ fn no_session_status_bar_keeps_help_hint_on_the_right() {
 }
 
 #[test]
+fn empty_state_opens_new_session_modal_with_gradient_logo() {
+    let mut state = fixture_state();
+    state.active_session_id.clear();
+    state.sessions.clear();
+
+    let app = App::new(state);
+
+    assert_eq!(app.overlay(), AppOverlay::Create);
+    assert_eq!(app.create_draft().expect("create draft").name, "tmp-1");
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
+    assert!(snapshot.contains("CAPSEM"));
+    assert!(snapshot.contains("new session"));
+
+    let buffer = render_app_test_buffer(&app, 100, 24).expect("render logo buffer");
+    let (logo_x, logo_y) = find_cell(&buffer, "CAPSEM");
+    let first = buffer_cell(&buffer, logo_x, logo_y);
+    let last = buffer_cell(&buffer, logo_x + 5, logo_y);
+    assert_ne!(
+        first.fg, last.fg,
+        "logo letters should use a visible gradient, not one flat color"
+    );
+    assert!(first.modifier.contains(Modifier::BOLD));
+    assert!(last.modifier.contains(Modifier::BOLD));
+}
+
+#[test]
 fn tab_colors_use_selected_yellow_and_unselected_blue_only() {
     let buffer = render_test_buffer(&fixture_state(), 100, 24).expect("render buffer");
     let row = buffer.area.height - 1;

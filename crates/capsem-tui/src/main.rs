@@ -10,7 +10,7 @@ use capsem_tui::gateway_provider::{ActionOutcome, GatewayProvider};
 use capsem_tui::model::{AppState, ServiceStatus, SessionLifecycle};
 use capsem_tui::provider::StateProvider;
 use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalSurface};
-use capsem_tui::ui::{render_app, render_snapshot, render_svg_snapshot};
+use capsem_tui::ui::{render_app, render_app_snapshot, render_app_svg_snapshot};
 use clap::Parser;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
@@ -57,20 +57,27 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let state = load_state(&cli)?;
-    let live_provider = live_provider(&cli);
-    let terminal_bridge = live_provider
-        .as_ref()
-        .map(|provider| TerminalBridge::spawn(provider.base_url().to_string()));
 
     if cli.snapshot_svg {
-        println!("{}", render_svg_snapshot(&state, cli.width, cli.height)?);
+        println!(
+            "{}",
+            render_app_svg_snapshot(&App::new(state), cli.width, cli.height)?
+        );
         return Ok(());
     }
 
     if cli.snapshot {
-        println!("{}", render_snapshot(&state, cli.width, cli.height)?);
+        println!(
+            "{}",
+            render_app_snapshot(&App::new(state), cli.width, cli.height)?
+        );
         return Ok(());
     }
+
+    let live_provider = live_provider(&cli);
+    let terminal_bridge = live_provider
+        .as_ref()
+        .map(|provider| TerminalBridge::spawn(provider.base_url().to_string()));
 
     run_interactive(
         App::new(state),

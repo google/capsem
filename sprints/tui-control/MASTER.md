@@ -141,6 +141,9 @@ attention markers.
   is the primary session-list chord, `Alt+i` opens active-session info, and
   create/fork modals now visibly highlight the active input and selected
   profile row.
+- Added the empty-state startup path: when no sessions exist, the TUI opens
+  the new-session modal directly. Text and SVG snapshots now use the same app
+  renderer, and the modal includes a compact gradient CAPSEM wordmark.
 
 ## Testing Gate
 
@@ -165,7 +168,8 @@ attention markers.
   sessions shows the prompt instead of a blank pane.
 - UI polish: `cargo test -p capsem-tui` and snapshot output cover the
   right-side `help: alt+?` status-bar hint after session stats and
-  focused-field highlighting, including the no-active-session status-bar path.
+  focused-field highlighting, including the no-active-session status-bar path
+  and the branded empty-state new-session modal.
 - New-session regression: `cargo test -p capsem-tui` covers create-modal
   rendering, profile selection, name editing, and authenticated named-profile
   provision request payloads.

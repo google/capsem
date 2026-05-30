@@ -111,6 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Alt+l` sessions overlay, and clearer `Alt+i` session info.
 - Added focused-field highlighting to `capsem-tui` create and fork dialogs so
   the active input and selected profile are visible.
+- Added an empty-state `capsem-tui` startup path that opens the new-session
+  modal directly and brands it with a compact gradient CAPSEM wordmark.
 - Changed the `capsem-tui` status hint to `help: alt+?` and moved it to the
   far right after active-session statistics, including the empty-session state.
 

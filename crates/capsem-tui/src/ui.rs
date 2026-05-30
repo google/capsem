@@ -21,6 +21,14 @@ const ACTIVE: Color = Color::Rgb(137, 180, 250);
 const ATTENTION: Color = Color::Rgb(249, 226, 175);
 const BAD: Color = Color::Rgb(243, 139, 168);
 const SELECTED_BG: Color = Color::Rgb(49, 50, 68);
+const LOGO_GRADIENT: [Color; 6] = [
+    Color::Rgb(137, 220, 235),
+    Color::Rgb(116, 199, 236),
+    Color::Rgb(137, 180, 250),
+    Color::Rgb(203, 166, 247),
+    Color::Rgb(245, 194, 231),
+    Color::Rgb(249, 226, 175),
+];
 
 pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     render_with_terminal(frame, state, None);
@@ -83,10 +91,18 @@ pub fn render_svg_snapshot(state: &AppState, width: u16, height: u16) -> Result<
 }
 
 pub fn render_app_snapshot(app: &App, width: u16, height: u16) -> Result<String> {
+    Ok(buffer_to_string(&render_app_buffer(app, width, height)?))
+}
+
+pub fn render_app_svg_snapshot(app: &App, width: u16, height: u16) -> Result<String> {
+    Ok(buffer_to_svg(&render_app_buffer(app, width, height)?))
+}
+
+fn render_app_buffer(app: &App, width: u16, height: u16) -> Result<Buffer> {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend)?;
     terminal.draw(|frame| render_app(frame, app, None))?;
-    Ok(buffer_to_string(terminal.backend().buffer()))
+    Ok(terminal.backend().buffer().clone())
 }
 
 fn render_buffer(state: &AppState, width: u16, height: u16) -> Result<Buffer> {
@@ -103,10 +119,7 @@ pub(crate) fn render_test_buffer(state: &AppState, width: u16, height: u16) -> R
 
 #[cfg(test)]
 pub(crate) fn render_app_test_buffer(app: &App, width: u16, height: u16) -> Result<Buffer> {
-    let backend = TestBackend::new(width, height);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.draw(|frame| render_app(frame, app, None))?;
-    Ok(terminal.backend().buffer().clone())
+    render_app_buffer(app, width, height)
 }
 
 fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
@@ -370,8 +383,8 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
         AppOverlay::Create => (state.profiles.len() as u16)
-            .saturating_add(9)
-            .clamp(11, 18),
+            .saturating_add(10)
+            .clamp(12, 18),
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
@@ -412,7 +425,7 @@ fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
 }
 
 fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
-    let mut lines = vec![overlay_title("new session")];
+    let mut lines = vec![logo_line(), overlay_title("new session")];
     let name = draft
         .map(|draft| draft.name.as_str())
         .filter(|name| !name.is_empty())
@@ -550,6 +563,20 @@ fn overlay_title(title: &'static str) -> Line<'static> {
             .bg(BAR_BG)
             .add_modifier(Modifier::BOLD),
     ))
+}
+
+fn logo_line() -> Line<'static> {
+    let mut spans = vec![Span::styled("        ", status_base_style())];
+    for (index, ch) in "CAPSEM".chars().enumerate() {
+        spans.push(Span::styled(
+            ch.to_string(),
+            Style::default()
+                .fg(LOGO_GRADIENT[index])
+                .bg(BAR_BG)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn overlay_line(text: &str) -> Line<'static> {
