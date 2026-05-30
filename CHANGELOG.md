@@ -111,8 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Alt+l` sessions overlay, and clearer `Alt+i` session info.
 - Added focused-field highlighting to `capsem-tui` create and fork dialogs so
   the active input and selected profile are visible.
-- Changed the far-left `capsem-tui` status hint to `help: alt+/` so it no
-  longer conflicts with `Alt+s` suspend.
+- Changed the `capsem-tui` status hint to `help: alt+?` and moved it to the
+  far right after active-session statistics, including the empty-session state.
 
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
@@ -163,11 +163,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `capsem-tui` service latency rendering to keep the status dot glued to
   the latency field, making the service block read as one unit.
 - Fixed `capsem-tui` shell controls to use an app-owned Alt namespace:
-  `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`, and `Alt+q`, instead of
-  terminal-dependent Cmd/Ctrl forwarding or prefix fallbacks.
-- Fixed `capsem-tui` help and modal handling by accepting both `Alt+?` and
-  `Alt+/`, rendering overlays through Ratatui modal widgets, and resending the
-  active terminal geometry whenever the real terminal size changes.
+  `Alt+Left/Right`, `Alt+1..9`, `Alt+n/f/r/s/c/t/d`, `Alt+?`, `Alt+i`,
+  `Alt+l`, and `Alt+q`, instead of terminal-dependent Cmd/Ctrl forwarding or
+  prefix fallbacks.
+- Fixed `capsem-tui` help and modal handling by using `Alt+?` for help,
+  rendering overlays through Ratatui modal widgets, and resending the active
+  terminal geometry whenever the real terminal size changes.
 - Fixed `capsem-tui` modal input ownership so `Esc` closes non-confirmation
   overlays, visible modals consume normal keys, and plain VM input resumes
   forwarding as soon as the modal closes.

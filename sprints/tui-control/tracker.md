@@ -110,8 +110,8 @@
   reserved latency field so it reads as one service-health segment.
 - Navigation is now app-owned: `Alt+Left/Right` switches sessions and
   `Alt+1..9` jumps by tab number. `Alt+n/f/r/s/c/t/d`, `Alt+q`,
-  `Alt+?`/`Alt+/`, `Alt+i`, and `Alt+l` cover shell actions, exit, help,
-  session info, and session list.
+  `Alt+?`, `Alt+i`, and `Alt+l` cover shell actions, exit, help, session
+  info, and session list.
 - Tab colors now use one semantic: selected is yellow, every other VM tab is
   blue. Bell/attention state keeps its text marker but no longer changes the
   tab color.
@@ -159,8 +159,8 @@
   tried to connect. Stopped/suspended/failed tabs now grey out, the pane shows
   `Press Enter to resume`, Enter invokes resume for the active inactive
   session, and the terminal bridge disconnects from inactive tabs.
-- Discoverability polish: the persistent status segment now starts with
-  `help: alt+/` before service latency/status. The full command list remains
+- Discoverability polish: the persistent status segment now ends with
+  `help: alt+?` after active-session statistics. The full command list remains
   in the help overlay.
 - New-session flow correction: `Alt+n` now opens a `new session` modal instead
   of immediately provisioning an ephemeral VM. The modal pre-fills the name as
@@ -176,12 +176,13 @@
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (35 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (36 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
-  far-left `help: alt+/` status-bar hint, plus the create modal profile/name
-  flow, selected-field highlighting, named fork modal/action coverage,
-  `Alt+l` sessions table, `Alt+i` session info, and `Alt+c` checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (35 tests), including
+  right-side `help: alt+?` status-bar hint after session stats, plus the create
+  modal profile/name flow, selected-field highlighting, named fork modal/action
+  coverage, `Alt+l` sessions table, `Alt+i` session info, and `Alt+c`
+  checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (36 tests), including
   token reuse, live profile-list refresh, named fork request payloads,
   checkpoint-over-suspend payloads, and raw local latency preservation
   coverage.

@@ -28,10 +28,10 @@ fn fixture_models_global_service_state_and_session_indicators() {
 fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
-    assert!(snapshot.contains("help: alt+/    18ms●"));
+    assert!(snapshot.contains("  18ms●"));
     assert!(snapshot.contains("1  profile-v2"));
     assert!(snapshot.contains("2  linux-os!"));
-    assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21"));
+    assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21 | help: alt+?"));
     assert!(
         !snapshot.contains("github.com/google/capsem"),
         "repo metadata belongs in a popup or future status segment, not the empty terminal surface"
@@ -44,6 +44,17 @@ fn snapshot_contains_light_bar_tabs_and_active_desktop() {
         !snapshot.contains("? help"),
         "help belongs in a popup, not persistent chrome"
     );
+}
+
+#[test]
+fn no_session_status_bar_keeps_help_hint_on_the_right() {
+    let mut state = fixture_state();
+    state.active_session_id.clear();
+    state.sessions.clear();
+
+    let snapshot = render_snapshot(&state, 100, 24).expect("render empty snapshot");
+
+    assert!(snapshot.contains("no session | help: alt+?"));
 }
 
 #[test]
@@ -254,6 +265,8 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
 
     assert!(snapshot.contains("Key"));
     assert!(snapshot.contains("Action"));
+    assert!(snapshot.contains("Alt+?"));
+    assert!(snapshot.contains("help"));
     assert!(snapshot.contains("Alt+s"));
     assert!(snapshot.contains("suspend"));
     assert!(snapshot.contains("Alt+c"));

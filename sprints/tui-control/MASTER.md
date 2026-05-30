@@ -105,10 +105,10 @@ attention markers.
   screen state, SGR colors, and text attributes. Client-side adjacent output
   coalescing and dirty-frame redraws now mirror the existing `capsem shell`
   speed contract instead of repainting on every loop.
-- Tightened interactive control polish: help opens on both `Alt+?` and
-  terminal-encoded `Alt+/`, overlays render as Ratatui modal blocks, service
-  latency renders as a glued `####ms●` segment, and active terminal geometry is
-  resent whenever the real terminal size changes.
+- Tightened interactive control polish: help opens on `Alt+?`, overlays render
+  as Ratatui modal blocks, service latency renders as a glued `####ms●`
+  segment, and active terminal geometry is resent whenever the real terminal
+  size changes.
 - Simplified human-facing tab colors: selected VM is yellow, every other VM tab
   is blue. Modal overlays now close with `Esc`, own normal keys while visible,
   and release VM input forwarding immediately after close.
@@ -125,8 +125,8 @@ attention markers.
   `Press Enter to resume` prompt, Enter invokes resume for the active inactive
   session, and the terminal WebSocket bridge disconnects instead of reconnecting
   to stopped VM sockets.
-- Added a far-left `help: alt+/` hint before service latency/status so help is
-  discoverable without conflicting with `Alt+s` suspend.
+- Added a far-right `help: alt+?` hint after active-session statistics so help
+  is discoverable without competing with service health or `Alt+s` suspend.
 - Corrected `Alt+n` from one-key ephemeral provisioning into a profile-aware
   new-session modal. The flow pre-fills the next unused `tmp-*` name, supports
   typing/backspace, lets Up/Down choose a live `/profiles` entry, and sends a
@@ -163,8 +163,9 @@ attention markers.
   modal/action path, plus `Alt+l` sessions, `Alt+i` session info, and `Alt+c`
   checkpoint. Live snapshot against the installed stopped `tui-proof-*`
   sessions shows the prompt instead of a blank pane.
-- UI polish: `cargo test -p capsem-tui` and snapshot output cover the far-left
-  `help: alt+/` status-bar hint and focused-field highlighting.
+- UI polish: `cargo test -p capsem-tui` and snapshot output cover the
+  right-side `help: alt+?` status-bar hint after session stats and
+  focused-field highlighting, including the no-active-session status-bar path.
 - New-session regression: `cargo test -p capsem-tui` covers create-modal
   rendering, profile selection, name editing, and authenticated named-profile
   provision request payloads.

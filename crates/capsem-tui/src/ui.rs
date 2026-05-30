@@ -120,7 +120,6 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     frame.render_widget(Paragraph::new("").style(base), area);
 
     let mut left = vec![
-        Span::styled("help: alt+/  ", muted_style()),
         Span::styled(format!("{:>4}ms", service.latency.as_millis()), base),
         Span::styled(
             service_dot(service.status),
@@ -141,7 +140,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     let right = state
         .active_session()
         .map(active_stats_spans)
-        .unwrap_or_else(|| vec![Span::styled(" no session ", muted_style())]);
+        .unwrap_or_else(no_session_stats_spans);
 
     let left_width = spans_width(&left).min(area.width as usize) as u16;
     let right_width = spans_width(&right).min(area.width as usize) as u16;
@@ -383,6 +382,7 @@ fn help_lines() -> Vec<Line<'static>> {
     vec![
         overlay_title("keys"),
         table_header(&["Key", "Action", "Scope", "Note"]),
+        help_row("Alt+?", "help", "global", "show this table"),
         help_row("Alt+Left", "previous", "global", "switch session"),
         help_row("Alt+Right", "next", "global", "switch session"),
         help_row("Alt+1..9", "jump", "global", "select by tab number"),
@@ -824,6 +824,15 @@ fn active_stats_spans(session: &SessionSummary) -> Vec<Span<'static>> {
         Span::styled(format_tokens(session.stats.tokens), stats_style()),
         Span::styled(" | $ ", muted_style()),
         Span::styled(format_cost_amount(session.stats.cost_micros), stats_style()),
+        Span::styled(" | help: alt+?", muted_style()),
+        Span::styled(" ", stats_style()),
+    ]
+}
+
+fn no_session_stats_spans() -> Vec<Span<'static>> {
+    vec![
+        Span::styled(" no session", muted_style()),
+        Span::styled(" | help: alt+?", muted_style()),
         Span::styled(" ", stats_style()),
     ]
 }
