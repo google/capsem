@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{fence, Ordering};
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::memory::GuestMemoryRef;
 
@@ -36,9 +36,18 @@ pub(super) struct VirtqDesc {
 }
 
 impl VirtqDesc {
-    fn read_from(mem: &GuestMemoryRef, desc_table_gpa: u64, index: u16) -> Option<Self> {
-        let offset = desc_table_gpa + (index as u64) * 16;
-        let host = mem.gpa_to_host(offset)?;
+    fn read_from(
+        mem: &GuestMemoryRef,
+        desc_table_gpa: u64,
+        queue_size: u16,
+        index: u16,
+    ) -> Option<Self> {
+        if index >= queue_size {
+            return None;
+        }
+        let desc_offset = (index as u64).checked_mul(16)?;
+        let offset = desc_table_gpa.checked_add(desc_offset)?;
+        let host = mem.gpa_range_to_host(offset, 16)?;
         unsafe {
             let addr = u64::from_le(std::ptr::read_unaligned(host as *const u64));
             let len = u32::from_le(std::ptr::read_unaligned(
@@ -242,6 +251,15 @@ impl VirtQueue {
     ///
     /// Returns None if no descriptors are available (ring empty).
     pub fn pop(&mut self) -> Option<DescriptorChain> {
+        if !self.has_valid_size() {
+            warn!(
+                event_name = "virtio.queue.invalid_size",
+                size = self.size,
+                "virtqueue size must be non-zero and power-of-two"
+            );
+            return None;
+        }
+
         // Acquire: ensure we see descriptor writes made by the driver
         // before the avail index update. Required by virtio spec when
         // device and driver run on different threads.
@@ -255,19 +273,54 @@ impl VirtQueue {
         let ring_index = self.next_avail % self.size;
         let head = self.read_avail_ring(ring_index);
         self.next_avail = self.next_avail.wrapping_add(1);
+        if head >= self.size {
+            warn!(
+                event_name = "virtio.queue.invalid_descriptor_head",
+                head,
+                size = self.size,
+                "avail ring descriptor head exceeded queue size"
+            );
+            return None;
+        }
 
         // Walk the descriptor chain
         let mut descriptors = Vec::new();
+        let mut seen = vec![false; self.size as usize];
         let mut idx = head;
         let mut visited = 0u32;
 
         loop {
             if visited >= self.size as u32 {
-                // Cycle detection: we've visited more descriptors than the queue size
-                break;
+                warn!(
+                    event_name = "virtio.queue.descriptor_chain_too_long",
+                    head,
+                    size = self.size,
+                    "descriptor chain exceeded queue size"
+                );
+                return None;
             }
+            if idx >= self.size {
+                warn!(
+                    event_name = "virtio.queue.invalid_descriptor_next",
+                    head,
+                    next = idx,
+                    size = self.size,
+                    "descriptor chain referenced an index outside the queue"
+                );
+                return None;
+            }
+            if seen[idx as usize] {
+                warn!(
+                    event_name = "virtio.queue.descriptor_cycle",
+                    head,
+                    repeated = idx,
+                    "descriptor chain cycle detected"
+                );
+                return None;
+            }
+            seen[idx as usize] = true;
 
-            let desc = VirtqDesc::read_from(&self.mem, self.desc_table_gpa, idx)?;
+            let desc = VirtqDesc::read_from(&self.mem, self.desc_table_gpa, self.size, idx)?;
             descriptors.push(desc);
             visited += 1;
 
@@ -278,6 +331,10 @@ impl VirtQueue {
         }
 
         Some(DescriptorChain { head, descriptors })
+    }
+
+    fn has_valid_size(&self) -> bool {
+        self.size != 0 && self.size.is_power_of_two()
     }
 
     /// Pop a descriptor chain, or arm driver notifications if the queue is empty.
@@ -358,7 +415,7 @@ impl VirtQueue {
     fn read_avail_idx(&self) -> u16 {
         // avail ring layout: flags (u16), idx (u16), ring[size] (u16 each)
         let idx_gpa = self.avail_ring_gpa + 2; // skip flags
-        if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
+        if let Some(ptr) = self.mem.gpa_range_to_host(idx_gpa, 2) {
             unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
         } else {
             0
@@ -374,7 +431,7 @@ impl VirtQueue {
     fn read_avail_ring(&self, ring_index: u16) -> u16 {
         // ring entries start at offset 4 (after flags + idx)
         let entry_gpa = self.avail_ring_gpa + 4 + (ring_index as u64) * 2;
-        if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
+        if let Some(ptr) = self.mem.gpa_range_to_host(entry_gpa, 2) {
             unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
         } else {
             0
@@ -389,7 +446,7 @@ impl VirtQueue {
     /// Write `avail_event` at the end of the used ring.
     fn write_avail_event(&self, idx: u16) {
         let event_gpa = self.used_ring_gpa + 4 + (self.size as u64) * 8;
-        if let Some(ptr) = self.mem.gpa_to_host(event_gpa) {
+        if let Some(ptr) = self.mem.gpa_range_to_host(event_gpa, 2) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
             }
@@ -400,7 +457,7 @@ impl VirtQueue {
     fn write_used_ring(&self, ring_index: u16, id: u16, len: u32) {
         // used ring layout: flags (u16), idx (u16), ring[size] {id: u32, len: u32}
         let entry_gpa = self.used_ring_gpa + 4 + (ring_index as u64) * 8;
-        if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
+        if let Some(ptr) = self.mem.gpa_range_to_host(entry_gpa, 8) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u32, (id as u32).to_le());
                 std::ptr::write_unaligned(ptr.add(4) as *mut u32, len.to_le());
@@ -411,7 +468,7 @@ impl VirtQueue {
     /// Write the `idx` field of the used ring.
     fn write_used_idx(&self, idx: u16) {
         let idx_gpa = self.used_ring_gpa + 2; // skip flags
-        if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
+        if let Some(ptr) = self.mem.gpa_range_to_host(idx_gpa, 2) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
             }
@@ -420,7 +477,7 @@ impl VirtQueue {
 }
 
 fn read_u16(mem: &GuestMemoryRef, gpa: u64) -> u16 {
-    mem.gpa_to_host(gpa).map_or(0, |ptr| unsafe {
+    mem.gpa_range_to_host(gpa, 2).map_or(0, |ptr| unsafe {
         u16::from_le(std::ptr::read_unaligned(ptr as *const u16))
     })
 }
@@ -941,9 +998,53 @@ mod tests {
         let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
-        // Should terminate (cycle detection kicks in at queue_size iterations)
-        let chain = q.pop().unwrap();
-        assert!(chain.descriptors.len() <= 16);
+        assert!(
+            q.pop().is_none(),
+            "cyclic descriptor chains must fail closed instead of returning a partial chain"
+        );
+    }
+
+    #[test]
+    fn avail_head_outside_queue_fails_closed() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_avail_ring_entry(&mem, avail_gpa, 0, 16);
+        write_avail_idx(&mem, avail_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        assert!(
+            q.pop().is_none(),
+            "avail ring descriptor heads must be less than queue size"
+        );
+    }
+
+    #[test]
+    fn descriptor_next_outside_queue_fails_closed() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 64,
+                flags: VRING_DESC_F_NEXT,
+                next: 16,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 0, 0);
+        write_avail_idx(&mem, avail_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        assert!(
+            q.pop().is_none(),
+            "descriptor next indices must be less than queue size"
+        );
     }
 
     // -----------------------------------------------------------------------

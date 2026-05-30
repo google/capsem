@@ -8,6 +8,7 @@
 - [ ] H01: safety and queue contracts.
   - [x] Record main merge and refreshed macOS benchmark comparison baseline.
   - [x] Add full guest-memory range validation before raw host pointers.
+  - [x] Reject malformed virtqueue descriptor indices and cycles.
 - [ ] H03: observability, status, and OTel resource counters.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
@@ -53,6 +54,10 @@
   overflow, RAM-end crossing, and x86_64 PCI-hole discontinuities; virtio-blk
   now uses it for zero-copy iovecs, discard reads, request header parsing,
   get-id writes, and status writes.
+- H01 queue-contract slice landed locally: virtqueue pop now rejects invalid
+  queue sizes, available-ring heads outside the queue, descriptor `next`
+  indices outside the queue, and descriptor cycles instead of returning a
+  partial or misparsed chain.
 
 ## Coverage Ledger
 
@@ -60,11 +65,15 @@
   `tests/test_benchmark_contract.py`, `tests/test_benchmark_artifacts.py`,
   `cargo test -p capsem-core guest_memory_ref --lib`,
   `cargo test -p capsem-core block_guest_iovecs_reject_range_that_crosses_ram_end --lib`,
-  `cargo test -p capsem-core virtio_blk --lib`.
+  `cargo test -p capsem-core virtio_blk --lib`,
+  `cargo test -p capsem-core virtio_queue --lib`.
 - Functional: pending per sub-sprint.
 - Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
   a descriptor whose start GPA is valid but whose length crosses RAM end is
-  rejected before raw iovecs reach host I/O.
+  rejected before raw iovecs reach host I/O. `avail_head_outside_queue_fails_closed`,
+  `descriptor_next_outside_queue_fails_closed`, and
+  `cycle_in_descriptor_chain_terminates` prove malformed split-ring chains fail
+  closed.
 - E2E/VM: pending per sub-sprint.
 - Telemetry: pending per sub-sprint.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
