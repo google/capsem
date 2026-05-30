@@ -1269,6 +1269,57 @@ fn format_uptime(secs: Option<u64>) -> String {
     }
 }
 
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.2} GiB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{} B", bytes as u64)
+    }
+}
+
+fn format_session_resource_lines(info: &client::SessionInfo) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(ram) = info.configured_ram_mb {
+        lines.push(format!("  Config RAM:     {} MiB", ram));
+    }
+    if let Some(vcpus) = info.configured_vcpus {
+        lines.push(format!("  vCPUs:          {}", vcpus));
+    }
+    if let Some(pid) = info.host_pid {
+        lines.push(format!("  Host PID:       {}", pid));
+    }
+    if let Some(rss) = info.host_process_rss_bytes {
+        lines.push(format!("  Host RSS:       {}", format_bytes(rss)));
+    }
+    if let Some(cpu_time) = info.host_cpu_time_micros {
+        lines.push(format!(
+            "  CPU Time:       {:.3}s",
+            cpu_time as f64 / 1_000_000.0
+        ));
+    }
+    if let Some(cpu_percent) = info.host_cpu_percent {
+        lines.push(format!("  CPU:            {:.1}%", cpu_percent));
+    }
+    if let Some(bytes) = info.session_disk_bytes {
+        lines.push(format!("  Session Disk:   {}", format_bytes(bytes)));
+    }
+    if let Some(bytes) = info.workspace_disk_bytes {
+        lines.push(format!("  Workspace:      {}", format_bytes(bytes)));
+    }
+    if let Some(bytes) = info.rootfs_overlay_bytes {
+        lines.push(format!("  Rootfs Overlay: {}", format_bytes(bytes)));
+    }
+    lines
+}
+
 fn format_session_profile_for_list(session: &client::SessionInfo) -> String {
     match (
         session.profile_id.as_deref(),
@@ -2031,6 +2082,15 @@ fn print_session_info(info: &SessionInfo) {
         }
         if let Some(fe) = info.total_file_events {
             println!("  File Events:   {}", fe);
+        }
+    }
+
+    let resource_lines = format_session_resource_lines(info);
+    if !resource_lines.is_empty() {
+        println!();
+        println!("Resources:");
+        for line in resource_lines {
+            println!("{line}");
         }
     }
 }
@@ -5837,6 +5897,17 @@ best_for = "Testing typed profile TOML parsing."
             denied_requests: None,
             total_file_events: None,
             model_call_count: None,
+            metrics_schema_version: None,
+            metrics_captured_at_unix_ms: None,
+            configured_ram_mb: None,
+            configured_vcpus: None,
+            host_pid: None,
+            host_process_rss_bytes: None,
+            host_cpu_time_micros: None,
+            host_cpu_percent: None,
+            session_disk_bytes: None,
+            workspace_disk_bytes: None,
+            rootfs_overlay_bytes: None,
             last_error: None,
         };
 
@@ -5849,6 +5920,66 @@ best_for = "Testing typed profile TOML parsing."
         session.profile_revision = None;
         session.profile_status = Some(SessionProfileStatus::Corrupted);
         assert_eq!(format_session_profile_for_list(&session), "corrupted");
+    }
+
+    #[test]
+    fn format_session_resource_lines_shows_live_metrics() {
+        let session = SessionInfo {
+            id: "vm".into(),
+            name: None,
+            pid: 0,
+            status: "Running".into(),
+            persistent: true,
+            ram_mb: Some(2048),
+            cpus: Some(2),
+            version: None,
+            base_assets: None,
+            profile_pin: None,
+            forked_from: None,
+            description: None,
+            profile_id: None,
+            profile_revision: None,
+            profile_status: None,
+            created_at: None,
+            uptime_secs: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            total_estimated_cost: None,
+            total_tool_calls: None,
+            total_mcp_calls: None,
+            total_requests: None,
+            allowed_requests: None,
+            denied_requests: None,
+            total_file_events: None,
+            model_call_count: None,
+            metrics_schema_version: Some(1),
+            metrics_captured_at_unix_ms: Some(1_780_103_109_000),
+            configured_ram_mb: Some(2048),
+            configured_vcpus: Some(2),
+            host_pid: Some(42),
+            host_process_rss_bytes: Some(64 * 1024 * 1024),
+            host_cpu_time_micros: Some(1_250_000),
+            host_cpu_percent: Some(12.34),
+            session_disk_bytes: Some(1024),
+            workspace_disk_bytes: Some(2 * 1024 * 1024),
+            rootfs_overlay_bytes: Some(3 * 1024 * 1024 * 1024),
+            last_error: None,
+        };
+
+        assert_eq!(
+            format_session_resource_lines(&session),
+            vec![
+                "  Config RAM:     2048 MiB",
+                "  vCPUs:          2",
+                "  Host PID:       42",
+                "  Host RSS:       64.0 MiB",
+                "  CPU Time:       1.250s",
+                "  CPU:            12.3%",
+                "  Session Disk:   1.0 KiB",
+                "  Workspace:      2.0 MiB",
+                "  Rootfs Overlay: 3.00 GiB",
+            ]
+        );
     }
 
     #[test]
@@ -5955,6 +6086,17 @@ best_for = "Testing typed profile TOML parsing."
             denied_requests: None,
             total_file_events: None,
             model_call_count: None,
+            metrics_schema_version: None,
+            metrics_captured_at_unix_ms: None,
+            configured_ram_mb: None,
+            configured_vcpus: None,
+            host_pid: None,
+            host_process_rss_bytes: None,
+            host_cpu_time_micros: None,
+            host_cpu_percent: None,
+            session_disk_bytes: None,
+            workspace_disk_bytes: None,
+            rootfs_overlay_bytes: None,
             last_error: None,
         };
 

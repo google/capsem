@@ -14,6 +14,9 @@
   - [x] Make guest-memory offset arithmetic overflow-safe.
   - [x] Make virtio-blk aggregate descriptor length accounting overflow-safe.
 - [ ] H03: observability, status, and OTel resource counters.
+  - [x] Surface existing live VM resource metrics through service `/info`.
+  - [x] Render live VM resource metrics in `capsem info`.
+  - [ ] Surface queue/backend/hypervisor counters through status and OTel.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
 - [ ] H05: storage, rootfs, and filesystem experiments.
@@ -83,6 +86,11 @@
   command path.
 - H03 is active next so the safety/queue counters and resource usage become
   visible through status and are ready for OTel export.
+- H03 first slice landed locally: `/info` now projects the existing
+  `VmMetricsSnapshot.resources` source of truth, and `capsem info` renders
+  configured RAM/vCPUs, host PID/RSS/CPU time/CPU percent, and disk usage
+  counters when they are available. Remaining H03 work is to wire queue/backend
+  counters into status and the metrics/exporter surface.
 
 ## Coverage Ledger
 
@@ -96,8 +104,14 @@
   `cargo test -p capsem-core offset_overflow_fails --lib`,
   `cargo test -p capsem-core guest_memory --lib`,
   `cargo test -p capsem-core block_data_length_overflow_returns_ioerr --lib`,
-  `cargo test -p capsem-core hypervisor::kvm --lib`.
+  `cargo test -p capsem-core hypervisor::kvm --lib`,
+  `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
+  `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
+  `cargo test -p capsem --bin capsem`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
+  A live named VM smoke with `capsem info --json` passed for H03 and reported
+  `metrics_schema_version=1`, `configured_ram_mb=2048`, `configured_vcpus=2`,
+  host PID, host RSS, and host CPU time before the throwaway VM was deleted.
 - Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
   a descriptor whose start GPA is valid but whose length crosses RAM end is
   rejected before raw iovecs reach host I/O. `avail_head_outside_queue_fails_closed`,
@@ -112,12 +126,17 @@
   tests prove hostile offset arithmetic returns errors instead of panicking.
   `block_data_length_overflow_returns_ioerr` proves aggregate descriptor length
   overflow fails the request instead of panicking.
-- E2E/VM: pending per sub-sprint.
-- Telemetry: pending per sub-sprint.
+- E2E/VM: `just exec "echo ok"` passed for the KVM one-shot VM path. H03
+  resource projection was also checked against a live named VM via
+  `capsem info --json`.
+- Telemetry: H03 first slice exposes existing `VmMetricsSnapshot.resources`
+  fields through the service API and CLI. OTel/exporter wiring for
+  queue/backend/hypervisor counters remains open.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
   `1.2.1780103109` are now present on main and compared successfully.
-- Missing/deferred: H03 status/OTel exposure remains next; full benchmark
-  rerun is deferred until a performance-affecting H02/H03 milestone lands.
+- Missing/deferred: H03 status/OTel exporter exposure remains next for
+  queue/backend/hypervisor counters; full benchmark rerun is deferred until a
+  performance-affecting H02/H03 milestone lands.

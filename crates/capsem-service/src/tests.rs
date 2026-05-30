@@ -1922,6 +1922,15 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
     snapshot.model.model_input_tokens_total = 11;
     snapshot.model.model_output_tokens_total = 29;
     snapshot.model.model_estimated_cost_micros_total = 1_250_000;
+    snapshot.resources.configured_ram_mb = 8192;
+    snapshot.resources.configured_vcpus = 4;
+    snapshot.resources.host_pid = Some(4242);
+    snapshot.resources.host_process_rss_bytes = Some(512 * 1024 * 1024);
+    snapshot.resources.host_cpu_time_micros = Some(1_500_000);
+    snapshot.resources.host_cpu_percent = Some(12.5);
+    snapshot.resources.session_disk_bytes = Some(1024);
+    snapshot.resources.workspace_disk_bytes = Some(2048);
+    snapshot.resources.rootfs_overlay_bytes = Some(4096);
     snapshot.mcp.mcp_tool_invocations_total = 6;
     snapshot.filesystem.fs_reads_total = 1;
     snapshot.filesystem.fs_writes_total = 2;
@@ -1942,6 +1951,20 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
 
     attach_metrics_snapshot(&mut info, &snapshot);
 
+    assert_eq!(info.metrics_schema_version, Some(snapshot.schema_version));
+    assert_eq!(
+        info.metrics_captured_at_unix_ms,
+        Some(snapshot.captured_at_unix_ms)
+    );
+    assert_eq!(info.configured_ram_mb, Some(8192));
+    assert_eq!(info.configured_vcpus, Some(4));
+    assert_eq!(info.host_pid, Some(4242));
+    assert_eq!(info.host_process_rss_bytes, Some(512 * 1024 * 1024));
+    assert_eq!(info.host_cpu_time_micros, Some(1_500_000));
+    assert_eq!(info.host_cpu_percent, Some(12.5));
+    assert_eq!(info.session_disk_bytes, Some(1024));
+    assert_eq!(info.workspace_disk_bytes, Some(2048));
+    assert_eq!(info.rootfs_overlay_bytes, Some(4096));
     assert_eq!(info.total_requests, Some(5));
     assert_eq!(info.allowed_requests, Some(4));
     assert_eq!(info.denied_requests, Some(1));

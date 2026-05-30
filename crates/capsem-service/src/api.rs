@@ -173,6 +173,28 @@ pub struct SandboxInfo {
     pub latest_detection_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_detection_severity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics_schema_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics_captured_at_unix_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_ram_mb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_vcpus: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_process_rss_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_cpu_time_micros: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_cpu_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_disk_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_disk_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rootfs_overlay_bytes: Option<u64>,
     /// Short tail of `process.log` from the last failed boot. Populated
     /// only when `status == "Defunct"`. Renders in `capsem list` /
     /// `capsem status` so a crashed VM tells the user *why* without
@@ -230,6 +252,17 @@ impl SandboxInfo {
             latest_detection_rule_id: None,
             latest_detection_title: None,
             latest_detection_severity: None,
+            metrics_schema_version: None,
+            metrics_captured_at_unix_ms: None,
+            configured_ram_mb: None,
+            configured_vcpus: None,
+            host_pid: None,
+            host_process_rss_bytes: None,
+            host_cpu_time_micros: None,
+            host_cpu_percent: None,
+            session_disk_bytes: None,
+            workspace_disk_bytes: None,
+            rootfs_overlay_bytes: None,
             last_error: None,
         }
     }

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Surfaced live VM resource metrics through `capsem info` and the service
+  `/info` response, including metrics schema/capture time, configured RAM and
+  vCPUs, host process PID/RSS/CPU time/CPU percent, and session/workspace/rootfs
+  disk counters when available.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.

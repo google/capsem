@@ -2762,6 +2762,17 @@ fn enrich_telemetry_from_session_db(info: &mut SandboxInfo, session_dir: &std::p
 }
 
 fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot) {
+    info.metrics_schema_version = Some(snapshot.schema_version);
+    info.metrics_captured_at_unix_ms = Some(snapshot.captured_at_unix_ms);
+    info.configured_ram_mb = Some(snapshot.resources.configured_ram_mb);
+    info.configured_vcpus = Some(snapshot.resources.configured_vcpus);
+    info.host_pid = snapshot.resources.host_pid;
+    info.host_process_rss_bytes = snapshot.resources.host_process_rss_bytes;
+    info.host_cpu_time_micros = snapshot.resources.host_cpu_time_micros;
+    info.host_cpu_percent = snapshot.resources.host_cpu_percent;
+    info.session_disk_bytes = snapshot.resources.session_disk_bytes;
+    info.workspace_disk_bytes = snapshot.resources.workspace_disk_bytes;
+    info.rootfs_overlay_bytes = snapshot.resources.rootfs_overlay_bytes;
     info.total_requests = Some(snapshot.http.http_requests_total);
     info.allowed_requests = Some(snapshot.http.http_requests_allowed_total);
     info.denied_requests = Some(snapshot.http.http_requests_denied_total);

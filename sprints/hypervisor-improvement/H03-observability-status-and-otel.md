@@ -43,5 +43,13 @@ must be useful in status/debug output and stable enough for OpenTelemetry.
 
 - Unit tests with a debug metrics recorder.
 - Status/info functional tests.
-- Real-session inspection after `just run "echo ok"`.
+- Real-session inspection after `just exec "echo ok"` and a live
+  `capsem info --json` check.
 
+## Progress
+
+- First slice complete: service `/info` and `capsem info` now expose the
+  existing live `VmMetricsSnapshot.resources` fields for configured RAM/vCPUs,
+  host PID/RSS/CPU time/CPU percent, and disk counters when available.
+- Next slice: wire queue/backend/hypervisor counters into status and the
+  OTel/exporter-facing metrics surface with bounded labels.

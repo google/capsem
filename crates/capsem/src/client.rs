@@ -124,6 +124,28 @@ pub struct SessionInfo {
     pub total_file_events: Option<u64>,
     #[serde(default)]
     pub model_call_count: Option<u64>,
+    #[serde(default)]
+    pub metrics_schema_version: Option<u32>,
+    #[serde(default)]
+    pub metrics_captured_at_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub configured_ram_mb: Option<u64>,
+    #[serde(default)]
+    pub configured_vcpus: Option<u32>,
+    #[serde(default)]
+    pub host_pid: Option<u32>,
+    #[serde(default)]
+    pub host_process_rss_bytes: Option<u64>,
+    #[serde(default)]
+    pub host_cpu_time_micros: Option<u64>,
+    #[serde(default)]
+    pub host_cpu_percent: Option<f64>,
+    #[serde(default)]
+    pub session_disk_bytes: Option<u64>,
+    #[serde(default)]
+    pub workspace_disk_bytes: Option<u64>,
+    #[serde(default)]
+    pub rootfs_overlay_bytes: Option<u64>,
     /// Tail of `process.log` from the last failed boot when
     /// `status == "Defunct"`. Rendered inline by `capsem list` so a
     /// crashed VM shows its own reason on screen.
