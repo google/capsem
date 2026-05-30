@@ -36,6 +36,9 @@
   let tableQuery = $state("");
   let tableFilter = $state("all");
   let tablePage = $state(0);
+  let modalPanel = $state<HTMLElement | undefined>(undefined);
+  let closeButton = $state<HTMLButtonElement | undefined>(undefined);
+  let restoreFocus: HTMLElement | null = null;
 
   let component = $derived(surface.components.get(id));
   let childItems = $derived(
@@ -216,6 +219,84 @@
   function renderableIconName(): string {
     return iconText(iconName());
   }
+
+  function modalLabelId(): string {
+    return `${component?.id ?? id}-label`;
+  }
+
+  function openModal(): void {
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      restoreFocus = document.activeElement;
+    }
+    open = true;
+  }
+
+  function closeModal(): void {
+    if (!open) return;
+    const focusTarget = restoreFocus;
+    restoreFocus = null;
+    open = false;
+    queueMicrotask(() => focusTarget?.focus());
+  }
+
+  function modalFocusables(): HTMLElement[] {
+    if (!modalPanel) return [];
+    const selector = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+    return Array.from(modalPanel.querySelectorAll<HTMLElement>(selector))
+      .filter((element) => element.offsetParent !== null && element.getAttribute("aria-hidden") !== "true");
+  }
+
+  function onModalKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeModal();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    const focusables = modalFocusables();
+    if (focusables.length === 0) {
+      event.preventDefault();
+      modalPanel?.focus();
+      return;
+    }
+
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  $effect(() => {
+    if (!open || typeof document === "undefined") return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.setTimeout(() => {
+      if (closeButton) {
+        closeButton.focus();
+      } else {
+        modalPanel?.focus();
+      }
+    }, 0);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  });
 </script>
 
 {#if component}
@@ -524,21 +605,39 @@
         {recipe}
         {scope}
         onAction={(action) => {
-          open = true;
+          openModal();
           onAction(action);
         }}
       />
       {#if open}
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-overlay/80 backdrop-blur-xs">
-          <div class="flex min-h-full items-center justify-center p-4">
-            <section class="w-full max-w-lg flex flex-col bg-overlay border border-overlay-line shadow-2xs rounded-xl">
+        <div
+          class="fixed inset-0 z-50 overflow-y-auto bg-overlay/80 backdrop-blur-xs"
+          role="presentation"
+          onkeydown={onModalKeydown}
+        >
+          <button
+            class="fixed inset-0 size-full cursor-default"
+            type="button"
+            aria-label="Close modal"
+            onclick={closeModal}
+          ></button>
+          <div class="relative flex min-h-full items-center justify-center p-4">
+            <div
+              bind:this={modalPanel}
+              class="w-full max-w-lg flex flex-col bg-overlay border border-overlay-line shadow-2xs rounded-xl pointer-events-auto"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={modalLabelId()}
+              tabindex="-1"
+            >
               <div class="flex justify-between items-center py-3 px-4 border-b border-overlay-header">
-                <h3 class="font-semibold text-foreground">Question</h3>
+                <h3 id={modalLabelId()} class="font-semibold text-foreground">Question</h3>
                 <button
+                  bind:this={closeButton}
                   class="size-8 inline-flex justify-center items-center gap-x-2 rounded-full bg-surface border border-surface-line text-surface-foreground hover:bg-surface-hover focus:outline-hidden focus:bg-surface-focus disabled:opacity-50 disabled:pointer-events-none"
                   type="button"
                   aria-label="Close"
-                  onclick={() => (open = false)}
+                  onclick={closeModal}
                 >
                   <span class="sr-only">Close</span>
                   <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -565,7 +664,7 @@
                           {recipe}
                           {scope}
                           onAction={(action) => {
-                            open = false;
+                            closeModal();
                             onAction(action);
                           }}
                         />
@@ -574,7 +673,7 @@
                   {/if}
                 {/if}
               </div>
-            </section>
+            </div>
           </div>
         </div>
       {/if}

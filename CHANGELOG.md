@@ -40,6 +40,8 @@
 
 ### Changed
 
+- Updated the A2UI modal renderer with Svelte dialog behavior: focus restore,
+  Escape/backdrop close, scroll lock, and keyboard focus cycling.
 - Removed the internal `A2UI Basic component: Card` caption from user-facing
   card output so protocol labels do not bleed into generated UI.
 - Fixed generated button labels so nested A2UI text inherits the button
