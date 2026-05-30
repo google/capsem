@@ -97,7 +97,26 @@ Firecracker's block path is a coordinated stack:
 - Register completion eventfd and batch completions into the used ring.
 - Preserve checkpoint quiesce by draining all pending async operations.
 
-### 4. Sequential read regression recovery
+### 4. Queue/backend telemetry and attribution
+- Add OTel-ready `metrics` counters and histograms for the current synchronous
+  KVM virtio-blk path before introducing another backend:
+  - queue notifications by backend (`mmio`, `ioeventfd`);
+  - queue drains and descriptors drained per wake;
+  - used entries published;
+  - interrupts raised and suppressed;
+  - request count/bytes/duration by operation and status;
+  - queue drain duration and quiesce drain duration.
+- Emit one structured `virtio.blk.queue_drain` summary per wake with enough
+  fields to correlate benchmark artifacts with queue behavior, while keeping
+  per-request logs at `trace`.
+- Keep this slice free of session DB schema changes; the existing JSON process
+  logs and future OTel exporter consume the same structured fields. Add a DB
+  projection later only if product workflows need persisted VM-device rows.
+- Use the telemetry slice as the baseline for the async engine so we can prove
+  whether future gains come from deeper queueing, fewer interrupts, lower drain
+  time, or faster host I/O.
+
+### 5. Sequential read regression recovery
 - Instrument whether the -13.1% scratch sequential regression is worker wake
   overhead, lost readahead, queue depth, host page cache behavior, or guest
   block queue parameters.
@@ -105,20 +124,20 @@ Firecracker's block path is a coordinated stack:
   artifacts.
 - Keep rootfs/startup improvements while recovering scratch sequential read.
 
-### 5. Storage/rootfs cross-platform tuning
+### 6. Storage/rootfs cross-platform tuning
 - Use storage diagnostics to compare squashfs zstd block size, rootfs layout,
   overlay behavior, and metadata pressure across Linux and macOS.
 - Only change rootfs chunk/compression/layout when both platforms can rerun the
   canonical benchmark.
 
-### 6. Telemetry and observability
+### 7. Telemetry and observability
 - Add long-term counters for queue notifications, descriptors drained, used
   entries published, interrupts raised/suppressed, sync vs async operations,
   io_uring submissions/completions, throttling, and quiesce drain duration.
 - Make counters inspectable through logs/session artifacts without turning the
   hot path noisy.
 
-### 7. Final proof and cleanup
+### 8. Final proof and cleanup
 - Commit accepted code and benchmark artifacts at each functional milestone.
 - Run focused unit tests, `just exec "echo ok"`, and `just benchmark`.
 - Ask macOS team to rerun `just benchmark` after any shared or rootfs-affecting

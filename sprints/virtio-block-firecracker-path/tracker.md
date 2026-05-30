@@ -5,10 +5,13 @@
 - [x] Record current combined KVM stack evidence.
 - [x] Add event-index feature negotiation and queue notification suppression.
 - [x] Benchmark event-index slice against `9d4c1f2a`.
+- [x] Add OTel-ready virtio-blk queue/backend metrics and structured drain
+      summaries.
+- [x] Verify virtio-blk metrics with a local metrics recorder unit test.
 - [ ] Prototype Linux async block engine with io_uring completion eventfd.
 - [ ] Benchmark async engine slice against current accepted stack.
 - [ ] Recover or explain scratch sequential read regression.
-- [ ] Add hot-path telemetry counters for queue and backend behavior.
+- [ ] Add async-path telemetry counters for io_uring submissions/completions.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
 - [x] Commit accepted benchmark artifacts after each accepted milestone.
 - [x] Update `CHANGELOG.md` with each functional milestone.
@@ -27,6 +30,10 @@
 - Handoff rule from user: do the best Linux implementation, keep commits clean
   and documented, and let the macOS team pull the branch/main and validate with
   canonical `just benchmark`.
+- Active next slice: add low-overhead virtio-blk metrics and structured queue
+  summaries before the async engine, so the next benchmark explains queue depth,
+  interrupt suppression, request mix, and backend drain time instead of only
+  reporting end-to-end throughput.
 
 ## Experiment Ledger
 
@@ -88,6 +95,20 @@
   - Next slice should add queue/backend telemetry before more tuning so we can
     distinguish fewer interrupts from queue-depth, cache, and host I/O effects.
 
+### Accepted: KVM virtio-blk telemetry counters
+- Code: this milestone commit.
+- Bench: pending clean-source benchmark artifact after this code commit.
+- Proof:
+  - `cargo test -p capsem-core hypervisor::kvm::virtio_blk::tests::block_read_records_queue_and_request_metrics --lib`
+  - `cargo test -p capsem-core hypervisor::kvm::virtio_blk --lib`
+  - `cargo test -p capsem-core hypervisor::kvm::virtio_queue --lib`
+  - `cargo test -p capsem-core hypervisor::kvm::virtio_mmio --lib`
+  - `cargo test -p capsem-core hypervisor::kvm --lib`
+  - `just exec "echo ok"`
+- Result:
+  - No performance claim yet. This slice adds attribution needed before the
+    async engine and rootfs recovery grind loop.
+
 ## Coverage Ledger
 - Unit/contract:
   - Current accepted stack passed focused KVM block, queue, MMIO, and broader
@@ -101,11 +122,29 @@
 - E2E/VM:
   - Current accepted stack passed canonical `just benchmark`.
 - Telemetry:
-  - Pending new counters for queue notify, suppression, sync/async operations,
-    completions, and quiesce drain timing.
+  - KVM virtio-blk now emits metrics for notifications, queue drains,
+    descriptors drained, used entries, request count/bytes/duration, interrupt
+    raised/suppressed decisions, and quiesce drain timing.
 - Performance:
   - Current accepted benchmark artifact included with the event-index slice.
 - Missing/deferred:
   - macOS rerun for the event-index shared virtqueue/benchmark state.
   - io_uring async engine tests and VM proof.
   - clear explanation or recovery of scratch sequential read regression.
+
+## Active Slice: virtio-blk telemetry
+- Build:
+  - `metrics` facade counters/histograms in the KVM virtio-blk path.
+  - Structured drain logs with backend, notification count, descriptors,
+    used entries, interrupt decision, and drain duration.
+  - Quiesce drain duration metric for suspend/resume proof.
+- Do not build:
+  - New session DB tables in this slice. The source of truth is structured JSON
+    logs plus the future OTel exporter; DB projection can be added when product
+    workflows need persisted per-device rows.
+- Proof target:
+  - Unit test with `metrics_util::debugging::DebuggingRecorder` proving a read
+    request emits request, byte, drain, used-entry, and interrupt metrics.
+  - Focused KVM block tests plus `just exec "echo ok"`.
+  - Broader `cargo test -p capsem-core hypervisor::kvm --lib` passed with
+    317 tests after telemetry wiring.

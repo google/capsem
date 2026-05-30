@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added OTel-ready KVM virtio-blk queue/backend metrics for notifications,
+  drains, descriptor/used-ring volume, request bytes/duration, interrupt
+  decisions, and quiesce drain timing.
 - Added the Virtio Block Firecracker Path sprint to track KVM block
   notification suppression, async I/O depth, shared rootfs/benchmark work, and
   macOS comparison reruns as one measured performance stack.

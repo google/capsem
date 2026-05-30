@@ -8,10 +8,11 @@ use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{mpsc, Arc};
-use std::time::Duration;
+use std::sync::{mpsc, Arc, Once};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use metrics::{describe_counter, describe_histogram, Unit};
 
 use super::memory::GuestMemoryRef;
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
@@ -51,6 +52,21 @@ const VIRTIO_BLK_S_UNSUPP: u8 = 2;
 // Request header size: type(u32) + reserved(u32) + sector(u64) = 16 bytes
 const REQ_HEADER_SIZE: usize = 16;
 
+// OTel-ready metric names. The metrics facade is no-op unless a recorder is
+// installed, and still gives us stable names for future OTLP export.
+const METRIC_QUEUE_NOTIFICATIONS_TOTAL: &str = "virtio.blk.queue_notifications_total";
+const METRIC_QUEUE_DRAINS_TOTAL: &str = "virtio.blk.queue_drains_total";
+const METRIC_DESCRIPTORS_DRAINED_TOTAL: &str = "virtio.blk.descriptors_drained_total";
+const METRIC_USED_ENTRIES_TOTAL: &str = "virtio.blk.used_entries_total";
+const METRIC_INTERRUPTS_TOTAL: &str = "virtio.blk.interrupts_total";
+const METRIC_REQUESTS_TOTAL: &str = "virtio.blk.requests_total";
+const METRIC_REQUEST_BYTES_TOTAL: &str = "virtio.blk.request_bytes_total";
+const METRIC_REQUEST_DURATION_MS: &str = "virtio.blk.request_duration_ms";
+const METRIC_QUEUE_DRAIN_DURATION_MS: &str = "virtio.blk.queue_drain_duration_ms";
+const METRIC_QUIESCE_DRAIN_DURATION_MS: &str = "virtio.blk.quiesce_drain_duration_ms";
+
+static DESCRIBE_METRICS: Once = Once::new();
+
 /// Virtio block device backed by a file.
 pub(super) struct VirtioBlockDevice {
     file: std::fs::File,
@@ -77,6 +93,7 @@ impl VirtioBlockDevice {
     /// If `read_only` is true, the file is opened read-only and
     /// VIRTIO_BLK_F_RO is advertised. Writes are rejected.
     pub fn new(path: &Path, read_only: bool) -> Result<Self> {
+        describe_metrics_once();
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(!read_only)
@@ -439,7 +456,13 @@ impl VirtioBlockDevice {
         mem: &GuestMemoryRef,
         queue: &mut VirtQueue,
     ) -> QueueProcessResult {
+        let drain_started = Instant::now();
         let mut processed = 0u32;
+        let mut used_entries = 0u32;
+        let mut read_ops = 0u32;
+        let mut write_ops = 0u32;
+        let mut bytes_read = 0u64;
+        let mut bytes_written = 0u64;
         while let Some(chain) = queue.pop_or_enable_notification() {
             let descs = &chain.descriptors;
             processed += 1;
@@ -452,6 +475,7 @@ impl VirtioBlockDevice {
                     "virtio-blk descriptor chain too short"
                 );
                 queue.push_used_deferred(chain.head, 0);
+                used_entries += 1;
                 continue;
             }
 
@@ -464,6 +488,7 @@ impl VirtioBlockDevice {
                     "virtio-blk request header descriptor was write-only"
                 );
                 queue.push_used_deferred(chain.head, 0);
+                used_entries += 1;
                 continue;
             }
 
@@ -478,6 +503,7 @@ impl VirtioBlockDevice {
                         "virtio-blk request header could not be parsed"
                     );
                     queue.push_used_deferred(chain.head, 0);
+                    used_entries += 1;
                     continue;
                 }
             };
@@ -493,6 +519,7 @@ impl VirtioBlockDevice {
                     "virtio-blk status descriptor was invalid"
                 );
                 queue.push_used_deferred(chain.head, 0);
+                used_entries += 1;
                 continue;
             }
 
@@ -503,18 +530,35 @@ impl VirtioBlockDevice {
             let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
 
             let status = match type_ {
-                VIRTIO_BLK_T_IN => {
+                VIRTIO_BLK_T_IN => timed_request(type_, total_data, || {
                     Self::process_read(file, mem, capacity_sectors, sector, &data_descs)
+                }),
+                VIRTIO_BLK_T_OUT => timed_request(type_, total_data, || {
+                    Self::process_write(file, mem, read_only, capacity_sectors, sector, &data_descs)
+                }),
+                VIRTIO_BLK_T_GET_ID => timed_request(type_, total_data, || {
+                    Self::process_get_id(mem, device_id, &data_descs)
+                }),
+                VIRTIO_BLK_T_DISCARD => timed_request(type_, total_data, || {
+                    Self::process_discard(file, mem, read_only, capacity_sectors, &data_descs)
+                }),
+                _ => timed_request(type_, total_data, || VIRTIO_BLK_S_UNSUPP),
+            };
+            match type_ {
+                VIRTIO_BLK_T_IN => {
+                    read_ops += 1;
+                    if status == VIRTIO_BLK_S_OK {
+                        bytes_read += total_data as u64;
+                    }
                 }
                 VIRTIO_BLK_T_OUT => {
-                    Self::process_write(file, mem, read_only, capacity_sectors, sector, &data_descs)
+                    write_ops += 1;
+                    if status == VIRTIO_BLK_S_OK {
+                        bytes_written += total_data as u64;
+                    }
                 }
-                VIRTIO_BLK_T_GET_ID => Self::process_get_id(mem, device_id, &data_descs),
-                VIRTIO_BLK_T_DISCARD => {
-                    Self::process_discard(file, mem, read_only, capacity_sectors, &data_descs)
-                }
-                _ => VIRTIO_BLK_S_UNSUPP,
-            };
+                _ => {}
+            }
             tracing::trace!(
                 event_name = "virtio.blk.request_complete",
                 head = chain.head,
@@ -534,6 +578,7 @@ impl VirtioBlockDevice {
                 1
             };
             queue.push_used_deferred(chain.head, used_len);
+            used_entries += 1;
         }
 
         if processed > 0 {
@@ -541,16 +586,160 @@ impl VirtioBlockDevice {
         }
 
         let should_interrupt = queue.prepare_kick();
+        let drain_duration = drain_started.elapsed();
         QueueProcessResult {
             processed,
+            used_entries,
             should_interrupt,
+            read_ops,
+            write_ops,
+            bytes_read,
+            bytes_written,
+            drain_duration,
         }
     }
 }
 
 struct QueueProcessResult {
     processed: u32,
+    used_entries: u32,
     should_interrupt: bool,
+    read_ops: u32,
+    write_ops: u32,
+    bytes_read: u64,
+    bytes_written: u64,
+    drain_duration: Duration,
+}
+
+fn describe_metrics_once() {
+    DESCRIBE_METRICS.call_once(|| {
+        describe_counter!(
+            METRIC_QUEUE_NOTIFICATIONS_TOTAL,
+            Unit::Count,
+            "Virtio block queue notifications observed by backend."
+        );
+        describe_counter!(
+            METRIC_QUEUE_DRAINS_TOTAL,
+            Unit::Count,
+            "Virtio block queue drain attempts by backend."
+        );
+        describe_counter!(
+            METRIC_DESCRIPTORS_DRAINED_TOTAL,
+            Unit::Count,
+            "Virtio block descriptor chains drained by backend."
+        );
+        describe_counter!(
+            METRIC_USED_ENTRIES_TOTAL,
+            Unit::Count,
+            "Virtio block used-ring entries published to the guest."
+        );
+        describe_counter!(
+            METRIC_INTERRUPTS_TOTAL,
+            Unit::Count,
+            "Virtio block interrupt decisions, partitioned by raised|suppressed."
+        );
+        describe_counter!(
+            METRIC_REQUESTS_TOTAL,
+            Unit::Count,
+            "Virtio block requests by operation and completion status."
+        );
+        describe_counter!(
+            METRIC_REQUEST_BYTES_TOTAL,
+            Unit::Bytes,
+            "Virtio block request payload bytes by operation and completion status."
+        );
+        describe_histogram!(
+            METRIC_REQUEST_DURATION_MS,
+            Unit::Milliseconds,
+            "Virtio block request processing wall time."
+        );
+        describe_histogram!(
+            METRIC_QUEUE_DRAIN_DURATION_MS,
+            Unit::Milliseconds,
+            "Virtio block queue drain wall time per backend wake."
+        );
+        describe_histogram!(
+            METRIC_QUIESCE_DRAIN_DURATION_MS,
+            Unit::Milliseconds,
+            "Virtio block quiesce drain wait time before checkpoint."
+        );
+    });
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+fn timed_request(type_: u32, total_data: u32, f: impl FnOnce() -> u8) -> u8 {
+    let started = Instant::now();
+    let status = f();
+    let operation = request_operation_label(type_);
+    let status_label = request_status_label(status);
+    ::metrics::counter!(
+        METRIC_REQUESTS_TOTAL,
+        "operation" => operation,
+        "status" => status_label,
+    )
+    .increment(1);
+    if total_data > 0 {
+        ::metrics::counter!(
+            METRIC_REQUEST_BYTES_TOTAL,
+            "operation" => operation,
+            "status" => status_label,
+        )
+        .increment(total_data as u64);
+    }
+    ::metrics::histogram!(
+        METRIC_REQUEST_DURATION_MS,
+        "operation" => operation,
+        "status" => status_label,
+    )
+    .record(duration_ms(started.elapsed()));
+    status
+}
+
+fn emit_queue_notification_metric(backend: &'static str, count: u64) {
+    ::metrics::counter!(METRIC_QUEUE_NOTIFICATIONS_TOTAL, "backend" => backend).increment(count);
+}
+
+fn emit_queue_drain_metrics(backend: &'static str, result: &QueueProcessResult) {
+    ::metrics::counter!(METRIC_QUEUE_DRAINS_TOTAL, "backend" => backend).increment(1);
+    if result.processed > 0 {
+        ::metrics::counter!(METRIC_DESCRIPTORS_DRAINED_TOTAL, "backend" => backend)
+            .increment(result.processed as u64);
+    }
+    if result.used_entries > 0 {
+        ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => backend)
+            .increment(result.used_entries as u64);
+    }
+    if result.should_interrupt {
+        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "raised")
+            .increment(1);
+    } else if result.processed > 0 {
+        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "suppressed")
+            .increment(1);
+    }
+    ::metrics::histogram!(METRIC_QUEUE_DRAIN_DURATION_MS, "backend" => backend)
+        .record(duration_ms(result.drain_duration));
+}
+
+fn request_operation_label(type_: u32) -> &'static str {
+    match type_ {
+        VIRTIO_BLK_T_IN => "read",
+        VIRTIO_BLK_T_OUT => "write",
+        VIRTIO_BLK_T_GET_ID => "get_id",
+        VIRTIO_BLK_T_DISCARD => "discard",
+        _ => "unsupported",
+    }
+}
+
+fn request_status_label(status: u8) -> &'static str {
+    match status {
+        VIRTIO_BLK_S_OK => "ok",
+        VIRTIO_BLK_S_IOERR => "ioerr",
+        VIRTIO_BLK_S_UNSUPP => "unsupported",
+        _ => "unknown",
+    }
 }
 
 impl VirtioDevice for VirtioBlockDevice {
@@ -690,6 +879,7 @@ impl VirtioDevice for VirtioBlockDevice {
             Some(mem) => mem,
             None => return false,
         };
+        emit_queue_notification_metric("mmio", 1);
         let result = Self::process_queue(
             &mut self.file,
             self.read_only,
@@ -698,12 +888,20 @@ impl VirtioDevice for VirtioBlockDevice {
             mem,
             &mut queue,
         );
+        emit_queue_drain_metrics("mmio", &result);
 
         self.queue = Some(queue);
         tracing::trace!(
             event_name = "virtio.blk.queue_drain",
+            backend = "mmio",
             processed = result.processed,
+            used_entries = result.used_entries,
             should_interrupt = result.should_interrupt,
+            read_ops = result.read_ops,
+            write_ops = result.write_ops,
+            bytes_read = result.bytes_read,
+            bytes_written = result.bytes_written,
+            duration_ms = duration_ms(result.drain_duration),
             "virtio-blk queue notification drained"
         );
         result.should_interrupt
@@ -717,13 +915,16 @@ impl VirtioDevice for VirtioBlockDevice {
             return Ok(());
         };
         let (done_tx, done_rx) = mpsc::channel();
+        let started = Instant::now();
         tx.send(BlockWorkerCommand::Drain(done_tx))
             .context("send virtio-blk drain command")?;
         write_eventfd(notify_fd.as_raw_fd()).context("wake virtio-blk worker for drain")?;
-        done_rx
+        let result = done_rx
             .recv_timeout(Duration::from_secs(2))
-            .context("wait for virtio-blk drain")?;
-        Ok(())
+            .context("wait for virtio-blk drain");
+        ::metrics::histogram!(METRIC_QUIESCE_DRAIN_DURATION_MS, "backend" => "ioeventfd")
+            .record(duration_ms(started.elapsed()));
+        result.map(|_| ())
     }
 
     fn uses_mmio_interrupt(&self) -> bool {
@@ -756,14 +957,18 @@ fn block_worker_loop(
     interrupt_status: Arc<AtomicU32>,
 ) {
     loop {
-        if let Err(error) = read_eventfd(notify_fd.as_raw_fd()) {
-            tracing::warn!(
-                event_name = "virtio.blk.ioeventfd_read_failed",
-                %error,
-                "virtio-blk worker failed to read notify eventfd"
-            );
-            return;
-        }
+        let notify_count = match read_eventfd(notify_fd.as_raw_fd()) {
+            Ok(count) => count,
+            Err(error) => {
+                tracing::warn!(
+                    event_name = "virtio.blk.ioeventfd_read_failed",
+                    %error,
+                    "virtio-blk worker failed to read notify eventfd"
+                );
+                return;
+            }
+        };
+        emit_queue_notification_metric("ioeventfd", notify_count);
 
         let mut stop = false;
         let mut drain_replies = Vec::new();
@@ -782,6 +987,7 @@ fn block_worker_loop(
             &mem,
             &mut queue,
         );
+        emit_queue_drain_metrics("ioeventfd", &result);
         if result.should_interrupt {
             signal_irq(irq_fd, &interrupt_status);
         }
@@ -790,8 +996,16 @@ fn block_worker_loop(
         }
         tracing::trace!(
             event_name = "virtio.blk.queue_drain",
+            backend = "ioeventfd",
+            notify_count,
             processed = result.processed,
+            used_entries = result.used_entries,
             should_interrupt = result.should_interrupt,
+            read_ops = result.read_ops,
+            write_ops = result.write_ops,
+            bytes_read = result.bytes_read,
+            bytes_written = result.bytes_written,
+            duration_ms = duration_ms(result.drain_duration),
             "virtio-blk ioeventfd worker drained queue notification"
         );
 
@@ -1261,6 +1475,47 @@ mod tests {
         let status_offset = data_offset + 512;
         assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_OK);
         assert_eq!(h.read_used_idx(), 1);
+    }
+
+    #[test]
+    fn block_read_records_queue_and_request_metrics() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter: Snapshotter = recorder.snapshotter();
+        let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+        let data = vec![0x42u8; 512];
+        let path = temp_disk_with_data("read-metrics.img", &data);
+        let mut h = TestHarness::new(&path, true);
+
+        h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
+        assert!(h.dev.queue_notify(0));
+
+        let snap = snapshotter.snapshot().into_vec();
+        let counter_total = |name: &str| -> u64 {
+            snap.iter()
+                .filter_map(|(key, _, _, value)| match (key.key().name(), value) {
+                    (metric, DebugValue::Counter(count)) if metric == name => Some(*count),
+                    _ => None,
+                })
+                .sum()
+        };
+        let histogram_present = |name: &str| -> bool {
+            snap.iter().any(|(key, _, _, value)| {
+                key.key().name() == name && matches!(value, DebugValue::Histogram(_))
+            })
+        };
+
+        assert_eq!(counter_total(METRIC_QUEUE_NOTIFICATIONS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_QUEUE_DRAINS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_DESCRIPTORS_DRAINED_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_USED_ENTRIES_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_INTERRUPTS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_REQUESTS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_REQUEST_BYTES_TOTAL), 512);
+        assert!(histogram_present(METRIC_REQUEST_DURATION_MS));
+        assert!(histogram_present(METRIC_QUEUE_DRAIN_DURATION_MS));
     }
 
     #[test]
