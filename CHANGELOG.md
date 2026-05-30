@@ -9,6 +9,8 @@
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering
   JSON Schema source of truth, Python Preline scraping, checked template
   bindings, and a Svelte workbench.
+- Added the UI MCP-style authoring acceptance gate: the agent must build a
+  requested UI through structured tools and render it in the workbench.
 
 ### Changed
 

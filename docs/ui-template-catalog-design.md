@@ -21,6 +21,7 @@ with exact Preline component patterns.
 
 ```text
 context.ui.alert(...)
+  -> UI MCP / structured authoring tools
   -> A2UI updateComponents message
   -> Capsem catalog JSON Schema validation
   -> Rust/TypeScript generated types
@@ -31,6 +32,47 @@ context.ui.alert(...)
 
 Plugins never provide HTML, CSS, Tailwind class strings, Preline attributes, or
 Svelte code. They can only emit objects accepted by the catalog schema.
+
+## Authoring Surface
+
+The model-facing authoring surface should look like structured tools, not a
+template string. This mirrors how Codex works: the agent calls typed tools, the
+host validates arguments, executes the operation, and returns structured
+observations.
+
+Minimum local UI tools:
+
+```text
+ui.catalog.list()
+ui.catalog.describe(component)
+ui.surface.create(id, kind, catalog)
+ui.component.add(surface_id, component)
+ui.surface.validate(surface_id)
+ui.surface.preview(surface_id)
+ui.surface.clear(surface_id)
+```
+
+Convenience tools such as `ui.alert`, `ui.button`, `ui.modal`, and `ui.card`
+are allowed only if they lower to the same A2UI object and pass the same
+catalog/template validators.
+
+ArrowJS remains useful as an ergonomics reference: small vocabulary,
+component-like composition, stable identity, and explicit bindings. It is not
+the emitted object. Raw `html` templates, callbacks, DOM events, `.innerHTML`,
+and arbitrary property bindings are not accepted from untrusted plugins/models.
+
+## Acceptance Gate
+
+The system must pass a self-use gate before we call it a plugin interface:
+
+1. the user asks the agent to create a specific UI;
+2. the agent builds it through local UI tools;
+3. the tools emit validated A2UI messages;
+4. the workbench renders through checked Preline templates;
+5. validation and template reports are visible in the UI;
+6. the agent can repair the surface from tool validation errors.
+
+If this fails, the plugin interface is not real enough.
 
 ## Schema Source Of Truth
 

@@ -6,6 +6,7 @@ Turn the UI preview spike into a disciplined, machine-checkable UI system:
 
 ```text
 plugin/model/Rust API
+  -> UI MCP / structured authoring tools
   -> A2UI v0.9 message envelope
   -> Capsem A2UI catalog JSON Schema
   -> generated Rust + TypeScript types
@@ -15,8 +16,10 @@ plugin/model/Rust API
 
 The hard rule: plugins and models emit typed A2UI messages. They do not emit
 HTML, Preline class strings, Tailwind classes, Svelte code, or renderer code.
-Preline is a trusted renderer template layer that we can scrape, inspect,
-annotate, and machine-check against the schema.
+When a model needs to build UI, it should use structured UI tools the same way
+Codex uses structured shell, patch, browser, and git tools. Preline is a
+trusted renderer template layer that we can scrape, inspect, annotate, and
+machine-check against the schema.
 
 ## Product Slice
 
@@ -26,8 +29,9 @@ Build a useful local workbench where we can inspect and prove the full path:
 2. reviewed templates promoted into tracked `templates/capsem-ui/...`;
 3. Capsem A2UI catalog schemas define the component surface;
 4. a checker proves template bindings match catalog properties;
-5. generated Rust and TypeScript types drive the demo and Svelte renderer;
-6. the preview page has a real Preline layout with a left sidebar, component
+5. a UI MCP-style authoring surface builds those messages incrementally;
+6. generated Rust and TypeScript types drive the demo and Svelte renderer;
+7. the preview page has a real Preline layout with a left sidebar, component
    catalogue navigation, rendered preview, A2UI JSON, template binding report,
    and source/template panes.
 
@@ -52,10 +56,71 @@ components. The page is a workbench, not a landing page.
   They are not protocol objects, but they are not loose HTML either.
 - Template metadata exists only to verify binding correctness and trace the
   recipe origin. It is not emitted by plugins.
+- The model-facing authoring API is a structured UI tool surface, not raw JSON
+  dumping. It should feel like Codex tools: named operations, typed parameters,
+  validation errors, and observable results.
+- ArrowJS informs ergonomics for templates and reactive authoring, but raw
+  `html` tagged templates, callbacks, DOM events, and arbitrary property
+  bindings are not accepted as plugin/model output.
 - Svelte owns all interactivity. We copy Preline CSS class recipes, but we do
   not use Preline JS, `data-hs-*` behavior, or plugin-authored DOM.
 - The UI workbench uses Svelte components only. No React, no arbitrary HTML
   injection, no runtime template execution from untrusted input.
+
+## UI MCP Authoring Contract
+
+The sprint must include a local UI MCP-style tool surface that a model can use
+to build A2UI without hand-writing a giant JSON blob. The first version can be
+served by the Rust prototype as ordinary endpoints or an in-process harness,
+but the shape must map cleanly to future MCP tools.
+
+Minimum authoring tools:
+
+```text
+ui.catalog.list()
+ui.catalog.describe(component)
+ui.surface.create(id, kind, catalog)
+ui.component.add(surface_id, component)
+ui.surface.validate(surface_id)
+ui.surface.preview(surface_id)
+ui.surface.clear(surface_id)
+```
+
+Optional convenience tools can compile into the same component operations:
+
+```text
+ui.alert(surface_id, id, message, variant, tone)
+ui.button(surface_id, id, child, variant, action)
+ui.modal(surface_id, id, trigger, content, variant)
+ui.card(surface_id, id, child, variant)
+```
+
+Each tool must return structured observations:
+
+- accepted/rejected;
+- normalized A2UI operation or validation errors;
+- affected surface/component ids;
+- template/check status when previewed.
+
+No tool accepts raw HTML, CSS classes, JavaScript callbacks, or renderer code.
+If a tool eventually accepts Arrow-like syntax, that syntax must compile to the
+same A2UI/catalog object and pass the same validator before rendering.
+
+## Acceptance Test
+
+This sprint is not credible until it passes the "Codex uses its own UI tools"
+test:
+
+1. the user asks the agent to create a specific UI;
+2. the agent uses the local UI MCP-style tools, not manual JSON editing, to
+   construct the surface;
+3. the tools emit A2UI messages validated against the Capsem catalog;
+4. the workbench renders the result through checked Preline templates;
+5. the workbench shows the A2UI, catalog/template validation, and rendered UI;
+6. the agent can iterate from validation errors and repair the surface.
+
+Failure means the plugin interface is not ready. If a model cannot author UI
+through the same structured path, plugins will not be able to either.
 
 ## Template Contract
 
@@ -175,8 +240,11 @@ no generic grey boxes, and no raw Tailwind color hacks.
 - `schemas/capsem-ui/templates/template.v1.schema.json`
 - `templates/capsem-ui/*`
 - `crates/capsem-plugin-engine/src/ui.rs`
+- `crates/capsem-plugin-engine/src/ui_tools.rs`
 - `crates/capsem-plugin-engine/tests/ui_templates.rs`
+- `crates/capsem-plugin-engine/tests/ui_tools.rs`
 - `crates/capsem-plugin-server/src/ui_preview.rs`
+- `crates/capsem-plugin-server/src/ui_tools.rs`
 - `ui-preview/src/*`
 - `docs/ui-template-catalog-design.md`
 - `docs/ui-fixme.md`
@@ -191,11 +259,14 @@ no generic grey boxes, and no raw Tailwind color hacks.
    `private/todo/preline`.
 3. Define the first Capsem catalog slice as A2UI-compatible JSON Schema.
 4. Define `template.capui.json` schema and one promoted template.
-5. Add template checker tests against the catalog and template metadata.
-6. Wire Rust preview endpoint to serve examples plus validation/check reports.
-7. Rebuild Svelte workbench with Preline sidebar, preview, and inspector panes.
-8. Promote the remaining initial templates and make failures visible.
-9. Run Rust tests, frontend build/tests, and browser verification.
+5. Add local UI MCP-style authoring tools that lower to A2UI messages.
+6. Add template checker tests against the catalog and template metadata.
+7. Wire Rust preview endpoint to serve examples plus validation/check reports.
+8. Rebuild Svelte workbench with Preline sidebar, preview, and inspector panes.
+9. Add the self-use acceptance scenario where the agent builds a requested UI
+   through the tools and previews it.
+10. Promote the remaining initial templates and make failures visible.
+11. Run Rust tests, frontend build/tests, and browser verification.
 
 ## Done Means
 
@@ -205,6 +276,10 @@ no generic grey boxes, and no raw Tailwind color hacks.
 - The checker rejects bad props, bad variants, missing required bindings,
   unknown markers, and selectors that do not exist.
 - The demo emits A2UI messages and validates them against the selected catalog.
+- The demo exposes a local UI MCP-style tool lane that can create, mutate,
+  validate, preview, and clear surfaces.
+- A requested UI can be built through those tools and shown in the workbench
+  without manual JSON edits.
 - The Svelte workbench renders the checked templates and shows the validation
   evidence without relying on plugin-authored HTML.
 - The browser preview is usable for continued component review.
@@ -214,14 +289,17 @@ no generic grey boxes, and no raw Tailwind color hacks.
 ## Testing Proof Matrix
 
 - Unit/contract: JSON Schema validation for A2UI messages, Capsem catalog
-  components, and template metadata; Rust tests for checker behavior.
+  components, and template metadata; Rust tests for checker behavior and UI
+  tool lowering.
 - Functional: server endpoint returns examples, validation reports, and
-  template check reports consumed by the Svelte workbench.
+  template check reports consumed by the Svelte workbench; UI tools create a
+  renderable surface.
 - Adversarial: malformed component kind, unknown variant, unknown binding prop,
-  missing selector, missing required renderable prop, and Preline JS behavior
-  markers are rejected.
+  missing selector, missing required renderable prop, invalid tool parameters,
+  manual raw HTML/class attempts, and Preline JS behavior markers are rejected.
 - E2E/VM: in-app browser loads the workbench from the Rust server and exercises
-  sidebar navigation plus modal interaction. No Capsem VM integration in this
+  sidebar navigation, modal interaction, and the "agent uses UI tools to build
+  a requested surface" acceptance scenario. No Capsem VM integration in this
   isolated sprint.
 - Telemetry: deferred; report objects are shaped so later plugin telemetry can
   record render/check results.
