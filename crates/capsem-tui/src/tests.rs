@@ -111,6 +111,32 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
 }
 
 #[test]
+fn replace_state_smooths_local_service_latency_jitter() {
+    let mut initial = fixture_state();
+    initial.service.latency = std::time::Duration::from_millis(1);
+    let mut app = App::new(initial);
+
+    let mut cache_refresh = fixture_state();
+    cache_refresh.service.latency = std::time::Duration::from_millis(7);
+    app.replace_state(cache_refresh);
+
+    assert_eq!(
+        app.state().service.latency,
+        std::time::Duration::from_micros(2_500)
+    );
+
+    let mut real_slow = fixture_state();
+    real_slow.service.latency = std::time::Duration::from_millis(150);
+    app.replace_state(real_slow);
+
+    assert_eq!(
+        app.state().service.latency,
+        std::time::Duration::from_millis(150),
+        "real degraded latency should not be hidden by local jitter smoothing"
+    );
+}
+
+#[test]
 fn shell_commands_are_alt_owned() {
     let mut app = App::new(fixture_state());
 
@@ -395,6 +421,47 @@ async fn gateway_provider_loads_status_over_http_gateway() {
 
     assert_eq!(state.sessions.len(), 2);
     assert_eq!(state.sessions[0].id, "vm-1");
+
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_reuses_token_across_status_refreshes() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let body = gateway_status_body().to_string();
+    let server = tokio::spawn(async move {
+        let mut token_requests = 0;
+        let mut status_requests = 0;
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                token_requests += 1;
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                status_requests += 1;
+                assert!(
+                    request.contains("GET /status "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(
+                    request.contains("authorization: Bearer test-token")
+                        || request.contains("Authorization: Bearer test-token"),
+                    "missing bearer auth: {request:?}"
+                );
+                write_json_response(&mut stream, &body).await;
+            }
+        }
+        assert_eq!(token_requests, 1, "token should be cached across refreshes");
+        assert_eq!(status_requests, 2);
+    });
+
+    let provider = GatewayProvider::new(format!("http://{addr}"));
+    provider.load_async().await.expect("initial load");
+    provider.load_async().await.expect("refresh load");
 
     server.await.expect("server task");
 }

@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed the guest rootfs build default to a configurable 128K squashfs block
   size, improving measured CLI startup and sequential rootfs reads while
   recording the chunk-size choice in `guest/config/build.toml`.
+- Changed `capsem-tui` gateway refreshes to reuse the HTTP client and cached
+  gateway token, so status polling measures the local status request instead of
+  redoing auth bootstrap on every tick.
 - Strengthened the suspend/resume lifecycle integration test so it now proves
   a background guest process keeps the same PID and continues writing after
   warm resume, giving Apple VZ and KVM the same long-term state-preservation
@@ -127,6 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bottom status bar does not shift as latency changes.
 - Fixed `capsem-tui` service latency rendering to keep the status dot glued to
   the latency field, making the service block read as one unit.
+- Fixed `capsem-tui` local latency jitter by smoothing sub-100ms cache-hit
+  versus cache-refresh measurements while still surfacing real slow responses.
 - Fixed `capsem-tui` shell controls to use an app-owned Alt namespace:
   `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`, and `Alt+q`, instead of
   terminal-dependent Cmd/Ctrl forwarding or prefix fallbacks.

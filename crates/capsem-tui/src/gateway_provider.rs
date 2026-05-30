@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -11,15 +12,53 @@ use crate::model::{
 };
 use crate::provider::StateProvider;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct GatewayProvider {
     base_url: String,
+    client: reqwest::Client,
+    token: Arc<Mutex<Option<String>>>,
+}
+
+impl PartialEq for GatewayProvider {
+    fn eq(&self, other: &Self) -> bool {
+        self.base_url == other.base_url
+    }
+}
+
+impl Eq for GatewayProvider {}
+
+impl GatewayProvider {
+    fn auth_token(&self) -> Result<Option<String>> {
+        self.token
+            .lock()
+            .map(|token| token.clone())
+            .map_err(|_| anyhow::anyhow!("capsem gateway token cache poisoned"))
+    }
+
+    fn store_auth_token(&self, token: String) -> Result<String> {
+        let mut cached = self
+            .token
+            .lock()
+            .map_err(|_| anyhow::anyhow!("capsem gateway token cache poisoned"))?;
+        *cached = Some(token.clone());
+        Ok(token)
+    }
+
+    async fn token(&self) -> Result<String> {
+        if let Some(token) = self.auth_token()? {
+            return Ok(token);
+        }
+        let token = fetch_token(&self.client, &self.base_url).await?;
+        self.store_auth_token(token)
+    }
 }
 
 impl GatewayProvider {
     pub fn new(base_url: String) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            client: reqwest::Client::new(),
+            token: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -36,10 +75,9 @@ impl GatewayProvider {
     }
 
     pub async fn load_async(&self) -> Result<AppState> {
+        let token = self.token().await?;
         let started = Instant::now();
-        let client = reqwest::Client::new();
-        let token = fetch_token(&client, &self.base_url).await?;
-        let status = fetch_status(&client, &self.base_url, &token).await?;
+        let status = fetch_status(&self.client, &self.base_url, &token).await?;
         Ok(status_response_to_state(status, started.elapsed()))
     }
 
@@ -52,9 +90,8 @@ impl GatewayProvider {
     }
 
     pub async fn invoke_async(&self, action: &ControlAction) -> Result<ActionOutcome> {
-        let client = reqwest::Client::new();
-        let token = fetch_token(&client, &self.base_url).await?;
-        invoke_action(&client, &self.base_url, &token, action).await
+        let token = self.token().await?;
+        invoke_action(&self.client, &self.base_url, &token, action).await
     }
 }
 

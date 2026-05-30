@@ -127,10 +127,19 @@
   per-connection helper.
 - Live fd stress after install: 150 service `/list` refreshes across
   `tui-proof-a` and `tui-proof-b` kept process fd counts flat at 39 and 40.
+- Local latency diagnosis: gateway `/status` is stable at roughly 4-8ms when
+  refreshing the two proof VMs. The visible `0/1ms` versus `7ms` jitter came
+  from the TUI displaying raw cache-hit/cache-refresh phase and paying token
+  bootstrap on every refresh.
+- TUI latency fix: gateway refreshes now reuse the HTTP client and cached
+  gateway token, and interactive state replacement smooths sub-100ms local
+  latency jitter without hiding real slow responses.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (23 tests).
+- Unit/contract: `cargo test -p capsem-tui` (25 tests).
+- TUI latency/provider: `cargo test -p capsem-tui` (25 tests), including
+  token reuse and local latency smoothing coverage.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Formatting: `cargo fmt -p capsem-tui -- --check`.
