@@ -2773,6 +2773,23 @@ fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot)
     info.session_disk_bytes = snapshot.resources.session_disk_bytes;
     info.workspace_disk_bytes = snapshot.resources.workspace_disk_bytes;
     info.rootfs_overlay_bytes = snapshot.resources.rootfs_overlay_bytes;
+    info.block_queue_notifications_total =
+        Some(snapshot.hypervisor.block.queue_notifications_total);
+    info.block_queue_drains_total = Some(snapshot.hypervisor.block.queue_drains_total);
+    info.block_descriptors_drained_total =
+        Some(snapshot.hypervisor.block.descriptors_drained_total);
+    info.block_used_entries_total = Some(snapshot.hypervisor.block.used_entries_total);
+    info.block_interrupts_raised_total = Some(snapshot.hypervisor.block.interrupts_raised_total);
+    info.block_interrupts_suppressed_total =
+        Some(snapshot.hypervisor.block.interrupts_suppressed_total);
+    info.block_read_ops_total = Some(snapshot.hypervisor.block.read_ops_total);
+    info.block_write_ops_total = Some(snapshot.hypervisor.block.write_ops_total);
+    info.block_bytes_read_total = Some(snapshot.hypervisor.block.bytes_read_total);
+    info.block_bytes_written_total = Some(snapshot.hypervisor.block.bytes_written_total);
+    info.block_async_submissions_total = Some(snapshot.hypervisor.block.async_submissions_total);
+    info.block_async_completions_total = Some(snapshot.hypervisor.block.async_completions_total);
+    info.block_async_fallbacks_total = Some(snapshot.hypervisor.block.async_fallbacks_total);
+    info.block_async_in_flight = Some(snapshot.hypervisor.block.async_in_flight);
     info.total_requests = Some(snapshot.http.http_requests_total);
     info.allowed_requests = Some(snapshot.http.http_requests_allowed_total);
     info.denied_requests = Some(snapshot.http.http_requests_denied_total);

@@ -195,6 +195,34 @@ pub struct SandboxInfo {
     pub workspace_disk_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rootfs_overlay_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_queue_notifications_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_queue_drains_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_descriptors_drained_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_used_entries_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_interrupts_raised_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_interrupts_suppressed_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_read_ops_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_write_ops_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_bytes_read_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_bytes_written_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_async_submissions_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_async_completions_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_async_fallbacks_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_async_in_flight: Option<u64>,
     /// Short tail of `process.log` from the last failed boot. Populated
     /// only when `status == "Defunct"`. Renders in `capsem list` /
     /// `capsem status` so a crashed VM tells the user *why* without
@@ -263,6 +291,20 @@ impl SandboxInfo {
             session_disk_bytes: None,
             workspace_disk_bytes: None,
             rootfs_overlay_bytes: None,
+            block_queue_notifications_total: None,
+            block_queue_drains_total: None,
+            block_descriptors_drained_total: None,
+            block_used_entries_total: None,
+            block_interrupts_raised_total: None,
+            block_interrupts_suppressed_total: None,
+            block_read_ops_total: None,
+            block_write_ops_total: None,
+            block_bytes_read_total: None,
+            block_bytes_written_total: None,
+            block_async_submissions_total: None,
+            block_async_completions_total: None,
+            block_async_fallbacks_total: None,
+            block_async_in_flight: None,
             last_error: None,
         }
     }

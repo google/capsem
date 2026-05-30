@@ -51,5 +51,8 @@ must be useful in status/debug output and stable enough for OpenTelemetry.
 - First slice complete: service `/info` and `capsem info` now expose the
   existing live `VmMetricsSnapshot.resources` fields for configured RAM/vCPUs,
   host PID/RSS/CPU time/CPU percent, and disk counters when available.
-- Next slice: wire queue/backend/hypervisor counters into status and the
-  OTel/exporter-facing metrics surface with bounded labels.
+- Second slice complete: KVM virtio-blk queue/backend counters now flow into
+  `VmMetricsSnapshot.hypervisor.block`, service `/info`, and `capsem info`
+  while preserving existing `metrics` facade emission.
+- Next slice: surface these counters through broader status/TUI and the
+  OTel/exporter-facing path with bounded labels.

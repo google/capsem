@@ -206,7 +206,8 @@ pub(crate) async fn handle_ipc_connection(
                 }
             }
             ServiceToProcess::GetMetricsSnapshot { id } => {
-                let snapshot = metrics_snapshot(&db, &vm_id, &resource_metrics);
+                let hypervisor_metrics = vm.lock().await.hypervisor_metrics();
+                let snapshot = metrics_snapshot(&db, &vm_id, &resource_metrics, hypervisor_metrics);
                 capsem_core::try_send!(
                     "ipc_metrics_snapshot",
                     ipc_tx_out
@@ -709,6 +710,7 @@ fn metrics_snapshot(
     db: &capsem_logger::DbWriter,
     vm_id: &str,
     resources: &ResourceMetricsContext,
+    hypervisor: capsem_proto::metrics::VmHypervisorMetrics,
 ) -> VmMetricsSnapshot {
     let captured_at_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -724,6 +726,7 @@ fn metrics_snapshot(
         snapshot.resources.host_process_rss_bytes = Some(proc_stats.rss_bytes);
         snapshot.resources.host_cpu_time_micros = Some(proc_stats.cpu_time_micros);
     }
+    snapshot.hypervisor = hypervisor;
     snapshot
 }
 

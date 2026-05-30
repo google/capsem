@@ -22,6 +22,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::vm::config::VmConfig;
 pub use crate::vm::VmState;
+use capsem_proto::metrics::VmHypervisorMetrics;
 
 /// A hypervisor backend that can boot VMs.
 pub trait Hypervisor: Send + Sync {
@@ -84,6 +85,11 @@ pub trait VmHandle: Send {
     /// `restoreMachineStateFromURL` before the VM has ever been started.
     fn supports_checkpoint(&self) -> bool {
         false
+    }
+
+    /// Snapshot backend-owned low-cardinality counters for status and telemetry.
+    fn hypervisor_metrics(&self) -> VmHypervisorMetrics {
+        VmHypervisorMetrics::default()
     }
 }
 

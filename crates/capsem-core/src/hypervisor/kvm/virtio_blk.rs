@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Once};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use capsem_proto::metrics::VmBlockMetrics;
 use io_uring::{opcode, types, IoUring};
 use metrics::{describe_counter, describe_histogram, Unit};
 
@@ -73,6 +74,99 @@ const METRIC_ASYNC_IN_FLIGHT: &str = "virtio.blk.async_in_flight";
 
 static DESCRIBE_METRICS: Once = Once::new();
 
+#[derive(Default)]
+pub(super) struct BlockDeviceMetrics {
+    queue_notifications_total: AtomicU64,
+    queue_drains_total: AtomicU64,
+    descriptors_drained_total: AtomicU64,
+    used_entries_total: AtomicU64,
+    interrupts_raised_total: AtomicU64,
+    interrupts_suppressed_total: AtomicU64,
+    read_ops_total: AtomicU64,
+    write_ops_total: AtomicU64,
+    bytes_read_total: AtomicU64,
+    bytes_written_total: AtomicU64,
+    async_submissions_total: AtomicU64,
+    async_completions_total: AtomicU64,
+    async_fallbacks_total: AtomicU64,
+    async_in_flight: AtomicU64,
+}
+
+impl BlockDeviceMetrics {
+    pub(super) fn snapshot(&self) -> VmBlockMetrics {
+        VmBlockMetrics {
+            queue_notifications_total: self.queue_notifications_total.load(Ordering::Relaxed),
+            queue_drains_total: self.queue_drains_total.load(Ordering::Relaxed),
+            descriptors_drained_total: self.descriptors_drained_total.load(Ordering::Relaxed),
+            used_entries_total: self.used_entries_total.load(Ordering::Relaxed),
+            interrupts_raised_total: self.interrupts_raised_total.load(Ordering::Relaxed),
+            interrupts_suppressed_total: self.interrupts_suppressed_total.load(Ordering::Relaxed),
+            read_ops_total: self.read_ops_total.load(Ordering::Relaxed),
+            write_ops_total: self.write_ops_total.load(Ordering::Relaxed),
+            bytes_read_total: self.bytes_read_total.load(Ordering::Relaxed),
+            bytes_written_total: self.bytes_written_total.load(Ordering::Relaxed),
+            async_submissions_total: self.async_submissions_total.load(Ordering::Relaxed),
+            async_completions_total: self.async_completions_total.load(Ordering::Relaxed),
+            async_fallbacks_total: self.async_fallbacks_total.load(Ordering::Relaxed),
+            async_in_flight: self.async_in_flight.load(Ordering::Relaxed),
+        }
+    }
+
+    fn record_queue_notification(&self, count: u64) {
+        self.queue_notifications_total
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    fn record_queue_drain(&self, result: &QueueProcessResult) {
+        self.queue_drains_total.fetch_add(1, Ordering::Relaxed);
+        self.descriptors_drained_total
+            .fetch_add(result.processed as u64, Ordering::Relaxed);
+        self.used_entries_total
+            .fetch_add(result.used_entries as u64, Ordering::Relaxed);
+        if result.should_interrupt {
+            self.interrupts_raised_total.fetch_add(1, Ordering::Relaxed);
+        } else if result.processed > 0 {
+            self.interrupts_suppressed_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        self.read_ops_total
+            .fetch_add(result.read_ops as u64, Ordering::Relaxed);
+        self.write_ops_total
+            .fetch_add(result.write_ops as u64, Ordering::Relaxed);
+        self.bytes_read_total
+            .fetch_add(result.bytes_read, Ordering::Relaxed);
+        self.bytes_written_total
+            .fetch_add(result.bytes_written, Ordering::Relaxed);
+        self.async_submissions_total
+            .fetch_add(result.submitted as u64, Ordering::Relaxed);
+        self.async_fallbacks_total
+            .fetch_add(result.async_fallbacks as u64, Ordering::Relaxed);
+    }
+
+    fn record_async_completion(&self, completion: &CompletionResult, in_flight: usize) {
+        self.async_completions_total
+            .fetch_add(completion.completed as u64, Ordering::Relaxed);
+        self.used_entries_total
+            .fetch_add(completion.used_entries as u64, Ordering::Relaxed);
+        if completion.should_interrupt {
+            self.interrupts_raised_total.fetch_add(1, Ordering::Relaxed);
+        } else if completion.completed > 0 {
+            self.interrupts_suppressed_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        self.read_ops_total
+            .fetch_add(completion.read_ops as u64, Ordering::Relaxed);
+        self.write_ops_total
+            .fetch_add(completion.write_ops as u64, Ordering::Relaxed);
+        self.bytes_read_total
+            .fetch_add(completion.bytes_read, Ordering::Relaxed);
+        self.bytes_written_total
+            .fetch_add(completion.bytes_written, Ordering::Relaxed);
+        self.async_in_flight
+            .store(in_flight.try_into().unwrap_or(u64::MAX), Ordering::Relaxed);
+    }
+}
+
 /// Virtio block device backed by a file.
 pub(super) struct VirtioBlockDevice {
     file: std::fs::File,
@@ -86,6 +180,7 @@ pub(super) struct VirtioBlockDevice {
     notify_fd: Option<OwnedFd>,
     control_tx: Option<mpsc::Sender<BlockWorkerCommand>>,
     worker_handle: Option<std::thread::JoinHandle<()>>,
+    metrics: Arc<BlockDeviceMetrics>,
 }
 
 enum BlockWorkerCommand {
@@ -131,7 +226,12 @@ impl VirtioBlockDevice {
             notify_fd: None,
             control_tx: None,
             worker_handle: None,
+            metrics: Arc::new(BlockDeviceMetrics::default()),
         })
+    }
+
+    pub(super) fn metrics(&self) -> Arc<BlockDeviceMetrics> {
+        Arc::clone(&self.metrics)
     }
 
     pub fn with_async_notify(
@@ -639,6 +739,7 @@ impl VirtioBlockDevice {
         QueueProcessResult {
             processed,
             submitted: 0,
+            async_fallbacks: 0,
             used_entries,
             should_interrupt,
             read_ops,
@@ -792,6 +893,7 @@ impl VirtioBlockDevice {
                         "operation" => request_operation_label(type_),
                     )
                     .increment(1);
+                    result.async_fallbacks += 1;
                     let status = if type_ == VIRTIO_BLK_T_IN {
                         timed_request(type_, total_data, || {
                             Self::process_read(file, mem, capacity_sectors, sector, &data_descs)
@@ -866,6 +968,7 @@ impl VirtioBlockDevice {
 struct QueueProcessResult {
     processed: u32,
     submitted: u32,
+    async_fallbacks: u32,
     used_entries: u32,
     should_interrupt: bool,
     read_ops: u32,
@@ -880,6 +983,7 @@ impl QueueProcessResult {
         Self {
             processed: 0,
             submitted: 0,
+            async_fallbacks: 0,
             used_entries: 0,
             should_interrupt: false,
             read_ops: 0,
@@ -1329,6 +1433,7 @@ impl VirtioDevice for VirtioBlockDevice {
                             let capacity_sectors = self.capacity_sectors;
                             let device_id = self.device_id;
                             let worker_mem = mem.clone();
+                            let metrics = Arc::clone(&self.metrics);
                             let handle = std::thread::Builder::new()
                                 .name("virtio-blk-ioeventfd".into())
                                 .spawn(move || {
@@ -1343,6 +1448,7 @@ impl VirtioDevice for VirtioBlockDevice {
                                         rx,
                                         irq_fd,
                                         interrupt_status,
+                                        metrics,
                                     )
                                 })
                                 .expect("failed to spawn virtio-blk ioeventfd worker");
@@ -1394,6 +1500,7 @@ impl VirtioDevice for VirtioBlockDevice {
             None => return false,
         };
         emit_queue_notification_metric("mmio", 1);
+        self.metrics.record_queue_notification(1);
         let result = Self::process_queue(
             &mut self.file,
             self.read_only,
@@ -1403,6 +1510,7 @@ impl VirtioDevice for VirtioBlockDevice {
             &mut queue,
         );
         emit_queue_drain_metrics("mmio", &result);
+        self.metrics.record_queue_drain(&result);
 
         self.queue = Some(queue);
         tracing::trace!(
@@ -1469,6 +1577,7 @@ fn block_worker_loop(
     rx: mpsc::Receiver<BlockWorkerCommand>,
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
+    metrics: Arc<BlockDeviceMetrics>,
 ) {
     if !should_use_io_uring(read_only) {
         block_worker_loop_sync(
@@ -1482,6 +1591,7 @@ fn block_worker_loop(
             rx,
             irq_fd,
             interrupt_status,
+            Arc::clone(&metrics),
         );
         return;
     }
@@ -1499,6 +1609,7 @@ fn block_worker_loop(
             irq_fd,
             interrupt_status,
             uring,
+            Arc::clone(&metrics),
         ),
         Err(error) => {
             tracing::warn!(
@@ -1517,6 +1628,7 @@ fn block_worker_loop(
                 rx,
                 irq_fd,
                 interrupt_status,
+                metrics,
             );
         }
     }
@@ -1543,6 +1655,7 @@ fn block_worker_loop_sync(
     rx: mpsc::Receiver<BlockWorkerCommand>,
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
+    metrics: Arc<BlockDeviceMetrics>,
 ) {
     loop {
         let notify_count = match read_eventfd(notify_fd.as_raw_fd()) {
@@ -1557,6 +1670,7 @@ fn block_worker_loop_sync(
             }
         };
         emit_queue_notification_metric("ioeventfd", notify_count);
+        metrics.record_queue_notification(notify_count);
 
         let mut stop = false;
         let mut drain_replies = Vec::new();
@@ -1576,6 +1690,7 @@ fn block_worker_loop_sync(
             &mut queue,
         );
         emit_queue_drain_metrics("ioeventfd", &result);
+        metrics.record_queue_drain(&result);
         if result.should_interrupt {
             signal_irq(irq_fd, &interrupt_status);
         }
@@ -1619,6 +1734,7 @@ fn block_worker_loop_uring(
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
     mut uring: BlockIoUring,
+    metrics: Arc<BlockDeviceMetrics>,
 ) {
     let epoll_fd = match create_epoll_fd() {
         Ok(fd) => fd,
@@ -1681,6 +1797,7 @@ fn block_worker_loop_uring(
                         }
                     };
                     emit_queue_notification_metric("io_uring", notify_count);
+                    metrics.record_queue_notification(notify_count);
 
                     while let Ok(command) = rx.try_recv() {
                         match command {
@@ -1699,6 +1816,7 @@ fn block_worker_loop_uring(
                         &mut uring,
                     );
                     emit_queue_drain_metrics("io_uring", &result);
+                    metrics.record_queue_drain(&result);
                     if result.should_interrupt {
                         signal_irq(irq_fd, &interrupt_status);
                     }
@@ -1722,6 +1840,7 @@ fn block_worker_loop_uring(
                 EPOLL_TOKEN_COMPLETION => {
                     let _ = drain_eventfd(uring.completion_fd());
                     let completion = uring.reap_completions(&mem, &mut queue);
+                    metrics.record_async_completion(&completion, uring.pending_len());
                     if completion.should_interrupt {
                         signal_irq(irq_fd, &interrupt_status);
                     }
@@ -2306,6 +2425,15 @@ mod tests {
         assert_eq!(counter_total(METRIC_REQUEST_BYTES_TOTAL), 512);
         assert!(histogram_present(METRIC_REQUEST_DURATION_MS));
         assert!(histogram_present(METRIC_QUEUE_DRAIN_DURATION_MS));
+
+        let block = h.dev.metrics().snapshot();
+        assert_eq!(block.queue_notifications_total, 1);
+        assert_eq!(block.queue_drains_total, 1);
+        assert_eq!(block.descriptors_drained_total, 1);
+        assert_eq!(block.used_entries_total, 1);
+        assert_eq!(block.interrupts_raised_total, 1);
+        assert_eq!(block.read_ops_total, 1);
+        assert_eq!(block.bytes_read_total, 512);
     }
 
     #[cfg(target_os = "linux")]

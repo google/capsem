@@ -16,7 +16,10 @@
 - [ ] H03: observability, status, and OTel resource counters.
   - [x] Surface existing live VM resource metrics through service `/info`.
   - [x] Render live VM resource metrics in `capsem info`.
-  - [ ] Surface queue/backend/hypervisor counters through status and OTel.
+  - [x] Surface KVM virtio-blk queue/backend counters through metrics snapshots,
+        service `/info`, and `capsem info`.
+  - [ ] Surface the same counters through broader status/TUI and OTel exporter
+        paths.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
 - [ ] H05: storage, rootfs, and filesystem experiments.
@@ -91,6 +94,12 @@
   configured RAM/vCPUs, host PID/RSS/CPU time/CPU percent, and disk usage
   counters when they are available. Remaining H03 work is to wire queue/backend
   counters into status and the metrics/exporter surface.
+- H03 second slice landed locally: KVM virtio-blk counters now accumulate in
+  backend-owned atomics, remain emitted through the `metrics` facade, flow into
+  `VmMetricsSnapshot.hypervisor.block`, and are projected through `/info` and
+  `capsem info`. Live proof on a KVM VM reported 5,876 queue notifications,
+  1,639 queue drains, 25,266 descriptors/used entries, 8,580 read ops, and
+  31,394,816 block bytes read.
 
 ## Coverage Ledger
 
@@ -105,8 +114,13 @@
   `cargo test -p capsem-core guest_memory --lib`,
   `cargo test -p capsem-core block_data_length_overflow_returns_ioerr --lib`,
   `cargo test -p capsem-core hypervisor::kvm --lib`,
+  `cargo test -p capsem-core block_read_records_queue_and_request_metrics --lib`,
+  `cargo test -p capsem-core virtio_blk --lib`,
+  `cargo test -p capsem-process metrics_snapshot_is_process_owned_and_versioned --bin capsem-process`,
+  `cargo test -p capsem-process ipc::tests --bin capsem-process`,
   `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
+  `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`,
   `cargo test -p capsem --bin capsem`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
   A live named VM smoke with `capsem info --json` passed for H03 and reported
@@ -128,15 +142,18 @@
   overflow fails the request instead of panicking.
 - E2E/VM: `just exec "echo ok"` passed for the KVM one-shot VM path. H03
   resource projection was also checked against a live named VM via
-  `capsem info --json`.
+  `capsem info --json`; the second H03 live check confirmed KVM block counters
+  appear in that same JSON response for a real booted VM.
 - Telemetry: H03 first slice exposes existing `VmMetricsSnapshot.resources`
-  fields through the service API and CLI. OTel/exporter wiring for
-  queue/backend/hypervisor counters remains open.
+  fields through the service API and CLI. H03 second slice adds
+  `VmMetricsSnapshot.hypervisor.block` and feeds it from the KVM virtio-blk
+  backend while preserving `metrics` facade emission. OTel exporter wiring and
+  broader status/TUI visibility remain open.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
   `1.2.1780103109` are now present on main and compared successfully.
-- Missing/deferred: H03 status/OTel exporter exposure remains next for
-  queue/backend/hypervisor counters; full benchmark rerun is deferred until a
-  performance-affecting H02/H03 milestone lands.
+- Missing/deferred: H03 broader status/TUI and OTel exporter exposure remains
+  next for queue/backend/hypervisor counters; full benchmark rerun is deferred
+  until a performance-affecting H02/H03 milestone lands.

@@ -112,7 +112,10 @@ fn metrics_snapshot_is_process_owned_and_versioned() {
         configured_vcpus: 4,
         configured_ram_mb: 8192,
     };
-    let snapshot = metrics_snapshot(&writer, "vm-s07", &resources);
+    let mut hypervisor = capsem_proto::metrics::VmHypervisorMetrics::default();
+    hypervisor.block.queue_notifications_total = 7;
+    hypervisor.block.bytes_read_total = 4096;
+    let snapshot = metrics_snapshot(&writer, "vm-s07", &resources, hypervisor);
 
     assert_eq!(snapshot.vm_id, "vm-s07");
     assert_eq!(
@@ -137,6 +140,8 @@ fn metrics_snapshot_is_process_owned_and_versioned() {
     assert_eq!(snapshot.resources.workspace_disk_bytes, None);
     assert_eq!(snapshot.resources.rootfs_overlay_bytes, None);
     assert_eq!(snapshot.resources.session_disk_bytes, None);
+    assert_eq!(snapshot.hypervisor.block.queue_notifications_total, 7);
+    assert_eq!(snapshot.hypervisor.block.bytes_read_total, 4096);
     assert!(snapshot.captured_at_unix_ms > 0);
 }
 

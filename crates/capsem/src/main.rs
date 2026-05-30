@@ -1320,6 +1320,59 @@ fn format_session_resource_lines(info: &client::SessionInfo) -> Vec<String> {
     lines
 }
 
+fn format_session_hypervisor_lines(info: &client::SessionInfo) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(count) = info.block_queue_notifications_total {
+        lines.push(format!("  Block Queue Notifications: {}", count));
+    }
+    if let Some(count) = info.block_queue_drains_total {
+        lines.push(format!("  Block Queue Drains:        {}", count));
+    }
+    if let Some(count) = info.block_descriptors_drained_total {
+        lines.push(format!("  Block Descriptors:         {}", count));
+    }
+    if let Some(count) = info.block_used_entries_total {
+        lines.push(format!("  Block Used Entries:        {}", count));
+    }
+    if let (Some(raised), Some(suppressed)) = (
+        info.block_interrupts_raised_total,
+        info.block_interrupts_suppressed_total,
+    ) {
+        lines.push(format!(
+            "  Block Interrupts:          {} raised, {} suppressed",
+            raised, suppressed
+        ));
+    }
+    if let (Some(reads), Some(writes)) = (info.block_read_ops_total, info.block_write_ops_total) {
+        lines.push(format!(
+            "  Block Ops:                 {} read, {} write",
+            reads, writes
+        ));
+    }
+    if let (Some(read), Some(written)) =
+        (info.block_bytes_read_total, info.block_bytes_written_total)
+    {
+        lines.push(format!(
+            "  Block Bytes:               {} read, {} written",
+            format_bytes(read),
+            format_bytes(written)
+        ));
+    }
+    if let Some(count) = info.block_async_submissions_total {
+        lines.push(format!("  Async Submissions:         {}", count));
+    }
+    if let Some(count) = info.block_async_completions_total {
+        lines.push(format!("  Async Completions:         {}", count));
+    }
+    if let Some(count) = info.block_async_fallbacks_total {
+        lines.push(format!("  Async Fallbacks:           {}", count));
+    }
+    if let Some(count) = info.block_async_in_flight {
+        lines.push(format!("  Async In Flight:           {}", count));
+    }
+    lines
+}
+
 fn format_session_profile_for_list(session: &client::SessionInfo) -> String {
     match (
         session.profile_id.as_deref(),
@@ -2090,6 +2143,15 @@ fn print_session_info(info: &SessionInfo) {
         println!();
         println!("Resources:");
         for line in resource_lines {
+            println!("{line}");
+        }
+    }
+
+    let hypervisor_lines = format_session_hypervisor_lines(info);
+    if !hypervisor_lines.is_empty() {
+        println!();
+        println!("Hypervisor:");
+        for line in hypervisor_lines {
             println!("{line}");
         }
     }
@@ -5908,6 +5970,20 @@ best_for = "Testing typed profile TOML parsing."
             session_disk_bytes: None,
             workspace_disk_bytes: None,
             rootfs_overlay_bytes: None,
+            block_queue_notifications_total: None,
+            block_queue_drains_total: None,
+            block_descriptors_drained_total: None,
+            block_used_entries_total: None,
+            block_interrupts_raised_total: None,
+            block_interrupts_suppressed_total: None,
+            block_read_ops_total: None,
+            block_write_ops_total: None,
+            block_bytes_read_total: None,
+            block_bytes_written_total: None,
+            block_async_submissions_total: None,
+            block_async_completions_total: None,
+            block_async_fallbacks_total: None,
+            block_async_in_flight: None,
             last_error: None,
         };
 
@@ -5963,6 +6039,20 @@ best_for = "Testing typed profile TOML parsing."
             session_disk_bytes: Some(1024),
             workspace_disk_bytes: Some(2 * 1024 * 1024),
             rootfs_overlay_bytes: Some(3 * 1024 * 1024 * 1024),
+            block_queue_notifications_total: Some(4),
+            block_queue_drains_total: Some(5),
+            block_descriptors_drained_total: Some(6),
+            block_used_entries_total: Some(7),
+            block_interrupts_raised_total: Some(8),
+            block_interrupts_suppressed_total: Some(9),
+            block_read_ops_total: Some(10),
+            block_write_ops_total: Some(11),
+            block_bytes_read_total: Some(12 * 1024),
+            block_bytes_written_total: Some(13 * 1024),
+            block_async_submissions_total: Some(14),
+            block_async_completions_total: Some(15),
+            block_async_fallbacks_total: Some(16),
+            block_async_in_flight: Some(17),
             last_error: None,
         };
 
@@ -5978,6 +6068,82 @@ best_for = "Testing typed profile TOML parsing."
                 "  Session Disk:   1.0 KiB",
                 "  Workspace:      2.0 MiB",
                 "  Rootfs Overlay: 3.00 GiB",
+            ]
+        );
+    }
+
+    #[test]
+    fn format_session_hypervisor_lines_shows_block_counters() {
+        let session = SessionInfo {
+            id: "vm".into(),
+            name: None,
+            pid: 0,
+            status: "Running".into(),
+            persistent: true,
+            ram_mb: None,
+            cpus: None,
+            version: None,
+            base_assets: None,
+            profile_pin: None,
+            forked_from: None,
+            description: None,
+            profile_id: None,
+            profile_revision: None,
+            profile_status: None,
+            created_at: None,
+            uptime_secs: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            total_estimated_cost: None,
+            total_tool_calls: None,
+            total_mcp_calls: None,
+            total_requests: None,
+            allowed_requests: None,
+            denied_requests: None,
+            total_file_events: None,
+            model_call_count: None,
+            metrics_schema_version: Some(1),
+            metrics_captured_at_unix_ms: Some(1_780_103_109_000),
+            configured_ram_mb: None,
+            configured_vcpus: None,
+            host_pid: None,
+            host_process_rss_bytes: None,
+            host_cpu_time_micros: None,
+            host_cpu_percent: None,
+            session_disk_bytes: None,
+            workspace_disk_bytes: None,
+            rootfs_overlay_bytes: None,
+            block_queue_notifications_total: Some(4),
+            block_queue_drains_total: Some(5),
+            block_descriptors_drained_total: Some(6),
+            block_used_entries_total: Some(7),
+            block_interrupts_raised_total: Some(8),
+            block_interrupts_suppressed_total: Some(9),
+            block_read_ops_total: Some(10),
+            block_write_ops_total: Some(11),
+            block_bytes_read_total: Some(12 * 1024),
+            block_bytes_written_total: Some(13 * 1024),
+            block_async_submissions_total: Some(14),
+            block_async_completions_total: Some(15),
+            block_async_fallbacks_total: Some(16),
+            block_async_in_flight: Some(17),
+            last_error: None,
+        };
+
+        assert_eq!(
+            format_session_hypervisor_lines(&session),
+            vec![
+                "  Block Queue Notifications: 4",
+                "  Block Queue Drains:        5",
+                "  Block Descriptors:         6",
+                "  Block Used Entries:        7",
+                "  Block Interrupts:          8 raised, 9 suppressed",
+                "  Block Ops:                 10 read, 11 write",
+                "  Block Bytes:               12.0 KiB read, 13.0 KiB written",
+                "  Async Submissions:         14",
+                "  Async Completions:         15",
+                "  Async Fallbacks:           16",
+                "  Async In Flight:           17",
             ]
         );
     }
@@ -6097,6 +6263,20 @@ best_for = "Testing typed profile TOML parsing."
             session_disk_bytes: None,
             workspace_disk_bytes: None,
             rootfs_overlay_bytes: None,
+            block_queue_notifications_total: None,
+            block_queue_drains_total: None,
+            block_descriptors_drained_total: None,
+            block_used_entries_total: None,
+            block_interrupts_raised_total: None,
+            block_interrupts_suppressed_total: None,
+            block_read_ops_total: None,
+            block_write_ops_total: None,
+            block_bytes_read_total: None,
+            block_bytes_written_total: None,
+            block_async_submissions_total: None,
+            block_async_completions_total: None,
+            block_async_fallbacks_total: None,
+            block_async_in_flight: None,
             last_error: None,
         };
 

@@ -16,6 +16,7 @@ pub struct VmMetricsSnapshot {
     pub mcp: VmMcpMetrics,
     pub filesystem: VmFilesystemMetrics,
     pub process: VmProcessMetrics,
+    pub hypervisor: VmHypervisorMetrics,
     pub security: VmSecurityMetrics,
     pub captured_at_unix_ms: u64,
 }
@@ -35,6 +36,7 @@ impl VmMetricsSnapshot {
             mcp: VmMcpMetrics::default(),
             filesystem: VmFilesystemMetrics::default(),
             process: VmProcessMetrics::default(),
+            hypervisor: VmHypervisorMetrics::default(),
             security: VmSecurityMetrics::default(),
             captured_at_unix_ms,
         }
@@ -156,6 +158,29 @@ pub struct VmProcessMetrics {
     pub process_exec_total: u64,
     pub process_audit_total: u64,
     pub process_errors_total: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct VmHypervisorMetrics {
+    pub block: VmBlockMetrics,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct VmBlockMetrics {
+    pub queue_notifications_total: u64,
+    pub queue_drains_total: u64,
+    pub descriptors_drained_total: u64,
+    pub used_entries_total: u64,
+    pub interrupts_raised_total: u64,
+    pub interrupts_suppressed_total: u64,
+    pub read_ops_total: u64,
+    pub write_ops_total: u64,
+    pub bytes_read_total: u64,
+    pub bytes_written_total: u64,
+    pub async_submissions_total: u64,
+    pub async_completions_total: u64,
+    pub async_fallbacks_total: u64,
+    pub async_in_flight: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]

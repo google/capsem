@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use capsem_proto::metrics::{VmBlockMetrics, VmHypervisorMetrics};
 use tokio::sync::mpsc;
 
 use super::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
@@ -417,6 +418,7 @@ impl Hypervisor for KvmHypervisor {
         let mmio_bus = Arc::new(mmio::MmioBus::new());
         #[cfg(target_arch = "x86_64")]
         let mut mmio_transports: Vec<(u32, Arc<virtio_mmio::VirtioMmioTransport>)> = Vec::new();
+        let mut block_metrics: Vec<Arc<virtio_blk::BlockDeviceMetrics>> = Vec::new();
         #[cfg(target_arch = "x86_64")]
         let console_irq_fd = create_irq_eventfd()?;
         #[cfg(target_arch = "x86_64")]
@@ -479,6 +481,7 @@ impl Hypervisor for KvmHypervisor {
                 Some(0),
             )?;
             let blk_device = virtio_blk::VirtioBlockDevice::new(disk_path, true)?;
+            block_metrics.push(blk_device.metrics());
             #[cfg(target_arch = "x86_64")]
             let blk_device = blk_device.with_async_notify(
                 blk_irq_fd.as_raw_fd(),
@@ -532,6 +535,7 @@ impl Hypervisor for KvmHypervisor {
                 Some(0),
             )?;
             let scratch_device = virtio_blk::VirtioBlockDevice::new(scratch_path, false)?;
+            block_metrics.push(scratch_device.metrics());
             #[cfg(target_arch = "x86_64")]
             let scratch_device = scratch_device.with_async_notify(
                 scratch_irq_fd.as_raw_fd(),
@@ -686,6 +690,7 @@ impl Hypervisor for KvmHypervisor {
             _vcpu_handles: vcpu_handles,
             _guest_mem: guest_mem,
             _mmio_bus: mmio_bus,
+            block_metrics,
             #[cfg(target_arch = "x86_64")]
             _mmio_transports: mmio_transports,
             _vsock_listener_handles: vsock_listener_handles,
@@ -706,6 +711,7 @@ struct KvmHandle {
     _vcpu_handles: Vec<std::thread::JoinHandle<Result<()>>>,
     _guest_mem: memory::GuestMemory,
     _mmio_bus: Arc<mmio::MmioBus>,
+    block_metrics: Vec<Arc<virtio_blk::BlockDeviceMetrics>>,
     #[cfg(target_arch = "x86_64")]
     _mmio_transports: Vec<(u32, Arc<virtio_mmio::VirtioMmioTransport>)>,
     _vsock_listener_handles: Vec<std::thread::JoinHandle<()>>,
@@ -821,6 +827,28 @@ impl VmHandle for KvmHandle {
 
     fn supports_checkpoint(&self) -> bool {
         cfg!(target_arch = "x86_64")
+    }
+
+    fn hypervisor_metrics(&self) -> VmHypervisorMetrics {
+        let mut block = VmBlockMetrics::default();
+        for metrics in &self.block_metrics {
+            let snapshot = metrics.snapshot();
+            block.queue_notifications_total += snapshot.queue_notifications_total;
+            block.queue_drains_total += snapshot.queue_drains_total;
+            block.descriptors_drained_total += snapshot.descriptors_drained_total;
+            block.used_entries_total += snapshot.used_entries_total;
+            block.interrupts_raised_total += snapshot.interrupts_raised_total;
+            block.interrupts_suppressed_total += snapshot.interrupts_suppressed_total;
+            block.read_ops_total += snapshot.read_ops_total;
+            block.write_ops_total += snapshot.write_ops_total;
+            block.bytes_read_total += snapshot.bytes_read_total;
+            block.bytes_written_total += snapshot.bytes_written_total;
+            block.async_submissions_total += snapshot.async_submissions_total;
+            block.async_completions_total += snapshot.async_completions_total;
+            block.async_fallbacks_total += snapshot.async_fallbacks_total;
+            block.async_in_flight += snapshot.async_in_flight;
+        }
+        VmHypervisorMetrics { block }
     }
 }
 
@@ -941,6 +969,7 @@ mod tests {
             _vcpu_handles: Vec::new(),
             _guest_mem: memory::GuestMemory::new(4096).unwrap(),
             _mmio_bus: Arc::new(mmio::MmioBus::new()),
+            block_metrics: Vec::new(),
             #[cfg(target_arch = "x86_64")]
             _mmio_transports: Vec::new(),
             _vsock_listener_handles: Vec::new(),
