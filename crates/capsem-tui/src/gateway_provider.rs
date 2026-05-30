@@ -443,6 +443,8 @@ async fn invoke_action(
             let ephemeral = json_u64(&body, "ephemeral_purged");
             let message = if *all {
                 format!("purged {purged} sessions ({persistent} persistent, {ephemeral} temporary)")
+            } else if persistent > 0 {
+                format!("purged {purged} sessions ({persistent} broken persistent, {ephemeral} temporary)")
             } else {
                 format!("purged {ephemeral} temporary sessions")
             };

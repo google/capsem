@@ -11940,14 +11940,23 @@ async fn handle_purge(
         }
     }
 
-    // If --all, also purge stopped persistent VMs
-    if payload.all {
+    // `purge` must clear failed boot records even without `--all`; a
+    // defunct persistent VM cannot be resumed safely and otherwise stays
+    // visible forever after the user asks for cleanup.
+    {
+        let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
         let stopped_names: Vec<String> = {
             let registry = state.persistent_registry.lock().unwrap();
             let instances = state.instances.lock().unwrap();
             registry
                 .list()
-                .filter(|e| !instances.contains_key(&e.name))
+                .filter(|entry| {
+                    !instances.contains_key(&entry.name)
+                        && (payload.all
+                            || entry.defunct
+                            || vm_profile_status(entry.profile_pin.as_ref(), &profile_catalog)
+                                == VmProfileStatus::Corrupted)
+                })
                 .map(|e| e.name.clone())
                 .collect()
         };

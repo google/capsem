@@ -2792,6 +2792,11 @@ async fn main() -> Result<()> {
                     "[*] Purged {} sessions ({} persistent, {} temporary).",
                     result.purged, result.persistent_purged, result.ephemeral_purged
                 );
+            } else if result.persistent_purged > 0 {
+                println!(
+                    "[*] Purged {} sessions ({} broken persistent, {} temporary).",
+                    result.purged, result.persistent_purged, result.ephemeral_purged
+                );
             } else {
                 println!("[*] Purged {} temporary sessions.", result.ephemeral_purged);
             }

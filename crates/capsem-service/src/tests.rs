@@ -2999,6 +2999,89 @@ fn provision_from_source_requires_profile_revision_pin() {
     );
 }
 
+#[tokio::test]
+async fn purge_default_removes_broken_persistent_vms_but_keeps_healthy_persistent() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let defunct_dir = dir.path().join("defunct-vm");
+    let corrupted_dir = dir.path().join("corrupted-vm");
+    let healthy_dir = dir.path().join("healthy-vm");
+    std::fs::create_dir_all(&defunct_dir).unwrap();
+    std::fs::create_dir_all(&corrupted_dir).unwrap();
+    std::fs::create_dir_all(&healthy_dir).unwrap();
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry
+            .register(PersistentVmEntry {
+                name: "defunct-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: None,
+                created_at: "0".into(),
+                session_dir: defunct_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: true,
+                last_error: Some("profile pin is corrupted".into()),
+                checkpoint_path: None,
+                env: None,
+            })
+            .unwrap();
+        registry
+            .register(PersistentVmEntry {
+                name: "corrupted-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: None,
+                created_at: "0".into(),
+                session_dir: corrupted_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            })
+            .unwrap();
+        registry
+            .register(PersistentVmEntry {
+                name: "healthy-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: Some(test_saved_vm_profile_pin(test_saved_vm_base_assets())),
+                created_at: "0".into(),
+                session_dir: healthy_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            })
+            .unwrap();
+    }
+
+    let Json(response) = handle_purge(State(state.clone()), Json(PurgeRequest { all: false }))
+        .await
+        .unwrap();
+
+    assert_eq!(response.purged, 2);
+    assert_eq!(response.persistent_purged, 2);
+    assert_eq!(response.ephemeral_purged, 0);
+    let registry = state.persistent_registry.lock().unwrap();
+    assert!(registry.get("defunct-vm").is_none());
+    assert!(registry.get("corrupted-vm").is_none());
+    assert!(registry.get("healthy-vm").is_some());
+}
+
 // -----------------------------------------------------------------------
 // Image handler tests (service-level unit tests)
 // -----------------------------------------------------------------------

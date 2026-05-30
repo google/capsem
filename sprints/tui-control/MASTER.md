@@ -181,8 +181,12 @@ attention markers.
   existing profile-aware new-session modal, and `Alt+d` remains the explicit
   cleanup path for that bad persistent VM.
 - Wired `Alt+p` to the installed gateway `/purge` endpoint for confirmed
-  temporary-VM cleanup without exposing destructive `purge --all` semantics in
-  the normal TUI key map.
+  temporary and broken VM cleanup without exposing destructive `purge --all`
+  semantics in the normal TUI key map.
+- Fixed the backend purge contract so `all=false` removes defunct and
+  profile-corrupted persistent registry entries while still preserving healthy
+  persistent VMs; the TUI refresh path now has real backend state to converge
+  on after cleanup.
 
 ## Testing Gate
 
@@ -206,6 +210,10 @@ attention markers.
   modal/action path, plus `Alt+l` sessions, `Alt+i` session info, and `Alt+c`
   checkpoint. Live snapshot against the installed stopped `tui-proof-*`
   sessions shows the prompt instead of a blank pane.
+- Service purge regression: `cargo test -p capsem-service
+  purge_default_removes_broken_persistent_vms_but_keeps_healthy_persistent`
+  proves safe purge removes defunct/profile-corrupted persistent VMs but leaves
+  healthy persistent VMs alone.
 - UI polish: `cargo test -p capsem-tui` and snapshot output cover the
   right-side `help: alt+?` status-bar hint after session stats and
   focused-field highlighting, including the no-active-session status-bar path

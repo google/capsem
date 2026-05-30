@@ -299,7 +299,7 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
             status_base_style().add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
-            "Alt+d deletes this VM; Alt+p purges temporary VMs",
+            "Alt+d deletes this VM; Alt+p purges temporary/broken VMs",
             muted_style(),
         )));
     } else {
@@ -495,7 +495,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+r", "resume", "session", "resume inactive VM"),
         help_row("Alt+t", "stop", "session", "stop active VM"),
         help_row("Alt+d", "delete", "session", "delete active VM"),
-        help_row("Alt+p", "purge", "global", "purge temporary VMs"),
+        help_row("Alt+p", "purge", "global", "purge temporary/broken VMs"),
         help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }

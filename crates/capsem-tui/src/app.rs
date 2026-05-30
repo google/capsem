@@ -75,7 +75,7 @@ impl ControlAction {
             | Self::Stop { id: name }
             | Self::Delete { id: name } => name,
             Self::Purge { all: true } => "all sessions",
-            Self::Purge { all: false } => "temporary sessions",
+            Self::Purge { all: false } => "temporary and broken VMs",
         }
     }
 }

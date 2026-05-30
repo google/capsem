@@ -690,7 +690,7 @@ fn purge_action_is_alt_p_and_requires_confirmation() {
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render purge confirmation");
     assert!(snapshot.contains("purge"));
-    assert!(snapshot.contains("temporary sessions"));
+    assert!(snapshot.contains("temporary and broken VMs"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
@@ -1172,6 +1172,45 @@ async fn gateway_provider_invokes_purge_over_authenticated_gateway() {
 
     assert_eq!(outcome.message, "purged 3 temporary sessions");
     assert_eq!(outcome.focus_session, None);
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_reports_defunct_persistent_purge() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /purge "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(request.contains(r#""all":false"#));
+                write_json_response(
+                    &mut stream,
+                    r#"{"purged":2,"persistent_purged":1,"ephemeral_purged":1}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Purge { all: false })
+        .await
+        .expect("invoke purge");
+
+    assert_eq!(
+        outcome.message,
+        "purged 2 sessions (1 broken persistent, 1 temporary)"
+    );
     server.await.expect("server task");
 }
 
