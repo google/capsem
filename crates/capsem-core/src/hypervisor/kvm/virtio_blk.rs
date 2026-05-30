@@ -1488,7 +1488,10 @@ fn should_use_io_uring(read_only: bool) -> bool {
     // The first measured io_uring slice improved scratch sequential reads but
     // regressed read-only rootfs and AI CLI startup. Keep rootfs on the
     // synchronous vectored path until a rootfs-specific async tune proves out.
-    !read_only
+    //
+    // The writable-device gate recovered rootfs but still regressed disk
+    // sequential reads, so io_uring remains opt-in while the backend matures.
+    !read_only && std::env::var_os("CAPSEM_KVM_BLK_IO_URING").is_some()
 }
 
 fn block_worker_loop_sync(
@@ -2730,14 +2733,21 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn block_io_uring_gate_keeps_read_only_rootfs_on_sync_path() {
+        std::env::remove_var("CAPSEM_KVM_BLK_IO_URING");
         assert!(
             !should_use_io_uring(true),
             "read-only rootfs should stay on the synchronous vectored path"
         );
         assert!(
-            should_use_io_uring(false),
-            "writable scratch disks remain eligible for io_uring experiments"
+            !should_use_io_uring(false),
+            "io_uring should stay default-off until benchmarks prove a default gate"
         );
+        std::env::set_var("CAPSEM_KVM_BLK_IO_URING", "1");
+        assert!(
+            should_use_io_uring(false),
+            "writable scratch disks remain eligible for opt-in io_uring experiments"
+        );
+        std::env::remove_var("CAPSEM_KVM_BLK_IO_URING");
     }
 
     // -----------------------------------------------------------------------

@@ -12,6 +12,7 @@
 - [x] Prototype Linux async block engine with io_uring completion eventfd.
 - [x] Benchmark async engine slice against current accepted stack.
 - [x] Gate io_uring away from read-only rootfs and benchmark the gated slice.
+- [ ] Make io_uring opt-in by default and benchmark the safe default.
 - [ ] Recover or explain scratch sequential read regression.
 - [x] Add async-path telemetry counters for io_uring submissions/completions.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
@@ -256,11 +257,25 @@
   - macOS rerun for the event-index shared virtqueue/benchmark state.
   - clear explanation or recovery of scratch sequential read regression.
 
-## Active Slice: io_uring default decision
+### Candidate: default-off io_uring
+- Code: this milestone commit.
+- Bench: pending clean-source `just benchmark` artifact after code commit.
+- Hypothesis:
+  - The safest Linux landing default is the accepted synchronous vectored stack
+    plus retained io_uring implementation behind `CAPSEM_KVM_BLK_IO_URING`.
+  - This should recover the telemetry baseline while preserving the code path
+    and metrics for future focused tuning.
+- Proof target:
+  - Gate unit test proves io_uring is default-off and opt-in for writable disks.
+  - `cargo test -p capsem-core hypervisor::kvm --lib`
+  - `just exec "echo ok"`
+  - `just benchmark`
+
+## Active Slice: default-off io_uring benchmark
 - Build:
-  - Decide whether io_uring should be default-off after the mixed gated result,
-    or whether a narrower request-shape gate is worth one more measured slice.
+  - Make io_uring opt-in behind `CAPSEM_KVM_BLK_IO_URING`.
   - Preserve the implementation and telemetry so future tuning is not lost.
+  - Record the safe-default benchmark artifact.
 - Do not build:
   - Additional queue tuning in the same commit as the default decision.
 - Proof target:
