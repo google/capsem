@@ -100,9 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Linux host doctor smoke probes for `KVM_GET_API_VERSION` and
   `/dev/vhost-vsock` openability so bootstrap verifies usable KVM devices, not
   just filesystem permissions.
-- Added a compact `Alt+s` suspend hint beside the `capsem-tui` service status
-  segment so the primary lifecycle shortcut is visible without reopening the
-  full help overlay.
+- Added a far-left `help: alt+s` suspend hint to the `capsem-tui` status bar
+  so the primary lifecycle shortcut is visible without reopening the full help
+  overlay.
 
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while

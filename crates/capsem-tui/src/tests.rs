@@ -28,7 +28,7 @@ fn fixture_models_global_service_state_and_session_indicators() {
 fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
-    assert!(snapshot.contains("   18ms●  Alt+s"));
+    assert!(snapshot.contains("help: alt+s    18ms●"));
     assert!(snapshot.contains("1  profile-v2"));
     assert!(snapshot.contains("2  linux-os!"));
     assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21"));

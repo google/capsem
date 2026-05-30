@@ -99,13 +99,12 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     frame.render_widget(Paragraph::new("").style(base), area);
 
     let mut left = vec![
-        Span::styled(" ", base),
+        Span::styled("help: alt+s  ", muted_style()),
         Span::styled(format!("{:>4}ms", service.latency.as_millis()), base),
         Span::styled(
             service_dot(service.status),
             service_style(service.status, service.latency.as_millis()),
         ),
-        Span::styled("  Alt+s", muted_style()),
         Span::styled("  ", base),
     ];
     if let Some(attempt) = service.reconnect_attempt {
