@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,15 @@ impl GatewayProvider {
         Ok(token)
     }
 
+    fn clear_auth_token(&self) -> Result<()> {
+        let mut cached = self
+            .token
+            .lock()
+            .map_err(|_| anyhow::anyhow!("capsem gateway token cache poisoned"))?;
+        *cached = None;
+        Ok(())
+    }
+
     async fn token(&self) -> Result<String> {
         if let Some(token) = self.auth_token()? {
             return Ok(token);
@@ -75,9 +84,16 @@ impl GatewayProvider {
     }
 
     pub async fn load_async(&self) -> Result<AppState> {
-        let token = self.token().await?;
+        let mut token = self.token().await?;
         let started = Instant::now();
-        let status = fetch_status(&self.client, &self.base_url, &token).await?;
+        let status = match fetch_status(&self.client, &self.base_url, &token).await {
+            Ok(status) => status,
+            Err(first_error) => {
+                self.clear_auth_token()?;
+                token = self.token().await.context(first_error)?;
+                fetch_status(&self.client, &self.base_url, &token).await?
+            }
+        };
         let mut state = status_response_to_state(status, started.elapsed());
         state.profiles = self.profile_options(&token, &state).await;
         Ok(state)
@@ -92,6 +108,9 @@ impl GatewayProvider {
     }
 
     pub async fn invoke_async(&self, action: &ControlAction) -> Result<ActionOutcome> {
+        if matches!(action, ControlAction::StartService) {
+            return start_service().await;
+        }
         let token = self.token().await?;
         invoke_action(&self.client, &self.base_url, &token, action).await
     }
@@ -322,6 +341,7 @@ async fn invoke_action(
     action: &ControlAction,
 ) -> Result<ActionOutcome> {
     match action {
+        ControlAction::StartService => start_service().await,
         ControlAction::CreateSession { name, profile_id } => {
             let response = client
                 .post(join_url(base_url, &["provision"])?)
@@ -397,6 +417,44 @@ async fn invoke_action(
             })
         }
     }
+}
+
+async fn start_service() -> Result<ActionOutcome> {
+    start_service_with_binary(&capsem_binary()).await
+}
+
+pub(crate) async fn start_service_with_binary(binary: &Path) -> Result<ActionOutcome> {
+    let output = tokio::process::Command::new(binary)
+        .arg("start")
+        .output()
+        .await
+        .with_context(|| format!("run {} start", binary.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        anyhow::bail!("capsem start failed: {detail}");
+    }
+    Ok(ActionOutcome {
+        message: "service start requested".to_string(),
+    })
+}
+
+fn capsem_binary() -> PathBuf {
+    if let Ok(path) = std::env::var("CAPSEM_TUI_CAPSEM_BINARY") {
+        return PathBuf::from(path);
+    }
+    let installed = home_dir().join(".capsem/bin/capsem");
+    if installed.exists() {
+        return installed;
+    }
+    PathBuf::from("capsem")
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 async fn post_empty(

@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results.
 
 ### Fixed
+- Fixed `capsem-tui` service-offline startup so the TUI shows an offline
+  service surface and asks to start Capsem before opening the new-session flow;
+  confirming the prompt runs the local `capsem start` command and refreshes
+  with a fresh gateway token.
 - Fixed `capsem-tui` empty-session creation so the TUI no longer invents a
   `default` profile when `/profiles` is unavailable; the new-session modal now
   blocks Enter until a real profile list is loaded and has unit plus gateway

@@ -189,20 +189,29 @@
   to run real `capsem-tui --snapshot` against a real gateway/service, verify
   the modal uses the real default profile, and provision/boot a VM over the
   same gateway contract.
+- Service-offline correction: when the gateway is unreachable, unavailable, or
+  failed, `capsem-tui` now renders `service offline` / `service unavailable`
+  and opens a confirmation prompt for `start service` instead of jumping into
+  the new-session modal. Confirming runs the local `capsem start` command from
+  `~/.capsem/bin/capsem` when present, with a `capsem` PATH fallback.
+- Token-refresh correction: after a service/gateway restart, the provider now
+  clears a stale cached gateway token and retries one load with a fresh
+  `/token`, so a successful start can converge back to live service state.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (39 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (42 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
   modal profile/name flow, selected-field highlighting, named fork modal/action
-  coverage, empty-state auto-create, gradient logo rendering, no-fake-default
-  profile failure handling, `Alt+l` sessions table, `Alt+i` session info, and
-  `Alt+c` checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (39 tests), including
+  coverage, empty-state auto-create, service-offline start prompt, gradient
+  logo rendering, no-fake-default profile failure handling, `Alt+l` sessions
+  table, `Alt+i` session info, and `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (42 tests), including
   token reuse, live profile-list refresh, named fork request payloads,
   checkpoint-over-suspend payloads, raw local latency preservation coverage,
-  and profile discovery failure behavior for empty services.
+  profile discovery failure behavior for empty services, and local
+  `capsem start` invocation without requiring a gateway token.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Service/core/logger hot paths: `cargo test -p capsem-service`,
@@ -213,6 +222,8 @@
 - Formatting: `cargo fmt -p capsem-tui -- --check`.
 - Process formatting: `cargo fmt -p capsem-process -- --check`.
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
+  `CAPSEM_GATEWAY_URL=http://127.0.0.1:9 cargo run -p capsem-tui --
+  --snapshot --width 100 --height 24`;
   `cargo run -p capsem-tui -- --fixture --snapshot --width 120 --height 30`;
   `cargo run -p capsem-tui -- --fixture --snapshot-svg --width 120 --height 30`;
   `cargo run -p capsem-tui -- --snapshot --width 120 --height 30` against

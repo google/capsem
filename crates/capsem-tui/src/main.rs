@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capsem_tui::app::{App, AppAction, ControlAction};
-use capsem_tui::fixture::FixtureProvider;
+use capsem_tui::fixture::{offline_state, FixtureProvider};
 use capsem_tui::gateway_provider::{ActionOutcome, GatewayProvider};
 use capsem_tui::model::{AppState, ServiceStatus, SessionLifecycle};
 use capsem_tui::provider::StateProvider;
@@ -98,15 +98,7 @@ fn load_state(cli: &Cli) -> Result<AppState> {
         .unwrap_or_else(GatewayProvider::default_base_url);
     match GatewayProvider::new(base_url.clone()).load() {
         Ok(state) => Ok(state),
-        Err(_) if cli.gateway_url.is_none() => {
-            let mut state = FixtureProvider
-                .load()
-                .context("load capsem-tui fallback fixture")?;
-            state.service.status = ServiceStatus::Offline;
-            state.service.latency = Duration::ZERO;
-            state.service.reconnect_attempt = Some(1);
-            Ok(state)
-        }
+        Err(_) if cli.gateway_url.is_none() => Ok(offline_state()),
         Err(error) => {
             Err(error).with_context(|| format!("load capsem gateway state from {base_url}"))
         }

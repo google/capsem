@@ -79,3 +79,18 @@ pub fn fixture_state() -> AppState {
         ],
     }
 }
+
+pub fn offline_state() -> AppState {
+    AppState {
+        service: ServiceState {
+            status: ServiceStatus::Offline,
+            latency: Duration::ZERO,
+            last_event_age: Duration::ZERO,
+            reconnect_attempt: Some(1),
+            control_message: None,
+        },
+        active_session_id: String::new(),
+        profiles: Vec::new(),
+        sessions: Vec::new(),
+    }
+}

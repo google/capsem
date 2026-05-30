@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::model::{AppState, SessionLifecycle};
+use crate::model::{AppState, ServiceStatus, SessionLifecycle};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppAction {
@@ -24,6 +24,7 @@ pub enum AppOverlay {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
+    StartService,
     CreateSession { name: String, profile_id: String },
     Fork { id: String, name: String },
     Resume { name: String },
@@ -36,6 +37,7 @@ pub enum ControlAction {
 impl ControlAction {
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::StartService => "start service",
             Self::CreateSession { .. } => "create",
             Self::Fork { .. } => "fork",
             Self::Resume { .. } => "resume",
@@ -48,6 +50,7 @@ impl ControlAction {
 
     pub fn target(&self) -> &str {
         match self {
+            Self::StartService => "Capsem service",
             Self::CreateSession { name, .. } => name,
             Self::Fork { name, .. } => name,
             Self::Resume { name }
@@ -96,9 +99,7 @@ impl App {
             create_draft: None,
             fork_draft: None,
         };
-        if app.state.sessions.is_empty() {
-            app.open_create();
-        }
+        app.sync_empty_state_prompt();
         app
     }
 
@@ -139,6 +140,7 @@ impl App {
             .unwrap_or_default();
         self.state = state;
         self.sync_active_session();
+        self.sync_empty_state_prompt();
     }
 
     pub fn set_control_message(&mut self, message: impl Into<String>) {
@@ -234,6 +236,23 @@ impl App {
             return;
         };
         self.state.active_session_id.clone_from(&session.id);
+    }
+
+    fn sync_empty_state_prompt(&mut self) {
+        if service_needs_start(self.state.service.status) {
+            self.create_draft = None;
+            self.fork_draft = None;
+            self.pending_action = Some(ControlAction::StartService);
+            self.overlay = AppOverlay::Confirm;
+            return;
+        }
+        if matches!(self.pending_action, Some(ControlAction::StartService)) {
+            self.pending_action = None;
+            self.overlay = AppOverlay::None;
+        }
+        if self.state.sessions.is_empty() && self.overlay == AppOverlay::None {
+            self.open_create();
+        }
     }
 
     fn handle_overlay_key(&mut self, key: KeyEvent) -> bool {
@@ -478,6 +497,13 @@ fn is_fork_key(key: KeyEvent) -> bool {
 
 fn is_alt_key(modifiers: KeyModifiers) -> bool {
     modifiers.contains(KeyModifiers::ALT)
+}
+
+fn service_needs_start(status: ServiceStatus) -> bool {
+    matches!(
+        status,
+        ServiceStatus::Offline | ServiceStatus::Degraded | ServiceStatus::Failed
+    )
 }
 
 fn default_profile_index(state: &AppState) -> usize {

@@ -192,6 +192,10 @@ fn render_terminal_surface(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
 ) {
+    if service_needs_start(state.service.status) {
+        render_service_offline_surface(frame, area, state.service.status);
+        return;
+    }
     let Some(session) = state.active_session() else {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(" no sessions", muted_style())))
@@ -256,6 +260,20 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
 }
 
+fn render_service_offline_surface(frame: &mut Frame<'_>, area: Rect, status: ServiceStatus) {
+    let lines = vec![
+        Line::from(Span::styled(
+            service_unavailable_title(status),
+            bad_style().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "Press Enter to start Capsem service",
+            status_base_style().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
+}
+
 fn terminal_line_to_ratatui(line: TerminalLine) -> Line<'static> {
     let spans = line
         .spans()
@@ -306,6 +324,24 @@ fn inactive_session_label(lifecycle: SessionLifecycle) -> &'static str {
         SessionLifecycle::Suspended => "suspended",
         SessionLifecycle::Failed => "failed",
         SessionLifecycle::Working | SessionLifecycle::WaitingForInput => "inactive",
+    }
+}
+
+fn service_needs_start(status: ServiceStatus) -> bool {
+    matches!(
+        status,
+        ServiceStatus::Offline | ServiceStatus::Degraded | ServiceStatus::Failed
+    )
+}
+
+fn service_unavailable_title(status: ServiceStatus) -> &'static str {
+    match status {
+        ServiceStatus::Offline => "service offline",
+        ServiceStatus::Degraded => "service unavailable",
+        ServiceStatus::Failed => "service failed",
+        ServiceStatus::Online | ServiceStatus::Reconnecting | ServiceStatus::Stale => {
+            "service unavailable"
+        }
     }
 }
 
@@ -771,6 +807,10 @@ fn status_base_style() -> Style {
 
 fn muted_style() -> Style {
     Style::default().fg(MUTED).bg(BAR_BG)
+}
+
+fn bad_style() -> Style {
+    Style::default().fg(BAD).bg(BAR_BG)
 }
 
 fn focus_style() -> Style {

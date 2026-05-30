@@ -3,8 +3,10 @@ use ratatui::style::{Color, Modifier};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::app::{App, AppAction, AppOverlay, ControlAction};
-use crate::fixture::fixture_state;
-use crate::gateway_provider::{state_from_status_json_for_test, GatewayProvider};
+use crate::fixture::{fixture_state, offline_state};
+use crate::gateway_provider::{
+    start_service_with_binary, state_from_status_json_for_test, GatewayProvider,
+};
 use crate::model::{Attention, ServiceStatus, SessionLifecycle};
 use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
 
@@ -58,6 +60,42 @@ fn no_session_status_bar_keeps_help_hint_on_the_right() {
 }
 
 #[test]
+fn offline_empty_state_asks_to_start_service_instead_of_create() {
+    let mut app = App::new(offline_state());
+
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(app.pending_action(), Some(&ControlAction::StartService));
+    assert_eq!(app.create_draft(), None);
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render offline start prompt");
+    assert!(snapshot.contains("service offline"));
+    assert!(snapshot.contains("Press Enter to start Capsem service"));
+    assert!(snapshot.contains("start service"));
+    assert!(
+        !snapshot.contains("new session"),
+        "offline service should ask to start before showing the create flow"
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::StartService)
+    );
+}
+
+#[test]
+fn degraded_empty_state_asks_to_start_service_instead_of_create() {
+    let mut state = offline_state();
+    state.service.status = ServiceStatus::Degraded;
+    let app = App::new(state);
+
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(app.pending_action(), Some(&ControlAction::StartService));
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render unavailable start prompt");
+    assert!(snapshot.contains("service unavailable"));
+    assert!(snapshot.contains("start service"));
+}
+
+#[test]
 fn empty_state_opens_new_session_modal_with_gradient_logo() {
     let mut state = fixture_state();
     state.active_session_id.clear();
@@ -81,6 +119,20 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
     );
     assert!(first.modifier.contains(Modifier::BOLD));
     assert!(last.modifier.contains(Modifier::BOLD));
+}
+
+#[tokio::test]
+async fn start_service_action_uses_local_capsem_binary_without_gateway_token() {
+    let binary = if std::path::Path::new("/bin/true").exists() {
+        std::path::Path::new("/bin/true")
+    } else {
+        std::path::Path::new("/usr/bin/true")
+    };
+    let outcome = start_service_with_binary(binary)
+        .await
+        .expect("start service command");
+
+    assert_eq!(outcome.message, "service start requested");
 }
 
 #[test]

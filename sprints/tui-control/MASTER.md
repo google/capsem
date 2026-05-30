@@ -148,6 +148,10 @@ attention markers.
   discovery failures no longer synthesize `default`, the modal shows
   `profiles unavailable`, and Enter is disabled until a real profile list is
   loaded.
+- Fixed the service-offline startup path: the TUI now shows a service-offline
+  surface, opens a `start service` confirmation prompt, runs local
+  `capsem start` on confirmation, and refreshes with a fresh gateway token
+  after service/gateway restart.
 - Added gateway E2E coverage for the TUI create contract: the test runs real
   `capsem-tui --snapshot` against a real gateway/service, verifies the modal
   uses the real default profile, then provisions and boot-checks a VM through
@@ -182,6 +186,10 @@ attention markers.
   rendering, profile selection, name editing, and authenticated named-profile
   provision request payloads, including the no-profile failure path where
   Enter is blocked instead of creating with a fake `default` profile.
+- Service-offline regression: `cargo test -p capsem-tui` covers offline and
+  gateway-unavailable startup prompting `StartService`, plus local command
+  execution without fetching a gateway token. A functional snapshot using
+  `CAPSEM_GATEWAY_URL=http://127.0.0.1:9` proves the visible offline prompt.
 - Gateway E2E regression:
   `tests/capsem-gateway/test_gw_e2e.py::TestGatewayE2E::test_tui_empty_create_uses_real_gateway_profiles`
   is now in the E2E suite. The local run skipped because this checkout is
