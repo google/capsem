@@ -19,6 +19,10 @@
   TypeScript response decoder.
 - Added contract support for alert tone metadata and card link metadata so
   accepted `ui.alert` and `ui.card` fields survive to rendering.
+- Added `ui.table` as a typed Rust UI tool with A2UI conformance coverage and
+  an explicit Preline table renderer.
+- Added a renderer-drift contract test so typed Rust UI recipe components fail
+  if the Svelte renderer has no explicit adapter.
 - Added a Rust-owned A2UI v0.9 Basic preview path with typed UI helpers,
   contract tests, server endpoints, and a Svelte/Preline renderer preview.
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering

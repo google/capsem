@@ -10,6 +10,7 @@ use crate::ui::{
 };
 
 pub const CAPSEM_UI_CATALOG_ID: &str = "https://capsem.org/schemas/ui/catalog.v1.json";
+pub const TYPED_UI_RECIPE_COMPONENTS: &[&str] = &["alert", "card", "modal", "table"];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,6 +171,7 @@ impl UiToolRunner {
             "ui.surface.clear" => self.surface_clear(call),
             "ui.alert" => self.alert(call),
             "ui.card" => self.card(call),
+            "ui.table" => self.table(call),
             "ui.ask" => self.ask(call),
             other => err(other, vec![format!("unknown UI tool: {other}")]),
         }
@@ -408,6 +410,112 @@ impl UiToolRunner {
             .with_component_id(id)
     }
 
+    fn table(&mut self, call: UiToolCall) -> UiToolObservation {
+        let Some(surface_id) = string_arg(&call.args, "surfaceId") else {
+            return err(call.tool, vec!["surfaceId is required".to_owned()]);
+        };
+        let id = string_arg(&call.args, "id").unwrap_or_else(|| "draft-table".to_owned());
+        let title = string_arg(&call.args, "title");
+        let columns = match string_array_arg(&call.args, "columns") {
+            Ok(columns) => columns,
+            Err(error) => return err(call.tool, vec![error]),
+        };
+        if columns.is_empty() {
+            return err(call.tool, vec!["columns must not be empty".to_owned()]);
+        }
+        let rows = match string_matrix_arg(&call.args, "rows") {
+            Ok(rows) => rows,
+            Err(error) => return err(call.tool, vec![error]),
+        };
+        for (index, row) in rows.iter().enumerate() {
+            if row.len() != columns.len() {
+                return err(
+                    call.tool,
+                    vec![format!(
+                        "row {index} has {} cells but columns has {}",
+                        row.len(),
+                        columns.len()
+                    )],
+                );
+            }
+        }
+
+        let surface = self
+            .surfaces
+            .entry(surface_id.clone())
+            .or_insert_with(|| UiToolSurface {
+                catalog_id: A2UI_BASIC_CATALOG_ID.to_owned(),
+                recipe: None,
+                components: BTreeMap::new(),
+            });
+
+        surface.recipe = Some(UiToolRecipe::new(
+            "table",
+            "basic",
+            "https://preline.co/docs/components/tables.html#basic-table",
+        ));
+
+        let table_id = format!("{id}-table");
+        let header_id = format!("{id}-header");
+        let mut table_children = Vec::new();
+        if let Some(title) = title {
+            let title_id = format!("{id}-title");
+            surface.components.insert(
+                title_id.clone(),
+                text_component(&title_id, title, Some(TextVariant::H3)),
+            );
+            table_children.push(title_id);
+        }
+        table_children.push(header_id.clone());
+
+        let header_cells: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let cell_id = format!("{id}-header-cell-{index}");
+                surface.components.insert(
+                    cell_id.clone(),
+                    text_component(&cell_id, value, Some(TextVariant::Caption)),
+                );
+                cell_id
+            })
+            .collect();
+        surface.components.insert(
+            header_id.clone(),
+            row_component_vec(&header_id, header_cells, Some(Align::Center)),
+        );
+
+        for (row_index, row) in rows.into_iter().enumerate() {
+            let row_id = format!("{id}-row-{row_index}");
+            let mut cell_ids = Vec::new();
+            for (cell_index, value) in row.into_iter().enumerate() {
+                let cell_id = format!("{id}-row-{row_index}-cell-{cell_index}");
+                surface.components.insert(
+                    cell_id.clone(),
+                    text_component(&cell_id, value, Some(TextVariant::Body)),
+                );
+                cell_ids.push(cell_id);
+            }
+            surface.components.insert(
+                row_id.clone(),
+                row_component_vec(&row_id, cell_ids, Some(Align::Center)),
+            );
+            table_children.push(row_id);
+        }
+
+        surface
+            .components
+            .insert("root".to_owned(), card_component("root", table_id.clone()));
+        surface.components.insert(
+            table_id.clone(),
+            column_component_vec(&table_id, table_children),
+        );
+
+        ok(call.tool, "table lowered to A2UI Basic components")
+            .with_surface_id(surface_id)
+            .with_component_id(id)
+    }
+
     fn ask(&mut self, call: UiToolCall) -> UiToolObservation {
         let Some(surface_id) = string_arg(&call.args, "surfaceId") else {
             return err(call.tool, vec!["surfaceId is required".to_owned()]);
@@ -591,6 +699,10 @@ impl UiToolObservation {
 
 pub fn run_tool_program(program: UiToolProgram) -> UiToolProgramResult {
     UiToolRunner::default().run(program)
+}
+
+pub fn typed_ui_recipe_components() -> &'static [&'static str] {
+    TYPED_UI_RECIPE_COMPONENTS
 }
 
 pub fn acceptance_program() -> UiToolProgram {
@@ -820,6 +932,47 @@ fn string_arg(args: &Value, name: &str) -> Option<String> {
     args.get(name)?.as_str().map(ToOwned::to_owned)
 }
 
+fn string_array_arg(args: &Value, name: &str) -> Result<Vec<String>, String> {
+    let Some(value) = args.get(name) else {
+        return Err(format!("{name} is required"));
+    };
+    let Some(items) = value.as_array() else {
+        return Err(format!("{name} must be an array of strings"));
+    };
+    items
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| format!("{name} must be an array of strings"))
+        })
+        .collect()
+}
+
+fn string_matrix_arg(args: &Value, name: &str) -> Result<Vec<Vec<String>>, String> {
+    let Some(value) = args.get(name) else {
+        return Err(format!("{name} is required"));
+    };
+    let Some(rows) = value.as_array() else {
+        return Err(format!("{name} must be an array of string arrays"));
+    };
+    rows.iter()
+        .map(|row| {
+            let Some(cells) = row.as_array() else {
+                return Err(format!("{name} must be an array of string arrays"));
+            };
+            cells
+                .iter()
+                .map(|cell| {
+                    cell.as_str()
+                        .map(ToOwned::to_owned)
+                        .ok_or_else(|| format!("{name} must be an array of string arrays"))
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn contains_forbidden_renderer_input(value: &Value) -> bool {
     match value {
         Value::Object(map) => map.iter().any(|(key, value)| {
@@ -872,6 +1025,28 @@ fn column_component<const N: usize>(
     BasicComponent::Column(Column {
         id: id.into(),
         children: ChildList::Static(children.into_iter().collect()),
+        justify: None,
+        align: None,
+    })
+}
+
+fn row_component_vec(
+    id: impl Into<String>,
+    children: Vec<String>,
+    align: Option<Align>,
+) -> BasicComponent {
+    BasicComponent::Row(Row {
+        id: id.into(),
+        children: ChildList::Static(children),
+        justify: None,
+        align,
+    })
+}
+
+fn column_component_vec(id: impl Into<String>, children: Vec<String>) -> BasicComponent {
+    BasicComponent::Column(Column {
+        id: id.into(),
+        children: ChildList::Static(children),
         justify: None,
         align: None,
     })

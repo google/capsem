@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use capsem_plugin_engine::ui_tools::{
-    acceptance_program, check_template, run_tool_program, TemplateSpec,
+    acceptance_program, check_template, run_tool_program, typed_ui_recipe_components, TemplateSpec,
 };
 use serde_json::json;
 
@@ -133,6 +133,100 @@ fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
         !serialized.contains("A2UI Basic component"),
         "user-facing card output leaked internal protocol label: {serialized}"
     );
+}
+
+#[test]
+fn typed_ui_recipe_components_have_explicit_svelte_renderers() {
+    let renderer = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("ui-preview/src/A2Node.svelte"),
+    )
+    .expect("renderer exists");
+
+    for component in typed_ui_recipe_components() {
+        let recipe_check = format!("recipe?.component === \"{component}\"");
+        assert!(
+            renderer.contains(&recipe_check),
+            "typed UI recipe component `{component}` has no explicit Svelte renderer branch"
+        );
+    }
+}
+
+#[test]
+fn ui_table_lowers_to_conformant_a2ui_and_recipe() {
+    let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "agent-draft" }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.table".to_owned(),
+                args: json!({
+                    "surfaceId": "agent-draft",
+                    "id": "houses",
+                    "title": "Great Houses of Westeros",
+                    "columns": ["House", "Motto", "Arms"],
+                    "rows": [
+                        ["Stark", "Winter Is Coming", "Direwolf"],
+                        ["Lannister", "Hear Me Roar!", "Golden lion"],
+                        ["Targaryen", "Fire and Blood", "Three-headed dragon"]
+                    ]
+                }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.validate".to_owned(),
+                args: json!({ "surfaceId": "agent-draft" }),
+            },
+        ],
+    });
+
+    assert!(result.ok, "{:#?}", result.observations);
+    let surface = result.surfaces.first().expect("surface exists");
+    assert_eq!(
+        surface
+            .recipe
+            .as_ref()
+            .map(|recipe| recipe.component.as_str()),
+        Some("table")
+    );
+    let serialized = serde_json::to_string(&surface.messages).unwrap();
+    assert!(serialized.contains("Winter Is Coming"));
+    assert!(serialized.contains("Golden lion"));
+    assert!(!serialized.contains("class"));
+    assert!(!serialized.contains("<table"));
+}
+
+#[test]
+fn ui_table_rejects_rows_with_wrong_cell_count() {
+    let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "bad-table" }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.table".to_owned(),
+                args: json!({
+                    "surfaceId": "bad-table",
+                    "columns": ["House", "Motto", "Arms"],
+                    "rows": [["Stark", "Winter Is Coming"]]
+                }),
+            },
+        ],
+    });
+
+    assert!(!result.ok);
+    assert!(result.observations.iter().any(|observation| {
+        observation
+            .errors
+            .iter()
+            .any(|error| error.contains("has 2 cells but columns has 3"))
+    }));
 }
 
 #[test]

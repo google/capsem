@@ -71,6 +71,45 @@ async fn hyper_render_preserves_card_link_contract() {
 }
 
 #[tokio::test]
+async fn hyper_render_outputs_conformant_table() {
+    let server = TestServer::start().await;
+    let response = server
+        .post(json!({
+            "calls": [
+                { "tool": "ui.surface.create", "args": { "id": "agent-draft" } },
+                {
+                    "tool": "ui.table",
+                    "args": {
+                        "surfaceId": "agent-draft",
+                        "id": "houses",
+                        "title": "Great Houses of Westeros",
+                        "columns": ["House", "Motto", "Arms"],
+                        "rows": [
+                            ["Stark", "Winter Is Coming", "Direwolf"],
+                            ["Lannister", "Hear Me Roar!", "Golden lion"],
+                            ["Targaryen", "Fire and Blood", "Three-headed dragon"]
+                        ]
+                    }
+                },
+                { "tool": "ui.surface.validate", "args": { "surfaceId": "agent-draft" } },
+                { "tool": "ui.surface.preview", "args": { "surfaceId": "agent-draft" } }
+            ]
+        }))
+        .await;
+
+    assert!(response.ok, "{response:#?}");
+    assert!(response.conformance.ok, "{response:#?}");
+    let surface = response.surfaces.first().expect("surface exists");
+    validate_messages(&surface.messages).expect("A2UI messages conform");
+    let recipe = surface.recipe.as_ref().expect("recipe exists");
+    assert_eq!(recipe.component, "table");
+    assert_eq!(recipe.variant, "basic");
+    let serialized = serde_json::to_string(&surface.messages).unwrap();
+    assert!(serialized.contains("Winter Is Coming"));
+    assert!(serialized.contains("Three-headed dragon"));
+}
+
+#[tokio::test]
 async fn hyper_render_rejects_bad_paths_and_bad_json() {
     let server = TestServer::start().await;
     let missing = reqwest::get(format!("{}/missing", server.base_url))

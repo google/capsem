@@ -93,6 +93,36 @@
     return component?.component === "Card" && recipe?.component === "card" && recipe?.variant === "simple";
   }
 
+  function isTableCard(): boolean {
+    return component?.component === "Card" && recipe?.component === "table" && recipe?.variant === "basic";
+  }
+
+  function isBasicModal(): boolean {
+    return component?.component === "Modal" && recipe?.component === "modal";
+  }
+
+  function tableChildComponents(): Array<NonNullable<typeof component>> {
+    if (!cardChild) return [];
+    return staticChildIds(cardChild)
+      .map((childId) => surface.components.get(childId))
+      .filter((child): child is NonNullable<typeof component> => Boolean(child));
+  }
+
+  function tableTitle(): string {
+    const title = tableChildComponents().find((child) => child.component === "Text");
+    return title ? textValue(surface, title, scope) : "";
+  }
+
+  function tableRows(): Array<NonNullable<typeof component>> {
+    return tableChildComponents().filter((child) => child.component === "Row");
+  }
+
+  function tableCells(row: NonNullable<typeof component>): Array<NonNullable<typeof component>> {
+    return staticChildIds(row)
+      .map((childId) => surface.components.get(childId))
+      .filter((child): child is NonNullable<typeof component> => Boolean(child));
+  }
+
   function alertClass(): string {
     if (recipe?.tone === "warning") {
       return "bg-warning/10 border border-warning/20 rounded-lg shadow-2xs p-4";
@@ -235,6 +265,50 @@
         </a>
       </div>
     </div>
+  {:else if component.component === "Card" && isTableCard()}
+    {@const title = tableTitle()}
+    {@const rows = tableRows()}
+    {@const header = rows[0]}
+    {@const bodyRows = rows.slice(1)}
+    <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl overflow-hidden">
+      {#if title}
+        <div class="px-6 py-4 border-b border-card-line">
+          <h3 class="font-semibold text-foreground">{title}</h3>
+        </div>
+      {/if}
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-card-line">
+          {#if header}
+            <thead class="bg-surface">
+              <tr>
+                {#each tableCells(header) as cell (cell.id)}
+                  <th scope="col" class="px-6 py-3 text-start text-xs font-semibold uppercase text-muted-foreground-1">
+                    {textValue(surface, cell, scope)}
+                  </th>
+                {/each}
+              </tr>
+            </thead>
+          {/if}
+          <tbody class="divide-y divide-card-line">
+            {#each bodyRows as row (row.id)}
+              <tr class="bg-card hover:bg-surface">
+                {#each tableCells(row) as cell, cellIndex (cell.id)}
+                  {#if cellIndex === 0}
+                    <th scope="row" class="px-6 py-4 whitespace-nowrap text-sm font-medium text-foreground">
+                      {textValue(surface, cell, scope)}
+                    </th>
+                  {:else}
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground-1">
+                      {textValue(surface, cell, scope)}
+                    </td>
+                  {/if}
+                {/each}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </div>
   {:else if component.component === "Card"}
     <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl">
       <div class="p-4">
@@ -245,7 +319,7 @@
     <button class={buttonClass()} type="button" onclick={runButton}>
       <A2Node id={prop("child")} {surface} {scope} {onAction} />
     </button>
-  {:else if component.component === "Modal"}
+  {:else if component.component === "Modal" && isBasicModal()}
     <div>
       <A2Node
         id={prop("trigger")}
