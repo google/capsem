@@ -57,5 +57,8 @@ must be useful in status/debug output and stable enough for OpenTelemetry.
 - Third slice complete: gateway `/status` enriches running VM summaries from
   `/info/{id}` and `capsem-tui` renders resource and block counters in the
   session-info overlay.
-- Next slice: surface these counters through the OTel/exporter-facing path with
-  bounded labels.
+- Fourth slice complete: `VmMetricsSnapshot::otel_metric_points()` maps live
+  resource and KVM block counters to stable OTel-compatible metric points with
+  explicit units, counter/gauge kinds, source metadata, and bounded attributes.
+- Next slice: move to H02 event delivery/backpressure; a real OTLP exporter
+  process/configuration remains deferred to the broader telemetry sprint.

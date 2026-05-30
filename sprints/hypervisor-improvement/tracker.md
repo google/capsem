@@ -20,7 +20,10 @@
         service `/info`, and `capsem info`.
   - [x] Surface live resource and KVM block counters through gateway `/status`
         and the TUI session-info overlay.
-  - [ ] Surface the same counters through the OTel exporter path.
+  - [x] Add OTel-compatible metric-point mapping for live VM resource and KVM
+        block counters.
+  - [ ] Real OTLP exporter process/configuration remains deferred to the
+        broader telemetry sprint.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
 - [ ] H05: storage, rootfs, and filesystem experiments.
@@ -107,6 +110,11 @@
   bytes, and block queue counters. Live gateway proof reported 5,908 queue
   notifications, 1,638 queue drains, 25,264 descriptors/used entries, 8,578
   read ops, and 31,394,816 block bytes read for a throwaway KVM VM.
+- H03 fourth slice landed locally: `VmMetricsSnapshot::otel_metric_points()`
+  now flattens resource and KVM block counters into stable OTel-compatible
+  metric points with explicit units, counter/gauge kinds, source metadata, and
+  bounded attributes (`component`, `backend`). This makes the counters
+  exporter-ready without adding a half-wired OTLP runtime in this sprint.
 
 ## Coverage Ledger
 
@@ -133,7 +141,8 @@
   `cargo test -p capsem --bin capsem`,
   `cargo test -p capsem-tui gateway_status_json_maps_to_tui_state --lib`,
   `cargo test -p capsem-tui stats_overlay_renders_on_demand_without_persistent_help --lib`,
-  `cargo test -p capsem-tui --lib`.
+  `cargo test -p capsem-tui --lib`,
+  `cargo test -p capsem-proto metrics::tests --lib`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
   A live named VM smoke with `capsem info --json` passed for H03 and reported
   `metrics_schema_version=1`, `configured_ram_mb=2048`, `configured_vcpus=2`,
@@ -162,13 +171,14 @@
   fields through the service API and CLI. H03 second slice adds
   `VmMetricsSnapshot.hypervisor.block` and feeds it from the KVM virtio-blk
   backend while preserving `metrics` facade emission. H03 third slice carries
-  those fields through gateway `/status` and the TUI model. OTel exporter
-  wiring remains open.
+  those fields through gateway `/status` and the TUI model. H03 fourth slice
+  adds OTel-compatible metric-point mapping with bounded attributes. Real OTLP
+  exporter process/configuration remains open for the broader telemetry sprint.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
   `1.2.1780103109` are now present on main and compared successfully.
-- Missing/deferred: H03 OTel exporter exposure remains next for
-  queue/backend/hypervisor counters; full benchmark rerun is deferred until a
+- Missing/deferred: Real OTLP exporter process/configuration is deferred to the
+  broader telemetry sprint; full benchmark rerun is deferred until a
   performance-affecting H02/H03 milestone lands.
