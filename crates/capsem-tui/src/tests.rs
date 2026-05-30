@@ -72,6 +72,47 @@ fn tab_colors_use_selected_yellow_and_unselected_blue_only() {
 }
 
 #[test]
+fn stopped_session_renders_resume_prompt_and_grey_tab() {
+    let mut state = fixture_state();
+    state.sessions[0].lifecycle = SessionLifecycle::Idle;
+
+    let snapshot = render_snapshot(&state, 100, 24).expect("render stopped snapshot");
+    assert!(
+        snapshot.contains("Press Enter to resume"),
+        "stopped sessions should render an explicit recovery affordance instead of a blank pane"
+    );
+    assert!(snapshot.contains("stopped"));
+
+    let buffer = render_test_buffer(&state, 100, 24).expect("render stopped buffer");
+    let row = buffer.area.height - 1;
+    let stopped_number = find_cell_x(&buffer, row, "1  profile-v2");
+    let stopped_label = stopped_number + 3;
+
+    assert_eq!(buffer_cell(&buffer, stopped_number, row).bg, grey());
+    assert_eq!(buffer_cell(&buffer, stopped_label, row).fg, grey());
+    assert!(
+        buffer_cell(&buffer, stopped_label, row)
+            .modifier
+            .contains(Modifier::DIM),
+        "stopped tab labels should read as inactive"
+    );
+}
+
+#[test]
+fn enter_resumes_stopped_active_session_instead_of_forwarding_to_terminal() {
+    let mut state = fixture_state();
+    state.sessions[0].lifecycle = SessionLifecycle::Idle;
+    let mut app = App::new(state);
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Resume {
+            name: "profile-v2".to_string()
+        })
+    );
+}
+
+#[test]
 fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
     let mut app = App::new(fixture_state());
 
@@ -560,6 +601,10 @@ fn yellow() -> Color {
 
 fn blue() -> Color {
     Color::Rgb(137, 180, 250)
+}
+
+fn grey() -> Color {
+    Color::Rgb(127, 137, 180)
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {

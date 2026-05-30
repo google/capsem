@@ -49,6 +49,10 @@ impl TerminalBridge {
         let _ = self.commands.send(TerminalCommand::Resize { cols, rows });
     }
 
+    pub fn disconnect(&self) {
+        let _ = self.commands.send(TerminalCommand::Disconnect);
+    }
+
     pub fn drain_events(&self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.events.try_recv() {
@@ -76,6 +80,7 @@ enum TerminalCommand {
         cols: u16,
         rows: u16,
     },
+    Disconnect,
     Shutdown,
 }
 
@@ -151,6 +156,13 @@ async fn run_terminal_manager(
                 if let Some(input) = &active_input {
                     let _ = input.send(TerminalInput::Resize { cols, rows });
                 }
+            }
+            TerminalCommand::Disconnect => {
+                if let Some(task) = active_task.take() {
+                    task.abort();
+                }
+                active_input = None;
+                active_session_id.clear();
             }
             TerminalCommand::Shutdown => {
                 if let Some(task) = active_task.take() {

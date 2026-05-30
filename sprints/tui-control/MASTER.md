@@ -120,6 +120,11 @@ attention markers.
   session directories, raw session DB queries no longer pay a 100ms watchdog
   floor, `/stats` has an empty/read-only fast path, and policy-context exports
   dedupe by security event before fixture projection.
+- Fixed inactive-session handling after the proof VMs were stopped: stopped,
+  suspended, and failed sessions now render a greyed tab plus a centered
+  `Press Enter to resume` prompt, Enter invokes resume for the active inactive
+  session, and the terminal WebSocket bridge disconnects instead of reconnecting
+  to stopped VM sockets.
 
 ## Testing Gate
 
@@ -137,3 +142,7 @@ attention markers.
   p95 0.798ms, slowest per-VM read `/files` p95 2.491ms, and gateway
   `/status` p95 0.223ms. Concurrent boot pressure remains a separate follow-up
   because endpoint speed should not depend on parallel provisioning setup.
+- Regression: `cargo test -p capsem-tui` covers stopped-session prompt,
+  greyed inactive tab tone, and Enter-to-resume behavior. Live snapshot against
+  the installed stopped `tui-proof-*` sessions shows the prompt instead of a
+  blank pane.

@@ -146,11 +146,17 @@
   `wait_exec_ready` miss before latency measurement. Sequentially provisioning
   8 live VMs is stable, so endpoint latency remains gated separately from a
   future concurrent-boot pressure test.
+- Stopped-session bug: stopped sessions were still selectable tabs, but the
+  main pane only rendered live terminal buffers and the WebSocket manager still
+  tried to connect. Stopped/suspended/failed tabs now grey out, the pane shows
+  `Press Enter to resume`, Enter invokes resume for the active inactive
+  session, and the terminal bridge disconnects from inactive tabs.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (25 tests).
-- TUI latency/provider: `cargo test -p capsem-tui` (25 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (27 tests), including
+  stopped-session resume prompt, grey tab, and Enter-to-resume coverage.
+- TUI latency/provider: `cargo test -p capsem-tui` (27 tests), including
   token reuse and raw local latency preservation coverage.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
@@ -164,7 +170,8 @@
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
   `cargo run -p capsem-tui -- --fixture --snapshot --width 120 --height 30`;
   `cargo run -p capsem-tui -- --fixture --snapshot-svg --width 120 --height 30`;
-  `just dev-tui`.
+  `cargo run -p capsem-tui -- --snapshot --width 120 --height 30` against
+  the installed stopped proof sessions; `just dev-tui`.
 - Gateway wiring: `GatewayProvider::load_async` authenticated HTTP mock test
   plus live local snapshot through the installed gateway.
 - Service actions: confirmed action key tests plus authenticated mock gateway

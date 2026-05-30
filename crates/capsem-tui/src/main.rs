@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use capsem_tui::app::{App, AppAction, ControlAction};
 use capsem_tui::fixture::FixtureProvider;
 use capsem_tui::gateway_provider::{ActionOutcome, GatewayProvider};
-use capsem_tui::model::{AppState, ServiceStatus};
+use capsem_tui::model::{AppState, ServiceStatus, SessionLifecycle};
 use capsem_tui::provider::StateProvider;
 use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalSurface};
 use capsem_tui::ui::{render_app, render_snapshot, render_svg_snapshot};
@@ -338,14 +338,20 @@ fn sync_terminal_connection(
     cols: u16,
     rows: u16,
 ) -> bool {
-    let active_id = &app.state().active_session_id;
-    if active_id.is_empty() {
-        return false;
-    }
+    let active_id = match active_terminal_session_id(app.state()) {
+        Some(active_id) => active_id,
+        None => {
+            if connected.take().is_some() {
+                bridge.disconnect();
+                return true;
+            }
+            return false;
+        }
+    };
     let cols = cols.max(1);
     let rows = rows.max(1);
     match connected {
-        Some(current) if current.session_id == *active_id => {
+        Some(current) if current.session_id == active_id => {
             if current.cols == cols && current.rows == rows {
                 return false;
             }
@@ -355,14 +361,26 @@ fn sync_terminal_connection(
             true
         }
         _ => {
-            bridge.connect(active_id.clone(), cols, rows);
+            bridge.connect(active_id.to_string(), cols, rows);
             *connected = Some(ConnectedTerminal {
-                session_id: active_id.clone(),
+                session_id: active_id.to_string(),
                 cols,
                 rows,
             });
             true
         }
+    }
+}
+
+fn active_terminal_session_id(state: &AppState) -> Option<&str> {
+    let session = state.active_session()?;
+    if matches!(
+        session.lifecycle,
+        SessionLifecycle::Working | SessionLifecycle::WaitingForInput
+    ) {
+        Some(session.id.as_str())
+    } else {
+        None
     }
 }
 

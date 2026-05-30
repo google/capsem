@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   health/token/status reads with committed `benchmarks/endpoint-latency/`
   results.
 
+### Fixed
+- Fixed `capsem-tui` stopped-session rendering so stopped/suspended/failed
+  tabs are greyed, the main pane shows a `Press Enter to resume` affordance
+  instead of going blank, and the terminal bridge disconnects instead of trying
+  to attach a WebSocket to an inactive VM.
+
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
   Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,

@@ -130,6 +130,11 @@ impl App {
             self.overlay = AppOverlay::Confirm;
             return AppAction::Consumed;
         }
+        if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+            if let Some(action) = self.active_resume_action() {
+                return AppAction::Invoke(action);
+            }
+        }
         if is_previous_key(key) {
             self.previous_session();
             return AppAction::Consumed;

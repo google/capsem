@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::app::{App, AppOverlay, ControlAction};
-use crate::model::{AppState, ServiceStatus, SessionSummary};
+use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
 use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
 
 const MAX_VISIBLE_TABS: usize = 4;
@@ -159,11 +159,24 @@ fn render_terminal_surface(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
 ) {
-    let Some(terminal) = terminal else {
-        frame.render_widget(Paragraph::new(""), area);
+    let Some(session) = state.active_session() else {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(" no sessions", muted_style())))
+                .alignment(Alignment::Center),
+            area,
+        );
         return;
     };
-    let active_id = state.active_session_id.as_str();
+    if !session_accepts_terminal(session.lifecycle) {
+        render_inactive_session_surface(frame, area, session);
+        return;
+    }
+
+    let Some(terminal) = terminal else {
+        render_waiting_terminal_surface(frame, area, session);
+        return;
+    };
+    let active_id = session.id.as_str();
     let mut lines = terminal
         .styled_lines_for(active_id, area.height as usize)
         .into_iter()
@@ -179,6 +192,35 @@ fn render_terminal_surface(
         )));
     }
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
+    let lines = vec![Line::from(vec![
+        Span::styled("connecting terminal ", muted_style()),
+        Span::styled(
+            session.id.clone(),
+            muted_style().add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
+}
+
+fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
+    let lines = vec![
+        Line::from(Span::styled(
+            session.id.clone(),
+            muted_style().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            inactive_session_label(session.lifecycle),
+            muted_style(),
+        )),
+        Line::from(Span::styled(
+            "Press Enter to resume",
+            status_base_style().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
 }
 
 fn terminal_line_to_ratatui(line: TerminalLine) -> Line<'static> {
@@ -216,6 +258,22 @@ fn terminal_style_to_ratatui(style: TerminalStyle) -> Style {
         result = result.add_modifier(Modifier::UNDERLINED);
     }
     result
+}
+
+fn session_accepts_terminal(lifecycle: SessionLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        SessionLifecycle::Working | SessionLifecycle::WaitingForInput
+    )
+}
+
+fn inactive_session_label(lifecycle: SessionLifecycle) -> &'static str {
+    match lifecycle {
+        SessionLifecycle::Idle => "stopped",
+        SessionLifecycle::Suspended => "suspended",
+        SessionLifecycle::Failed => "failed",
+        SessionLifecycle::Working | SessionLifecycle::WaitingForInput => "inactive",
+    }
 }
 
 fn terminal_color_to_ratatui(color: TerminalColor) -> Option<Color> {
@@ -432,7 +490,7 @@ fn push_tab(
     max_width: usize,
     used: &mut usize,
 ) -> bool {
-    let tone = TabTone::from_active(active);
+    let tone = TabTone::from_session(session, active);
     let number = format!(" {} ", index + 1);
     let label = format!(
         " {}{} ",
@@ -454,6 +512,9 @@ fn push_tab(
     let mut label_style = Style::default().fg(tone.color()).bg(BAR_BG);
     if active {
         label_style = label_style.add_modifier(Modifier::BOLD);
+    }
+    if tone == TabTone::Inactive {
+        label_style = label_style.add_modifier(Modifier::DIM);
     }
     spans.push(Span::styled(label, label_style));
     *used += width;
@@ -513,10 +574,17 @@ fn stats_style() -> Style {
 enum TabTone {
     Selected,
     Unselected,
+    Inactive,
 }
 
 impl TabTone {
-    const fn from_active(active: bool) -> Self {
+    const fn from_session(session: &SessionSummary, active: bool) -> Self {
+        if matches!(
+            session.lifecycle,
+            SessionLifecycle::Idle | SessionLifecycle::Suspended | SessionLifecycle::Failed
+        ) {
+            return Self::Inactive;
+        }
         if active {
             Self::Selected
         } else {
@@ -528,6 +596,7 @@ impl TabTone {
         match self {
             Self::Selected => ATTENTION,
             Self::Unselected => ACTIVE,
+            Self::Inactive => MUTED,
         }
     }
 }
