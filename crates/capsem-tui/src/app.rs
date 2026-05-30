@@ -48,6 +48,19 @@ impl ControlAction {
         }
     }
 
+    pub const fn progress_label(&self) -> &'static str {
+        match self {
+            Self::StartService => "starting service",
+            Self::CreateSession { .. } => "creating",
+            Self::Fork { .. } => "forking",
+            Self::Resume { .. } => "resuming",
+            Self::Checkpoint { .. } => "checkpointing",
+            Self::Suspend { .. } => "suspending",
+            Self::Stop { .. } => "stopping",
+            Self::Delete { .. } => "deleting",
+        }
+    }
+
     pub fn target(&self) -> &str {
         match self {
             Self::StartService => "Capsem service",
@@ -68,6 +81,7 @@ pub struct App {
     active_index: usize,
     overlay: AppOverlay,
     pending_action: Option<ControlAction>,
+    control_progress: Option<String>,
     create_draft: Option<CreateDraft>,
     fork_draft: Option<ForkDraft>,
 }
@@ -96,6 +110,7 @@ impl App {
             active_index,
             overlay: AppOverlay::None,
             pending_action: None,
+            control_progress: None,
             create_draft: None,
             fork_draft: None,
         };
@@ -114,6 +129,10 @@ impl App {
 
     pub fn pending_action(&self) -> Option<&ControlAction> {
         self.pending_action.as_ref()
+    }
+
+    pub fn control_progress(&self) -> Option<&str> {
+        self.control_progress.as_deref()
     }
 
     pub fn create_draft(&self) -> Option<&CreateDraft> {
@@ -146,6 +165,14 @@ impl App {
 
     pub fn set_control_message(&mut self, message: impl Into<String>) {
         self.state.service.control_message = Some(message.into());
+    }
+
+    pub fn set_control_progress(&mut self, label: impl Into<String>) {
+        self.control_progress = Some(label.into());
+    }
+
+    pub fn clear_control_progress(&mut self) {
+        self.control_progress = None;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> AppAction {

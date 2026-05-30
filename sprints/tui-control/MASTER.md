@@ -171,6 +171,10 @@ attention markers.
   failure/disconnect statuses as connection teardown in the UI loop and by
   clearing finished terminal tasks inside the bridge manager before reconnecting
   the same session.
+- Added full-pane control progress feedback for suspend. `Alt+s` now renders
+  `suspending...` in the main surface while the suspend action is running,
+  keeping long VM lifecycle operations visible without relying on the tab strip
+  or bottom bar alone.
 
 ## Testing Gate
 
@@ -224,3 +228,6 @@ attention markers.
   terminal-task cleanup and UI connected-marker teardown after terminal failure
   statuses, preventing keystrokes from being sent to a dead WebSocket after
   Enter resume.
+- Suspend progress regression: `cargo test -p capsem-tui` covers the
+  full-pane `suspending...` surface and asserts the normal terminal surface is
+  hidden while suspend is in progress.

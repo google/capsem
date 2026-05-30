@@ -55,6 +55,8 @@
 - [x] Add regression tests for corrupt-tab filtering and create focus targets.
 - [x] Fix suspend/resume terminal reconnect so typing works after Enter resume.
 - [x] Add regression tests for stale terminal connection cleanup.
+- [x] Show full-pane `suspending...` progress during `Alt+s` suspend actions.
+- [x] Add render regression for suspend progress owning the main pane.
 
 ## Notes
 
@@ -222,10 +224,14 @@
   manager also observes finished connection tasks, so a same-session reconnect
   after resume starts a fresh WebSocket instead of writing keystrokes to a
   stale input channel.
+- Suspend progress polish: control actions now carry progress labels and the
+  app renders active control progress in the main pane. `Alt+s` therefore shows
+  `suspending...` full screen while the suspend worker is running, not just a
+  tiny bottom-bar message.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (46 lib tests, 2 binary tests),
+- Unit/contract: `cargo test -p capsem-tui` (47 lib tests, 2 binary tests),
   including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
@@ -233,9 +239,10 @@
   coverage, empty-state auto-create, service-offline start prompt, gradient
   logo rendering, no-fake-default profile failure handling, corrupt-profile
   tab filtering plus inventory visibility, create focus targets,
-  suspend/resume stale-terminal reconnect cleanup, `Alt+l` sessions table,
-  `Alt+i` session info, and `Alt+c` checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (46 lib tests, 2 binary
+  suspend/resume stale-terminal reconnect cleanup, full-pane suspend progress
+  rendering, `Alt+l` sessions table, `Alt+i` session info, and `Alt+c`
+  checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (47 lib tests, 2 binary
   tests), including
   token reuse, live profile-list refresh, named fork request payloads,
   checkpoint-over-suspend payloads, raw local latency preservation coverage,

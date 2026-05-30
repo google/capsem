@@ -687,6 +687,20 @@ fn suspend_action_requires_persistent_running_session() {
 }
 
 #[test]
+fn suspend_progress_owns_the_main_terminal_surface() {
+    let mut app = App::new(fixture_state());
+    app.set_control_progress("suspending");
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render suspend progress");
+
+    assert!(snapshot.contains("suspending..."));
+    assert!(
+        !snapshot.contains("connecting terminal profile-v2"),
+        "suspend progress should be visible in the main pane, not only the status bar"
+    );
+}
+
+#[test]
 fn checkpoint_action_is_alt_c_and_uses_checkpoint_label() {
     let mut app = App::new(fixture_state());
     assert_eq!(

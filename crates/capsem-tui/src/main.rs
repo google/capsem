@@ -176,13 +176,16 @@ fn run_loop(
                 match event {
                     ControlEvent::Started(label) => {
                         app.set_control_message(format!("{label}..."));
+                        app.set_control_progress(label);
                     }
                     ControlEvent::Finished(Ok(outcome)) => {
+                        app.clear_control_progress();
                         app.set_control_message(outcome.message);
                         focus_after_refresh = outcome.focus_session;
                         should_refresh = true;
                     }
                     ControlEvent::Finished(Err(error)) => {
+                        app.clear_control_progress();
                         app.set_control_message(error);
                         should_refresh = true;
                     }
@@ -304,7 +307,7 @@ impl ControlBridge {
         let (event_tx, event_rx) = mpsc::channel::<ControlEvent>();
         thread::spawn(move || {
             while let Ok(action) = command_rx.recv() {
-                let label = action.label().to_string();
+                let label = action.progress_label().to_string();
                 let _ = event_tx.send(ControlEvent::Started(label));
                 let result = provider
                     .invoke(&action)

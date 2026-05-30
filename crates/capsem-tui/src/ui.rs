@@ -42,7 +42,16 @@ pub fn render_with_terminal(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
 ) {
-    render_layout(frame, state, terminal, AppOverlay::None, None, None, None);
+    render_layout(
+        frame,
+        state,
+        terminal,
+        AppOverlay::None,
+        None,
+        None,
+        None,
+        None,
+    );
 }
 
 pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSurface>) {
@@ -52,6 +61,7 @@ pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSu
         terminal,
         app.overlay(),
         app.pending_action(),
+        app.control_progress(),
         app.create_draft(),
         app.fork_draft(),
     );
@@ -63,6 +73,7 @@ fn render_layout(
     terminal: Option<&TerminalSurface>,
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
+    control_progress: Option<&str>,
     create_draft: Option<&CreateDraft>,
     fork_draft: Option<&ForkDraft>,
 ) {
@@ -72,7 +83,11 @@ fn render_layout(
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(root);
 
-    render_terminal_surface(frame, chunks[0], state, terminal);
+    if let Some(label) = control_progress {
+        render_control_progress_surface(frame, chunks[0], label);
+    } else {
+        render_terminal_surface(frame, chunks[0], state, terminal);
+    }
     render_status_bar(frame, state, chunks[1]);
     render_overlay(
         frame,
@@ -186,6 +201,18 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(right)).style(base),
         Rect::new(right_x, area.y, right_width, area.height),
+    );
+}
+
+fn render_control_progress_surface(frame: &mut Frame<'_>, area: Rect, label: &str) {
+    let text = format!("{}...", label.trim_end_matches('.'));
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            focus_style().add_modifier(Modifier::BOLD),
+        )))
+        .alignment(Alignment::Center),
+        area,
     );
 }
 

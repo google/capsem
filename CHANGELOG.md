@@ -199,6 +199,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
+  `suspending...` state while the suspend action runs instead of only updating
+  the bottom status bar.
 - Fixed `capsem-tui` terminal input after suspend/resume so a failed or closed
   terminal WebSocket clears the connected marker, reconnects the active session
   after resume, and does not drop typed input into a stale terminal task.
