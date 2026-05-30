@@ -176,6 +176,13 @@ attention markers.
   `suspending...` in the main surface while the suspend action is running,
   keeping long VM lifecycle operations visible without relying on the tab strip
   or bottom bar alone.
+- Tightened corrupt-profile recovery: stopped VMs with broken signed profile
+  pins now render `Press Enter to create a replacement`, Enter opens the
+  existing profile-aware new-session modal, and `Alt+d` remains the explicit
+  cleanup path for that bad persistent VM.
+- Wired `Alt+p` to the installed gateway `/purge` endpoint for confirmed
+  temporary-VM cleanup without exposing destructive `purge --all` semantics in
+  the normal TUI key map.
 
 ## Testing Gate
 
@@ -194,7 +201,8 @@ attention markers.
   `/status` p95 0.223ms. Concurrent boot pressure remains a separate follow-up
   because endpoint speed should not depend on parallel provisioning setup.
 - Regression: `cargo test -p capsem-tui` covers stopped-session prompt,
-  greyed inactive tab tone, Enter-to-resume behavior, and the named fork
+  greyed inactive tab tone, Enter-to-resume behavior, corrupt-profile
+  Enter-to-create recovery, confirmed `Alt+p` purge wiring, and the named fork
   modal/action path, plus `Alt+l` sessions, `Alt+i` session info, and `Alt+c`
   checkpoint. Live snapshot against the installed stopped `tui-proof-*`
   sessions shows the prompt instead of a blank pane.

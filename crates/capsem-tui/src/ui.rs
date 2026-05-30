@@ -228,8 +228,14 @@ fn render_terminal_surface(
     }
     let Some(session) = state.active_session() else {
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(" no sessions", muted_style())))
-                .alignment(Alignment::Center),
+            Paragraph::new(vec![
+                Line::from(Span::styled("no sessions", muted_style())),
+                Line::from(Span::styled(
+                    "Press Enter to create a VM",
+                    status_base_style().add_modifier(Modifier::BOLD),
+                )),
+            ])
+            .alignment(Alignment::Center),
             area,
         );
         return;
@@ -287,6 +293,14 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
         lines.push(Line::from(Span::styled(
             reason,
             bad_style().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "Press Enter to create a replacement",
+            status_base_style().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "Alt+d deletes this VM; Alt+p purges temporary VMs",
+            muted_style(),
         )));
     } else {
         lines.push(Line::from(Span::styled(
@@ -452,7 +466,7 @@ fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
 
 fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
     match overlay {
-        AppOverlay::Help => 17,
+        AppOverlay::Help => 19,
         AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
         AppOverlay::Create => (state.profiles.len() as u16)
@@ -481,6 +495,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+r", "resume", "session", "resume inactive VM"),
         help_row("Alt+t", "stop", "session", "stop active VM"),
         help_row("Alt+d", "delete", "session", "delete active VM"),
+        help_row("Alt+p", "purge", "global", "purge temporary VMs"),
         help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }

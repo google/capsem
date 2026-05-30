@@ -237,21 +237,30 @@ fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render corrupted profile session");
     assert!(snapshot.contains("cannot resume: profile pin is corrupted"));
     assert!(!snapshot.contains("Press Enter to resume"));
+    assert!(snapshot.contains("Press Enter to create a replacement"));
+    assert!(snapshot.contains("Alt+d deletes this VM"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Consumed
     );
+    assert_eq!(app.overlay(), AppOverlay::Create);
     assert_eq!(
-        app.state().service.control_message.as_deref(),
-        Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+        app.create_draft().expect("create draft").name,
+        "tmp-1".to_string()
     );
+
+    app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.pending_action(), None);
+    assert_eq!(
+        app.state().service.control_message.as_deref(),
+        Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+    );
 }
 
 #[test]
@@ -457,6 +466,8 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
     assert!(snapshot.contains("Alt+i"));
     assert!(snapshot.contains("session info"));
     assert!(snapshot.contains("Alt+f fork"));
+    assert!(snapshot.contains("Alt+p"));
+    assert!(snapshot.contains("purge"));
 }
 
 #[test]
@@ -661,6 +672,30 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
     );
     assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(app.pending_action(), None);
+}
+
+#[test]
+fn purge_action_is_alt_p_and_requires_confirmation() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('p'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Purge { all: false })
+    );
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render purge confirmation");
+    assert!(snapshot.contains("purge"));
+    assert!(snapshot.contains("temporary sessions"));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Purge { all: false })
+    );
 }
 
 #[test]
@@ -1095,6 +1130,48 @@ async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
         .expect("invoke checkpoint");
 
     assert_eq!(outcome.message, "checkpointed vm-1");
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_invokes_purge_over_authenticated_gateway() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /purge "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(
+                    request.contains("authorization: Bearer test-token")
+                        || request.contains("Authorization: Bearer test-token"),
+                    "missing bearer auth: {request:?}"
+                );
+                assert!(request.contains(r#""all":false"#));
+                write_json_response(
+                    &mut stream,
+                    r#"{"purged":3,"persistent_purged":0,"ephemeral_purged":3}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Purge { all: false })
+        .await
+        .expect("invoke purge");
+
+    assert_eq!(outcome.message, "purged 3 temporary sessions");
+    assert_eq!(outcome.focus_session, None);
     server.await.expect("server task");
 }
 

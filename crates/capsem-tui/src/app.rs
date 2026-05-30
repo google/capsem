@@ -32,6 +32,7 @@ pub enum ControlAction {
     Suspend { id: String },
     Stop { id: String },
     Delete { id: String },
+    Purge { all: bool },
 }
 
 impl ControlAction {
@@ -45,6 +46,7 @@ impl ControlAction {
             Self::Suspend { .. } => "suspend",
             Self::Stop { .. } => "stop",
             Self::Delete { .. } => "delete",
+            Self::Purge { .. } => "purge",
         }
     }
 
@@ -58,6 +60,7 @@ impl ControlAction {
             Self::Suspend { .. } => "suspending",
             Self::Stop { .. } => "stopping",
             Self::Delete { .. } => "deleting",
+            Self::Purge { .. } => "purging",
         }
     }
 
@@ -71,6 +74,8 @@ impl ControlAction {
             | Self::Suspend { id: name }
             | Self::Stop { id: name }
             | Self::Delete { id: name } => name,
+            Self::Purge { all: true } => "all sessions",
+            Self::Purge { all: false } => "temporary sessions",
         }
     }
 }
@@ -231,8 +236,12 @@ impl App {
             return AppAction::Consumed;
         }
         if key.code == KeyCode::Enter && key.modifiers.is_empty() {
-            if let Some(reason) = self.active_resume_blocked_reason() {
-                self.set_control_message(reason);
+            if self.active_resume_blocked_reason().is_some() {
+                self.open_create();
+                return AppAction::Consumed;
+            }
+            if self.state.active_session().is_none() {
+                self.open_create();
                 return AppAction::Consumed;
             }
             if let Some(action) = self.active_resume_action() {
@@ -405,6 +414,7 @@ impl App {
             KeyCode::Char('s' | 'S') => self.active_suspend_action(),
             KeyCode::Char('t' | 'T') => self.active_id().map(|id| ControlAction::Stop { id }),
             KeyCode::Char('d' | 'D') => self.active_id().map(|id| ControlAction::Delete { id }),
+            KeyCode::Char('p' | 'P') => Some(ControlAction::Purge { all: false }),
             _ => None,
         }
     }

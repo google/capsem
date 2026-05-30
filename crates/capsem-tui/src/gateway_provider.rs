@@ -429,6 +429,28 @@ async fn invoke_action(
                 focus_session: None,
             })
         }
+        ControlAction::Purge { all } => {
+            let response = client
+                .post(join_url(base_url, &["purge"])?)
+                .bearer_auth(token)
+                .json(&serde_json::json!({ "all": all }))
+                .send()
+                .await
+                .context("purge capsem sessions")?;
+            let body = response_json(response).await?;
+            let purged = json_u64(&body, "purged");
+            let persistent = json_u64(&body, "persistent_purged");
+            let ephemeral = json_u64(&body, "ephemeral_purged");
+            let message = if *all {
+                format!("purged {purged} sessions ({persistent} persistent, {ephemeral} temporary)")
+            } else {
+                format!("purged {ephemeral} temporary sessions")
+            };
+            Ok(ActionOutcome {
+                message,
+                focus_session: None,
+            })
+        }
     }
 }
 
@@ -499,6 +521,12 @@ async fn response_json(response: reqwest::Response) -> Result<serde_json::Value>
         return Ok(serde_json::json!({}));
     }
     serde_json::from_str(&text).context("parse gateway action response")
+}
+
+fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
+    body.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default()
 }
 
 fn join_url(base_url: &str, path_segments: &[&str]) -> Result<reqwest::Url> {

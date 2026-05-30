@@ -60,6 +60,10 @@
 - [x] Preserve pending `Alt+n` create focus until the new VM appears in
       gateway state.
 - [x] Add regression for delayed gateway visibility after create.
+- [x] Make corrupt-profile stopped VMs offer Enter-to-create replacement.
+- [x] Wire confirmed `Alt+p` purge through the installed HTTP gateway.
+- [x] Add render, keymap, and authenticated gateway regression tests for
+      corrupt-profile recovery and purge.
 
 ## Notes
 
@@ -102,7 +106,7 @@
   opens the new-session dialog, `Alt+f` opens the fork dialog, `Alt+r` resumes
   stopped/suspended sessions, `Alt+s` suspends the active session, `Alt+c`
   checkpoints/saves it through the current suspend endpoint, `Alt+t` stops it,
-  and `Alt+d` deletes it.
+  `Alt+d` deletes it, and `Alt+p` purges temporary VMs through `/purge`.
   Action calls run on a
   background worker so long suspend/stop/provision paths do not freeze terminal
   rendering.
@@ -234,10 +238,17 @@
   app renders active control progress in the main pane. `Alt+s` therefore shows
   `suspending...` full screen while the suspend worker is running, not just a
   tiny bottom-bar message.
+- Corrupt-profile recovery correction: a selected bad profile-pin VM now shows
+  `Press Enter to create a replacement`; Enter opens the normal profile-aware
+  create modal, while `Alt+r` remains blocked with the explicit signed-profile
+  error.
+- Purge correction: `Alt+p` opens a confirmation modal for temporary-VM purge
+  and posts authenticated `POST /purge` with `{"all":false}`. Persistent
+  broken VMs remain an explicit `Alt+d` delete action, not a global purge.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (48 lib tests, 2 binary tests),
+- Unit/contract: `cargo test -p capsem-tui` (50 lib tests, 2 binary tests),
   including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
@@ -246,14 +257,16 @@
   logo rendering, no-fake-default profile failure handling, corrupt-profile
   tab filtering plus inventory visibility, create focus targets,
   delayed-create pending focus, suspend/resume stale-terminal reconnect
-  cleanup, full-pane suspend progress rendering, `Alt+l` sessions table,
-  `Alt+i` session info, and `Alt+c` checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (48 lib tests, 2 binary
+  cleanup, full-pane suspend progress rendering, corrupt-profile
+  Enter-to-create recovery, confirmed `Alt+p` purge wiring, `Alt+l` sessions
+  table, `Alt+i` session info, and `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (50 lib tests, 2 binary
   tests), including
   token reuse, live profile-list refresh, named fork request payloads,
-  checkpoint-over-suspend payloads, raw local latency preservation coverage,
-  profile discovery failure behavior for empty services, and local
-  `capsem start` invocation without requiring a gateway token.
+  checkpoint-over-suspend payloads, authenticated `/purge` payloads, raw local
+  latency preservation coverage, profile discovery failure behavior for empty
+  services, and local `capsem start` invocation without requiring a gateway
+  token.
 - CLI shell cutover: `cargo test -p capsem` covers CLI parsing and
   `capsem shell` argument mapping to `capsem-tui`; a black-box command with
   `CAPSEM_SHELL_TUI_BINARY=/bin/echo target/debug/capsem shell my-vm` proves

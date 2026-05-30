@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added confirmed `capsem-tui` service actions for resuming, suspending,
   stopping, and deleting sessions through the installed HTTP gateway without
   blocking the terminal UI.
+- Added `Alt+p` purge in `capsem-tui`, routed through the installed gateway's
+  authenticated `/purge` endpoint for temporary VM cleanup.
 - Added a profile-aware `capsem-tui` new-session dialog with an editable
   prefilled `tmp-*` session name and live profile selection before
   provisioning.
@@ -199,6 +201,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` recovery for stopped VMs with corrupted profile pins:
+  the inactive pane now explains that Enter creates a replacement VM, while
+  `Alt+d` remains available to delete the bad VM entry.
 - Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
   `suspending...` state while the suspend action runs instead of only updating
   the bottom status bar.
