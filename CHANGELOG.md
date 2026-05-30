@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   macOS comparison reruns as one measured performance stack.
 - Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
   in-VM, lifecycle, fork, and security-engine benchmark results.
+- Recorded fresh macOS arm64 canonical `just benchmark` data for
+  `1.2.1780103109` after merging the Linux support branch, including in-VM,
+  endpoint-latency, host-native, lifecycle, fork, parallel, Criterion, and
+  VM-originated security-engine benchmark artifacts.
 - Added `just benchmark-compare` and `scripts/compare_benchmark_artifacts.py`
   to turn committed Linux/macOS benchmark artifacts into ratio and percentage
   comparisons while making missing lanes explicit.

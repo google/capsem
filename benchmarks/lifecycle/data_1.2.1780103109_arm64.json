@@ -1,0 +1,90 @@
+{
+  "version": "0.1.0",
+  "timestamp": 1780149853.5451891,
+  "runs": 3,
+  "operations": {
+    "provision_ms": {
+      "min": 847.4,
+      "mean": 849.1,
+      "max": 851.9,
+      "values": [
+        851.9,
+        847.4,
+        847.9
+      ]
+    },
+    "exec_ready_ms": {
+      "min": 12.9,
+      "mean": 13.0,
+      "max": 13.1,
+      "values": [
+        13.1,
+        12.9,
+        12.9
+      ]
+    },
+    "exec_ms": {
+      "min": 11.8,
+      "mean": 12.0,
+      "max": 12.3,
+      "values": [
+        11.9,
+        12.3,
+        11.8
+      ]
+    },
+    "delete_ms": {
+      "min": 61.2,
+      "mean": 61.4,
+      "max": 61.7,
+      "values": [
+        61.7,
+        61.3,
+        61.2
+      ]
+    },
+    "total_ms": {
+      "min": 933.8,
+      "mean": 935.4,
+      "max": 938.6,
+      "values": [
+        938.6,
+        933.9,
+        933.8
+      ]
+    }
+  },
+  "schema": "capsem.benchmark-artifact.v1",
+  "project_version": "1.2.1780103109",
+  "arch": "arm64",
+  "recorded_at": 1780149853.5454772,
+  "recorded_at_utc": "2026-05-30T14:04:13.545479+00:00",
+  "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
+  "host": {
+    "platform": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:12 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6050",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.4",
+    "cpu_count": 18,
+    "cpu_count_logical": 18,
+    "cpu_model": "Apple M5 Max",
+    "cpu_count_physical": 18,
+    "memory_total_bytes": 137438953472,
+    "os_product_version": "26.5",
+    "memory_total_gb": 128.0
+  },
+  "git": {
+    "commit": "0a425541fbdc03cc9821aafb238a0dd4b26ccdcd",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
+      "benchmarks/capsem-bench/data_1.2.1780103109_arm64.json",
+      "benchmarks/host-native/data_1.2.1780103109_arm64.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_security_packs_microbench.json"
+    ]
+  }
+}
