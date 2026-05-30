@@ -11,6 +11,8 @@
 - Added a live UI authoring lane so `POST /ui/tools/run` stores the latest
   structured tool result, `/ui/spec/demo` exposes it, and the workbench renders
   the authored "Agent Draft" first.
+- Added a chat-shell workbench view that renders the authored A2UI component
+  inside an assistant message while preserving the inspector panes.
 - Added a Rust-owned A2UI v0.9 Basic preview path with typed UI helpers,
   contract tests, server endpoints, and a Svelte/Preline renderer preview.
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering

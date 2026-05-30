@@ -197,19 +197,79 @@
               {/each}
             </div>
 
-            <article class="rounded-xl border border-card-line bg-card shadow-2xs">
+            <article class="overflow-hidden rounded-xl border border-card-line bg-card shadow-2xs">
               <div class="flex items-center justify-between gap-3 border-b border-card-line px-4 py-3">
                 <div>
-                  <h3 class="text-sm font-semibold tracking-normal text-foreground">Rendered preview</h3>
+                  <h3 class="text-sm font-semibold tracking-normal text-foreground">Capsem Chat</h3>
                   <p class="mt-1 text-xs text-muted-foreground-1">{current.api}</p>
                 </div>
                 <span class="inline-flex items-center gap-x-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground">
                   {current.recipe.component}:{current.recipe.variant}
                 </span>
               </div>
-              <div class="bg-surface p-6">
-                <div class="mx-auto w-full max-w-xl">
-                  <A2Node id="root" {surface} recipe={current.recipe} scope={surface.data} onAction={recordAction} />
+              <div class="bg-surface">
+                <div class="mx-auto flex min-h-[520px] w-full max-w-3xl flex-col">
+                  <div class="flex items-center justify-between border-b border-card-line bg-card px-4 py-3">
+                    <div class="flex min-w-0 items-center gap-3">
+                      <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                        C
+                      </div>
+                      <div class="min-w-0">
+                        <div class="truncate text-sm font-semibold text-foreground">Capsem assistant</div>
+                        <div class="truncate text-xs text-muted-foreground-1">UI authoring lane</div>
+                      </div>
+                    </div>
+                    <span class={current.toolRun
+                      ? "inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground"
+                      : "inline-flex items-center rounded-full bg-layer px-2.5 py-1 text-xs font-medium text-layer-foreground"}>
+                      {current.label}
+                    </span>
+                  </div>
+
+                  <div class="flex-1 space-y-5 overflow-auto px-4 py-5">
+                    <div class="flex justify-end">
+                      <div class="max-w-[78%] rounded-2xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground shadow-2xs">
+                        Build me a shell of a chat app and show the generated component inside it.
+                      </div>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                      <div class="flex size-8 shrink-0 items-center justify-center rounded-full bg-card border border-card-line text-xs font-semibold text-foreground">
+                        AI
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="mb-2 text-xs font-medium text-muted-foreground-1">assistant</div>
+                        <div class="rounded-2xl rounded-tl-sm border border-card-line bg-card p-4 shadow-2xs">
+                          <p class="mb-4 text-sm text-muted-foreground-1">
+                            The component below is rendered from the selected A2UI surface, not handwritten chat HTML.
+                          </p>
+                          <div class="rounded-xl border border-card-line bg-surface p-4">
+                            <A2Node id="root" {surface} recipe={current.recipe} scope={surface.data} onAction={recordAction} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="border-t border-card-line bg-card p-4">
+                    <div class="flex items-end gap-3 rounded-xl border border-card-line bg-surface p-2">
+                      <textarea
+                        class="min-h-11 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground-1"
+                        rows="1"
+                        placeholder="Ask Capsem to create a UI..."
+                      ></textarea>
+                      <button
+                        type="button"
+                        class="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover focus:outline-hidden focus:bg-primary-focus"
+                        aria-label="Send"
+                      >
+                        <svg class="size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="m22 2-7 20-4-9-9-4Z"></path>
+                          <path d="M22 2 11 13"></path>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </article>
