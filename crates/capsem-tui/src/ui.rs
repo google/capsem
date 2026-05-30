@@ -434,15 +434,18 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
     lines.push(overlay_line(
         "active input: name; type to edit; Backspace deletes",
     ));
-    lines.push(overlay_line(
-        "Up/Down selects profile; Enter creates; Esc cancels",
-    ));
+    let create_hint = if state.profiles.is_empty() {
+        "profile list unavailable; Enter disabled; Esc cancels"
+    } else {
+        "Up/Down selects profile; Enter creates; Esc cancels"
+    };
+    lines.push(overlay_line(create_hint));
     lines.push(overlay_line(""));
     lines.push(overlay_title("profiles"));
     lines.push(table_header(&["Pick", "Profile", "Name", "Default"]));
 
     if state.profiles.is_empty() {
-        lines.push(focus_line("▶  default"));
+        lines.push(focus_line("profiles unavailable"));
         return lines;
     }
 

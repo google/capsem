@@ -179,19 +179,30 @@
   modal directly, and text/SVG snapshots use the same app renderer so the empty
   service proof matches the interactive path. The modal carries a compact
   gradient CAPSEM wordmark.
+- Create failure regression: when gateway `/profiles` fails and no sessions can
+  provide real profile IDs, `capsem-tui` now leaves the profile list empty
+  instead of synthesizing `default`. The new-session modal renders
+  `profiles unavailable`, keeps Enter disabled, and stays open until a real
+  profile list is available.
+- E2E discipline correction: added
+  `tests/capsem-gateway/test_gw_e2e.py::TestGatewayE2E::test_tui_empty_create_uses_real_gateway_profiles`
+  to run real `capsem-tui --snapshot` against a real gateway/service, verify
+  the modal uses the real default profile, and provision/boot a VM over the
+  same gateway contract.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (37 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (39 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
   modal profile/name flow, selected-field highlighting, named fork modal/action
-  coverage, empty-state auto-create, gradient logo rendering, `Alt+l` sessions
-  table, `Alt+i` session info, and `Alt+c` checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (37 tests), including
+  coverage, empty-state auto-create, gradient logo rendering, no-fake-default
+  profile failure handling, `Alt+l` sessions table, `Alt+i` session info, and
+  `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (39 tests), including
   token reuse, live profile-list refresh, named fork request payloads,
-  checkpoint-over-suspend payloads, and raw local latency preservation
-  coverage.
+  checkpoint-over-suspend payloads, raw local latency preservation coverage,
+  and profile discovery failure behavior for empty services.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Service/core/logger hot paths: `cargo test -p capsem-service`,
@@ -208,6 +219,10 @@
   the installed stopped proof sessions; `just dev-tui`.
 - Gateway wiring: `GatewayProvider::load_async` authenticated HTTP mock test
   plus live local snapshot through the installed gateway.
+- Gateway E2E: `uv run python -m pytest
+  tests/capsem-gateway/test_gw_e2e.py::TestGatewayE2E::test_tui_empty_create_uses_real_gateway_profiles
+  -q -s` is now present in the E2E suite. Local execution skipped because
+  this checkout is missing `assets/arm64/rootfs.squashfs`.
 - Service actions: confirmed action key tests plus authenticated mock gateway
   tests for successful stop, named profile create, named fork, checkpoint, and
   surfaced service error bodies.
@@ -223,7 +238,9 @@
   multi-session terminal proof works with MCP-created `tui-proof-a` and
   `tui-proof-b`; installed gateway terminal WebSocket returned VM shell output
   from `tui-proof-a`; post-fix installed fd stress held both VM process fd
-  counts flat through repeated service metrics polling.
+  counts flat through repeated service metrics polling; the TUI create
+  gateway-contract E2E is committed and skipped locally only because the
+  worktree asset directory lacks `rootfs.squashfs`.
 - Telemetry: current gateway `/status` counters mapped; event-stream semantics
   still open.
 - Performance: 8-live-VM endpoint gate passes with `/list` sub-ms, `/stats`

@@ -84,6 +84,29 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
 }
 
 #[test]
+fn empty_create_modal_blocks_enter_when_profiles_are_unavailable() {
+    let mut state = fixture_state();
+    state.active_session_id.clear();
+    state.sessions.clear();
+    state.profiles.clear();
+    let mut app = App::new(state);
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
+    assert!(snapshot.contains("profiles unavailable"));
+    assert!(
+        !snapshot.contains("▶  default"),
+        "the TUI must not invent a default profile when profile discovery failed"
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Consumed,
+        "create should be disabled until a real profile list is available"
+    );
+    assert_eq!(app.overlay(), AppOverlay::Create);
+}
+
+#[test]
 fn tab_colors_use_selected_yellow_and_unselected_blue_only() {
     let buffer = render_test_buffer(&fixture_state(), 100, 24).expect("render buffer");
     let row = buffer.area.height - 1;
@@ -651,6 +674,48 @@ async fn gateway_provider_loads_status_over_http_gateway() {
 }
 
 #[tokio::test]
+async fn gateway_provider_does_not_invent_default_profile_when_profiles_fail() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else if request.contains("GET /status ") {
+                write_json_response(&mut stream, gateway_empty_status_body()).await;
+            } else {
+                assert!(
+                    request.contains("GET /profiles "),
+                    "unexpected request: {request:?}"
+                );
+                write_response(
+                    &mut stream,
+                    "502 Bad Gateway",
+                    r#"{"error":"service profile discovery unavailable"}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let state = GatewayProvider::new(format!("http://{addr}"))
+        .load_async()
+        .await
+        .expect("load state over gateway");
+
+    assert!(state.sessions.is_empty());
+    assert!(
+        state.profiles.is_empty(),
+        "profile discovery failure with no sessions must not synthesize default"
+    );
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn gateway_provider_reuses_token_across_status_refreshes() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -1029,6 +1094,16 @@ fn gateway_status_body() -> &'static str {
                 "denied_requests": 1
             }
         ]
+    }"#
+}
+
+fn gateway_empty_status_body() -> &'static str {
+    r#"{
+        "service": "running",
+        "gateway_version": "test",
+        "vm_count": 0,
+        "resource_summary": null,
+        "vms": []
     }"#
 }
 

@@ -226,14 +226,6 @@ fn profiles_from_sessions(state: &AppState) -> Vec<ProfileOption> {
             is_default: profiles.is_empty(),
         });
     }
-    if profiles.is_empty() {
-        profiles.push(ProfileOption {
-            id: "default".to_string(),
-            name: "default".to_string(),
-            description: None,
-            is_default: true,
-        });
-    }
     profiles
 }
 

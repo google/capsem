@@ -367,7 +367,10 @@ impl App {
                 if name.is_empty() {
                     return AppAction::Consumed;
                 }
-                let profile_id = selected_profile_id(&self.state, draft.selected_profile);
+                let Some(profile_id) = selected_profile_id(&self.state, draft.selected_profile)
+                else {
+                    return AppAction::Consumed;
+                };
                 self.create_draft = None;
                 self.overlay = AppOverlay::None;
                 AppAction::Invoke(ControlAction::CreateSession { name, profile_id })
@@ -485,13 +488,12 @@ fn default_profile_index(state: &AppState) -> usize {
         .unwrap_or_default()
 }
 
-fn selected_profile_id(state: &AppState, index: usize) -> String {
+fn selected_profile_id(state: &AppState, index: usize) -> Option<String> {
     state
         .profiles
         .get(index)
         .or_else(|| state.profiles.first())
         .map(|profile| profile.id.clone())
-        .unwrap_or_else(|| "default".to_string())
 }
 
 fn next_tmp_name(state: &AppState) -> String {

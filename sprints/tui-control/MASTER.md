@@ -144,6 +144,14 @@ attention markers.
 - Added the empty-state startup path: when no sessions exist, the TUI opens
   the new-session modal directly. Text and SVG snapshots now use the same app
   renderer, and the modal includes a compact gradient CAPSEM wordmark.
+- Fixed the create failure regression from the empty-service path: profile
+  discovery failures no longer synthesize `default`, the modal shows
+  `profiles unavailable`, and Enter is disabled until a real profile list is
+  loaded.
+- Added gateway E2E coverage for the TUI create contract: the test runs real
+  `capsem-tui --snapshot` against a real gateway/service, verifies the modal
+  uses the real default profile, then provisions and boot-checks a VM through
+  the same gateway contract.
 
 ## Testing Gate
 
@@ -172,7 +180,13 @@ attention markers.
   and the branded empty-state new-session modal.
 - New-session regression: `cargo test -p capsem-tui` covers create-modal
   rendering, profile selection, name editing, and authenticated named-profile
-  provision request payloads.
+  provision request payloads, including the no-profile failure path where
+  Enter is blocked instead of creating with a fake `default` profile.
+- Gateway E2E regression:
+  `tests/capsem-gateway/test_gw_e2e.py::TestGatewayE2E::test_tui_empty_create_uses_real_gateway_profiles`
+  is now in the E2E suite. The local run skipped because this checkout is
+  missing `assets/arm64/rootfs.squashfs`; it will execute in an asset-complete
+  gateway E2E gate.
 - Fork regression: `cargo test -p capsem-tui` covers fork-modal rendering,
   name editing, help discoverability, and authenticated gateway fork payloads.
 - Checkpoint regression: `cargo test -p capsem-tui` covers `Alt+c` confirmation

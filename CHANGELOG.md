@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results.
 
 ### Fixed
+- Fixed `capsem-tui` empty-session creation so the TUI no longer invents a
+  `default` profile when `/profiles` is unavailable; the new-session modal now
+  blocks Enter until a real profile list is loaded and has unit plus gateway
+  E2E coverage for the profile-backed create contract.
 - Fixed `capsem-tui` stopped-session rendering so stopped/suspended/failed
   tabs are greyed, the main pane shows a `Press Enter to resume` affordance
   instead of going blank, and the terminal bridge disconnects instead of trying

@@ -4,7 +4,10 @@ These tests boot real VMs through the gateway TCP endpoint.
 Requires capsem-service binary, VM assets, and codesigned binaries.
 """
 
+import subprocess
 import uuid
+
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +17,8 @@ from helpers.profile_asset_fixture import asset_source_dir, find_asset, write_pr
 from helpers.service import ServiceInstance, vm_name
 
 pytestmark = [pytest.mark.gateway, pytest.mark.e2e]
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+TUI_BINARY = PROJECT_ROOT / "target/debug/capsem-tui"
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +59,54 @@ def e2e_client(e2e_env):
 
 
 class TestGatewayE2E:
+
+    def test_tui_empty_create_uses_real_gateway_profiles(self, e2e_env, e2e_client):
+        """Real TUI snapshot + gateway provision prove create does not use a fake profile."""
+        gw, _ = e2e_env
+        profiles = e2e_client.get("/profiles", timeout=30)
+        profile_rows = profiles.get("profiles", [])
+        assert profile_rows, profiles
+        profile_id = profiles.get("default_profile") or profile_rows[0]["profile"]["id"]
+
+        snapshot = subprocess.run(
+            [
+                str(TUI_BINARY),
+                "--gateway-url",
+                gw.base_url,
+                "--snapshot",
+                "--width",
+                "100",
+                "--height",
+                "24",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert snapshot.returncode == 0, snapshot.stderr
+        assert profile_id in snapshot.stdout
+        assert "profiles unavailable" not in snapshot.stdout
+        assert "▶  default" not in snapshot.stdout
+
+        name = vm_name("gw-tui-create")
+        resp = e2e_client.post(
+            "/provision",
+            {
+                "name": name,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "profile_id": profile_id,
+            },
+            timeout=240,
+        )
+        assert resp is not None, "TUI create gateway contract provision failed"
+        vm_id = resp.get("id", name)
+        try:
+            assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=180), (
+                f"VM {vm_id} never became exec-ready through gateway"
+            )
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
 
     def test_profile_selected_create_download_boot_via_gateway(self, e2e_client):
         """HTTP create selects a profile, reconciles its assets, boots, and pins."""
