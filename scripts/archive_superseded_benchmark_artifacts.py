@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TESTS_DIR = PROJECT_ROOT / "tests"
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+from helpers.benchmark_artifacts import benchmark_arch  # noqa: E402
+
 DATA_RE = re.compile(r"^data_(?P<version>.+?)_(?P<arch>x86_64|arm64)(?:_(?P<suffix>.+))?\.json$")
 LEGACY_DATA_RE = re.compile(r"^data_(?P<version>.+?)\.json$")
 
@@ -159,11 +166,56 @@ def archive_superseded(
     return archive_path, superseded
 
 
-def archive_manifest(root: Path, artifacts: list[BenchmarkArtifact]) -> dict[str, Any]:
+def archive_current_arch(
+    root: Path,
+    *,
+    arch: str | None = None,
+    archive_name: str | None = None,
+    dry_run: bool = False,
+) -> tuple[Path | None, list[BenchmarkArtifact]]:
+    selected_arch = arch or benchmark_arch()
+    artifacts = [
+        artifact
+        for artifact in discover_artifacts(root)
+        if artifact.metadata.get("arch") == selected_arch
+    ]
+    if not artifacts:
+        return None, []
+
+    archive_dir = root / "benchmarks" / "archive"
+    archive_path = archive_dir / (archive_name or default_archive_name(prefix="benchmark-prerun"))
+    if archive_path.suffix != ".zip":
+        archive_path = archive_path.with_suffix(".zip")
+
+    if dry_run:
+        return archive_path, artifacts
+
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    manifest = archive_manifest(
+        root,
+        artifacts,
+        policy=(
+            "copy current generated data_*.json artifacts for this architecture "
+            "before just benchmark overwrites active lanes"
+        ),
+    )
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
+        for artifact in artifacts:
+            zf.write(artifact.path, artifact.path.relative_to(root).as_posix())
+    return archive_path, artifacts
+
+
+def archive_manifest(
+    root: Path,
+    artifacts: list[BenchmarkArtifact],
+    *,
+    policy: str = "keep newest generated data_*.json per category/arch/lane; zip superseded artifacts",
+) -> dict[str, Any]:
     return {
         "schema": "capsem.benchmark-archive.v1",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "policy": "keep newest generated data_*.json per category/arch/lane; zip superseded artifacts",
+        "policy": policy,
         "artifacts": [
             {
                 "path": artifact.path.relative_to(root).as_posix(),
@@ -183,9 +235,9 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def default_archive_name() -> str:
+def default_archive_name(prefix: str = "benchmark-history") -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"benchmark-history-{timestamp}.zip"
+    return f"{prefix}-{timestamp}.zip"
 
 
 def parse_args() -> argparse.Namespace:
@@ -193,16 +245,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--archive-name", help="Archive filename, mostly for tests.")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--archive-current-arch",
+        action="store_true",
+        help="Copy current active artifacts for this host architecture before a benchmark run overwrites them.",
+    )
+    parser.add_argument("--arch", help="Architecture for --archive-current-arch.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    archive_path, archived = archive_superseded(
-        args.root,
-        archive_name=args.archive_name,
-        dry_run=args.dry_run,
-    )
+    if args.archive_current_arch:
+        archive_path, archived = archive_current_arch(
+            args.root,
+            arch=args.arch,
+            archive_name=args.archive_name,
+            dry_run=args.dry_run,
+        )
+    else:
+        archive_path, archived = archive_superseded(
+            args.root,
+            archive_name=args.archive_name,
+            dry_run=args.dry_run,
+        )
     if not archived:
         print("No superseded benchmark artifacts to archive.")
         return 0

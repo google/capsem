@@ -111,3 +111,25 @@ def test_dry_run_does_not_delete_or_write_archive(tmp_path):
     assert old.exists()
     assert new.exists()
     assert not archive_path.exists()
+
+
+def test_archive_current_arch_copies_without_deleting(tmp_path):
+    linux = tmp_path / "benchmarks" / "capsem-bench" / "data_1.2.1_x86_64.json"
+    mac = tmp_path / "benchmarks" / "capsem-bench" / "data_1.2.1_arm64.json"
+    write_json(linux, {"project_version": "1.2.1", "arch": "x86_64", "recorded_at": 10})
+    write_json(mac, {"project_version": "1.2.1", "arch": "arm64", "recorded_at": 10})
+
+    archive_path, archived = archive_script.archive_current_arch(
+        tmp_path,
+        arch="x86_64",
+        archive_name="prerun.zip",
+    )
+
+    assert archive_path == tmp_path / "benchmarks" / "archive" / "prerun.zip"
+    assert [item.path for item in archived] == [linux]
+    assert linux.exists()
+    assert mac.exists()
+    with zipfile.ZipFile(archive_path) as zf:
+        names = zf.namelist()
+        assert "benchmarks/capsem-bench/data_1.2.1_x86_64.json" in names
+        assert "benchmarks/capsem-bench/data_1.2.1_arm64.json" not in names

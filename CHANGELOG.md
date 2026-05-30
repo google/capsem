@@ -8,10 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Added canonical `just benchmark` retention so superseded generated
-  benchmark artifacts are zipped under `benchmarks/archive/` and active
-  benchmark directories keep only the latest artifact for each category,
-  architecture, and benchmark lane.
+- Added canonical `just benchmark` retention so same-architecture active
+  artifacts are copied to `benchmarks/archive/` before reruns, superseded
+  generated benchmark artifacts are zipped afterward, and active benchmark
+  directories keep only the latest artifact for each category, architecture,
+  and benchmark lane.
 - Added the Hypervisor Improvement meta sprint to turn the Firecracker source
   audit into structured sub-sprints for KVM safety, event delivery,
   observability/status/OTel, CPU/SMP lifecycle, storage/rootfs experiments, and

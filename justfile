@@ -889,6 +889,8 @@ benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
+    echo "=== Preserve current benchmark artifacts ==="
+    uv run python scripts/archive_superseded_benchmark_artifacts.py --archive-current-arch
     echo "=== Criterion microbenchmarks ==="
     cargo bench -p capsem-security-engine --bench security_engine_cel
     cargo bench -p capsem-core --bench security_packs
