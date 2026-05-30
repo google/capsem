@@ -103,8 +103,12 @@ attention markers.
   gateway WebSocket command returned `TUI_WS_PROOF_A` from `tui-proof-a`.
 - Replaced the temporary terminal text parser with `vt100`, preserving xterm
   screen state, SGR colors, and text attributes. Client-side adjacent output
-  coalescing and dirty-frame redraws now mirror the existing `capsem shell`
-  speed contract instead of repainting on every loop.
+  coalescing and dirty-frame redraws now preserve the old shell speed contract
+  without repainting on every loop.
+- Cut over `capsem shell` to launch `capsem-tui`, making the TUI the only
+  public interactive VM shell surface. `capsem shell <session>` now opens the
+  TUI focused on that session; bare `capsem shell` opens the TUI home/create
+  flow.
 - Tightened interactive control polish: help opens on `Alt+?`, overlays render
   as Ratatui modal blocks, service latency renders as a glued `####ms●`
   segment, and active terminal geometry is resent whenever the real terminal
@@ -199,3 +203,5 @@ attention markers.
   name editing, help discoverability, and authenticated gateway fork payloads.
 - Checkpoint regression: `cargo test -p capsem-tui` covers `Alt+c` confirmation
   and the authenticated checkpoint request over the current suspend endpoint.
+- Shell cutover regression: `cargo test -p capsem` covers CLI parsing and
+  `capsem shell` to `capsem-tui --session` argument mapping.

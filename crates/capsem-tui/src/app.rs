@@ -231,6 +231,19 @@ impl App {
         self.sync_active_session();
     }
 
+    pub fn select_session_by_id(&mut self, id: &str) -> bool {
+        let Some(index) = self
+            .state
+            .sessions
+            .iter()
+            .position(|session| session.id == id || session.title == id)
+        else {
+            return false;
+        };
+        self.select_session(index);
+        true
+    }
+
     fn sync_active_session(&mut self) {
         let Some(session) = self.state.sessions.get(self.active_index) else {
             return;

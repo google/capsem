@@ -45,6 +45,10 @@ struct Cli {
     #[arg(long, default_value_t = 1_000)]
     refresh_ms: u64,
 
+    /// Start focused on a specific session id or title.
+    #[arg(long)]
+    session: Option<String>,
+
     /// Snapshot width.
     #[arg(long, default_value_t = 100)]
     width: u16,
@@ -57,20 +61,15 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let state = load_state(&cli)?;
+    let app = app_from_state(state, cli.session.as_deref())?;
 
     if cli.snapshot_svg {
-        println!(
-            "{}",
-            render_app_svg_snapshot(&App::new(state), cli.width, cli.height)?
-        );
+        println!("{}", render_app_svg_snapshot(&app, cli.width, cli.height)?);
         return Ok(());
     }
 
     if cli.snapshot {
-        println!(
-            "{}",
-            render_app_snapshot(&App::new(state), cli.width, cli.height)?
-        );
+        println!("{}", render_app_snapshot(&app, cli.width, cli.height)?);
         return Ok(());
     }
 
@@ -79,12 +78,7 @@ fn main() -> Result<()> {
         .as_ref()
         .map(|provider| TerminalBridge::spawn(provider.base_url().to_string()));
 
-    run_interactive(
-        App::new(state),
-        live_provider,
-        terminal_bridge,
-        cli.refresh_interval(),
-    )
+    run_interactive(app, live_provider, terminal_bridge, cli.refresh_interval())
 }
 
 fn load_state(cli: &Cli) -> Result<AppState> {
@@ -103,6 +97,16 @@ fn load_state(cli: &Cli) -> Result<AppState> {
             Err(error).with_context(|| format!("load capsem gateway state from {base_url}"))
         }
     }
+}
+
+fn app_from_state(state: AppState, session: Option<&str>) -> Result<App> {
+    let mut app = App::new(state);
+    if let Some(session) = session {
+        if !app.select_session_by_id(session) {
+            anyhow::bail!("session not found in TUI state: {session}");
+        }
+    }
+    Ok(app)
 }
 
 fn live_provider(cli: &Cli) -> Option<GatewayProvider> {

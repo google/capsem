@@ -264,6 +264,20 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
 }
 
 #[test]
+fn app_can_start_focused_on_session_id_or_title() {
+    let mut app = App::new(fixture_state());
+
+    assert!(app.select_session_by_id("linux-os"));
+    assert_eq!(app.state().active_session_id, "linux-os");
+
+    assert!(app.select_session_by_id("Profile V2"));
+    assert_eq!(app.state().active_session_id, "profile-v2");
+
+    assert!(!app.select_session_by_id("missing-session"));
+    assert_eq!(app.state().active_session_id, "profile-v2");
+}
+
+#[test]
 fn replace_state_preserves_fresh_service_latency_measurement() {
     let mut initial = fixture_state();
     initial.service.latency = std::time::Duration::from_millis(1);

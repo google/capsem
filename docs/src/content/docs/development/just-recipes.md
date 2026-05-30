@@ -11,14 +11,14 @@ sidebar:
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just shell` | Build/sign as needed, boot a temporary VM, and attach a shell | ~10s after first build |
+| `just shell` | Build/sign as needed, start or reuse the service, and open the TUI | ~10s after first build |
 | `just exec "CMD"` | Run a command in a fresh temporary VM, then destroy it | ~10s after first build |
 | `just run-service` | Start or reuse the daemon service | continuous |
 | `just ui` | Tauri desktop app with hot reload and the service path | continuous |
 | `just dev-frontend` | Frontend-only dev server with mock data on port 5173 | continuous |
 | `just build-ui [release]` | Frontend build plus `cargo build -p capsem-app` | build dependent |
 
-`just shell` is the daily VM driver. `just exec "CMD"` is the one-shot path for
+`just shell` is the daily TUI driver. `just exec "CMD"` is the one-shot path for
 quick checks. After frontend changes intended for the desktop app, use
 `just build-ui`; the Tauri binary embeds `frontend/dist` at cargo build time.
 

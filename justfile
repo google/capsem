@@ -9,7 +9,7 @@
 #   _ensure-service kills any running service, launches a fresh one, waits for socket
 #
 # User-facing recipe chains:
-#   shell            -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
+#   shell            -> _check-assets + _pack-initrd + _ensure-service + TUI
 #   ui               -> _ensure-setup + _pnpm-install + run-service (service + Tauri dev hot-reload)
 #   run-service      -> _check-assets + _pack-initrd + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
@@ -36,7 +36,7 @@
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
 #   just build-assets (builds kernel + rootfs -- needs docker via Colima on macOS)
 #
-# Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
+# Daily dev:          just shell         (service daemon + TUI, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
 # Local install:      just install       (hard clean + native package install + status/VM network gate)
@@ -293,7 +293,7 @@ run-ui *ARGS: build-ui
     sleep 1
     ./target/debug/capsem-app {{ARGS}}
 
-# Start service daemon + boot temporary VM + shell (~10s after first build)
+# Start service daemon + open the TUI (~10s after first build)
 shell: _check-assets _pack-initrd _ensure-service
     #!/bin/bash
     set -euo pipefail

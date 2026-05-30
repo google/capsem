@@ -45,6 +45,10 @@
 - [x] Run live installed-gateway empty-service snapshot.
 - [x] Run live two-session terminal proof.
 - [x] Commit functional milestone.
+- [x] Replace legacy `capsem shell` with `capsem-tui`.
+- [x] Remove old CLI shell PTY bridge code.
+- [x] Add CLI/TUI cutover tests.
+- [ ] Commit v1 shell cutover.
 
 ## Notes
 
@@ -197,6 +201,9 @@
 - Token-refresh correction: after a service/gateway restart, the provider now
   clears a stale cached gateway token and retries one load with a fresh
   `/token`, so a successful start can converge back to live service state.
+- V1 shell cutover: `capsem shell` is now the stable public entry point for
+  the TUI, not a second terminal implementation. The legacy direct IPC PTY
+  bridge is intentionally removed so terminal semantics live in one surface.
 
 ## Coverage Ledger
 
@@ -212,6 +219,10 @@
   checkpoint-over-suspend payloads, raw local latency preservation coverage,
   profile discovery failure behavior for empty services, and local
   `capsem start` invocation without requiring a gateway token.
+- CLI shell cutover: `cargo test -p capsem` covers CLI parsing and
+  `capsem shell` argument mapping to `capsem-tui`; a black-box command with
+  `CAPSEM_SHELL_TUI_BINARY=/bin/echo target/debug/capsem shell my-vm` proves
+  the actual binary dispatch emits `--session my-vm`.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Service/core/logger hot paths: `cargo test -p capsem-service`,

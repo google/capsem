@@ -161,6 +161,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   modal directly and brands it with a compact gradient CAPSEM wordmark.
 - Changed the `capsem-tui` status hint to `help: alt+?` and moved it to the
   far right after active-session statistics, including the empty-session state.
+- Changed `capsem shell` to launch `capsem-tui` as the single interactive VM
+  control surface; `capsem shell <session>` now opens the TUI focused on that
+  session instead of using the legacy direct PTY bridge.
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
   leaving snapshot symlink restore scoped to `/root`.
