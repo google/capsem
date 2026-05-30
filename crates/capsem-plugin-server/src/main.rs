@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
 fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(ui_preview::preview_html))
+        .route("/chat", get(ui_preview::preview_html))
         .route("/ui-preview", get(ui_preview::preview_html))
         .route("/ui/spec/demo", get(ui_preview::demo))
         .route("/ui/spec/validate", post(ui_preview::validate))

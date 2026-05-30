@@ -1,5 +1,6 @@
 <script lang="ts">
   import A2Node from "./A2Node.svelte";
+  import ChatPage from "./ChatPage.svelte";
   import {
     buildSurface,
     type A2uiMessage,
@@ -27,6 +28,7 @@
   let error = $state("");
   let actions = $state<RenderAction[]>([]);
   let refreshTimer: number | undefined;
+  const cleanChatPage = window.location.pathname === "/chat";
 
   let items = $derived.by<WorkbenchItem[]>(() => {
     if (!payload) return [];
@@ -121,6 +123,9 @@
   }
 </script>
 
+{#if cleanChatPage}
+  <ChatPage />
+{:else}
 <main class="min-h-screen bg-surface text-foreground">
   <div class="flex min-h-screen">
     <aside class="hidden w-72 shrink-0 border-e border-card-line bg-card lg:block">
@@ -334,3 +339,4 @@
     </section>
   </div>
 </main>
+{/if}

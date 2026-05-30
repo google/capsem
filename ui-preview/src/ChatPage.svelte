@@ -1,0 +1,155 @@
+<script lang="ts">
+  import A2Node from "./A2Node.svelte";
+  import { buildSurface, type A2uiMessage, type PreviewPayload, type PreviewRecipe, type RenderAction } from "./a2ui";
+  import { onDestroy, onMount } from "svelte";
+
+  type ChatSurface = {
+    label: string;
+    recipe: PreviewRecipe;
+    messages: A2uiMessage[];
+  };
+
+  let payload = $state<PreviewPayload | null>(null);
+  let error = $state("");
+  let actions = $state<RenderAction[]>([]);
+  let refreshTimer: number | undefined;
+
+  let chatSurface = $derived.by<ChatSurface | null>(() => {
+    const authored = payload?.authored?.surfaces[0];
+    if (authored) {
+      return {
+        label: payload?.authored?.ok ? "live" : "invalid",
+        recipe: authored.recipe ?? {
+          component: "card",
+          variant: "simple",
+          docsUrl: "https://preline.co/docs/components/card.html",
+        },
+        messages: authored.messages,
+      };
+    }
+
+    const fallback = payload?.toolAcceptance.surfaces[0];
+    if (!fallback) return null;
+    return {
+      label: "demo",
+      recipe: {
+        component: "alert",
+        variant: "discovery",
+        docsUrl: "https://preline.co/docs/components/alerts.html#discovery",
+      },
+      messages: fallback.messages,
+    };
+  });
+
+  let surface = $derived(chatSurface ? buildSurface(chatSurface.messages) : null);
+
+  onMount(() => {
+    loadPayload();
+    refreshTimer = window.setInterval(loadPayload, 1500);
+  });
+
+  onDestroy(() => {
+    if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+  });
+
+  function loadPayload(): void {
+    fetch("/ui/spec/demo")
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((body: PreviewPayload) => {
+        payload = body;
+      })
+      .catch((cause: Error) => {
+        error = cause.message;
+      });
+  }
+
+  function recordAction(action: RenderAction): void {
+    actions = [{ ...action, context: action.context ?? {} }, ...actions].slice(0, 4);
+  }
+</script>
+
+<main class="min-h-screen bg-surface text-foreground">
+  <section class="mx-auto flex min-h-screen w-full max-w-4xl flex-col bg-card shadow-2xs">
+    <header class="flex items-center justify-between border-b border-card-line px-4 py-3">
+      <div class="flex min-w-0 items-center gap-3">
+        <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+          C
+        </div>
+        <div class="min-w-0">
+          <h1 class="truncate text-sm font-semibold text-foreground">Capsem Chat</h1>
+          <p class="truncate text-xs text-muted-foreground-1">UI authoring lane</p>
+        </div>
+      </div>
+      {#if chatSurface}
+        <span class="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground">
+          {chatSurface.label}
+        </span>
+      {/if}
+    </header>
+
+    {#if error}
+      <div class="m-4 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive">
+        {error}
+      </div>
+    {:else if !chatSurface || !surface}
+      <div class="flex flex-1 items-center justify-center text-sm text-muted-foreground-1">
+        Loading chat...
+      </div>
+    {:else}
+      <div class="flex-1 space-y-5 overflow-auto bg-surface px-4 py-6">
+        <div class="flex justify-end">
+          <div class="max-w-[78%] rounded-2xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground shadow-2xs">
+            Build me a shell of a chat app and show the generated component inside it.
+          </div>
+        </div>
+
+        <div class="flex items-start gap-3">
+          <div class="flex size-8 shrink-0 items-center justify-center rounded-full border border-card-line bg-card text-xs font-semibold text-foreground">
+            AI
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="mb-2 text-xs font-medium text-muted-foreground-1">assistant</div>
+            <div class="rounded-2xl rounded-tl-sm border border-card-line bg-card p-4 shadow-2xs">
+              <div class="rounded-xl border border-card-line bg-surface p-4">
+                <A2Node id="root" {surface} recipe={chatSurface.recipe} scope={surface.data} onAction={recordAction} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {#if actions.length}
+          <div class="ms-11 grid gap-2">
+            {#each actions as action}
+              <div class="rounded-lg border border-card-line bg-card px-3 py-2 text-xs text-muted-foreground-1">
+                {action.name}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <footer class="border-t border-card-line bg-card p-4">
+        <div class="flex items-end gap-3 rounded-xl border border-card-line bg-surface p-2">
+          <textarea
+            class="min-h-11 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground-1"
+            rows="1"
+            placeholder="Ask Capsem to create a UI..."
+          ></textarea>
+          <button
+            type="button"
+            class="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover focus:outline-hidden focus:bg-primary-focus"
+            aria-label="Send"
+          >
+            <svg class="size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m22 2-7 20-4-9-9-4Z"></path>
+              <path d="M22 2 11 13"></path>
+            </svg>
+          </button>
+        </div>
+      </footer>
+    {/if}
+  </section>
+</main>

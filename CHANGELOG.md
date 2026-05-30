@@ -13,6 +13,8 @@
   the authored "Agent Draft" first.
 - Added a chat-shell workbench view that renders the authored A2UI component
   inside an assistant message while preserving the inspector panes.
+- Added a clean `/chat` page for the user-facing chat shell, separate from the
+  diagnostic workbench.
 - Added a Rust-owned A2UI v0.9 Basic preview path with typed UI helpers,
   contract tests, server endpoints, and a Svelte/Preline renderer preview.
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering
