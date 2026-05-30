@@ -167,7 +167,7 @@ pub enum ProcessToService {
         data: Option<Vec<u8>>,
         error: Option<String>,
     },
-    /// Guest requested shutdown (forwarded from capsem-sysutil via vsock:5004).
+    /// Deprecated compatibility frame. Guest-initiated shutdown is disabled.
     ShutdownRequested { id: String },
     /// Guest requested suspend (forwarded from capsem-sysutil via vsock:5004).
     SuspendRequested { id: String },

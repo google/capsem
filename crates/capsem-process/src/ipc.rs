@@ -110,7 +110,7 @@ pub(crate) async fn handle_ipc_connection(
     });
 
     // Every connection receives low-volume lifecycle events (StateChanged,
-    // ShutdownRequested, SuspendRequested) from the broadcast. TerminalOutput
+    // deprecated ShutdownRequested frames, SuspendRequested) from the broadcast. TerminalOutput
     // is high-volume and still opt-in via StartTerminalStream. Without this,
     // a suspend-only connection never sees StateChanged { state: "Suspended" }
     // and the service times out waiting for confirmation.

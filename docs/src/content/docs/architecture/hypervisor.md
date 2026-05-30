@@ -81,7 +81,7 @@ All guest-host communication uses vsock (virtio socket), with dedicated ports:
 | 5000 | Control messages (resize, heartbeat, exec, file I/O) | capsem-pty-agent |
 | 5001 | Terminal data (PTY I/O) | capsem-pty-agent |
 | 5002 | MITM proxy and framed guest MCP endpoint | capsem-net-proxy, capsem-mcp-server |
-| 5004 | Lifecycle commands (shutdown/suspend) | capsem-sysutil |
+| 5004 | Lifecycle commands (suspend; shutdown frames ignored for compatibility) | capsem-sysutil |
 | 5005 | Exec output (direct child stdout) | capsem-pty-agent |
 | 5006 | Kernel audit stream | capsem-pty-agent |
 | 5007 | DNS proxy queries | capsem-dns-proxy |

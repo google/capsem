@@ -85,6 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results.
 
 ### Changed
+- Disabled in-VM shutdown commands. `capsem-sysutil` now only supports guest
+  suspend, `capsem-init` removes `/sbin/shutdown`, `/sbin/halt`,
+  `/sbin/poweroff`, and `/sbin/reboot` from the VM overlay, and the host
+  ignores deprecated shutdown lifecycle frames for compatibility.
 - Gated the Linux KVM virtio-blk io_uring backend to writable block devices
   after the first benchmark showed scratch sequential-read gains but rootfs and
   AI CLI startup regressions when io_uring was used unconditionally.

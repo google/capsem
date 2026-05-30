@@ -104,7 +104,7 @@ pub const VSOCK_PORT_CONTROL: u32 = 5000;
 pub const VSOCK_PORT_TERMINAL: u32 = 5001;
 /// vsock port for SNI proxy (HTTPS/HTTP traffic from guest).
 pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
-/// vsock port for guest lifecycle commands (shutdown/suspend from capsem-sysutil).
+/// vsock port for guest lifecycle commands (currently suspend from capsem-sysutil).
 pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
 /// vsock port for exec output (direct child process stdout from guest).
 pub const VSOCK_PORT_EXEC: u32 = 5005;
@@ -513,7 +513,7 @@ pub enum GuestToHost {
     /// Error encountered during a file operation or exec.
     Error { id: u64, message: String },
     // -- Lifecycle --
-    /// Guest requests shutdown.
+    /// Deprecated: guest shutdown is disabled; hosts should ignore this.
     ShutdownRequest,
     /// Guest requests suspend.
     SuspendRequest,

@@ -21,7 +21,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 | `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |
 | `capsem-app` | Thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). 2 IPC commands: `open_url`, `check_for_app_update`. Bundled `frontend/dist` as offline fallback. Crate name matches directory; binary is `capsem-app`. | `main.rs` |
 | `capsem-tray` | System tray. Polls gateway for VM status, quick actions (open dashboard, quit). | `main.rs`, `menu.rs` |
-| `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent + file I/O), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay), `sysutil.rs` (lifecycle multi-call: shutdown/halt/poweroff/reboot/suspend) |
+| `capsem-agent` | Guest binaries. Cross-compiled for aarch64/x86_64-linux-musl. | `main.rs` (PTY agent + file I/O), `net_proxy.rs` (TCP relay), `mcp_server.rs` (MCP relay), `sysutil.rs` (guest suspend helper; in-VM shutdown disabled) |
 | `capsem-logger` | Session DB schema, queries, async writer. | `schema.rs`, `writer.rs`, `events.rs` |
 | `capsem-proto` | Shared protocol types. | `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost) |
 | `capsem-guard` | Companion-process lifecycle primitives: parent-watch + singleton flock. Used by gateway and tray to refuse-standalone, enforce one-instance, and self-exit when the service dies (incl. SIGKILL). | `src/lib.rs` (`install`, `Singleton`, `watch_parent_or_exit`) |

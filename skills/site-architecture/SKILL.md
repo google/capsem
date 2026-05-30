@@ -22,7 +22,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Guest-side:**
 - **capsem-init** (`capsem-init`): PID 1, sets up air-gapped networking, mounts filesystems, deploys guest binaries, launches daemons, writes boot timing JSONL
 - **capsem-pty-agent** (`capsem-pty-agent`): main guest agent -- PTY bridge, control channel, exec, file I/O, shutdown handler (see "Guest agent architecture" below)
-- **capsem-sysutil** (`capsem-sysutil`): multi-call binary for guest lifecycle commands (shutdown, halt, poweroff, reboot, suspend). Opens its own vsock:5004 connection independently of the agent, so shutdown works even if the agent is hung. Symlinked by capsem-init to `/sbin/shutdown`, `/sbin/halt`, `/sbin/poweroff`, `/sbin/reboot`, `/usr/local/bin/suspend`.
+- **capsem-sysutil** (`capsem-sysutil`): guest suspend helper. Opens its own vsock:5004 connection independently of the agent, so suspend works even if the agent is hung. Symlinked by capsem-init only to `/usr/local/bin/suspend`; in-VM shutdown commands are disabled.
 - **capsem-net-proxy** (`capsem-net-proxy`): redirects HTTPS traffic to host MITM proxy via vsock
 - **capsem-mcp-server** (`capsem-mcp-server`): guest MCP stdio-to-framed-vsock relay for tool calls to the host MITM MCP endpoint
 
@@ -114,7 +114,7 @@ Serial console stays active for kernel boot logs. Terminal I/O switches to vsock
 | 5000 | Control messages (resize, heartbeat, exec commands, file I/O) |
 | 5001 | Terminal data (PTY I/O) |
 | 5002 | MITM proxy and framed guest MCP endpoint |
-| 5004 | Lifecycle commands (shutdown/suspend, capsem-sysutil) |
+| 5004 | Lifecycle commands (suspend; deprecated shutdown frames ignored, capsem-sysutil) |
 | 5005 | Exec output (direct child process stdout, on demand) |
 
 ## Guest agent architecture
@@ -142,22 +142,19 @@ Single-threaded, sync Rust binary (no tokio). Launched by capsem-init after file
 
 **Shutdown handler:** `sync()` -> `SIGTERM` bash -> wait `SHUTDOWN_GRACE_SECS` (defined in `capsem-proto`) -> `SIGKILL` (interactive bash ignores SIGTERM) -> break. The bridge loop cleanup then sends SIGHUP + waitpid to reap the child.
 
-### capsem-sysutil (lifecycle multi-call binary)
+### capsem-sysutil (guest suspend helper)
 
 Busybox-pattern binary dispatching on `argv[0]`. Symlinked by capsem-init:
-- `/sbin/shutdown`, `/sbin/halt`, `/sbin/poweroff`, `/sbin/reboot` -> `/run/capsem-sysutil`
 - `/usr/local/bin/suspend` -> `/run/capsem-sysutil`
 
-Opens its own vsock:5004 connection (independent of capsem-pty-agent) and sends `GuestToHost::ShutdownRequest` or `SuspendRequest`. Shows a countdown (`SHUTDOWN_GRACE_SECS + 1` seconds) before sending. Rejects reboot requests with an error.
+Opens its own vsock:5004 connection (independent of capsem-pty-agent) and sends `GuestToHost::SuspendRequest`. Shows a countdown (`SHUTDOWN_GRACE_SECS + 1` seconds) before sending. `shutdown`, `halt`, and `poweroff` return an error; `reboot` remains unsupported. The host ignores old `GuestToHost::ShutdownRequest` frames for wire compatibility.
 
-**Shutdown flow (end-to-end):**
+**Suspend flow (end-to-end):**
 ```
-Guest: shutdown -> capsem-sysutil -> vsock:5004 -> capsem-process
-  capsem-process: reads ShutdownRequest -> sends ProcessToService::ShutdownRequested to service
-  capsem-process: sends HostToGuest::Shutdown on control channel (vsock:5000)
-  capsem-pty-agent: receives Shutdown -> sync + SIGTERM + grace + SIGKILL -> exit
-  capsem-process: VM stops, process exits
-  capsem-service: child reaper cleans up (ephemeral: destroy session, persistent: preserve)
+Guest: suspend -> capsem-sysutil -> vsock:5004 -> capsem-process
+  capsem-process: reads SuspendRequest -> sends ProcessToService::SuspendRequested to service
+  capsem-process: saves VM state and exits cleanly
+  capsem-service: marks persistent VM suspended for resume
 ```
 
 ### capsem-net-proxy
@@ -266,7 +263,7 @@ Read `references/tauri-v2.md` for Tauri v2 patterns. capsem-app is a thin webvie
 - **`capsem-mcp`**: MCP server (stdio). Uses `rmcp` crate. Bridges AI agent tool calls to service HTTP API.
 - **`capsem-gateway`**: TCP-to-UDS HTTP reverse proxy. Axum server on port 19222, Bearer token auth, CORS. Provides `/status` (cached), `/terminal/{id}` (WebSocket relay), and transparent fallback to service. Frontend and tray connect through this.
 - **`capsem-app`**: thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). No capsem-core dependency. 2 IPC commands: `open_url`, `check_for_app_update`.
-- **`capsem-agent`**: guest binaries crate. Contains four binaries cross-compiled for aarch64/x86_64-linux-musl: `capsem-pty-agent` (PTY bridge + control + exec + file I/O + shutdown), `capsem-sysutil` (lifecycle multi-call: shutdown/halt/poweroff/reboot/suspend), `capsem-net-proxy` (HTTPS -> MITM), `capsem-mcp-server` (guest MCP relay).
+- **`capsem-agent`**: guest binaries crate. Contains four binaries cross-compiled for aarch64/x86_64-linux-musl: `capsem-pty-agent` (PTY bridge + control + exec + file I/O + shutdown), `capsem-sysutil` (guest suspend helper; in-VM shutdown disabled), `capsem-net-proxy` (HTTPS -> MITM), `capsem-mcp-server` (guest MCP relay).
 - **`capsem-logger`**: session DB schema, queries, async writer.
 - **`capsem-proto`**: shared protocol types. `ipc.rs` (ServiceToProcess/ProcessToService), `lib.rs` (HostToGuest/GuestToHost).
 

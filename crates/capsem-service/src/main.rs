@@ -1092,19 +1092,9 @@ impl ServiceState {
             // is Some, the child exited without an explicit
             // capsem-service-side shutdown removing it first.
             //
-            // BUT: a guest-initiated shutdown via `capsem-sysutil
-            // shutdown` (vsock:5004 -> ProcessToService::Shutdown
-            // Requested) also leaves the instance in the map -- the
-            // service has no listener for ShutdownRequested, the
-            // process just sends Shutdown to itself and exits cleanly
-            // with code 0. Treating that as "unexpected" flips the
-            // persistent registry to `defunct` so `capsem list` shows
-            // the VM as Defunct instead of Stopped, and the next
-            // `capsem resume` is misleadingly blocked.
-            //
             // Distinguish: a clean exit (code 0) from the process is a
-            // graceful shutdown regardless of who initiated it. Any
-            // non-zero exit code or signal-kill is a crash.
+            // graceful shutdown. Any non-zero exit code or signal-kill
+            // is a crash.
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
             let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
             let unexpected_exit = removed.is_some() && !clean_exit;
@@ -1158,7 +1148,7 @@ impl ServiceState {
                         state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
                     }
                 } else {
-                    tracing::info!(id_clone, "child exited cleanly (guest-initiated shutdown)");
+                    tracing::info!(id_clone, "child exited cleanly");
                     if !info.persistent {
                         let session_dir = info.session_dir.clone();
                         let cleanup_path = session_dir.clone();

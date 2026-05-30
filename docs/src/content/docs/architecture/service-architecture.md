@@ -85,7 +85,7 @@ Five binaries run inside each Linux VM, cross-compiled for `aarch64-unknown-linu
 | **capsem-net-proxy** | Redirects HTTPS to host MITM proxy | 5002 |
 | **capsem-dns-proxy** | Redirects DNS queries to the host DNS policy/resolver path | 5007 |
 | **capsem-mcp-server** | Guest MCP stdio-to-framed-vsock relay | 5002 |
-| **capsem-sysutil** | Lifecycle multi-call (shutdown/halt/poweroff/reboot/suspend) | 5004 |
+| **capsem-sysutil** | Guest suspend helper; in-VM shutdown commands disabled | 5004 |
 
 ## Communication diagram
 
@@ -152,7 +152,7 @@ Each layer uses a different protocol optimized for its role:
 | 5000 | Control messages (resize, heartbeat, exec, file I/O) | capsem-pty-agent |
 | 5001 | Terminal data (PTY I/O) | capsem-pty-agent |
 | 5002 | MITM proxy and framed guest MCP endpoint | capsem-net-proxy, capsem-mcp-server |
-| 5004 | Lifecycle commands (shutdown/suspend) | capsem-sysutil |
+| 5004 | Lifecycle commands (suspend; shutdown frames ignored for compatibility) | capsem-sysutil |
 | 5005 | Exec output (direct child stdout) | capsem-pty-agent |
 | 5006 | Kernel audit stream | capsem-pty-agent |
 | 5007 | DNS proxy queries | capsem-dns-proxy |
