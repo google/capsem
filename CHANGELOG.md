@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backing file, probes required read/write opcodes, restricts the disabled ring
   before enabling it, and submits queued requests in batches from the block
   worker.
+- Added a repeatable Firecracker comparison harness that runs Capsem's
+  rootfs/startup benchmark workload under the official Firecracker release with
+  the Capsem x86_64 kernel/rootfs assets and records structured JSON results.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.

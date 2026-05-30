@@ -1,0 +1,200 @@
+{
+  "schema": "capsem.firecracker_benchmark.v1",
+  "timestamp": 1780173562.8040798,
+  "firecracker": "Firecracker v1.15.1",
+  "engine": "Async",
+  "duration_s": 23.224,
+  "returncode": 0,
+  "host": {
+    "machine": "x86_64",
+    "system": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "processor": ""
+  },
+  "assets": {
+    "kernel": "/home/elieb_google_com/capsem/target/firecracker-bench/vmlinux-capsem",
+    "rootfs": "/home/elieb_google_com/capsem/assets/x86_64/rootfs.squashfs",
+    "initrd_source": "/home/elieb_google_com/capsem/assets/x86_64/initrd.img"
+  },
+  "rootfs": {
+    "scan_dirs": [
+      "/usr/bin",
+      "/usr/lib",
+      "/opt/ai-clis"
+    ],
+    "largest_file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    "largest_file_size": 239650512,
+    "seq_read": {
+      "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+      "size_bytes": 239650512,
+      "block_size": 1048576,
+      "duration_ms": 1829.7,
+      "throughput_mbps": 124.9
+    },
+    "files_found": 5554,
+    "rand_read_4k": {
+      "count": 5000,
+      "files_sampled": 2600,
+      "block_size": 4096,
+      "duration_ms": 2623.5,
+      "iops": 1905.8,
+      "throughput_mbps": 7.4
+    },
+    "large_binary_seq_read": {
+      "count": 3,
+      "files": [
+        {
+          "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+          "size_bytes": 239650512,
+          "cold": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 810.8,
+            "throughput_mbps": 281.9
+          },
+          "warm": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 37.7,
+            "throughput_mbps": 6055.0
+          }
+        },
+        {
+          "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+          "size_bytes": 239650512,
+          "cold": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 810.9,
+            "throughput_mbps": 281.9
+          },
+          "warm": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 37.4,
+            "throughput_mbps": 6106.1
+          }
+        },
+        {
+          "path": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "size_bytes": 222019904,
+          "cold": {
+            "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+            "size_bytes": 222019904,
+            "block_size": 1048576,
+            "duration_ms": 827.4,
+            "throughput_mbps": 255.9
+          },
+          "warm": {
+            "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+            "size_bytes": 222019904,
+            "block_size": 1048576,
+            "duration_ms": 35.3,
+            "throughput_mbps": 5996.0
+          }
+        }
+      ],
+      "bytes_read": 701320928,
+      "cold_duration_ms": 2449.1,
+      "warm_duration_ms": 110.4,
+      "cold_throughput_mbps": 273.1,
+      "warm_throughput_mbps": 6058.3
+    },
+    "small_js_read": {
+      "count": 5000,
+      "files_sampled": 113,
+      "bytes_read": 43322923,
+      "duration_ms": 51.7,
+      "ops_per_sec": 96680.5,
+      "throughput_mbps": 798.9
+    },
+    "metadata_stat": {
+      "entries": 6573,
+      "files": 5554,
+      "dirs": 670,
+      "symlinks": 349,
+      "errors": 0,
+      "duration_ms": 144.9,
+      "stats_per_sec": 45374.3
+    }
+  },
+  "startup": {
+    "runs_per_command": 3,
+    "commands": {
+      "python3": {
+        "command": [
+          "python3",
+          "--version"
+        ],
+        "timings_ms": [
+          33.2,
+          30.4,
+          30.3
+        ],
+        "min_ms": 30.3,
+        "mean_ms": 31.3,
+        "max_ms": 33.2
+      },
+      "node": {
+        "command": [
+          "node",
+          "--version"
+        ],
+        "timings_ms": [
+          246.3,
+          243.4,
+          243.6
+        ],
+        "min_ms": 243.4,
+        "mean_ms": 244.4,
+        "max_ms": 246.3
+      },
+      "claude": {
+        "command": [
+          "claude",
+          "--version"
+        ],
+        "timings_ms": [
+          1127.5,
+          915.4,
+          867.5
+        ],
+        "min_ms": 867.5,
+        "mean_ms": 970.1,
+        "max_ms": 1127.5
+      },
+      "gemini": {
+        "command": [
+          "gemini",
+          "--version"
+        ],
+        "timings_ms": [
+          2863.4,
+          2328.9,
+          2328.5
+        ],
+        "min_ms": 2328.5,
+        "mean_ms": 2506.9,
+        "max_ms": 2863.4
+      },
+      "codex": {
+        "command": [
+          "codex",
+          "--version"
+        ],
+        "timings_ms": [
+          764.3,
+          765.4,
+          765.4
+        ],
+        "min_ms": 764.3,
+        "mean_ms": 765.0,
+        "max_ms": 765.4
+      }
+    }
+  }
+}

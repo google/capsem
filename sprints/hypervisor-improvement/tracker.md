@@ -167,6 +167,19 @@
   37,732/s (+4.5%). The mixed result rejected the larger ring for now.
 - H02 VM smoke passed with the full async profile selected by default:
   `just exec "echo ok"` returned `ok` from a real KVM one-shot VM.
+- Firecracker reality check on the same Linux host with official Firecracker
+  v1.15.1, Capsem x86_64 rootfs.squashfs, Capsem kernel extracted from bzImage
+  to ELF vmlinux, 2 vCPUs, 2048 MiB RAM, and a benchmark-only initrd: Firecracker
+  Sync beat current Capsem full-async rootfs lanes by seq read +0.7%, random
+  read +46.6%, cold large-binary +58.2%, warm large-binary +10.0%, small JS
+  +21.7%, metadata stat +12.1%. Startup was also faster: python3 12.3%, node
+  27.4%, claude 42.6%, gemini 23.3%, codex 36.4%.
+- Firecracker Async was close to Sync for this workload, not a clean io_uring
+  proof: vs current Capsem full-async it measured seq read +3.2%, random read
+  +46.3%, cold large-binary +59.8%, warm large-binary +9.1%, small JS +27.4%,
+  metadata stat +20.3%. This makes the next Capsem sprint less about blindly
+  defaulting io_uring and more about matching Firecracker's virtqueue,
+  interrupt, request, and guest-visible block behavior first.
 
 ## Coverage Ledger
 
@@ -254,7 +267,12 @@
   full-profile local benchmarks measured the full async engine before grouped
   ablation: same-run rootfs showed cold binary +8.0%, small JS +2.7%, metadata
   +4.2%, but random rootfs -8.2%; same-run startup showed node +4.2% but codex
-  -9.6%. Queue depth 256 was rejected after mixed ablation results. A local
+  -9.6%. Queue depth 256 was rejected after mixed ablation results. Official
+  Firecracker v1.15.1 with the same Capsem rootfs/kernel workload proved the
+  VMM/device path gap is real: Firecracker Sync was +46.6% random rootfs,
+  +58.2% cold large-binary, +21.7% small JS, +12.1% metadata, and 12.3-42.6%
+  faster on AI CLI startup. Firecracker Async remained in the same band rather
+  than proving io_uring alone is the missing lever. A local
   uncommitted VirtioFS batching probe measured `/root`
   targeted disk at seq write +2.3%, seq read +2.4%, random write -0.6%, random
   read +10.8% without event-index, but it was not accepted because it was not
