@@ -982,6 +982,42 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
 }
 
 #[tokio::test]
+async fn gateway_provider_only_offers_tui_launchable_profiles() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let body = gateway_status_body().to_string();
+    let server = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else if request.contains("GET /profiles ") {
+                write_json_response(&mut stream, gateway_profiles_with_unlaunchable_body()).await;
+            } else {
+                assert!(
+                    request.contains("GET /status "),
+                    "unexpected request: {request:?}"
+                );
+                write_json_response(&mut stream, &body).await;
+            }
+        }
+    });
+
+    let state = GatewayProvider::new(format!("http://{addr}"))
+        .load_async()
+        .await
+        .expect("load state over gateway");
+
+    assert_eq!(state.profiles.len(), 1);
+    assert_eq!(state.profiles[0].id, "corp-default");
+
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -1428,6 +1464,75 @@ fn gateway_profiles_body() -> &'static str {
                     "best_for": "kernel and distro work"
                 },
                 "source": "user"
+            }
+        ]
+    }"#
+}
+
+fn gateway_profiles_with_unlaunchable_body() -> &'static str {
+    r#"{
+        "mode": "settings_profiles_v2",
+        "default_profile": "corp-default",
+        "profiles": [
+            {
+                "profile": {
+                    "id": "corp-default",
+                    "name": "Corp Default",
+                    "best_for": "default profile"
+                },
+                "source": "corp",
+                "ui": true,
+                "tui": true,
+                "web": true,
+                "asset_status": {
+                    "state": "ready",
+                    "ready": true,
+                    "usable_for_vm": true,
+                    "profile_id": "corp-default",
+                    "assets": [],
+                    "missing": [],
+                    "missing_assets": []
+                }
+            },
+            {
+                "profile": {
+                    "id": "web-only",
+                    "name": "Web Only",
+                    "best_for": "browser-only workflow"
+                },
+                "source": "corp",
+                "ui": true,
+                "tui": false,
+                "web": true,
+                "asset_status": {
+                    "state": "ready",
+                    "ready": true,
+                    "usable_for_vm": true,
+                    "profile_id": "web-only",
+                    "assets": [],
+                    "missing": [],
+                    "missing_assets": []
+                }
+            },
+            {
+                "profile": {
+                    "id": "missing-assets",
+                    "name": "Missing Assets",
+                    "best_for": "broken fixture"
+                },
+                "source": "corp",
+                "ui": true,
+                "tui": true,
+                "web": true,
+                "asset_status": {
+                    "state": "missing",
+                    "ready": false,
+                    "usable_for_vm": false,
+                    "profile_id": "missing-assets",
+                    "assets": [],
+                    "missing": ["rootfs.squashfs"],
+                    "missing_assets": []
+                }
             }
         ]
     }"#

@@ -205,6 +205,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `/profiles` so create surfaces only receive profiles with verified VM
+  assets, and added `ui`/`tui`/`web` capability flags so terminal and web
+  launchers can hide profiles that do not belong on that surface.
 - Fixed service purge so `all=false` still removes defunct or profile-corrupted
   persistent VMs while preserving healthy persistent VMs, making TUI cleanup
   actually clear broken profile-pin sessions from refreshed VM lists.

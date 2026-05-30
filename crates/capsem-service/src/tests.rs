@@ -5161,28 +5161,25 @@ async fn handle_get_presets_returns_list() {
 }
 
 #[tokio::test]
-async fn handle_list_profiles_returns_catalog_with_default_profile() {
+async fn handle_list_profiles_omits_unlaunchable_default_profile() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, _, _) = install_settings_profiles_env(&dir);
 
     let Json(val) = handle_list_profiles().await.unwrap();
-    assert_eq!(
-        val["default_profile"],
-        serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
-    );
+    assert_eq!(val["default_profile"], serde_json::Value::Null);
     let profiles = val["profiles"].as_array().expect("profiles array");
     assert!(
-        profiles.iter().any(|profile| {
+        profiles.iter().all(|profile| {
             profile["profile"]["id"]
-                == serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+                != serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
         }),
-        "catalog should include the selected everyday-work profile"
+        "launch list must not include the selected profile until its assets are verified"
     );
 }
 
 #[tokio::test]
-async fn handle_list_profiles_reports_asset_status_per_profile_without_poisoning_catalog() {
+async fn handle_list_profiles_reports_only_launchable_profiles_with_surface_flags() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
@@ -5245,15 +5242,22 @@ async fn handle_list_profiles_reports_asset_status_per_profile_without_poisoning
         .iter()
         .find(|profile| profile["profile"]["id"] == serde_json::json!("good-assets"))
         .expect("good profile should be listed");
-    let bad = profiles
-        .iter()
-        .find(|profile| profile["profile"]["id"] == serde_json::json!("bad-assets"))
-        .expect("bad profile should still be listed");
-    let unsigned = profiles
-        .iter()
-        .find(|profile| profile["profile"]["id"] == serde_json::json!("unsigned-assets"))
-        .expect("unsigned profile should still be listed");
+    assert!(
+        profiles
+            .iter()
+            .all(|profile| profile["profile"]["id"] != serde_json::json!("bad-assets")),
+        "profiles launch list must not expose profiles with missing assets"
+    );
+    assert!(
+        profiles
+            .iter()
+            .all(|profile| profile["profile"]["id"] != serde_json::json!("unsigned-assets")),
+        "profiles launch list must not expose unsigned profiles"
+    );
 
+    assert_eq!(good["ui"], serde_json::json!(true));
+    assert_eq!(good["tui"], serde_json::json!(true));
+    assert_eq!(good["web"], serde_json::json!(true));
     assert_eq!(good["asset_status"]["state"], serde_json::json!("ready"));
     assert_eq!(
         good["asset_status"]["usable_for_vm"],
@@ -5267,34 +5271,7 @@ async fn handle_list_profiles_reports_asset_status_per_profile_without_poisoning
         .as_str()
         .unwrap()
         .ends_with(good_kernel_path.file_name().unwrap().to_str().unwrap()));
-    assert_eq!(bad["asset_status"]["state"], serde_json::json!("missing"));
-    assert_eq!(
-        bad["asset_status"]["usable_for_vm"],
-        serde_json::json!(false)
-    );
-    assert_eq!(bad["asset_status"]["missing"].as_array().unwrap().len(), 3);
-    assert!(
-        bad["asset_status"]["missing_assets"][0]["path"]
-            .as_str()
-            .unwrap()
-            .contains("bad-assets")
-            || bad["asset_status"]["missing_assets"][0]["path"]
-                .as_str()
-                .unwrap()
-                .contains("vmlinuz-")
-    );
-    assert_eq!(
-        unsigned["asset_status"]["state"],
-        serde_json::json!("error")
-    );
-    assert_eq!(
-        unsigned["asset_status"]["usable_for_vm"],
-        serde_json::json!(false)
-    );
-    assert!(unsigned["asset_status"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("no installed signed catalog revision"));
+    assert_eq!(profiles.len(), 1, "only the verified profile is launchable");
 }
 
 #[tokio::test]
@@ -6386,12 +6363,9 @@ async fn handle_create_profile_persists_user_profile() {
     assert_eq!(val["source"], serde_json::json!("user"));
     assert_eq!(val["locked"], serde_json::json!(false));
 
-    let Json(list) = handle_list_profiles().await.unwrap();
-    assert!(list["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|profile| profile["profile"]["id"] == serde_json::json!("custom")));
+    let Json(read_back) = handle_get_profile(Path("custom".to_string())).await.unwrap();
+    assert_eq!(read_back["profile"]["id"], serde_json::json!("custom"));
+    assert_eq!(read_back["source"], serde_json::json!("user"));
 }
 
 #[tokio::test]
@@ -7227,12 +7201,8 @@ async fn rules_api_functional_chain_reloads_profile_changes_across_calls() {
     let Json(created) = handle_create_profile(Json(profile)).await.unwrap();
     assert_eq!(created["profile"]["id"], serde_json::json!("chain"));
 
-    let Json(profiles) = handle_list_profiles().await.unwrap();
-    assert!(profiles["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|profile| profile["profile"]["id"] == serde_json::json!("chain")));
+    let Json(read_back) = handle_get_profile(Path("chain".to_string())).await.unwrap();
+    assert_eq!(read_back["profile"]["id"], serde_json::json!("chain"));
 
     let Json(listed) = handle_list_rules(Query(RulesQuery {
         profile: Some("chain".to_string()),

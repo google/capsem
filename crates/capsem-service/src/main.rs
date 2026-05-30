@@ -4590,6 +4590,9 @@ fn profile_record_json(
         "source": record.source.as_str(),
         "path": record.path.as_ref().map(|path| path.display().to_string()),
         "locked": record.locked,
+        "ui": true,
+        "tui": true,
+        "web": true,
     })
 }
 
@@ -4980,8 +4983,13 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
 
     let mut profiles = catalog
         .list()
-        .map(|record| {
-            profile_record_json_with_asset_status(record, &settings, &asset_locations.assets_dir)
+        .filter_map(|record| {
+            let value =
+                profile_record_json_with_asset_status(record, &settings, &asset_locations.assets_dir);
+            value["asset_status"]["usable_for_vm"]
+                .as_bool()
+                .unwrap_or(false)
+                .then_some(value)
         })
         .collect::<Vec<_>>();
     profiles.sort_by(|left, right| {
@@ -4991,9 +4999,16 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
             .cmp(right["profile"]["id"].as_str().unwrap_or_default())
     });
 
+    let default_profile = profiles
+        .iter()
+        .any(|profile| {
+            profile["profile"]["id"].as_str() == Some(settings.profiles.default_profile.as_str())
+        })
+        .then_some(settings.profiles.default_profile);
+
     Ok(Json(json!({
         "mode": "settings_profiles_v2",
-        "default_profile": settings.profiles.default_profile,
+        "default_profile": default_profile,
         "asset_locations": asset_locations_status_json(&asset_locations),
         "profiles": profiles,
     })))

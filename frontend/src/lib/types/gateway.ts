@@ -168,6 +168,9 @@ export interface ProfileListRecord {
   source: string;
   path?: string | null;
   locked: boolean;
+  ui?: boolean;
+  tui?: boolean;
+  web?: boolean;
   asset_status?: ProfileAssetStatus | null;
 }
 

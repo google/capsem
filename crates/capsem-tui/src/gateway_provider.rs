@@ -596,6 +596,7 @@ impl ProfilesResponse {
         let default = self.default_profile.unwrap_or_default();
         self.profiles
             .into_iter()
+            .filter(ProfileRecordResponse::is_tui_launchable)
             .filter_map(|record| {
                 let id = record.profile.id?;
                 let name = record.profile.name.unwrap_or_else(|| id.clone());
@@ -613,6 +614,26 @@ impl ProfilesResponse {
 #[derive(Debug, Deserialize)]
 struct ProfileRecordResponse {
     profile: ProfileResponse,
+    #[serde(default = "default_true")]
+    ui: bool,
+    #[serde(default = "default_true")]
+    tui: bool,
+    #[serde(default = "default_true", rename = "web")]
+    _web: bool,
+    #[serde(default)]
+    asset_status: Option<ProfileAssetStatusResponse>,
+}
+
+impl ProfileRecordResponse {
+    fn is_tui_launchable(&self) -> bool {
+        self.ui
+            && self.tui
+            && self
+                .asset_status
+                .as_ref()
+                .and_then(|status| status.usable_for_vm)
+                .unwrap_or(true)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -623,6 +644,16 @@ struct ProfileResponse {
     name: Option<String>,
     #[serde(default)]
     best_for: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileAssetStatusResponse {
+    #[serde(default)]
+    usable_for_vm: Option<bool>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
