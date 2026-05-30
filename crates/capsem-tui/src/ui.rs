@@ -105,6 +105,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
             service_dot(service.status),
             service_style(service.status, service.latency.as_millis()),
         ),
+        Span::styled("  Alt+s", muted_style()),
         Span::styled("  ", base),
     ];
     if let Some(attempt) = service.reconnect_attempt {

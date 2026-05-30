@@ -125,6 +125,8 @@ attention markers.
   `Press Enter to resume` prompt, Enter invokes resume for the active inactive
   session, and the terminal WebSocket bridge disconnects instead of reconnecting
   to stopped VM sockets.
+- Added a persistent left-bar `Alt+s` hint next to service latency/status so
+  suspend is discoverable without adding back the old full-width help strip.
 
 ## Testing Gate
 
@@ -146,3 +148,5 @@ attention markers.
   greyed inactive tab tone, and Enter-to-resume behavior. Live snapshot against
   the installed stopped `tui-proof-*` sessions shows the prompt instead of a
   blank pane.
+- UI polish: `cargo test -p capsem-tui` and snapshot output cover the left-side
+  `Alt+s` status-bar hint.

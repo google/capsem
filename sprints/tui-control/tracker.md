@@ -151,11 +151,15 @@
   tried to connect. Stopped/suspended/failed tabs now grey out, the pane shows
   `Press Enter to resume`, Enter invokes resume for the active inactive
   session, and the terminal bridge disconnects from inactive tabs.
+- Discoverability polish: the persistent left status segment now includes a
+  compact `Alt+s` suspend hint beside service latency/status. The full command
+  list remains in the help overlay.
 
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-tui` (27 tests), including
-  stopped-session resume prompt, grey tab, and Enter-to-resume coverage.
+  stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
+  left-side `Alt+s` status-bar hint.
 - TUI latency/provider: `cargo test -p capsem-tui` (27 tests), including
   token reuse and raw local latency preservation coverage.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
