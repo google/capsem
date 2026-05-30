@@ -7,7 +7,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
 use ratatui::{Frame, Terminal};
 
-use crate::app::{App, AppOverlay, ControlAction, CreateDraft, ForkDraft};
+use crate::app::{
+    resume_blocked_reason, session_visible_in_tabs, App, AppOverlay, ControlAction, CreateDraft,
+    ForkDraft,
+};
 use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
 use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
 
@@ -243,7 +246,7 @@ fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &
 }
 
 fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
-    let lines = vec![
+    let mut lines = vec![
         Line::from(Span::styled(
             session.id.clone(),
             muted_style().add_modifier(Modifier::BOLD),
@@ -252,11 +255,18 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
             inactive_session_label(session.lifecycle),
             muted_style(),
         )),
-        Line::from(Span::styled(
+    ];
+    if let Some(reason) = resume_blocked_reason(session) {
+        lines.push(Line::from(Span::styled(
+            reason,
+            bad_style().add_modifier(Modifier::BOLD),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
             "Press Enter to resume",
             status_base_style().add_modifier(Modifier::BOLD),
-        )),
-    ];
+        )));
+    }
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
 }
 
@@ -579,7 +589,7 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
             "{active} {:<2} {:<18} {:<14} {:<10} {:>6} {:>7} ${:<5}",
             index + 1,
             truncate(&session.title, 18),
-            truncate(&session.profile, 14),
+            truncate(&profile_inventory_label(session), 14),
             session.lifecycle.label(),
             format_duration(session.stats.duration),
             format_tokens(session.stats.tokens),
@@ -592,6 +602,16 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
         }
     }
     lines
+}
+
+fn profile_inventory_label(session: &SessionSummary) -> String {
+    if resume_blocked_reason(session).is_some() {
+        return session
+            .profile_status
+            .clone()
+            .unwrap_or_else(|| "profile-error".to_string());
+    }
+    session.profile.clone()
 }
 
 fn overlay_title(title: &'static str) -> Line<'static> {
@@ -680,14 +700,27 @@ fn info_row(field: &'static str, value: &str, note: impl AsRef<str>) -> Line<'st
 }
 
 fn tab_spans(state: &AppState, active_index: usize, max_width: usize) -> Vec<Span<'static>> {
-    let visible = visible_tab_range(state.sessions.len(), active_index);
+    let tab_sessions = state
+        .sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, session)| session_visible_in_tabs(session))
+        .collect::<Vec<_>>();
+    if tab_sessions.is_empty() {
+        return Vec::new();
+    }
+    let active_tab_index = tab_sessions
+        .iter()
+        .position(|(index, _)| *index == active_index)
+        .unwrap_or_default();
+    let visible = visible_tab_range(tab_sessions.len(), active_tab_index);
     let mut spans = Vec::new();
     let mut used = 0;
     if visible.start > 0 {
         push_budgeted(&mut spans, "< | ", muted_style(), max_width, &mut used);
     }
-    for (offset, session) in state.sessions[visible.clone()].iter().enumerate() {
-        let index = visible.start + offset;
+    for (offset, (session_index, session)) in tab_sessions[visible.clone()].iter().enumerate() {
+        let tab_index = visible.start + offset;
         let separator = if offset == 0 && visible.start == 0 {
             ""
         } else {
@@ -707,16 +740,16 @@ fn tab_spans(state: &AppState, active_index: usize, max_width: usize) -> Vec<Spa
 
         if !push_tab(
             &mut spans,
-            index,
+            tab_index,
             session,
-            index == active_index,
+            *session_index == active_index,
             max_width,
             &mut used,
         ) {
             break;
         }
     }
-    if visible.end < state.sessions.len() {
+    if visible.end < tab_sessions.len() {
         let more = " | >";
         if used + more.chars().count() <= max_width {
             spans.push(Span::styled(more, muted_style()));

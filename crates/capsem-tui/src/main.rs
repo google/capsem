@@ -170,6 +170,7 @@ fn run_loop(
     loop {
         if let Some(bridge) = &control_bridge {
             let mut should_refresh = false;
+            let mut focus_after_refresh = None;
             for event in bridge.drain_events() {
                 needs_draw = true;
                 match event {
@@ -178,6 +179,7 @@ fn run_loop(
                     }
                     ControlEvent::Finished(Ok(outcome)) => {
                         app.set_control_message(outcome.message);
+                        focus_after_refresh = outcome.focus_session;
                         should_refresh = true;
                     }
                     ControlEvent::Finished(Err(error)) => {
@@ -188,6 +190,9 @@ fn run_loop(
             }
             if should_refresh {
                 needs_draw |= refresh_state(app, live_provider.as_ref());
+                if let Some(session_id) = focus_after_refresh {
+                    needs_draw |= app.select_session_by_id(&session_id);
+                }
             }
         }
         if let Some(bridge) = &terminal_bridge {

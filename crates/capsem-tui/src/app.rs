@@ -99,6 +99,7 @@ impl App {
             create_draft: None,
             fork_draft: None,
         };
+        app.ensure_active_tab_visible();
         app.sync_empty_state_prompt();
         app
     }
@@ -139,7 +140,7 @@ impl App {
             .position(|session| session.id == state.active_session_id)
             .unwrap_or_default();
         self.state = state;
-        self.sync_active_session();
+        self.ensure_active_tab_visible();
         self.sync_empty_state_prompt();
     }
 
@@ -178,12 +179,22 @@ impl App {
                 return AppAction::Consumed;
             }
         }
+        if self.resume_key_is_blocked(key) {
+            if let Some(reason) = self.active_resume_blocked_reason() {
+                self.set_control_message(reason);
+            }
+            return AppAction::Consumed;
+        }
         if let Some(action) = self.control_action_for_key(key) {
             self.pending_action = Some(action);
             self.overlay = AppOverlay::Confirm;
             return AppAction::Consumed;
         }
         if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+            if let Some(reason) = self.active_resume_blocked_reason() {
+                self.set_control_message(reason);
+                return AppAction::Consumed;
+            }
             if let Some(action) = self.active_resume_action() {
                 return AppAction::Invoke(action);
             }
@@ -204,30 +215,41 @@ impl App {
     }
 
     pub fn next_session(&mut self) {
-        if self.state.sessions.is_empty() {
+        let visible = visible_session_indices(&self.state);
+        if visible.is_empty() {
             return;
         }
-        self.active_index = (self.active_index + 1) % self.state.sessions.len();
+        let position = visible
+            .iter()
+            .position(|index| *index == self.active_index)
+            .unwrap_or_default();
+        self.active_index = visible[(position + 1) % visible.len()];
         self.sync_active_session();
     }
 
     pub fn previous_session(&mut self) {
-        if self.state.sessions.is_empty() {
+        let visible = visible_session_indices(&self.state);
+        if visible.is_empty() {
             return;
         }
-        self.active_index = if self.active_index == 0 {
-            self.state.sessions.len() - 1
+        let position = visible
+            .iter()
+            .position(|index| *index == self.active_index)
+            .unwrap_or_default();
+        self.active_index = if position == 0 {
+            visible[visible.len() - 1]
         } else {
-            self.active_index - 1
+            visible[position - 1]
         };
         self.sync_active_session();
     }
 
     pub fn select_session(&mut self, index: usize) {
-        if index >= self.state.sessions.len() {
+        let visible = visible_session_indices(&self.state);
+        let Some(actual_index) = visible.get(index).copied() else {
             return;
-        }
-        self.active_index = index;
+        };
+        self.active_index = actual_index;
         self.sync_active_session();
     }
 
@@ -240,8 +262,27 @@ impl App {
         else {
             return false;
         };
-        self.select_session(index);
+        self.active_index = index;
+        self.sync_active_session();
         true
+    }
+
+    fn ensure_active_tab_visible(&mut self) {
+        if self
+            .state
+            .sessions
+            .get(self.active_index)
+            .is_some_and(session_visible_in_tabs)
+        {
+            self.sync_active_session();
+            return;
+        }
+        let Some(index) = self.state.sessions.iter().position(session_visible_in_tabs) else {
+            self.sync_active_session();
+            return;
+        };
+        self.active_index = index;
+        self.sync_active_session();
     }
 
     fn sync_active_session(&mut self) {
@@ -320,6 +361,12 @@ impl App {
         }
     }
 
+    fn resume_key_is_blocked(&self, key: KeyEvent) -> bool {
+        is_alt_key(key.modifiers)
+            && matches!(key.code, KeyCode::Char('r' | 'R'))
+            && self.active_resume_blocked_reason().is_some()
+    }
+
     fn active_resume_action(&self) -> Option<ControlAction> {
         let session = self.state.active_session()?;
         if !matches!(
@@ -328,9 +375,16 @@ impl App {
         ) {
             return None;
         }
+        if resume_blocked_reason(session).is_some() {
+            return None;
+        }
         Some(ControlAction::Resume {
             name: session.id.clone(),
         })
+    }
+
+    fn active_resume_blocked_reason(&self) -> Option<&'static str> {
+        self.state.active_session().and_then(resume_blocked_reason)
     }
 
     fn active_checkpoint_action(&self) -> Option<ControlAction> {
@@ -533,6 +587,30 @@ fn selected_profile_id(state: &AppState, index: usize) -> Option<String> {
         .get(index)
         .or_else(|| state.profiles.first())
         .map(|profile| profile.id.clone())
+}
+
+pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&'static str> {
+    let status = session.profile_status.as_deref()?.to_ascii_lowercase();
+    if matches!(
+        status.as_str(),
+        "ready" | "ok" | "installed" | "active" | "current"
+    ) {
+        return None;
+    }
+    Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+}
+
+pub fn session_visible_in_tabs(session: &crate::model::SessionSummary) -> bool {
+    resume_blocked_reason(session).is_none()
+}
+
+fn visible_session_indices(state: &AppState) -> Vec<usize> {
+    state
+        .sessions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, session)| session_visible_in_tabs(session).then_some(index))
+        .collect()
 }
 
 fn next_tmp_name(state: &AppState) -> String {

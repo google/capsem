@@ -48,7 +48,11 @@
 - [x] Replace legacy `capsem shell` with `capsem-tui`.
 - [x] Remove old CLI shell PTY bridge code.
 - [x] Add CLI/TUI cutover tests.
-- [ ] Commit v1 shell cutover.
+- [x] Commit v1 shell cutover.
+- [x] Hide corrupted profile-pin sessions from the VM tab strip while keeping
+      them in the full `Alt+l` inventory.
+- [x] Focus newly created sessions after the gateway provision refresh.
+- [x] Add regression tests for corrupt-tab filtering and create focus targets.
 
 ## Notes
 
@@ -204,17 +208,25 @@
 - V1 shell cutover: `capsem shell` is now the stable public entry point for
   the TUI, not a second terminal implementation. The legacy direct IPC PTY
   bridge is intentionally removed so terminal semantics live in one surface.
+- Corrupt-profile handling: old proof VMs without a signed profile pin are not
+  disk-corrupt; the service correctly refuses resume. The TUI now keeps those
+  VMs out of the bottom tab strip, leaves them visible in `Alt+l`, and reports
+  the recreate-from-signed-profile reason when explicitly selected.
+- Create focus fix: gateway action outcomes now carry an optional session id
+  to select after refresh. `/provision`, `/fork`, resume, suspend, stop, and
+  checkpoint preserve focus on the affected session when it still exists.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (42 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (45 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
   modal profile/name flow, selected-field highlighting, named fork modal/action
   coverage, empty-state auto-create, service-offline start prompt, gradient
-  logo rendering, no-fake-default profile failure handling, `Alt+l` sessions
-  table, `Alt+i` session info, and `Alt+c` checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (42 tests), including
+  logo rendering, no-fake-default profile failure handling, corrupt-profile
+  tab filtering plus inventory visibility, create focus targets, `Alt+l`
+  sessions table, `Alt+i` session info, and `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (45 tests), including
   token reuse, live profile-list refresh, named fork request payloads,
   checkpoint-over-suspend payloads, raw local latency preservation coverage,
   profile discovery failure behavior for empty services, and local

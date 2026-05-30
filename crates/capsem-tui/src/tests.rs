@@ -133,6 +133,7 @@ async fn start_service_action_uses_local_capsem_binary_without_gateway_token() {
         .expect("start service command");
 
     assert_eq!(outcome.message, "service start requested");
+    assert_eq!(outcome.focus_session, None);
 }
 
 #[test]
@@ -221,6 +222,71 @@ fn enter_resumes_stopped_active_session_instead_of_forwarding_to_terminal() {
         AppAction::Invoke(ControlAction::Resume {
             name: "profile-v2".to_string()
         })
+    );
+}
+
+#[test]
+fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
+    let mut state = fixture_state();
+    state.sessions[0].lifecycle = SessionLifecycle::Idle;
+    state.sessions[0].profile_status = Some("corrupted".to_string());
+    state.sessions[0].attention = vec![Attention::CredentialIssue];
+    let mut app = App::new(state);
+    assert!(app.select_session_by_id("profile-v2"));
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render corrupted profile session");
+    assert!(snapshot.contains("cannot resume: profile pin is corrupted"));
+    assert!(!snapshot.contains("Press Enter to resume"));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.state().service.control_message.as_deref(),
+        Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.pending_action(), None);
+}
+
+#[test]
+fn corrupted_profile_sessions_are_hidden_from_tabs_but_stay_in_vm_list() {
+    let mut state = fixture_state();
+    state.sessions[0].lifecycle = SessionLifecycle::Idle;
+    state.sessions[0].profile_status = Some("corrupted".to_string());
+    state.sessions[0].attention = vec![Attention::CredentialIssue];
+    let mut app = App::new(state);
+
+    assert_eq!(
+        app.state().active_session_id,
+        "linux-os",
+        "startup focus should move to the first resumable tab instead of a corrupt profile pin"
+    );
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render filtered tabs");
+    assert!(!snapshot.contains("profile-v2"));
+    assert!(snapshot.contains("1  linux-os!"));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    let list_snapshot = render_app_snapshot(&app, 120, 30).expect("render session inventory");
+    assert!(list_snapshot.contains("Profile V2"));
+    assert!(list_snapshot.contains("corrupted"));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('1'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.state().active_session_id,
+        "linux-os",
+        "tab number 1 should map to the first visible tab, not the hidden corrupt session"
     );
 }
 
@@ -687,6 +753,11 @@ fn gateway_status_json_maps_to_tui_state() {
     let attention = &state.sessions[1];
     assert_eq!(attention.lifecycle, SessionLifecycle::Suspended);
     assert!(attention.attention.contains(&Attention::PolicyDeny));
+    assert_eq!(attention.profile_status.as_deref(), Some("corrupted"));
+    assert!(
+        attention.attention.contains(&Attention::CredentialIssue),
+        "corrupted profile status should be surfaced as a credential/profile issue"
+    );
 }
 
 #[test]
@@ -905,6 +976,7 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
         .expect("invoke create");
 
     assert_eq!(outcome.message, "created tmp-1-proof");
+    assert_eq!(outcome.focus_session.as_deref(), Some("tmp-1-proof"));
     server.await.expect("server task");
 }
 
@@ -944,6 +1016,10 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
         .expect("invoke fork");
 
     assert_eq!(outcome.message, "forked profile-v2-fork-copy");
+    assert_eq!(
+        outcome.focus_session.as_deref(),
+        Some("profile-v2-fork-copy")
+    );
     server.await.expect("server task");
 }
 
@@ -1115,7 +1191,7 @@ async fn write_json_response(stream: &mut tokio::net::TcpStream, body: &str) {
 
 async fn write_response(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
     let response = format!(
-        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
         body.len(),
         body
     );
@@ -1153,6 +1229,7 @@ fn gateway_status_body() -> &'static str {
                 "status": "Suspended",
                 "persistent": true,
                 "profile_id": "linux-os",
+                "profile_status": "corrupted",
                 "uptime_secs": 7860,
                 "total_input_tokens": 10000,
                 "total_output_tokens": 2900,

@@ -62,6 +62,7 @@ pub struct SessionSummary {
     pub title: String,
     pub repo_path: Option<String>,
     pub profile: String,
+    pub profile_status: Option<String>,
     pub branch: Option<String>,
     pub persistent: bool,
     pub lifecycle: SessionLifecycle,

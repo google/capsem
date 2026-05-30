@@ -199,6 +199,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` create flow focus so a newly provisioned VM becomes the
+  active tab after the gateway refresh instead of leaving focus on the previous
+  session.
+- Fixed `capsem-tui` corrupted profile-pin handling so non-resumable sessions
+  are hidden from the bottom VM tab strip, still appear in the full `Alt+l`
+  session inventory, and explain that the VM must be recreated from a signed
+  profile if explicitly selected.
 - Fixed `capsem-tui` service-offline startup so the TUI shows an offline
   service surface and asks to start Capsem before opening the new-session flow;
   confirming the prompt runs the local `capsem start` command and refreshes

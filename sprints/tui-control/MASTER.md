@@ -160,6 +160,13 @@ attention markers.
   `capsem-tui --snapshot` against a real gateway/service, verifies the modal
   uses the real default profile, then provisions and boot-checks a VM through
   the same gateway contract.
+- Added corrupt-profile guardrails after the old proof sessions surfaced
+  missing signed profile pins. Non-resumable sessions are hidden from the
+  bottom VM tabs, still shown in `Alt+l` inventory with their profile status,
+  and explain the recreate-from-signed-profile path if explicitly selected.
+- Fixed post-create focus by carrying a `focus_session` id out of gateway
+  control actions and selecting it after the refreshed status includes the new
+  VM.
 
 ## Testing Gate
 
@@ -205,3 +212,7 @@ attention markers.
   and the authenticated checkpoint request over the current suspend endpoint.
 - Shell cutover regression: `cargo test -p capsem` covers CLI parsing and
   `capsem shell` to `capsem-tui --session` argument mapping.
+- Corrupt profile/create-focus regression: `cargo test -p capsem-tui` covers
+  corrupt sessions being filtered from tabs but retained in `Alt+l`, blocked
+  resume messaging, and `/provision` returning a focus target for newly
+  created VMs.

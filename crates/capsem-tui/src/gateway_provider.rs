@@ -262,7 +262,12 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         id,
         title,
         repo_path: None,
-        profile: vm.profile_id.unwrap_or_else(|| "default".to_string()),
+        profile: vm
+            .profile_id
+            .clone()
+            .or_else(|| vm.profile_status.clone())
+            .unwrap_or_else(|| "default".to_string()),
+        profile_status: vm.profile_status,
         branch: vm.profile_revision,
         persistent: vm.persistent,
         lifecycle,
@@ -314,7 +319,7 @@ fn attention_from_vm(vm: &VmSummary, lifecycle: SessionLifecycle) -> Vec<Attenti
             "ready" | "ok" | "installed" | "active" | "current"
         )
     }) {
-        attention.push(Attention::StaleData);
+        attention.push(Attention::CredentialIssue);
     }
     attention
 }
@@ -332,6 +337,7 @@ fn cost_to_micros(cost: Option<f64>) -> u64 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionOutcome {
     pub message: String,
+    pub focus_session: Option<String>,
 }
 
 async fn invoke_action(
@@ -361,6 +367,7 @@ async fn invoke_action(
                 .unwrap_or("session");
             Ok(ActionOutcome {
                 message: format!("created {id}"),
+                focus_session: Some(id.to_string()),
             })
         }
         ControlAction::Fork { id, name } => {
@@ -378,30 +385,35 @@ async fn invoke_action(
                 .unwrap_or(name);
             Ok(ActionOutcome {
                 message: format!("forked {fork_name}"),
+                focus_session: Some(fork_name.to_string()),
             })
         }
         ControlAction::Resume { name } => {
             post_empty(client, base_url, token, &["resume", name]).await?;
             Ok(ActionOutcome {
                 message: format!("resumed {name}"),
+                focus_session: Some(name.clone()),
             })
         }
         ControlAction::Checkpoint { id } => {
             post_empty(client, base_url, token, &["suspend", id]).await?;
             Ok(ActionOutcome {
                 message: format!("checkpointed {id}"),
+                focus_session: Some(id.clone()),
             })
         }
         ControlAction::Suspend { id } => {
             post_empty(client, base_url, token, &["suspend", id]).await?;
             Ok(ActionOutcome {
                 message: format!("suspended {id}"),
+                focus_session: Some(id.clone()),
             })
         }
         ControlAction::Stop { id } => {
             post_empty(client, base_url, token, &["stop", id]).await?;
             Ok(ActionOutcome {
                 message: format!("stopped {id}"),
+                focus_session: Some(id.clone()),
             })
         }
         ControlAction::Delete { id } => {
@@ -414,6 +426,7 @@ async fn invoke_action(
             response_json(response).await?;
             Ok(ActionOutcome {
                 message: format!("deleted {id}"),
+                focus_session: None,
             })
         }
     }
@@ -437,6 +450,7 @@ pub(crate) async fn start_service_with_binary(binary: &Path) -> Result<ActionOut
     }
     Ok(ActionOutcome {
         message: "service start requested".to_string(),
+        focus_session: None,
     })
 }
 
