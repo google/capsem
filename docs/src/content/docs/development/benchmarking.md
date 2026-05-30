@@ -75,6 +75,14 @@ Linux `x86_64` against macOS `arm64`, reports ratios and percentages for common
 lanes, and lists missing lanes such as host-native or Criterion artifacts when
 one side has not rerun the current `just benchmark` suite yet.
 
+`just benchmark` also runs benchmark retention after recording artifacts. The
+active category directories keep the latest generated `data_*.json` for each
+category, architecture, and benchmark lane; superseded generated artifacts are
+zipped under `benchmarks/archive/` with a manifest containing their paths,
+hashes, version, architecture, lane, timestamp, and source commit. Historical
+archives are for engineering provenance, while current docs and performance
+claims should cite the active latest artifacts.
+
 ### Disk I/O (`disk`)
 
 Measures scratch disk performance in `/root` (VirtioFS-backed workspace).

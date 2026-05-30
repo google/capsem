@@ -15,6 +15,7 @@ def test_just_benchmark_runs_full_canonical_artifact_suite():
     assert "uv run python scripts/archive_criterion_benchmarks.py" in recipe
     assert "uv run python -m pytest tests/capsem-serial/" in recipe
     assert "-m benchmark" in recipe
+    assert "uv run python scripts/archive_superseded_benchmark_artifacts.py" in recipe
 
 
 def test_capsem_bench_all_includes_storage_split_diagnostics():

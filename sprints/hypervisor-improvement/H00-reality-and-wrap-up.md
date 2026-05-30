@@ -15,15 +15,19 @@ claims.
 - Confirm current doctor/test status or name exact red items.
 - Update `sprints/virtio-block-firecracker-path/tracker.md` if it is stale.
 - Decide H01 vs H03 first implementation order with the user.
+- Land benchmark retention in the canonical `just benchmark` path so historical
+  generated artifacts are zipped automatically instead of cleaned up by hand.
 
 ## Done
 
 - The current branch has no ambiguous benchmark or sprint state.
 - The next implementation slice has a named starting artifact and test status.
+- `just benchmark` keeps only active latest generated benchmark artifacts in the
+  category directories and archives superseded generated artifacts under
+  `benchmarks/archive/`.
 
 ## Proof
 
 - `git status --short`
 - current benchmark artifact names and comparison output
 - current doctor/test status, or explicit deferred gap
-

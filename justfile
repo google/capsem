@@ -895,6 +895,8 @@ benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
     uv run python scripts/archive_criterion_benchmarks.py
     echo "=== VM-originated and in-VM benchmark artifacts ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/ -v --tb=short -m benchmark
+    echo "=== Archive superseded benchmark artifacts ==="
+    uv run python scripts/archive_superseded_benchmark_artifacts.py
 
 # Backward-compatible alias for the canonical benchmark suite.
 bench: benchmark
