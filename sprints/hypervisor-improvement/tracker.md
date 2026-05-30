@@ -12,6 +12,7 @@
   - [x] Validate split-ring size, alignment, and guest-memory coverage.
   - [x] Reject invalid ready queues during virtio-mmio activation/restore.
   - [x] Make guest-memory offset arithmetic overflow-safe.
+  - [x] Make virtio-blk aggregate descriptor length accounting overflow-safe.
 - [ ] H03: observability, status, and OTel resource counters.
 - [ ] H02: event delivery and backpressure.
 - [ ] H04: CPU, SMP, and lifecycle.
@@ -72,6 +73,9 @@
 - H01 memory-helper slice landed locally: `GuestMemory` and `GuestMemoryRef`
   read/write helpers use checked offset arithmetic so invalid offsets produce
   errors rather than debug panics.
+- H01 block-accounting slice landed locally: virtio-blk queue drains use
+  checked `u32` accumulation for total descriptor data length so maliciously
+  large chains return `IOERR` instead of panicking before I/O validation.
 
 ## Coverage Ledger
 
@@ -83,7 +87,8 @@
   `cargo test -p capsem-core virtio_queue --lib`,
   `cargo test -p capsem-core virtio_mmio --lib`,
   `cargo test -p capsem-core offset_overflow_fails --lib`,
-  `cargo test -p capsem-core guest_memory --lib`.
+  `cargo test -p capsem-core guest_memory --lib`,
+  `cargo test -p capsem-core block_data_length_overflow_returns_ioerr --lib`.
 - Functional: pending per sub-sprint.
 - Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
   a descriptor whose start GPA is valid but whose length crosses RAM end is
@@ -97,6 +102,8 @@
   `driver_ok_rejects_ready_queue_outside_guest_ram` prove malformed ready
   queues are rejected at transport activation. `guest_memory_*_offset_overflow_fails`
   tests prove hostile offset arithmetic returns errors instead of panicking.
+  `block_data_length_overflow_returns_ioerr` proves aggregate descriptor length
+  overflow fails the request instead of panicking.
 - E2E/VM: pending per sub-sprint.
 - Telemetry: pending per sub-sprint.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts

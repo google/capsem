@@ -421,6 +421,12 @@ impl VirtioBlockDevice {
         Some(data)
     }
 
+    fn total_data_len(data_descs: &[(u64, u32)]) -> Option<u32> {
+        data_descs
+            .iter()
+            .try_fold(0_u32, |acc, &(_, len)| acc.checked_add(len))
+    }
+
     fn discard_range(file: &mut std::fs::File, offset: u64, len: u64) -> std::io::Result<()> {
         let ret = unsafe {
             libc::fallocate(
@@ -557,7 +563,20 @@ impl VirtioBlockDevice {
                 .iter()
                 .map(|d| (d.addr, d.len))
                 .collect();
-            let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
+            let total_data = match Self::total_data_len(&data_descs) {
+                Some(total_data) => total_data,
+                None => {
+                    tracing::warn!(
+                        event_name = "virtio.blk.request_malformed",
+                        head = chain.head,
+                        "virtio-blk request data length overflowed u32"
+                    );
+                    Self::write_status(mem, status_desc.addr, VIRTIO_BLK_S_IOERR);
+                    queue.push_used_deferred(chain.head, 1);
+                    used_entries += 1;
+                    continue;
+                }
+            };
 
             let status = match type_ {
                 VIRTIO_BLK_T_IN => timed_request(type_, total_data, || {
@@ -705,7 +724,20 @@ impl VirtioBlockDevice {
                 .iter()
                 .map(|d| (d.addr, d.len))
                 .collect();
-            let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
+            let total_data = match Self::total_data_len(&data_descs) {
+                Some(total_data) => total_data,
+                None => {
+                    tracing::warn!(
+                        event_name = "virtio.blk.request_malformed",
+                        head = chain.head,
+                        "virtio-blk request data length overflowed u32"
+                    );
+                    Self::write_status(mem, status_desc.addr, VIRTIO_BLK_S_IOERR);
+                    queue.push_used_deferred(chain.head, 1);
+                    result.used_entries += 1;
+                    continue;
+                }
+            };
 
             match type_ {
                 VIRTIO_BLK_T_IN | VIRTIO_BLK_T_OUT => {
@@ -2830,6 +2862,45 @@ mod tests {
             VirtioBlockDevice::guest_iovecs(&memref, &[(RAM_BASE + 4095, 2)]).is_none(),
             "zero-copy iovecs must validate the full guest range before exposing raw host pointers"
         );
+    }
+
+    #[test]
+    fn block_data_length_overflow_returns_ioerr() {
+        let path = temp_disk("data-len-overflow.img", 512);
+        let mut h = TestHarness::new(&path, true);
+
+        let header_offset = DATA_AREA_OFFSET;
+        let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        let status_offset = data_offset + 16;
+
+        h.write_header(header_offset, VIRTIO_BLK_T_IN, 0);
+        h.write_desc(
+            0,
+            RAM_BASE + header_offset,
+            REQ_HEADER_SIZE as u32,
+            VRING_DESC_F_NEXT,
+            1,
+        );
+        h.write_desc(
+            1,
+            RAM_BASE + data_offset,
+            u32::MAX,
+            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            2,
+        );
+        h.write_desc(
+            2,
+            RAM_BASE + data_offset + 8,
+            1,
+            VRING_DESC_F_NEXT | VRING_DESC_F_WRITE,
+            3,
+        );
+        h.write_desc(3, RAM_BASE + status_offset, 1, VRING_DESC_F_WRITE, 0);
+        h.push_avail(0, 0, 1);
+
+        h.dev.queue_notify(0);
+
+        assert_eq!(h.read_status(status_offset), VIRTIO_BLK_S_IOERR);
     }
 
     #[test]
