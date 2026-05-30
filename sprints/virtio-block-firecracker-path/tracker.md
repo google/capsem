@@ -12,7 +12,7 @@
 - [x] Prototype Linux async block engine with io_uring completion eventfd.
 - [x] Benchmark async engine slice against current accepted stack.
 - [x] Gate io_uring away from read-only rootfs and benchmark the gated slice.
-- [ ] Make io_uring opt-in by default and benchmark the safe default.
+- [x] Make io_uring opt-in by default and benchmark the safe default.
 - [ ] Recover or explain scratch sequential read regression.
 - [x] Add async-path telemetry counters for io_uring submissions/completions.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
@@ -35,6 +35,9 @@
   canonical `just benchmark`.
 - Active next slice: gate the Linux io_uring async block backend so scratch
   sequential-read gains do not regress rootfs and AI CLI startup.
+- Current io_uring decision: keep the implementation and metrics, but default
+  it off behind `CAPSEM_KVM_BLK_IO_URING` until a future tuning slice proves a
+  clean default win.
 
 ## Experiment Ledger
 
@@ -253,13 +256,16 @@
   - Writable-device io_uring gate recovered rootfs/startup versus unconditional
     io_uring but remains mixed versus telemetry because disk sequential read
     regressed.
+  - Default-off io_uring is the current safe landing point: rootfs/random IOPS
+    and most startup are neutral-to-better versus telemetry, while io_uring
+    remains available for opt-in experiments.
 - Missing/deferred:
   - macOS rerun for the event-index shared virtqueue/benchmark state.
   - clear explanation or recovery of scratch sequential read regression.
 
-### Candidate: default-off io_uring
-- Code: this milestone commit.
-- Bench: pending clean-source `just benchmark` artifact after code commit.
+### Measured: default-off io_uring
+- Code: `803bfbac perf: make kvm io_uring block opt in`
+- Bench: this milestone benchmark artifact commit.
 - Hypothesis:
   - The safest Linux landing default is the accepted synchronous vectored stack
     plus retained io_uring implementation behind `CAPSEM_KVM_BLK_IO_URING`.
@@ -270,14 +276,40 @@
   - `cargo test -p capsem-core hypervisor::kvm --lib`
   - `just exec "echo ok"`
   - `just benchmark`
+- Result versus previous Linux telemetry artifact:
+  - disk sequential write: -0.8%
+  - disk sequential read: -7.0%
+  - disk random write IOPS: +1.6%
+  - disk random read IOPS: +1.8%
+  - rootfs sequential read: +3.0%
+  - rootfs random 4K IOPS: +2.1%
+  - large binary cold read: -4.1%
+  - large binary warm read: -2.6%
+  - small JS reads: -16.2%
+  - metadata stats: +2.3%
+  - python startup: +13.7% faster
+  - node startup: +0.5% faster
+  - claude startup: +0.0% faster
+  - gemini startup: +1.0% faster
+  - codex startup: -0.1% slower
+- Interpretation:
+  - This is the safest landing shape for the io_uring work: the implementation
+    and telemetry are retained, but default execution returns to the accepted
+    synchronous vectored path unless `CAPSEM_KVM_BLK_IO_URING` is set.
+  - The remaining regressions in this run are not explained by default io_uring
+    because the default path does not enable it. Disk sequential read and small
+    JS reads should move to the next investigation loop with host-native
+    variance and cache/rootfs attribution in view.
 
-## Active Slice: default-off io_uring benchmark
+## Active Slice: disk sequential and small-JS attribution
 - Build:
-  - Make io_uring opt-in behind `CAPSEM_KVM_BLK_IO_URING`.
-  - Preserve the implementation and telemetry so future tuning is not lost.
-  - Record the safe-default benchmark artifact.
+  - Attribute disk sequential read and small-JS regressions in the safe-default
+    artifact without changing multiple knobs at once.
+  - Use existing storage/rootfs benchmark lanes and host-native variance to
+    decide whether this is backend behavior, rootfs cache/layout, or run noise.
 - Do not build:
-  - Additional queue tuning in the same commit as the default decision.
+  - Additional io_uring tuning until the default-off artifact is committed and
+    compared.
 - Proof target:
   - `cargo test -p capsem-core hypervisor::kvm --lib`
   - `just exec "echo ok"`

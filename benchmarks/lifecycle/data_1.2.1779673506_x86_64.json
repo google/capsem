@@ -1,64 +1,64 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780104796.2484732,
+  "timestamp": 1780105640.0529685,
   "runs": 3,
   "operations": {
     "provision_ms": {
-      "min": 2343.2,
-      "mean": 2377.2,
-      "max": 2445.0,
+      "min": 2290.0,
+      "mean": 2292.0,
+      "max": 2294.4,
       "values": [
-        2343.5,
-        2445.0,
-        2343.2
+        2291.7,
+        2290.0,
+        2294.4
       ]
     },
     "exec_ready_ms": {
-      "min": 24.1,
-      "mean": 25.4,
-      "max": 26.8,
+      "min": 24.0,
+      "mean": 26.7,
+      "max": 31.2,
       "values": [
-        24.1,
-        25.2,
-        26.8
+        24.0,
+        31.2,
+        24.9
       ]
     },
     "exec_ms": {
-      "min": 23.0,
+      "min": 23.3,
       "mean": 23.8,
       "max": 24.2,
       "values": [
-        24.1,
+        23.3,
         24.2,
-        23.0
+        23.9
       ]
     },
     "delete_ms": {
-      "min": 166.8,
-      "mean": 167.3,
+      "min": 165.7,
+      "mean": 167.0,
       "max": 168.0,
       "values": [
-        168.0,
         167.2,
-        166.8
+        165.7,
+        168.0
       ]
     },
     "total_ms": {
-      "min": 2559.7,
-      "mean": 2593.7,
-      "max": 2661.6,
+      "min": 2506.2,
+      "mean": 2509.5,
+      "max": 2511.2,
       "values": [
-        2559.7,
-        2661.6,
-        2559.8
+        2506.2,
+        2511.1,
+        2511.2
       ]
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780104796.2488468,
-  "recorded_at_utc": "2026-05-30T01:33:16.248850+00:00",
+  "recorded_at": 1780105640.0533588,
+  "recorded_at_utc": "2026-05-30T01:47:20.053361+00:00",
   "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
   "host": {
     "platform": "Linux",
@@ -78,7 +78,7 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "c2422adfa541131ece0851b14863c2bf99d7b248",
+    "commit": "803bfbacf6a7de39b88f9f90139eb96f7b691b5e",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [

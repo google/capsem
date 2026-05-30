@@ -1,52 +1,52 @@
 {
   "kind": "host_native_baseline",
   "version": "0.1.0",
-  "timestamp": 1780104770.1741788,
+  "timestamp": 1780105615.0154505,
   "filesystem": {
-    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmp7cdo4iaj",
+    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmpisl06h9t",
     "disk_usage": {
       "total_bytes": 519537790976,
-      "used_bytes": 300737564672,
-      "free_bytes": 218783449088
+      "used_bytes": 300791599104,
+      "free_bytes": 218729414656
     },
     "df": {
       "source": "/dev/root",
       "fstype": "ext4",
       "blocks_1k": 507361124,
-      "used_1k": 293689028,
-      "available_1k": 213655712,
+      "used_1k": 293741796,
+      "available_1k": 213602944,
       "capacity": "58%",
       "mount": "/"
     }
   },
   "disk": {
-    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmp7cdo4iaj",
+    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmpisl06h9t",
     "size_mb": 256,
     "seq_write": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 588.6,
-      "throughput_mbps": 435.0
+      "duration_ms": 590.0,
+      "throughput_mbps": 433.9
     },
     "seq_read": {
       "size_bytes": 268435456,
       "block_size": 1048576,
-      "duration_ms": 45.2,
-      "throughput_mbps": 5662.7
+      "duration_ms": 42.6,
+      "throughput_mbps": 6007.0
     },
     "rand_write_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 15487.9,
-      "iops": 645.7,
-      "throughput_mbps": 2.5
+      "duration_ms": 14682.0,
+      "iops": 681.1,
+      "throughput_mbps": 2.7
     },
     "rand_read_4k": {
       "count": 10000,
       "block_size": 4096,
-      "duration_ms": 31.3,
-      "iops": 319205.4,
-      "throughput_mbps": 1246.9
+      "duration_ms": 28.0,
+      "iops": 357257.3,
+      "throughput_mbps": 1395.5
     }
   },
   "startup": {
@@ -60,10 +60,10 @@
         "timings_ms": [
           1.8,
           1.6,
-          1.5
+          1.6
         ],
-        "min_ms": 1.5,
-        "mean_ms": 1.6,
+        "min_ms": 1.6,
+        "mean_ms": 1.7,
         "max_ms": 1.8
       },
       "node": {
@@ -72,13 +72,13 @@
           "--version"
         ],
         "timings_ms": [
-          64.2,
-          64.6,
-          64.7
+          64.1,
+          64.5,
+          64.5
         ],
-        "min_ms": 64.2,
-        "mean_ms": 64.5,
-        "max_ms": 64.7
+        "min_ms": 64.1,
+        "mean_ms": 64.4,
+        "max_ms": 64.5
       },
       "claude": {
         "command": [
@@ -100,13 +100,13 @@
           "--version"
         ],
         "timings_ms": [
-          16.0,
-          16.1,
-          16.1
+          15.9,
+          16.2,
+          16.2
         ],
-        "min_ms": 16.0,
+        "min_ms": 15.9,
         "mean_ms": 16.1,
-        "max_ms": 16.1
+        "max_ms": 16.2
       }
     }
   },
@@ -114,17 +114,17 @@
     "count": 5000,
     "files_sampled": 128,
     "bytes_read": 3280000,
-    "duration_ms": 28.0,
-    "ops_per_sec": 178377.6,
-    "throughput_mbps": 111.6
+    "duration_ms": 29.2,
+    "ops_per_sec": 171132.1,
+    "throughput_mbps": 107.1
   },
   "metadata_stat": {
     "entries": 5050,
     "files": 5000,
     "dirs": 50,
     "errors": 0,
-    "duration_ms": 22.9,
-    "stats_per_sec": 220316.4
+    "duration_ms": 23.4,
+    "stats_per_sec": 215776.7
   },
   "io_shape": {
     "sequential_block_size": 1048576,
@@ -134,8 +134,8 @@
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780104787.6149092,
-  "recorded_at_utc": "2026-05-30T01:33:07.614913+00:00",
+  "recorded_at": 1780105631.6684754,
+  "recorded_at_utc": "2026-05-30T01:47:11.668480+00:00",
   "command": "uv run pytest tests/capsem-serial/test_host_native_benchmark.py -xvs",
   "host": {
     "platform": "Linux",
@@ -155,7 +155,7 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "c2422adfa541131ece0851b14863c2bf99d7b248",
+    "commit": "803bfbacf6a7de39b88f9f90139eb96f7b691b5e",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [
