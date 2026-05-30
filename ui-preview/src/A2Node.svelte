@@ -514,7 +514,7 @@
     </div>
   {:else if component.component === "Button"}
     <button class={buttonClass()} type="button" onclick={runButton}>
-      <A2Node id={prop("child")} {surface} {scope} {onAction} />
+      <A2Node id={prop("child")} {surface} {scope} tone="button" {onAction} />
     </button>
   {:else if component.component === "Modal" && isBasicModal()}
     <div>

@@ -217,6 +217,9 @@ export function textClass(variant: unknown, tone = "default"): string {
   if (tone === "alert") {
     return "mt-2 text-sm text-foreground";
   }
+  if (tone === "button") {
+    return "text-sm font-medium text-inherit";
+  }
 
   switch (variant) {
     case "h1":

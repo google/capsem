@@ -42,6 +42,8 @@
 
 - Removed the internal `A2UI Basic component: Card` caption from user-facing
   card output so protocol labels do not bleed into generated UI.
+- Fixed generated button labels so nested A2UI text inherits the button
+  foreground color instead of rendering muted grey on primary buttons.
 - Replaced remaining raw palette utilities in the generated UI renderer path
   with Preline semantic token classes.
 - Moved A2UI message types, typed UI helpers, UI tools, and template checks out
