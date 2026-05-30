@@ -57,9 +57,9 @@ Capsem strengths we should preserve:
 | # | Sub-sprint | Status | Purpose | Depends On |
 | --- | --- | --- | --- | --- |
 | H00 | [Reality And Wrap-Up](H00-reality-and-wrap-up.md) | Done | Close current KVM/block context, preserve benchmark truth, identify the 2-3 pre-flight items before deeper work. | none |
-| H01 | [Safety And Queue Contracts](H01-safety-and-queue-contracts.md) | Active | Fix guest-memory range validation, descriptor validation, queue invariants, and adversarial tests. | H00 |
+| H01 | [Safety And Queue Contracts](H01-safety-and-queue-contracts.md) | Done | Fix guest-memory range validation, descriptor validation, queue invariants, and adversarial tests. | H00 |
 | H02 | [Event Delivery And Backpressure](H02-event-delivery-and-backpressure.md) | Not Started | Generalize worker/event-loop patterns, widen ioeventfd/event_idx where safe, add queue-full backpressure. | H01 |
-| H03 | [Observability Status And OTel](H03-observability-status-and-otel.md) | Not Started | Make CPU, memory, IO, queue, backend, and lifecycle counters visible in status and exportable to OTel. | H00 |
+| H03 | [Observability Status And OTel](H03-observability-status-and-otel.md) | Active | Make CPU, memory, IO, queue, backend, and lifecycle counters visible in status and exportable to OTel. | H00 |
 | H04 | [CPU SMP And Lifecycle](H04-cpu-smp-and-lifecycle.md) | Not Started | Improve vCPU lifecycle, `immediate_exit`, SMP topology, exit metrics, timer confidence, and pause/resume control. | H01, H03 |
 | H05 | [Storage Rootfs And Filesystems](H05-storage-rootfs-and-filesystems.md) | Not Started | Compare rootfs formats/chunks/compression/cache policies and preserve Apple/Linux product semantics. | H03 |
 | H06 | [Benchmark And Product Proof](H06-benchmark-and-product-proof.md) | Not Started | Keep performance science strict: artifacts, host-native baselines, status visibility, doctor gates, macOS reruns. | H01-H05 |

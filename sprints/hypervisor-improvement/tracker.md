@@ -5,7 +5,7 @@
 - [x] Create meta-sprint structure and sub-sprint plan.
 - [x] H00: close current KVM/block context and benchmark truth.
 - [x] H00: make benchmark artifact retention part of `just benchmark`.
-- [ ] H01: safety and queue contracts.
+- [x] H01: safety and queue contracts.
   - [x] Record main merge and refreshed macOS benchmark comparison baseline.
   - [x] Add full guest-memory range validation before raw host pointers.
   - [x] Reject malformed virtqueue descriptor indices and cycles.
@@ -76,6 +76,13 @@
 - H01 block-accounting slice landed locally: virtio-blk queue drains use
   checked `u32` accumulation for total descriptor data length so maliciously
   large chains return `IOERR` instead of panicking before I/O validation.
+- H01 closed with `cargo test -p capsem-core hypervisor::kvm --lib` passing
+  333 tests and `just exec "echo ok"` proving the current KVM boot/exec path
+  still works after queue activation hardening. The old `just run` smoke path
+  no longer exists after the TUI merge; `just exec` is the current one-shot VM
+  command path.
+- H03 is active next so the safety/queue counters and resource usage become
+  visible through status and are ready for OTel export.
 
 ## Coverage Ledger
 
@@ -88,8 +95,9 @@
   `cargo test -p capsem-core virtio_mmio --lib`,
   `cargo test -p capsem-core offset_overflow_fails --lib`,
   `cargo test -p capsem-core guest_memory --lib`,
-  `cargo test -p capsem-core block_data_length_overflow_returns_ioerr --lib`.
-- Functional: pending per sub-sprint.
+  `cargo test -p capsem-core block_data_length_overflow_returns_ioerr --lib`,
+  `cargo test -p capsem-core hypervisor::kvm --lib`.
+- Functional: `just exec "echo ok"` passed after H01 queue activation changes.
 - Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
   a descriptor whose start GPA is valid but whose length crosses RAM end is
   rejected before raw iovecs reach host I/O. `avail_head_outside_queue_fails_closed`,
@@ -111,6 +119,5 @@
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
   `1.2.1780103109` are now present on main and compared successfully.
-- Missing/deferred: H01 implementation has started; functional VM smoke,
-  telemetry/status, and full benchmark reruns are deferred until a functional
-  H01 milestone lands.
+- Missing/deferred: H03 status/OTel exposure remains next; full benchmark
+  rerun is deferred until a performance-affecting H02/H03 milestone lands.
