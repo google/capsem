@@ -1,8 +1,8 @@
-use capsem_plugin_engine::ui::{
+use capsem_ui_catalog::ui::{
     validate_messages, A2uiServerMessage, A2uiVersion, BasicComponent, CreateSurface,
     A2UI_BASIC_CATALOG_ID,
 };
-use capsem_plugin_engine::ui::{Ui, UpdateComponents};
+use capsem_ui_catalog::ui::{Ui, UpdateComponents};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -118,9 +118,9 @@ fn rejects_update_before_create() {
         version: A2uiVersion::V0_9,
         update_components: UpdateComponents {
             surface_id: "missing-surface".to_owned(),
-            components: vec![BasicComponent::Text(capsem_plugin_engine::ui::Text {
+            components: vec![BasicComponent::Text(capsem_ui_catalog::ui::Text {
                 id: "root".to_owned(),
-                text: capsem_plugin_engine::ui::DynamicString::Literal("orphan".to_owned()),
+                text: capsem_ui_catalog::ui::DynamicString::Literal("orphan".to_owned()),
                 variant: None,
             })],
         },

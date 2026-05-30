@@ -12,9 +12,9 @@ use axum::{
     Json, Router,
 };
 use capsem_plugin_engine::{
-    ui_tools::UiToolProgramResult, InstallPluginRequest, InstallRunRequest, PluginError,
-    PluginRegistry, RunPluginRequest,
+    InstallPluginRequest, InstallRunRequest, PluginError, PluginRegistry, RunPluginRequest,
 };
+use capsem_ui_catalog::ui_tools::UiToolProgramResult;
 use serde_json::json;
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;

@@ -1,6 +1,6 @@
 use axum::{extract::State, response::Html, Json};
-use capsem_plugin_engine::ui::{validate_messages, A2uiServerMessage, Ui, A2UI_BASIC_CATALOG_ID};
-use capsem_plugin_engine::ui_tools::{acceptance_program, run_tool_program, UiToolProgramResult};
+use capsem_ui_catalog::ui::{validate_messages, A2uiServerMessage, Ui, A2UI_BASIC_CATALOG_ID};
+use capsem_ui_catalog::ui_tools::{acceptance_program, run_tool_program, UiToolProgramResult};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -51,7 +51,7 @@ pub async fn validate(Json(request): Json<ValidateUiRequest>) -> Json<ValidateUi
 
 fn demo_payload(authored: Option<UiToolProgramResult>) -> UiPreviewPayload {
     UiPreviewPayload {
-        generated_by: "rust::capsem_plugin_engine::ui::Ui",
+        generated_by: "rust::capsem_ui_catalog::ui::Ui",
         catalog_id: A2UI_BASIC_CATALOG_ID,
         authored,
         tool_acceptance: run_tool_program(acceptance_program()),
@@ -167,7 +167,7 @@ impl UiPreviewExample {
         api: &'static str,
         surface: &'static str,
         recipe: UiRecipe,
-        document: capsem_plugin_engine::ui::A2uiDocument,
+        document: capsem_ui_catalog::ui::A2uiDocument,
     ) -> Self {
         Self {
             name,

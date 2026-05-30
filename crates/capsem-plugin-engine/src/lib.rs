@@ -9,8 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-pub mod ui;
-pub mod ui_tools;
+pub use capsem_ui_catalog::{ui, ui_tools};
 
 const ABI_VERSION: &str = "capsem-plugin-v1";
 const PLACEHOLDER_RUNTIME_KIND: &str = "wasmtime-precompiled-component-placeholder";

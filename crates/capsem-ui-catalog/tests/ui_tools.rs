@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use capsem_plugin_engine::ui_tools::{
+use capsem_ui_catalog::ui_tools::{
     acceptance_program, check_template, run_tool_program, typed_ui_recipe_components, TemplateSpec,
 };
 use serde_json::json;
@@ -21,13 +21,13 @@ fn ui_tool_acceptance_program_builds_renderable_surface() {
 
 #[test]
 fn ui_tools_build_card_and_modal_drafts() {
-    let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+    let result = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.create".to_owned(),
                 args: json!({ "id": "agent-draft" }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.card".to_owned(),
                 args: json!({
                     "surfaceId": "agent-draft",
@@ -36,11 +36,11 @@ fn ui_tools_build_card_and_modal_drafts() {
                     "description": "All plugin UI must pass through structured tools."
                 }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.validate".to_owned(),
                 args: json!({ "surfaceId": "agent-draft" }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.ask".to_owned(),
                 args: json!({
                     "surfaceId": "agent-draft",
@@ -50,7 +50,7 @@ fn ui_tools_build_card_and_modal_drafts() {
                     "no": "Deny"
                 }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.preview".to_owned(),
                 args: json!({ "surfaceId": "agent-draft" }),
             },
@@ -77,13 +77,13 @@ fn ui_tools_build_card_and_modal_drafts() {
 
 #[test]
 fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
-    let alert = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+    let alert = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.create".to_owned(),
                 args: json!({ "id": "warning" }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.alert".to_owned(),
                 args: json!({
                     "surfaceId": "warning",
@@ -102,13 +102,13 @@ fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
         Some("warning")
     );
 
-    let card = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+    let card = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.create".to_owned(),
                 args: json!({ "id": "model" }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.card".to_owned(),
                 args: json!({
                     "surfaceId": "model",
@@ -158,13 +158,13 @@ fn typed_ui_recipe_components_have_explicit_svelte_renderers() {
 
 #[test]
 fn ui_table_lowers_to_conformant_a2ui_and_recipe() {
-    let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+    let result = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.create".to_owned(),
                 args: json!({ "id": "agent-draft" }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.table".to_owned(),
                 args: json!({
                     "surfaceId": "agent-draft",
@@ -178,7 +178,7 @@ fn ui_table_lowers_to_conformant_a2ui_and_recipe() {
                     ]
                 }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.validate".to_owned(),
                 args: json!({ "surfaceId": "agent-draft" }),
             },
@@ -203,13 +203,13 @@ fn ui_table_lowers_to_conformant_a2ui_and_recipe() {
 
 #[test]
 fn ui_table_rejects_rows_with_wrong_cell_count() {
-    let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+    let result = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.create".to_owned(),
                 args: json!({ "id": "bad-table" }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.table".to_owned(),
                 args: json!({
                     "surfaceId": "bad-table",
@@ -231,13 +231,13 @@ fn ui_table_rejects_rows_with_wrong_cell_count() {
 
 #[test]
 fn ui_tools_reject_raw_renderer_inputs() {
-    let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+    let result = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.surface.create".to_owned(),
                 args: json!({ "id": "bad" }),
             },
-            capsem_plugin_engine::ui_tools::UiToolCall {
+            capsem_ui_catalog::ui_tools::UiToolCall {
                 tool: "ui.component.add".to_owned(),
                 args: json!({
                     "surfaceId": "bad",
@@ -282,9 +282,9 @@ fn template_checker_rejects_unknown_props() {
         component: "Alert".to_owned(),
         variant: "soft".to_owned(),
         structural: Vec::new(),
-        bindings: vec![capsem_plugin_engine::ui_tools::TemplateBinding {
+        bindings: vec![capsem_ui_catalog::ui_tools::TemplateBinding {
             prop: "notAProp".to_owned(),
-            kind: capsem_plugin_engine::ui_tools::TemplateBindingKind::Text,
+            kind: capsem_ui_catalog::ui_tools::TemplateBindingKind::Text,
             selector: "[data-capui-text='message']".to_owned(),
         }],
     };
@@ -299,7 +299,7 @@ fn template_checker_rejects_unknown_props() {
         .any(|error| error.contains("unknown binding prop")));
 }
 
-fn check_template_dir(path: &str) -> capsem_plugin_engine::ui_tools::TemplateCheckReport {
+fn check_template_dir(path: &str) -> capsem_ui_catalog::ui_tools::TemplateCheckReport {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()

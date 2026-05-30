@@ -1,5 +1,5 @@
 use capsem_a2ui_hyper::{serve, A2uiRenderResponse};
-use capsem_plugin_engine::ui::validate_messages;
+use capsem_ui_catalog::ui::validate_messages;
 use serde_json::json;
 use tokio::{net::TcpListener, sync::oneshot};
 

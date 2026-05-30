@@ -8,7 +8,7 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 bytes.workspace = true
-capsem-plugin-engine = { path = "../capsem-plugin-engine" }
+capsem-ui-catalog.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true

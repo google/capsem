@@ -179,7 +179,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
- "capsem-plugin-engine",
+ "capsem-ui-catalog",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -195,6 +195,7 @@ version = "0.1.0"
 dependencies = [
  "a2ui-types",
  "blake3",
+ "capsem-ui-catalog",
  "reqwest",
  "serde",
  "serde_json",
@@ -210,10 +211,20 @@ dependencies = [
  "anyhow",
  "axum",
  "capsem-plugin-engine",
+ "capsem-ui-catalog",
  "serde",
  "serde_json",
  "tokio",
  "tower-http",
+]
+
+[[package]]
+name = "capsem-ui-catalog"
+version = "0.1.0"
+dependencies = [
+ "a2ui-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

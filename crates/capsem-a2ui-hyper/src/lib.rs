@@ -1,7 +1,7 @@
 use std::{convert::Infallible, net::SocketAddr};
 
 use bytes::Bytes;
-use capsem_plugin_engine::{
+use capsem_ui_catalog::{
     ui::validate_messages,
     ui_tools::{run_tool_program, UiToolObservation, UiToolProgram, UiToolSurfaceSnapshot},
 };

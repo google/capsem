@@ -26,6 +26,8 @@
 - Added `/chat` theme and dark-mode controls backed by real Preline packaged
   themes for semantic-token visual checks.
 - Added a semantic-token regression test for the generated UI renderer path.
+- Added a standalone `capsem-ui-catalog` crate so the A2UI/Preline catalogue can
+  land independently of the full WASM plugin runtime.
 - Added a Rust-owned A2UI v0.9 Basic preview path with typed UI helpers,
   contract tests, server endpoints, and a Svelte/Preline renderer preview.
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering
@@ -40,6 +42,8 @@
   card output so protocol labels do not bleed into generated UI.
 - Replaced remaining raw palette utilities in the generated UI renderer path
   with Preline semantic token classes.
+- Moved A2UI message types, typed UI helpers, UI tools, and template checks out
+  of `capsem-plugin-engine` ownership and into `capsem-ui-catalog`.
 - Updated the UI preview to show the actual A2UI Basic `Card` component with
   Preline card tokens, and cross-check Rust messages with `a2ui-types`.
 - Moved the rendered preview above the A2UI JSON and restyled the shell around
