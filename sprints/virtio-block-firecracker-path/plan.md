@@ -43,6 +43,16 @@ Firecracker's block path is a coordinated stack:
   arrive through a completion eventfd and are batched into the used ring.
 - Fixed files and restricted io_uring operations keep the async path tight.
 
+Current io_uring prototype status:
+- KVM virtio-blk read/write requests can now submit GPA-translated scatter/gather
+  iovecs to io_uring from the existing ioeventfd worker.
+- A completion eventfd is registered with io_uring and polled beside guest queue
+  notifications.
+- The synchronous vectored worker remains the fallback when io_uring setup is
+  unavailable.
+- The next gate is a clean-source `just benchmark` artifact before any extra
+  tuning.
+
 ## Architecture Split
 
 ### Cross-platform / Apple-beneficial
@@ -91,11 +101,12 @@ Firecracker's block path is a coordinated stack:
 ### 3. Async block engine prototype
 - Add a Linux-only async file engine abstraction beside the current sync
   vectored engine.
-- Start with direct guest-memory pointers and io_uring single-buffer requests.
-- Decide whether scatter/gather becomes multiple linked SQEs, `readv/writev`
-  through io_uring, or temporary fallback to sync for multi-descriptor chains.
+- Submit direct guest-memory scatter/gather iovecs through io_uring
+  `Readv`/`Writev`.
 - Register completion eventfd and batch completions into the used ring.
 - Preserve checkpoint quiesce by draining all pending async operations.
+- Benchmark this slice before adding queue tuning, fixed-file registration, or
+  restricted-op optimizations.
 
 ### 4. Queue/backend telemetry and attribution
 - Add OTel-ready `metrics` counters and histograms for the current synchronous

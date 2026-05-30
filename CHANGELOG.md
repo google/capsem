@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added a Linux KVM virtio-blk io_uring backend that submits read/write
+  requests from the existing ioeventfd worker, reaps completions through a
+  completion eventfd, preserves synchronous fallback, and records async
+  submission/completion/in-flight metrics.
 - Added OTel-ready KVM virtio-blk queue/backend metrics for notifications,
   drains, descriptor/used-ring volume, request bytes/duration, interrupt
   decisions, and quiesce drain timing.

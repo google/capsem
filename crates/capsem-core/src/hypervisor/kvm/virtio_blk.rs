@@ -4,6 +4,7 @@
 //! get-ID, and discard operations. Read-only mode enforced via feature bit
 //! and write/discard rejection.
 
+use std::collections::HashMap;
 use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
@@ -12,6 +13,7 @@ use std::sync::{mpsc, Arc, Once};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use io_uring::{opcode, types, IoUring};
 use metrics::{describe_counter, describe_histogram, Unit};
 
 use super::memory::GuestMemoryRef;
@@ -64,6 +66,10 @@ const METRIC_REQUEST_BYTES_TOTAL: &str = "virtio.blk.request_bytes_total";
 const METRIC_REQUEST_DURATION_MS: &str = "virtio.blk.request_duration_ms";
 const METRIC_QUEUE_DRAIN_DURATION_MS: &str = "virtio.blk.queue_drain_duration_ms";
 const METRIC_QUIESCE_DRAIN_DURATION_MS: &str = "virtio.blk.quiesce_drain_duration_ms";
+const METRIC_ASYNC_SUBMISSIONS_TOTAL: &str = "virtio.blk.async_submissions_total";
+const METRIC_ASYNC_COMPLETIONS_TOTAL: &str = "virtio.blk.async_completions_total";
+const METRIC_ASYNC_FALLBACKS_TOTAL: &str = "virtio.blk.async_fallbacks_total";
+const METRIC_ASYNC_IN_FLIGHT: &str = "virtio.blk.async_in_flight";
 
 static DESCRIBE_METRICS: Once = Once::new();
 
@@ -222,6 +228,24 @@ impl VirtioBlockDevice {
             });
         }
         Some(iovecs)
+    }
+
+    fn prepare_rw_iovecs(
+        mem: &GuestMemoryRef,
+        capacity_sectors: u64,
+        sector: u64,
+        data_descs: &[(u64, u32)],
+    ) -> Result<(u64, u64, Vec<libc::iovec>), u8> {
+        let offset = sector.checked_mul(SECTOR_SIZE).ok_or(VIRTIO_BLK_S_IOERR)?;
+        let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
+        if offset
+            .checked_add(total_len)
+            .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
+        {
+            return Err(VIRTIO_BLK_S_IOERR);
+        }
+        let iovecs = Self::guest_iovecs(mem, data_descs).ok_or(VIRTIO_BLK_S_IOERR)?;
+        Ok((offset, total_len, iovecs))
     }
 
     fn iovecs_after(iovecs: &[libc::iovec], mut consumed: u64) -> Vec<libc::iovec> {
@@ -589,6 +613,7 @@ impl VirtioBlockDevice {
         let drain_duration = drain_started.elapsed();
         QueueProcessResult {
             processed,
+            submitted: 0,
             used_entries,
             should_interrupt,
             read_ops,
@@ -598,10 +623,211 @@ impl VirtioBlockDevice {
             drain_duration,
         }
     }
+
+    fn process_queue_uring(
+        file: &mut std::fs::File,
+        read_only: bool,
+        capacity_sectors: u64,
+        device_id: &[u8; VIRTIO_BLK_ID_LEN],
+        mem: &GuestMemoryRef,
+        queue: &mut VirtQueue,
+        uring: &mut BlockIoUring,
+    ) -> QueueProcessResult {
+        let drain_started = Instant::now();
+        let mut result = QueueProcessResult::new(drain_started);
+        while let Some(chain) = queue.pop_or_enable_notification() {
+            let descs = &chain.descriptors;
+            result.processed += 1;
+
+            if descs.len() < 2 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk descriptor chain too short"
+                );
+                queue.push_used_deferred(chain.head, 0);
+                result.used_entries += 1;
+                continue;
+            }
+
+            let header_desc = &descs[0];
+            if header_desc.is_write_only() {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    descriptors = descs.len(),
+                    "virtio-blk request header descriptor was write-only"
+                );
+                queue.push_used_deferred(chain.head, 0);
+                result.used_entries += 1;
+                continue;
+            }
+
+            let (type_, sector) = match Self::parse_header(mem, header_desc.addr, header_desc.len) {
+                Some(h) => h,
+                None => {
+                    tracing::warn!(
+                        event_name = "virtio.blk.request_malformed",
+                        head = chain.head,
+                        header_addr = format_args!("{:#x}", header_desc.addr),
+                        header_len = header_desc.len,
+                        "virtio-blk request header could not be parsed"
+                    );
+                    queue.push_used_deferred(chain.head, 0);
+                    result.used_entries += 1;
+                    continue;
+                }
+            };
+
+            let status_desc = &descs[descs.len() - 1];
+            if !status_desc.is_write_only() || status_desc.len < 1 {
+                tracing::warn!(
+                    event_name = "virtio.blk.request_malformed",
+                    head = chain.head,
+                    status_addr = format_args!("{:#x}", status_desc.addr),
+                    status_len = status_desc.len,
+                    status_write_only = status_desc.is_write_only(),
+                    "virtio-blk status descriptor was invalid"
+                );
+                queue.push_used_deferred(chain.head, 0);
+                result.used_entries += 1;
+                continue;
+            }
+
+            let data_descs: Vec<(u64, u32)> = descs[1..descs.len() - 1]
+                .iter()
+                .map(|d| (d.addr, d.len))
+                .collect();
+            let total_data: u32 = data_descs.iter().map(|&(_, l)| l).sum();
+
+            match type_ {
+                VIRTIO_BLK_T_IN | VIRTIO_BLK_T_OUT => {
+                    if type_ == VIRTIO_BLK_T_OUT && read_only {
+                        timed_request(type_, total_data, || VIRTIO_BLK_S_IOERR);
+                        Self::write_status(mem, status_desc.addr, VIRTIO_BLK_S_IOERR);
+                        queue.push_used_deferred(chain.head, 1);
+                        result.used_entries += 1;
+                        result.write_ops += 1;
+                        continue;
+                    }
+
+                    let (offset, _total_len, iovecs) =
+                        match Self::prepare_rw_iovecs(mem, capacity_sectors, sector, &data_descs) {
+                            Ok(prepared) => prepared,
+                            Err(status) => {
+                                timed_request(type_, total_data, || status);
+                                Self::write_status(mem, status_desc.addr, status);
+                                queue.push_used_deferred(chain.head, 1);
+                                result.used_entries += 1;
+                                if type_ == VIRTIO_BLK_T_IN {
+                                    result.read_ops += 1;
+                                } else {
+                                    result.write_ops += 1;
+                                }
+                                continue;
+                            }
+                        };
+
+                    if uring
+                        .submit_rw(
+                            chain.head,
+                            type_,
+                            total_data,
+                            status_desc.addr,
+                            offset,
+                            iovecs,
+                        )
+                        .is_ok()
+                    {
+                        result.submitted += 1;
+                        if type_ == VIRTIO_BLK_T_IN {
+                            result.read_ops += 1;
+                        } else {
+                            result.write_ops += 1;
+                        }
+                        continue;
+                    }
+
+                    ::metrics::counter!(
+                        METRIC_ASYNC_FALLBACKS_TOTAL,
+                        "operation" => request_operation_label(type_),
+                    )
+                    .increment(1);
+                    let status = if type_ == VIRTIO_BLK_T_IN {
+                        timed_request(type_, total_data, || {
+                            Self::process_read(file, mem, capacity_sectors, sector, &data_descs)
+                        })
+                    } else {
+                        timed_request(type_, total_data, || {
+                            Self::process_write(
+                                file,
+                                mem,
+                                read_only,
+                                capacity_sectors,
+                                sector,
+                                &data_descs,
+                            )
+                        })
+                    };
+                    Self::write_status(mem, status_desc.addr, status);
+                    let used_len = if status == VIRTIO_BLK_S_OK && type_ == VIRTIO_BLK_T_IN {
+                        total_data + 1
+                    } else {
+                        1
+                    };
+                    queue.push_used_deferred(chain.head, used_len);
+                    result.used_entries += 1;
+                    if type_ == VIRTIO_BLK_T_IN {
+                        result.read_ops += 1;
+                        if status == VIRTIO_BLK_S_OK {
+                            result.bytes_read += total_data as u64;
+                        }
+                    } else {
+                        result.write_ops += 1;
+                        if status == VIRTIO_BLK_S_OK {
+                            result.bytes_written += total_data as u64;
+                        }
+                    }
+                }
+                VIRTIO_BLK_T_GET_ID => {
+                    let status = timed_request(type_, total_data, || {
+                        Self::process_get_id(mem, device_id, &data_descs)
+                    });
+                    Self::write_status(mem, status_desc.addr, status);
+                    queue.push_used_deferred(chain.head, 1);
+                    result.used_entries += 1;
+                }
+                VIRTIO_BLK_T_DISCARD => {
+                    let status = timed_request(type_, total_data, || {
+                        Self::process_discard(file, mem, read_only, capacity_sectors, &data_descs)
+                    });
+                    Self::write_status(mem, status_desc.addr, status);
+                    queue.push_used_deferred(chain.head, 1);
+                    result.used_entries += 1;
+                }
+                _ => {
+                    let status = timed_request(type_, total_data, || VIRTIO_BLK_S_UNSUPP);
+                    Self::write_status(mem, status_desc.addr, status);
+                    queue.push_used_deferred(chain.head, 1);
+                    result.used_entries += 1;
+                }
+            }
+        }
+
+        if result.used_entries > 0 {
+            queue.flush_used();
+        }
+
+        result.should_interrupt = queue.prepare_kick();
+        result.drain_duration = drain_started.elapsed();
+        result
+    }
 }
 
 struct QueueProcessResult {
     processed: u32,
+    submitted: u32,
     used_entries: u32,
     should_interrupt: bool,
     read_ops: u32,
@@ -609,6 +835,232 @@ struct QueueProcessResult {
     bytes_read: u64,
     bytes_written: u64,
     drain_duration: Duration,
+}
+
+impl QueueProcessResult {
+    fn new(drain_started: Instant) -> Self {
+        Self {
+            processed: 0,
+            submitted: 0,
+            used_entries: 0,
+            should_interrupt: false,
+            read_ops: 0,
+            write_ops: 0,
+            bytes_read: 0,
+            bytes_written: 0,
+            drain_duration: drain_started.elapsed(),
+        }
+    }
+}
+
+struct PendingBlockRequest {
+    head: u16,
+    type_: u32,
+    total_data: u32,
+    status_addr: u64,
+    iovecs: Vec<libc::iovec>,
+    started: Instant,
+}
+
+struct BlockIoUring {
+    ring: IoUring,
+    completion_fd: OwnedFd,
+    pending: HashMap<u64, PendingBlockRequest>,
+    next_user_data: u64,
+    file_fd: RawFd,
+}
+
+impl BlockIoUring {
+    fn new(file_fd: RawFd) -> std::io::Result<Self> {
+        let completion_fd = create_eventfd(libc::EFD_CLOEXEC | libc::EFD_NONBLOCK)?;
+        let ring = IoUring::new(QUEUE_SIZE as u32)?;
+        ring.submitter()
+            .register_eventfd(completion_fd.as_raw_fd())?;
+        Ok(Self {
+            ring,
+            completion_fd,
+            pending: HashMap::new(),
+            next_user_data: 1,
+            file_fd,
+        })
+    }
+
+    fn completion_fd(&self) -> RawFd {
+        self.completion_fd.as_raw_fd()
+    }
+
+    fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    fn submit_rw(
+        &mut self,
+        head: u16,
+        type_: u32,
+        total_data: u32,
+        status_addr: u64,
+        offset: u64,
+        iovecs: Vec<libc::iovec>,
+    ) -> std::io::Result<()> {
+        let user_data = self.next_user_data;
+        self.next_user_data = self.next_user_data.wrapping_add(1).max(1);
+        let iovec_ptr = iovecs.as_ptr();
+        let iovec_len = iovecs.len() as u32;
+        let entry = match type_ {
+            VIRTIO_BLK_T_IN => opcode::Readv::new(types::Fd(self.file_fd), iovec_ptr, iovec_len)
+                .offset(offset)
+                .build()
+                .user_data(user_data),
+            VIRTIO_BLK_T_OUT => opcode::Writev::new(types::Fd(self.file_fd), iovec_ptr, iovec_len)
+                .offset(offset)
+                .build()
+                .user_data(user_data),
+            _ => unreachable!("only read/write requests are submitted to io_uring"),
+        };
+        self.pending.insert(
+            user_data,
+            PendingBlockRequest {
+                head,
+                type_,
+                total_data,
+                status_addr,
+                iovecs,
+                started: Instant::now(),
+            },
+        );
+
+        let push_result = unsafe { self.ring.submission().push(&entry) };
+        if push_result.is_err() {
+            self.pending.remove(&user_data);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "io_uring submission queue full",
+            ));
+        }
+        loop {
+            match self.ring.submit() {
+                Ok(_) => break,
+                Err(error) if error.raw_os_error() == Some(libc::EINTR) => continue,
+                Err(error) => {
+                    tracing::warn!(
+                        event_name = "virtio.blk.io_uring_submit_failed",
+                        %error,
+                        operation = request_operation_label(type_),
+                        "virtio-blk io_uring submit failed after queueing SQE"
+                    );
+                    break;
+                }
+            }
+        }
+        ::metrics::counter!(
+            METRIC_ASYNC_SUBMISSIONS_TOTAL,
+            "operation" => request_operation_label(type_),
+        )
+        .increment(1);
+        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring")
+            .record(self.pending.len() as f64);
+        Ok(())
+    }
+
+    fn reap_completions(
+        &mut self,
+        mem: &GuestMemoryRef,
+        queue: &mut VirtQueue,
+    ) -> CompletionResult {
+        let mut result = CompletionResult::default();
+        let completions: Vec<_> = self
+            .ring
+            .completion()
+            .map(|cqe| (cqe.user_data(), cqe.result()))
+            .collect();
+        for (user_data, io_result) in completions {
+            let Some(request) = self.pending.remove(&user_data) else {
+                tracing::warn!(
+                    event_name = "virtio.blk.io_uring_unknown_completion",
+                    user_data,
+                    io_result,
+                    "virtio-blk io_uring completion had no pending request"
+                );
+                continue;
+            };
+            let status = if io_result >= 0 && io_result as u32 == request.total_data {
+                VIRTIO_BLK_S_OK
+            } else {
+                VIRTIO_BLK_S_IOERR
+            };
+            emit_request_metrics(
+                request.type_,
+                request.total_data,
+                status,
+                request.started.elapsed(),
+            );
+            ::metrics::counter!(
+                METRIC_ASYNC_COMPLETIONS_TOTAL,
+                "operation" => request_operation_label(request.type_),
+                "status" => request_status_label(status),
+            )
+            .increment(1);
+            VirtioBlockDevice::write_status(mem, request.status_addr, status);
+            let used_len = if status == VIRTIO_BLK_S_OK && request.type_ == VIRTIO_BLK_T_IN {
+                request.total_data + 1
+            } else {
+                1
+            };
+            queue.push_used_deferred(request.head, used_len);
+            result.completed += 1;
+            result.used_entries += 1;
+            match request.type_ {
+                VIRTIO_BLK_T_IN => {
+                    result.read_ops += 1;
+                    if status == VIRTIO_BLK_S_OK {
+                        result.bytes_read += request.total_data as u64;
+                    }
+                }
+                VIRTIO_BLK_T_OUT => {
+                    result.write_ops += 1;
+                    if status == VIRTIO_BLK_S_OK {
+                        result.bytes_written += request.total_data as u64;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if result.used_entries > 0 {
+            queue.flush_used();
+            result.should_interrupt = queue.prepare_kick();
+            ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => "io_uring")
+                .increment(result.used_entries as u64);
+            if result.should_interrupt {
+                ::metrics::counter!(
+                    METRIC_INTERRUPTS_TOTAL,
+                    "backend" => "io_uring",
+                    "decision" => "raised",
+                )
+                .increment(1);
+            } else {
+                ::metrics::counter!(
+                    METRIC_INTERRUPTS_TOTAL,
+                    "backend" => "io_uring",
+                    "decision" => "suppressed",
+                )
+                .increment(1);
+            }
+        }
+        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring")
+            .record(self.pending.len() as f64);
+        result
+    }
+}
+
+#[derive(Default)]
+struct CompletionResult {
+    completed: u32,
+    used_entries: u32,
+    should_interrupt: bool,
+    read_ops: u32,
+    write_ops: u32,
+    bytes_read: u64,
+    bytes_written: u64,
 }
 
 fn describe_metrics_once() {
@@ -663,6 +1115,26 @@ fn describe_metrics_once() {
             Unit::Milliseconds,
             "Virtio block quiesce drain wait time before checkpoint."
         );
+        describe_counter!(
+            METRIC_ASYNC_SUBMISSIONS_TOTAL,
+            Unit::Count,
+            "Virtio block io_uring submissions by operation."
+        );
+        describe_counter!(
+            METRIC_ASYNC_COMPLETIONS_TOTAL,
+            Unit::Count,
+            "Virtio block io_uring completions by operation and completion status."
+        );
+        describe_counter!(
+            METRIC_ASYNC_FALLBACKS_TOTAL,
+            Unit::Count,
+            "Virtio block requests handled by synchronous fallback from the async path."
+        );
+        describe_histogram!(
+            METRIC_ASYNC_IN_FLIGHT,
+            Unit::Count,
+            "Virtio block io_uring in-flight request depth after submit/completion."
+        );
     });
 }
 
@@ -673,6 +1145,11 @@ fn duration_ms(duration: Duration) -> f64 {
 fn timed_request(type_: u32, total_data: u32, f: impl FnOnce() -> u8) -> u8 {
     let started = Instant::now();
     let status = f();
+    emit_request_metrics(type_, total_data, status, started.elapsed());
+    status
+}
+
+fn emit_request_metrics(type_: u32, total_data: u32, status: u8, duration: Duration) {
     let operation = request_operation_label(type_);
     let status_label = request_status_label(status);
     ::metrics::counter!(
@@ -694,8 +1171,7 @@ fn timed_request(type_: u32, total_data: u32, f: impl FnOnce() -> u8) -> u8 {
         "operation" => operation,
         "status" => status_label,
     )
-    .record(duration_ms(started.elapsed()));
-    status
+    .record(duration_ms(duration));
 }
 
 fn emit_queue_notification_metric(backend: &'static str, count: u64) {
@@ -945,6 +1421,54 @@ impl Drop for VirtioBlockDevice {
 }
 
 fn block_worker_loop(
+    file: std::fs::File,
+    read_only: bool,
+    capacity_sectors: u64,
+    device_id: [u8; VIRTIO_BLK_ID_LEN],
+    mem: GuestMemoryRef,
+    queue: VirtQueue,
+    notify_fd: OwnedFd,
+    rx: mpsc::Receiver<BlockWorkerCommand>,
+    irq_fd: RawFd,
+    interrupt_status: Arc<AtomicU32>,
+) {
+    match BlockIoUring::new(file.as_raw_fd()) {
+        Ok(uring) => block_worker_loop_uring(
+            file,
+            read_only,
+            capacity_sectors,
+            device_id,
+            mem,
+            queue,
+            notify_fd,
+            rx,
+            irq_fd,
+            interrupt_status,
+            uring,
+        ),
+        Err(error) => {
+            tracing::warn!(
+                event_name = "virtio.blk.io_uring_disabled",
+                %error,
+                "virtio-blk io_uring backend unavailable; using synchronous worker"
+            );
+            block_worker_loop_sync(
+                file,
+                read_only,
+                capacity_sectors,
+                device_id,
+                mem,
+                queue,
+                notify_fd,
+                rx,
+                irq_fd,
+                interrupt_status,
+            );
+        }
+    }
+}
+
+fn block_worker_loop_sync(
     mut file: std::fs::File,
     read_only: bool,
     capacity_sectors: u64,
@@ -1015,12 +1539,206 @@ fn block_worker_loop(
     }
 }
 
+const EPOLL_TOKEN_NOTIFY: u64 = 1;
+const EPOLL_TOKEN_COMPLETION: u64 = 2;
+
+#[allow(clippy::too_many_arguments)]
+fn block_worker_loop_uring(
+    mut file: std::fs::File,
+    read_only: bool,
+    capacity_sectors: u64,
+    device_id: [u8; VIRTIO_BLK_ID_LEN],
+    mem: GuestMemoryRef,
+    mut queue: VirtQueue,
+    notify_fd: OwnedFd,
+    rx: mpsc::Receiver<BlockWorkerCommand>,
+    irq_fd: RawFd,
+    interrupt_status: Arc<AtomicU32>,
+    mut uring: BlockIoUring,
+) {
+    let epoll_fd = match create_epoll_fd() {
+        Ok(fd) => fd,
+        Err(error) => {
+            tracing::warn!(
+                event_name = "virtio.blk.io_uring_epoll_failed",
+                %error,
+                "virtio-blk io_uring worker could not create epoll fd"
+            );
+            return;
+        }
+    };
+    if let Err(error) = epoll_add(
+        epoll_fd.as_raw_fd(),
+        notify_fd.as_raw_fd(),
+        EPOLL_TOKEN_NOTIFY,
+    )
+    .and_then(|_| {
+        epoll_add(
+            epoll_fd.as_raw_fd(),
+            uring.completion_fd(),
+            EPOLL_TOKEN_COMPLETION,
+        )
+    }) {
+        tracing::warn!(
+            event_name = "virtio.blk.io_uring_epoll_failed",
+            %error,
+            "virtio-blk io_uring worker could not register eventfds"
+        );
+        return;
+    }
+
+    let mut stop = false;
+    let mut drain_replies = Vec::new();
+    loop {
+        let events = match epoll_wait_tokens(epoll_fd.as_raw_fd()) {
+            Ok(events) => events,
+            Err(error) => {
+                tracing::warn!(
+                    event_name = "virtio.blk.io_uring_epoll_failed",
+                    %error,
+                    "virtio-blk io_uring epoll wait failed"
+                );
+                return;
+            }
+        };
+
+        for token in events {
+            match token {
+                EPOLL_TOKEN_NOTIFY => {
+                    let notify_count = match read_eventfd(notify_fd.as_raw_fd()) {
+                        Ok(count) => count,
+                        Err(error) => {
+                            tracing::warn!(
+                                event_name = "virtio.blk.ioeventfd_read_failed",
+                                %error,
+                                "virtio-blk io_uring worker failed to read notify eventfd"
+                            );
+                            return;
+                        }
+                    };
+                    emit_queue_notification_metric("io_uring", notify_count);
+
+                    while let Ok(command) = rx.try_recv() {
+                        match command {
+                            BlockWorkerCommand::Drain(done) => drain_replies.push(done),
+                            BlockWorkerCommand::Stop => stop = true,
+                        }
+                    }
+
+                    let result = VirtioBlockDevice::process_queue_uring(
+                        &mut file,
+                        read_only,
+                        capacity_sectors,
+                        &device_id,
+                        &mem,
+                        &mut queue,
+                        &mut uring,
+                    );
+                    emit_queue_drain_metrics("io_uring", &result);
+                    if result.should_interrupt {
+                        signal_irq(irq_fd, &interrupt_status);
+                    }
+                    tracing::trace!(
+                        event_name = "virtio.blk.queue_drain",
+                        backend = "io_uring",
+                        notify_count,
+                        processed = result.processed,
+                        submitted = result.submitted,
+                        used_entries = result.used_entries,
+                        in_flight = uring.pending_len(),
+                        should_interrupt = result.should_interrupt,
+                        read_ops = result.read_ops,
+                        write_ops = result.write_ops,
+                        bytes_read = result.bytes_read,
+                        bytes_written = result.bytes_written,
+                        duration_ms = duration_ms(result.drain_duration),
+                        "virtio-blk io_uring worker drained queue notification"
+                    );
+                }
+                EPOLL_TOKEN_COMPLETION => {
+                    let _ = drain_eventfd(uring.completion_fd());
+                    let completion = uring.reap_completions(&mem, &mut queue);
+                    if completion.should_interrupt {
+                        signal_irq(irq_fd, &interrupt_status);
+                    }
+                    tracing::trace!(
+                        event_name = "virtio.blk.async_completions",
+                        backend = "io_uring",
+                        completed = completion.completed,
+                        used_entries = completion.used_entries,
+                        in_flight = uring.pending_len(),
+                        should_interrupt = completion.should_interrupt,
+                        read_ops = completion.read_ops,
+                        write_ops = completion.write_ops,
+                        bytes_read = completion.bytes_read,
+                        bytes_written = completion.bytes_written,
+                        "virtio-blk io_uring completions reaped"
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        if uring.pending_len() == 0 {
+            for done in drain_replies.drain(..) {
+                let _ = done.send(());
+            }
+            if stop {
+                return;
+            }
+        }
+    }
+}
+
 fn dup_owned_fd(fd: RawFd) -> std::io::Result<OwnedFd> {
     let duped = unsafe { libc::dup(fd) };
     if duped < 0 {
         return Err(std::io::Error::last_os_error());
     }
     Ok(unsafe { OwnedFd::from_raw_fd(duped) })
+}
+
+fn create_eventfd(flags: libc::c_int) -> std::io::Result<OwnedFd> {
+    let fd = unsafe { libc::eventfd(0, flags) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn create_epoll_fd() -> std::io::Result<OwnedFd> {
+    let fd = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn epoll_add(epoll_fd: RawFd, fd: RawFd, token: u64) -> std::io::Result<()> {
+    let mut event = libc::epoll_event {
+        events: libc::EPOLLIN as u32,
+        u64: token,
+    };
+    let ret = unsafe { libc::epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut event) };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn epoll_wait_tokens(epoll_fd: RawFd) -> std::io::Result<Vec<u64>> {
+    let mut events = [libc::epoll_event { events: 0, u64: 0 }; 8];
+    loop {
+        let n = unsafe { libc::epoll_wait(epoll_fd, events.as_mut_ptr(), events.len() as i32, -1) };
+        if n >= 0 {
+            return Ok(events[..n as usize].iter().map(|event| event.u64).collect());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EINTR) {
+            continue;
+        }
+        return Err(error);
+    }
 }
 
 fn read_eventfd(fd: RawFd) -> std::io::Result<u64> {
@@ -1047,6 +1765,14 @@ fn read_eventfd(fd: RawFd) -> std::io::Result<u64> {
             std::io::ErrorKind::UnexpectedEof,
             "short eventfd read",
         ));
+    }
+}
+
+fn drain_eventfd(fd: RawFd) -> std::io::Result<Option<u64>> {
+    match read_eventfd(fd) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.raw_os_error() == Some(libc::EAGAIN) => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -1516,6 +2242,73 @@ mod tests {
         assert_eq!(counter_total(METRIC_REQUEST_BYTES_TOTAL), 512);
         assert!(histogram_present(METRIC_REQUEST_DURATION_MS));
         assert!(histogram_present(METRIC_QUEUE_DRAIN_DURATION_MS));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn block_io_uring_records_async_metrics() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter: Snapshotter = recorder.snapshotter();
+        let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+        let data = vec![0xA5u8; 512];
+        let path = temp_disk_with_data("read-uring-metrics.img", &data);
+        let mut h = TestHarness::new(&path, true);
+        let mut file = h.dev.file.try_clone().unwrap();
+        let Ok(mut uring) = BlockIoUring::new(file.as_raw_fd()) else {
+            return;
+        };
+        let mut queue = h.dev.queue.take().unwrap();
+        let mem = h.dev.mem.as_ref().unwrap().clone();
+
+        h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
+        let result = VirtioBlockDevice::process_queue_uring(
+            &mut file,
+            true,
+            h.dev.capacity_sectors,
+            &h.dev.device_id,
+            &mem,
+            &mut queue,
+            &mut uring,
+        );
+        assert_eq!(result.processed, 1);
+        assert_eq!(result.submitted, 1);
+        assert_eq!(result.used_entries, 0);
+
+        uring.ring.submit_and_wait(1).unwrap();
+        let completion = uring.reap_completions(&mem, &mut queue);
+        assert_eq!(completion.completed, 1);
+        assert_eq!(completion.used_entries, 1);
+
+        let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        assert_eq!(h.read_bytes(data_offset, 512), data);
+        assert_eq!(h.read_status(data_offset + 512), VIRTIO_BLK_S_OK);
+
+        let snap = snapshotter.snapshot().into_vec();
+        let counter_total = |name: &str| -> u64 {
+            snap.iter()
+                .filter_map(|(key, _, _, value)| match (key.key().name(), value) {
+                    (metric, DebugValue::Counter(count)) if metric == name => Some(*count),
+                    _ => None,
+                })
+                .sum()
+        };
+        let histogram_present = |name: &str| -> bool {
+            snap.iter().any(|(key, _, _, value)| {
+                key.key().name() == name && matches!(value, DebugValue::Histogram(_))
+            })
+        };
+
+        assert_eq!(counter_total(METRIC_ASYNC_SUBMISSIONS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_ASYNC_COMPLETIONS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_USED_ENTRIES_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_INTERRUPTS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_REQUESTS_TOTAL), 1);
+        assert_eq!(counter_total(METRIC_REQUEST_BYTES_TOTAL), 512);
+        assert!(histogram_present(METRIC_ASYNC_IN_FLIGHT));
+        assert!(histogram_present(METRIC_REQUEST_DURATION_MS));
     }
 
     #[test]
