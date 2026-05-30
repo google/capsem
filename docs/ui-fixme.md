@@ -104,11 +104,28 @@ For each supported component, keep a fixture that contains:
 The renderer should fail closed for unsupported recipe variants instead of
 falling back to a fake generic box.
 
-## Immediate Next Steps
+## Fixed In The Isolated Prototype
 
-1. Vendor/pin upstream A2UI v0.9 schemas.
-2. Scrape exact Preline docs snippets into ignored `private/todo/preline`.
-3. Define the Capsem A2UI catalog JSON Schema slice.
-4. Define checked Preline template metadata and checker tests.
-5. Replace the cramped preview with a Svelte/Preline workbench with sidebar,
-   rendered preview, source panes, and checker reports.
+1. Upstream A2UI v0.9 schemas are pinned under `schemas/a2ui/v0_9`.
+2. Exact Preline docs snippets are scraped into ignored
+   `private/todo/preline` when the docs expose extractable examples.
+3. The first Capsem catalog schema slice and template metadata schema exist
+   under `schemas/capsem-ui`.
+4. Five reviewed templates are tracked under `templates/capsem-ui`.
+5. The Svelte workbench has a sidebar, rendered preview first, and A2UI/tool
+   inspector panes.
+6. The self-use gate builds the first rendered surface through structured UI
+   tools, not hand-authored JSON.
+
+## Next Fixes
+
+1. Replace the temporary Rust contract map in the template checker with code
+   generated from JSON Schema.
+2. Expand the Preline scraper so it can recover modal and card variants that
+   are not exposed through the first textarea extractor.
+3. Make template reports visible per promoted template, not only through the
+   Rust tests and workbench metadata pane.
+4. Remove generic fallback rendering from production lanes once every supported
+   component has a checked adapter.
+5. Decide the exact Capsem catalog extension path for Preline variants that
+   A2UI Basic does not model directly.

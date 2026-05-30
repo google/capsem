@@ -1,4 +1,5 @@
 mod ui_preview;
+mod ui_tools;
 
 use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
 
@@ -53,6 +54,8 @@ fn app(state: AppState) -> Router {
         .route("/ui-preview", get(ui_preview::preview_html))
         .route("/ui/spec/demo", get(ui_preview::demo))
         .route("/ui/spec/validate", post(ui_preview::validate))
+        .route("/ui/tools/run", post(ui_tools::run))
+        .route("/ui/tools/acceptance", get(ui_tools::acceptance))
         .route("/health", get(health))
         .route("/plugins/install", post(install_plugin))
         .route("/plugins/run", post(run_plugin))

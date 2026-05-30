@@ -1,0 +1,17 @@
+{
+  "schema": "capsem.ui-template.v1",
+  "component": "StatusCard",
+  "variant": "top-border",
+  "bindings": [
+    {
+      "prop": "title",
+      "kind": "text",
+      "selector": "[data-capui-text='title']"
+    },
+    {
+      "prop": "message",
+      "kind": "text",
+      "selector": "[data-capui-text='message']"
+    }
+  ]
+}

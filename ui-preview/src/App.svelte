@@ -2,21 +2,66 @@
   import A2Node from "./A2Node.svelte";
   import {
     buildSurface,
+    type A2uiMessage,
     type PreviewExample,
     type PreviewPayload,
+    type PreviewRecipe,
     type RenderAction,
   } from "./a2ui";
   import { onMount } from "svelte";
 
+  type WorkbenchItem = {
+    name: string;
+    label: string;
+    api: string;
+    surface: string;
+    recipe: PreviewRecipe;
+    messages: A2uiMessage[];
+    toolRun?: boolean;
+  };
+
   let payload = $state<PreviewPayload | null>(null);
   let selected = $state(0);
+  let inspector = $state<"a2ui" | "tools" | "template">("a2ui");
   let error = $state("");
   let actions = $state<RenderAction[]>([]);
 
-  let examples = $derived(payload?.examples ?? []);
-  let current = $derived(examples[selected] as PreviewExample | undefined);
+  let items = $derived.by<WorkbenchItem[]>(() => {
+    if (!payload) return [];
+    const toolSurface = payload.toolAcceptance.surfaces[0];
+    const toolItem: WorkbenchItem = {
+      name: "Tool Acceptance",
+      label: "UI MCP",
+      api: "ui.surface.create -> ui.alert -> ui.surface.validate -> ui.surface.preview",
+      surface: toolSurface?.surfaceId ?? "tool-acceptance",
+      recipe: {
+        component: "alert",
+        variant: "discovery",
+        docsUrl: "https://preline.co/docs/components/alerts.html#discovery",
+      },
+      messages: toolSurface?.messages ?? [],
+      toolRun: true,
+    };
+
+    return [
+      toolItem,
+      ...payload.examples.map((example: PreviewExample) => ({
+        name: example.name,
+        label: example.surface,
+        api: example.api,
+        surface: example.surface,
+        recipe: example.recipe,
+        messages: example.messages,
+      })),
+    ];
+  });
+
+  let current = $derived(items[selected]);
   let surface = $derived(current ? buildSurface(current.messages) : null);
   let serialized = $derived(current ? JSON.stringify(current.messages, null, 2) : "");
+  let toolSerialized = $derived(
+    payload ? JSON.stringify(payload.toolAcceptance.observations, null, 2) : "",
+  );
 
   onMount(() => {
     fetch("/ui/spec/demo")
@@ -39,108 +84,165 @@
         context: action.context ?? {},
       },
       ...actions,
-    ].slice(0, 5);
+    ].slice(0, 6);
+  }
+
+  function selectItem(index: number): void {
+    selected = index;
+    actions = [];
   }
 </script>
 
-<main class="min-h-screen bg-white dark:bg-neutral-900">
-  <div class="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-    <header class="flex flex-col gap-3">
-      <div class="max-w-2xl">
-        <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-500/20 dark:text-primary-400">
-          A2UI v0.9 Basic
-        </span>
-        <h1 class="mt-4 text-2xl font-semibold tracking-normal text-stone-800 dark:text-neutral-200">Capsem UI renderer</h1>
-        <p class="mt-2 text-sm leading-6 text-stone-500 dark:text-neutral-400">
-          Rust emits validated A2UI Basic messages; Svelte maps their fields into Preline component recipes.
-        </p>
+<main class="min-h-screen bg-surface text-foreground">
+  <div class="flex min-h-screen">
+    <aside class="hidden w-72 shrink-0 border-e border-card-line bg-card lg:block">
+      <div class="border-b border-card-line px-5 py-4">
+        <p class="text-xs font-semibold uppercase text-muted-foreground-1">Capsem UI</p>
+        <h1 class="mt-1 text-lg font-semibold tracking-normal text-foreground">A2UI Workbench</h1>
       </div>
-    </header>
-
-    {#if error}
-      <section class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-        {error}
-      </section>
-    {:else if !current || !surface}
-      <section class="rounded-xl border border-stone-200 bg-white p-5 text-sm text-stone-500 shadow-2xs dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
-        Loading preview...
-      </section>
-    {:else}
-      <div class="border-b border-stone-200 dark:border-neutral-700">
-        <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
-        <nav class="flex gap-x-2 overflow-x-auto" aria-label="Tabs" role="tablist" aria-orientation="horizontal">
-          {#each examples as example, index}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={index === selected}
-              class={index === selected
-                ? "active -mb-px py-3 px-4 inline-flex items-center gap-x-2 bg-white text-sm font-medium text-center border border-stone-200 border-b-transparent text-primary rounded-t-lg focus:outline-hidden focus:text-primary-focus disabled:opacity-50 disabled:pointer-events-none dark:bg-neutral-900 dark:border-neutral-700 dark:text-primary"
-                : "-mb-px py-3 px-4 inline-flex items-center gap-x-2 bg-stone-50 text-sm font-medium text-center border border-stone-200 text-stone-500 rounded-t-lg hover:text-stone-700 focus:outline-hidden focus:text-stone-700 disabled:opacity-50 disabled:pointer-events-none dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"}
-              onclick={() => {
-                selected = index;
-                actions = [];
-              }}
-            >
-              {example.name}
-            </button>
-          {/each}
-        </nav>
-      </div>
-
-      <section class="rounded-xl border border-stone-200 bg-white shadow-2xs dark:border-neutral-700 dark:bg-neutral-900">
-        <div class="border-b border-stone-200 px-4 py-3 dark:border-neutral-700">
-          <div class="flex items-center justify-between gap-3">
-            <h2 class="text-sm font-semibold tracking-normal text-stone-800 dark:text-neutral-200">Preline recipe render</h2>
-            <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-primary text-primary-foreground">
-              {current.recipe.component}:{current.recipe.variant}
+      <nav class="p-3" aria-label="Component workbench">
+        {#each items as item, index}
+          <button
+            type="button"
+            class={index === selected
+              ? "mb-1 flex w-full items-center justify-between rounded-lg bg-primary px-3 py-2 text-left text-sm font-medium text-primary-foreground"
+              : "mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium text-muted-foreground-1 hover:bg-surface-hover hover:text-foreground"}
+            onclick={() => selectItem(index)}
+          >
+            <span>{item.name}</span>
+            <span class={index === selected
+              ? "rounded-full bg-primary-foreground/15 px-2 py-0.5 text-[11px]"
+              : "rounded-full bg-surface px-2 py-0.5 text-[11px] text-muted-foreground"}>
+              {item.label}
             </span>
-          </div>
-        </div>
-        <div class="p-6">
-          <div class="mx-auto w-full max-w-xl">
-            <A2Node id="root" {surface} recipe={current.recipe} scope={surface.data} onAction={recordAction} />
-          </div>
-        </div>
-      </section>
+          </button>
+        {/each}
+      </nav>
+    </aside>
 
-      <section class="grid gap-5 lg:grid-cols-2">
-        <article class="rounded-xl border border-stone-200 bg-white p-4 shadow-2xs dark:border-neutral-700 dark:bg-neutral-900">
-          <div class="mb-3 flex items-center justify-between gap-3">
-            <h2 class="text-sm font-semibold tracking-normal text-stone-800 dark:text-neutral-200">Rust API</h2>
-            <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-500/20 dark:text-primary-400">
-              {payload?.generatedBy}
-            </span>
+    <section class="flex min-w-0 flex-1 flex-col">
+      <header class="border-b border-card-line bg-card px-4 py-4 sm:px-6">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p class="text-xs font-semibold uppercase text-muted-foreground-1">A2UI v0.9 + checked Preline templates</p>
+            <h2 class="mt-1 text-xl font-semibold tracking-normal text-foreground">
+              {current?.name ?? "Loading"}
+            </h2>
           </div>
-          <pre class="overflow-auto rounded-lg bg-stone-100 p-3 text-xs leading-5 text-stone-800 dark:bg-neutral-800 dark:text-neutral-200">{current.api}</pre>
-          {#if actions.length}
-            <div class="mt-4">
-              <h3 class="mb-2 text-xs font-semibold text-stone-800 dark:text-neutral-200">Client actions</h3>
-              <div class="flex flex-col gap-2">
-                {#each actions as action, index}
-                  <div class="rounded-lg border border-stone-200 bg-stone-100 p-2 text-xs text-stone-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-400">
-                    {index + 1}. {action.name} from {action.sourceComponentId}
-                  </div>
+          {#if payload}
+            <div class="flex flex-wrap items-center gap-2">
+              <span class={payload.toolAcceptance.ok
+                ? "inline-flex items-center gap-x-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
+                : "inline-flex items-center gap-x-1.5 rounded-full bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground"}>
+                tool gate {payload.toolAcceptance.ok ? "passing" : "failing"}
+              </span>
+              <span class="inline-flex items-center gap-x-1.5 rounded-full border border-card-line bg-surface px-3 py-1.5 text-xs font-medium text-muted-foreground-1">
+                {payload.catalogId}
+              </span>
+            </div>
+          {/if}
+        </div>
+      </header>
+
+      {#if error}
+        <div class="m-6 rounded-lg border border-destructive bg-destructive/10 p-4 text-sm text-destructive">
+          {error}
+        </div>
+      {:else if !current || !surface}
+        <div class="m-6 rounded-lg border border-card-line bg-card p-5 text-sm text-muted-foreground-1 shadow-2xs">
+          Loading preview...
+        </div>
+      {:else}
+        <div class="grid flex-1 gap-0 xl:grid-cols-[minmax(0,1fr)_480px]">
+          <section class="min-w-0 overflow-auto p-4 sm:p-6">
+            <div class="mb-4 flex flex-wrap gap-2 lg:hidden">
+              {#each items as item, index}
+                <button
+                  type="button"
+                  class={index === selected
+                    ? "rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
+                    : "rounded-lg border border-card-line bg-card px-3 py-2 text-sm font-medium text-muted-foreground-1"}
+                  onclick={() => selectItem(index)}
+                >
+                  {item.name}
+                </button>
+              {/each}
+            </div>
+
+            <article class="rounded-xl border border-card-line bg-card shadow-2xs">
+              <div class="flex items-center justify-between gap-3 border-b border-card-line px-4 py-3">
+                <div>
+                  <h3 class="text-sm font-semibold tracking-normal text-foreground">Rendered preview</h3>
+                  <p class="mt-1 text-xs text-muted-foreground-1">{current.api}</p>
+                </div>
+                <span class="inline-flex items-center gap-x-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground">
+                  {current.recipe.component}:{current.recipe.variant}
+                </span>
+              </div>
+              <div class="bg-surface p-6">
+                <div class="mx-auto w-full max-w-xl">
+                  <A2Node id="root" {surface} recipe={current.recipe} scope={surface.data} onAction={recordAction} />
+                </div>
+              </div>
+            </article>
+
+            {#if actions.length}
+              <article class="mt-5 rounded-xl border border-card-line bg-card p-4 shadow-2xs">
+                <h3 class="text-sm font-semibold tracking-normal text-foreground">Client actions</h3>
+                <div class="mt-3 grid gap-2">
+                  {#each actions as action, index}
+                    <div class="rounded-lg border border-card-line bg-surface p-3 text-xs text-muted-foreground-1">
+                      {index + 1}. {action.name} from {action.sourceComponentId}
+                    </div>
+                  {/each}
+                </div>
+              </article>
+            {/if}
+          </section>
+
+          <aside class="border-t border-card-line bg-card xl:border-s xl:border-t-0">
+            <div class="border-b border-card-line px-4 py-3">
+              <div class="flex gap-2">
+                {#each ["a2ui", "tools", "template"] as tab}
+                  <button
+                    type="button"
+                    class={inspector === tab
+                      ? "rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+                      : "rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground-1 hover:bg-surface"}
+                    onclick={() => (inspector = tab as "a2ui" | "tools" | "template")}
+                  >
+                    {tab}
+                  </button>
                 {/each}
               </div>
             </div>
-          {/if}
-        </article>
-
-        <article class="rounded-xl border border-stone-200 bg-white shadow-2xs dark:border-neutral-700 dark:bg-neutral-900">
-          <div class="border-b border-stone-200 px-4 py-3 dark:border-neutral-700">
-            <div class="flex items-center justify-between gap-3">
-              <h2 class="text-sm font-semibold tracking-normal text-stone-800 dark:text-neutral-200">A2UI Basic format</h2>
-              <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-white border border-stone-200 text-stone-800 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-                validated
-              </span>
+            <div class="p-4">
+              {#if inspector === "a2ui"}
+                <pre class="max-h-[calc(100vh-180px)] overflow-auto rounded-lg bg-surface p-4 text-xs leading-5 text-foreground">{serialized}</pre>
+              {:else if inspector === "tools"}
+                <div class="mb-3 rounded-lg border border-card-line bg-surface p-3 text-xs text-muted-foreground-1">
+                  Self-use gate: the first surface is built through structured UI tools.
+                </div>
+                <pre class="max-h-[calc(100vh-235px)] overflow-auto rounded-lg bg-surface p-4 text-xs leading-5 text-foreground">{toolSerialized}</pre>
+              {:else}
+                <div class="grid gap-3 text-sm">
+                  <div class="rounded-lg border border-card-line bg-surface p-3">
+                    <div class="text-xs font-semibold uppercase text-muted-foreground-1">Template check</div>
+                    <div class="mt-1 text-foreground">component={current.recipe.component}</div>
+                    <div class="text-muted-foreground-1">variant={current.recipe.variant}</div>
+                  </div>
+                  <a
+                    class="inline-flex items-center gap-x-1 text-sm font-semibold text-primary hover:text-primary-hover hover:underline"
+                    href={current.recipe.docsUrl}
+                  >
+                    Preline source recipe
+                  </a>
+                </div>
+              {/if}
             </div>
-          </div>
-          <div class="p-4">
-            <pre class="max-h-[360px] overflow-auto rounded-lg bg-stone-100 p-4 text-xs leading-5 text-stone-800 dark:bg-neutral-800 dark:text-neutral-200">{serialized}</pre>
-          </div>
-        </article>
-      </section>
-    {/if}
+          </aside>
+        </div>
+      {/if}
+    </section>
   </div>
 </main>

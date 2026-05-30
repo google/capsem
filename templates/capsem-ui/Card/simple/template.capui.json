@@ -1,0 +1,13 @@
+{
+  "schema": "capsem.ui-template.v1",
+  "component": "Card",
+  "variant": "simple",
+  "structural": ["id"],
+  "bindings": [
+    {
+      "prop": "child",
+      "kind": "component_ref",
+      "selector": "[data-capui-slot='child']"
+    }
+  ]
+}

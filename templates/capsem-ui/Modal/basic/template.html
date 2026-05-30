@@ -1,0 +1,15 @@
+<div data-template-component="Modal" data-template-state="open">
+  <div data-capui-slot="trigger"></div>
+  <div class="size-full fixed top-0 inset-s-0 z-80 overflow-x-hidden overflow-y-auto pointer-events-none">
+    <div class="sm:max-w-lg sm:w-full m-3 sm:mx-auto">
+      <div class="flex flex-col bg-overlay border border-overlay-line shadow-2xs rounded-xl pointer-events-auto">
+        <div class="flex justify-between items-center py-3 px-4 border-b border-overlay-header">
+          <h3 class="font-semibold text-foreground" data-template-text="title"></h3>
+          <button type="button" class="size-8 inline-flex justify-center items-center gap-x-2 rounded-full bg-surface border border-surface-line text-surface-foreground hover:bg-surface-hover focus:outline-hidden focus:bg-surface-focus disabled:opacity-50 disabled:pointer-events-none" aria-label="Close" data-template-action="close"></button>
+        </div>
+        <div class="p-4 overflow-y-auto" data-capui-slot="content"></div>
+        <div class="flex justify-end items-center gap-x-2 py-3 px-4 border-t border-overlay-footer" data-template-slot="footer"></div>
+      </div>
+    </div>
+  </div>
+</div>

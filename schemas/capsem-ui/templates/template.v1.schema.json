@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capsem.org/schemas/ui/template.v1.json",
+  "title": "Capsem UI Template",
+  "type": "object",
+  "required": ["schema", "component", "variant", "bindings"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "capsem.ui-template.v1" },
+    "component": { "type": "string", "minLength": 1 },
+    "variant": { "type": "string", "minLength": 1 },
+    "structural": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    },
+    "bindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/binding" }
+    }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "required": ["prop", "kind", "selector"],
+      "additionalProperties": false,
+      "properties": {
+        "prop": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["text", "attribute", "component_ref", "action", "state"]
+        },
+        "selector": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

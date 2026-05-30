@@ -1,0 +1,18 @@
+{
+  "schema": "capsem.ui-template.v1",
+  "component": "Modal",
+  "variant": "basic",
+  "structural": ["id"],
+  "bindings": [
+    {
+      "prop": "trigger",
+      "kind": "component_ref",
+      "selector": "[data-capui-slot='trigger']"
+    },
+    {
+      "prop": "content",
+      "kind": "component_ref",
+      "selector": "[data-capui-slot='content']"
+    }
+  ]
+}

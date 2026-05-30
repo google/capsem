@@ -35,6 +35,7 @@ export type A2uiComponent = {
 export type PreviewPayload = {
   generatedBy: string;
   catalogId: string;
+  toolAcceptance: UiToolProgramResult;
   examples: PreviewExample[];
 };
 
@@ -50,6 +51,29 @@ export type PreviewRecipe = {
   component: string;
   variant: string;
   docsUrl: string;
+};
+
+export type UiToolProgramResult = {
+  ok: boolean;
+  observations: UiToolObservation[];
+  surfaces: UiToolSurfaceSnapshot[];
+};
+
+export type UiToolObservation = {
+  tool: string;
+  ok: boolean;
+  message?: string;
+  surfaceId?: string;
+  componentId?: string;
+  errors: string[];
+  messages: A2uiMessage[];
+};
+
+export type UiToolSurfaceSnapshot = {
+  surfaceId: string;
+  catalogId: string;
+  componentCount: number;
+  messages: A2uiMessage[];
 };
 
 export type SurfaceModel = {

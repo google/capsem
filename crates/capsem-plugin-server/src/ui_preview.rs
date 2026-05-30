@@ -1,5 +1,6 @@
 use axum::{response::Html, Json};
 use capsem_plugin_engine::ui::{validate_messages, A2uiServerMessage, Ui, A2UI_BASIC_CATALOG_ID};
+use capsem_plugin_engine::ui_tools::{acceptance_program, run_tool_program, UiToolProgramResult};
 use serde::{Deserialize, Serialize};
 
 pub async fn preview_html() -> Html<String> {
@@ -50,6 +51,7 @@ fn demo_payload() -> UiPreviewPayload {
     UiPreviewPayload {
         generated_by: "rust::capsem_plugin_engine::ui::Ui",
         catalog_id: A2UI_BASIC_CATALOG_ID,
+        tool_acceptance: run_tool_program(acceptance_program()),
         examples: vec![
             UiPreviewExample::new(
                 "Alert",
@@ -123,6 +125,7 @@ fn demo_payload() -> UiPreviewPayload {
 pub struct UiPreviewPayload {
     pub generated_by: &'static str,
     pub catalog_id: &'static str,
+    pub tool_acceptance: UiToolProgramResult,
     pub examples: Vec<UiPreviewExample>,
 }
 

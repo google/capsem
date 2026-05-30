@@ -74,6 +74,18 @@ The system must pass a self-use gate before we call it a plugin interface:
 
 If this fails, the plugin interface is not real enough.
 
+The isolated prototype now includes this first gate as Rust code:
+
+```text
+ui.surface.create(id="tool-acceptance")
+ui.alert(surface_id="tool-acceptance", message="Security review required")
+ui.surface.validate(surface_id="tool-acceptance")
+ui.surface.preview(surface_id="tool-acceptance")
+```
+
+The preview endpoint returns the resulting observations and the Svelte
+workbench renders that tool-built surface as the first item.
+
 ## Schema Source Of Truth
 
 The source of truth is JSON Schema:
@@ -87,6 +99,10 @@ schemas/capsem-ui/templates/template.v1.schema.json
 
 Rust and TypeScript types are generated from those schemas. Hand-written types
 are acceptable only as temporary sprint scaffolding and must be tracked as debt.
+
+Current prototype debt: the schemas are pinned and checked in, but the narrow
+Rust and TypeScript models are still hand-written scaffolding. Generation is
+the next correctness step before this leaves the isolated crate.
 
 ## Template Shape
 

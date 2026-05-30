@@ -1,0 +1,18 @@
+{
+  "schema": "capsem.ui-template.v1",
+  "component": "Button",
+  "variant": "primary",
+  "structural": ["id"],
+  "bindings": [
+    {
+      "prop": "child",
+      "kind": "component_ref",
+      "selector": "[data-capui-slot='child']"
+    },
+    {
+      "prop": "action",
+      "kind": "action",
+      "selector": "[data-capui-action='action']"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema": "capsem.ui-template.v1",
+  "component": "Alert",
+  "variant": "soft",
+  "bindings": [
+    {
+      "prop": "tone",
+      "kind": "attribute",
+      "selector": "[data-capui-icon='tone']"
+    },
+    {
+      "prop": "title",
+      "kind": "text",
+      "selector": "[data-capui-text='title']"
+    },
+    {
+      "prop": "message",
+      "kind": "text",
+      "selector": "[data-capui-text='message']"
+    }
+  ]
+}

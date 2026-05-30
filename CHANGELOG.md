@@ -4,6 +4,10 @@
 
 ### Added
 
+- Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
+  catalog/template schemas, checked Preline templates, Rust UI tool runner
+  endpoints, and a Svelte workbench that renders the tool-built acceptance
+  surface first.
 - Added a Rust-owned A2UI v0.9 Basic preview path with typed UI helpers,
   contract tests, server endpoints, and a Svelte/Preline renderer preview.
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering

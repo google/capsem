@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capsem.org/schemas/ui/catalog.v1.json",
+  "title": "Capsem UI Catalog",
+  "description": "First Capsem UI catalog slice, compatible with A2UI v0.9 authoring and rendered through checked Preline templates.",
+  "catalogId": "https://capsem.org/schemas/ui/catalog.v1.json",
+  "components": {
+    "Alert": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "../a2ui/v0_9/common_types.json#/$defs/ComponentId" },
+        "component": { "const": "Alert" },
+        "variant": {
+          "type": "string",
+          "enum": ["soft", "solid", "bordered", "dismissible"],
+          "default": "soft"
+        },
+        "tone": {
+          "type": "string",
+          "enum": ["neutral", "primary", "warning", "danger"],
+          "default": "neutral"
+        },
+        "title": { "$ref": "../a2ui/v0_9/common_types.json#/$defs/DynamicString" },
+        "message": { "$ref": "../a2ui/v0_9/common_types.json#/$defs/DynamicString" }
+      },
+      "required": ["id", "component", "message"],
+      "additionalProperties": false
+    },
+    "StatusCard": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "../a2ui/v0_9/common_types.json#/$defs/ComponentId" },
+        "component": { "const": "StatusCard" },
+        "variant": {
+          "type": "string",
+          "enum": ["top-border"],
+          "default": "top-border"
+        },
+        "title": { "$ref": "../a2ui/v0_9/common_types.json#/$defs/DynamicString" },
+        "message": { "$ref": "../a2ui/v0_9/common_types.json#/$defs/DynamicString" }
+      },
+      "required": ["id", "component", "title", "message"],
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "anyComponent": {
+      "oneOf": [
+        { "$ref": "#/components/Alert" },
+        { "$ref": "#/components/StatusCard" }
+      ],
+      "discriminator": {
+        "propertyName": "component"
+      }
+    }
+  }
+}
