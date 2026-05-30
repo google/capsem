@@ -760,7 +760,6 @@ async fn run_async_main_loop(
         let resource_metrics = ipc::ResourceMetricsContext {
             configured_vcpus: args.cpus,
             configured_ram_mb: args.ram_mb,
-            session_dir: session_dir.clone(),
         };
 
         tokio::spawn(async move {

@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source selection, and tailing.
 - Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
   in-VM, lifecycle, fork, and security-engine benchmark results.
+- Added an 8-live-VM host endpoint latency benchmark under
+  `tests/capsem-serial/test_endpoint_latency_benchmark.py`, covering global
+  service reads, per-VM detail/history/file/policy-context reads, and gateway
+  health/token/status reads with committed `benchmarks/endpoint-latency/`
+  results.
 
 ### Changed
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
@@ -74,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `capsem-tui` gateway refreshes to reuse the HTTP client and cached
   gateway token, so status polling measures the local status request instead of
   redoing auth bootstrap on every tick.
+- Changed `capsem-process` live metrics snapshots to stay on in-memory
+  counters instead of recursively scanning VM session directories on the
+  service `/list` hot path.
+- Changed service read hot paths so `/list` no longer calls per-VM live metrics,
+  `/stats` uses an empty/read-only fast path, raw session DB queries use
+  SQLite progress handlers instead of a 100ms watchdog-thread floor, and
+  policy-context exports no longer duplicate one security event across multiple
+  joined detail rows.
 - Strengthened the suspend/resume lifecycle integration test so it now proves
   a background guest process keeps the same PID and continues writing after
   warm resume, giving Apple VZ and KVM the same long-term state-preservation
@@ -130,8 +143,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bottom status bar does not shift as latency changes.
 - Fixed `capsem-tui` service latency rendering to keep the status dot glued to
   the latency field, making the service block read as one unit.
-- Fixed `capsem-tui` local latency jitter by smoothing sub-100ms cache-hit
-  versus cache-refresh measurements while still surfacing real slow responses.
 - Fixed `capsem-tui` shell controls to use an app-owned Alt namespace:
   `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`, and `Alt+q`, instead of
   terminal-dependent Cmd/Ctrl forwarding or prefix fallbacks.

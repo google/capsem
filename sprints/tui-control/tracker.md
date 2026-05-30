@@ -127,21 +127,38 @@
   per-connection helper.
 - Live fd stress after install: 150 service `/list` refreshes across
   `tui-proof-a` and `tui-proof-b` kept process fd counts flat at 39 and 40.
-- Local latency diagnosis: gateway `/status` is stable at roughly 4-8ms when
-  refreshing the two proof VMs. The visible `0/1ms` versus `7ms` jitter came
-  from the TUI displaying raw cache-hit/cache-refresh phase and paying token
-  bootstrap on every refresh.
+- Local latency diagnosis: the original two-VM 4-8ms reading was real service
+  work, not a UI display problem. `/list` was still calling per-VM live metrics,
+  `capsem-process` metrics snapshots recursively scanned session directories,
+  and raw session DB queries paid a fixed 100ms watchdog-thread floor.
 - TUI latency fix: gateway refreshes now reuse the HTTP client and cached
-  gateway token, and interactive state replacement smooths sub-100ms local
-  latency jitter without hiding real slow responses.
+  gateway token while preserving the freshly measured latency value. The
+  service hot paths now keep `/list` in-memory, keep metrics snapshots
+  process-owned, use SQLite progress handlers for raw query timeouts, skip
+  `/stats` schema creation on read, and dedupe policy-context exports by
+  security event.
+- Endpoint latency gate: 8 live temporary VMs now cover global service reads,
+  per-VM info/logs/history/files/policy-context reads, and gateway
+  health/token/status reads. Latest release-binary arm64 run: `/list` p95
+  0.335ms, `/stats` p95 0.798ms, slowest per-VM endpoint `/files` p95
+  2.491ms, gateway `/status` p95 0.223ms.
+- Boot pressure follow-up: an early 4-way parallel benchmark setup run hit one
+  `wait_exec_ready` miss before latency measurement. Sequentially provisioning
+  8 live VMs is stable, so endpoint latency remains gated separately from a
+  future concurrent-boot pressure test.
 
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-tui` (25 tests).
 - TUI latency/provider: `cargo test -p capsem-tui` (25 tests), including
-  token reuse and local latency smoothing coverage.
+  token reuse and raw local latency preservation coverage.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
+- Service/core/logger hot paths: `cargo test -p capsem-service`,
+  `cargo test -p capsem-core session`, and `cargo test -p capsem-logger`.
+- Endpoint benchmark: `CAPSEM_ASSETS_DIR="$HOME/.capsem/assets" uv run python
+  -m pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs
+  --tb=short`.
 - Formatting: `cargo fmt -p capsem-tui -- --check`.
 - Process formatting: `cargo fmt -p capsem-process -- --check`.
 - Functional: `cargo run -p capsem-tui -- --snapshot --width 100 --height 24`;
@@ -166,4 +183,6 @@
   counts flat through repeated service metrics polling.
 - Telemetry: current gateway `/status` counters mapped; event-stream semantics
   still open.
-- Performance: not measured yet.
+- Performance: 8-live-VM endpoint gate passes with `/list` sub-ms, `/stats`
+  under 1ms p95 on release binaries, all per-VM reads under the 12ms p95 gate,
+  and gateway `/status` around 0.22ms p95.

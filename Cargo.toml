@@ -23,7 +23,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.2.1779673506"
+version = "1.2.1780103109"
 edition = "2021"
 rust-version = "1.91"
 license = "Apache-2.0"
@@ -70,7 +70,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 rmp-serde = "1.3.0"
 toml = "0.8"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 humantime = "2"
 objc2 = "0.6"
 objc2-virtualization = { version = "0.3", features = [

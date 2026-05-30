@@ -1,7 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::time::Duration;
 
-use crate::model::{AppState, ServiceStatus, SessionLifecycle};
+use crate::model::{AppState, SessionLifecycle};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppAction {
@@ -89,12 +88,6 @@ impl App {
 
     pub fn replace_state(&mut self, mut state: AppState) {
         state.service.control_message = self.state.service.control_message.clone();
-        if matches!(self.state.service.status, ServiceStatus::Online)
-            && matches!(state.service.status, ServiceStatus::Online)
-        {
-            state.service.latency =
-                stable_local_latency(self.state.service.latency, state.service.latency);
-        }
         let previous_active_id = self.state.active_session_id.clone();
         if state
             .sessions
@@ -265,23 +258,6 @@ impl App {
             .active_session()
             .map(|session| session.id.clone())
     }
-}
-
-fn stable_local_latency(previous: Duration, next: Duration) -> Duration {
-    const LOCAL_JITTER_CEILING: Duration = Duration::from_millis(100);
-    if previous == Duration::ZERO
-        || previous >= LOCAL_JITTER_CEILING
-        || next >= LOCAL_JITTER_CEILING
-    {
-        return next;
-    }
-    let previous_micros = previous.as_micros();
-    let next_micros = next.as_micros();
-    let smoothed = previous_micros
-        .saturating_mul(3)
-        .saturating_add(next_micros)
-        / 4;
-    Duration::from_micros(smoothed.min(u64::MAX as u128) as u64)
 }
 
 fn is_exit_key(key: KeyEvent) -> bool {

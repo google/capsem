@@ -159,6 +159,42 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 
 Every operation must complete in under 1.2 seconds. The test runs 3 cycles and asserts each individual operation stays under the gate.
 
+## Host-side endpoint latency benchmark
+
+Profiles service and gateway read endpoints with eight live temporary VMs. This
+is the TUI/control-plane hot-path gate and intentionally uses raw HTTP clients
+instead of curl helpers so process startup does not pollute endpoint timing.
+
+```bash
+uv run pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs
+```
+
+**Location:** `tests/capsem-serial/test_endpoint_latency_benchmark.py`
+
+### Endpoint groups
+
+| Group | What it covers | Default gate |
+|-------|----------------|--------------|
+| service_global | `/version`, `/list`, `/stats`, settings, profile, rules, enforcement, detection, setup, skills, MCP connector reads | p95 <= 3ms, max <= 10ms |
+| service_vm | `/info/{id}`, logs, history, file listing, session policy contexts across all 8 VMs | p95 <= 12ms, max <= 35ms |
+| gateway | `/health`, `/token`, `/status` over persistent TCP | p95 <= 2ms, max <= 8ms |
+
+### Tunables
+
+- `CAPSEM_ENDPOINT_BENCH_VM_COUNT`: number of live VMs (default: 8)
+- `CAPSEM_ENDPOINT_BENCH_GLOBAL_RUNS`: iterations per global endpoint (default: 16)
+- `CAPSEM_ENDPOINT_BENCH_VM_RUNS`: iterations per per-VM endpoint (default: 4)
+- `CAPSEM_ENDPOINT_BENCH_GATEWAY_RUNS`: iterations per gateway endpoint (default: 32)
+- `CAPSEM_ENDPOINT_BENCH_{GLOBAL,VM,GATEWAY}_P95_MS`: p95 gates
+- `CAPSEM_ENDPOINT_BENCH_{GLOBAL,VM,GATEWAY}_MAX_MS`: max gates
+
+### When to run
+
+- After changes to `/list`, `/status`, `/info`, history, files, settings,
+  profile, rule, detection, enforcement, setup, skills, or gateway proxy paths
+- After adding TUI polling, dashboard, tray, or gateway aggregation behavior
+- Before release when claiming local control-plane responsiveness
+
 ## Host-side fork benchmark
 
 Profiles fork (image creation) and boot-from-image. Same test file, separate test function.
@@ -282,6 +318,7 @@ projection.
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
 - Host-side lifecycle: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs`
 - Host-side fork: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`
+- Host-side endpoint latency: `uv run pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs`
 - Host-side Security Engine: `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs`
 - Both host-side: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
 - Full run: `just benchmark` (or alias `just bench`) or `just test`
@@ -297,6 +334,7 @@ that should not dirty the checkout:
 benchmarks/
   fork/data_1.2.3_x86_64_linux-rc1.json          # Fork speed, image size, data survival
   lifecycle/data_1.2.3_x86_64_linux-rc1.json     # Provision, exec-ready, exec, delete
+  endpoint-latency/data_*.json   # Service/gateway read latency across 8 live VMs
   security-engine/data_*.json    # CEL microbench and VM-originated enforcement
 ```
 

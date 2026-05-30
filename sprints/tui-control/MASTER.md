@@ -115,6 +115,11 @@ attention markers.
 - Kept richer missing state explicit for future API work: waiting-for-input,
   terminal bell, per-session repo/path metadata, security/enforcement/detection
   totals, and event cursor semantics are not invented by the TUI.
+- Reproduced and fixed the local latency stack under an 8-live-VM endpoint
+  gate: `/list` stays in-memory, process metrics snapshots no longer scan
+  session directories, raw session DB queries no longer pay a 100ms watchdog
+  floor, `/stats` has an empty/read-only fast path, and policy-context exports
+  dedupe by security event before fixture projection.
 
 ## Testing Gate
 
@@ -127,4 +132,8 @@ attention markers.
   gateway terminal WebSocket shell output from `tui-proof-a`.
 - Telemetry: mapped from current counters; event stream/cursor semantics remain
   open.
-- Performance: frame/render timing deferred until interactive loop exists.
+- Performance: 8-live-VM endpoint benchmark is active in the serial benchmark
+  gate. Latest release-binary arm64 proof has `/list` p95 0.335ms, `/stats`
+  p95 0.798ms, slowest per-VM read `/files` p95 2.491ms, and gateway
+  `/status` p95 0.223ms. Concurrent boot pressure remains a separate follow-up
+  because endpoint speed should not depend on parallel provisioning setup.

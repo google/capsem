@@ -1,0 +1,751 @@
+{
+  "version": "0.1.0",
+  "timestamp": 1780103291.448705,
+  "vm_count": 8,
+  "iterations": {
+    "service_global": 16,
+    "service_vm": 4,
+    "gateway": 32
+  },
+  "gates": {
+    "service_global": {
+      "p95_ms": 3.0,
+      "max_ms": 10.0
+    },
+    "service_vm": {
+      "p95_ms": 12.0,
+      "max_ms": 35.0
+    },
+    "gateway": {
+      "p95_ms": 2.0,
+      "max_ms": 8.0
+    }
+  },
+  "groups": {
+    "service_global": {
+      "/version": {
+        "count": 16,
+        "min_ms": 0.051,
+        "p50_ms": 0.056,
+        "p95_ms": 0.088,
+        "p99_ms": 0.088,
+        "max_ms": 0.088
+      },
+      "/list": {
+        "count": 16,
+        "min_ms": 0.177,
+        "p50_ms": 0.191,
+        "p95_ms": 0.335,
+        "p99_ms": 0.335,
+        "max_ms": 0.335
+      },
+      "/stats": {
+        "count": 16,
+        "min_ms": 0.51,
+        "p50_ms": 0.602,
+        "p95_ms": 0.798,
+        "p99_ms": 0.798,
+        "max_ms": 0.798
+      },
+      "/settings": {
+        "count": 16,
+        "min_ms": 0.234,
+        "p50_ms": 0.253,
+        "p95_ms": 0.338,
+        "p99_ms": 0.338,
+        "max_ms": 0.338
+      },
+      "/settings/presets": {
+        "count": 16,
+        "min_ms": 0.204,
+        "p50_ms": 0.23,
+        "p95_ms": 0.421,
+        "p99_ms": 0.421,
+        "max_ms": 0.421
+      },
+      "/profiles": {
+        "count": 16,
+        "min_ms": 0.369,
+        "p50_ms": 0.406,
+        "p95_ms": 0.532,
+        "p99_ms": 0.532,
+        "max_ms": 0.532
+      },
+      "/profiles/catalog": {
+        "count": 16,
+        "min_ms": 0.094,
+        "p50_ms": 0.105,
+        "p95_ms": 0.123,
+        "p99_ms": 0.123,
+        "max_ms": 0.123
+      },
+      "/rules": {
+        "count": 16,
+        "min_ms": 0.169,
+        "p50_ms": 0.182,
+        "p95_ms": 0.213,
+        "p99_ms": 0.213,
+        "max_ms": 0.213
+      },
+      "/enforcement": {
+        "count": 16,
+        "min_ms": 0.061,
+        "p50_ms": 0.071,
+        "p95_ms": 0.089,
+        "p99_ms": 0.089,
+        "max_ms": 0.089
+      },
+      "/enforcement/stats": {
+        "count": 16,
+        "min_ms": 0.302,
+        "p50_ms": 0.323,
+        "p95_ms": 0.409,
+        "p99_ms": 0.409,
+        "max_ms": 0.409
+      },
+      "/detection": {
+        "count": 16,
+        "min_ms": 0.044,
+        "p50_ms": 0.052,
+        "p95_ms": 0.059,
+        "p99_ms": 0.059,
+        "max_ms": 0.059
+      },
+      "/detection/stats": {
+        "count": 16,
+        "min_ms": 0.297,
+        "p50_ms": 0.32,
+        "p95_ms": 0.457,
+        "p99_ms": 0.457,
+        "max_ms": 0.457
+      },
+      "/confirm/pending": {
+        "count": 16,
+        "min_ms": 0.045,
+        "p50_ms": 0.049,
+        "p95_ms": 0.057,
+        "p99_ms": 0.057,
+        "max_ms": 0.057
+      },
+      "/skills": {
+        "count": 16,
+        "min_ms": 0.205,
+        "p50_ms": 0.228,
+        "p95_ms": 0.315,
+        "p99_ms": 0.315,
+        "max_ms": 0.315
+      },
+      "/setup/state": {
+        "count": 16,
+        "min_ms": 0.063,
+        "p50_ms": 0.068,
+        "p95_ms": 0.084,
+        "p99_ms": 0.084,
+        "max_ms": 0.084
+      },
+      "/setup/assets": {
+        "count": 16,
+        "min_ms": 0.067,
+        "p50_ms": 0.073,
+        "p95_ms": 0.086,
+        "p99_ms": 0.086,
+        "max_ms": 0.086
+      },
+      "/mcp/connectors": {
+        "count": 16,
+        "min_ms": 0.193,
+        "p50_ms": 0.214,
+        "p95_ms": 0.235,
+        "p99_ms": 0.235,
+        "max_ms": 0.235
+      }
+    },
+    "service_vm": {
+      "/info/epbench-937920e0-0": {
+        "count": 4,
+        "min_ms": 0.435,
+        "p50_ms": 0.468,
+        "p95_ms": 0.629,
+        "p99_ms": 0.629,
+        "max_ms": 0.629
+      },
+      "/logs/epbench-937920e0-0": {
+        "count": 4,
+        "min_ms": 0.619,
+        "p50_ms": 0.656,
+        "p95_ms": 0.745,
+        "p99_ms": 0.745,
+        "max_ms": 0.745
+      },
+      "/history/epbench-937920e0-0": {
+        "count": 4,
+        "min_ms": 0.304,
+        "p50_ms": 0.322,
+        "p95_ms": 0.371,
+        "p99_ms": 0.371,
+        "max_ms": 0.371
+      },
+      "/history/epbench-937920e0-0/counts": {
+        "count": 4,
+        "min_ms": 0.301,
+        "p50_ms": 0.304,
+        "p95_ms": 0.343,
+        "p99_ms": 0.343,
+        "max_ms": 0.343
+      },
+      "/history/epbench-937920e0-0/processes": {
+        "count": 4,
+        "min_ms": 0.296,
+        "p50_ms": 0.319,
+        "p95_ms": 0.35,
+        "p99_ms": 0.35,
+        "max_ms": 0.35
+      },
+      "/history/epbench-937920e0-0/transcript": {
+        "count": 4,
+        "min_ms": 0.067,
+        "p50_ms": 0.07,
+        "p95_ms": 0.081,
+        "p99_ms": 0.081,
+        "max_ms": 0.081
+      },
+      "/files/epbench-937920e0-0": {
+        "count": 4,
+        "min_ms": 2.06,
+        "p50_ms": 2.247,
+        "p95_ms": 2.491,
+        "p99_ms": 2.491,
+        "max_ms": 2.491
+      },
+      "/sessions/epbench-937920e0-0/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.616,
+        "p50_ms": 0.67,
+        "p95_ms": 0.737,
+        "p99_ms": 0.737,
+        "max_ms": 0.737
+      },
+      "/info/epbench-937920e0-1": {
+        "count": 4,
+        "min_ms": 0.361,
+        "p50_ms": 0.372,
+        "p95_ms": 0.449,
+        "p99_ms": 0.449,
+        "max_ms": 0.449
+      },
+      "/logs/epbench-937920e0-1": {
+        "count": 4,
+        "min_ms": 0.588,
+        "p50_ms": 0.609,
+        "p95_ms": 0.66,
+        "p99_ms": 0.66,
+        "max_ms": 0.66
+      },
+      "/history/epbench-937920e0-1": {
+        "count": 4,
+        "min_ms": 0.334,
+        "p50_ms": 0.371,
+        "p95_ms": 0.418,
+        "p99_ms": 0.418,
+        "max_ms": 0.418
+      },
+      "/history/epbench-937920e0-1/counts": {
+        "count": 4,
+        "min_ms": 0.278,
+        "p50_ms": 0.282,
+        "p95_ms": 0.327,
+        "p99_ms": 0.327,
+        "max_ms": 0.327
+      },
+      "/history/epbench-937920e0-1/processes": {
+        "count": 4,
+        "min_ms": 0.313,
+        "p50_ms": 0.322,
+        "p95_ms": 0.345,
+        "p99_ms": 0.345,
+        "max_ms": 0.345
+      },
+      "/history/epbench-937920e0-1/transcript": {
+        "count": 4,
+        "min_ms": 0.062,
+        "p50_ms": 0.065,
+        "p95_ms": 0.074,
+        "p99_ms": 0.074,
+        "max_ms": 0.074
+      },
+      "/files/epbench-937920e0-1": {
+        "count": 4,
+        "min_ms": 2.17,
+        "p50_ms": 2.195,
+        "p95_ms": 2.28,
+        "p99_ms": 2.28,
+        "max_ms": 2.28
+      },
+      "/sessions/epbench-937920e0-1/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.582,
+        "p50_ms": 0.621,
+        "p95_ms": 0.648,
+        "p99_ms": 0.648,
+        "max_ms": 0.648
+      },
+      "/info/epbench-937920e0-2": {
+        "count": 4,
+        "min_ms": 0.374,
+        "p50_ms": 0.4,
+        "p95_ms": 0.434,
+        "p99_ms": 0.434,
+        "max_ms": 0.434
+      },
+      "/logs/epbench-937920e0-2": {
+        "count": 4,
+        "min_ms": 0.616,
+        "p50_ms": 0.647,
+        "p95_ms": 0.688,
+        "p99_ms": 0.688,
+        "max_ms": 0.688
+      },
+      "/history/epbench-937920e0-2": {
+        "count": 4,
+        "min_ms": 0.305,
+        "p50_ms": 0.318,
+        "p95_ms": 0.333,
+        "p99_ms": 0.333,
+        "max_ms": 0.333
+      },
+      "/history/epbench-937920e0-2/counts": {
+        "count": 4,
+        "min_ms": 0.278,
+        "p50_ms": 0.284,
+        "p95_ms": 0.312,
+        "p99_ms": 0.312,
+        "max_ms": 0.312
+      },
+      "/history/epbench-937920e0-2/processes": {
+        "count": 4,
+        "min_ms": 0.282,
+        "p50_ms": 0.282,
+        "p95_ms": 0.325,
+        "p99_ms": 0.325,
+        "max_ms": 0.325
+      },
+      "/history/epbench-937920e0-2/transcript": {
+        "count": 4,
+        "min_ms": 0.066,
+        "p50_ms": 0.066,
+        "p95_ms": 0.077,
+        "p99_ms": 0.077,
+        "max_ms": 0.077
+      },
+      "/files/epbench-937920e0-2": {
+        "count": 4,
+        "min_ms": 2.188,
+        "p50_ms": 2.251,
+        "p95_ms": 2.318,
+        "p99_ms": 2.318,
+        "max_ms": 2.318
+      },
+      "/sessions/epbench-937920e0-2/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.599,
+        "p50_ms": 0.638,
+        "p95_ms": 0.719,
+        "p99_ms": 0.719,
+        "max_ms": 0.719
+      },
+      "/info/epbench-937920e0-3": {
+        "count": 4,
+        "min_ms": 0.378,
+        "p50_ms": 0.419,
+        "p95_ms": 0.497,
+        "p99_ms": 0.497,
+        "max_ms": 0.497
+      },
+      "/logs/epbench-937920e0-3": {
+        "count": 4,
+        "min_ms": 0.604,
+        "p50_ms": 0.616,
+        "p95_ms": 0.69,
+        "p99_ms": 0.69,
+        "max_ms": 0.69
+      },
+      "/history/epbench-937920e0-3": {
+        "count": 4,
+        "min_ms": 0.324,
+        "p50_ms": 0.326,
+        "p95_ms": 0.374,
+        "p99_ms": 0.374,
+        "max_ms": 0.374
+      },
+      "/history/epbench-937920e0-3/counts": {
+        "count": 4,
+        "min_ms": 0.264,
+        "p50_ms": 0.278,
+        "p95_ms": 0.348,
+        "p99_ms": 0.348,
+        "max_ms": 0.348
+      },
+      "/history/epbench-937920e0-3/processes": {
+        "count": 4,
+        "min_ms": 0.279,
+        "p50_ms": 0.314,
+        "p95_ms": 0.331,
+        "p99_ms": 0.331,
+        "max_ms": 0.331
+      },
+      "/history/epbench-937920e0-3/transcript": {
+        "count": 4,
+        "min_ms": 0.063,
+        "p50_ms": 0.067,
+        "p95_ms": 0.074,
+        "p99_ms": 0.074,
+        "max_ms": 0.074
+      },
+      "/files/epbench-937920e0-3": {
+        "count": 4,
+        "min_ms": 2.125,
+        "p50_ms": 2.19,
+        "p95_ms": 2.263,
+        "p99_ms": 2.263,
+        "max_ms": 2.263
+      },
+      "/sessions/epbench-937920e0-3/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.594,
+        "p50_ms": 0.636,
+        "p95_ms": 0.648,
+        "p99_ms": 0.648,
+        "max_ms": 0.648
+      },
+      "/info/epbench-937920e0-4": {
+        "count": 4,
+        "min_ms": 0.401,
+        "p50_ms": 0.42,
+        "p95_ms": 0.434,
+        "p99_ms": 0.434,
+        "max_ms": 0.434
+      },
+      "/logs/epbench-937920e0-4": {
+        "count": 4,
+        "min_ms": 0.571,
+        "p50_ms": 0.606,
+        "p95_ms": 0.68,
+        "p99_ms": 0.68,
+        "max_ms": 0.68
+      },
+      "/history/epbench-937920e0-4": {
+        "count": 4,
+        "min_ms": 0.314,
+        "p50_ms": 0.334,
+        "p95_ms": 0.348,
+        "p99_ms": 0.348,
+        "max_ms": 0.348
+      },
+      "/history/epbench-937920e0-4/counts": {
+        "count": 4,
+        "min_ms": 0.263,
+        "p50_ms": 0.267,
+        "p95_ms": 0.31,
+        "p99_ms": 0.31,
+        "max_ms": 0.31
+      },
+      "/history/epbench-937920e0-4/processes": {
+        "count": 4,
+        "min_ms": 0.272,
+        "p50_ms": 0.276,
+        "p95_ms": 0.333,
+        "p99_ms": 0.333,
+        "max_ms": 0.333
+      },
+      "/history/epbench-937920e0-4/transcript": {
+        "count": 4,
+        "min_ms": 0.065,
+        "p50_ms": 0.065,
+        "p95_ms": 0.078,
+        "p99_ms": 0.078,
+        "max_ms": 0.078
+      },
+      "/files/epbench-937920e0-4": {
+        "count": 4,
+        "min_ms": 2.109,
+        "p50_ms": 2.198,
+        "p95_ms": 2.323,
+        "p99_ms": 2.323,
+        "max_ms": 2.323
+      },
+      "/sessions/epbench-937920e0-4/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.582,
+        "p50_ms": 0.615,
+        "p95_ms": 0.767,
+        "p99_ms": 0.767,
+        "max_ms": 0.767
+      },
+      "/info/epbench-937920e0-5": {
+        "count": 4,
+        "min_ms": 0.383,
+        "p50_ms": 0.411,
+        "p95_ms": 0.414,
+        "p99_ms": 0.414,
+        "max_ms": 0.414
+      },
+      "/logs/epbench-937920e0-5": {
+        "count": 4,
+        "min_ms": 0.576,
+        "p50_ms": 0.61,
+        "p95_ms": 0.697,
+        "p99_ms": 0.697,
+        "max_ms": 0.697
+      },
+      "/history/epbench-937920e0-5": {
+        "count": 4,
+        "min_ms": 0.32,
+        "p50_ms": 0.337,
+        "p95_ms": 0.355,
+        "p99_ms": 0.355,
+        "max_ms": 0.355
+      },
+      "/history/epbench-937920e0-5/counts": {
+        "count": 4,
+        "min_ms": 0.274,
+        "p50_ms": 0.28,
+        "p95_ms": 0.342,
+        "p99_ms": 0.342,
+        "max_ms": 0.342
+      },
+      "/history/epbench-937920e0-5/processes": {
+        "count": 4,
+        "min_ms": 0.27,
+        "p50_ms": 0.304,
+        "p95_ms": 0.315,
+        "p99_ms": 0.315,
+        "max_ms": 0.315
+      },
+      "/history/epbench-937920e0-5/transcript": {
+        "count": 4,
+        "min_ms": 0.07,
+        "p50_ms": 0.076,
+        "p95_ms": 0.08,
+        "p99_ms": 0.08,
+        "max_ms": 0.08
+      },
+      "/files/epbench-937920e0-5": {
+        "count": 4,
+        "min_ms": 2.072,
+        "p50_ms": 2.109,
+        "p95_ms": 2.298,
+        "p99_ms": 2.298,
+        "max_ms": 2.298
+      },
+      "/sessions/epbench-937920e0-5/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.59,
+        "p50_ms": 0.61,
+        "p95_ms": 0.658,
+        "p99_ms": 0.658,
+        "max_ms": 0.658
+      },
+      "/info/epbench-937920e0-6": {
+        "count": 4,
+        "min_ms": 0.367,
+        "p50_ms": 0.382,
+        "p95_ms": 0.449,
+        "p99_ms": 0.449,
+        "max_ms": 0.449
+      },
+      "/logs/epbench-937920e0-6": {
+        "count": 4,
+        "min_ms": 0.573,
+        "p50_ms": 0.588,
+        "p95_ms": 0.685,
+        "p99_ms": 0.685,
+        "max_ms": 0.685
+      },
+      "/history/epbench-937920e0-6": {
+        "count": 4,
+        "min_ms": 0.296,
+        "p50_ms": 0.313,
+        "p95_ms": 0.316,
+        "p99_ms": 0.316,
+        "max_ms": 0.316
+      },
+      "/history/epbench-937920e0-6/counts": {
+        "count": 4,
+        "min_ms": 0.271,
+        "p50_ms": 0.274,
+        "p95_ms": 0.283,
+        "p99_ms": 0.283,
+        "max_ms": 0.283
+      },
+      "/history/epbench-937920e0-6/processes": {
+        "count": 4,
+        "min_ms": 0.276,
+        "p50_ms": 0.282,
+        "p95_ms": 0.294,
+        "p99_ms": 0.294,
+        "max_ms": 0.294
+      },
+      "/history/epbench-937920e0-6/transcript": {
+        "count": 4,
+        "min_ms": 0.073,
+        "p50_ms": 0.077,
+        "p95_ms": 0.077,
+        "p99_ms": 0.077,
+        "max_ms": 0.077
+      },
+      "/files/epbench-937920e0-6": {
+        "count": 4,
+        "min_ms": 2.059,
+        "p50_ms": 2.139,
+        "p95_ms": 2.239,
+        "p99_ms": 2.239,
+        "max_ms": 2.239
+      },
+      "/sessions/epbench-937920e0-6/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.624,
+        "p50_ms": 0.629,
+        "p95_ms": 0.76,
+        "p99_ms": 0.76,
+        "max_ms": 0.76
+      },
+      "/info/epbench-937920e0-7": {
+        "count": 4,
+        "min_ms": 0.408,
+        "p50_ms": 0.411,
+        "p95_ms": 0.469,
+        "p99_ms": 0.469,
+        "max_ms": 0.469
+      },
+      "/logs/epbench-937920e0-7": {
+        "count": 4,
+        "min_ms": 0.558,
+        "p50_ms": 0.586,
+        "p95_ms": 0.614,
+        "p99_ms": 0.614,
+        "max_ms": 0.614
+      },
+      "/history/epbench-937920e0-7": {
+        "count": 4,
+        "min_ms": 0.304,
+        "p50_ms": 0.305,
+        "p95_ms": 0.339,
+        "p99_ms": 0.339,
+        "max_ms": 0.339
+      },
+      "/history/epbench-937920e0-7/counts": {
+        "count": 4,
+        "min_ms": 0.27,
+        "p50_ms": 0.287,
+        "p95_ms": 0.306,
+        "p99_ms": 0.306,
+        "max_ms": 0.306
+      },
+      "/history/epbench-937920e0-7/processes": {
+        "count": 4,
+        "min_ms": 0.262,
+        "p50_ms": 0.285,
+        "p95_ms": 0.291,
+        "p99_ms": 0.291,
+        "max_ms": 0.291
+      },
+      "/history/epbench-937920e0-7/transcript": {
+        "count": 4,
+        "min_ms": 0.069,
+        "p50_ms": 0.07,
+        "p95_ms": 0.077,
+        "p99_ms": 0.077,
+        "max_ms": 0.077
+      },
+      "/files/epbench-937920e0-7": {
+        "count": 4,
+        "min_ms": 2.024,
+        "p50_ms": 2.091,
+        "p95_ms": 2.254,
+        "p99_ms": 2.254,
+        "max_ms": 2.254
+      },
+      "/sessions/epbench-937920e0-7/policy-contexts": {
+        "count": 4,
+        "min_ms": 0.582,
+        "p50_ms": 0.622,
+        "p95_ms": 0.685,
+        "p99_ms": 0.685,
+        "max_ms": 0.685
+      }
+    },
+    "gateway": {
+      "/health": {
+        "count": 32,
+        "min_ms": 0.12,
+        "p50_ms": 0.133,
+        "p95_ms": 0.187,
+        "p99_ms": 0.221,
+        "max_ms": 0.221
+      },
+      "/token": {
+        "count": 32,
+        "min_ms": 0.109,
+        "p50_ms": 0.121,
+        "p95_ms": 0.164,
+        "p99_ms": 0.166,
+        "max_ms": 0.166
+      },
+      "/status": {
+        "count": 32,
+        "min_ms": 0.186,
+        "p50_ms": 0.198,
+        "p95_ms": 0.223,
+        "p99_ms": 0.269,
+        "max_ms": 0.269
+      }
+    }
+  },
+  "schema": "capsem.benchmark-artifact.v1",
+  "project_version": "1.2.1780103109",
+  "arch": "arm64",
+  "recorded_at": 1780103291.44931,
+  "recorded_at_utc": "2026-05-30T01:08:11.449313+00:00",
+  "command": "uv run pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs",
+  "host": {
+    "platform": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:12 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6050",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.4",
+    "cpu_count": 18,
+    "cpu_count_logical": 18,
+    "cpu_model": "Apple M5 Max",
+    "cpu_count_physical": 18,
+    "memory_total_bytes": 137438953472,
+    "os_product_version": "26.5",
+    "memory_total_gb": 128.0
+  },
+  "git": {
+    "commit": "a21e269c34f5eb9993f6198b635e65e00bfc42f0",
+    "dirty": true,
+    "source_dirty": true,
+    "dirty_paths": [
+      "CHANGELOG.md",
+      "Cargo.toml",
+      "crates/capsem-app/tauri.conf.json",
+      "crates/capsem-core/src/session/index.rs",
+      "crates/capsem-logger/src/reader.rs",
+      "crates/capsem-process/src/ipc.rs",
+      "crates/capsem-process/src/ipc/tests.rs",
+      "crates/capsem-process/src/main.rs",
+      "crates/capsem-service/src/main.rs",
+      "crates/capsem-service/src/tests.rs",
+      "crates/capsem-tui/src/app.rs",
+      "crates/capsem-tui/src/tests.rs",
+      "pyproject.toml",
+      "skills/dev-benchmark/SKILL.md",
+      "sprints/tui-control/MASTER.md",
+      "sprints/tui-control/tracker.md",
+      "uv.lock",
+      "benchmarks/endpoint-latency/data_1.2.1779673506_arm64.json",
+      "tests/capsem-serial/test_endpoint_latency_benchmark.py"
+    ]
+  }
+}

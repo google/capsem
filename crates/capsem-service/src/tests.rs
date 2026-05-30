@@ -8583,6 +8583,38 @@ async fn handle_session_detection_hunt_reads_hand_built_security_db_corpus() {
         "coding"
     );
 
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        insert_hunt_security_event_fixture(
+            &conn,
+            "evt-duplicate-file",
+            "trace-duplicate-file",
+            1_700_000_000_010,
+            "file",
+            "file.activity",
+            "file",
+        );
+        conn.execute(
+            "INSERT INTO fs_events (
+                timestamp, action, path, size, trace_id
+             ) VALUES
+                ('2026-05-21T10:00:00Z', 'read', '/workspace/a.txt', 1, 'trace-duplicate-file'),
+                ('2026-05-21T10:00:00Z', 'read', '/workspace/b.txt', 1, 'trace-duplicate-file')",
+            [],
+        )
+        .unwrap();
+    }
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let reconstructed = session_backtest_events(vm_id, &reader).unwrap();
+    let duplicate_refs = reconstructed
+        .iter()
+        .filter(|event| event.event.common.event_id == "evt-duplicate-file")
+        .count();
+    assert_eq!(
+        duplicate_refs, 1,
+        "one security event with multiple detail rows must export once"
+    );
+
     let Json(result) = handle_session_detection_hunt(
         Path(vm_id.into()),
         State(state),

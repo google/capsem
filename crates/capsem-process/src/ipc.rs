@@ -2,7 +2,7 @@ use anyhow::Result;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::metrics::VmMetricsSnapshot;
 use nix::libc;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +43,6 @@ const READY_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 pub(crate) struct ResourceMetricsContext {
     pub(crate) configured_vcpus: u32,
     pub(crate) configured_ram_mb: u64,
-    pub(crate) session_dir: PathBuf,
 }
 
 fn shutdown_grace_period(vm_ready: bool) -> Duration {
@@ -725,11 +724,6 @@ fn metrics_snapshot(
         snapshot.resources.host_process_rss_bytes = Some(proc_stats.rss_bytes);
         snapshot.resources.host_cpu_time_micros = Some(proc_stats.cpu_time_micros);
     }
-    snapshot.resources.session_disk_bytes = dir_size_bytes(&resources.session_dir).ok();
-    snapshot.resources.workspace_disk_bytes =
-        dir_size_bytes(&resources.session_dir.join("guest").join("workspace")).ok();
-    snapshot.resources.rootfs_overlay_bytes =
-        dir_size_bytes(&resources.session_dir.join("guest").join("system")).ok();
     snapshot
 }
 
@@ -768,35 +762,6 @@ fn parse_proc_stat(stat: &str) -> Option<ProcStats> {
             .saturating_mul(1_000_000)
             / ticks_per_second as u64,
     })
-}
-
-fn dir_size_bytes(path: &Path) -> std::io::Result<u64> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(e),
-    };
-    if metadata.is_file() {
-        return Ok(metadata.len());
-    }
-    if !metadata.is_dir() {
-        return Ok(0);
-    }
-
-    let mut total = 0u64;
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            total = total.saturating_add(dir_size_bytes(&entry.path())?);
-        } else if file_type.is_file() {
-            total = total.saturating_add(entry.metadata()?.len());
-        }
-    }
-    Ok(total)
 }
 
 #[cfg(test)]

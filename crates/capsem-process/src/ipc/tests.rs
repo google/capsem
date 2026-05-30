@@ -108,23 +108,9 @@ fn classify_drain_runtime_rule_matches() {
 #[test]
 fn metrics_snapshot_is_process_owned_and_versioned() {
     let writer = capsem_logger::DbWriter::open_in_memory(16).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("guest").join("workspace")).unwrap();
-    std::fs::create_dir_all(dir.path().join("guest").join("system")).unwrap();
-    std::fs::write(
-        dir.path().join("guest").join("workspace").join("work.txt"),
-        b"work",
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("guest").join("system").join("rootfs.img"),
-        b"overlay",
-    )
-    .unwrap();
     let resources = ResourceMetricsContext {
         configured_vcpus: 4,
         configured_ram_mb: 8192,
-        session_dir: dir.path().to_path_buf(),
     };
     let snapshot = metrics_snapshot(&writer, "vm-s07", &resources);
 
@@ -148,9 +134,9 @@ fn metrics_snapshot_is_process_owned_and_versioned() {
     assert!(snapshot.resources.host_cpu_time_micros.is_some());
     #[cfg(not(target_os = "linux"))]
     assert!(snapshot.resources.host_cpu_time_micros.is_none());
-    assert_eq!(snapshot.resources.workspace_disk_bytes, Some(4));
-    assert_eq!(snapshot.resources.rootfs_overlay_bytes, Some(7));
-    assert_eq!(snapshot.resources.session_disk_bytes, Some(11));
+    assert_eq!(snapshot.resources.workspace_disk_bytes, None);
+    assert_eq!(snapshot.resources.rootfs_overlay_bytes, None);
+    assert_eq!(snapshot.resources.session_disk_bytes, None);
     assert!(snapshot.captured_at_unix_ms > 0);
 }
 

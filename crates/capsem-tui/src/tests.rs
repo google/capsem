@@ -111,28 +111,19 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
 }
 
 #[test]
-fn replace_state_smooths_local_service_latency_jitter() {
+fn replace_state_preserves_fresh_service_latency_measurement() {
     let mut initial = fixture_state();
     initial.service.latency = std::time::Duration::from_millis(1);
     let mut app = App::new(initial);
 
-    let mut cache_refresh = fixture_state();
-    cache_refresh.service.latency = std::time::Duration::from_millis(7);
-    app.replace_state(cache_refresh);
+    let mut refreshed = fixture_state();
+    refreshed.service.latency = std::time::Duration::from_millis(7);
+    app.replace_state(refreshed);
 
     assert_eq!(
         app.state().service.latency,
-        std::time::Duration::from_micros(2_500)
-    );
-
-    let mut real_slow = fixture_state();
-    real_slow.service.latency = std::time::Duration::from_millis(150);
-    app.replace_state(real_slow);
-
-    assert_eq!(
-        app.state().service.latency,
-        std::time::Duration::from_millis(150),
-        "real degraded latency should not be hidden by local jitter smoothing"
+        std::time::Duration::from_millis(7),
+        "TUI should report the measured latency; latency stability belongs in the service hot path"
     );
 }
 

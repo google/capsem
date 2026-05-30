@@ -2972,9 +2972,6 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             attach_vm_profile_status(&mut info, i.profile_pin.as_ref(), &profile_catalog);
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
-            if let Some(snapshot) = live_metrics_snapshot_for_vm(&state, &i.id, &i.uds_path).await {
-                attach_metrics_snapshot(&mut info, &snapshot);
-            }
             sandboxes.push(info);
         }
     }
@@ -3224,7 +3221,10 @@ async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<StatsResponse>, AppError> {
     let db_path = state.main_db_path();
-    let index = capsem_core::session::SessionIndex::open(&db_path).map_err(|e| {
+    if !db_path.exists() {
+        return Ok(Json(empty_stats_response()));
+    }
+    let index = capsem_core::session::SessionIndex::open_readonly(&db_path).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to open main.db: {e}"),
@@ -3263,6 +3263,27 @@ async fn handle_stats(
         top_tools,
         top_mcp_tools,
     }))
+}
+
+fn empty_stats_response() -> StatsResponse {
+    StatsResponse {
+        global: capsem_core::session::GlobalStats {
+            total_sessions: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_estimated_cost: 0.0,
+            total_tool_calls: 0,
+            total_mcp_calls: 0,
+            total_file_events: 0,
+            total_requests: 0,
+            total_allowed: 0,
+            total_denied: 0,
+        },
+        sessions: Vec::new(),
+        top_providers: Vec::new(),
+        top_tools: Vec::new(),
+        top_mcp_tools: Vec::new(),
+    }
 }
 
 async fn handle_logs(
@@ -3334,6 +3355,9 @@ fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<Str
             format!("open session security log db: {error}"),
         )
     })?;
+    if !session_has_security_events(&reader)? {
+        return Ok(None);
+    }
     let json_str = reader
         .query_raw(
             "SELECT
@@ -3478,6 +3502,28 @@ fn read_security_logs_from_session_db(session_dir: &FsPath) -> Result<Option<Str
         lines.push(security_log_line_from_row(&row)?);
     }
     Ok(Some(lines.join("\n")))
+}
+
+fn session_has_security_events(reader: &capsem_logger::DbReader) -> Result<bool, AppError> {
+    let json_str = reader
+        .query_raw("SELECT 1 FROM security_events LIMIT 1")
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query session security event presence: {error}"),
+            )
+        })?;
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("parse session security event presence: {error}"),
+        )
+    })?;
+    Ok(value
+        .get("rows")
+        .and_then(|rows| rows.as_array())
+        .map(|rows| !rows.is_empty())
+        .unwrap_or(false))
 }
 
 fn security_log_cell(
@@ -8003,6 +8049,7 @@ fn security_events_query_rows(
                 ON (ame.mcp_call_id = se.mcp_call_id
                     OR ame.mcp_call_id = m.request_id)
                AND se.event_family = 'mcp'
+             GROUP BY se.id
              ORDER BY se.timestamp_unix_ms ASC, se.id ASC
              LIMIT 10000",
         )
@@ -9010,6 +9057,14 @@ fn session_policy_context_export_json(
     session_id: &str,
     reader: &capsem_logger::DbReader,
 ) -> Result<serde_json::Value, AppError> {
+    if !session_has_security_events(reader)? {
+        return Ok(json!({
+            "schema": "capsem.policy-context-export.v1",
+            "session_id": session_id,
+            "fixture_count": 0,
+            "fixtures": [],
+        }));
+    }
     let events = session_backtest_events(session_id, reader)?;
     let fixtures = events
         .iter()
