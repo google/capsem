@@ -6,7 +6,7 @@ use crate::app::{App, AppAction, AppOverlay, ControlAction};
 use crate::fixture::fixture_state;
 use crate::gateway_provider::{state_from_status_json_for_test, GatewayProvider};
 use crate::model::{Attention, ServiceStatus, SessionLifecycle};
-use crate::ui::{render_app_snapshot, render_snapshot, render_test_buffer};
+use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
 
 #[test]
 fn fixture_models_global_service_state_and_session_indicators() {
@@ -28,7 +28,7 @@ fn fixture_models_global_service_state_and_session_indicators() {
 fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
-    assert!(snapshot.contains("help: alt+s    18ms●"));
+    assert!(snapshot.contains("help: alt+/    18ms●"));
     assert!(snapshot.contains("1  profile-v2"));
     assert!(snapshot.contains("2  linux-os!"));
     assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21"));
@@ -209,10 +209,25 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     assert!(snapshot.contains("tmp-1"));
     assert!(snapshot.contains("corp-default"));
     assert!(snapshot.contains("linux-builder"));
+    assert!(snapshot.contains("active input"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Down, KeyModifiers::NONE)),
         AppAction::Consumed
+    );
+    let focused = render_app_test_buffer(&app, 100, 24).expect("render focused create dialog");
+    let (name_x, name_y) = find_cell(&focused, "tmp-1");
+    assert_eq!(buffer_cell(&focused, name_x, name_y).bg, selected_bg());
+    let (profile_x, profile_y) = find_cell(&focused, "linux-builder");
+    assert_eq!(
+        buffer_cell(&focused, profile_x, profile_y).bg,
+        selected_bg()
+    );
+    assert!(
+        buffer_cell(&focused, profile_x, profile_y)
+            .modifier
+            .contains(Modifier::BOLD),
+        "selected profile row should be visually highlighted"
     );
     for ch in ['-', 'p', 'r', 'o', 'o', 'f'] {
         assert_eq!(
@@ -237,8 +252,16 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render help");
 
-    assert!(snapshot.contains("Alt+s save"));
-    assert!(snapshot.contains("Alt+o sessions/status"));
+    assert!(snapshot.contains("Key"));
+    assert!(snapshot.contains("Action"));
+    assert!(snapshot.contains("Alt+s"));
+    assert!(snapshot.contains("suspend"));
+    assert!(snapshot.contains("Alt+c"));
+    assert!(snapshot.contains("checkpoint"));
+    assert!(snapshot.contains("Alt+l"));
+    assert!(snapshot.contains("sessions"));
+    assert!(snapshot.contains("Alt+i"));
+    assert!(snapshot.contains("session info"));
     assert!(snapshot.contains("Alt+f fork"));
 }
 
@@ -256,6 +279,7 @@ fn fork_overlay_asks_for_name_and_invokes_fork_action() {
     assert!(snapshot.contains("source"));
     assert!(snapshot.contains("profile-v2"));
     assert!(snapshot.contains("profile-v2-fork"));
+    assert!(snapshot.contains("active input"));
 
     for ch in ['-', 'c', 'o', 'p', 'y'] {
         assert_eq!(
@@ -271,6 +295,28 @@ fn fork_overlay_asks_for_name_and_invokes_fork_action() {
             name: "profile-v2-fork-copy".to_string()
         })
     );
+}
+
+#[test]
+fn alt_l_lists_sessions_as_table_with_key_fields() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Home);
+
+    let snapshot = render_app_snapshot(&app, 120, 30).expect("render session list");
+    assert!(snapshot.contains("Name"));
+    assert!(snapshot.contains("Profile"));
+    assert!(snapshot.contains("State"));
+    assert!(snapshot.contains("Time"));
+    assert!(snapshot.contains("Tokens"));
+    assert!(snapshot.contains("Cost"));
+    assert!(snapshot.contains("Profile V2"));
+    assert!(snapshot.contains("corp-default"));
+    assert!(snapshot.contains("linux-builder"));
 }
 
 #[test]
@@ -315,6 +361,16 @@ fn function_keys_toggle_hidden_overlays() {
     assert_eq!(app.overlay(), AppOverlay::Stats);
     assert_eq!(
         app.handle_key(key(KeyCode::Char('i'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Home);
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('l'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::None);
@@ -437,13 +493,34 @@ fn suspend_action_requires_persistent_running_session() {
 }
 
 #[test]
+fn checkpoint_action_is_alt_c_and_uses_checkpoint_label() {
+    let mut app = App::new(fixture_state());
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('c'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Checkpoint {
+            id: "profile-v2".to_string()
+        })
+    );
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render checkpoint confirm");
+    assert!(snapshot.contains("checkpoint"));
+    assert!(snapshot.contains("profile-v2"));
+}
+
+#[test]
 fn stats_overlay_renders_on_demand_without_persistent_help() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('i'), KeyModifiers::ALT));
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render app snapshot");
 
-    assert!(snapshot.contains("stats"));
+    assert!(snapshot.contains("session info"));
+    assert!(snapshot.contains("Field"));
+    assert!(snapshot.contains("Value"));
     assert!(snapshot.contains("profile-v2"));
     assert!(snapshot.contains("tokens"));
     assert!(
@@ -701,6 +778,39 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
 }
 
 #[tokio::test]
+async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /suspend/vm-1 "),
+                    "unexpected request: {request:?}"
+                );
+                write_json_response(&mut stream, r#"{"success":true}"#).await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Checkpoint {
+            id: "vm-1".to_string(),
+        })
+        .await
+        .expect("invoke checkpoint");
+
+    assert_eq!(outcome.message, "checkpointed vm-1");
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn gateway_provider_surfaces_action_error_body() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -754,6 +864,21 @@ fn find_cell_x(buffer: &ratatui::buffer::Buffer, row: u16, needle: &str) -> u16 
     line[..byte_index].chars().count() as u16
 }
 
+fn find_cell(buffer: &ratatui::buffer::Buffer, needle: &str) -> (u16, u16) {
+    let width = buffer.area.width as usize;
+    for y in 0..buffer.area.height {
+        let row_start = y as usize * width;
+        let line = buffer.content()[row_start..row_start + width]
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        if let Some(byte_index) = line.find(needle) {
+            return (line[..byte_index].chars().count() as u16, y);
+        }
+    }
+    panic!("{needle:?} in rendered buffer");
+}
+
 fn buffer_cell(buffer: &ratatui::buffer::Buffer, x: u16, y: u16) -> &ratatui::buffer::Cell {
     let width = buffer.area.width as usize;
     &buffer.content()[y as usize * width + x as usize]
@@ -769,6 +894,10 @@ fn blue() -> Color {
 
 fn grey() -> Color {
     Color::Rgb(127, 137, 180)
+}
+
+fn selected_bg() -> Color {
+    Color::Rgb(49, 50, 68)
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {

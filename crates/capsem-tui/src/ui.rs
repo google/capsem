@@ -20,6 +20,7 @@ const ONLINE: Color = Color::Rgb(166, 227, 161);
 const ACTIVE: Color = Color::Rgb(137, 180, 250);
 const ATTENTION: Color = Color::Rgb(249, 226, 175);
 const BAD: Color = Color::Rgb(243, 139, 168);
+const SELECTED_BG: Color = Color::Rgb(49, 50, 68);
 
 pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     render_with_terminal(frame, state, None);
@@ -100,6 +101,14 @@ pub(crate) fn render_test_buffer(state: &AppState, width: u16, height: u16) -> R
     render_buffer(state, width, height)
 }
 
+#[cfg(test)]
+pub(crate) fn render_app_test_buffer(app: &App, width: u16, height: u16) -> Result<Buffer> {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.draw(|frame| render_app(frame, app, None))?;
+    Ok(terminal.backend().buffer().clone())
+}
+
 fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     let service = &state.service;
     let active_index = state
@@ -111,7 +120,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     frame.render_widget(Paragraph::new("").style(base), area);
 
     let mut left = vec![
-        Span::styled("help: alt+s  ", muted_style()),
+        Span::styled("help: alt+/  ", muted_style()),
         Span::styled(format!("{:>4}ms", service.latency.as_millis()), base),
         Span::styled(
             service_dot(service.status),
@@ -312,7 +321,7 @@ fn render_overlay(
     frame.render_widget(Clear, popup);
     let title = match overlay {
         AppOverlay::Help => " help ",
-        AppOverlay::Stats => " stats ",
+        AppOverlay::Stats => " session info ",
         AppOverlay::Home => " sessions ",
         AppOverlay::Create => " new session ",
         AppOverlay::Fork => " fork session ",
@@ -358,12 +367,12 @@ fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
 
 fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
     match overlay {
-        AppOverlay::Help => 10,
-        AppOverlay::Stats => 10,
+        AppOverlay::Help => 17,
+        AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
         AppOverlay::Create => (state.profiles.len() as u16)
-            .saturating_add(8)
-            .clamp(10, 18),
+            .saturating_add(9)
+            .clamp(11, 18),
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
@@ -373,14 +382,20 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
 fn help_lines() -> Vec<Line<'static>> {
     vec![
         overlay_title("keys"),
-        overlay_line("Alt+Left/Right switch sessions"),
-        overlay_line("Alt+1..9 jumps to a session"),
-        overlay_line("Alt+n new   Alt+f fork   Alt+s save"),
-        overlay_line("Alt+r resume   Alt+t stop   Alt+d delete"),
-        overlay_line("Alt+? help   Alt+i stats   Alt+o sessions/status"),
-        overlay_line("Alt+q quit"),
-        overlay_line("Alt+/ also opens help when the terminal sends slash"),
-        overlay_line("plain q, Ctrl-C, and shell keys pass through"),
+        table_header(&["Key", "Action", "Scope", "Note"]),
+        help_row("Alt+Left", "previous", "global", "switch session"),
+        help_row("Alt+Right", "next", "global", "switch session"),
+        help_row("Alt+1..9", "jump", "global", "select by tab number"),
+        help_row("Alt+l", "sessions", "global", "list sessions and status"),
+        help_row("Alt+i", "session info", "session", "active VM details"),
+        help_row("Alt+n", "new", "global", "create from profile"),
+        help_row("Alt+f", "fork", "session", "fork active VM"),
+        help_row("Alt+s", "suspend", "session", "warm stop active VM"),
+        help_row("Alt+c", "checkpoint", "session", "save/checkpoint VM"),
+        help_row("Alt+r", "resume", "session", "resume inactive VM"),
+        help_row("Alt+t", "stop", "session", "stop active VM"),
+        help_row("Alt+d", "delete", "session", "delete active VM"),
+        help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }
 
@@ -402,16 +417,19 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
         .map(|draft| draft.name.as_str())
         .filter(|name| !name.is_empty())
         .unwrap_or(" ");
-    lines.push(overlay_pair("name", name));
-    lines.push(overlay_line("type to edit; Backspace deletes"));
+    lines.push(focus_pair("name", name));
+    lines.push(overlay_line(
+        "active input: name; type to edit; Backspace deletes",
+    ));
     lines.push(overlay_line(
         "Up/Down selects profile; Enter creates; Esc cancels",
     ));
     lines.push(overlay_line(""));
     lines.push(overlay_title("profiles"));
+    lines.push(table_header(&["Pick", "Profile", "Name", "Default"]));
 
     if state.profiles.is_empty() {
-        lines.push(overlay_line("* default"));
+        lines.push(focus_line("▶  default"));
         return lines;
     }
 
@@ -420,14 +438,19 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
         .unwrap_or_default()
         .min(state.profiles.len().saturating_sub(1));
     for (index, profile) in state.profiles.iter().take(8).enumerate() {
-        let marker = if index == selected { "*" } else { " " };
+        let marker = if index == selected { "▶" } else { " " };
         let default = if profile.is_default { " default" } else { "" };
-        lines.push(overlay_line(&format!(
-            "{marker} {}  {}{}",
+        let row = format!(
+            "{marker:<4} {:<20} {:<22}{}",
             truncate(&profile.id, 20),
             truncate(&profile.name, 22),
             default
-        )));
+        );
+        if index == selected {
+            lines.push(focus_line(&row));
+        } else {
+            lines.push(overlay_line(&row));
+        }
     }
     lines
 }
@@ -446,28 +469,42 @@ fn fork_lines(state: &AppState, draft: Option<&ForkDraft>) -> Vec<Line<'static>>
     vec![
         overlay_title("fork session"),
         overlay_pair("source", &session.id),
-        overlay_pair("name", name),
-        overlay_line("type to edit; Backspace deletes"),
+        focus_pair("name", name),
+        overlay_line("active input: name; type to edit; Backspace deletes"),
         overlay_line("Enter forks; Esc cancels"),
     ]
 }
 
 fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
     let Some(session) = state.active_session() else {
-        return vec![overlay_title("stats"), overlay_line("no active session")];
+        return vec![
+            overlay_title("session info"),
+            overlay_line("no active session"),
+        ];
     };
     vec![
-        overlay_title("stats"),
-        overlay_pair("session", &session.id),
-        overlay_pair("profile", &session.profile),
-        overlay_pair("state", session.lifecycle.label()),
-        overlay_pair("duration", &format_duration(session.stats.duration)),
-        overlay_pair("tokens", &format_tokens(session.stats.tokens)),
-        overlay_pair(
+        overlay_title("session info"),
+        table_header(&["Field", "Value", "Note", ""]),
+        info_row("session", &session.id, &session.title),
+        info_row(
+            "profile",
+            &session.profile,
+            session.branch.as_deref().unwrap_or(""),
+        ),
+        info_row(
+            "state",
+            session.lifecycle.label(),
+            attention_summary(session),
+        ),
+        info_row("duration", &format_duration(session.stats.duration), ""),
+        info_row("tokens", &format_tokens(session.stats.tokens), ""),
+        info_row(
             "cost",
             &format!("${}", format_cost_amount(session.stats.cost_micros)),
+            "",
         ),
-        overlay_pair("events", &session.stats.events.to_string()),
+        info_row("events", &session.stats.events.to_string(), ""),
+        info_row("jobs", &session.stats.jobs.to_string(), ""),
     ]
 }
 
@@ -477,19 +514,30 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
         lines.push(overlay_line("no sessions"));
         return lines;
     }
+    lines.push(table_header(&[
+        "#", "Name", "Profile", "State", "Time", "Tokens", "Cost",
+    ]));
     for (index, session) in state.sessions.iter().take(10).enumerate() {
         let active = if session.id == state.active_session_id {
-            "*"
+            "▶"
         } else {
             " "
         };
-        lines.push(overlay_line(&format!(
-            "{active} {}  {}  {}  {}",
+        let row = format!(
+            "{active} {:<2} {:<18} {:<14} {:<10} {:>6} {:>7} ${:<5}",
             index + 1,
-            truncate(&session.id, 18),
+            truncate(&session.title, 18),
+            truncate(&session.profile, 14),
             session.lifecycle.label(),
-            session.profile
-        )));
+            format_duration(session.stats.duration),
+            format_tokens(session.stats.tokens),
+            format_cost_amount(session.stats.cost_micros),
+        );
+        if session.id == state.active_session_id {
+            lines.push(focus_line(&row));
+        } else {
+            lines.push(overlay_line(&row));
+        }
     }
     lines
 }
@@ -508,11 +556,61 @@ fn overlay_line(text: &str) -> Line<'static> {
     Line::from(Span::styled(text.to_string(), status_base_style()))
 }
 
+fn focus_line(text: &str) -> Line<'static> {
+    Line::from(Span::styled(text.to_string(), focus_style()))
+}
+
 fn overlay_pair(label: &'static str, value: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label:>8}  "), muted_style()),
         Span::styled(value.to_string(), status_base_style()),
     ])
+}
+
+fn focus_pair(label: &'static str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:>8}  "), muted_style()),
+        Span::styled(value.to_string(), focus_style()),
+    ])
+}
+
+fn table_header(columns: &[&'static str]) -> Line<'static> {
+    let widths = [8, 18, 14, 12, 8, 8, 8];
+    let spans = columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            Span::styled(
+                format!(
+                    "{column:<width$}",
+                    width = widths[index.min(widths.len() - 1)]
+                ),
+                muted_style().add_modifier(Modifier::BOLD),
+            )
+        })
+        .collect::<Vec<_>>();
+    Line::from(spans)
+}
+
+fn help_row(
+    key: &'static str,
+    action: &'static str,
+    scope: &'static str,
+    note: &'static str,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{key} "),
+            status_base_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{action:<14}"), status_base_style()),
+        Span::styled(format!("{scope:<12}"), muted_style()),
+        Span::styled(note.to_string(), status_base_style()),
+    ])
+}
+
+fn info_row(field: &'static str, value: &str, note: impl AsRef<str>) -> Line<'static> {
+    overlay_line(&format!("{field:<8} {value:<18} {}", note.as_ref()))
 }
 
 fn tab_spans(state: &AppState, active_index: usize, max_width: usize) -> Vec<Span<'static>> {
@@ -645,6 +743,13 @@ fn muted_style() -> Style {
     Style::default().fg(MUTED).bg(BAR_BG)
 }
 
+fn focus_style() -> Style {
+    Style::default()
+        .fg(ATTENTION)
+        .bg(SELECTED_BG)
+        .add_modifier(Modifier::BOLD)
+}
+
 fn stats_style() -> Style {
     Style::default().fg(TEXT).bg(BAR_BG)
 }
@@ -697,6 +802,18 @@ fn attention_marker(session: &SessionSummary) -> &'static str {
     } else {
         "!"
     }
+}
+
+fn attention_summary(session: &SessionSummary) -> String {
+    if session.attention.is_empty() {
+        return String::new();
+    }
+    session
+        .attention
+        .iter()
+        .map(|attention| attention.marker())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn active_stats_spans(session: &SessionSummary) -> Vec<Span<'static>> {

@@ -14,7 +14,7 @@
 - [x] Add two-session standalone fixture for local playback.
 - [x] Add keyboard session switching without capturing plain `q`.
 - [x] Add `just dev-tui` recipe.
-- [x] Add hidden help, stats, and sessions overlays.
+- [x] Add hidden help, session-info, and sessions overlays.
 - [x] Inventory existing gateway `/status` model for TUI state.
 - [x] Add typed gateway provider over installed HTTP gateway.
 - [x] Map lifecycle, attention, uptime, token, cost, job, and event counters.
@@ -36,6 +36,10 @@
 - [x] Add confirmed create/resume/suspend/stop/delete actions through the
       installed HTTP gateway.
 - [x] Add named fork action through the installed HTTP gateway.
+- [x] Split `Alt+s` suspend from `Alt+c` checkpoint/save.
+- [x] Rework help, session list, and session info into structured readable
+      tables.
+- [x] Highlight active modal fields and selected profile rows.
 - [x] Run live installed-gateway empty-service snapshot.
 - [x] Run live two-session terminal proof.
 - [x] Commit functional milestone.
@@ -79,8 +83,9 @@
   existing service log contract.
 - Safe service actions are now active behind a confirmation overlay. `Alt+n`
   opens the new-session dialog, `Alt+f` opens the fork dialog, `Alt+r` resumes
-  stopped/suspended sessions, `Alt+s` saves/suspends the active session,
-  `Alt+t` stops it, and `Alt+d` deletes it.
+  stopped/suspended sessions, `Alt+s` suspends the active session, `Alt+c`
+  checkpoints/saves it through the current suspend endpoint, `Alt+t` stops it,
+  and `Alt+d` deletes it.
   Action calls run on a
   background worker so long suspend/stop/provision paths do not freeze terminal
   rendering.
@@ -104,20 +109,21 @@
 - Service latency now renders as `####ms●`, with the status dot glued to the
   reserved latency field so it reads as one service-health segment.
 - Navigation is now app-owned: `Alt+Left/Right` switches sessions and
-  `Alt+1..9` jumps by tab number. `Alt+n/r/s/t/d`, `Alt+q`, `Alt+?`/`Alt+/`,
-  `Alt+i`, and `Alt+o` cover shell actions, exit, help, stats, and session
-  list.
+  `Alt+1..9` jumps by tab number. `Alt+n/f/r/s/c/t/d`, `Alt+q`,
+  `Alt+?`/`Alt+/`, `Alt+i`, and `Alt+l` cover shell actions, exit, help,
+  session info, and session list.
 - Tab colors now use one semantic: selected is yellow, every other VM tab is
   blue. Bell/attention state keeps its text marker but no longer changes the
   tab color.
 - Interactive terminal resize now tracks the active session and geometry
   together, so a pure terminal resize resends the guest PTY size even when the
   selected VM did not change.
-- Help, stats, sessions, and confirmation overlays now use Ratatui `Clear` and
-  bordered modal blocks instead of drawing loose text over terminal output.
-- Help, stats, and sessions are real modals: `Esc` closes them, visible modals
-  consume normal keys, and plain VM input forwards again immediately after
-  close. Key-release events are ignored in the interactive loop.
+- Help, session info, sessions, and confirmation overlays now use Ratatui
+  `Clear` and bordered modal blocks instead of drawing loose text over
+  terminal output.
+- Help, session info, and sessions are real modals: `Esc` closes them, visible
+  modals consume normal keys, and plain VM input forwards again immediately
+  after close. Key-release events are ignored in the interactive loop.
 - `just dev-tui` documents the same Alt-only shell contract inline so local
   playback and installed usage do not drift.
 - MCP triage for `tui-proof-a` found no session-level failures. Host triage
@@ -154,7 +160,7 @@
   `Press Enter to resume`, Enter invokes resume for the active inactive
   session, and the terminal bridge disconnects from inactive tabs.
 - Discoverability polish: the persistent status segment now starts with
-  `help: alt+s` before service latency/status. The full command list remains
+  `help: alt+/` before service latency/status. The full command list remains
   in the help overlay.
 - New-session flow correction: `Alt+n` now opens a `new session` modal instead
   of immediately provisioning an ephemeral VM. The modal pre-fills the name as
@@ -163,18 +169,22 @@
   the selected `profile_id`.
 - Fork flow correction: `Alt+f` now opens a `fork session` modal, pre-fills
   the next unused `<source>-fork` name, lets the user type/backspace, and sends
-  `POST /fork/{id}` with the chosen `name`. Full help now calls out
-  `Alt+s save`, `Alt+o sessions/status`, and `Alt+f fork`.
+  `POST /fork/{id}` with the chosen `name`.
+- Usability correction: full help is now a structured table, `Alt+l` opens the
+  session list table, `Alt+i` opens session info, and create/fork modals
+  highlight the active input plus the selected profile row.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (32 tests), including
+- Unit/contract: `cargo test -p capsem-tui` (35 tests), including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
-  far-left `help: alt+s` status-bar hint, plus the create modal profile/name
-  flow and named fork modal/action coverage.
-- TUI latency/provider: `cargo test -p capsem-tui` (32 tests), including
-  token reuse, live profile-list refresh, named fork request payloads, and raw
-  local latency preservation coverage.
+  far-left `help: alt+/` status-bar hint, plus the create modal profile/name
+  flow, selected-field highlighting, named fork modal/action coverage,
+  `Alt+l` sessions table, `Alt+i` session info, and `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (35 tests), including
+  token reuse, live profile-list refresh, named fork request payloads,
+  checkpoint-over-suspend payloads, and raw local latency preservation
+  coverage.
 - Process IPC: `cargo test -p capsem-process` (120 tests), including
   `connection_teardown_aborts_writer_and_lifecycle_tasks`.
 - Service/core/logger hot paths: `cargo test -p capsem-service`,
@@ -192,13 +202,14 @@
 - Gateway wiring: `GatewayProvider::load_async` authenticated HTTP mock test
   plus live local snapshot through the installed gateway.
 - Service actions: confirmed action key tests plus authenticated mock gateway
-  tests for successful stop, named profile create, named fork, and surfaced
-  service error bodies.
+  tests for successful stop, named profile create, named fork, checkpoint, and
+  surfaced service error bodies.
 - Terminal wiring: `TerminalSurface` output, xterm color/style preservation,
   adjacent output coalescing, and key-encoding tests.
 - MCP wiring: `capsem_terminal_snapshot` router registration and rendering
   tests.
-- Overlay wiring: function-key state tests and stats overlay render test.
+- Overlay wiring: function-key state tests and session-info overlay render
+  test.
 - Adversarial: malformed gateway status mapping; action error response body
   surfaced to the status bar instead of being swallowed.
 - E2E/VM: live installed-gateway empty-service snapshot works; live

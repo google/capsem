@@ -63,8 +63,8 @@ attention markers.
   session stats on the right.
 - Added a typed app controller for session switching.
 - Kept plain `q` and Ctrl-C available for the agent/terminal stream. The TUI
-  shell owns Alt chords: `Alt+Left/Right`, `Alt+1..9`, `Alt+n/r/s/t/d`,
-  `Alt+f`, `Alt+q`, `Alt+?`, `Alt+i`, and `Alt+o`.
+  shell owns Alt chords: `Alt+Left/Right`, `Alt+1..9`,
+  `Alt+n/f/r/s/c/t/d`, `Alt+q`, `Alt+?`, `Alt+i`, and `Alt+l`.
 - Added `just dev-tui` for direct local playback.
 
 ## T04-T05 Closeout
@@ -125,16 +125,22 @@ attention markers.
   `Press Enter to resume` prompt, Enter invokes resume for the active inactive
   session, and the terminal WebSocket bridge disconnects instead of reconnecting
   to stopped VM sockets.
-- Added a far-left `help: alt+s` hint before service latency/status so suspend
-  is discoverable without adding back the old full-width help strip.
+- Added a far-left `help: alt+/` hint before service latency/status so help is
+  discoverable without conflicting with `Alt+s` suspend.
 - Corrected `Alt+n` from one-key ephemeral provisioning into a profile-aware
   new-session modal. The flow pre-fills the next unused `tmp-*` name, supports
   typing/backspace, lets Up/Down choose a live `/profiles` entry, and sends a
   named persistent `/provision` request with the selected `profile_id`.
 - Added `Alt+f` as a fork modal. The flow pre-fills the next unused
   `<source>-fork` name, supports typing/backspace, and sends authenticated
-  `POST /fork/{id}` with the chosen `name`. Help now explicitly lists
-  `Alt+s save`, `Alt+o sessions/status`, and `Alt+f fork`.
+  `POST /fork/{id}` with the chosen `name`.
+- Split `Alt+s` and `Alt+c`: `Alt+s` is suspend, while `Alt+c` is the
+  checkpoint/save affordance routed through the current suspend endpoint until
+  the service exposes a separate checkpoint-only API.
+- Reworked help, session list, and session info as structured tables. `Alt+l`
+  is the primary session-list chord, `Alt+i` opens active-session info, and
+  create/fork modals now visibly highlight the active input and selected
+  profile row.
 
 ## Testing Gate
 
@@ -154,12 +160,15 @@ attention markers.
   because endpoint speed should not depend on parallel provisioning setup.
 - Regression: `cargo test -p capsem-tui` covers stopped-session prompt,
   greyed inactive tab tone, Enter-to-resume behavior, and the named fork
-  modal/action path. Live snapshot against the installed stopped
-  `tui-proof-*` sessions shows the prompt instead of a blank pane.
+  modal/action path, plus `Alt+l` sessions, `Alt+i` session info, and `Alt+c`
+  checkpoint. Live snapshot against the installed stopped `tui-proof-*`
+  sessions shows the prompt instead of a blank pane.
 - UI polish: `cargo test -p capsem-tui` and snapshot output cover the far-left
-  `help: alt+s` status-bar hint.
+  `help: alt+/` status-bar hint and focused-field highlighting.
 - New-session regression: `cargo test -p capsem-tui` covers create-modal
   rendering, profile selection, name editing, and authenticated named-profile
   provision request payloads.
 - Fork regression: `cargo test -p capsem-tui` covers fork-modal rendering,
   name editing, help discoverability, and authenticated gateway fork payloads.
+- Checkpoint regression: `cargo test -p capsem-tui` covers `Alt+c` confirmation
+  and the authenticated checkpoint request over the current suspend endpoint.

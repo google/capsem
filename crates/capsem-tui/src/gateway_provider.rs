@@ -374,6 +374,12 @@ async fn invoke_action(
                 message: format!("resumed {name}"),
             })
         }
+        ControlAction::Checkpoint { id } => {
+            post_empty(client, base_url, token, &["suspend", id]).await?;
+            Ok(ActionOutcome {
+                message: format!("checkpointed {id}"),
+            })
+        }
         ControlAction::Suspend { id } => {
             post_empty(client, base_url, token, &["suspend", id]).await?;
             Ok(ActionOutcome {

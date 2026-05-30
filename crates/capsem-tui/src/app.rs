@@ -27,6 +27,7 @@ pub enum ControlAction {
     CreateSession { name: String, profile_id: String },
     Fork { id: String, name: String },
     Resume { name: String },
+    Checkpoint { id: String },
     Suspend { id: String },
     Stop { id: String },
     Delete { id: String },
@@ -38,7 +39,8 @@ impl ControlAction {
             Self::CreateSession { .. } => "create",
             Self::Fork { .. } => "fork",
             Self::Resume { .. } => "resume",
-            Self::Suspend { .. } => "save",
+            Self::Checkpoint { .. } => "checkpoint",
+            Self::Suspend { .. } => "suspend",
             Self::Stop { .. } => "stop",
             Self::Delete { .. } => "delete",
         }
@@ -49,6 +51,7 @@ impl ControlAction {
             Self::CreateSession { name, .. } => name,
             Self::Fork { name, .. } => name,
             Self::Resume { name }
+            | Self::Checkpoint { id: name }
             | Self::Suspend { id: name }
             | Self::Stop { id: name }
             | Self::Delete { id: name } => name,
@@ -236,7 +239,7 @@ impl App {
         let next = match key.code {
             KeyCode::Char('?' | '/') => AppOverlay::Help,
             KeyCode::Char('i' | 'I') => AppOverlay::Stats,
-            KeyCode::Char('o' | 'O') => AppOverlay::Home,
+            KeyCode::Char('l' | 'L' | 'o' | 'O') => AppOverlay::Home,
             _ => return false,
         };
         self.overlay = if self.overlay == next {
@@ -273,6 +276,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char('r' | 'R') => self.active_resume_action(),
+            KeyCode::Char('c' | 'C') => self.active_checkpoint_action(),
             KeyCode::Char('s' | 'S') => self.active_suspend_action(),
             KeyCode::Char('t' | 'T') => self.active_id().map(|id| ControlAction::Stop { id }),
             KeyCode::Char('d' | 'D') => self.active_id().map(|id| ControlAction::Delete { id }),
@@ -290,6 +294,16 @@ impl App {
         }
         Some(ControlAction::Resume {
             name: session.id.clone(),
+        })
+    }
+
+    fn active_checkpoint_action(&self) -> Option<ControlAction> {
+        let session = self.state.active_session()?;
+        if !session.persistent || !matches!(session.lifecycle, SessionLifecycle::Working) {
+            return None;
+        }
+        Some(ControlAction::Checkpoint {
+            id: session.id.clone(),
         })
     }
 

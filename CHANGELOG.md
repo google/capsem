@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provisioning.
 - Added a `capsem-tui` fork dialog on `Alt+f` that asks for a fork name and
   sends the request through the installed gateway.
+- Added `Alt+c` checkpoint/save as an explicit `capsem-tui` action, leaving
+  `Alt+s` to mean suspend.
 - Added `capsem-tui` to local install/package payloads so the TUI is available
   from `~/.capsem/bin/capsem-tui` after installation.
 - Added `capsem_terminal_snapshot` to the Capsem MCP server so agents can
@@ -105,11 +107,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Linux host doctor smoke probes for `KVM_GET_API_VERSION` and
   `/dev/vhost-vsock` openability so bootstrap verifies usable KVM devices, not
   just filesystem permissions.
-- Added a far-left `help: alt+s` suspend hint to the `capsem-tui` status bar
-  so the primary lifecycle shortcut is visible without reopening the full help
-  overlay.
-- Clarified the `capsem-tui` help overlay so `Alt+s` is labeled as save,
-  `Alt+o` as sessions/status, and `Alt+f` as fork.
+- Added structured `capsem-tui` help and session-list tables, an explicit
+  `Alt+l` sessions overlay, and clearer `Alt+i` session info.
+- Added focused-field highlighting to `capsem-tui` create and fork dialogs so
+  the active input and selected profile are visible.
+- Changed the far-left `capsem-tui` status hint to `help: alt+/` so it no
+  longer conflicts with `Alt+s` suspend.
 
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
