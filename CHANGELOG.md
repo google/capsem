@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved KVM virtio-blk io_uring recovery so completions immediately retry
   a backpressured descriptor when submission capacity is freed, instead of
   waiting for another guest queue notification.
+- Added the full Firecracker-shaped KVM virtio-blk async profile: io_uring is
+  selected for read-only and writable block devices, uses a fixed registered
+  backing file, probes required read/write opcodes, restricts the disabled ring
+  before enabling it, and submits queued requests in batches from the block
+  worker.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.
@@ -107,11 +112,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Marked the Hypervisor Improvement H01 safety-and-queue-contracts slice
   complete after the full KVM unit gate and one-shot VM exec smoke passed, and
   opened H03 observability/status/OTel as the next active slice.
-- Gated the Linux KVM virtio-blk io_uring backend to writable block devices
-  after the first benchmark showed scratch sequential-read gains but rootfs and
-  AI CLI startup regressions when io_uring was used unconditionally.
-- Made the Linux KVM virtio-blk io_uring backend opt-in while measured default
-  gates continue to show disk or rootfs regressions.
+- Replaced the earlier opt-in/writable-only KVM virtio-blk io_uring gate with a
+  full async profile for both rootfs and writable block devices, while keeping
+  `CAPSEM_KVM_BLK_IO_URING=sync` as the explicit benchmark ablation and
+  fallback path.
 - Added KVM virtio-blk event-index negotiation and shared virtqueue
   notification-suppression helpers, with canonical Linux benchmark artifacts
   recording the mixed performance result for the Firecracker-path sprint.

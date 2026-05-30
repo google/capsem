@@ -31,8 +31,13 @@
         service `/info`, `capsem info`, and the OTel metric-point contract.
   - [x] Retry backpressured KVM virtio-blk io_uring descriptors immediately
         after completions free submission capacity.
+  - [x] Build the full Firecracker-shaped KVM block async profile before
+        ablation: default io_uring engine for block devices, fixed registered
+        fd, opcode probe, ring restrictions, explicit enable, existing
+        backpressure, completion-triggered retry, and quiesce drain.
+  - [x] Run the full-profile benchmark first, then grouped ablation.
   - [ ] Extend the same backpressure/event-loop audit to other KVM devices and
-        completion paths.
+        completion paths after block is measured as a whole.
 - [ ] H04: CPU, SMP, and lifecycle.
 - [ ] H05: storage, rootfs, and filesystem experiments.
 - [ ] H06: benchmark and product proof.
@@ -132,6 +137,36 @@
   completions and immediately performs a completion-triggered queue drain. A
   descriptor rewound by SQ-full backpressure can be resubmitted as soon as
   completion capacity is available, without requiring a fresh guest notify.
+- H02 direction correction on 2026-05-30: isolated VirtioFS batching/event-index
+  experiments produced mixed numbers and were reverted uncommitted. The next
+  accepted unit is the whole KVM block async profile, benchmarked as a complete
+  backend shape before ablation. Firecracker comparison points being adopted
+  now: async engine as a first-class file engine, fixed registered fd,
+  restricted/probed ring, queue-full throttling/backpressure, completion event
+  retry, deferred used-ring publication, event-index interrupt decisions, and
+  quiesce drain semantics.
+- H02 full-profile slice landed locally: KVM virtio-blk now uses the full async
+  profile for read-only rootfs and writable block devices by default, keeps
+  `CAPSEM_KVM_BLK_IO_URING=sync` as the ablation/fallback path, registers the
+  backing fd as a fixed file, probes required opcodes, restricts the ring while
+  disabled, explicitly enables it, and submits once per queue-drain or
+  completion-retry batch.
+- H02 full-profile benchmark, same-run async-vs-sync rootfs: seq read 121.0
+  MB/s vs 121.7 (-0.6%), random read 1303 IOPS vs 1420 (-8.2%), large binary
+  cold 170.9 MB/s vs 158.3 (+8.0%), large binary warm 5555.1 MB/s vs 5451.0
+  (+1.9%), small JS 75,860 ops/s vs 73,875 (+2.7%), metadata stat 37,732/s vs
+  36,196/s (+4.2%).
+- H02 full-profile benchmark, same-run async-vs-sync startup: python3 38.3 ms
+  vs 38.1 (-0.5%), node 336.7 ms vs 351.5 (+4.2%), claude 1720.9 ms vs
+  1707.5 (-0.8%), gemini 3246.9 ms vs 3196.0 (-1.6%), codex 1203.5 ms vs
+  1098.2 (-9.6%). Lower startup latency is better.
+- H02 grouped ablation, io_uring depth 256 vs accepted 128: seq read 120.3
+  MB/s vs 121.0 (-0.6%), random read 1347 IOPS vs 1303 (+3.4%), large binary
+  cold 161.3 MB/s vs 170.9 (-5.6%), large binary warm 5555.1 MB/s vs 5555.1
+  (+0.0%), small JS 71,505 ops/s vs 75,860 (-5.7%), metadata stat 39,430/s vs
+  37,732/s (+4.5%). The mixed result rejected the larger ring for now.
+- H02 VM smoke passed with the full async profile selected by default:
+  `just exec "echo ok"` returned `ok` from a real KVM one-shot VM.
 
 ## Coverage Ledger
 
@@ -163,12 +198,15 @@
   `cargo test -p capsem-core undo_pop_retries_last_chain --lib`,
   `cargo test -p capsem-core block_io_uring_queue_full_backpressures_without_sync_fallback --lib`,
   `cargo test -p capsem-core block_io_uring_completion_retries_backpressured_descriptor --lib`,
+  `cargo test -p capsem-core block_io_uring --lib`,
   `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
   A live named VM smoke with `capsem info --json` passed for H03 and reported
   `metrics_schema_version=1`, `configured_ram_mb=2048`, `configured_vcpus=2`,
   host PID, host RSS, and host CPU time before the throwaway VM was deleted.
+  `just exec "echo ok"` also passed after H02 made the full io_uring block
+  profile the default KVM block backend.
 - Adversarial: `block_guest_iovecs_reject_range_that_crosses_ram_end` proves
   a descriptor whose start GPA is valid but whose length crosses RAM end is
   rejected before raw iovecs reach host I/O. `avail_head_outside_queue_fails_closed`,
@@ -189,12 +227,15 @@
   `block_io_uring_completion_retries_backpressured_descriptor` proves a real
   io_uring completion frees capacity and triggers resubmission of the rewound
   descriptor without a new guest notification.
+  `block_io_uring_uses_firecracker_shaped_ring_contract` proves the io_uring
+  backend comes up with a fixed registered file and ring restrictions enabled.
 - E2E/VM: `just exec "echo ok"` passed for the KVM one-shot VM path. H03
   resource projection was also checked against a live named VM via
   `capsem info --json`; the second H03 live check confirmed KVM block counters
   appear in that same JSON response for a real booted VM. The third H03 live
   check confirmed gateway `/status` carries those counters to the TUI-facing
-  feed for a real booted VM.
+  feed for a real booted VM. H02 default async block selection was smoke-tested
+  through the same KVM one-shot VM path.
 - Telemetry: H03 first slice exposes existing `VmMetricsSnapshot.resources`
   fields through the service API and CLI. H03 second slice adds
   `VmMetricsSnapshot.hypervisor.block` and feeds it from the KVM virtio-blk
@@ -209,9 +250,16 @@
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
   `1.2.1780103109` are now present on main and compared successfully. H02 first
-  and second slices are correctness/backpressure for the opt-in io_uring path;
-  no canonical benchmark was rerun because the default block backend is
-  unchanged.
+  and second slices are correctness/backpressure for the io_uring path. H02
+  full-profile local benchmarks measured the full async engine before grouped
+  ablation: same-run rootfs showed cold binary +8.0%, small JS +2.7%, metadata
+  +4.2%, but random rootfs -8.2%; same-run startup showed node +4.2% but codex
+  -9.6%. Queue depth 256 was rejected after mixed ablation results. A local
+  uncommitted VirtioFS batching probe measured `/root`
+  targeted disk at seq write +2.3%, seq read +2.4%, random write -0.6%, random
+  read +10.8% without event-index, but it was not accepted because it was not
+  the systematic backend-wide profile now being pursued.
 - Missing/deferred: Real OTLP exporter process/configuration is deferred to the
-  broader telemetry sprint; full benchmark rerun is deferred until a
-  performance-affecting H02/H03 milestone lands.
+  broader telemetry sprint; canonical `just benchmark` artifact refresh is
+  deferred until the full async default is accepted after broader VM smoke and
+  storage/startup proof.

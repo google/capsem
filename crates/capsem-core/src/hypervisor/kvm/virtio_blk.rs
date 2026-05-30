@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capsem_proto::metrics::VmBlockMetrics;
-use io_uring::{opcode, types, IoUring};
+use io_uring::{opcode, register::Restriction, squeue, types, IoUring, Probe};
 use metrics::{describe_counter, describe_histogram, Unit};
 
 use super::memory::GuestMemoryRef;
@@ -26,6 +26,10 @@ const VIRTIO_ID_BLOCK: u32 = 2;
 
 /// Maximum queue size for the requestq.
 const QUEUE_SIZE: u16 = 256;
+/// Keep the host async ring bounded below the guest-visible queue so descriptors
+/// can backpressure cleanly instead of letting host work grow without a cap.
+const IO_URING_QUEUE_SIZE: u32 = 128;
+const IO_URING_FIXED_FILE_INDEX: u32 = 0;
 
 /// Sector size in bytes.
 const SECTOR_SIZE: u64 = 512;
@@ -1066,21 +1070,39 @@ struct BlockIoUring {
     completion_fd: OwnedFd,
     pending: HashMap<u64, PendingBlockRequest>,
     next_user_data: u64,
-    file_fd: RawFd,
+    fixed_file_index: u32,
+    restrictions_enabled: bool,
 }
 
 impl BlockIoUring {
     fn new(file_fd: RawFd) -> std::io::Result<Self> {
         let completion_fd = create_eventfd(libc::EFD_CLOEXEC | libc::EFD_NONBLOCK)?;
-        let ring = IoUring::new(QUEUE_SIZE as u32)?;
-        ring.submitter()
-            .register_eventfd(completion_fd.as_raw_fd())?;
+        let ring = IoUring::builder()
+            .setup_r_disabled()
+            .build(IO_URING_QUEUE_SIZE)?;
+        let submitter = ring.submitter();
+
+        let mut probe = Probe::new();
+        submitter.register_probe(&mut probe)?;
+        require_uring_opcode(&probe, opcode::Readv::CODE, "READV")?;
+        require_uring_opcode(&probe, opcode::Writev::CODE, "WRITEV")?;
+
+        submitter.register_eventfd(completion_fd.as_raw_fd())?;
+        submitter.register_files(&[file_fd])?;
+        let mut restrictions = [
+            Restriction::sqe_op(opcode::Readv::CODE),
+            Restriction::sqe_op(opcode::Writev::CODE),
+            Restriction::sqe_flags_required(squeue::Flags::FIXED_FILE.bits()),
+        ];
+        submitter.register_restrictions(&mut restrictions)?;
+        submitter.register_enable_rings()?;
         Ok(Self {
             ring,
             completion_fd,
             pending: HashMap::new(),
             next_user_data: 1,
-            file_fd,
+            fixed_file_index: IO_URING_FIXED_FILE_INDEX,
+            restrictions_enabled: true,
         })
     }
 
@@ -1106,14 +1128,18 @@ impl BlockIoUring {
         let iovec_ptr = iovecs.as_ptr();
         let iovec_len = iovecs.len() as u32;
         let entry = match type_ {
-            VIRTIO_BLK_T_IN => opcode::Readv::new(types::Fd(self.file_fd), iovec_ptr, iovec_len)
-                .offset(offset)
-                .build()
-                .user_data(user_data),
-            VIRTIO_BLK_T_OUT => opcode::Writev::new(types::Fd(self.file_fd), iovec_ptr, iovec_len)
-                .offset(offset)
-                .build()
-                .user_data(user_data),
+            VIRTIO_BLK_T_IN => {
+                opcode::Readv::new(types::Fixed(self.fixed_file_index), iovec_ptr, iovec_len)
+                    .offset(offset)
+                    .build()
+                    .user_data(user_data)
+            }
+            VIRTIO_BLK_T_OUT => {
+                opcode::Writev::new(types::Fixed(self.fixed_file_index), iovec_ptr, iovec_len)
+                    .offset(offset)
+                    .build()
+                    .user_data(user_data)
+            }
             _ => unreachable!("only read/write requests are submitted to io_uring"),
         };
         self.pending.insert(
@@ -1136,21 +1162,6 @@ impl BlockIoUring {
                 "io_uring submission queue full",
             ));
         }
-        loop {
-            match self.ring.submit() {
-                Ok(_) => break,
-                Err(error) if error.raw_os_error() == Some(libc::EINTR) => continue,
-                Err(error) => {
-                    tracing::warn!(
-                        event_name = "virtio.blk.io_uring_submit_failed",
-                        %error,
-                        operation = request_operation_label(type_),
-                        "virtio-blk io_uring submit failed after queueing SQE"
-                    );
-                    break;
-                }
-            }
-        }
         ::metrics::counter!(
             METRIC_ASYNC_SUBMISSIONS_TOTAL,
             "operation" => request_operation_label(type_),
@@ -1159,6 +1170,16 @@ impl BlockIoUring {
         ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring")
             .record(self.pending.len() as f64);
         Ok(())
+    }
+
+    fn kick_submission_queue(&mut self) -> std::io::Result<usize> {
+        loop {
+            match self.ring.submit() {
+                Ok(submitted) => return Ok(submitted),
+                Err(error) if error.raw_os_error() == Some(libc::EINTR) => continue,
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     fn reap_completions(
@@ -1248,6 +1269,17 @@ impl BlockIoUring {
         ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring")
             .record(self.pending.len() as f64);
         result
+    }
+}
+
+fn require_uring_opcode(probe: &Probe, opcode: u8, name: &'static str) -> std::io::Result<()> {
+    if probe.is_supported(opcode) {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!("io_uring opcode {name} is not supported"),
+        ))
     }
 }
 
@@ -1697,13 +1729,15 @@ fn block_worker_loop(
 }
 
 fn should_use_io_uring(read_only: bool) -> bool {
-    // The first measured io_uring slice improved scratch sequential reads but
-    // regressed read-only rootfs and AI CLI startup. Keep rootfs on the
-    // synchronous vectored path until a rootfs-specific async tune proves out.
-    //
-    // The writable-device gate recovered rootfs but still regressed disk
-    // sequential reads, so io_uring remains opt-in while the backend matures.
-    !read_only && std::env::var_os("CAPSEM_KVM_BLK_IO_URING").is_some()
+    let _ = read_only;
+    !matches!(
+        std::env::var("CAPSEM_KVM_BLK_IO_URING")
+            .ok()
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("0" | "false" | "off" | "sync")
+    )
 }
 
 fn block_worker_loop_sync(
@@ -1877,6 +1911,16 @@ fn block_worker_loop_uring(
                         &mut queue,
                         &mut uring,
                     );
+                    if result.submitted > 0 {
+                        if let Err(error) = uring.kick_submission_queue() {
+                            tracing::warn!(
+                                event_name = "virtio.blk.io_uring_submit_failed",
+                                %error,
+                                submitted = result.submitted,
+                                "virtio-blk io_uring batch submit failed"
+                            );
+                        }
+                    }
                     emit_queue_drain_metrics("io_uring", &result);
                     metrics.record_queue_drain(&result);
                     if result.should_interrupt {
@@ -1929,6 +1973,16 @@ fn block_worker_loop_uring(
                         "virtio-blk io_uring completions reaped"
                     );
                     if retry.drain.processed > 0 || retry.drain.async_queue_full > 0 {
+                        if retry.drain.submitted > 0 {
+                            if let Err(error) = uring.kick_submission_queue() {
+                                tracing::warn!(
+                                    event_name = "virtio.blk.io_uring_submit_failed",
+                                    %error,
+                                    submitted = retry.drain.submitted,
+                                    "virtio-blk io_uring completion-retry batch submit failed"
+                                );
+                            }
+                        }
                         emit_queue_drain_metrics("io_uring", &retry.drain);
                         metrics.record_queue_drain(&retry.drain);
                         if retry.drain.should_interrupt {
@@ -2532,6 +2586,23 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn block_io_uring_uses_firecracker_shaped_ring_contract() {
+        let path = temp_disk("uring-contract.img", 512);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let Ok(uring) = BlockIoUring::new(file.as_raw_fd()) else {
+            return;
+        };
+
+        assert_eq!(uring.fixed_file_index, IO_URING_FIXED_FILE_INDEX);
+        assert!(uring.restrictions_enabled);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn block_io_uring_records_async_metrics() {
         use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 
@@ -2705,6 +2776,8 @@ mod tests {
                 pending_iovecs,
             )
             .unwrap();
+        uring.kick_submission_queue().unwrap();
+        uring.ring.submit_and_wait(1).unwrap();
 
         h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
         let retry_data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
@@ -2726,8 +2799,8 @@ mod tests {
         assert_eq!(full.async_queue_full, 1);
         assert_eq!(full.submitted, 0);
         assert_eq!(h.read_status(retry_status_offset), 0xAA);
+        uring.kick_submission_queue().unwrap();
 
-        uring.ring.submit_and_wait(1).unwrap();
         let retry = VirtioBlockDevice::reap_completions_and_retry(
             &mut file,
             false,
@@ -3141,20 +3214,20 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn block_io_uring_gate_keeps_read_only_rootfs_on_sync_path() {
+    fn block_io_uring_gate_defaults_to_full_async_profile() {
         std::env::remove_var("CAPSEM_KVM_BLK_IO_URING");
         assert!(
-            !should_use_io_uring(true),
-            "read-only rootfs should stay on the synchronous vectored path"
+            should_use_io_uring(true),
+            "read-only rootfs participates in the full async profile"
         );
-        assert!(
-            !should_use_io_uring(false),
-            "io_uring should stay default-off until benchmarks prove a default gate"
-        );
-        std::env::set_var("CAPSEM_KVM_BLK_IO_URING", "1");
         assert!(
             should_use_io_uring(false),
-            "writable scratch disks remain eligible for opt-in io_uring experiments"
+            "writable block devices participate in the full async profile"
+        );
+        std::env::set_var("CAPSEM_KVM_BLK_IO_URING", "sync");
+        assert!(
+            !should_use_io_uring(false),
+            "the sync escape hatch remains available for ablation and fallback"
         );
         std::env::remove_var("CAPSEM_KVM_BLK_IO_URING");
     }
