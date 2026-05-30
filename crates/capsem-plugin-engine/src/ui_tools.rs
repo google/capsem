@@ -5,8 +5,8 @@ use serde_json::{json, Value};
 
 use crate::ui::{
     validate_messages, A2uiServerMessage, A2uiVersion, Action, Align, BasicComponent, Button,
-    ButtonVariant, Card, ChildList, CreateSurface, DynamicString, EventAction, Icon, IconName,
-    KnownIcon, Row, Text, TextVariant, UpdateComponents, A2UI_BASIC_CATALOG_ID,
+    ButtonVariant, Card, ChildList, Column, CreateSurface, DynamicString, EventAction, Icon,
+    IconName, KnownIcon, Modal, Row, Text, TextVariant, UpdateComponents, A2UI_BASIC_CATALOG_ID,
 };
 
 pub const CAPSEM_UI_CATALOG_ID: &str = "https://capsem.org/schemas/ui/catalog.v1.json";
@@ -56,7 +56,17 @@ pub struct UiToolSurfaceSnapshot {
     pub surface_id: String,
     pub catalog_id: String,
     pub component_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<UiToolRecipe>,
     pub messages: Vec<A2uiServerMessage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiToolRecipe {
+    pub component: String,
+    pub variant: String,
+    pub docs_url: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -106,6 +116,7 @@ pub struct UiToolRunner {
 #[derive(Clone, Debug)]
 struct UiToolSurface {
     catalog_id: String,
+    recipe: Option<UiToolRecipe>,
     components: BTreeMap<String, BasicComponent>,
 }
 
@@ -123,6 +134,7 @@ impl UiToolRunner {
                 surface_id: surface_id.clone(),
                 catalog_id: surface.catalog_id.clone(),
                 component_count: surface.components.len(),
+                recipe: surface.recipe.clone(),
                 messages: surface.messages(surface_id),
             })
             .collect();
@@ -146,6 +158,8 @@ impl UiToolRunner {
             "ui.surface.preview" => self.surface_preview(call),
             "ui.surface.clear" => self.surface_clear(call),
             "ui.alert" => self.alert(call),
+            "ui.card" => self.card(call),
+            "ui.ask" => self.ask(call),
             other => err(other, vec![format!("unknown UI tool: {other}")]),
         }
     }
@@ -183,6 +197,7 @@ impl UiToolRunner {
             surface_id.clone(),
             UiToolSurface {
                 catalog_id,
+                recipe: None,
                 components: BTreeMap::new(),
             },
         );
@@ -273,9 +288,15 @@ impl UiToolRunner {
             .entry(surface_id.clone())
             .or_insert_with(|| UiToolSurface {
                 catalog_id: A2UI_BASIC_CATALOG_ID.to_owned(),
+                recipe: None,
                 components: BTreeMap::new(),
             });
 
+        surface.recipe = Some(UiToolRecipe::new(
+            "alert",
+            "discovery",
+            "https://preline.co/docs/components/alerts.html#discovery",
+        ));
         let row_id = format!("{id}-row");
         let icon_id = format!("{id}-icon");
         let text_id = format!("{id}-text");
@@ -314,6 +335,211 @@ impl UiToolRunner {
         ok(call.tool, "alert lowered to A2UI Basic components")
             .with_surface_id(surface_id)
             .with_component_id(id)
+    }
+
+    fn card(&mut self, call: UiToolCall) -> UiToolObservation {
+        let Some(surface_id) = string_arg(&call.args, "surfaceId") else {
+            return err(call.tool, vec!["surfaceId is required".to_owned()]);
+        };
+        let Some(title) = string_arg(&call.args, "title") else {
+            return err(call.tool, vec!["title is required".to_owned()]);
+        };
+        let Some(description) = string_arg(&call.args, "description") else {
+            return err(call.tool, vec!["description is required".to_owned()]);
+        };
+        let id = string_arg(&call.args, "id").unwrap_or_else(|| "draft-card".to_owned());
+        let surface = self
+            .surfaces
+            .entry(surface_id.clone())
+            .or_insert_with(|| UiToolSurface {
+                catalog_id: A2UI_BASIC_CATALOG_ID.to_owned(),
+                recipe: None,
+                components: BTreeMap::new(),
+            });
+
+        surface.recipe = Some(UiToolRecipe::new(
+            "card",
+            "simple",
+            "https://preline.co/docs/components/card.html#simple-card",
+        ));
+
+        let body_id = format!("{id}-body");
+        let title_id = format!("{id}-title");
+        let description_id = format!("{id}-description");
+        let meta_id = format!("{id}-meta");
+        let icon_id = format!("{id}-icon");
+        let caption_id = format!("{id}-caption");
+        surface
+            .components
+            .insert("root".to_owned(), card_component("root", &body_id));
+        surface.components.insert(
+            body_id.clone(),
+            column_component(
+                &body_id,
+                [title_id.clone(), description_id.clone(), meta_id.clone()],
+            ),
+        );
+        surface.components.insert(
+            title_id.clone(),
+            text_component(&title_id, title, Some(TextVariant::H3)),
+        );
+        surface.components.insert(
+            description_id.clone(),
+            text_component(&description_id, description, Some(TextVariant::Body)),
+        );
+        surface.components.insert(
+            meta_id.clone(),
+            row_component(
+                &meta_id,
+                [icon_id.clone(), caption_id.clone()],
+                Some(Align::Center),
+            ),
+        );
+        surface.components.insert(
+            icon_id.clone(),
+            BasicComponent::Icon(Icon {
+                id: icon_id,
+                name: IconName::Known(KnownIcon::Info),
+            }),
+        );
+        surface.components.insert(
+            caption_id.clone(),
+            text_component(
+                &caption_id,
+                "A2UI Basic component: Card",
+                Some(TextVariant::Caption),
+            ),
+        );
+
+        ok(call.tool, "card lowered to A2UI Basic components")
+            .with_surface_id(surface_id)
+            .with_component_id(id)
+    }
+
+    fn ask(&mut self, call: UiToolCall) -> UiToolObservation {
+        let Some(surface_id) = string_arg(&call.args, "surfaceId") else {
+            return err(call.tool, vec!["surfaceId is required".to_owned()]);
+        };
+        let Some(text) = string_arg(&call.args, "text") else {
+            return err(call.tool, vec!["text is required".to_owned()]);
+        };
+        let yes = string_arg(&call.args, "yes").unwrap_or_else(|| "Yes".to_owned());
+        let no = string_arg(&call.args, "no").unwrap_or_else(|| "No".to_owned());
+        let id = string_arg(&call.args, "id").unwrap_or_else(|| "draft-ask".to_owned());
+        let surface = self
+            .surfaces
+            .entry(surface_id.clone())
+            .or_insert_with(|| UiToolSurface {
+                catalog_id: A2UI_BASIC_CATALOG_ID.to_owned(),
+                recipe: None,
+                components: BTreeMap::new(),
+            });
+
+        surface.recipe = Some(UiToolRecipe::new(
+            "modal",
+            "basic",
+            "https://preline.co/docs/components/modal.html",
+        ));
+
+        let title_id = format!("{id}-title");
+        let modal_id = format!("{id}-modal");
+        let open_button_id = format!("{id}-open");
+        let open_text_id = format!("{id}-open-text");
+        let content_id = format!("{id}-content");
+        let message_id = format!("{id}-message");
+        let actions_id = format!("{id}-actions");
+        let no_button_id = format!("{id}-no");
+        let no_text_id = format!("{id}-no-text");
+        let yes_button_id = format!("{id}-yes");
+        let yes_text_id = format!("{id}-yes-text");
+
+        surface.components.insert(
+            "root".to_owned(),
+            column_component("root", [title_id.clone(), modal_id.clone()]),
+        );
+        surface.components.insert(
+            title_id.clone(),
+            text_component(&title_id, "Question", Some(TextVariant::H3)),
+        );
+        surface.components.insert(
+            modal_id.clone(),
+            BasicComponent::Modal(Modal {
+                id: modal_id,
+                trigger: open_button_id.clone(),
+                content: content_id.clone(),
+            }),
+        );
+        surface.components.insert(
+            open_button_id.clone(),
+            button_component(
+                &open_button_id,
+                &open_text_id,
+                format!("{id}.open"),
+                ButtonVariant::Primary,
+            ),
+        );
+        surface.components.insert(
+            open_text_id.clone(),
+            text_component(&open_text_id, "Open question", None),
+        );
+        surface.components.insert(
+            content_id.clone(),
+            column_component(&content_id, [message_id.clone(), actions_id.clone()]),
+        );
+        surface.components.insert(
+            message_id.clone(),
+            text_component(&message_id, text, Some(TextVariant::Body)),
+        );
+        surface.components.insert(
+            actions_id.clone(),
+            row_component(
+                &actions_id,
+                [no_button_id.clone(), yes_button_id.clone()],
+                Some(Align::Center),
+            ),
+        );
+        surface.components.insert(
+            no_button_id.clone(),
+            button_component(
+                &no_button_id,
+                &no_text_id,
+                format!("{id}.no"),
+                ButtonVariant::Default,
+            ),
+        );
+        surface
+            .components
+            .insert(no_text_id.clone(), text_component(&no_text_id, no, None));
+        surface.components.insert(
+            yes_button_id.clone(),
+            button_component(
+                &yes_button_id,
+                &yes_text_id,
+                format!("{id}.yes"),
+                ButtonVariant::Primary,
+            ),
+        );
+        surface
+            .components
+            .insert(yes_text_id.clone(), text_component(&yes_text_id, yes, None));
+
+        ok(call.tool, "ask modal lowered to A2UI Basic components")
+            .with_surface_id(surface_id)
+            .with_component_id(id)
+    }
+}
+
+impl UiToolRecipe {
+    fn new(
+        component: impl Into<String>,
+        variant: impl Into<String>,
+        docs_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            component: component.into(),
+            variant: variant.into(),
+            docs_url: docs_url.into(),
+        }
     }
 }
 
@@ -601,8 +827,51 @@ fn contains_forbidden_renderer_input(value: &Value) -> bool {
     }
 }
 
-#[allow(dead_code)]
-fn _button_component(
+fn text_component(
+    id: impl Into<String>,
+    value: impl Into<String>,
+    variant: Option<TextVariant>,
+) -> BasicComponent {
+    BasicComponent::Text(Text {
+        id: id.into(),
+        text: DynamicString::Literal(value.into()),
+        variant,
+    })
+}
+
+fn card_component(id: impl Into<String>, child: impl Into<String>) -> BasicComponent {
+    BasicComponent::Card(Card {
+        id: id.into(),
+        child: child.into(),
+    })
+}
+
+fn row_component<const N: usize>(
+    id: impl Into<String>,
+    children: [String; N],
+    align: Option<Align>,
+) -> BasicComponent {
+    BasicComponent::Row(Row {
+        id: id.into(),
+        children: ChildList::Static(children.into_iter().collect()),
+        justify: None,
+        align,
+    })
+}
+
+fn column_component<const N: usize>(
+    id: impl Into<String>,
+    children: [String; N],
+) -> BasicComponent {
+    BasicComponent::Column(Column {
+        id: id.into(),
+        children: ChildList::Static(children.into_iter().collect()),
+        justify: None,
+        align: None,
+    })
+}
+
+fn button_component(
     id: impl Into<String>,
     child: impl Into<String>,
     action_name: impl Into<String>,

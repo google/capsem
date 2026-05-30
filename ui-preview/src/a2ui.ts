@@ -35,6 +35,7 @@ export type A2uiComponent = {
 export type PreviewPayload = {
   generatedBy: string;
   catalogId: string;
+  authored?: UiToolProgramResult | null;
   toolAcceptance: UiToolProgramResult;
   examples: PreviewExample[];
 };
@@ -73,6 +74,7 @@ export type UiToolSurfaceSnapshot = {
   surfaceId: string;
   catalogId: string;
   componentCount: number;
+  recipe?: PreviewRecipe;
   messages: A2uiMessage[];
 };
 

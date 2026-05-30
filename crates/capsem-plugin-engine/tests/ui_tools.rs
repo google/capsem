@@ -20,6 +20,62 @@ fn ui_tool_acceptance_program_builds_renderable_surface() {
 }
 
 #[test]
+fn ui_tools_build_card_and_modal_drafts() {
+    let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "agent-draft" }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.card".to_owned(),
+                args: json!({
+                    "surfaceId": "agent-draft",
+                    "id": "ship-card",
+                    "title": "Release gate",
+                    "description": "All plugin UI must pass through structured tools."
+                }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.validate".to_owned(),
+                args: json!({ "surfaceId": "agent-draft" }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.ask".to_owned(),
+                args: json!({
+                    "surfaceId": "agent-draft",
+                    "id": "approve-release",
+                    "text": "Allow this plugin UI to render?",
+                    "yes": "Allow",
+                    "no": "Deny"
+                }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.preview".to_owned(),
+                args: json!({ "surfaceId": "agent-draft" }),
+            },
+        ],
+    });
+
+    assert!(result.ok, "{:#?}", result.observations);
+    assert_eq!(result.surfaces.len(), 1);
+    assert_eq!(result.surfaces[0].surface_id, "agent-draft");
+    assert_eq!(
+        result.surfaces[0]
+            .recipe
+            .as_ref()
+            .map(|recipe| recipe.component.as_str()),
+        Some("modal")
+    );
+    assert!(result.surfaces[0]
+        .messages
+        .iter()
+        .any(|message| serde_json::to_string(message)
+            .unwrap()
+            .contains("Allow this plugin UI")));
+}
+
+#[test]
 fn ui_tools_reject_raw_renderer_inputs() {
     let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
         calls: vec![

@@ -8,6 +8,9 @@
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance
   surface first.
+- Added a live UI authoring lane so `POST /ui/tools/run` stores the latest
+  structured tool result, `/ui/spec/demo` exposes it, and the workbench renders
+  the authored "Agent Draft" first.
 - Added a Rust-owned A2UI v0.9 Basic preview path with typed UI helpers,
   contract tests, server endpoints, and a Svelte/Preline renderer preview.
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering

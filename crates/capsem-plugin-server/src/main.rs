@@ -12,15 +12,18 @@ use axum::{
     Json, Router,
 };
 use capsem_plugin_engine::{
-    InstallPluginRequest, InstallRunRequest, PluginError, PluginRegistry, RunPluginRequest,
+    ui_tools::UiToolProgramResult, InstallPluginRequest, InstallRunRequest, PluginError,
+    PluginRegistry, RunPluginRequest,
 };
 use serde_json::json;
+use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 #[derive(Clone)]
 struct AppState {
     registry: Arc<PluginRegistry>,
+    authored_ui: Arc<RwLock<Option<UiToolProgramResult>>>,
 }
 
 #[tokio::main]
@@ -35,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
             "wasmtime-wat-fuel" => PluginRegistry::wasmtime_wat_fuel(artifact_dir),
             _ => PluginRegistry::new(artifact_dir),
         }),
+        authored_ui: Arc::new(RwLock::new(None)),
     };
 
     let app = app(state);
@@ -55,6 +59,7 @@ fn app(state: AppState) -> Router {
         .route("/ui/spec/demo", get(ui_preview::demo))
         .route("/ui/spec/validate", post(ui_preview::validate))
         .route("/ui/tools/run", post(ui_tools::run))
+        .route("/ui/tools/latest", get(ui_tools::latest))
         .route("/ui/tools/acceptance", get(ui_tools::acceptance))
         .route("/health", get(health))
         .route("/plugins/install", post(install_plugin))

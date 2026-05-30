@@ -8,7 +8,7 @@
     type PreviewRecipe,
     type RenderAction,
   } from "./a2ui";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   type WorkbenchItem = {
     name: string;
@@ -18,6 +18,7 @@
     recipe: PreviewRecipe;
     messages: A2uiMessage[];
     toolRun?: boolean;
+    toolResult?: PreviewPayload["toolAcceptance"];
   };
 
   let payload = $state<PreviewPayload | null>(null);
@@ -25,9 +26,25 @@
   let inspector = $state<"a2ui" | "tools" | "template">("a2ui");
   let error = $state("");
   let actions = $state<RenderAction[]>([]);
+  let refreshTimer: number | undefined;
 
   let items = $derived.by<WorkbenchItem[]>(() => {
     if (!payload) return [];
+    const authoredSurface = payload.authored?.surfaces[0];
+    const authoredItem: WorkbenchItem | null = authoredSurface ? {
+      name: "Agent Draft",
+      label: payload.authored?.ok ? "live" : "invalid",
+      api: "POST /ui/tools/run -> stored latest result -> rendered by workbench",
+      surface: authoredSurface.surfaceId,
+      recipe: authoredSurface.recipe ?? {
+        component: "card",
+        variant: "simple",
+        docsUrl: "https://preline.co/docs/components/card.html",
+      },
+      messages: authoredSurface.messages,
+      toolRun: true,
+      toolResult: payload.authored ?? undefined,
+    } : null;
     const toolSurface = payload.toolAcceptance.surfaces[0];
     const toolItem: WorkbenchItem = {
       name: "Tool Acceptance",
@@ -41,9 +58,11 @@
       },
       messages: toolSurface?.messages ?? [],
       toolRun: true,
+      toolResult: payload.toolAcceptance,
     };
 
     return [
+      ...(authoredItem ? [authoredItem] : []),
       toolItem,
       ...payload.examples.map((example: PreviewExample) => ({
         name: example.name,
@@ -60,10 +79,19 @@
   let surface = $derived(current ? buildSurface(current.messages) : null);
   let serialized = $derived(current ? JSON.stringify(current.messages, null, 2) : "");
   let toolSerialized = $derived(
-    payload ? JSON.stringify(payload.toolAcceptance.observations, null, 2) : "",
+    current?.toolResult ? JSON.stringify(current.toolResult.observations, null, 2) : "",
   );
 
   onMount(() => {
+    loadPayload();
+    refreshTimer = window.setInterval(loadPayload, 1500);
+  });
+
+  onDestroy(() => {
+    if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+  });
+
+  function loadPayload(): void {
     fetch("/ui/spec/demo")
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -75,7 +103,7 @@
       .catch((cause: Error) => {
         error = cause.message;
       });
-  });
+  }
 
   function recordAction(action: RenderAction): void {
     actions = [
