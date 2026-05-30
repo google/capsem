@@ -130,6 +130,30 @@ pub struct VmSummary {
     pub total_file_events: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_ram_mb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_vcpus: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_process_rss_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_cpu_time_micros: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_queue_notifications_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_queue_drains_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_descriptors_drained_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_used_entries_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_read_ops_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_write_ops_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_bytes_read_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_bytes_written_total: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -301,6 +325,30 @@ struct SessionInfo {
     total_file_events: Option<u64>,
     #[serde(default)]
     model_call_count: Option<u64>,
+    #[serde(default)]
+    configured_ram_mb: Option<u64>,
+    #[serde(default)]
+    configured_vcpus: Option<u32>,
+    #[serde(default)]
+    host_process_rss_bytes: Option<u64>,
+    #[serde(default)]
+    host_cpu_time_micros: Option<u64>,
+    #[serde(default)]
+    block_queue_notifications_total: Option<u64>,
+    #[serde(default)]
+    block_queue_drains_total: Option<u64>,
+    #[serde(default)]
+    block_descriptors_drained_total: Option<u64>,
+    #[serde(default)]
+    block_used_entries_total: Option<u64>,
+    #[serde(default)]
+    block_read_ops_total: Option<u64>,
+    #[serde(default)]
+    block_write_ops_total: Option<u64>,
+    #[serde(default)]
+    block_bytes_read_total: Option<u64>,
+    #[serde(default)]
+    block_bytes_written_total: Option<u64>,
 }
 
 async fn fetch_status(state: &AppState) -> StatusResponse {
@@ -329,6 +377,13 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
     let mut suspended: usize = 0;
 
     for sess in &list.sessions {
+        let detail = if is_running_status(&sess.status) {
+            fetch_session_info(&state.uds_path, &sess.id).await
+        } else {
+            None
+        };
+        let metrics = detail.as_ref().unwrap_or(sess);
+
         if let Some(ram) = sess.ram_mb {
             total_ram += ram;
         }
@@ -364,6 +419,18 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             denied_requests: sess.denied_requests,
             total_file_events: sess.total_file_events,
             model_call_count: sess.model_call_count,
+            configured_ram_mb: metrics.configured_ram_mb,
+            configured_vcpus: metrics.configured_vcpus,
+            host_process_rss_bytes: metrics.host_process_rss_bytes,
+            host_cpu_time_micros: metrics.host_cpu_time_micros,
+            block_queue_notifications_total: metrics.block_queue_notifications_total,
+            block_queue_drains_total: metrics.block_queue_drains_total,
+            block_descriptors_drained_total: metrics.block_descriptors_drained_total,
+            block_used_entries_total: metrics.block_used_entries_total,
+            block_read_ops_total: metrics.block_read_ops_total,
+            block_write_ops_total: metrics.block_write_ops_total,
+            block_bytes_read_total: metrics.block_bytes_read_total,
+            block_bytes_written_total: metrics.block_bytes_written_total,
         });
     }
 
@@ -398,6 +465,15 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         }),
         assets,
     }
+}
+
+fn is_running_status(status: &str) -> bool {
+    status.eq_ignore_ascii_case("running")
+}
+
+async fn fetch_session_info(uds_path: &std::path::Path, id: &str) -> Option<SessionInfo> {
+    let body = uds_get(uds_path, &format!("/info/{id}")).await.ok()?;
+    serde_json::from_slice::<SessionInfo>(&body).ok()
 }
 
 /// Simple GET request over UDS.

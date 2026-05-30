@@ -185,6 +185,18 @@ fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSu
         denied_requests: None,
         total_file_events: None,
         model_call_count: None,
+        configured_ram_mb: None,
+        configured_vcpus: None,
+        host_process_rss_bytes: None,
+        host_cpu_time_micros: None,
+        block_queue_notifications_total: None,
+        block_queue_drains_total: None,
+        block_descriptors_drained_total: None,
+        block_used_entries_total: None,
+        block_read_ops_total: None,
+        block_write_ops_total: None,
+        block_bytes_read_total: None,
+        block_bytes_written_total: None,
     }
 }
 
@@ -257,6 +269,65 @@ async fn fetch_status_multiple_vms() {
     assert_eq!(rs.total_cpus, 7);
     assert_eq!(rs.running_count, 2);
     assert_eq!(rs.stopped_count, 1);
+    h.abort();
+}
+
+#[tokio::test]
+async fn fetch_status_enriches_running_vm_with_info_metrics() {
+    let mock = axum::Router::new()
+        .route(
+            "/list",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "sandboxes": [
+                        {"id": "vm1", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                        {"id": "vm2", "name": "sleepy", "pid": 200, "status": "Suspended", "persistent": true, "ram_mb": 4096, "cpus": 4}
+                    ]
+                }))
+            }),
+        )
+        .route(
+            "/info/{id}",
+            axum::routing::get(|axum::extract::Path(id): axum::extract::Path<String>| async move {
+                axum::Json(serde_json::json!({
+                    "id": id,
+                    "status": "Running",
+                    "persistent": true,
+                    "configured_ram_mb": 2048,
+                    "configured_vcpus": 2,
+                    "host_process_rss_bytes": 256 * 1024 * 1024u64,
+                    "host_cpu_time_micros": 1_250_000u64,
+                    "block_queue_notifications_total": 5876u64,
+                    "block_queue_drains_total": 1639u64,
+                    "block_descriptors_drained_total": 25266u64,
+                    "block_used_entries_total": 25266u64,
+                    "block_read_ops_total": 8580u64,
+                    "block_write_ops_total": 3u64,
+                    "block_bytes_read_total": 31_394_816u64,
+                    "block_bytes_written_total": 4096u64
+                }))
+            }),
+        );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let state = test_app_state(&path);
+    let resp = fetch_status(&state).await;
+    assert_eq!(resp.service, "running");
+    assert_eq!(resp.vms.len(), 2);
+    let running = &resp.vms[0];
+    assert_eq!(running.configured_ram_mb, Some(2048));
+    assert_eq!(running.configured_vcpus, Some(2));
+    assert_eq!(running.host_process_rss_bytes, Some(256 * 1024 * 1024));
+    assert_eq!(running.host_cpu_time_micros, Some(1_250_000));
+    assert_eq!(running.block_queue_notifications_total, Some(5876));
+    assert_eq!(running.block_queue_drains_total, Some(1639));
+    assert_eq!(running.block_descriptors_drained_total, Some(25266));
+    assert_eq!(running.block_used_entries_total, Some(25266));
+    assert_eq!(running.block_read_ops_total, Some(8580));
+    assert_eq!(running.block_write_ops_total, Some(3));
+    assert_eq!(running.block_bytes_read_total, Some(31_394_816));
+    assert_eq!(running.block_bytes_written_total, Some(4096));
+    assert_eq!(resp.vms[1].block_queue_notifications_total, None);
     h.abort();
 }
 

@@ -453,7 +453,7 @@ fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
 fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
     match overlay {
         AppOverlay::Help => 17,
-        AppOverlay::Stats => 12,
+        AppOverlay::Stats => 19,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
         AppOverlay::Create => (state.profiles.len() as u16)
             .saturating_add(10)
@@ -571,7 +571,7 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
             overlay_line("no active session"),
         ];
     };
-    vec![
+    let mut lines = vec![
         overlay_title("session info"),
         table_header(&["Field", "Value", "Note", ""]),
         info_row("session", &session.id, &session.title),
@@ -594,7 +594,70 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
         ),
         info_row("events", &session.stats.events.to_string(), ""),
         info_row("jobs", &session.stats.jobs.to_string(), ""),
-    ]
+    ];
+    if session.stats.configured_ram_mb.is_some() || session.stats.configured_vcpus.is_some() {
+        let ram = session
+            .stats
+            .configured_ram_mb
+            .map(|ram| format!("{ram} MiB"))
+            .unwrap_or_else(|| "-".to_string());
+        let vcpus = session
+            .stats
+            .configured_vcpus
+            .map(|vcpus| vcpus.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        lines.push(info_row("resources", &ram, format!("{vcpus} vCPU")));
+    }
+    if session.stats.host_process_rss_bytes.is_some()
+        || session.stats.host_cpu_time_micros.is_some()
+    {
+        let rss = session
+            .stats
+            .host_process_rss_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "-".to_string());
+        let cpu = session
+            .stats
+            .host_cpu_time_micros
+            .map(|micros| format!("{:.2}s cpu", micros as f64 / 1_000_000.0))
+            .unwrap_or_default();
+        lines.push(info_row("host", &rss, cpu));
+    }
+    if session.stats.block_read_ops_total.is_some() || session.stats.block_write_ops_total.is_some()
+    {
+        let reads = session.stats.block_read_ops_total.unwrap_or_default();
+        let writes = session.stats.block_write_ops_total.unwrap_or_default();
+        lines.push(info_row(
+            "block ops",
+            &reads.to_string(),
+            format!("{writes} write"),
+        ));
+    }
+    if session.stats.block_bytes_read_total.is_some()
+        || session.stats.block_bytes_written_total.is_some()
+    {
+        let read = format_bytes(session.stats.block_bytes_read_total.unwrap_or_default());
+        let written = format!(
+            "{} written",
+            format_bytes(session.stats.block_bytes_written_total.unwrap_or_default())
+        );
+        lines.push(info_row("block bytes", &read, written));
+    }
+    if session.stats.block_queue_notifications_total.is_some()
+        || session.stats.block_queue_drains_total.is_some()
+    {
+        let notifications = session
+            .stats
+            .block_queue_notifications_total
+            .unwrap_or_default();
+        let drains = session.stats.block_queue_drains_total.unwrap_or_default();
+        lines.push(info_row(
+            "block queue",
+            &notifications.to_string(),
+            format!("{drains} drains"),
+        ));
+    }
+    lines
 }
 
 fn home_lines(state: &AppState) -> Vec<Line<'static>> {
@@ -983,6 +1046,22 @@ fn format_tokens(tokens: u64) -> String {
         format!("{:.1}k", tokens as f64 / 1_000.0)
     } else {
         tokens.to_string()
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.2} GiB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{} B", bytes as u64)
     }
 }
 

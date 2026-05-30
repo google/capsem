@@ -282,6 +282,16 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
                 .min(u32::MAX as u64) as u32,
             tokens,
             cost_micros: cost_to_micros(vm.total_estimated_cost),
+            configured_ram_mb: vm.configured_ram_mb,
+            configured_vcpus: vm.configured_vcpus,
+            host_process_rss_bytes: vm.host_process_rss_bytes,
+            host_cpu_time_micros: vm.host_cpu_time_micros,
+            block_queue_notifications_total: vm.block_queue_notifications_total,
+            block_queue_drains_total: vm.block_queue_drains_total,
+            block_read_ops_total: vm.block_read_ops_total,
+            block_write_ops_total: vm.block_write_ops_total,
+            block_bytes_read_total: vm.block_bytes_read_total,
+            block_bytes_written_total: vm.block_bytes_written_total,
         },
     }
 }
@@ -551,6 +561,26 @@ struct VmSummary {
     denied_requests: Option<u64>,
     #[serde(default)]
     total_file_events: Option<u64>,
+    #[serde(default)]
+    configured_ram_mb: Option<u64>,
+    #[serde(default)]
+    configured_vcpus: Option<u32>,
+    #[serde(default)]
+    host_process_rss_bytes: Option<u64>,
+    #[serde(default)]
+    host_cpu_time_micros: Option<u64>,
+    #[serde(default)]
+    block_queue_notifications_total: Option<u64>,
+    #[serde(default)]
+    block_queue_drains_total: Option<u64>,
+    #[serde(default)]
+    block_read_ops_total: Option<u64>,
+    #[serde(default)]
+    block_write_ops_total: Option<u64>,
+    #[serde(default)]
+    block_bytes_read_total: Option<u64>,
+    #[serde(default)]
+    block_bytes_written_total: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

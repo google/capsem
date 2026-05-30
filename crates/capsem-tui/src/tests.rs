@@ -752,13 +752,17 @@ fn stats_overlay_renders_on_demand_without_persistent_help() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('i'), KeyModifiers::ALT));
 
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render app snapshot");
+    let snapshot = render_app_snapshot(&app, 100, 36).expect("render app snapshot");
 
     assert!(snapshot.contains("session info"));
     assert!(snapshot.contains("Field"));
     assert!(snapshot.contains("Value"));
     assert!(snapshot.contains("profile-v2"));
     assert!(snapshot.contains("tokens"));
+    assert!(snapshot.contains("resources"));
+    assert!(snapshot.contains("block ops"));
+    assert!(snapshot.contains("block bytes"));
+    assert!(snapshot.contains("block queue"));
     assert!(
         !render_snapshot(&fixture_state(), 100, 24)
             .expect("render base snapshot")
@@ -787,6 +791,14 @@ fn gateway_status_json_maps_to_tui_state() {
     assert_eq!(active.stats.duration, std::time::Duration::from_secs(2840));
     assert_eq!(active.stats.tokens, 38_912);
     assert_eq!(active.stats.cost_micros, 215_000);
+    assert_eq!(active.stats.configured_ram_mb, Some(2048));
+    assert_eq!(active.stats.configured_vcpus, Some(2));
+    assert_eq!(active.stats.host_process_rss_bytes, Some(223_854_592));
+    assert_eq!(active.stats.host_cpu_time_micros, Some(2_460_000));
+    assert_eq!(active.stats.block_queue_notifications_total, Some(5_876));
+    assert_eq!(active.stats.block_queue_drains_total, Some(1_639));
+    assert_eq!(active.stats.block_read_ops_total, Some(8_580));
+    assert_eq!(active.stats.block_bytes_read_total, Some(31_394_816));
     assert!(
         active.attention.is_empty(),
         "current profile status should not be marked stale"
@@ -1264,7 +1276,17 @@ fn gateway_status_body() -> &'static str {
                 "total_estimated_cost": 0.215,
                 "total_tool_calls": 7,
                 "total_requests": 11,
-                "total_file_events": 3
+                "total_file_events": 3,
+                "configured_ram_mb": 2048,
+                "configured_vcpus": 2,
+                "host_process_rss_bytes": 223854592,
+                "host_cpu_time_micros": 2460000,
+                "block_queue_notifications_total": 5876,
+                "block_queue_drains_total": 1639,
+                "block_read_ops_total": 8580,
+                "block_write_ops_total": 3,
+                "block_bytes_read_total": 31394816,
+                "block_bytes_written_total": 4096
             },
             {
                 "id": "vm-2",

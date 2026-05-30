@@ -54,5 +54,8 @@ must be useful in status/debug output and stable enough for OpenTelemetry.
 - Second slice complete: KVM virtio-blk queue/backend counters now flow into
   `VmMetricsSnapshot.hypervisor.block`, service `/info`, and `capsem info`
   while preserving existing `metrics` facade emission.
-- Next slice: surface these counters through broader status/TUI and the
-  OTel/exporter-facing path with bounded labels.
+- Third slice complete: gateway `/status` enriches running VM summaries from
+  `/info/{id}` and `capsem-tui` renders resource and block counters in the
+  session-info overlay.
+- Next slice: surface these counters through the OTel/exporter-facing path with
+  bounded labels.

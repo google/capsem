@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service `/info`, and `capsem info`, including queue notifications, queue
   drains, descriptors, used-ring entries, interrupt decisions, block ops,
   bytes, and async backend depth/fallback counters.
+- Surfaced live VM resource and KVM block counters through the gateway
+  `/status` feed and the `capsem-tui` session-info overlay so users can see
+  resource use and I/O activity without leaving the terminal control surface.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.
