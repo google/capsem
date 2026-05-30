@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
+  source commit `b6f9b6e2`, including refreshed active artifacts and a
+  pre-rerun archive of the prior Linux artifacts for provenance.
+- Added canonical `just benchmark` retention so same-architecture active
+  artifacts are copied to `benchmarks/archive/` before reruns, superseded
+  generated benchmark artifacts are zipped afterward, and active benchmark
+  directories keep only the latest artifact for each category, architecture,
+  and benchmark lane.
+- Added the Hypervisor Improvement meta sprint to turn the Firecracker source
+  audit into structured sub-sprints for KVM safety, event delivery,
+  observability/status/OTel, CPU/SMP lifecycle, storage/rootfs experiments, and
+  benchmark proof.
 - Added a Linux KVM virtio-blk io_uring backend that submits read/write
   requests from the existing ioeventfd worker, reaps completions through a
   completion eventfd, preserves synchronous fallback, and records async

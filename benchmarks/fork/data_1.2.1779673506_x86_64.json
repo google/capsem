@@ -1,54 +1,54 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780105665.4199045,
+  "timestamp": 1780145173.583271,
   "runs": 3,
   "fork": {
     "fork_ms": {
-      "min": 103.8,
-      "mean": 116.4,
-      "max": 122.9,
+      "min": 104.2,
+      "mean": 112.3,
+      "max": 117.1,
       "values": [
-        103.8,
-        122.9,
-        122.5
+        104.2,
+        117.1,
+        115.7
       ]
     },
     "image_size_mb": {
-      "min": 75.8,
-      "mean": 95.8,
+      "min": 85.8,
+      "mean": 99.1,
       "max": 105.8,
       "values": [
-        75.79,
+        85.79,
         105.79,
         105.79
       ]
     },
     "boot_provision_ms": {
-      "min": 1441.2,
-      "mean": 1465.9,
-      "max": 1486.2,
+      "min": 1419.5,
+      "mean": 1429.9,
+      "max": 1438.4,
       "values": [
-        1470.3,
-        1441.2,
-        1486.2
+        1419.5,
+        1438.4,
+        1431.7
       ]
     },
     "boot_ready_ms": {
-      "min": 29.0,
-      "mean": 37.5,
-      "max": 50.0,
+      "min": 23.7,
+      "mean": 29.5,
+      "max": 33.1,
       "values": [
-        29.0,
-        33.4,
-        50.0
+        33.1,
+        31.6,
+        23.7
       ]
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1779673506",
   "arch": "x86_64",
-  "recorded_at": 1780105665.4202814,
-  "recorded_at_utc": "2026-05-30T01:47:45.420283+00:00",
+  "recorded_at": 1780145173.5836608,
+  "recorded_at_utc": "2026-05-30T12:46:13.583663+00:00",
   "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs",
   "host": {
     "platform": "Linux",
@@ -68,7 +68,7 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "803bfbacf6a7de39b88f9f90139eb96f7b691b5e",
+    "commit": "b6f9b6e2342496f7c9c5dadd77548aa8d138678e",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [

@@ -10,11 +10,13 @@ def test_just_benchmark_runs_full_canonical_artifact_suite():
     recipe = justfile.split("\n# Backward-compatible alias for the canonical benchmark suite.", 1)[0]
     recipe = recipe.rsplit("\n# Run the standard artifact-recording benchmark suite.", 1)[1]
 
+    assert "uv run python scripts/archive_superseded_benchmark_artifacts.py --archive-current-arch" in recipe
     assert "cargo bench -p capsem-security-engine --bench security_engine_cel" in recipe
     assert "cargo bench -p capsem-core --bench security_packs" in recipe
     assert "uv run python scripts/archive_criterion_benchmarks.py" in recipe
     assert "uv run python -m pytest tests/capsem-serial/" in recipe
     assert "-m benchmark" in recipe
+    assert "uv run python scripts/archive_superseded_benchmark_artifacts.py" in recipe
 
 
 def test_capsem_bench_all_includes_storage_split_diagnostics():

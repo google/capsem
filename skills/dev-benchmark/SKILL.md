@@ -45,6 +45,17 @@ against the hardware that produced the run. The default host I/O directory is
 accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
 disk.
 
+`just benchmark` runs `scripts/archive_superseded_benchmark_artifacts.py` for
+retention. Before recording new artifacts, it copies the current host
+architecture's active generated artifacts into `benchmarks/archive/` so
+same-version reruns do not silently overwrite the prior evidence. After
+recording artifacts, active benchmark directories keep only the newest generated
+`data_*.json` per category, architecture, and lane. Superseded generated
+artifacts are zipped under `benchmarks/archive/` with a manifest including path,
+hash, project version, architecture, lane, timestamp, and source commit. Treat
+archives as historical provenance, not current marketing or development
+baselines.
+
 `capsem-bench all` includes the `storage` section. Keep that in the canonical
 path so Linux and macOS artifacts both capture rootfs/workspace/tmpfs
 attribution data; only the long-running load diagnostics stay opt-in.

@@ -889,12 +889,16 @@ benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
+    echo "=== Preserve current benchmark artifacts ==="
+    uv run python scripts/archive_superseded_benchmark_artifacts.py --archive-current-arch
     echo "=== Criterion microbenchmarks ==="
     cargo bench -p capsem-security-engine --bench security_engine_cel
     cargo bench -p capsem-core --bench security_packs
     uv run python scripts/archive_criterion_benchmarks.py
     echo "=== VM-originated and in-VM benchmark artifacts ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/ -v --tb=short -m benchmark
+    echo "=== Archive superseded benchmark artifacts ==="
+    uv run python scripts/archive_superseded_benchmark_artifacts.py
 
 # Backward-compatible alias for the canonical benchmark suite.
 bench: benchmark
