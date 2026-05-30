@@ -9,9 +9,23 @@
     messages: A2uiMessage[];
   };
 
+  const themes = [
+    { label: "Default", value: "default" },
+    { label: "Ocean", value: "theme-ocean" },
+    { label: "Moon", value: "theme-moon" },
+    { label: "Olive", value: "theme-olive" },
+    { label: "Bubblegum", value: "theme-bubblegum" },
+    { label: "Autumn", value: "theme-autumn" },
+    { label: "Cashmere", value: "theme-cashmere" },
+    { label: "Harvest", value: "theme-harvest" },
+    { label: "Retro", value: "theme-retro" },
+  ];
+
   let payload = $state<PreviewPayload | null>(null);
   let error = $state("");
   let actions = $state<RenderAction[]>([]);
+  let selectedTheme = $state("default");
+  let darkMode = $state(false);
   let refreshTimer: number | undefined;
 
   let chatSurface = $derived.by<ChatSurface | null>(() => {
@@ -44,6 +58,9 @@
   let surface = $derived(chatSurface ? buildSurface(chatSurface.messages) : null);
 
   onMount(() => {
+    selectedTheme = window.localStorage.getItem("capsem-chat-theme") ?? "default";
+    darkMode = window.localStorage.getItem("capsem-chat-dark") === "true";
+    applyTheme();
     loadPayload();
     refreshTimer = window.setInterval(loadPayload, 1500);
   });
@@ -69,11 +86,27 @@
   function recordAction(action: RenderAction): void {
     actions = [{ ...action, context: action.context ?? {} }, ...actions].slice(0, 4);
   }
+
+  function applyTheme(): void {
+    const root = document.documentElement;
+    if (selectedTheme === "default") {
+      root.removeAttribute("data-theme");
+    } else {
+      root.dataset.theme = selectedTheme;
+    }
+    root.classList.toggle("dark", darkMode);
+  }
+
+  function updateTheme(): void {
+    window.localStorage.setItem("capsem-chat-theme", selectedTheme);
+    window.localStorage.setItem("capsem-chat-dark", String(darkMode));
+    applyTheme();
+  }
 </script>
 
 <main class="min-h-screen bg-surface text-foreground">
   <section class="mx-auto flex min-h-screen w-full max-w-4xl flex-col bg-card shadow-2xs">
-    <header class="flex items-center justify-between border-b border-card-line px-4 py-3">
+    <header class="flex flex-wrap items-center justify-between gap-3 border-b border-card-line px-4 py-3">
       <div class="flex min-w-0 items-center gap-3">
         <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
           C
@@ -83,11 +116,36 @@
           <p class="truncate text-xs text-muted-foreground-1">UI authoring lane</p>
         </div>
       </div>
-      {#if chatSurface}
-        <span class="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground">
-          {chatSurface.label}
-        </span>
-      {/if}
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <label class="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground-1">
+          <span>Theme</span>
+          <select
+            class="rounded-lg border border-layer-line bg-layer py-1.5 pe-8 ps-3 text-xs font-medium text-layer-foreground focus:border-primary focus:ring-primary"
+            bind:value={selectedTheme}
+            onchange={updateTheme}
+            aria-label="Theme"
+          >
+            {#each themes as theme}
+              <option value={theme.value}>{theme.label}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="inline-flex items-center gap-2 rounded-lg border border-layer-line bg-layer px-3 py-1.5 text-xs font-medium text-layer-foreground">
+          <input
+            type="checkbox"
+            class="rounded border-line-2 bg-surface text-primary focus:ring-primary"
+            bind:checked={darkMode}
+            onchange={updateTheme}
+            aria-label="Dark mode"
+          />
+          <span>Dark</span>
+        </label>
+        {#if chatSurface}
+          <span class="inline-flex items-center rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground">
+            {chatSurface.label}
+          </span>
+        {/if}
+      </div>
     </header>
 
     {#if error}

@@ -215,18 +215,18 @@ export function textClass(variant: unknown, tone = "default"): string {
 
   switch (variant) {
     case "h1":
-      return "text-4xl font-semibold tracking-normal text-stone-800 dark:text-neutral-200";
+      return "text-4xl font-semibold tracking-normal text-foreground";
     case "h2":
-      return "text-2xl font-semibold tracking-normal text-stone-800 dark:text-neutral-200";
+      return "text-2xl font-semibold tracking-normal text-foreground";
     case "h3":
-      return "font-semibold text-stone-800 dark:text-neutral-200";
+      return "font-semibold text-foreground";
     case "h4":
-      return "text-sm font-semibold tracking-normal text-stone-800 dark:text-neutral-200";
+      return "text-sm font-semibold tracking-normal text-foreground";
     case "caption":
-      return "mt-1 text-xs font-medium uppercase text-stone-500 dark:text-neutral-500";
+      return "mt-1 text-xs font-medium uppercase text-muted-foreground-1";
     case "body":
     default:
-      return "mt-1 text-sm text-stone-500 dark:text-neutral-400";
+      return "mt-1 text-sm text-muted-foreground-1";
   }
 }
 

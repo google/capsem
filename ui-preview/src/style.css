@@ -4,6 +4,14 @@
 @source "../../node_modules/preline";
 @plugin "@tailwindcss/forms";
 @import "../../node_modules/preline/css/themes/theme.css";
+@import "../../node_modules/preline/css/themes/ocean.css";
+@import "../../node_modules/preline/css/themes/moon.css";
+@import "../../node_modules/preline/css/themes/olive.css";
+@import "../../node_modules/preline/css/themes/bubblegum.css";
+@import "../../node_modules/preline/css/themes/autumn.css";
+@import "../../node_modules/preline/css/themes/cashmere.css";
+@import "../../node_modules/preline/css/themes/harvest.css";
+@import "../../node_modules/preline/css/themes/retro.css";
 
 @theme {
   --color-warning: oklch(0.78 0.16 82);

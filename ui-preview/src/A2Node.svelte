@@ -78,7 +78,7 @@
     if (variant === "borderless") {
       return "py-3 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-transparent text-primary hover:text-primary-hover focus:outline-hidden focus:text-primary-hover disabled:opacity-50 disabled:pointer-events-none";
     }
-    return "py-3 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-stone-200 bg-white text-stone-800 shadow-2xs hover:bg-stone-50 focus:outline-hidden focus:bg-stone-50 disabled:opacity-50 disabled:pointer-events-none dark:bg-neutral-900 dark:border-neutral-700 dark:text-white dark:hover:bg-neutral-800 dark:focus:bg-neutral-800";
+    return "py-3 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg bg-layer border border-layer-line text-layer-foreground shadow-2xs hover:bg-layer-hover focus:outline-hidden focus:bg-layer-focus disabled:opacity-50 disabled:pointer-events-none";
   }
 
   function isAlertCard(): boolean {
@@ -332,13 +332,13 @@
         }}
       />
       {#if open}
-        <div class="fixed inset-0 z-50 overflow-y-auto bg-stone-950/10 backdrop-blur-xs">
+        <div class="fixed inset-0 z-50 overflow-y-auto bg-overlay/80 backdrop-blur-xs">
           <div class="flex min-h-full items-center justify-center p-4">
-            <section class="w-full max-w-lg flex flex-col bg-white border border-stone-200 shadow-2xs rounded-xl dark:bg-neutral-900 dark:border-neutral-700">
-              <div class="flex justify-between items-center py-3 px-4 border-b border-stone-200 dark:border-neutral-700">
-                <h3 class="font-bold text-stone-800 dark:text-white">Question</h3>
+            <section class="w-full max-w-lg flex flex-col bg-overlay border border-overlay-line shadow-2xs rounded-xl">
+              <div class="flex justify-between items-center py-3 px-4 border-b border-overlay-header">
+                <h3 class="font-semibold text-foreground">Question</h3>
                 <button
-                  class="size-8 inline-flex justify-center items-center gap-x-2 rounded-full border border-transparent bg-stone-100 text-stone-800 hover:bg-stone-200 focus:outline-hidden focus:bg-stone-200 disabled:opacity-50 disabled:pointer-events-none dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700 dark:focus:bg-neutral-700"
+                  class="size-8 inline-flex justify-center items-center gap-x-2 rounded-full bg-surface border border-surface-line text-surface-foreground hover:bg-surface-hover focus:outline-hidden focus:bg-surface-focus disabled:opacity-50 disabled:pointer-events-none"
                   type="button"
                   aria-label="Close"
                   onclick={() => (open = false)}
@@ -355,7 +355,7 @@
                   {@const message = childComponent(surface, modalContent, 0)}
                   {@const actions = childComponent(surface, modalContent, 1)}
                   {#if message}
-                    <p class="text-sm text-stone-500 dark:text-neutral-400">
+                    <p class="text-sm text-muted-foreground-1">
                       {textValue(surface, message, scope)}
                     </p>
                   {/if}
