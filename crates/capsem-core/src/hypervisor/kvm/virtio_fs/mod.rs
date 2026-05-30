@@ -442,7 +442,7 @@ impl VirtioDevice for VirtioFsDevice {
         );
     }
 
-    fn queue_notify(&mut self, queue_index: u32) {
+    fn queue_notify(&mut self, queue_index: u32) -> bool {
         debug!(
             event_name = "virtio.fs.queue_notify",
             queue_index, "virtio-fs queue notified"
@@ -450,6 +450,7 @@ impl VirtioDevice for VirtioFsDevice {
         if let Some(ref tx) = self.notify_tx {
             let _ = tx.send(WorkerCommand::Notify(queue_index));
         }
+        false
     }
 
     fn quiesce(&mut self) -> Result<()> {

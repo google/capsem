@@ -6,12 +6,15 @@ sidebar:
 ---
 
 Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the VM. It outputs rich tables to stderr for humans and saves structured JSON to `/tmp/capsem-benchmark.json` for machine consumption.
+The default `capsem-bench all` run includes storage split diagnostics so Linux
+and macOS artifacts carry the same rootfs/workspace/tmpfs attribution data.
 
 ## Running benchmarks
 
 ```bash
 just benchmark                      # Standard artifact-recording benchmark suite
 just bench                          # Alias for just benchmark
+just benchmark-compare              # Compare committed Linux/macOS artifacts
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
 just run "capsem-bench storage"     # Rootfs/workspace/tmpfs split
@@ -64,6 +67,24 @@ workload runs under `target/host-native-benchmark` so it measures the project
 filesystem rather than `/tmp` tmpfs; override with
 `CAPSEM_HOST_NATIVE_BENCH_DIR` when comparing a specific disk.
 
+### Cross-platform artifact comparison
+
+Use `just benchmark-compare` after Linux and macOS have committed artifacts
+from the same benchmark version. The command reads `benchmarks/`, compares
+Linux `x86_64` against macOS `arm64`, reports ratios and percentages for common
+lanes, and lists missing lanes such as host-native or Criterion artifacts when
+one side has not rerun the current `just benchmark` suite yet.
+
+`just benchmark` also runs benchmark retention. Before the run, it copies the
+current host architecture's active generated artifacts into `benchmarks/archive/`
+so same-version reruns do not silently overwrite the prior evidence. After the
+run, active category directories keep the latest generated `data_*.json` for
+each category, architecture, and benchmark lane; superseded generated artifacts
+are zipped under `benchmarks/archive/` with a manifest containing their paths,
+hashes, version, architecture, lane, timestamp, and source commit. Historical
+archives are for engineering provenance, while current docs and performance
+claims should cite the active latest artifacts.
+
 ### Disk I/O (`disk`)
 
 Measures scratch disk performance in `/root` (VirtioFS-backed workspace).
@@ -92,6 +113,9 @@ Measures rootfs reads plus writable-path I/O across `/root`, `/tmp`,
 `/var/tmp`, `/var/log`, and `/run` by default. Use it when Linux and macOS
 benchmarks diverge and you need to separate VirtioFS workspace costs from
 tmpfs, overlayfs, squashfs/rootfs reads, and host filesystem behavior.
+This section is recorded by the canonical `just benchmark` path because
+`capsem-bench all` includes `storage`; the long-running load tests remain
+explicit opt-ins.
 
 The path set is configurable via `CAPSEM_STORAGE_BENCH_PATHS`; write test size
 is configurable via `CAPSEM_STORAGE_BENCH_SIZE_MB` (default: 64). The detailed

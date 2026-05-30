@@ -5,6 +5,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
+fn pre_fork_guest_flush_command_freezes_and_syncs() {
+    let command = pre_fork_guest_flush_command();
+
+    assert!(!command.contains("fstrim"));
+    assert!(command.contains("fsfreeze -f /"));
+    assert!(command.contains("fsfreeze -u /"));
+}
+
+#[test]
 fn startup_asset_requirement_reads_profile_vm_assets() {
     let dir = tempfile::tempdir().unwrap();
     let profile_dir = dir.path().join("profiles/base");

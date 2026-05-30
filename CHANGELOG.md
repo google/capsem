@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
+  source commit `b6f9b6e2`, including refreshed active artifacts and a
+  pre-rerun archive of the prior Linux artifacts for provenance.
+- Added canonical `just benchmark` retention so same-architecture active
+  artifacts are copied to `benchmarks/archive/` before reruns, superseded
+  generated benchmark artifacts are zipped afterward, and active benchmark
+  directories keep only the latest artifact for each category, architecture,
+  and benchmark lane.
+- Added the Hypervisor Improvement meta sprint to turn the Firecracker source
+  audit into structured sub-sprints for KVM safety, event delivery,
+  observability/status/OTel, CPU/SMP lifecycle, storage/rootfs experiments, and
+  benchmark proof.
+- Added a Linux KVM virtio-blk io_uring backend that submits read/write
+  requests from the existing ioeventfd worker, reaps completions through a
+  completion eventfd, preserves synchronous fallback, and records async
+  submission/completion/in-flight metrics.
+- Added OTel-ready KVM virtio-blk queue/backend metrics for notifications,
+  drains, descriptor/used-ring volume, request bytes/duration, interrupt
+  decisions, and quiesce drain timing.
+- Added the Virtio Block Firecracker Path sprint to track KVM block
+  notification suppression, async I/O depth, shared rootfs/benchmark work, and
+  macOS comparison reruns as one measured performance stack.
+- Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
+  in-VM, lifecycle, fork, and security-engine benchmark results.
+- Added `just benchmark-compare` and `scripts/compare_benchmark_artifacts.py`
+  to turn committed Linux/macOS benchmark artifacts into ratio and percentage
+  comparisons while making missing lanes explicit.
+- Added benchmark contract tests proving the canonical `just benchmark` path
+  includes Criterion archiving plus the required serial artifact lanes,
+  including host-native, lifecycle, fork, and VM-originated security benchmarks.
+- Included `capsem-bench storage` in the default `capsem-bench all` path so
+  canonical Linux and macOS benchmark artifacts both record storage attribution
+  for rootfs, workspace, tmpfs, overlay, and queue/FUSE metadata.
+- Added scatter/gather virtio-blk tests proving KVM block requests preserve
+  multi-descriptor guest payload order.
 - Added the initial `capsem-tui` crate with a fixture-backed standalone
   terminal control screen, global service light-bar state, per-session desktop
   indicators, and deterministic snapshot rendering for early UI proof.
@@ -37,32 +72,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `capsem_terminal_snapshot` to the Capsem MCP server so agents can
   inspect a session terminal/log surface through MCP with ANSI cleanup, grep,
   source selection, and tailing.
-- Recorded macOS arm64 benchmark data for `1.2.1779673506`, including
-  in-VM, lifecycle, fork, and security-engine benchmark results.
 - Added an 8-live-VM host endpoint latency benchmark under
   `tests/capsem-serial/test_endpoint_latency_benchmark.py`, covering global
   service reads, per-VM detail/history/file/policy-context reads, and gateway
   health/token/status reads with committed `benchmarks/endpoint-latency/`
   results.
 
-### Fixed
-- Fixed `capsem-tui` service-offline startup so the TUI shows an offline
-  service surface and asks to start Capsem before opening the new-session flow;
-  confirming the prompt runs the local `capsem start` command and refreshes
-  with a fresh gateway token.
-- Fixed `capsem-tui` empty-session creation so the TUI no longer invents a
-  `default` profile when `/profiles` is unavailable; the new-session modal now
-  blocks Enter until a real profile list is loaded and has unit plus gateway
-  E2E coverage for the profile-backed create contract.
-- Fixed `capsem-tui` stopped-session rendering so stopped/suspended/failed
-  tabs are greyed, the main pane shows a `Press Enter to resume` affordance
-  instead of going blank, and the terminal bridge disconnects instead of trying
-  to attach a WebSocket to an inactive VM.
-
 ### Changed
+- Gated the Linux KVM virtio-blk io_uring backend to writable block devices
+  after the first benchmark showed scratch sequential-read gains but rootfs and
+  AI CLI startup regressions when io_uring was used unconditionally.
+- Made the Linux KVM virtio-blk io_uring backend opt-in while measured default
+  gates continue to show disk or rootfs regressions.
+- Added KVM virtio-blk event-index negotiation and shared virtqueue
+  notification-suppression helpers, with canonical Linux benchmark artifacts
+  recording the mixed performance result for the Firecracker-path sprint.
 - Split Google into its own `sprints/google/` meta sprint covering Gmail,
   Drive, gcloud, Firebase, Firebase Realtime DB remote comms, Jet Ski, Gemini,
   and Google AI.
+- Routed x86_64 KVM virtio-blk queue notifications through `KVM_IOEVENTFD`
+  with a dedicated block worker, so guest queue kicks no longer require vCPU
+  MMIO exits while preserving synchronous fallback tests.
+- Switched the KVM virtio-blk read/write data path from seek plus per-descriptor
+  host I/O to `preadv`/`pwritev` over GPA-translated guest memory iovecs.
+- Batched KVM virtio-blk used-ring publication so one queue notification writes
+  `used.idx` once after draining all completed block descriptors.
 - Added the Profile Foundation meta sprint with F00-F12 sub-sprints, a
   code-reality check, and a crosswalk from the old Profile V2 S-numbered
   boards.
@@ -123,7 +157,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   modal directly and brands it with a compact gradient CAPSEM wordmark.
 - Changed the `capsem-tui` status hint to `help: alt+?` and moved it to the
   far right after active-session statistics, including the empty-session state.
-
 - Added Linux KVM doctor coverage that creates and resolves symlinks under
   `/tmp`, keeping link-heavy cache/tool probes off the VirtioFS workspace while
   leaving snapshot symlink restore scoped to `/root`.
@@ -159,6 +192,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` service-offline startup so the TUI shows an offline
+  service surface and asks to start Capsem before opening the new-session flow;
+  confirming the prompt runs the local `capsem start` command and refreshes
+  with a fresh gateway token.
+- Fixed `capsem-tui` empty-session creation so the TUI no longer invents a
+  `default` profile when `/profiles` is unavailable; the new-session modal now
+  blocks Enter until a real profile list is loaded and has unit plus gateway
+  E2E coverage for the profile-backed create contract.
+- Fixed `capsem-tui` stopped-session rendering so stopped/suspended/failed
+  tabs are greyed, the main pane shows a `Press Enter to resume` affordance
+  instead of going blank, and the terminal bridge disconnects instead of trying
+  to attach a WebSocket to an inactive VM.
 - Fixed a `capsem-process` IPC file-descriptor leak where short-lived
   status/metrics connections left writer and lifecycle-forwarder tasks alive
   after the client disconnected.
@@ -192,6 +237,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed install profile materialization so manifest aliases and legacy local
   alias directories do not make package assembly look for non-existent VM
   assets.
+- Added Linux KVM virtio-blk discard handling so explicit guest discard/trim
+  requests can punch holes in writable virtio block backing files.
 - Refreshed local profile asset pins during dev service startup so benchmark
   runs after `_pack-initrd` use matching initrd/rootfs hashes.
 - Expanded x86_64 KVM warm-restore groundwork by checkpointing VM interrupt

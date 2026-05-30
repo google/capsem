@@ -2173,8 +2173,7 @@ async fn handle_fork(
             uds,
             ServiceToProcess::Exec {
                 id: freeze_id,
-                command: "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
-                    .to_string(),
+                command: pre_fork_guest_flush_command().to_string(),
             },
             Some(10),
         )
@@ -2280,6 +2279,10 @@ async fn handle_fork(
         name: name.clone(),
         size_bytes,
     }))
+}
+
+fn pre_fork_guest_flush_command() -> &'static str {
+    "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
 }
 
 fn ensure_required_vm_profile_pin(pin: Option<&SavedVmProfilePin>, subject: &str) -> Result<()> {

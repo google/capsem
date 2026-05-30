@@ -18,6 +18,15 @@ def test_benchmark_output_path_defaults_to_project_benchmarks(monkeypatch, tmp_p
     assert path == root / "benchmarks" / "lifecycle" / "data_1.2.3_x86_64.json"
 
 
+def test_benchmark_output_path_is_arch_scoped_for_arm64(monkeypatch, tmp_path):
+    monkeypatch.delenv("CAPSEM_BENCHMARK_OUTPUT_DIR", raising=False)
+    monkeypatch.delenv("CAPSEM_BENCHMARK_RUN_ID", raising=False)
+
+    path = benchmark_output_path(tmp_path, "fork", "1.2.3", "arm64")
+
+    assert path == tmp_path / "benchmarks" / "fork" / "data_1.2.3_arm64.json"
+
+
 def test_benchmark_output_path_supports_output_dir_and_run_id(monkeypatch, tmp_path):
     out = tmp_path / "out"
     monkeypatch.setenv("CAPSEM_BENCHMARK_OUTPUT_DIR", str(out))

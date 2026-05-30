@@ -12,6 +12,7 @@ use anyhow::{bail, Result};
 
 use super::memory::GuestMemoryRef;
 use super::mmio::MmioDevice;
+use super::virtio_queue::VIRTIO_RING_F_EVENT_IDX;
 
 // ---------------------------------------------------------------------------
 // Virtio MMIO register offsets
@@ -30,6 +31,7 @@ const QUEUE_NUM_MAX: u64 = 0x034;
 const QUEUE_NUM: u64 = 0x038;
 const QUEUE_READY: u64 = 0x044;
 const QUEUE_NOTIFY: u64 = 0x050;
+pub(super) const QUEUE_NOTIFY_OFFSET: u64 = QUEUE_NOTIFY;
 const INTERRUPT_STATUS: u64 = 0x060;
 const INTERRUPT_ACK: u64 = 0x064;
 const STATUS: u64 = 0x070;
@@ -70,6 +72,7 @@ pub(super) struct QueueConfig {
     pub device_addr: u64,
     pub size: u16,
     pub warm_restore: bool,
+    pub event_idx: bool,
 }
 
 /// Device-specific behavior for a virtio device.
@@ -90,7 +93,11 @@ pub(super) trait VirtioDevice: Send {
     /// descriptor table, available ring, and used ring addresses.
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]);
     /// Called when a queue is notified (guest wrote to QUEUE_NOTIFY).
-    fn queue_notify(&mut self, queue_index: u32);
+    ///
+    /// Returns whether the transport should raise the used-buffer interrupt
+    /// for devices that use the MMIO interrupt path. Devices that own their
+    /// interrupt delivery can return false.
+    fn queue_notify(&mut self, queue_index: u32) -> bool;
     /// Called while vCPUs are paused before checkpointing device/guest state.
     fn quiesce(&mut self) -> Result<()> {
         Ok(())
@@ -329,6 +336,7 @@ impl VirtioMmioTransport {
                     device_addr: q.device_addr(),
                     size: q.num,
                     warm_restore: true,
+                    event_idx: snapshot.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
                 })
                 .collect();
             state.device.activate(mem, &queue_configs);
@@ -470,8 +478,8 @@ impl MmioDevice for VirtioMmioTransport {
                         use_interrupt,
                         "virtio-mmio queue notified"
                     );
-                    state.device.queue_notify(val);
-                    if use_interrupt {
+                    let should_interrupt = state.device.queue_notify(val);
+                    if use_interrupt && should_interrupt {
                         state.interrupt_status.fetch_or(1, Ordering::SeqCst);
                         if let Some(fd) = state.interrupt_fd.as_ref() {
                             let one: u64 = 1;
@@ -530,6 +538,7 @@ impl MmioDevice for VirtioMmioTransport {
                             device_addr: q.device_addr(),
                             size: q.num,
                             warm_restore: false,
+                            event_idx: state.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
                         })
                         .collect();
                     state.device.activate(mem, &queue_configs);
@@ -641,9 +650,10 @@ mod tests {
             self.activated
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        fn queue_notify(&mut self, _queue_index: u32) {
+        fn queue_notify(&mut self, _queue_index: u32) -> bool {
             self.notify_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            true
         }
         fn uses_mmio_interrupt(&self) -> bool {
             self.use_interrupt
