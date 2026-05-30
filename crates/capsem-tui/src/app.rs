@@ -81,6 +81,7 @@ pub struct App {
     active_index: usize,
     overlay: AppOverlay,
     pending_action: Option<ControlAction>,
+    pending_focus_session: Option<String>,
     control_progress: Option<String>,
     create_draft: Option<CreateDraft>,
     fork_draft: Option<ForkDraft>,
@@ -110,6 +111,7 @@ impl App {
             active_index,
             overlay: AppOverlay::None,
             pending_action: None,
+            pending_focus_session: None,
             control_progress: None,
             create_draft: None,
             fork_draft: None,
@@ -146,7 +148,10 @@ impl App {
     pub fn replace_state(&mut self, mut state: AppState) {
         state.service.control_message = self.state.service.control_message.clone();
         let previous_active_id = self.state.active_session_id.clone();
-        if state
+        if let Some(index) = self.pending_focus_index(&state) {
+            state.active_session_id = state.sessions[index].id.clone();
+            self.pending_focus_session = None;
+        } else if state
             .sessions
             .iter()
             .any(|session| session.id == previous_active_id)
@@ -173,6 +178,14 @@ impl App {
 
     pub fn clear_control_progress(&mut self) {
         self.control_progress = None;
+    }
+
+    pub fn focus_session_when_available(&mut self, id: impl Into<String>) {
+        let id = id.into();
+        if self.select_session_by_id(&id) {
+            return;
+        }
+        self.pending_focus_session = Some(id);
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> AppAction {
@@ -292,6 +305,14 @@ impl App {
         self.active_index = index;
         self.sync_active_session();
         true
+    }
+
+    fn pending_focus_index(&self, state: &AppState) -> Option<usize> {
+        let pending = self.pending_focus_session.as_deref()?;
+        state
+            .sessions
+            .iter()
+            .position(|session| session.id == pending || session.title == pending)
     }
 
     fn ensure_active_tab_visible(&mut self) {

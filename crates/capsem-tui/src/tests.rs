@@ -534,6 +534,34 @@ fn refresh_preserves_active_session_when_it_still_exists() {
 }
 
 #[test]
+fn pending_create_focus_survives_until_new_session_appears() {
+    let mut app = App::new(fixture_state());
+    app.select_session_by_id("profile-v2");
+    app.focus_session_when_available("tmp-2");
+
+    let unchanged = fixture_state();
+    app.replace_state(unchanged);
+    assert_eq!(
+        app.state().active_session_id,
+        "profile-v2",
+        "focus should not move if the gateway refresh does not list the new VM yet"
+    );
+
+    let mut refreshed = fixture_state();
+    let mut created = refreshed.sessions[0].clone();
+    created.id = "tmp-2".to_string();
+    created.title = "tmp-2".to_string();
+    refreshed.sessions.push(created);
+    app.replace_state(refreshed);
+
+    assert_eq!(
+        app.state().active_session_id,
+        "tmp-2",
+        "pending create focus should apply on the first refresh that contains the new VM"
+    );
+}
+
+#[test]
 fn function_keys_toggle_hidden_overlays() {
     let mut app = App::new(fixture_state());
 

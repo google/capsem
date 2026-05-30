@@ -206,8 +206,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal WebSocket clears the connected marker, reconnects the active session
   after resume, and does not drop typed input into a stale terminal task.
 - Fixed `capsem-tui` create flow focus so a newly provisioned VM becomes the
-  active tab after the gateway refresh instead of leaving focus on the previous
-  session.
+  active tab even when the first gateway refresh after `/provision` does not
+  list the VM yet.
 - Fixed `capsem-tui` corrupted profile-pin handling so non-resumable sessions
   are hidden from the bottom VM tab strip, still appear in the full `Alt+l`
   session inventory, and explain that the VM must be recreated from a signed

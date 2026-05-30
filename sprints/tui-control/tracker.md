@@ -57,6 +57,9 @@
 - [x] Add regression tests for stale terminal connection cleanup.
 - [x] Show full-pane `suspending...` progress during `Alt+s` suspend actions.
 - [x] Add render regression for suspend progress owning the main pane.
+- [x] Preserve pending `Alt+n` create focus until the new VM appears in
+      gateway state.
+- [x] Add regression for delayed gateway visibility after create.
 
 ## Notes
 
@@ -217,8 +220,11 @@
   VMs out of the bottom tab strip, leaves them visible in `Alt+l`, and reports
   the recreate-from-signed-profile reason when explicitly selected.
 - Create focus fix: gateway action outcomes now carry an optional session id
-  to select after refresh. `/provision`, `/fork`, resume, suspend, stop, and
-  checkpoint preserve focus on the affected session when it still exists.
+  to select after refresh. The app keeps that focus request pending until a
+  gateway refresh actually contains the target VM, so `/provision` focus does
+  not disappear when the first status refresh races ahead of VM registration.
+  `/fork`, resume, suspend, stop, and checkpoint preserve focus on the affected
+  session when it still exists.
 - Suspend/resume input fix: a failed or closed terminal WebSocket now clears
   the UI connected marker and sends a disconnect to the bridge. The terminal
   manager also observes finished connection tasks, so a same-session reconnect
@@ -231,7 +237,7 @@
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-tui` (47 lib tests, 2 binary tests),
+- Unit/contract: `cargo test -p capsem-tui` (48 lib tests, 2 binary tests),
   including
   stopped-session resume prompt, grey tab, Enter-to-resume coverage, and the
   right-side `help: alt+?` status-bar hint after session stats, plus the create
@@ -239,10 +245,10 @@
   coverage, empty-state auto-create, service-offline start prompt, gradient
   logo rendering, no-fake-default profile failure handling, corrupt-profile
   tab filtering plus inventory visibility, create focus targets,
-  suspend/resume stale-terminal reconnect cleanup, full-pane suspend progress
-  rendering, `Alt+l` sessions table, `Alt+i` session info, and `Alt+c`
-  checkpoint.
-- TUI latency/provider: `cargo test -p capsem-tui` (47 lib tests, 2 binary
+  delayed-create pending focus, suspend/resume stale-terminal reconnect
+  cleanup, full-pane suspend progress rendering, `Alt+l` sessions table,
+  `Alt+i` session info, and `Alt+c` checkpoint.
+- TUI latency/provider: `cargo test -p capsem-tui` (48 lib tests, 2 binary
   tests), including
   token reuse, live profile-list refresh, named fork request payloads,
   checkpoint-over-suspend payloads, raw local latency preservation coverage,

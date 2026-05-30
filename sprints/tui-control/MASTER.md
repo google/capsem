@@ -165,8 +165,9 @@ attention markers.
   bottom VM tabs, still shown in `Alt+l` inventory with their profile status,
   and explain the recreate-from-signed-profile path if explicitly selected.
 - Fixed post-create focus by carrying a `focus_session` id out of gateway
-  control actions and selecting it after the refreshed status includes the new
-  VM.
+  control actions and keeping it pending until refreshed gateway state includes
+  the new VM. This avoids losing `Alt+n` focus when the first refresh after
+  `/provision` returns before service registration catches up.
 - Fixed the suspend/resume terminal input regression by treating terminal
   failure/disconnect statuses as connection teardown in the UI loop and by
   clearing finished terminal tasks inside the bridge manager before reconnecting
@@ -222,8 +223,8 @@ attention markers.
   `capsem shell` to `capsem-tui --session` argument mapping.
 - Corrupt profile/create-focus regression: `cargo test -p capsem-tui` covers
   corrupt sessions being filtered from tabs but retained in `Alt+l`, blocked
-  resume messaging, and `/provision` returning a focus target for newly
-  created VMs.
+  resume messaging, `/provision` returning a focus target for newly created
+  VMs, and delayed gateway visibility after create.
 - Suspend/resume input regression: `cargo test -p capsem-tui` covers stale
   terminal-task cleanup and UI connected-marker teardown after terminal failure
   statuses, preventing keystrokes from being sent to a dead WebSocket after
