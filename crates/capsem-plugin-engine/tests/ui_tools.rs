@@ -76,6 +76,60 @@ fn ui_tools_build_card_and_modal_drafts() {
 }
 
 #[test]
+fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
+    let alert = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "warning" }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.alert".to_owned(),
+                args: json!({
+                    "surfaceId": "warning",
+                    "message": "all your base beling to us",
+                    "tone": "warning",
+                    "variant": "soft"
+                }),
+            },
+        ],
+    });
+    assert_eq!(
+        alert.surfaces[0]
+            .recipe
+            .as_ref()
+            .and_then(|recipe| recipe.tone.as_deref()),
+        Some("warning")
+    );
+
+    let card = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "model" }),
+            },
+            capsem_plugin_engine::ui_tools::UiToolCall {
+                tool: "ui.card".to_owned(),
+                args: json!({
+                    "surfaceId": "model",
+                    "title": "model",
+                    "description": "Gemini",
+                    "linkLabel": "visit homepage",
+                    "linkHref": "https://gemini.google.com/"
+                }),
+            },
+        ],
+    });
+    let link = card.surfaces[0]
+        .recipe
+        .as_ref()
+        .and_then(|recipe| recipe.link.as_ref())
+        .expect("link survives");
+    assert_eq!(link.label, "visit homepage");
+    assert_eq!(link.href, "https://gemini.google.com/");
+}
+
+#[test]
 fn ui_tools_reject_raw_renderer_inputs() {
     let result = run_tool_program(capsem_plugin_engine::ui_tools::UiToolProgram {
         calls: vec![

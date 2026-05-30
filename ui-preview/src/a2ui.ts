@@ -52,6 +52,11 @@ export type PreviewRecipe = {
   component: string;
   variant: string;
   docsUrl: string;
+  tone?: string;
+  link?: {
+    label: string;
+    href: string;
+  };
 };
 
 export type UiToolProgramResult = {

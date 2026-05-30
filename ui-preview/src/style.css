@@ -5,6 +5,10 @@
 @plugin "@tailwindcss/forms";
 @import "../../node_modules/preline/css/themes/theme.css";
 
+@theme {
+  --color-warning: oklch(0.78 0.16 82);
+}
+
 html {
   background: var(--background);
 }

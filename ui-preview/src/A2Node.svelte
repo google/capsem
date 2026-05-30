@@ -93,6 +93,13 @@
     return component?.component === "Card" && recipe?.component === "card" && recipe?.variant === "simple";
   }
 
+  function alertClass(): string {
+    if (recipe?.tone === "warning") {
+      return "bg-warning/10 border border-warning/20 rounded-lg shadow-2xs p-4";
+    }
+    return "bg-layer border border-layer-line rounded-lg shadow-lg p-4";
+  }
+
   function iconName(): unknown {
     return component?.name;
   }
@@ -145,7 +152,7 @@
     {@const icon = childComponent(surface, cardChild, 0)}
     {@const message = childComponent(surface, cardChild, 1)}
     <div
-      class="bg-layer border border-layer-line rounded-lg shadow-lg p-4"
+      class={alertClass()}
       role="alert"
       tabindex="-1"
       aria-labelledby={`${surface.surfaceId}-alert-label`}
@@ -220,8 +227,8 @@
             {textValue(surface, description, scope)}
           </p>
         {/if}
-        <a class="mt-3 inline-flex items-center gap-x-1 text-sm font-semibold rounded-lg border border-transparent text-primary decoration-2 hover:text-primary-hover hover:underline focus:underline focus:outline-hidden focus:text-primary-focus disabled:opacity-50 disabled:pointer-events-none" href={recipe?.docsUrl ?? "#"}>
-          Card link
+        <a class="mt-3 inline-flex items-center gap-x-1 text-sm font-semibold rounded-lg border border-transparent text-primary decoration-2 hover:text-primary-hover hover:underline focus:underline focus:outline-hidden focus:text-primary-focus disabled:opacity-50 disabled:pointer-events-none" href={recipe?.link?.href ?? recipe?.docsUrl ?? "#"}>
+          {recipe?.link?.label ?? "Card link"}
           <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="m9 18 6-6-6-6"></path>
           </svg>

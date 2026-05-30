@@ -15,6 +15,10 @@
   inside an assistant message while preserving the inspector panes.
 - Added a clean `/chat` page for the user-facing chat shell, separate from the
   diagnostic workbench.
+- Added a Hyper-only A2UI contract lane with E2E conformance tests and a tested
+  TypeScript response decoder.
+- Added contract support for alert tone metadata and card link metadata so
+  accepted `ui.alert` and `ui.card` fields survive to rendering.
 - Added a Rust-owned A2UI v0.9 Basic preview path with typed UI helpers,
   contract tests, server endpoints, and a Svelte/Preline renderer preview.
 - Added an A2UI/Capsem/Preline template-system sprint and design note covering

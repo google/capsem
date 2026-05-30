@@ -67,6 +67,17 @@ pub struct UiToolRecipe {
     pub component: String,
     pub variant: String,
     pub docs_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<UiToolLink>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiToolLink {
+    pub label: String,
+    pub href: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -292,11 +303,16 @@ impl UiToolRunner {
                 components: BTreeMap::new(),
             });
 
-        surface.recipe = Some(UiToolRecipe::new(
-            "alert",
-            "discovery",
-            "https://preline.co/docs/components/alerts.html#discovery",
-        ));
+        let variant = string_arg(&call.args, "variant").unwrap_or_else(|| "soft".to_owned());
+        let tone = string_arg(&call.args, "tone").unwrap_or_else(|| "info".to_owned());
+        surface.recipe = Some(
+            UiToolRecipe::new(
+                "alert",
+                variant,
+                "https://preline.co/docs/components/alerts.html#discovery",
+            )
+            .with_tone(tone),
+        );
         let row_id = format!("{id}-row");
         let icon_id = format!("{id}-icon");
         let text_id = format!("{id}-text");
@@ -357,11 +373,16 @@ impl UiToolRunner {
                 components: BTreeMap::new(),
             });
 
-        surface.recipe = Some(UiToolRecipe::new(
-            "card",
-            "simple",
-            "https://preline.co/docs/components/card.html#simple-card",
-        ));
+        let link_label = string_arg(&call.args, "linkLabel");
+        let link_href = string_arg(&call.args, "linkHref");
+        surface.recipe = Some(
+            UiToolRecipe::new(
+                "card",
+                "simple",
+                "https://preline.co/docs/components/card.html#simple-card",
+            )
+            .with_optional_link(link_label, link_href),
+        );
 
         let body_id = format!("{id}-body");
         let title_id = format!("{id}-title");
@@ -539,7 +560,21 @@ impl UiToolRecipe {
             component: component.into(),
             variant: variant.into(),
             docs_url: docs_url.into(),
+            tone: None,
+            link: None,
         }
+    }
+
+    fn with_tone(mut self, tone: impl Into<String>) -> Self {
+        self.tone = Some(tone.into());
+        self
+    }
+
+    fn with_optional_link(mut self, label: Option<String>, href: Option<String>) -> Self {
+        if let (Some(label), Some(href)) = (label, href) {
+            self.link = Some(UiToolLink { label, href });
+        }
+        self
     }
 }
 

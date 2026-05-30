@@ -174,6 +174,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "capsem-a2ui-hyper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "capsem-plugin-engine",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "capsem-plugin-engine"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,20 @@
+[package]
+name = "capsem-a2ui-hyper"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+capsem-plugin-engine = { path = "../capsem-plugin-engine" }
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
