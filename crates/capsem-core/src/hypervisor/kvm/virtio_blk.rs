@@ -986,6 +986,33 @@ impl VirtioBlockDevice {
         result.drain_duration = drain_started.elapsed();
         result
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reap_completions_and_retry(
+        file: &mut std::fs::File,
+        read_only: bool,
+        capacity_sectors: u64,
+        device_id: &[u8; VIRTIO_BLK_ID_LEN],
+        mem: &GuestMemoryRef,
+        queue: &mut VirtQueue,
+        uring: &mut BlockIoUring,
+    ) -> CompletionRetryResult {
+        let completion = uring.reap_completions(mem, queue);
+        let drain = if completion.completed > 0 {
+            Self::process_queue_uring(
+                file,
+                read_only,
+                capacity_sectors,
+                device_id,
+                mem,
+                queue,
+                uring,
+            )
+        } else {
+            QueueProcessResult::new(Instant::now())
+        };
+        CompletionRetryResult { completion, drain }
+    }
 }
 
 struct QueueProcessResult {
@@ -1018,6 +1045,11 @@ impl QueueProcessResult {
             drain_duration: drain_started.elapsed(),
         }
     }
+}
+
+struct CompletionRetryResult {
+    completion: CompletionResult,
+    drain: QueueProcessResult,
 }
 
 struct PendingBlockRequest {
@@ -1870,24 +1902,55 @@ fn block_worker_loop_uring(
                 }
                 EPOLL_TOKEN_COMPLETION => {
                     let _ = drain_eventfd(uring.completion_fd());
-                    let completion = uring.reap_completions(&mem, &mut queue);
-                    metrics.record_async_completion(&completion, uring.pending_len());
-                    if completion.should_interrupt {
+                    let retry = VirtioBlockDevice::reap_completions_and_retry(
+                        &mut file,
+                        read_only,
+                        capacity_sectors,
+                        &device_id,
+                        &mem,
+                        &mut queue,
+                        &mut uring,
+                    );
+                    metrics.record_async_completion(&retry.completion, uring.pending_len());
+                    if retry.completion.should_interrupt {
                         signal_irq(irq_fd, &interrupt_status);
                     }
                     tracing::trace!(
                         event_name = "virtio.blk.async_completions",
                         backend = "io_uring",
-                        completed = completion.completed,
-                        used_entries = completion.used_entries,
+                        completed = retry.completion.completed,
+                        used_entries = retry.completion.used_entries,
                         in_flight = uring.pending_len(),
-                        should_interrupt = completion.should_interrupt,
-                        read_ops = completion.read_ops,
-                        write_ops = completion.write_ops,
-                        bytes_read = completion.bytes_read,
-                        bytes_written = completion.bytes_written,
+                        should_interrupt = retry.completion.should_interrupt,
+                        read_ops = retry.completion.read_ops,
+                        write_ops = retry.completion.write_ops,
+                        bytes_read = retry.completion.bytes_read,
+                        bytes_written = retry.completion.bytes_written,
                         "virtio-blk io_uring completions reaped"
                     );
+                    if retry.drain.processed > 0 || retry.drain.async_queue_full > 0 {
+                        emit_queue_drain_metrics("io_uring", &retry.drain);
+                        metrics.record_queue_drain(&retry.drain);
+                        if retry.drain.should_interrupt {
+                            signal_irq(irq_fd, &interrupt_status);
+                        }
+                        tracing::trace!(
+                            event_name = "virtio.blk.completion_retry",
+                            backend = "io_uring",
+                            processed = retry.drain.processed,
+                            submitted = retry.drain.submitted,
+                            async_queue_full = retry.drain.async_queue_full,
+                            used_entries = retry.drain.used_entries,
+                            in_flight = uring.pending_len(),
+                            should_interrupt = retry.drain.should_interrupt,
+                            read_ops = retry.drain.read_ops,
+                            write_ops = retry.drain.write_ops,
+                            bytes_read = retry.drain.bytes_read,
+                            bytes_written = retry.drain.bytes_written,
+                            duration_ms = duration_ms(retry.drain.drain_duration),
+                            "virtio-blk retried queue after io_uring completion"
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -2612,6 +2675,75 @@ mod tests {
         );
         assert_eq!(retry.processed, 1);
         assert_eq!(retry.submitted, 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn block_io_uring_completion_retries_backpressured_descriptor() {
+        let data = vec![0xA5u8; 512];
+        let path = temp_disk_with_data("read-uring-retry.img", &data);
+        let mut h = TestHarness::new(&path, false);
+        let mut file = h.dev.file.try_clone().unwrap();
+        let Ok(mut uring) = BlockIoUring::new(file.as_raw_fd()) else {
+            return;
+        };
+        let mut queue = h.dev.queue.take().unwrap();
+        let mem = h.dev.mem.as_ref().unwrap().clone();
+
+        let pending_data_offset = DATA_AREA_OFFSET + 2048;
+        let pending_status_offset = pending_data_offset + 512;
+        let pending_iovecs =
+            VirtioBlockDevice::guest_iovecs(&mem, &[(RAM_BASE + pending_data_offset, 512)])
+                .unwrap();
+        uring
+            .submit_rw(
+                7,
+                VIRTIO_BLK_T_IN,
+                512,
+                RAM_BASE + pending_status_offset,
+                0,
+                pending_iovecs,
+            )
+            .unwrap();
+
+        h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
+        let retry_data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
+        let retry_status_offset = retry_data_offset + 512;
+        h.write_bytes(retry_status_offset, &[0xAA]);
+
+        let entry = opcode::Nop::new().build().user_data(u64::MAX);
+        while unsafe { uring.ring.submission().push(&entry) }.is_ok() {}
+
+        let full = VirtioBlockDevice::process_queue_uring(
+            &mut file,
+            false,
+            h.dev.capacity_sectors,
+            &h.dev.device_id,
+            &mem,
+            &mut queue,
+            &mut uring,
+        );
+        assert_eq!(full.async_queue_full, 1);
+        assert_eq!(full.submitted, 0);
+        assert_eq!(h.read_status(retry_status_offset), 0xAA);
+
+        uring.ring.submit_and_wait(1).unwrap();
+        let retry = VirtioBlockDevice::reap_completions_and_retry(
+            &mut file,
+            false,
+            h.dev.capacity_sectors,
+            &h.dev.device_id,
+            &mem,
+            &mut queue,
+            &mut uring,
+        );
+
+        assert_eq!(retry.completion.completed, 1);
+        assert_eq!(retry.drain.processed, 1);
+        assert_eq!(retry.drain.submitted, 1);
+        assert_eq!(retry.drain.async_queue_full, 0);
+        assert_eq!(h.read_status(pending_status_offset), VIRTIO_BLK_S_OK);
+        assert_eq!(h.read_status(retry_status_offset), 0xAA);
     }
 
     #[test]

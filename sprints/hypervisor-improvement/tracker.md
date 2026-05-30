@@ -29,6 +29,8 @@
         backpressure instead of synchronous fallback.
   - [x] Add and surface `async_queue_full_total` through VM block metrics,
         service `/info`, `capsem info`, and the OTel metric-point contract.
+  - [x] Retry backpressured KVM virtio-blk io_uring descriptors immediately
+        after completions free submission capacity.
   - [ ] Extend the same backpressure/event-loop audit to other KVM devices and
         completion paths.
 - [ ] H04: CPU, SMP, and lifecycle.
@@ -126,6 +128,10 @@
   worker records one queue-full event, rewinds the popped descriptor, leaves
   used/status untouched, and retries the same request when the async queue has
   capacity again.
+- H02 second slice landed locally: the io_uring completion branch now reaps
+  completions and immediately performs a completion-triggered queue drain. A
+  descriptor rewound by SQ-full backpressure can be resubmitted as soon as
+  completion capacity is available, without requiring a fresh guest notify.
 
 ## Coverage Ledger
 
@@ -156,6 +162,7 @@
   `cargo test -p capsem-proto metrics::tests --lib`,
   `cargo test -p capsem-core undo_pop_retries_last_chain --lib`,
   `cargo test -p capsem-core block_io_uring_queue_full_backpressures_without_sync_fallback --lib`,
+  `cargo test -p capsem-core block_io_uring_completion_retries_backpressured_descriptor --lib`,
   `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
@@ -179,6 +186,9 @@
   `block_io_uring_queue_full_backpressures_without_sync_fallback` proves a full
   io_uring submission queue does not burn CPU in the synchronous fallback path,
   does not complete the request, and can retry the same descriptor later.
+  `block_io_uring_completion_retries_backpressured_descriptor` proves a real
+  io_uring completion frees capacity and triggers resubmission of the rewound
+  descriptor without a new guest notification.
 - E2E/VM: `just exec "echo ok"` passed for the KVM one-shot VM path. H03
   resource projection was also checked against a live named VM via
   `capsem info --json`; the second H03 live check confirmed KVM block counters
@@ -199,8 +209,9 @@
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
   `1.2.1780103109` are now present on main and compared successfully. H02 first
-  slice is correctness/backpressure for the opt-in io_uring path; no canonical
-  benchmark was rerun because the default block backend is unchanged.
+  and second slices are correctness/backpressure for the opt-in io_uring path;
+  no canonical benchmark was rerun because the default block backend is
+  unchanged.
 - Missing/deferred: Real OTLP exporter process/configuration is deferred to the
   broader telemetry sprint; full benchmark rerun is deferred until a
   performance-affecting H02/H03 milestone lands.

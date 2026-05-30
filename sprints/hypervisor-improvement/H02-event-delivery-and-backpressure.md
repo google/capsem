@@ -43,3 +43,7 @@ without collapsing all blocking work onto one loop.
   `async_queue_full_total`, leaves the request uncompleted, and retries it on a
   later drain. The counter flows through VM metrics, `capsem info`, and the
   OTel metric-point contract.
+- Second slice complete: io_uring completions now immediately retry a
+  backpressured descriptor when capacity is freed. The completion branch reaps
+  completions, then performs a completion-triggered queue drain so a descriptor
+  rewound by SQ-full backpressure does not wait for another guest notify.

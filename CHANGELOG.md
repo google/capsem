@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   async queues now rewind the descriptor for retry instead of falling back to
   synchronous I/O, with queue-full counters exposed through VM metrics,
   `capsem info`, and the OTel metric-point contract.
+- Improved KVM virtio-blk io_uring recovery so completions immediately retry
+  a backpressured descriptor when submission capacity is freed, instead of
+  waiting for another guest queue notification.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.
