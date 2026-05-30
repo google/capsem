@@ -103,6 +103,10 @@
     return component?.component === "Card" && recipe?.component === "notice";
   }
 
+  function isAskCard(): boolean {
+    return component?.component === "Card" && recipe?.component === "ask";
+  }
+
   function isFactsCard(): boolean {
     return component?.component === "Card" && recipe?.component === "facts";
   }
@@ -409,6 +413,29 @@
         {/if}
         {#if actions}
           <div class="flex flex-wrap gap-2">
+            {#each staticChildIds(actions) as actionId}
+              <A2Node id={actionId} {surface} {recipe} {scope} {onAction} />
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {:else if component.component === "Card" && isAskCard()}
+    {@const title = cardTextChildren()[0]}
+    {@const detail = cardTextChildren()[1]}
+    {@const actions = cardActionRows()[0]}
+    <div class="flex flex-col bg-card border border-card-line shadow-2xs rounded-xl overflow-hidden">
+      <div class="p-4">
+        <div class="flex flex-col gap-2">
+          {#if title}
+            <h3 class="font-semibold text-foreground">{textValue(surface, title, scope)}</h3>
+          {/if}
+          {#if detail}
+            <p class="text-sm text-muted-foreground-1">{textValue(surface, detail, scope)}</p>
+          {/if}
+        </div>
+        {#if actions}
+          <div class="mt-4 flex flex-wrap items-center gap-2">
             {#each staticChildIds(actions) as actionId}
               <A2Node id={actionId} {surface} {recipe} {scope} {onAction} />
             {/each}

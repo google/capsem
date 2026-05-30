@@ -110,7 +110,7 @@ async fn hyper_render_outputs_pack_01_notice_facts_and_choices() {
                     "args": {
                         "surfaceId": "agent-draft",
                         "title": "Policy decision",
-                        "text": "How should this call proceed?",
+                        "detail": "How should this call proceed?",
                         "choices": [
                             { "label": "Allow once", "action": "policy.allow_once", "variant": "primary" },
                             { "label": "Deny", "action": "policy.deny", "variant": "default" }
@@ -128,7 +128,10 @@ async fn hyper_render_outputs_pack_01_notice_facts_and_choices() {
     let serialized = serde_json::to_string(&surface.messages).unwrap();
     assert!(serialized.contains("Review required"));
     assert!(serialized.contains("Repository"));
+    assert!(serialized.contains("Policy decision"));
+    assert!(serialized.contains("How should this call proceed?"));
     assert!(serialized.contains("policy.allow_once"));
+    assert!(!serialized.contains("\"component\":\"Modal\""));
 }
 
 #[tokio::test]

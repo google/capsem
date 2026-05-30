@@ -6,13 +6,13 @@ use serde_json::{json, Value};
 use crate::ui::{
     validate_messages, A2uiServerMessage, A2uiVersion, Action, Align, BasicComponent, Button,
     ButtonVariant, Card, ChildList, Column, CreateSurface, DynamicString, EventAction, Icon,
-    IconName, Image, ImageFit, ImageVariant, KnownIcon, Modal, Row, Text, TextVariant,
-    UpdateComponents, A2UI_BASIC_CATALOG_ID,
+    IconName, Image, ImageFit, ImageVariant, KnownIcon, Row, Text, TextVariant, UpdateComponents,
+    A2UI_BASIC_CATALOG_ID,
 };
 
 pub const CAPSEM_UI_CATALOG_ID: &str = "https://capsem.org/schemas/ui/catalog.v1.json";
 pub const TYPED_UI_RECIPE_COMPONENTS: &[&str] =
-    &["alert", "card", "facts", "modal", "notice", "table"];
+    &["alert", "ask", "card", "facts", "modal", "notice", "table"];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -727,14 +727,29 @@ impl UiToolRunner {
         let Some(surface_id) = string_arg(&call.args, "surfaceId") else {
             return err(call.tool, vec!["surfaceId is required".to_owned()]);
         };
-        let Some(text) = string_arg(&call.args, "text") else {
-            return err(call.tool, vec!["text is required".to_owned()]);
-        };
         let id = string_arg(&call.args, "id").unwrap_or_else(|| "draft-ask".to_owned());
+        let explicit_title = string_arg(&call.args, "title");
+        let legacy_text = string_arg(&call.args, "text");
+        let detail = string_arg(&call.args, "detail").or_else(|| {
+            if explicit_title.is_some() {
+                legacy_text.clone()
+            } else {
+                None
+            }
+        });
+        let Some(title) = explicit_title.or(legacy_text) else {
+            return err(call.tool, vec!["title or text is required".to_owned()]);
+        };
         let yes = string_arg(&call.args, "yes").unwrap_or_else(|| "Yes".to_owned());
         let no = string_arg(&call.args, "no").unwrap_or_else(|| "No".to_owned());
         let choices = match action_list_arg(&call.args, "choices") {
-            Ok(choices) if !choices.is_empty() => choices,
+            Ok(choices) if choices.len() == 2 => choices,
+            Ok(choices) if !choices.is_empty() => {
+                return err(
+                    call.tool,
+                    vec!["choices must contain exactly two actions".to_owned()],
+                );
+            }
             Ok(_) => vec![
                 UiToolActionInput {
                     label: no,
@@ -749,9 +764,6 @@ impl UiToolRunner {
             ],
             Err(error) => return err(call.tool, vec![error]),
         };
-        let title = string_arg(&call.args, "title").unwrap_or_else(|| "Question".to_owned());
-        let button_label =
-            string_arg(&call.args, "buttonLabel").unwrap_or_else(|| "Open question".to_owned());
         let surface = self
             .surfaces
             .entry(surface_id.clone())
@@ -762,55 +774,41 @@ impl UiToolRunner {
             });
 
         surface.recipe = Some(UiToolRecipe::new(
-            "modal",
-            "basic",
-            "https://preline.co/docs/components/modal.html",
+            "ask",
+            "inline",
+            "https://preline.co/docs/components/card.html",
         ));
 
         let title_id = format!("{id}-title");
-        let modal_id = format!("{id}-modal");
-        let open_button_id = format!("{id}-open");
-        let open_text_id = format!("{id}-open-text");
         let content_id = format!("{id}-content");
-        let message_id = format!("{id}-message");
+        let detail_id = format!("{id}-detail");
         let actions_id = format!("{id}-actions");
+        let mut content_children = vec![title_id.clone()];
+        if detail
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            content_children.push(detail_id.clone());
+        }
+        content_children.push(actions_id.clone());
 
         surface.components.insert(
             "root".to_owned(),
-            column_component("root", [title_id.clone(), modal_id.clone()]),
+            card_component("root", content_id.clone()),
         );
         surface.components.insert(
             title_id.clone(),
             text_component(&title_id, title, Some(TextVariant::H3)),
         );
-        surface.components.insert(
-            modal_id.clone(),
-            BasicComponent::Modal(Modal {
-                id: modal_id,
-                trigger: open_button_id.clone(),
-                content: content_id.clone(),
-            }),
-        );
-        surface.components.insert(
-            open_button_id.clone(),
-            button_component(
-                &open_button_id,
-                &open_text_id,
-                format!("{id}.open"),
-                ButtonVariant::Primary,
-            ),
-        );
-        surface.components.insert(
-            open_text_id.clone(),
-            text_component(&open_text_id, button_label, None),
-        );
+        if let Some(detail) = detail.filter(|value| !value.trim().is_empty()) {
+            surface.components.insert(
+                detail_id.clone(),
+                text_component(&detail_id, detail, Some(TextVariant::Body)),
+            );
+        }
         surface.components.insert(
             content_id.clone(),
-            column_component(&content_id, [message_id.clone(), actions_id.clone()]),
-        );
-        surface.components.insert(
-            message_id.clone(),
-            text_component(&message_id, text, Some(TextVariant::Body)),
+            column_component_vec(&content_id, content_children),
         );
         let choice_ids = insert_action_buttons(surface, &id, &choices);
         surface.components.insert(
@@ -818,7 +816,7 @@ impl UiToolRunner {
             row_component_vec(&actions_id, choice_ids, Some(Align::Center)),
         );
 
-        ok(call.tool, "ask modal lowered to A2UI Basic components")
+        ok(call.tool, "ask lowered to inline A2UI Basic components")
             .with_surface_id(surface_id)
             .with_component_id(id)
     }
@@ -1243,18 +1241,6 @@ fn card_component(id: impl Into<String>, child: impl Into<String>) -> BasicCompo
     BasicComponent::Card(Card {
         id: id.into(),
         child: child.into(),
-    })
-}
-
-fn column_component<const N: usize>(
-    id: impl Into<String>,
-    children: [String; N],
-) -> BasicComponent {
-    BasicComponent::Column(Column {
-        id: id.into(),
-        children: ChildList::Static(children.into_iter().collect()),
-        justify: None,
-        align: None,
     })
 }
 

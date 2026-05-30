@@ -40,6 +40,8 @@
 
 ### Changed
 
+- Changed `ui.ask` from a modal launcher to an inline decision card with a
+  title, optional detail text, and two visible action buttons.
 - Updated the A2UI modal renderer with Svelte dialog behavior: focus restore,
   Escape/backdrop close, scroll lock, and keyboard focus cycling.
 - Removed the internal `A2UI Basic component: Card` caption from user-facing

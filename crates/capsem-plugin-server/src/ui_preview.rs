@@ -68,13 +68,13 @@ fn demo_payload(authored: Option<UiToolProgramResult>) -> UiPreviewPayload {
                 Ui::alert("preview-alert", "Security review required"),
             ),
             UiPreviewExample::new(
-                "Ask Modal",
+                "Ask",
                 r#"ui.ask(text="Allow this model call?", yes="Allow", no="Deny")"#,
                 "interactive",
                 UiRecipe::new(
-                    "modal",
-                    "basic",
-                    "https://preline.co/docs/components/modal.html",
+                    "ask",
+                    "inline",
+                    "https://preline.co/docs/components/card.html",
                 ),
                 Ui::ask("preview-ask", "Allow this model call?", "Allow", "Deny"),
             ),

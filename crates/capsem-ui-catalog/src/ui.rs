@@ -799,22 +799,9 @@ impl Ui {
         A2uiDocument::new(surface_id.clone()).components(
             surface_id,
             vec![
-                column("root", ["ask-title", "ask-modal"]),
-                text("ask-title", "Question", Some(TextVariant::H3)),
-                BasicComponent::Modal(Modal {
-                    id: "ask-modal".to_owned(),
-                    trigger: "ask-open".to_owned(),
-                    content: "ask-content".to_owned(),
-                }),
-                button(
-                    "ask-open",
-                    "ask-open-text",
-                    "ask.open",
-                    ButtonVariant::Primary,
-                ),
-                text("ask-open-text", "Open question", None),
-                column("ask-content", ["ask-message", "ask-actions"]),
-                text("ask-message", text_value, Some(TextVariant::Body)),
+                card("root", "ask-content"),
+                column("ask-content", ["ask-title", "ask-actions"]),
+                text("ask-title", text_value, Some(TextVariant::H3)),
                 row("ask-actions", ["ask-no", "ask-yes"], Some(Align::Center)),
                 button("ask-no", "ask-no-text", "ask.no", ButtonVariant::Default),
                 text("ask-no-text", no, None),

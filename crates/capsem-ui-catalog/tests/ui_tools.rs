@@ -20,7 +20,7 @@ fn ui_tool_acceptance_program_builds_renderable_surface() {
 }
 
 #[test]
-fn ui_tools_build_card_and_modal_drafts() {
+fn ui_tools_build_card_and_inline_ask_drafts() {
     let result = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
             capsem_ui_catalog::ui_tools::UiToolCall {
@@ -65,14 +65,12 @@ fn ui_tools_build_card_and_modal_drafts() {
             .recipe
             .as_ref()
             .map(|recipe| recipe.component.as_str()),
-        Some("modal")
+        Some("ask")
     );
-    assert!(result.surfaces[0]
-        .messages
-        .iter()
-        .any(|message| serde_json::to_string(message)
-            .unwrap()
-            .contains("Allow this plugin UI")));
+    let serialized = serde_json::to_string(&result.surfaces[0].messages).unwrap();
+    assert!(serialized.contains("Allow this plugin UI"));
+    assert!(!serialized.contains("\"component\":\"Modal\""));
+    assert!(!serialized.contains("Open question"));
 }
 
 #[test]
@@ -143,7 +141,7 @@ fn ui_tools_preserve_alert_tone_and_card_link_contract_fields() {
 }
 
 #[test]
-fn ui_pack_01_lowers_notice_facts_and_choice_modal() {
+fn ui_pack_01_lowers_notice_facts_and_inline_choice_ask() {
     let result = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
         calls: vec![
             capsem_ui_catalog::ui_tools::UiToolCall {
@@ -179,12 +177,11 @@ fn ui_pack_01_lowers_notice_facts_and_choice_modal() {
                     "surfaceId": "pack",
                     "id": "choice",
                     "title": "Policy decision",
-                    "text": "How should this call proceed?",
+                    "detail": "How should this call proceed?",
                     "buttonLabel": "Choose policy",
                     "choices": [
                         { "label": "Allow once", "action": "policy.allow_once", "variant": "primary" },
-                        { "label": "Deny", "action": "policy.deny", "variant": "default" },
-                        { "label": "Open details", "action": "policy.details", "variant": "borderless" }
+                        { "label": "Deny", "action": "policy.deny", "variant": "default" }
                     ]
                 }),
             },
@@ -199,9 +196,63 @@ fn ui_pack_01_lowers_notice_facts_and_choice_modal() {
     let serialized = serde_json::to_string(&result.surfaces[0].messages).unwrap();
     assert!(serialized.contains("Review required"));
     assert!(serialized.contains("Repository"));
+    assert!(serialized.contains("Policy decision"));
+    assert!(serialized.contains("How should this call proceed?"));
     assert!(serialized.contains("policy.allow_once"));
-    assert!(serialized.contains("policy.details"));
+    assert!(!serialized.contains("Choose policy"));
+    assert!(!serialized.contains("\"component\":\"Modal\""));
     assert!(!serialized.contains("<"));
+}
+
+#[test]
+fn ui_ask_rejects_missing_prompt_and_extra_choices() {
+    let missing_prompt = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "bad-ask" }),
+            },
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.ask".to_owned(),
+                args: json!({ "surfaceId": "bad-ask" }),
+            },
+        ],
+    });
+    assert!(!missing_prompt.ok);
+    assert!(missing_prompt.observations.iter().any(|observation| {
+        observation
+            .errors
+            .iter()
+            .any(|error| error.contains("title or text is required"))
+    }));
+
+    let extra_choices = run_tool_program(capsem_ui_catalog::ui_tools::UiToolProgram {
+        calls: vec![
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.surface.create".to_owned(),
+                args: json!({ "id": "bad-choices" }),
+            },
+            capsem_ui_catalog::ui_tools::UiToolCall {
+                tool: "ui.ask".to_owned(),
+                args: json!({
+                    "surfaceId": "bad-choices",
+                    "title": "Policy decision",
+                    "choices": [
+                        { "label": "Allow", "action": "allow" },
+                        { "label": "Deny", "action": "deny" },
+                        { "label": "Details", "action": "details" }
+                    ]
+                }),
+            },
+        ],
+    });
+    assert!(!extra_choices.ok);
+    assert!(extra_choices.observations.iter().any(|observation| {
+        observation
+            .errors
+            .iter()
+            .any(|error| error.contains("exactly two actions"))
+    }));
 }
 
 #[test]
