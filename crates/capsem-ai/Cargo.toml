@@ -7,9 +7,9 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-siumai.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 

@@ -17,10 +17,11 @@ use capsem_plugin_engine::{
 };
 use capsem_ui_catalog::native_deck::{
     artifact_by_id, create_chart, create_diagram, create_sheet, create_slide, create_slide_deck,
-    create_table, demo_deck_proof, generate_image, generate_text, query_demo_sql, ChartRequest,
-    DiagramRequest, GenerateImageRequest, GenerateTextRequest, NativeArtifact, NativeArtifactKind,
-    NativeDeckProof, SheetRequest, SlideDeckRequest, SlideDeckSpec, SlideRef, SlideRequest,
-    SqliteQueryRequest, SqliteQueryResponse, TableRequest,
+    create_table, demo_deck_proof, generate_embedding, generate_image, generate_text,
+    query_demo_sql, ChartRequest, DiagramRequest, GenerateEmbeddingRequest, GenerateImageRequest,
+    GenerateTextRequest, NativeArtifact, NativeArtifactKind, NativeDeckProof, SheetRequest,
+    SlideDeckRequest, SlideDeckSpec, SlideRef, SlideRequest, SqliteQueryRequest,
+    SqliteQueryResponse, TableRequest,
 };
 use capsem_ui_catalog::ui_tools::UiToolProgramResult;
 use serde_json::json;
@@ -51,6 +52,10 @@ struct NativeTelemetryEvent {
     kind: NativeArtifactKind,
     duration_ms: u128,
     status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost: Option<serde_json::Value>,
 }
 
 impl NativeWorkspace {
@@ -206,6 +211,10 @@ fn app(state: AppState) -> Router {
         .route("/native/data/sheet", post(native_create_sheet))
         .route("/native/generate/text", post(native_generate_text))
         .route("/native/generate/image", post(native_generate_image))
+        .route(
+            "/native/generate/embedding",
+            post(native_generate_embedding),
+        )
         .route("/native/ui/table", post(native_create_table))
         .route("/native/ui/chart", post(native_create_chart))
         .route("/native/ui/diagram", post(native_create_diagram))
@@ -266,6 +275,7 @@ async fn native_mcp_tools() -> Json<serde_json::Value> {
             {"name": "local__data_sheet", "route": "POST /native/data/sheet"},
             {"name": "local__generate_text", "route": "POST /native/generate/text"},
             {"name": "local__generate_image", "route": "POST /native/generate/image"},
+            {"name": "local__generate_embedding", "route": "POST /native/generate/embedding"},
             {"name": "local__ui_table", "route": "POST /native/ui/table"},
             {"name": "local__ui_chart", "route": "POST /native/ui/chart"},
             {"name": "local__ui_diagram", "route": "POST /native/ui/diagram"},
@@ -359,6 +369,22 @@ async fn native_generate_image(
             .await
             .map_err(NativeApiError::bad_request)?,
         "generate.image",
+        started,
+    )
+    .await
+}
+
+async fn native_generate_embedding(
+    State(state): State<AppState>,
+    Json(request): Json<GenerateEmbeddingRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
+    store_artifact(
+        &state,
+        generate_embedding_provider(request, &state.generation)
+            .await
+            .map_err(NativeApiError::bad_request)?,
+        "generate.embedding",
         started,
     )
     .await
@@ -469,6 +495,8 @@ async fn store_artifact(
         kind: artifact.kind,
         duration_ms: started.elapsed().as_millis(),
         status: artifact.spec["status"].as_str().unwrap_or("ok").to_owned(),
+        usage: artifact.spec.get("usage").cloned(),
+        cost: artifact.spec.get("cost").cloned(),
     });
     Ok(Json(artifact))
 }
@@ -492,6 +520,8 @@ async fn generate_text_provider(
             artifact.spec["provider"] = json!(output.provider);
             artifact.spec["providerModel"] = json!(output.model);
             artifact.spec["text"] = json!(output.text);
+            artifact.spec["usage"] = json!(output.usage);
+            artifact.spec["cost"] = json!(output.cost);
         }
         Err(error) => generation_error_to_artifact(&mut artifact, error),
     }
@@ -515,6 +545,8 @@ async fn generate_image_provider(
             artifact.spec["status"] = json!("generated");
             artifact.spec["provider"] = json!(output.provider);
             artifact.spec["providerModel"] = json!(output.model);
+            artifact.spec["usage"] = json!(output.usage);
+            artifact.spec["cost"] = json!(output.cost);
             if let Some(mime_type) = output.mime_type {
                 artifact.spec["mimeType"] = json!(mime_type);
             }
@@ -527,6 +559,33 @@ async fn generate_image_provider(
             if let Some(revised_prompt) = output.revised_prompt {
                 artifact.spec["revisedPrompt"] = json!(revised_prompt);
             }
+        }
+        Err(error) => generation_error_to_artifact(&mut artifact, error),
+    }
+    Ok(artifact)
+}
+
+async fn generate_embedding_provider(
+    request: GenerateEmbeddingRequest,
+    engine: &GenerationEngine<impl ModelProvider>,
+) -> Result<NativeArtifact, String> {
+    let mut artifact = generate_embedding(request.clone())?;
+    match engine
+        .generate_embedding(capsem_ai::GenerateEmbeddingRequest {
+            provider: request.provider,
+            model: request.model,
+            input: request.input,
+        })
+        .await
+    {
+        Ok(output) => {
+            artifact.spec["status"] = json!("generated");
+            artifact.spec["provider"] = json!(output.provider);
+            artifact.spec["providerModel"] = json!(output.model);
+            artifact.spec["dimensions"] = json!(output.dimensions);
+            artifact.spec["vectors"] = json!(output.vectors);
+            artifact.spec["usage"] = json!(output.usage);
+            artifact.spec["cost"] = json!(output.cost);
         }
         Err(error) => generation_error_to_artifact(&mut artifact, error),
     }
@@ -665,6 +724,35 @@ mod tests {
         assert_eq!(artifact.spec["status"], "generated");
         assert_eq!(artifact.spec["provider"], "google");
         assert_eq!(artifact.spec["text"], "fake: review this");
+        assert_eq!(artifact.spec["usage"]["totalTokens"], 6);
+        assert_eq!(artifact.spec["cost"]["currency"], "USD");
+    }
+
+    #[tokio::test]
+    async fn embedding_generation_artifact_uses_capsem_ai_engine() {
+        let engine = GenerationEngine::new(
+            GenerationSettings::empty().with_credential("openai-api-key", "sk-test"),
+            FakeModelProvider,
+        );
+        let artifact = generate_embedding_provider(
+            GenerateEmbeddingRequest {
+                id: "embedding-test".to_owned(),
+                title: "Embedding Test".to_owned(),
+                input: vec!["review this".to_owned()],
+                provider: "openai".to_owned(),
+                model: None,
+            },
+            &engine,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(artifact.kind, NativeArtifactKind::GeneratedEmbedding);
+        assert_eq!(artifact.spec["status"], "generated");
+        assert_eq!(artifact.spec["provider"], "openai");
+        assert_eq!(artifact.spec["dimensions"], 3);
+        assert_eq!(artifact.spec["vectors"].as_array().unwrap().len(), 1);
+        assert_eq!(artifact.spec["usage"]["promptTokens"], 4);
     }
 
     #[tokio::test]

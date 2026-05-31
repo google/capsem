@@ -29,6 +29,8 @@ class CapsemNativeClientTest(unittest.TestCase):
                 return {"id": body["id"], "kind": "generatedText"}
             if path == "/native/generate/image":
                 return {"id": body["id"], "kind": "generatedImage"}
+            if path == "/native/generate/embedding":
+                return {"id": body["id"], "kind": "generatedEmbedding"}
             if path == "/native/ui/table":
                 return {"id": body["id"], "kind": "table"}
             if path == "/native/ui/chart":
@@ -77,6 +79,14 @@ class CapsemNativeClientTest(unittest.TestCase):
                 prompt="generate image",
             )["kind"],
             "generatedImage",
+        )
+        self.assertEqual(
+            client.generate.embedding(
+                artifact_id="embedding-1",
+                title="Embedding",
+                input=["embed me"],
+            )["kind"],
+            "generatedEmbedding",
         )
         self.assertEqual(
             client.ui.table(
@@ -163,6 +173,20 @@ class CapsemNativeClientTest(unittest.TestCase):
                     "prompt": "generate text",
                     "system": "be terse",
                     "provider": "gemini",
+                    "model": None,
+                },
+            ),
+            calls,
+        )
+        self.assertIn(
+            (
+                "POST",
+                "/native/generate/embedding",
+                {
+                    "id": "embedding-1",
+                    "title": "Embedding",
+                    "input": ["embed me"],
+                    "provider": "openai",
                     "model": None,
                 },
             ),

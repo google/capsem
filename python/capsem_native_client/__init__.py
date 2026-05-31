@@ -132,6 +132,27 @@ class GenerateApi:
             },
         )
 
+    def embedding(
+        self,
+        *,
+        artifact_id: str,
+        title: str,
+        input: list[str],
+        provider: str = "openai",
+        model: Optional[str] = None,
+    ) -> dict[str, Any]:
+        return self.client._request(
+            "POST",
+            "/native/generate/embedding",
+            {
+                "id": artifact_id,
+                "title": title,
+                "input": input,
+                "provider": provider,
+                "model": model,
+            },
+        )
+
 
 @dataclass(frozen=True)
 class UiApi:

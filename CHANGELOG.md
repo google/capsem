@@ -46,6 +46,12 @@
 - Added the first Gemini-backed image generation path with typed missing-key
   and provider-error artifact states, plus live native telemetry records for
   artifact construction calls.
+- Added Capsem AI usage/cost accounting fields for generated artifacts and
+  telemetry, plus an embedding generation route for future dashboard and
+  retrieval work.
+- Added ignored live smoke tests for OpenAI image generation, Gemini Nano Banana
+  image generation, and OpenAI embeddings so provider credentials can be checked
+  without making default test runs spend money.
 - Added Plotly and Mermaid preview/export adapters for native chart and diagram
   artifacts, and an MCP-shaped native tool descriptor endpoint for the eventual
   local tool wrapper.
@@ -113,3 +119,6 @@
   and modal shells.
 - Added explicit Preline recipe metadata to UI preview examples so the renderer
   maps A2UI fields into named component variants instead of guessing from ids.
+- Replaced the prototype `capsem-ai` provider implementation with a
+  Capsem-owned HTTP provider while keeping the clean text/image/embedding
+  request/result surface at the public boundary.

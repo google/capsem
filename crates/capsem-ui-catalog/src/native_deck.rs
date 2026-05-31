@@ -38,6 +38,7 @@ pub struct NativeArtifact {
 pub enum NativeArtifactKind {
     GeneratedText,
     GeneratedImage,
+    GeneratedEmbedding,
     Sheet,
     Table,
     Chart,
@@ -95,6 +96,18 @@ pub struct GenerateTextRequest {
     pub prompt: String,
     #[serde(default)]
     pub system: Option<String>,
+    #[serde(default = "default_gemini_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateEmbeddingRequest {
+    pub id: String,
+    pub title: String,
+    pub input: Vec<String>,
     #[serde(default = "default_gemini_provider")]
     pub provider: String,
     #[serde(default)]
@@ -303,6 +316,31 @@ pub fn generate_text(request: GenerateTextRequest) -> Result<NativeArtifact, Str
             "model": request.model,
             "system": request.system,
             "prompt": request.prompt,
+            "status": "planned"
+        }),
+    ))
+}
+
+pub fn generate_embedding(request: GenerateEmbeddingRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    require_non_empty("provider", &request.provider)?;
+    if request.input.is_empty() {
+        return Err("input must contain at least one item".to_owned());
+    }
+    for value in &request.input {
+        require_non_empty("input", value)?;
+    }
+    Ok(artifact(
+        request.id,
+        NativeArtifactKind::GeneratedEmbedding,
+        request.title,
+        json!({
+            "component": "capsem-embedding",
+            "media": "embedding",
+            "provider": request.provider,
+            "model": request.model,
+            "input": request.input,
             "status": "planned"
         }),
     ))
