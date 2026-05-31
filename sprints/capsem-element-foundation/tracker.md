@@ -22,6 +22,9 @@
 - Browser check created a `capsem-elt`, assigned a typed spec, observed an open
   ShadowRoot, and received a composed/bubbling `capsem:ready` event with the
   spec id.
+- PM slide-deck track captured: spreadsheet data -> chart/image/text/table
+  slide blocks -> ordered slide deck. Chart work now needs export handles and
+  sheet-range bindings, not just live preview rendering.
 
 ## Coverage Ledger
 
@@ -34,3 +37,6 @@
 - Telemetry: not applicable.
 - Performance: not applicable.
 - Missing/deferred: specialized chart element and Plotly adapter are next sprint.
+- Missing/deferred: spreadsheet, slide, and slide-deck catalog types are a
+  future export/product track, but the current chart design must preserve that
+  path.

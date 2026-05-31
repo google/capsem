@@ -17,6 +17,10 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
   custom events.
 - This is UI isolation, not a security boundary. Rust contracts and sandboxed
   plugin execution remain the security boundary.
+- PM slide-deck requirement is now a design constraint on chart/export work:
+  spreadsheets, charts, images, text blocks, slides, and slide decks should
+  share the same Rust-owned catalog path instead of becoming a separate
+  presentation renderer later.
 
 ## Files
 
@@ -34,6 +38,18 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
 - Tests guard the foundation pattern so specialized elements reuse it.
 - Browser verification creates a `<capsem-elt>`, sets a spec, and observes
   shadow output plus composed event emission.
+
+## Future Track
+
+Capsem needs a typed spreadsheet-to-slide-deck lane:
+
+- `ui.sheet` creates spreadsheet-like data with named ranges.
+- `ui.barChart`, `ui.lineChart`, `ui.heatmapChart`, and `ui.boxPlot` can bind to
+  sheet ranges and produce stable export handles.
+- `ui.slide` composes chart, image, text, table, and generated UI blocks.
+- `ui.slideDeck` combines slides into an ordered deck artifact.
+- Live preview can use Svelte/Preline/Web Components, but export must be
+  deterministic from the Rust catalog spec.
 
 ## Proof Matrix
 

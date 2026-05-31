@@ -219,6 +219,56 @@ This lets models, tools, and plugins share the same block vocabulary. The
 surface decides placement: chat bubble, right panel, workspace tab, modal body,
 or remote UI card.
 
+## Spreadsheet To Slide Deck Track
+
+PM requirement: Capsem will eventually need to create spreadsheet data, derive
+charts from that data, embed charts/images/text into slides, and combine slides
+into a slide deck artifact.
+
+That is not part of the immediate plugin/WASM MVP, but it changes the UI
+catalog design now:
+
+- spreadsheet objects need typed sheets, named ranges, and addressable cell
+  references so chart inputs can point at data instead of copying blobs
+- chart objects need stable export handles for PNG/SVG first, with PDF or deck
+  export considered later
+- slide objects need typed blocks for chart, image, text, table, and generated
+  UI fragments
+- slide decks need ordered slide composition, metadata, and deterministic export
+  separate from the live Svelte renderer
+- the same Rust catalog types should feed chat, side panels, slides, and deck
+  export so model-authored UI does not fork from plugin-authored UI
+
+Candidate authoring shape:
+
+```ts
+const sheet = ui.sheet("quarterly_metrics", {
+  columns: ["quarter", "revenue", "margin"],
+  rows,
+});
+
+const chart = ui.barChart("revenue_by_quarter", {
+  source: sheet.range("A1:C5"),
+  x: "quarter",
+  series: ["revenue", "margin"],
+  stack: false,
+});
+
+const intro = ui.slide("exec_intro", {
+  blocks: [
+    ui.textBlock({ title: "Q4 Security Posture", body: "Revenue and risk view." }),
+    ui.chartBlock(chart),
+    ui.imageBlock({ src: "capsem://asset/logo" }),
+  ],
+});
+
+await ui.slideDeck("board_packet").replace({ slides: [intro] });
+```
+
+This track belongs beside chart/export work, not after it. If charts cannot
+round-trip from typed Rust spec to Svelte preview to deterministic exported
+asset, they will not be usable in decks.
+
 ## Lowered Host Object
 
 Surface calls compile into internal operations like this:
