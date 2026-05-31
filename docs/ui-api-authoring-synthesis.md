@@ -253,6 +253,13 @@ catalog design now:
 - the same Rust catalog types should feed chat, side panels, slides, and deck
   export so model-authored UI does not fork from plugin-authored UI
 
+The concrete spike is tracked in
+`sprints/capsem-native-mcp-and-deck-proof/`: prove the end-to-end path from
+SQLite data to generated media, chart/diagram specs, slide composition, deck
+export, and `web.preview`. Before MCP wiring, a small Python client should call
+the Rust webserver routes for each native API so the final MCP tools wrap a
+known surface instead of inventing one.
+
 SQLite is not the public UI API, and it should not be scoped only to slides. It
 is a general per-instance SQL workspace behind the tools/plugins/model lane.
 Each agent/session/workspace instance can receive its own constrained SQLite
