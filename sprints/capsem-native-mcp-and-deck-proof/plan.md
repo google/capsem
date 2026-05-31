@@ -11,8 +11,13 @@ ad hoc browser scripting:
 
 ```text
 SQLite data -> table/sheet -> chart/diagram/generated media -> slide blocks
-  -> slide deck -> export artifact -> web preview
+  -> slide deck -> export artifact -> <capsem-slide-deck> preview
 ```
+
+Each artifact must also be materializable on its own while the deck is being
+built: generated image, spreadsheet/sheet, table, chart, diagram, slide, and
+final deck. The proof should be gradual, not one giant final object that only
+works at the end.
 
 ## Direction
 
@@ -63,6 +68,19 @@ local
       inspect
 ```
 
+`web.preview` is for websites and browser-backed page acceptance. It is not the
+deck preview surface. Decks, slides, charts, sheets, generated images, and
+diagrams preview through Capsem-owned components in the `<capsem-*>` family:
+
+```text
+<capsem-sheet>
+<capsem-chart>
+<capsem-diagram>
+<capsem-media>
+<capsem-slide>
+<capsem-slide-deck>
+```
+
 The exact MCP wire naming remains a spike question. Current Capsem guest MCP
 uses `server__tool_name` through the aggregator, and host-control tools use
 `capsem_*`. Preferred model-facing shape is `local.ui.alert()`. The spike must
@@ -106,7 +124,8 @@ client.ui.bar_chart(...)
 client.generate.image(...)
 client.asset.put(...)
 client.export.deck(...)
-client.web.preview.show(...)
+client.ui.render_artifact(...)
+client.ui.slide_deck(...)
 ```
 
 The Python library should be tiny and boring:
@@ -173,7 +192,9 @@ Required constraints:
   first backend.
 - Slide and slideDeck specs compose text, table, chart, diagram, image, and
   generated media blocks.
-- `web.preview` can show the produced artifact to the user.
+- Each intermediate artifact can be rendered individually through a Capsem
+  component before it is composed into the deck.
+- `<capsem-slide-deck>` can show the produced deck to the user.
 - The final acceptance test builds a nice deck without hand-editing the output.
 
 ## Proof Matrix
@@ -183,7 +204,8 @@ Required constraints:
 - Functional: Python client builds the deck from Rust routes.
 - Adversarial: malformed specs, missing Gemini key, oversized chart data,
   unsafe Plotly fields, invalid asset handles, invalid slide references.
-- E2E/UI: preview the generated deck through `web.preview`.
+- E2E/UI: preview generated sheet, chart, diagram, media, slide, and deck
+  artifacts through `<capsem-*>` components.
 - Telemetry: each native tool call records duration, result, provider/model
   provenance where relevant, and error class.
 - Performance: basic timing for chart render/export, deck export, and Gemini

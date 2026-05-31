@@ -11,8 +11,10 @@
 - [ ] Add Mermaid diagram spec/render/export proof.
 - [ ] Add Gemini-backed `generate.image` proof.
 - [ ] Add generated asset store handles.
+- [ ] Add individual artifact materialization for generated image, sheet,
+  table, chart, diagram, slide, and deck.
 - [ ] Add slide and slideDeck composition proof.
-- [ ] Add `web.preview` proof surface.
+- [ ] Add `<capsem-slide-deck>` proof surface.
 - [ ] Add acceptance test that builds a nice deck end to end.
 - [ ] Changelog.
 - [ ] Commit.
@@ -35,6 +37,11 @@
 - Web Components and Shadow DOM are not security boundaries.
 - Plotly is a first-party renderer adapter. Models/plugins never receive raw
   Plotly authority.
+- `web.preview` is for websites/browser-backed page acceptance, not deck
+  preview.
+- Deck and artifact previews use Capsem-owned `<capsem-*>` components.
+- The sprint must prove gradual output: each useful artifact can be produced and
+  inspected independently before deck composition.
 
 ## Coverage Ledger
 
@@ -45,4 +52,5 @@
 - Telemetry: pending.
 - Performance: pending.
 - Missing/deferred: provider routing UI, final MCP naming, sandboxed frame
-  renderer fallback, full deck export formats, and plugin/WASM binding.
+  renderer fallback, full deck export formats, website-oriented `web.preview`,
+  and plugin/WASM binding.

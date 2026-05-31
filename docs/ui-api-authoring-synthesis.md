@@ -244,9 +244,9 @@ catalog design now:
 - slide decks need ordered slide composition, metadata, and deterministic export
   separate from the live Svelte renderer
 - `web.preview` needs its own later sprint as the browser-backed surface for
-  showing user-visible pages, previews, and acceptance states; it is related to
+  showing websites/pages and browser-backed acceptance states; it is related to
   browser automation, but the product object is a preview surface, not raw
-  browser control
+  browser control, and it is not the slide-deck preview surface
 - generated media should be first-class typed Capsem assets via
   `generate.image`, `generate.video`, and `generate.audio`, so models can create
   media for cards, slides, decks, and chat without stuffing blobs into UI specs
@@ -256,9 +256,24 @@ catalog design now:
 The concrete spike is tracked in
 `sprints/capsem-native-mcp-and-deck-proof/`: prove the end-to-end path from
 SQLite data to generated media, chart/diagram specs, slide composition, deck
-export, and `web.preview`. Before MCP wiring, a small Python client should call
-the Rust webserver routes for each native API so the final MCP tools wrap a
-known surface instead of inventing one.
+export, and Capsem-owned `<capsem-*>` previews. Before MCP wiring, a small
+Python client should call the Rust webserver routes for each native API so the
+final MCP tools wrap a known surface instead of inventing one.
+
+The deck proof must be gradual. Little Codex should be able to produce and
+inspect each artifact individually before composing the deck:
+
+- generated image/audio/video asset
+- spreadsheet/sheet
+- table
+- chart
+- diagram
+- slide
+- slide deck
+
+Decks and their intermediate artifacts preview through Capsem components such
+as `<capsem-sheet>`, `<capsem-chart>`, `<capsem-diagram>`, `<capsem-media>`,
+`<capsem-slide>`, and `<capsem-slide-deck>`.
 
 SQLite is not the public UI API, and it should not be scoped only to slides. It
 is a general per-instance SQL workspace behind the tools/plugins/model lane.
@@ -381,15 +396,17 @@ typed nouns.
 `web.preview` should be planned as a separate surface:
 
 ```ts
-await web.preview("board_packet_preview").show({
-  artifact: "capsem://deck/board_packet",
+await web.preview("pricing_page_preview").show({
+  url: "http://127.0.0.1:8787/pricing",
   mode: "interactive",
 });
 ```
 
-This is the lane for user-visible browser previews and acceptance checks. It
-should reuse Capsem's browser capability underneath, but the authoring object
-is preview/show/inspect, not a grab bag of browser verbs.
+This is the lane for user-visible website/page previews and browser acceptance
+checks. It should reuse Capsem's browser capability underneath, but the
+authoring object is preview/show/inspect, not a grab bag of browser verbs. It
+does not replace Capsem component previews for slides, charts, sheets, or
+generated media.
 
 Candidate authoring shape:
 

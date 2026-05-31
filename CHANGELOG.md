@@ -23,6 +23,9 @@
 - Added the native MCP/deck proof sprint covering tool hierarchy, Gemini-backed
   generation, Web Component and Plotly security constraints, and a Python client
   rehearsal layer before MCP wiring.
+- Clarified that slide-deck preview uses Capsem-owned `<capsem-*>` components,
+  while `web.preview` is reserved for website/page preview, and required
+  individual artifact materialization during deck construction.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance
