@@ -247,16 +247,19 @@ Unit/contract:
   `dns.response`.
 - `cargo test -p capsem-service --no-run` proves service tests compile with
   typed session reconstruction and event construction.
+- `cargo test -p capsem-service handle_session_detection_hunt` proves the
+  session telemetry path reconstructs DNS, MCP, model, file, process,
+  snapshot, VM, profile, and conversation events from `security_events`, then
+  hunts over canonical CEL fields and matched-field paths.
 
 Functional:
-- Partial. Security-engine evaluator APIs are covered by focused Rust tests,
-  and the MITM live request path now has a fixture-backed functional test for
-  canonical `model.request` blocking before upstream dispatch plus canonical
-  `model.response` and provider tool-call blocking before guest delivery.
-  The framed-MCP live request/response path now has fixture-backed proof for
-  canonical `mcp.request` and `mcp.response` CEL enforcement. Production
-  service/profile registry wiring for Sigma/Detection IR and live provider
-  tool-result callbacks remain open under T2/T4.
+- Partial. Security-engine evaluator APIs are covered by focused Rust tests.
+  The MITM live path has fixture-backed functional tests for canonical
+  `model.request`, `model.response`, provider tool-call, and request-side tool
+  result blocking. The framed-MCP live path has fixture-backed proof for
+  canonical `mcp.request` and `mcp.response` CEL enforcement. Service
+  session-hunt tests prove persisted canonical events reconstruct into the
+  same CEL roots for detection.
 
 Adversarial:
 - Partial. Existing policy-context tests cover missing/redacted body semantics
@@ -268,8 +271,12 @@ E2E/VM:
 - Missing. Required once live callbacks are rewired under T2.
 
 Telemetry:
-- Missing. Required to prove logged/session event matches detection and
-  enforcement events after T2.
+- Partial. `handle_session_detection_hunt_reconstructs_core_projection_families`
+  proves persisted `security_events` rows reconstruct into canonical
+  `PolicyContext` roots and session detection matched fields for DNS, MCP,
+  model, file, process, snapshot, VM, profile, and conversation. A live VM E2E
+  assertion that the post-session DB exactly matches a real blocked run remains
+  open.
 
 Performance:
 - Fast benchmark coverage added:
@@ -294,8 +301,8 @@ Missing/deferred:
 - Credential, VM, profile, conversation, and snapshot remain live producer
   gaps. They are first-party in the contract/projection/session-detection path,
   but no live emitter was found in this T0/T0a mapping pass.
-- T4/T5 provider-body hardening, integration proof, and session telemetry proof
-  are still open.
+- T4/T5 provider-body hardening and real VM E2E proof are still open. Session
+  telemetry reconstruction/hunt proof exists at the service-test layer.
 - T6 still needs full benchmark artifact execution and callback/parser/hunt
   benchmark coverage.
 - The current file watcher emits file path/class/size; file content search is
