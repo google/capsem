@@ -26,9 +26,10 @@
   text, and table slide blocks -> ordered slide deck. Chart and diagram work
   now needs export handles and sheet-range bindings, not just live preview
   rendering.
-- Data manipulation note captured: add a constrained SQLite scratch workbench
-  for little Codex so report/chart/deck data can be joined, filtered, grouped,
-  and reused without stuffing raw arrays into prompts.
+- Data manipulation note captured: add a constrained per-instance SQLite
+  workspace for little Codex so data can be joined, filtered, grouped, and
+  reused without stuffing raw arrays into prompts. This is general, not only for
+  report/chart/deck workflows.
 - Local MCP note captured: expose the SQLite workbench first through Capsem MCP
   tools, then wrap the same Rust service in plugin context APIs later.
 
@@ -46,6 +47,6 @@
 - Missing/deferred: spreadsheet, diagram, slide, and slide-deck catalog types
   are a future export/product track, but the current chart design must preserve
   that path.
-- Missing/deferred: SQLite scratch database API, query limits, type mapping,
-  import/export boundaries, and audit logging need their own data sprint before
-  finance/science report workflows become real.
+- Missing/deferred: per-instance SQLite API, query limits, type mapping,
+  import/export boundaries, lifetime policy, and audit logging need their own
+  data sprint before finance/science/report workflows become real.

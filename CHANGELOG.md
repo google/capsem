@@ -9,8 +9,9 @@
 - Documented the future spreadsheet-to-slide-deck UI track so chart, diagram,
   and export work preserves sheet ranges, export handles, slide blocks, and
   deck composition.
-- Documented the future SQLite scratch data workbench requirement for
-  model-assisted data manipulation before rendering sheets, charts, and decks.
+- Documented the future per-instance SQLite workspace requirement for
+  model-assisted data manipulation before rendering sheets, charts, decks, or
+  other data-backed artifacts.
 - Clarified that the SQLite data workbench should first surface through
   Capsem's local MCP tools so agents can use it before the WASM plugin runtime.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI

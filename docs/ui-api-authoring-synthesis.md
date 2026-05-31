@@ -246,10 +246,15 @@ catalog design now:
 - the same Rust catalog types should feed chat, side panels, slides, and deck
   export so model-authored UI does not fork from plugin-authored UI
 
-SQLite is not the public UI API. It is a constrained data capability behind the
-tools/plugins/model lane. Because Capsem already exposes its own local MCP, the
-first implementation should present this as MCP tools for little Codex rather
-than as a bespoke UI feature:
+SQLite is not the public UI API, and it should not be scoped only to slides. It
+is a general per-instance SQL workspace behind the tools/plugins/model lane.
+Each agent/session/workspace instance can receive its own constrained SQLite
+database for shaping data before it becomes UI, telemetry, reports, or export
+artifacts.
+
+Because Capsem already exposes its own local MCP, the first implementation
+should present this as MCP tools for little Codex rather than as a bespoke UI
+feature:
 
 ```text
 capsem.data.sqlite.create
@@ -262,6 +267,11 @@ capsem.ui.render
 The same Rust service can later expose equivalent plugin context methods, but
 the MCP lane lets agents manipulate data and prove the chart/slide contract
 without waiting for the full WASM plugin runtime.
+
+This per-instance SQL lane should be useful beyond deck generation: finance
+analysis, scientific tables, benchmark summaries, audit traces, session
+inspection, and any workflow where a model needs reliable joins, filters,
+aggregations, or reusable intermediate tables.
 
 ```ts
 const db = context.data.sqlite("board_packet");

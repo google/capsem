@@ -21,10 +21,10 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
   spreadsheets, charts, diagrams, images, text blocks, slides, and slide decks
   should share the same Rust-owned catalog path instead of becoming a separate
   presentation renderer later.
-- Little Codex needs a SQLite-backed scratch data workbench for manipulation:
-  joins, grouping, filtering, pivots, and repeatable chart/deck inputs. SQLite
-  should feed typed sheets/tables/charts; it should not become a UI escape
-  hatch.
+- Little Codex needs a per-instance SQLite workspace for manipulation: joins,
+  grouping, filtering, pivots, and repeatable intermediate tables. This is a
+  general Capsem data primitive, not just a slide/deck helper. It should feed
+  typed sheets/tables/charts; it should not become a UI escape hatch.
 - Since Capsem exposes its own local MCP, the first SQLite workbench surface
   should be MCP tools for agents. Plugin context methods can wrap the same Rust
   service later.
@@ -50,8 +50,9 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
 
 Capsem needs a typed spreadsheet-to-slide-deck lane:
 
-- `context.data.sqlite` creates a constrained scratch database for report data
-  manipulation before rendering.
+- `context.data.sqlite` creates a constrained per-instance SQL workspace for
+  data manipulation before rendering, reporting, telemetry inspection, or
+  export.
 - `capsem.data.sqlite.*` MCP tools are the first authoring lane for little
   Codex; they can feed `capsem.ui.*` render tools and prove the contract before
   WASM plugins are wired.
