@@ -7,10 +7,10 @@
 - [ ] T0: Map every live enforcement callback to the event shape it evaluates.
 - [ ] T0a: Map every live detection callback/source to the event shape it evaluates.
 - [x] T1: Define and test the canonical `SecurityEvent` CEL projection for every event family.
-- [ ] T2: Rewire live model/MCP detection and enforcement callbacks to canonical events.
+- [x] T2: Rewire live model/MCP detection and enforcement callbacks to canonical events.
   Model request, model response, provider-emitted tool-call, and live MCP
-  request/response enforcement are wired; provider tool-result proof remains
-  open.
+  request/response enforcement are wired; request-side model tool-result
+  enforcement is now proven before upstream dispatch.
 - [x] T3: Remove model/MCP-to-HTTP rule lowering.
 - [ ] T4: Add abstraction-level regression tests.
   First semantic object-search regression added for HTTP, DNS, file, MCP
@@ -38,7 +38,7 @@ Fill this during T0.
 | Model request | Canonical `model.request` `SecurityEvent` from parsed provider request body before upstream dispatch | Canonical model request event | T2 request slice wired |
 | Model response | Canonical `model.response` `SecurityEvent` from parsed provider response body before guest delivery | Canonical model response event | T2 response slice wired |
 | Provider tool call | Canonical `model.response` event carries provider-emitted tool calls at `model.request.tool_calls[...]` before guest delivery | Canonical model tool-call event | T2 tool-call slice wired |
-| Provider tool result | Unknown | Canonical model tool-result event | Unmapped |
+| Provider/request tool result | Canonical `model.request` event carries returned tool results at `model.response.tool_results[...]` before upstream dispatch | Canonical model tool-result projection | T2 tool-result slice wired |
 | File activity | Unknown | Canonical file event | Unmapped |
 | Process activity | Unknown | Canonical process event | Unmapped |
 | Credential activity | Unknown | Canonical credential event | Unmapped |
@@ -113,7 +113,9 @@ Fill this during T0.
   `SecurityEventType`, made profile callback validation consume the same typed
   registry, removed stale pseudo-callbacks from the contract, and added
   SQLite `security_events` checks for known types plus family/type consistency.
-- T2 remains open for provider-emitted tool-result proof.
+- T2 final slice proves OpenAI-shaped tool-result messages can block before
+  upstream dispatch from the same canonical `model.request` event using parsed
+  tool-result metadata at `model.response.tool_results[...]`.
 
 ## Benchmark Gate
 
@@ -197,6 +199,10 @@ Unit/contract:
   request/body/response inline blocking still works and canonical
   `model.request` CEL rules block before upstream dispatch while canonical
   `model.response` and provider tool-call CEL rules block before guest delivery.
+- `cargo test -p capsem-core
+  runtime_security_engine_blocks_model_tool_result_before_upstream_dispatch`
+  proves OpenAI-shaped tool-result messages block before upstream dispatch from
+  canonical `model.response.tool_results[...]` on the `model.request` event.
 - `cargo test -p capsem-core settings_profiles::tests::` proves generated
   settings/Profile rules use canonical MCP CEL fields, including priority-0
   `allowed_tools` allow rules.
@@ -270,10 +276,10 @@ Performance:
 
 Missing/deferred:
 - T0 live callback map is still open.
-- T2 live callback rewire is partial: canonical `model.request`,
-  `model.response`, provider-emitted tool-call, and framed-MCP request/response
-  blocking are wired and tested. Provider tool-result proof remains open. T3
-  lowering/removal is done.
+- T2 live callback rewire is complete for the current fixture-backed surface:
+  canonical `model.request`, `model.response`, provider-emitted tool-call,
+  request-side model tool-result, and framed-MCP request/response blocking are
+  wired and tested. T3 lowering/removal is done.
 - T4/T5 provider-body hardening, integration proof, and session telemetry proof
   are still open.
 - T6 still needs full benchmark artifact execution and callback/parser/hunt

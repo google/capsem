@@ -48,7 +48,7 @@ This sprint verifies that diagnosis and then removes the second path.
 | --- | --- | --- | --- |
 | T0 | Event-Flow Map | Not Started | Every live enforcement callback is mapped to the event shape it evaluates. |
 | T1 | Canonical Projection Contract | Done | Detection and enforcement CEL bindings are defined from every canonical `SecurityEvent` family. |
-| T2 | Live Enforcement Rewire | In Progress | MITM/provider callbacks evaluate canonical model request/response/tool events; framed MCP request/response now evaluates canonical MCP events. |
+| T2 | Live Enforcement Rewire | Done | MITM/provider callbacks evaluate canonical model request/response/tool events; framed MCP request/response now evaluates canonical MCP events. |
 | T3 | Rule Compilation Cleanup | Done | Model/MCP rules are no longer rewritten into HTTP request/response predicates. |
 | T4 | Regression Tests | In Progress | Tests fail if model rules only work through HTTP-body compatibility fields. |
 | T5 | Integration Proof | Not Started | End-to-end proof shows canonical events drive block/detect/log behavior. |
@@ -122,11 +122,12 @@ Benchmark release hold:
   `model.request.*` CEL can block inline without relying on HTTP body fields.
 - T2 also wires canonical `model.response` enforcement before guest delivery,
   using the provider parser output and exposing parsed response text through
-  `model.response.body.text`. Provider tool-result enforcement remains a
-  release blocker.
+  `model.response.body.text`.
 - T2 proves provider-emitted tool-call blocking from that canonical
-  `model.response` event using `model.request.tool_calls[...]`. Provider
-  tool-result enforcement remains open.
+  `model.response` event using `model.request.tool_calls[...]`.
+- T2 also proves request-side model tool-result blocking before upstream
+  dispatch from the canonical `model.request` event using
+  `model.response.tool_results[...]`.
 - T4 now includes the first semantic object-search regression: canonical policy
   objects support direct `contains()`, `match()`, and `matches()` over HTTP,
   DNS, file path/content, MCP arguments, model tool-call arguments, and model

@@ -698,6 +698,76 @@ async fn runtime_security_engine_blocks_canonical_model_request_before_upstream_
 }
 
 #[tokio::test]
+async fn runtime_security_engine_blocks_model_tool_result_before_upstream_dispatch() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-model-tool-result-canonical".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "common.event_type == 'model.request' \
+                && model.response.tool_results[0].tool_call_id == 'call_secret' \
+                && model.response.tool_results[0].content_preview.contains('classified-tool-result') \
+                && model.response.tool_results[0].returned_to_model == true"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("canonical model tool-result block".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+    let (mut sender, proxy_task, conn_task) = open_direct_plain_http_request_conn(
+        &config,
+        "api.openai.com",
+        port,
+        Some(ProviderKind::OpenAi),
+    )
+    .await;
+    let request = Bytes::from(
+        r#"{"model":"gpt-test","messages":[{"role":"user","content":"hello"},{"role":"assistant","tool_calls":[{"id":"call_secret","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_secret","content":"classified-tool-result: token=abc"}]}"#,
+    );
+
+    let (status, body) = send_openai_json_request(
+        &mut sender,
+        "api.openai.com",
+        "/v1/chat/completions",
+        request,
+    )
+    .await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("canonical model tool-result block"));
+    upstream_task.await.unwrap();
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-model-tool-result-canonical")
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.event_type, se.final_action, steps.rule_id, steps.message \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("model.request"));
+    assert!(security.contains("block"));
+    assert!(security.contains("block-model-tool-result-canonical"));
+}
+
+#[tokio::test]
 async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
     let mut engine = SecurityEngine::default();
     engine.set_enforcement(Box::new(

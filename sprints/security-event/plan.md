@@ -168,9 +168,11 @@ upstream dispatch. The MITM response path now evaluates a canonical
 `model.response` event, derived from the decompressed provider response and
 parsed SSE summary, before guest delivery. Provider-emitted tool-call blocking
 is proven on the same canonical model response event through
-`model.request.tool_calls[...]`. The framed MCP path now evaluates canonical
-`mcp.request` and `mcp.response` events over parsed JSON-RPC frames and
-response bodies. Provider-emitted tool-result proof remains open.
+`model.request.tool_calls[...]`. Request-side model tool-result blocking is
+proven before upstream dispatch on the canonical `model.request` event through
+`model.response.tool_results[...]`. The framed MCP path now evaluates
+canonical `mcp.request` and `mcp.response` events over parsed JSON-RPC frames
+and response bodies.
 
 ## T3: Rule Compilation Cleanup
 

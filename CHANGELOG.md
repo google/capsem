@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serde-as-string roundtrips, strict parsing, family mapping, callback guards,
   constructor family checks, and SQLite `security_events` constraints that
   reject unknown event types and family/type mismatches for new DBs.
+- Added live MITM enforcement proof for canonical model tool results:
+  OpenAI-shaped tool-result messages now block before upstream dispatch through
+  `model.response.tool_results[...]` on the canonical `model.request` event.
 - Added canonical CEL policy-context roots for credential, VM, conversation,
   and snapshot security events so detection and enforcement rules can address
   those event families directly.
