@@ -222,8 +222,8 @@ or remote UI card.
 ## Spreadsheet To Slide Deck Track
 
 PM requirement: Capsem will eventually need to create spreadsheet data, derive
-charts from that data, embed charts/images/text into slides, and combine slides
-into a slide deck artifact.
+charts from that data, create diagrams, embed charts/images/text/diagrams into
+slides, and combine slides into a slide deck artifact.
 
 That is not part of the immediate plugin/WASM MVP, but it changes the UI
 catalog design now:
@@ -234,6 +234,10 @@ catalog design now:
   export considered later
 - slide objects need typed blocks for chart, image, text, table, and generated
   UI fragments
+- diagram objects should start with a Mermaid-backed variant because Mermaid is
+  text-native, reviewable, model-friendly, and exportable; the public API should
+  still be `ui.diagram`, not `ui.mermaid`, so Graphviz or first-party diagram
+  specs can be added later
 - slide decks need ordered slide composition, metadata, and deterministic export
   separate from the live Svelte renderer
 - the same Rust catalog types should feed chat, side panels, slides, and deck
@@ -254,10 +258,21 @@ const chart = ui.barChart("revenue_by_quarter", {
   stack: false,
 });
 
+const flow = ui.diagram("review_flow", {
+  kind: "mermaid",
+  source: `
+    flowchart LR
+      A[Model call] --> B{Policy review}
+      B -->|allow| C[Continue]
+      B -->|review| D[Ask user]
+  `,
+});
+
 const intro = ui.slide("exec_intro", {
   blocks: [
     ui.textBlock({ title: "Q4 Security Posture", body: "Revenue and risk view." }),
     ui.chartBlock(chart),
+    ui.diagramBlock(flow),
     ui.imageBlock({ src: "capsem://asset/logo" }),
   ],
 });
@@ -265,9 +280,9 @@ const intro = ui.slide("exec_intro", {
 await ui.slideDeck("board_packet").replace({ slides: [intro] });
 ```
 
-This track belongs beside chart/export work, not after it. If charts cannot
-round-trip from typed Rust spec to Svelte preview to deterministic exported
-asset, they will not be usable in decks.
+This track belongs beside chart/diagram/export work, not after it. If charts
+and diagrams cannot round-trip from typed Rust spec to Svelte preview to
+deterministic exported asset, they will not be usable in decks.
 
 ## Lowered Host Object
 
