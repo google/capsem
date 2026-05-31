@@ -36,6 +36,14 @@
   browser-backed previews and acceptance surfaces.
 - Media generation note captured: add `generate.image`, `generate.video`, and
   `generate.audio` as typed asset-producing APIs, not raw blob escapes.
+- Gemini spike note captured: implement `generate.*` first through Capsem MCP
+  backed by the existing Gemini API key, with explicit config errors when the
+  key is missing.
+- Multimodal generation note captured: image/video/audio generation should
+  accept typed asset inputs such as reference images, masks, clips, voice
+  samples, and timing/storyboard hints.
+- MCP grouping note captured: group tools by product noun as the surface grows:
+  data, ui, generate, asset, export, and web preview.
 
 ## Coverage Ledger
 
@@ -60,3 +68,5 @@
 - Missing/deferred: generated image/video/audio asset schemas, provider
   routing, storage, permissions, and export behavior need a media generation
   sprint.
+- Missing/deferred: provider configuration UI/policy for Gemini, OpenAI, local,
+  and future providers is intentionally out of the first Gemini-backed spike.

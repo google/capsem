@@ -309,11 +309,17 @@ Generated media should lower into the asset store before it enters UI:
 const hero = await generate.image("capsem_architecture_hero", {
   prompt: "clean technical illustration of an isolated security workspace",
   aspectRatio: "16:9",
+  inputs: [
+    { kind: "image", asset: "capsem://asset/reference_dashboard" },
+  ],
 });
 
 const narration = await generate.audio("deck_intro_voiceover", {
   text: "This deck summarizes the Q4 security posture.",
   voice: "neutral",
+  inputs: [
+    { kind: "audio", asset: "capsem://asset/reference_voice" },
+  ],
 });
 ```
 
@@ -321,6 +327,41 @@ Those handles can then be used by `ui.imageBlock`, future `ui.videoBlock`, and
 future `ui.audioBlock`, or exported into slides and decks. The generation APIs
 produce typed assets; they do not bypass the renderer, asset store, or export
 validation.
+
+First spike: implement the `generate` lane through Capsem MCP tools backed by
+Gemini, using the existing Capsem Gemini API key when it is present. If the key
+is unavailable, the tool should fail explicitly with a configuration error
+instead of silently selecting a different provider.
+
+Longer term, provider configuration is its own design question:
+
+- how users choose OpenAI, Gemini, local, or other media providers
+- which providers support image, video, audio, and multimodal inputs
+- how the UI displays provider availability, cost/latency, and failure state
+- how generated assets record provider/model/provenance without leaking secrets
+
+Generation tools need multimodal inputs from day one. Image generation may take
+reference images, masks, sketches, or screenshots. Video generation may take
+images, clips, timing hints, and storyboards. Audio generation may take text,
+voice references, existing audio, or timing cues. All inputs should be asset
+handles or typed inline content accepted by the Capsem MCP tools, not ad hoc
+paths or raw blobs.
+
+As the local MCP grows, tools should be grouped by product nouns:
+
+```text
+capsem.data.sqlite.*
+capsem.ui.*
+capsem.generate.image
+capsem.generate.video
+capsem.generate.audio
+capsem.asset.*
+capsem.export.*
+capsem.web.preview
+```
+
+The grouping keeps little Codex close to the Capsem API while still letting
+generic capabilities come from the sandbox or third-party MCPs.
 
 `web.preview` should be planned as a separate surface:
 

@@ -33,6 +33,15 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
 - `generate.image`, `generate.video`, and `generate.audio` should be native
   media-generation APIs that create typed assets for UI, chat, slides, and deck
   export.
+- The first `generate` spike should use Gemini through Capsem MCP when the
+  existing Gemini API key is configured. Provider routing across Gemini,
+  OpenAI, local, and other backends is a later configuration/UI problem.
+- Generation APIs must accept multimodal inputs through typed asset handles or
+  Capsem MCP payloads: reference images, masks, screenshots, clips, voice
+  references, existing audio, and timing/storyboard hints.
+- Capsem MCP tools need grouping by product noun as the surface expands:
+  `capsem.data.sqlite.*`, `capsem.ui.*`, `capsem.generate.*`,
+  `capsem.asset.*`, `capsem.export.*`, and `capsem.web.preview`.
 
 ## Files
 
@@ -71,6 +80,8 @@ Capsem needs a typed spreadsheet-to-slide-deck lane:
 - `ui.slideDeck` combines slides into an ordered deck artifact.
 - `generate.image`, `generate.video`, and `generate.audio` create asset handles
   that can be embedded by UI blocks and exported into decks.
+- The `generate` spike uses Gemini first if Capsem has the key configured, and
+  returns an explicit configuration error otherwise.
 - `web.preview` shows rendered pages/artifacts to the user and supports later
   acceptance checks.
 - Live preview can use Svelte/Preline/Web Components, but export must be
