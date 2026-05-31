@@ -187,6 +187,8 @@ Required constraints:
 - Gemini-backed `generate.image` works when configured and fails clearly when
   not configured.
 - SQLite data can feed table/sheet/chart specs.
+- Chart specs include at least two chart instances from the same SQLite
+  workspace before Plotly rendering/export is wired.
 - Plotly-backed chart preview and export are validated through typed specs.
 - Diagram preview/export works through the diagram API, with Mermaid as the
   first backend.

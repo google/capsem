@@ -26,6 +26,9 @@
 - Clarified that slide-deck preview uses Capsem-owned `<capsem-*>` components,
   while `web.preview` is reserved for website/page preview, and required
   individual artifact materialization during deck construction.
+- Added the first native deck-proof Rust/Python path with read-only SQLite
+  query support, individual artifact materialization, multiple chart specs, and
+  deterministic artifact handles.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance
