@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added a reusable `<capsem-elt>` Web Component foundation with Shadow DOM,
+  typed spec assignment, lifecycle cleanup, and composed Capsem event emission.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance
