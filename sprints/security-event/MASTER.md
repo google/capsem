@@ -46,7 +46,7 @@ This sprint verifies that diagnosis and then removes the second path.
 
 | Slice | Name | Status | Exit Criteria |
 | --- | --- | --- | --- |
-| T0 | Event-Flow Map | Not Started | Every live enforcement callback is mapped to the event shape it evaluates. |
+| T0 | Event-Flow Map | Done | Every live enforcement callback is mapped to the event shape it evaluates. |
 | T1 | Canonical Projection Contract | Done | Detection and enforcement CEL bindings are defined from every canonical `SecurityEvent` family. |
 | T2 | Live Enforcement Rewire | Done | MITM/provider callbacks evaluate canonical model request/response/tool events; framed MCP request/response now evaluates canonical MCP events. |
 | T3 | Rule Compilation Cleanup | Done | Model/MCP rules are no longer rewritten into HTTP request/response predicates. |
@@ -158,3 +158,8 @@ Benchmark release hold:
   `capsem_security_engine::SecurityEventType`. Callback validation, runtime
   rule guards, constructors, profile schema, and new `security_events` SQLite
   tables consume the same closed contract instead of parallel string lists.
+- T0/T0a mapped the current enforcement and detection surfaces. HTTP, DNS,
+  MCP, model, and process have live inline enforcement callbacks; file emits
+  canonical ledger events for session detection; credential, VM, profile,
+  conversation, and snapshot are supported by contract/session reconstruction
+  but still need live producers.

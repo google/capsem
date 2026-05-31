@@ -4,8 +4,8 @@
 
 - [x] Create `security-event` branch from `origin/main`.
 - [x] Create sprint plan/tracker/master docs.
-- [ ] T0: Map every live enforcement callback to the event shape it evaluates.
-- [ ] T0a: Map every live detection callback/source to the event shape it evaluates.
+- [x] T0: Map every live enforcement callback to the event shape it evaluates.
+- [x] T0a: Map every live detection callback/source to the event shape it evaluates.
 - [x] T1: Define and test the canonical `SecurityEvent` CEL projection for every event family.
 - [x] T2: Rewire live model/MCP detection and enforcement callbacks to canonical events.
   Model request, model response, provider-emitted tool-call, and live MCP
@@ -26,26 +26,33 @@
 
 ## Callback-To-Event Map
 
-Fill this during T0.
-
 | Callback / Source | Current Event Evaluated | Target Event | Status |
 | --- | --- | --- | --- |
 | HTTP request MITM | Canonical `http.request` `SecurityEvent` via `telemetry_hook::build_http_security_event` | Canonical network/HTTP request event | Mapped |
 | HTTP response MITM | Canonical `http.response` `SecurityEvent` via `telemetry_hook::build_http_response_security_event` | Canonical network/HTTP response event | Mapped |
-| DNS | Unknown | Canonical DNS event | Unmapped |
+| DNS | Canonical `dns.request` `SecurityEvent` via `capsem-process/src/vsock.rs` before DNS transport; fallback ledger event via `build_dns_resolved_security_event` | Canonical DNS request event | Live inline enforcement mapped |
 | MCP request/tool | Canonical `mcp.request` `SecurityEvent` built from parsed JSON-RPC frame before MCP dispatch | Canonical MCP request event | T2 MCP request slice wired |
 | MCP response/result | Canonical `mcp.response` `SecurityEvent` built from parsed JSON-RPC response before guest delivery | Canonical MCP response event | T2 MCP response slice wired |
 | Model request | Canonical `model.request` `SecurityEvent` from parsed provider request body before upstream dispatch | Canonical model request event | T2 request slice wired |
 | Model response | Canonical `model.response` `SecurityEvent` from parsed provider response body before guest delivery | Canonical model response event | T2 response slice wired |
 | Provider tool call | Canonical `model.response` event carries provider-emitted tool calls at `model.request.tool_calls[...]` before guest delivery | Canonical model tool-call event | T2 tool-call slice wired |
 | Provider/request tool result | Canonical `model.request` event carries returned tool results at `model.response.tool_results[...]` before upstream dispatch | Canonical model tool-result projection | T2 tool-result slice wired |
-| File activity | Unknown | Canonical file event | Unmapped |
-| Process activity | Unknown | Canonical process event | Unmapped |
-| Credential activity | Unknown | Canonical credential event | Unmapped |
-| VM lifecycle | Unknown | Canonical VM event | Unmapped |
-| Profile update | Unknown | Canonical profile event | Unmapped |
-| Conversation activity | Unknown | Canonical conversation event | Unmapped |
-| Snapshot activity | Unknown | Canonical snapshot event | Unmapped |
+| File activity | Canonical `file.activity` resolved event via `capsem-core/src/fs_monitor.rs` and MCP file-tool restore/delete logging; no inline file enforcement callback yet | Canonical file event | Ledger/session-detection mapped; inline enforcement not currently produced |
+| Process activity | Canonical `process.exec` `SecurityEvent` via `capsem-process-engine::evaluate_exec_security_event` before guest exec delivery | Canonical process event | Live inline enforcement mapped |
+| Credential activity | No live producer found; canonical projection and session reconstruction support `credential.activity` / `credential.request` if persisted | Canonical credential event | Contract/session-detection mapped; producer gap |
+| VM lifecycle | No live producer found for `vm.start` / `vm.create`; service session reconstruction supports persisted VM lifecycle events | Canonical VM event | Contract/session-detection mapped; producer gap |
+| Profile update | No live producer found for `profile.update`; service session reconstruction supports persisted profile events | Canonical profile event | Contract/session-detection mapped; producer gap |
+| Conversation activity | No live producer found for `conversation.message`; service session reconstruction supports persisted conversation events | Canonical conversation event | Contract/session-detection mapped; producer gap |
+| Snapshot activity | No live producer found for `snapshot.create`; service session reconstruction supports persisted snapshot events | Canonical snapshot event | Contract/session-detection mapped; producer gap |
+
+## Detection Source Map
+
+| Source | Event Shape | Detection Path | Status |
+| --- | --- | --- | --- |
+| Runtime detection/backtest request payloads | Caller-provided typed `SecurityEvent` / `RuntimeBacktestEvent` | `capsem-security-engine::run_detection_backtest` / `run_detection_hunt` | Mapped |
+| Session `security_events` ledger | Reconstructed canonical `SecurityEvent` via `session_security_event_from_row` | `handle_session_detection_hunt` -> `run_detection_hunt` | Mapped |
+| HTTP/DNS/MCP/model/file/process rows emitted by live engines | Persisted as `security_events` through `WriteOp::ResolvedSecurityEvent` | Session hunt and policy-context export reconstruct canonical events | Mapped |
+| Credential/VM/profile/conversation/snapshot rows | Supported only when a `security_events` row exists; no live producer found in this slice | Session hunt and policy-context export reconstruct canonical events | Producer gap, not detection gap |
 
 ## Notes
 
@@ -116,6 +123,11 @@ Fill this during T0.
 - T2 final slice proves OpenAI-shaped tool-result messages can block before
   upstream dispatch from the same canonical `model.request` event using parsed
   tool-result metadata at `model.response.tool_results[...]`.
+- T0/T0a source map is complete for the current codebase. Remaining
+  credential, VM, profile, conversation, and snapshot gaps are producer gaps:
+  the typed contract, CEL projection, SQLite ledger, session reconstruction,
+  and detection hunt support those families when rows exist, but this slice did
+  not find live emitters for them.
 
 ## Benchmark Gate
 
@@ -275,11 +287,13 @@ Performance:
   `just benchmark-compare` remain required before any performance claim.
 
 Missing/deferred:
-- T0 live callback map is still open.
 - T2 live callback rewire is complete for the current fixture-backed surface:
   canonical `model.request`, `model.response`, provider-emitted tool-call,
   request-side model tool-result, and framed-MCP request/response blocking are
   wired and tested. T3 lowering/removal is done.
+- Credential, VM, profile, conversation, and snapshot remain live producer
+  gaps. They are first-party in the contract/projection/session-detection path,
+  but no live emitter was found in this T0/T0a mapping pass.
 - T4/T5 provider-body hardening, integration proof, and session telemetry proof
   are still open.
 - T6 still needs full benchmark artifact execution and callback/parser/hunt
