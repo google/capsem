@@ -43,6 +43,12 @@
 - Added a live native artifact workspace with reset/list/render behavior so
   step-by-step tool calls can build an interactive slide deck visible on
   `/deck` without changing code.
+- Added the first Gemini-backed image generation path with typed missing-key
+  and provider-error artifact states, plus live native telemetry records for
+  artifact construction calls.
+- Added Plotly and Mermaid preview/export adapters for native chart and diagram
+  artifacts, and an MCP-shaped native tool descriptor endpoint for the eventual
+  local tool wrapper.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

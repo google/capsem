@@ -3,7 +3,7 @@
 ## Tasks
 
 - [x] Write sprint plan and tracker.
-- [ ] Decide MCP naming after testing real client behavior.
+- [x] Decide MCP naming after testing real client behavior.
 - [x] Define Rust webserver routes for native Capsem APIs.
 - [x] Add tiny Python client library that calls the Rust routes.
 - [x] Expose contract calls for `generate.image`, sheet, table, chart,
@@ -11,9 +11,9 @@
 - [x] Persist native artifact tool calls in a live workspace for step-by-step
   `/deck` preview.
 - [x] Add SQLite data workspace proof.
-- [ ] Add Plotly chart spec/render/export proof.
-- [ ] Add Mermaid diagram spec/render/export proof.
-- [ ] Add Gemini-backed `generate.image` proof.
+- [x] Add Plotly chart spec/render/export proof.
+- [x] Add Mermaid diagram spec/render/export proof.
+- [x] Add Gemini-backed `generate.image` proof.
 - [x] Add generated asset store handles.
 - [x] Add individual artifact materialization for generated image, sheet,
   table, chart, diagram, slide, and deck.
@@ -69,6 +69,15 @@
   /native/workspace/reset` clears it, construction routes insert artifacts, and
   `/native/deck-proof` falls back to the Realms demo only when the workspace is
   empty.
+- MCP naming for this spike is flattened `local__group_tool`, matching the
+  current Capsem aggregator shape. `/native/mcp/tools` exposes route-to-tool
+  descriptors for the future wrapper.
+- Gemini uses `CAPSEM_GEMINI_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`.
+  The current environment has no key, so live generation returns a typed
+  `configMissing` media artifact instead of failing the deck.
+- Plotly and Mermaid render in the `<capsem-*>` adapter layer and expose local
+  SVG/PNG export buttons. Plotly's chunk is large and remains performance debt
+  for a later renderer-packaging pass.
 
 ## Coverage Ledger
 
@@ -88,14 +97,23 @@
   calls, `/native/deck-proof` returned `Live Tool Deck` with 5 artifacts and 1
   slide; Chrome `/deck?v=workspace` rendered that same live deck with one
   `<capsem-slide-deck>`.
+- Provider/telemetry acceptance: with no Gemini key present, `generate.image`
+  returned status `configMissing`; `/native/telemetry` recorded data, generate,
+  chart, diagram, slide, and slideDeck operations with durations and status.
+- Renderer acceptance: Chrome `/deck?v=final-render` loaded the tool-built
+  `Final Tool Deck`; the selected chart mounted Plotly and exposed SVG/PNG
+  export buttons; the selected diagram mounted Mermaid SVG and exposed SVG
+  export.
 - Adversarial: Rust test rejects non-SELECT SQL in the demo workspace.
 - E2E/UI: Chrome `/deck?v=fix` rendered "The Realms Of Code", registered
   `<capsem-slide-deck>`, showed 22 artifact controls, and mounted the custom
   deck component. Chrome `/deck?v=workspace` rendered the tool-built live
   workspace deck without code changes.
-- Telemetry: pending.
-- Performance: pending.
-- Missing/deferred: real Plotly rendering/export, Mermaid rendering/export,
-  Gemini provider call, provider routing UI, final MCP naming, sandboxed frame
-  renderer fallback, full deck export formats, website-oriented `web.preview`,
-  and plugin/WASM binding.
+- Telemetry: native construction routes append in-memory telemetry events with
+  operation, artifact id, kind, duration, and status.
+- Performance: Vite build warns that Plotly is a large lazy chunk; renderer
+  packaging and worker/frame isolation remain follow-up work.
+- Missing/deferred: live Gemini success path needs a configured key, provider
+  routing UI, sandboxed frame renderer fallback, full deck export formats,
+  website-oriented `web.preview`, real MCP server registration, and plugin/WASM
+  binding.

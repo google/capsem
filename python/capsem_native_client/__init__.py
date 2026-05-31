@@ -61,6 +61,12 @@ class NativeApi:
     def artifact(self, artifact_id: str) -> dict[str, Any]:
         return self.client._request("GET", f"/native/artifacts/{artifact_id}")
 
+    def telemetry(self) -> list[dict[str, Any]]:
+        return self.client._request("GET", "/native/telemetry")
+
+    def mcp_tools(self) -> dict[str, Any]:
+        return self.client._request("GET", "/native/mcp/tools")
+
 
 @dataclass(frozen=True)
 class DataApi:

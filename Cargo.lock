@@ -224,6 +224,7 @@ dependencies = [
  "axum",
  "capsem-plugin-engine",
  "capsem-ui-catalog",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

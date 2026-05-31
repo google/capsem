@@ -36,6 +36,8 @@
   },
   "dependencies": {
     "@napi-rs/blake-hash": "^1.3.6",
+    "mermaid": "^11.15.0",
+    "plotly.js-dist-min": "^3.5.1",
     "preline": "^4.2.0"
   }
 }

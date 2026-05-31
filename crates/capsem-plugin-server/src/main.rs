@@ -1,7 +1,7 @@
 mod ui_preview;
 mod ui_tools;
 
-use std::{collections::BTreeMap, env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, env, net::SocketAddr, path::PathBuf, sync::Arc, time::Instant};
 
 use anyhow::Context;
 use axum::{
@@ -32,12 +32,23 @@ struct AppState {
     registry: Arc<PluginRegistry>,
     authored_ui: Arc<RwLock<Option<UiToolProgramResult>>>,
     native_workspace: Arc<RwLock<NativeWorkspace>>,
+    telemetry: Arc<RwLock<Vec<NativeTelemetryEvent>>>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct NativeWorkspace {
     artifacts: BTreeMap<String, NativeArtifact>,
     deck_id: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTelemetryEvent {
+    operation: String,
+    artifact_id: String,
+    kind: NativeArtifactKind,
+    duration_ms: u128,
+    status: String,
 }
 
 impl NativeWorkspace {
@@ -154,6 +165,7 @@ async fn main() -> anyhow::Result<()> {
         }),
         authored_ui: Arc::new(RwLock::new(None)),
         native_workspace: Arc::new(RwLock::new(NativeWorkspace::default())),
+        telemetry: Arc::new(RwLock::new(Vec::new())),
     };
 
     let app = app(state);
@@ -180,6 +192,8 @@ fn app(state: AppState) -> Router {
         .route("/ui/tools/acceptance", get(ui_tools::acceptance))
         .route("/native/deck-proof", get(native_deck_proof))
         .route("/native/workspace/reset", post(native_workspace_reset))
+        .route("/native/telemetry", get(native_telemetry))
+        .route("/native/mcp/tools", get(native_mcp_tools))
         .route("/native/artifacts", get(native_artifacts))
         .route("/native/artifacts/:id", get(native_artifact))
         .route("/native/data/sqlite/query", post(native_sqlite_query))
@@ -223,10 +237,35 @@ async fn native_deck_proof(
 
 async fn native_workspace_reset(State(state): State<AppState>) -> Json<serde_json::Value> {
     *state.native_workspace.write().await = NativeWorkspace::default();
+    state.telemetry.write().await.clear();
     Json(json!({
         "ok": true,
         "workspace": "native-artifacts",
         "artifacts": 0
+    }))
+}
+
+async fn native_telemetry(State(state): State<AppState>) -> Json<Vec<NativeTelemetryEvent>> {
+    Json(state.telemetry.read().await.clone())
+}
+
+async fn native_mcp_tools() -> Json<serde_json::Value> {
+    Json(json!({
+        "ok": true,
+        "namespace": "local",
+        "tools": [
+            {"name": "local__native_workspace_reset", "route": "POST /native/workspace/reset"},
+            {"name": "local__data_sqlite_query", "route": "POST /native/data/sqlite/query"},
+            {"name": "local__data_sheet", "route": "POST /native/data/sheet"},
+            {"name": "local__generate_image", "route": "POST /native/generate/image"},
+            {"name": "local__ui_table", "route": "POST /native/ui/table"},
+            {"name": "local__ui_chart", "route": "POST /native/ui/chart"},
+            {"name": "local__ui_diagram", "route": "POST /native/ui/diagram"},
+            {"name": "local__ui_slide", "route": "POST /native/ui/slide"},
+            {"name": "local__ui_slide_deck", "route": "POST /native/ui/slide-deck"},
+            {"name": "local__native_render_artifact", "route": "POST /native/ui/render-artifact"},
+            {"name": "local__native_telemetry", "route": "GET /native/telemetry"}
+        ]
     }))
 }
 
@@ -275,9 +314,12 @@ async fn native_create_sheet(
     State(state): State<AppState>,
     Json(request): Json<SheetRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
     store_artifact(
         &state,
         create_sheet(request).map_err(NativeApiError::bad_request)?,
+        "data.sheet",
+        started,
     )
     .await
 }
@@ -286,9 +328,14 @@ async fn native_generate_image(
     State(state): State<AppState>,
     Json(request): Json<GenerateImageRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
     store_artifact(
         &state,
-        generate_image(request).map_err(NativeApiError::bad_request)?,
+        generate_image_provider(request)
+            .await
+            .map_err(NativeApiError::bad_request)?,
+        "generate.image",
+        started,
     )
     .await
 }
@@ -297,9 +344,12 @@ async fn native_create_table(
     State(state): State<AppState>,
     Json(request): Json<TableRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
     store_artifact(
         &state,
         create_table(request).map_err(NativeApiError::bad_request)?,
+        "ui.table",
+        started,
     )
     .await
 }
@@ -308,9 +358,12 @@ async fn native_create_chart(
     State(state): State<AppState>,
     Json(request): Json<ChartRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
     store_artifact(
         &state,
         create_chart(request).map_err(NativeApiError::bad_request)?,
+        "ui.chart",
+        started,
     )
     .await
 }
@@ -319,9 +372,12 @@ async fn native_create_diagram(
     State(state): State<AppState>,
     Json(request): Json<DiagramRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
     store_artifact(
         &state,
         create_diagram(request).map_err(NativeApiError::bad_request)?,
+        "ui.diagram",
+        started,
     )
     .await
 }
@@ -330,9 +386,12 @@ async fn native_create_slide(
     State(state): State<AppState>,
     Json(request): Json<SlideRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
     store_artifact(
         &state,
         create_slide(request).map_err(NativeApiError::bad_request)?,
+        "ui.slide",
+        started,
     )
     .await
 }
@@ -341,8 +400,9 @@ async fn native_create_slide_deck(
     State(state): State<AppState>,
     Json(request): Json<SlideDeckRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
     let (_, artifact) = create_slide_deck(request).map_err(NativeApiError::bad_request)?;
-    store_artifact(&state, artifact).await
+    store_artifact(&state, artifact, "ui.slideDeck", started).await
 }
 
 async fn native_render_artifact(
@@ -371,13 +431,103 @@ async fn native_render_artifact(
 async fn store_artifact(
     state: &AppState,
     artifact: NativeArtifact,
+    operation: &str,
+    started: Instant,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
     state
         .native_workspace
         .write()
         .await
         .insert(artifact.clone());
+    state.telemetry.write().await.push(NativeTelemetryEvent {
+        operation: operation.to_owned(),
+        artifact_id: artifact.id.clone(),
+        kind: artifact.kind,
+        duration_ms: started.elapsed().as_millis(),
+        status: artifact.spec["status"].as_str().unwrap_or("ok").to_owned(),
+    });
     Ok(Json(artifact))
+}
+
+async fn generate_image_provider(request: GenerateImageRequest) -> Result<NativeArtifact, String> {
+    let mut artifact = generate_image(request.clone())?;
+    if request.provider != "gemini" {
+        artifact.spec["status"] = json!("planned");
+        artifact.spec["note"] = json!("only the Gemini provider path is wired in this spike");
+        return Ok(artifact);
+    }
+
+    let Some(api_key) = gemini_api_key() else {
+        artifact.spec["status"] = json!("configMissing");
+        artifact.spec["error"] =
+            json!("missing CAPSEM_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY");
+        return Ok(artifact);
+    };
+    let model = env::var("CAPSEM_GEMINI_IMAGE_MODEL")
+        .unwrap_or_else(|_| "gemini-2.5-flash-image".to_owned());
+    let url =
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
+    let body = json!({
+        "contents": [{
+            "parts": [{"text": request.prompt}]
+        }],
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"]
+        }
+    });
+    let client = reqwest::Client::new();
+    let response = client
+        .post(url)
+        .header("x-goog-api-key", api_key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    if !status.is_success() {
+        artifact.spec["status"] = json!("providerError");
+        artifact.spec["error"] = json!(payload);
+        return Ok(artifact);
+    }
+
+    let parts = payload["candidates"][0]["content"]["parts"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let inline = parts
+        .iter()
+        .find_map(|part| part.get("inlineData").or_else(|| part.get("inline_data")));
+    let text = parts
+        .iter()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if let Some(inline) = inline {
+        let mime = inline["mimeType"]
+            .as_str()
+            .or_else(|| inline["mime_type"].as_str())
+            .unwrap_or("image/png");
+        let data = inline["data"].as_str().unwrap_or_default();
+        artifact.spec["status"] = json!("generated");
+        artifact.spec["providerModel"] = json!(model);
+        artifact.spec["mimeType"] = json!(mime);
+        artifact.spec["dataUrl"] = json!(format!("data:{mime};base64,{data}"));
+        if !text.is_empty() {
+            artifact.spec["generatedText"] = json!(text);
+        }
+    } else {
+        artifact.spec["status"] = json!("providerError");
+        artifact.spec["error"] = json!("Gemini response did not contain inline image data");
+        artifact.spec["providerResponse"] = payload;
+    }
+    Ok(artifact)
+}
+
+fn gemini_api_key() -> Option<String> {
+    ["CAPSEM_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        .into_iter()
+        .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
 }
 
 #[derive(Debug, serde::Deserialize)]

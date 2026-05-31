@@ -17,6 +17,10 @@ class CapsemNativeClientTest(unittest.TestCase):
                 return [{"id": "chart-revenue-by-quarter"}]
             if path == "/native/artifacts/chart-revenue-by-quarter":
                 return {"id": "chart-revenue-by-quarter"}
+            if path == "/native/telemetry":
+                return [{"operation": "ui.chart"}]
+            if path == "/native/mcp/tools":
+                return {"tools": [{"name": "local__ui_chart"}]}
             if path == "/native/data/sqlite/query":
                 return {"ok": True, "rows": [{"quarter": "Q1"}]}
             if path == "/native/data/sheet":
@@ -43,6 +47,8 @@ class CapsemNativeClientTest(unittest.TestCase):
         self.assertEqual(client.native.deck_proof()["summary"]["chartCount"], 2)
         self.assertEqual(client.native.artifacts()[0]["id"], "chart-revenue-by-quarter")
         self.assertEqual(client.native.artifact("chart-revenue-by-quarter")["id"], "chart-revenue-by-quarter")
+        self.assertEqual(client.native.telemetry()[0]["operation"], "ui.chart")
+        self.assertEqual(client.native.mcp_tools()["tools"][0]["name"], "local__ui_chart")
         self.assertEqual(client.data.sqlite.query("select 1")["rows"][0]["quarter"], "Q1")
         self.assertEqual(
             client.ui.sheet(
@@ -111,12 +117,14 @@ class CapsemNativeClientTest(unittest.TestCase):
         self.assertEqual(client.ui.render_artifact("chart-revenue-by-quarter")["component"], "capsem-chart")
 
         self.assertEqual(
-            calls[:4],
+            calls[:6],
             [
                 ("POST", "/native/workspace/reset", {}),
                 ("GET", "/native/deck-proof", None),
                 ("GET", "/native/artifacts", None),
                 ("GET", "/native/artifacts/chart-revenue-by-quarter", None),
+                ("GET", "/native/telemetry", None),
+                ("GET", "/native/mcp/tools", None),
             ],
         )
         self.assertIn(("POST", "/native/data/sqlite/query", {"sql": "select 1"}), calls)
