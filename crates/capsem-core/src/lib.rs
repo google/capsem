@@ -1,5 +1,6 @@
 pub mod asset_manager;
 pub mod auto_snapshot;
+pub mod build_info;
 pub mod fs_monitor;
 pub mod host_config;
 pub mod host_state;

@@ -68,6 +68,9 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if capsem_core::build_info::maybe_print_json_and_exit("capsem-gateway")? {
+        return Ok(());
+    }
     let args = Args::parse();
     let run_dir = args
         .run_dir
@@ -210,9 +213,13 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let build = capsem_core::build_info::BuildInfo::current("capsem-gateway");
     Json(serde_json::json!({
         "ok": true,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": build.version,
+        "protocol_version": build.protocol_version,
+        "schema_hash": build.schema_hash,
+        "build_ts": build.build_ts,
         "service_socket": state.uds_path.display().to_string(),
     }))
 }

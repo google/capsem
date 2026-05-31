@@ -686,6 +686,57 @@ async fn host_binary_version_check_reports_stale_process_binary() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn host_binary_version_check_reports_same_version_schema_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let service_bin = dir.path().join("capsem-service");
+    let process_bin = dir.path().join("capsem-process");
+    write_executable_script(
+        &service_bin,
+        &format!(
+            "#!/bin/sh\nprintf 'capsem-service {}\\n'\n",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+    write_executable_script(
+        &process_bin,
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--build-info-json" ]; then
+  printf '%s\n' '{{"binary":"capsem-process","version":"{}","protocol_version":{},"schema_hash":"deadbeefdeadbeef","build_ts":"test"}}'
+else
+  printf 'capsem-process {}\n'
+fi
+"#,
+            env!("CARGO_PKG_VERSION"),
+            capsem_core::capsem_proto::PROTOCOL_VERSION,
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+
+    let paths = crate::paths::CapsemPaths {
+        cli_bin: dir.path().join("capsem"),
+        service_bin,
+        process_bin,
+        mcp_bin: dir.path().join("capsem-mcp"),
+        mcp_aggregator_bin: dir.path().join("capsem-mcp-aggregator"),
+        mcp_builtin_bin: dir.path().join("capsem-mcp-builtin"),
+        gateway_bin: dir.path().join("capsem-gateway"),
+        tray_bin: dir.path().join("capsem-tray"),
+        assets_dir: dir.path().join("assets"),
+    };
+
+    let issues = super::check_host_binary_versions(&paths).await;
+    assert!(matches!(
+        issues.as_slice(),
+        [super::HealthIssue::HostBinaryVersionMismatch { name, .. }] if *name == "capsem-process"
+    ));
+    let report = issues[0].to_report();
+    assert_eq!(report.details["actual_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(report.details["actual_schema_hash"], "deadbeefdeadbeef");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn host_binary_version_check_reports_stale_gateway_and_tray() {
     let dir = tempfile::tempdir().unwrap();
     let service_bin = dir.path().join("capsem-service");

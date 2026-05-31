@@ -278,6 +278,10 @@ pub enum HealthIssue {
         path: PathBuf,
         actual_version: String,
         expected_version: String,
+        actual_protocol_version: Option<u16>,
+        expected_protocol_version: Option<u16>,
+        actual_schema_hash: Option<String>,
+        expected_schema_hash: Option<String>,
     },
     ServiceUnitMissing,
     ServiceUnitUnreadable {
@@ -401,11 +405,27 @@ impl HealthIssue {
                 path,
                 actual_version,
                 expected_version,
+                actual_protocol_version,
+                expected_protocol_version,
+                actual_schema_hash,
+                expected_schema_hash,
             } => {
                 details.insert("name", (*name).to_string());
                 details.insert("path", path.display().to_string());
                 details.insert("actual_version", actual_version.clone());
                 details.insert("expected_version", expected_version.clone());
+                if let Some(version) = actual_protocol_version {
+                    details.insert("actual_protocol_version", version.to_string());
+                }
+                if let Some(version) = expected_protocol_version {
+                    details.insert("expected_protocol_version", version.to_string());
+                }
+                if let Some(hash) = actual_schema_hash {
+                    details.insert("actual_schema_hash", hash.clone());
+                }
+                if let Some(hash) = expected_schema_hash {
+                    details.insert("expected_schema_hash", hash.clone());
+                }
             }
             HealthIssue::ServiceUnitUnreadable { unit_path, error } => {
                 details.insert("unit_path", unit_path.display().to_string());
@@ -495,13 +515,18 @@ impl fmt::Display for HealthIssue {
                 path,
                 actual_version,
                 expected_version,
+                actual_schema_hash,
+                expected_schema_hash,
+                ..
             } => write!(
                 f,
-                "Host binary version mismatch: {} ({}) is v{}, expected v{}",
+                "Host binary compatibility mismatch: {} ({}) is v{} schema {}, expected v{} schema {}",
                 name,
                 path.display(),
                 actual_version,
-                expected_version
+                actual_schema_hash.as_deref().unwrap_or("unknown"),
+                expected_version,
+                expected_schema_hash.as_deref().unwrap_or("unknown")
             ),
             HealthIssue::ServiceUnitMissing => {
                 write!(f, "Service unit is not installed")
@@ -936,12 +961,13 @@ async fn check_service_health_from_status(
     let home = crate::paths::capsem_home().unwrap_or_default();
     let sock = home.join("run/service.sock");
     let my_version = env!("CARGO_PKG_VERSION");
+    let current_build = capsem_core::build_info::BuildInfo::current("capsem");
 
-    match service_version(&sock).await {
-        Some(ref v) if v == my_version => {}
-        Some(ref v) => issues.push(HealthIssue::ServiceStale {
-            running_version: v.clone(),
-            binary_version: my_version.to_string(),
+    match service_build_info(&sock).await {
+        Some(ref info) if runtime_build_info_compatible(info, my_version) => {}
+        Some(ref info) => issues.push(HealthIssue::ServiceStale {
+            running_version: describe_build_info(info),
+            binary_version: describe_build_info(&current_build),
         }),
         None => issues.push(HealthIssue::ServiceEndpointUnavailable),
     }
@@ -956,11 +982,11 @@ async fn check_service_health_from_status(
             let port = port_str.trim();
             let token = token.trim();
             match gateway_status(port, token).await {
-                (Some(ref v), true) if v == my_version => {}
-                (Some(ref v), true) => {
+                (Some(ref info), true) if runtime_build_info_compatible(info, my_version) => {}
+                (Some(ref info), true) => {
                     issues.push(HealthIssue::GatewayStale {
-                        running_version: v.clone(),
-                        binary_version: my_version.to_string(),
+                        running_version: describe_build_info(info),
+                        binary_version: describe_build_info(&current_build),
                     });
                 }
                 (Some(_), false) => {
@@ -1068,10 +1094,30 @@ async fn host_binary_version_mismatch(name: &'static str, path: &Path) -> Option
     }
 
     let expected_version = env!("CARGO_PKG_VERSION").to_string();
-    let actual_version = helper_binary_version(path)
-        .await
-        .unwrap_or_else(|| "unknown".to_string());
-    if actual_version == expected_version {
+    let expected_protocol_version = capsem_core::capsem_proto::PROTOCOL_VERSION;
+    let expected_schema_hash = capsem_core::build_info::schema_hash_hex();
+    let build_info =
+        capsem_core::build_info::query_binary(path, std::time::Duration::from_secs(2)).await;
+
+    let actual_version = match build_info.as_ref() {
+        Some(info) => info.version.clone(),
+        None => helper_binary_version(path)
+            .await
+            .unwrap_or_else(|| "unknown".to_string()),
+    };
+    let actual_protocol_version = build_info.as_ref().map(|info| info.protocol_version);
+    let actual_schema_hash = build_info.as_ref().map(|info| info.schema_hash.clone());
+
+    let version_matches = actual_version == expected_version;
+    let protocol_matches = build_info
+        .as_ref()
+        .map(|info| {
+            info.protocol_version == expected_protocol_version
+                && info.schema_hash == expected_schema_hash
+        })
+        .unwrap_or(true);
+
+    if version_matches && protocol_matches {
         return None;
     }
 
@@ -1080,6 +1126,10 @@ async fn host_binary_version_mismatch(name: &'static str, path: &Path) -> Option
         path: path.to_path_buf(),
         actual_version,
         expected_version,
+        actual_protocol_version,
+        expected_protocol_version: build_info.as_ref().map(|_| expected_protocol_version),
+        actual_schema_hash,
+        expected_schema_hash: build_info.as_ref().map(|_| expected_schema_hash),
     })
 }
 
@@ -1452,12 +1502,16 @@ async fn print_service_and_gateway_status() {
     let home = crate::paths::capsem_home().unwrap_or_default();
     let sock = home.join("run/service.sock");
     let my_version = env!("CARGO_PKG_VERSION");
+    let current_build = capsem_core::build_info::BuildInfo::current("capsem");
 
-    match service_version(&sock).await {
-        Some(ref v) if v == my_version => println!("Service:   ok (v{})", v),
-        Some(ref v) => println!(
+    match service_build_info(&sock).await {
+        Some(ref info) if runtime_build_info_compatible(info, my_version) => {
+            println!("Service:   ok ({})", describe_build_info(info))
+        }
+        Some(ref info) => println!(
             "Service:   STALE (running v{}, binary is v{}) -- restart service",
-            v, my_version
+            describe_build_info(info),
+            describe_build_info(&current_build)
         ),
         None => println!("Service:   STALE (socket dead or no /version endpoint)"),
     }
@@ -1472,13 +1526,18 @@ async fn print_service_and_gateway_status() {
             let port = port_str.trim();
             let token = token.trim();
             match gateway_status(port, token).await {
-                (Some(ref v), true) if v == my_version => {
-                    println!("Gateway:   ok (port {}, v{})", port, v);
+                (Some(ref info), true) if runtime_build_info_compatible(info, my_version) => {
+                    println!(
+                        "Gateway:   ok (port {}, {})",
+                        port,
+                        describe_build_info(info)
+                    );
                 }
-                (Some(ref v), true) => {
+                (Some(ref info), true) => {
                     println!(
                         "Gateway:   STALE (running v{}, binary is v{}) -- restart service",
-                        v, my_version
+                        describe_build_info(info),
+                        describe_build_info(&current_build)
                     );
                 }
                 (Some(_), false) => {
@@ -1551,7 +1610,7 @@ async fn print_defunct_sessions(service_running: bool) {
     }
 }
 
-async fn service_version(sock: &Path) -> Option<String> {
+async fn service_build_info(sock: &Path) -> Option<capsem_core::build_info::BuildInfo> {
     let stream = tokio::net::UnixStream::connect(sock).await.ok()?;
     let (reader, mut writer) = tokio::io::split(stream);
     writer
@@ -1565,14 +1624,17 @@ async fn service_version(sock: &Path) -> Option<String> {
     let body = String::from_utf8_lossy(&buf);
     let json_start = body.find('{')?;
     let v: serde_json::Value = serde_json::from_str(&body[json_start..]).ok()?;
-    v.get("version")?.as_str().map(String::from)
+    build_info_from_json(v, "capsem-service")
 }
 
-async fn gateway_status(port: &str, token: &str) -> (Option<String>, bool) {
+async fn gateway_status(
+    port: &str,
+    token: &str,
+) -> (Option<capsem_core::build_info::BuildInfo>, bool) {
     let client = reqwest::Client::new();
 
     let health_url = format!("http://127.0.0.1:{}/health", port);
-    let gw_version: Option<String> = async {
+    let gw_version: Option<capsem_core::build_info::BuildInfo> = async {
         let r = client
             .get(&health_url)
             .timeout(std::time::Duration::from_secs(2))
@@ -1580,7 +1642,7 @@ async fn gateway_status(port: &str, token: &str) -> (Option<String>, bool) {
             .await
             .ok()?;
         let v: serde_json::Value = r.json().await.ok()?;
-        v.get("version")?.as_str().map(String::from)
+        build_info_from_json(v, "capsem-gateway")
     }
     .await;
 
@@ -1595,6 +1657,47 @@ async fn gateway_status(port: &str, token: &str) -> (Option<String>, bool) {
         .unwrap_or(false);
 
     (gw_version, token_ok)
+}
+
+fn build_info_from_json(
+    value: serde_json::Value,
+    binary: &str,
+) -> Option<capsem_core::build_info::BuildInfo> {
+    let version = value.get("version")?.as_str()?.to_string();
+    Some(capsem_core::build_info::BuildInfo {
+        binary: value
+            .get("binary")
+            .and_then(|v| v.as_str())
+            .unwrap_or(binary)
+            .to_string(),
+        version,
+        protocol_version: value
+            .get("protocol_version")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u16::try_from(v).ok())
+            .unwrap_or(0),
+        schema_hash: value
+            .get("schema_hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        build_ts: value
+            .get("build_ts")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+fn runtime_build_info_compatible(info: &capsem_core::build_info::BuildInfo, version: &str) -> bool {
+    info.version == version && info.protocol_compatible_with_current()
+}
+
+fn describe_build_info(info: &capsem_core::build_info::BuildInfo) -> String {
+    if info.schema_hash.is_empty() {
+        return info.version.clone();
+    }
+    format!("{} schema {}", info.version, info.schema_hash)
 }
 
 #[cfg(test)]

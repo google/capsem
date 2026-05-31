@@ -4,6 +4,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[cfg(unix)]
+fn write_executable_script(path: &std::path::Path, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, script).unwrap();
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
 #[test]
 fn pre_fork_guest_flush_command_freezes_and_syncs() {
     let command = pre_fork_guest_flush_command();
@@ -11,6 +21,35 @@ fn pre_fork_guest_flush_command_freezes_and_syncs() {
     assert!(!command.contains("fstrim"));
     assert!(command.contains("fsfreeze -f /"));
     assert!(command.contains("fsfreeze -u /"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn process_binary_compatibility_rejects_same_version_schema_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let process_bin = dir.path().join("capsem-process");
+    write_executable_script(
+        &process_bin,
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--build-info-json" ]; then
+  printf '%s\n' '{{"binary":"capsem-process","version":"{}","protocol_version":{},"schema_hash":"deadbeefdeadbeef","build_ts":"test"}}'
+else
+  printf 'capsem-process {}\n'
+fi
+"#,
+            env!("CARGO_PKG_VERSION"),
+            capsem_core::capsem_proto::PROTOCOL_VERSION,
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+
+    let err = verify_process_binary_compatible(&process_bin)
+        .await
+        .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("incompatible capsem-process"));
+    assert!(msg.contains("deadbeefdeadbeef"));
 }
 
 #[test]
@@ -6363,7 +6402,9 @@ async fn handle_create_profile_persists_user_profile() {
     assert_eq!(val["source"], serde_json::json!("user"));
     assert_eq!(val["locked"], serde_json::json!(false));
 
-    let Json(read_back) = handle_get_profile(Path("custom".to_string())).await.unwrap();
+    let Json(read_back) = handle_get_profile(Path("custom".to_string()))
+        .await
+        .unwrap();
     assert_eq!(read_back["profile"]["id"], serde_json::json!("custom"));
     assert_eq!(read_back["source"], serde_json::json!("user"));
 }

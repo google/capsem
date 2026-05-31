@@ -206,6 +206,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed same-version host binary drift so `capsem status` and service startup
+  compare IPC protocol/schema hashes, preventing suspend from failing against
+  an incompatible `capsem-process` that reports the same package version.
 - Fixed `capsem-tui` gateway refresh failure handling so unavailable live
   status clears stale VM tabs instead of preserving old sessions as actionable
   suspend/stop/delete targets, and now shows failed control actions in a popup

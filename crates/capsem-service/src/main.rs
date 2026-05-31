@@ -3993,6 +3993,31 @@ async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<S
     Ok(text)
 }
 
+async fn verify_process_binary_compatible(path: &FsPath) -> Result<()> {
+    let info = capsem_core::build_info::query_binary(path, std::time::Duration::from_secs(2))
+        .await
+        .ok_or_else(|| {
+            anyhow!(
+                "{} does not report Capsem build info; rebuild or reinstall capsem-process",
+                path.display()
+            )
+        })?;
+    let expected = capsem_core::build_info::BuildInfo::current("capsem-service");
+    if info.version != expected.version || !info.protocol_compatible_with_current() {
+        return Err(anyhow!(
+            "incompatible capsem-process at {}: version {} protocol {} schema {}, expected version {} protocol {} schema {}",
+            path.display(),
+            info.version,
+            info.protocol_version,
+            info.schema_hash,
+            expected.version,
+            expected.protocol_version,
+            expected.schema_hash
+        ));
+    }
+    Ok(())
+}
+
 #[tracing::instrument(skip_all, fields(cmd = ?std::mem::discriminant(&cmd), timeout_secs = ?timeout_secs))]
 async fn send_ipc_command(
     uds_path: &std::path::Path,
@@ -4984,8 +5009,11 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
     let mut profiles = catalog
         .list()
         .filter_map(|record| {
-            let value =
-                profile_record_json_with_asset_status(record, &settings, &asset_locations.assets_dir);
+            let value = profile_record_json_with_asset_status(
+                record,
+                &settings,
+                &asset_locations.assets_dir,
+            );
             value["asset_status"]["usable_for_vm"]
                 .as_bool()
                 .unwrap_or(false)
@@ -12190,6 +12218,9 @@ async fn handle_run(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if capsem_core::build_info::maybe_print_json_and_exit("capsem-service")? {
+        return Ok(());
+    }
     let args = Args::parse();
 
     let mut run_dir = capsem_core::paths::capsem_run_dir();
@@ -12252,27 +12283,32 @@ async fn main() -> Result<()> {
     // Fast path: someone else already serves a compatible version.
     if service_sock.exists() {
         if let Ok(Some(running)) =
-            startup::probe_running_version(&service_sock, probe_timeout).await
+            startup::probe_running_build_info(&service_sock, probe_timeout).await
         {
-            if running == current_version {
+            if running.version == current_version && running.protocol_compatible_with_current() {
                 info!(
                     socket = %service_sock.display(),
-                    version = %running,
+                    version = %running.version,
+                    schema_hash = %running.schema_hash,
                     "compatible capsem-service already running; exiting 0"
                 );
                 return Ok(());
             }
             eprintln!(
-                "capsem-service {} is already running at {}, but this binary is {}.\n\
+                "capsem-service {} schema {} is already running at {}, but this binary is {} schema {}.\n\
                  Stop the running service before starting a new one.",
-                running,
+                running.version,
+                running.schema_hash,
                 service_sock.display(),
-                current_version
+                current_version,
+                capsem_core::build_info::schema_hash_hex()
             );
             return Err(anyhow::anyhow!(
-                "version mismatch with running service (running: {}, this: {})",
-                running,
-                current_version
+                "build mismatch with running service (running: {} schema {}, this: {} schema {})",
+                running.version,
+                running.schema_hash,
+                current_version,
+                capsem_core::build_info::schema_hash_hex()
             ));
         }
     }
@@ -12291,20 +12327,26 @@ async fn main() -> Result<()> {
 
     // Under lock: double-check a peer didn't finish starting while we waited.
     if service_sock.exists() {
-        match startup::probe_running_version(&service_sock, probe_timeout).await {
-            Ok(Some(running)) if running == current_version => {
+        match startup::probe_running_build_info(&service_sock, probe_timeout).await {
+            Ok(Some(running))
+                if running.version == current_version
+                    && running.protocol_compatible_with_current() =>
+            {
                 info!(
                     socket = %service_sock.display(),
-                    version = %running,
+                    version = %running.version,
+                    schema_hash = %running.schema_hash,
                     "peer starter won the race; exiting 0"
                 );
                 return Ok(());
             }
             Ok(Some(running)) => {
                 return Err(anyhow::anyhow!(
-                    "version mismatch with running service (running: {}, this: {})",
-                    running,
-                    current_version
+                    "build mismatch with running service (running: {} schema {}, this: {} schema {})",
+                    running.version,
+                    running.schema_hash,
+                    current_version,
+                    capsem_core::build_info::schema_hash_hex()
                 ));
             }
             Ok(None) => {
@@ -12325,6 +12367,7 @@ async fn main() -> Result<()> {
     let process_binary = args
         .process_binary
         .unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
+    verify_process_binary_compatible(&process_binary).await?;
     let service_settings_path = service_settings_path();
     let service_settings =
         capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path)
@@ -12462,7 +12505,15 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route(
             "/version",
-            get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
+            get(|| async {
+                let build = capsem_core::build_info::BuildInfo::current("capsem-service");
+                Json(serde_json::json!({
+                    "version": build.version,
+                    "protocol_version": build.protocol_version,
+                    "schema_hash": build.schema_hash,
+                    "build_ts": build.build_ts,
+                }))
+            }),
         )
         .route(
             "/companions/tray/ensure",
