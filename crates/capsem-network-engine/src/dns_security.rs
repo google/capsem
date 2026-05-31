@@ -17,7 +17,8 @@ use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, BlockResponse, DnsSecuritySubject, Enforceability,
     EventMutation, RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
     SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError, SecurityEvent,
-    SecurityEventCommon, SecurityResult, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    SecurityEventCommon, SecurityEventType, SecurityResult, SourceEngine, StepStatus,
+    RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
 use crate::dns_parser::{build_nxdomain, build_redirect_response, DnsQuery};
@@ -117,7 +118,7 @@ pub fn build_dns_security_event_from_query(
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "dns.request".into(),
+            event_type: SecurityEventType::DnsRequest,
             redaction_state: RedactionState::Raw,
         },
         DnsSecuritySubject {
@@ -267,7 +268,7 @@ pub fn build_dns_resolved_security_event(event: &DnsEvent) -> ResolvedSecurityEv
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "dns.request".into(),
+            event_type: SecurityEventType::DnsRequest,
             redaction_state: RedactionState::Raw,
         },
         DnsSecuritySubject {

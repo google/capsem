@@ -3,6 +3,7 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod pty_log;
+mod security_engine;
 mod terminal;
 mod vsock;
 
@@ -371,17 +372,18 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
-    let runtime_rule_matches = mcp_runtime::RuntimeRuleMatchAccumulator::default();
-    let runtime_policy = mcp_runtime::load_runtime_policy_state_with_runtime_rules_and_recorder(
-        &session_dir,
-        None,
-        Some(runtime_rule_matches.clone()),
-    );
+    let runtime_rule_matches = security_engine::RuntimeRuleMatchAccumulator::default();
+    let security_runtime =
+        security_engine::load_security_runtime_state_with_runtime_rules_and_recorder(
+            &session_dir,
+            None,
+            Some(runtime_rule_matches.clone()),
+        );
     if let Ok(env_profile_id) = std::env::var(capsem_core::telemetry::CAPSEM_PROFILE_ID_ENV) {
-        if env_profile_id != runtime_policy.profile_id {
+        if env_profile_id != security_runtime.profile_id {
             warn!(
                 env_profile_id,
-                effective_profile_id = %runtime_policy.profile_id,
+                effective_profile_id = %security_runtime.profile_id,
                 "process telemetry profile identity differed from attached vm-effective settings"
             );
         }
@@ -391,14 +393,14 @@ async fn run_async_main_loop(
         capsem_logger::TelemetryIdentity {
             timestamp: std::time::SystemTime::now(),
             vm_id: args.id.clone(),
-            profile_id: runtime_policy.profile_id.clone(),
+            profile_id: security_runtime.profile_id.clone(),
             user_id: user_id.clone(),
         },
     ))
     .await;
     info!(
         vm_id = %args.id,
-        profile_id = %runtime_policy.profile_id,
+        profile_id = %security_runtime.profile_id,
         user_id = %user_id,
         "session telemetry identity attached"
     );
@@ -419,7 +421,7 @@ async fn run_async_main_loop(
         }
     }
 
-    let guest_config = runtime_policy.guest_config.clone();
+    let guest_config = security_runtime.guest_config.clone();
 
     let net_state = Arc::new(capsem_core::create_net_state(&args.id, Arc::clone(&db))?);
     // Locate the builtin MCP server binary next to our own binary.
@@ -427,15 +429,15 @@ async fn run_async_main_loop(
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mcp_servers = mcp_runtime::build_servers_with_builtin(
-        &runtime_policy.mcp_user,
-        &runtime_policy.mcp_corp,
+        &security_runtime.mcp_user,
+        &security_runtime.mcp_corp,
         builtin_bin.as_deref(),
         &session_dir,
-        &runtime_policy.domain_policy,
+        &security_runtime.domain_policy,
     );
-    let snap_auto_max = runtime_policy.snapshot_auto_max;
-    let snap_manual_max = runtime_policy.snapshot_manual_max;
-    let snap_interval = runtime_policy.snapshot_interval_secs;
+    let snap_auto_max = security_runtime.snapshot_auto_max;
+    let snap_manual_max = security_runtime.snapshot_manual_max;
+    let snap_interval = security_runtime.snapshot_interval_secs;
 
     let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
         session_dir.clone(),
@@ -518,14 +520,14 @@ async fn run_async_main_loop(
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
     let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        runtime_policy.mcp_policy.clone(),
+        security_runtime.mcp_policy.clone(),
     )));
     let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(
-        runtime_policy.domain_policy.clone(),
+        security_runtime.domain_policy.clone(),
     )));
     let runtime_security_engine = Arc::new(
         capsem_core::net::mitm_proxy::RuntimeSecurityEngineSlot::new(
-            runtime_policy.security_engine.clone(),
+            security_runtime.security_engine.clone(),
         ),
     );
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));

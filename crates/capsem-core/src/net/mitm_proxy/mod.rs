@@ -164,6 +164,16 @@ struct RuntimeHttpResponseInput {
     response_body_preview: Option<String>,
 }
 
+struct RuntimeModelRequestInput {
+    req_ctx: TelemetryRequestContext,
+    request_body: Bytes,
+}
+
+struct RuntimeModelResponseInput {
+    req_ctx: TelemetryRequestContext,
+    response_body: Bytes,
+}
+
 enum RuntimeHttpDecision {
     Allow(Option<Box<SecurityResult>>),
     Rewrite(Box<SecurityResult>),
@@ -316,6 +326,184 @@ fn evaluate_runtime_http_response_inner(
     Ok(RuntimeHttpDecision::Reject(
         Box::new(denied_ctx),
         format!("Capsem: response blocked by security engine ({response_reason})\n"),
+    ))
+}
+
+fn evaluate_runtime_model_request(
+    config: &MitmProxyConfig,
+    input: RuntimeModelRequestInput,
+) -> Option<Result<RuntimeHttpDecision, SecurityEngineError>> {
+    if !config.security_engine.has_engine() {
+        return None;
+    }
+    Some(evaluate_runtime_model_request_inner(
+        config.security_engine.as_ref(),
+        input,
+    ))
+}
+
+fn evaluate_runtime_model_request_inner(
+    engine: &dyn RuntimeSecurityEngine,
+    input: RuntimeModelRequestInput,
+) -> Result<RuntimeHttpDecision, SecurityEngineError> {
+    let timestamp_unix_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let Some(event) = telemetry_hook::build_model_request_security_event(
+        &input.req_ctx,
+        input.request_body.as_ref(),
+        timestamp_unix_ms,
+        crate::telemetry::ambient_capsem_trace_id(),
+    ) else {
+        return Ok(RuntimeHttpDecision::Allow(None));
+    };
+    let result = engine.evaluate(event)?;
+
+    if matches!(result.action, SecurityAction::Rewrite(_)) {
+        let mut denied_ctx = input.req_ctx;
+        denied_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+        denied_ctx.decision = Decision::Denied;
+        denied_ctx.matched_rule = result
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.clone());
+        denied_ctx.policy_action = Some("block".into());
+        denied_ctx.policy_rule = denied_ctx.matched_rule.clone();
+        denied_ctx.policy_reason =
+            Some("model request rewrite requires canonical model rewriter".into());
+        denied_ctx.runtime_security_results.push(result);
+        return Ok(RuntimeHttpDecision::Reject(
+            Box::new(denied_ctx),
+            "Capsem: model request rewrite is not available on the canonical path\n".into(),
+        ));
+    }
+
+    if runtime_action_allows_transport(&result.action) {
+        return Ok(RuntimeHttpDecision::Allow(Some(Box::new(result))));
+    }
+
+    let decision = result.resolved_event.event.decision.as_ref();
+    let policy_rule = decision.and_then(|decision| decision.rule.clone());
+    let policy_reason = runtime_security_reason(&result);
+    let policy_action = decision
+        .map(|decision| security_decision_action_label(decision.action).to_string())
+        .unwrap_or_else(|| security_action_label(&result.action).to_string());
+    let mut denied_ctx = input.req_ctx;
+    denied_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+    denied_ctx.decision = Decision::Denied;
+    denied_ctx.matched_rule = policy_rule.clone().or_else(|| Some(policy_reason.clone()));
+    denied_ctx.policy_action = Some(policy_action);
+    denied_ctx.policy_rule = policy_rule.clone();
+    denied_ctx.policy_reason = Some(policy_reason.clone());
+    denied_ctx.runtime_security_results.push(result);
+
+    let response_reason = policy_rule
+        .as_deref()
+        .map(|rule| format!("{rule}: {policy_reason}"))
+        .unwrap_or_else(|| policy_reason.clone());
+    Ok(RuntimeHttpDecision::Reject(
+        Box::new(denied_ctx),
+        format!("Capsem: model request blocked by security engine ({response_reason})\n"),
+    ))
+}
+
+fn evaluate_runtime_model_response(
+    config: &MitmProxyConfig,
+    input: RuntimeModelResponseInput,
+) -> Option<Result<RuntimeHttpDecision, SecurityEngineError>> {
+    if !config.security_engine.has_engine() {
+        return None;
+    }
+    Some(evaluate_runtime_model_response_inner(
+        config.security_engine.as_ref(),
+        config.telemetry.as_ref(),
+        input,
+    ))
+}
+
+fn evaluate_runtime_model_response_inner(
+    engine: &dyn RuntimeSecurityEngine,
+    telemetry: &telemetry_hook::TelemetryDeps,
+    input: RuntimeModelResponseInput,
+) -> Result<RuntimeHttpDecision, SecurityEngineError> {
+    let Some(provider) = input.req_ctx.ai_provider else {
+        return Ok(RuntimeHttpDecision::Allow(None));
+    };
+    let max_preview = input.req_ctx.max_response_preview;
+    let preview_len = input.response_body.len().min(max_preview);
+    let resp_stats = telemetry_hook::TelemetryResponseStats {
+        bytes: input.response_body.len() as u64,
+        preview: input.response_body[..preview_len].to_vec(),
+        max_preview,
+    };
+    let llm_events =
+        telemetry_hook::parse_llm_events_from_response_body(provider, input.response_body.as_ref());
+    let timestamp_unix_ms = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let Some(event) = telemetry_hook::build_model_response_security_event(
+        telemetry,
+        &input.req_ctx,
+        &resp_stats,
+        &llm_events,
+        timestamp_unix_ms,
+        crate::telemetry::ambient_capsem_trace_id(),
+    ) else {
+        return Ok(RuntimeHttpDecision::Allow(None));
+    };
+    let result = engine.evaluate(event)?;
+
+    if matches!(result.action, SecurityAction::Rewrite(_)) {
+        let mut denied_ctx = input.req_ctx;
+        denied_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+        denied_ctx.decision = Decision::Denied;
+        denied_ctx.matched_rule = result
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.clone());
+        denied_ctx.policy_action = Some("block".into());
+        denied_ctx.policy_rule = denied_ctx.matched_rule.clone();
+        denied_ctx.policy_reason =
+            Some("model response rewrite requires canonical model rewriter".into());
+        denied_ctx.runtime_security_results.push(result);
+        return Ok(RuntimeHttpDecision::Reject(
+            Box::new(denied_ctx),
+            "Capsem: model response rewrite is not available on the canonical path\n".into(),
+        ));
+    }
+
+    if runtime_action_allows_transport(&result.action) {
+        return Ok(RuntimeHttpDecision::Allow(Some(Box::new(result))));
+    }
+
+    let decision = result.resolved_event.event.decision.as_ref();
+    let policy_rule = decision.and_then(|decision| decision.rule.clone());
+    let policy_reason = runtime_security_reason(&result);
+    let policy_action = decision
+        .map(|decision| security_decision_action_label(decision.action).to_string())
+        .unwrap_or_else(|| security_action_label(&result.action).to_string());
+    let mut denied_ctx = input.req_ctx;
+    denied_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+    denied_ctx.decision = Decision::Denied;
+    denied_ctx.matched_rule = policy_rule.clone().or_else(|| Some(policy_reason.clone()));
+    denied_ctx.policy_action = Some(policy_action);
+    denied_ctx.policy_rule = policy_rule.clone();
+    denied_ctx.policy_reason = Some(policy_reason.clone());
+    denied_ctx.runtime_security_results.push(result);
+
+    let response_reason = policy_rule
+        .as_deref()
+        .map(|rule| format!("{rule}: {policy_reason}"))
+        .unwrap_or_else(|| policy_reason.clone());
+    Ok(RuntimeHttpDecision::Reject(
+        Box::new(denied_ctx),
+        format!("Capsem: model response blocked by security engine ({response_reason})\n"),
     ))
 }
 
@@ -472,10 +660,7 @@ fn apply_runtime_http_response_body_rewrite(result: &SecurityResult, body: &mut 
         else {
             continue;
         };
-        if path != "response.text"
-            && path != "http.response.body.text"
-            && !path.starts_with("tool.arguments.")
-        {
+        if path != "response.text" && path != "http.response.body.text" {
             continue;
         }
         if let Ok(regex) = regex::Regex::new(pattern) {
@@ -1269,6 +1454,145 @@ async fn handle_request(
         }
     }
 
+    if let Some(request_body) = buffered_request_body.clone() {
+        let model_req_ctx = TelemetryRequestContext {
+            event_id_seed: telemetry_hook::new_http_event_id_seed(),
+            domain: domain.to_string(),
+            process_name: process_name.clone(),
+            ai_provider,
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            status_code: None,
+            decision: Decision::Allowed,
+            matched_rule: None,
+            request_headers: Some(req_hdrs.clone()),
+            response_headers: None,
+            start_time,
+            request_body_stats: Arc::clone(&req_stats),
+            max_response_preview: 0,
+            port: upstream_port,
+            conn_type,
+            identity: telemetry_identity.clone(),
+            policy_mode: runtime_policy_mode.clone(),
+            policy_action: runtime_policy_action.clone(),
+            policy_rule: runtime_policy_rule.clone(),
+            policy_reason: runtime_policy_reason.clone(),
+            runtime_security_results: runtime_security_results.clone(),
+        };
+        if let Some(runtime_decision) = evaluate_runtime_model_request(
+            config,
+            RuntimeModelRequestInput {
+                req_ctx: model_req_ctx,
+                request_body,
+            },
+        ) {
+            match runtime_decision {
+                Ok(RuntimeHttpDecision::Allow(result)) => {
+                    if let Some(result) = result {
+                        if let Some(decision) = result.resolved_event.event.decision.as_ref() {
+                            runtime_policy_mode = Some("runtime".into());
+                            runtime_policy_action =
+                                Some(security_decision_action_label(decision.action).into());
+                            runtime_policy_rule = decision.rule.clone();
+                            runtime_policy_reason = decision.reason.clone();
+                        }
+                        runtime_security_results.push(*result);
+                    }
+                }
+                Ok(RuntimeHttpDecision::Rewrite(result)) => {
+                    let reason = result
+                        .resolved_event
+                        .event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.reason.clone())
+                        .unwrap_or_else(|| {
+                            "model request rewrite requires canonical model rewriter".into()
+                        });
+                    let mut req_ctx = TelemetryRequestContext {
+                        event_id_seed: telemetry_hook::new_http_event_id_seed(),
+                        domain: domain.to_string(),
+                        process_name: process_name.clone(),
+                        ai_provider,
+                        method: method.clone(),
+                        path: path.clone(),
+                        query: query.clone(),
+                        status_code: Some(SECURITY_BLOCK_STATUS),
+                        decision: Decision::Denied,
+                        matched_rule: result
+                            .resolved_event
+                            .event
+                            .decision
+                            .as_ref()
+                            .and_then(|decision| decision.rule.clone()),
+                        request_headers: Some(req_hdrs.clone()),
+                        response_headers: None,
+                        start_time,
+                        request_body_stats: Arc::clone(&req_stats),
+                        max_response_preview: 0,
+                        port: upstream_port,
+                        conn_type,
+                        identity: telemetry_identity.clone(),
+                        policy_mode: Some("runtime".into()),
+                        policy_action: Some("block".into()),
+                        policy_rule: None,
+                        policy_reason: Some(reason),
+                        runtime_security_results,
+                    };
+                    req_ctx.runtime_security_results.push(*result);
+                    let body_text =
+                        "Capsem: model request rewrite is not available on the canonical path\n";
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(
+                            synthetic_body_with_telemetry(config, body_text.into(), req_ctx).await,
+                        )
+                        .unwrap());
+                }
+                Ok(RuntimeHttpDecision::Reject(req_ctx, body_text)) => {
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(synthetic_body_with_telemetry(config, body_text, *req_ctx).await)
+                        .unwrap());
+                }
+                Err(error) => {
+                    let reason = format!("security engine error: {error}");
+                    let req_ctx = TelemetryRequestContext {
+                        event_id_seed: telemetry_hook::new_http_event_id_seed(),
+                        domain: domain.to_string(),
+                        process_name: process_name.clone(),
+                        ai_provider,
+                        method: method.clone(),
+                        path: path.clone(),
+                        query: query.clone(),
+                        status_code: Some(SECURITY_BLOCK_STATUS),
+                        decision: Decision::Error,
+                        matched_rule: Some(reason.clone()),
+                        request_headers: Some(req_hdrs.clone()),
+                        response_headers: None,
+                        start_time,
+                        request_body_stats: Arc::clone(&req_stats),
+                        max_response_preview: 0,
+                        port: upstream_port,
+                        conn_type,
+                        identity: telemetry_identity.clone(),
+                        policy_mode: Some("runtime".into()),
+                        policy_action: Some("error".into()),
+                        policy_rule: None,
+                        policy_reason: Some(reason.clone()),
+                        runtime_security_results,
+                    };
+                    let body_text = format!("Capsem: {reason}\n");
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
+                        .unwrap());
+                }
+            }
+        }
+    }
+
     let upstream_req_body: ProxyBoxBody = if let Some(body) = buffered_request_body {
         Full::new(body).map_err(|never| match never {}).boxed()
     } else {
@@ -1606,6 +1930,81 @@ async fn handle_request(
                         .as_ref()
                         .and_then(|decision| decision.reason.clone());
                     req_ctx.runtime_security_results.push(*result);
+                }
+                Ok(RuntimeHttpDecision::Reject(denied_ctx, body_text)) => {
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(synthetic_body_with_telemetry(config, body_text, *denied_ctx).await)
+                        .unwrap());
+                }
+                Err(error) => {
+                    let reason = format!("security engine error: {error}");
+                    req_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+                    req_ctx.decision = Decision::Error;
+                    req_ctx.matched_rule = Some(reason.clone());
+                    req_ctx.policy_mode = Some("runtime".into());
+                    req_ctx.policy_action = Some("error".into());
+                    req_ctx.policy_reason = Some(reason.clone());
+                    let body_text = format!("Capsem: {reason}\n");
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(synthetic_body_with_telemetry(config, body_text, req_ctx).await)
+                        .unwrap());
+                }
+            }
+        }
+
+        if let Some(runtime_decision) = evaluate_runtime_model_response(
+            config,
+            RuntimeModelResponseInput {
+                req_ctx: req_ctx.clone(),
+                response_body: response_body.clone(),
+            },
+        ) {
+            match runtime_decision {
+                Ok(RuntimeHttpDecision::Allow(result)) => {
+                    if let Some(result) = result {
+                        if let Some(decision) = result.resolved_event.event.decision.as_ref() {
+                            req_ctx.policy_mode = Some("runtime".into());
+                            req_ctx.policy_action =
+                                Some(security_decision_action_label(decision.action).into());
+                            req_ctx.policy_rule = decision.rule.clone();
+                            req_ctx.policy_reason = decision.reason.clone();
+                        }
+                        req_ctx.runtime_security_results.push(*result);
+                    }
+                }
+                Ok(RuntimeHttpDecision::Rewrite(result)) => {
+                    let reason = result
+                        .resolved_event
+                        .event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.reason.clone())
+                        .unwrap_or_else(|| {
+                            "model response rewrite requires canonical model rewriter".into()
+                        });
+                    req_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
+                    req_ctx.decision = Decision::Denied;
+                    req_ctx.matched_rule = result
+                        .resolved_event
+                        .event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.rule.clone());
+                    req_ctx.policy_mode = Some("runtime".into());
+                    req_ctx.policy_action = Some("block".into());
+                    req_ctx.policy_rule = req_ctx.matched_rule.clone();
+                    req_ctx.policy_reason = Some(reason);
+                    req_ctx.runtime_security_results.push(*result);
+                    let body_text =
+                        "Capsem: model response rewrite is not available on the canonical path\n";
+                    return Ok(hyper::Response::builder()
+                        .status(SECURITY_BLOCK_STATUS)
+                        .body(
+                            synthetic_body_with_telemetry(config, body_text.into(), req_ctx).await,
+                        )
+                        .unwrap());
                 }
                 Ok(RuntimeHttpDecision::Reject(denied_ctx, body_text)) => {
                     return Ok(hyper::Response::builder()

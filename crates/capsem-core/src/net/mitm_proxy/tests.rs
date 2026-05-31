@@ -10,6 +10,7 @@ use http_body_util::BodyExt;
 use crate::net::cert_authority::CertAuthority;
 use capsem_security_engine::{
     CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+    SecurityEventType,
 };
 
 const CA_KEY: &str = include_str!("../../../../../config/capsem-ca.key");
@@ -96,6 +97,17 @@ fn runtime_security_engine_slot_swaps_rules_without_rebuilding_config() {
     assert!(!slot.has_engine());
 }
 
+#[test]
+fn mitm_runtime_source_has_no_model_tool_argument_http_rewrite_bridge() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(manifest_dir.join("src/net/mitm_proxy/mod.rs")).unwrap();
+
+    assert!(
+        !source.contains("tool.arguments."),
+        "MITM HTTP response rewriting must not carry model tool-argument compatibility paths"
+    );
+}
+
 fn block_host_engine(host: &str) -> Arc<dyn RuntimeSecurityEngine> {
     let mut engine = SecurityEngine::default();
     engine.set_enforcement(Box::new(
@@ -143,7 +155,7 @@ fn test_http_security_event(host: &str, path: &str) -> capsem_security_engine::S
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: SecurityEventType::HttpRequest,
             redaction_state: capsem_security_engine::RedactionState::Raw,
         },
         capsem_security_engine::HttpSecuritySubject {
@@ -625,6 +637,67 @@ async fn runtime_security_engine_blocks_request_body_before_upstream_dispatch() 
 }
 
 #[tokio::test]
+async fn runtime_security_engine_blocks_canonical_model_request_before_upstream_dispatch() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-model-request-canonical".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "common.event_type == 'model.request' \
+                && model.request.provider == 'openai' \
+                && model.request.model == 'gpt-test'"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("canonical model request block".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+    let (mut sender, proxy_task, conn_task) = open_direct_plain_http_request_conn(
+        &config,
+        "api.openai.com",
+        port,
+        Some(ProviderKind::OpenAi),
+    )
+    .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-test", "needle").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("canonical model request block"));
+    upstream_task.await.unwrap();
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-model-request-canonical")
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.event_type, se.final_action, steps.rule_id, steps.message \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("model.request"));
+    assert!(security.contains("block"));
+    assert!(security.contains("block-model-request-canonical"));
+}
+
+#[tokio::test]
 async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
     let mut engine = SecurityEngine::default();
     engine.set_enforcement(Box::new(
@@ -692,6 +765,152 @@ async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
     assert!(security.contains("http.response"));
     assert!(security.contains("http.request"));
     assert!(security.contains("block-response-secret-inline"));
+}
+
+#[tokio::test]
+async fn runtime_security_engine_blocks_canonical_model_response_before_guest_delivery() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-model-response-canonical".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "common.event_type == 'model.response' \
+                && model.response.provider == 'openai' \
+                && model.response.body.text.contains('needle-from-model')"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("canonical model response block".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_fixture_response_owned(
+        200,
+        "OK",
+        vec![("content-type", "text/event-stream")],
+        openai_sse_text_response("gpt-test", "needle-from-model"),
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
+            .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "127.0.0.1", "gpt-test", "safe").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("canonical model response block"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.starts_with("POST /v1/chat/completions"),
+        "model response policy must run after upstream response parsing"
+    );
+    drop(sender);
+    conn_task.abort();
+    proxy_task.abort();
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-model-response-canonical")
+    );
+    assert!(
+        events[0]
+            .response_body_preview
+            .as_deref()
+            .is_some_and(|preview| !preview.contains("needle-from-model")),
+        "blocked model response body must not be journaled back through the guest response preview"
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.event_type, se.final_action, steps.rule_id, steps.message \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("model.response"));
+    assert!(security.contains("block"));
+    assert!(security.contains("block-model-response-canonical"));
+}
+
+#[tokio::test]
+async fn runtime_security_engine_blocks_provider_tool_call_before_guest_delivery() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-provider-tool-call-canonical".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "common.event_type == 'model.response' \
+                && model.request.tool_calls[0].name == 'mcp.filesystem.read_file' \
+                && model.request.tool_calls[0].arguments_status == 'valid_json'"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("canonical provider tool-call block".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_fixture_response_owned(
+        200,
+        "OK",
+        vec![("content-type", "text/event-stream")],
+        openai_sse_tool_call_response(
+            "gpt-test",
+            "call_1",
+            "mcp__filesystem__read_file",
+            r#"{"path":"/workspace/secret.txt"}"#,
+        ),
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
+            .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "127.0.0.1", "gpt-test", "safe").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("canonical provider tool-call block"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(upstream_request.starts_with("POST /v1/chat/completions"));
+    drop(sender);
+    conn_task.abort();
+    proxy_task.abort();
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-provider-tool-call-canonical")
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.event_type, se.final_action, steps.rule_id, steps.message \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("model.response"));
+    assert!(security.contains("block-provider-tool-call-canonical"));
 }
 
 #[tokio::test]

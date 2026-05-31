@@ -32,6 +32,7 @@ SUITES = {
             "security_engine_cel_evaluate/",
             "security_engine_detection_evaluate/",
             "security_engine_backtest_dedupe/",
+            "security_engine_runtime_backtest_hunt/",
             "security_engine_runtime_registry/",
             "security_engine_policy_context/",
             "security_engine_native_lookup/",
@@ -42,16 +43,17 @@ SUITES = {
             "Does not include guest transport, service IPC, Security Engine emitter, or session.db journal write latency.",
         ],
     },
-    "security_packs_microbench": {
-        "kind": "criterion_security_packs_microbench",
-        "command": "cargo bench -p capsem-core --bench security_packs",
+    "detection_ir_microbench": {
+        "kind": "criterion_detection_ir_microbench",
+        "command": "cargo bench -p capsem-security-engine --bench detection_ir",
         "prefixes": (
-            "security_packs_detection_ir_parse/",
-            "security_packs_detection_ir_lowering/",
+            "security_engine_detection_ir_parse/",
+            "security_engine_detection_ir_lowering/",
+            "security_engine_detection_ir_matching/",
         ),
         "notes": [
             "Host-side microbenchmark only.",
-            "Measures Detection IR V1 JSON parse/validate, Detection IR to CEL detection-rule lowering, and lower-plus-compile costs.",
+            "Measures Detection IR V1 JSON parse/validate, Detection IR to CEL detection-rule lowering, lower-plus-compile costs, direct matching, canonical SecurityEvent matching, and lowered-CEL matching.",
             "Does not include VM transport, service IPC, runtime registry propagation, Security Engine dispatch, or session.db journal write latency.",
         ],
     },

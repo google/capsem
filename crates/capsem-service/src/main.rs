@@ -4358,16 +4358,9 @@ fn load_service_profiles_state() -> Result<
 }
 
 fn rule_type_from_callback(callback: &str) -> Option<&'static str> {
-    match callback {
-        "mcp.request" | "mcp.response" => Some("mcp"),
-        "http.request" | "http.read" | "http.write" | "http.response" => Some("http"),
-        "dns.request" | "dns.response" => Some("dns"),
-        "model.request" | "model.response" | "model.tool_call" | "model.tool_response" => {
-            Some("model")
-        }
-        "hook.decision" => Some("hook"),
-        _ => None,
-    }
+    seceng::SecurityEventType::parse(callback)
+        .ok()
+        .map(|event_type| event_type.family().as_str())
 }
 
 fn split_policy_key(key: &str) -> Result<(String, String), String> {
@@ -4830,6 +4823,73 @@ struct RuntimeDetectionRuleRequest {
     enabled: bool,
 }
 
+impl RuntimeEnforcementRuleRequest {
+    fn cel_rule(&self) -> seceng::CelEnforcementRule {
+        seceng::CelEnforcementRule {
+            id: self.id.clone(),
+            pack_id: self.pack_id.clone(),
+            condition: self.condition.clone(),
+            decision: self.decision,
+            reason: self.reason.clone(),
+            mutations: Vec::new(),
+        }
+    }
+
+    fn runtime_record(&self) -> seceng::RuntimeRuleRecord {
+        seceng::RuntimeRuleRecord {
+            metadata: seceng::RuntimeRuleMetadata {
+                id: self.id.clone(),
+                pack_id: self.pack_id.clone(),
+                scope: seceng::RuleScope::Runtime,
+                origin: seceng::RuleOrigin::Runtime,
+                priority: self.priority,
+            },
+            definition: seceng::RuntimeRuleDefinition::Enforcement {
+                decision: self.decision,
+                reason: self.reason.clone(),
+            },
+            source: self.condition.clone(),
+            enabled: self.enabled,
+        }
+    }
+}
+
+impl RuntimeDetectionRuleRequest {
+    fn cel_rule(&self) -> seceng::CelDetectionRule {
+        seceng::CelDetectionRule {
+            id: self.id.clone(),
+            pack_id: self.pack_id.clone(),
+            sigma_id: self.sigma_id.clone(),
+            title: self.title.clone(),
+            condition: self.condition.clone(),
+            severity: self.severity,
+            confidence: self.confidence,
+            tags: self.tags.clone(),
+        }
+    }
+
+    fn runtime_record(&self) -> seceng::RuntimeRuleRecord {
+        seceng::RuntimeRuleRecord {
+            metadata: seceng::RuntimeRuleMetadata {
+                id: self.id.clone(),
+                pack_id: Some(self.pack_id.clone()),
+                scope: seceng::RuleScope::Runtime,
+                origin: seceng::RuleOrigin::Runtime,
+                priority: self.priority,
+            },
+            definition: seceng::RuntimeRuleDefinition::Detection {
+                sigma_id: self.sigma_id.clone(),
+                title: self.title.clone(),
+                severity: self.severity,
+                confidence: self.confidence,
+                tags: self.tags.clone(),
+            },
+            source: self.condition.clone(),
+            enabled: self.enabled,
+        }
+    }
+}
+
 const RUNTIME_SECURITY_RULES_STORE_SCHEMA: &str = "capsem.runtime-security-rules.v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4860,6 +4920,16 @@ struct RuntimeBacktestEvent {
     event: seceng::SecurityEvent,
     #[serde(default)]
     expected: Option<String>,
+}
+
+impl RuntimeBacktestEvent {
+    fn engine_input(&self) -> seceng::BacktestEventInput {
+        seceng::BacktestEventInput {
+            event_ref: self.event_ref.clone(),
+            event: self.event.clone(),
+            expected: self.expected.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -6320,118 +6390,32 @@ fn validate_runtime_rule_id(id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn runtime_rule_plan_id(condition: &str) -> String {
-    format!("cel:{}", blake3::hash(condition.as_bytes()).to_hex())
-}
-
 fn compile_runtime_enforcement_rule(
     request: &RuntimeEnforcementRuleRequest,
 ) -> Result<String, seceng::SecurityEngineError> {
-    validate_runtime_enforcement_decision_supported(request.decision).map_err(|message| {
-        seceng::SecurityEngineError::CelCompileFailed {
-            rule_id: request.id.clone(),
-            message,
-        }
-    })?;
-    seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
-        id: request.id.clone(),
-        pack_id: request.pack_id.clone(),
-        condition: request.condition.clone(),
-        decision: request.decision,
-        reason: request.reason.clone(),
-        mutations: Vec::new(),
-    }])?;
-    Ok(runtime_rule_plan_id(&request.condition))
+    seceng::compile_runtime_enforcement_rule(request.cel_rule())
 }
 
 fn compile_runtime_detection_rule(
     request: &RuntimeDetectionRuleRequest,
 ) -> Result<String, seceng::SecurityEngineError> {
-    seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
-        id: request.id.clone(),
-        pack_id: request.pack_id.clone(),
-        sigma_id: request.sigma_id.clone(),
-        title: request.title.clone(),
-        condition: request.condition.clone(),
-        severity: request.severity,
-        confidence: request.confidence,
-        tags: request.tags.clone(),
-    }])?;
-    Ok(runtime_rule_plan_id(&request.condition))
+    seceng::compile_runtime_detection_rule(request.cel_rule())
 }
 
 fn compile_runtime_detection_record(
     record: &seceng::RuntimeRuleRecord,
 ) -> Result<String, seceng::SecurityEngineError> {
-    let seceng::RuntimeRuleDefinition::Detection {
-        sigma_id,
-        title,
-        severity,
-        confidence,
-        tags,
-    } = &record.definition
-    else {
-        return Err(seceng::SecurityEngineError::CelCompileFailed {
-            rule_id: record.metadata.id.clone(),
-            message: "expected detection rule definition".into(),
-        });
-    };
-    seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
-        id: record.metadata.id.clone(),
-        pack_id: record
-            .metadata
-            .pack_id
-            .clone()
-            .unwrap_or_else(|| "runtime".into()),
-        sigma_id: sigma_id.clone(),
-        title: title.clone(),
-        condition: record.source.clone(),
-        severity: *severity,
-        confidence: *confidence,
-        tags: tags.clone(),
-    }])?;
-    Ok(runtime_rule_plan_id(&record.source))
+    seceng::compile_runtime_rule_record(record)
 }
 
 fn runtime_enforcement_record(
     request: &RuntimeEnforcementRuleRequest,
 ) -> seceng::RuntimeRuleRecord {
-    seceng::RuntimeRuleRecord {
-        metadata: seceng::RuntimeRuleMetadata {
-            id: request.id.clone(),
-            pack_id: request.pack_id.clone(),
-            scope: seceng::RuleScope::Runtime,
-            origin: seceng::RuleOrigin::Runtime,
-            priority: request.priority,
-        },
-        definition: seceng::RuntimeRuleDefinition::Enforcement {
-            decision: request.decision,
-            reason: request.reason.clone(),
-        },
-        source: request.condition.clone(),
-        enabled: request.enabled,
-    }
+    request.runtime_record()
 }
 
 fn runtime_detection_record(request: &RuntimeDetectionRuleRequest) -> seceng::RuntimeRuleRecord {
-    seceng::RuntimeRuleRecord {
-        metadata: seceng::RuntimeRuleMetadata {
-            id: request.id.clone(),
-            pack_id: Some(request.pack_id.clone()),
-            scope: seceng::RuleScope::Runtime,
-            origin: seceng::RuleOrigin::Runtime,
-            priority: request.priority,
-        },
-        definition: seceng::RuntimeRuleDefinition::Detection {
-            sigma_id: request.sigma_id.clone(),
-            title: request.title.clone(),
-            severity: request.severity,
-            confidence: request.confidence,
-            tags: request.tags.clone(),
-        },
-        source: request.condition.clone(),
-        enabled: request.enabled,
-    }
+    request.runtime_record()
 }
 
 fn profile_rule_decision(
@@ -6468,24 +6452,13 @@ fn profile_rule_scope_origin(
     }
 }
 
-fn profile_rule_callback_guard(callback: &str) -> Result<&'static str, AppError> {
-    match callback {
-        "dns.request" => Ok("common.event_type == 'dns.request'"),
-        "dns.response" => Ok("common.event_type == 'dns.response'"),
-        "http.request" | "http.read" | "http.write" => Ok("common.event_type == 'http.request'"),
-        "http.response" => Ok("common.event_type == 'http.response'"),
-        "mcp.request" => Ok("common.event_type == 'mcp.request'"),
-        "mcp.response" => Ok("common.event_type == 'mcp.response'"),
-        "model.request" => Ok("common.event_type == 'model.request'"),
-        "model.response" => Ok("common.event_type == 'model.response'"),
-        "model.tool_call" => Ok("common.event_type == 'model.tool_call'"),
-        "model.tool_response" => Ok("common.event_type == 'model.tool_response'"),
-        "hook.decision" => Ok("common.event_type == 'hook.decision'"),
-        _ => Err(AppError(
+fn profile_rule_callback_guard(callback: &str) -> Result<String, AppError> {
+    seceng::SecurityEventType::callback_guard(callback).map_err(|_| {
+        AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("profile rule callback '{callback}' cannot be seeded into runtime enforcement"),
-        )),
-    }
+        )
+    })
 }
 
 fn profile_rule_condition(
@@ -6504,10 +6477,7 @@ fn normalize_profile_runtime_condition(callback: &str, condition: &str) -> Strin
         normalized = normalized.replace("qname", "dns.request.qname");
         normalized = normalized.replace("dns.request.dns.request.qname", "dns.request.qname");
     }
-    if matches!(
-        callback,
-        "http.request" | "http.read" | "http.write" | "http.response"
-    ) {
+    if matches!(callback, "http.request" | "http.response") {
         for (from, to) in [
             ("request.host", "http.request.host"),
             ("request.path", "http.request.path"),
@@ -6549,41 +6519,13 @@ fn profile_seeded_enforcement_record(
 fn compile_runtime_enforcement_record(
     record: &seceng::RuntimeRuleRecord,
 ) -> Result<String, seceng::SecurityEngineError> {
-    let seceng::RuntimeRuleDefinition::Enforcement { decision, reason } = &record.definition else {
-        return Err(seceng::SecurityEngineError::CelCompileFailed {
-            rule_id: record.metadata.id.clone(),
-            message: "expected enforcement rule definition".into(),
-        });
-    };
-    if record.metadata.scope == seceng::RuleScope::Runtime {
-        validate_runtime_enforcement_decision_supported(*decision).map_err(|message| {
-            seceng::SecurityEngineError::CelCompileFailed {
-                rule_id: record.metadata.id.clone(),
-                message,
-            }
-        })?;
-    }
-    seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
-        id: record.metadata.id.clone(),
-        pack_id: record.metadata.pack_id.clone(),
-        condition: record.source.clone(),
-        decision: *decision,
-        reason: reason.clone(),
-        mutations: Vec::new(),
-    }])?;
-    Ok(runtime_rule_plan_id(&record.source))
+    seceng::compile_runtime_rule_record(record)
 }
 
 fn validate_runtime_enforcement_decision_supported(
     decision: seceng::SecurityDecisionAction,
 ) -> Result<(), String> {
-    if decision == seceng::SecurityDecisionAction::Ask {
-        return Err(
-            "ask decisions require S15-confirm-ux; runtime ask overlays are disabled until the confirm resolver is wired"
-                .into(),
-        );
-    }
-    Ok(())
+    seceng::validate_runtime_enforcement_decision_supported(decision)
 }
 
 fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Result<usize, AppError> {
@@ -6637,10 +6579,7 @@ fn seed_runtime_security_rules_from_profiles(state: &Arc<ServiceState>) -> Resul
 fn profile_rule_supported_by_runtime_registry(
     rule: &capsem_core::settings_profiles::EffectiveRule,
 ) -> bool {
-    matches!(
-        rule.callback.as_str(),
-        "dns.request" | "http.request" | "http.read" | "http.write" | "http.response"
-    )
+    seceng::SecurityEventType::parse(&rule.callback).is_ok()
 }
 
 fn runtime_security_rule_overlays_store(
@@ -7485,490 +7424,6 @@ async fn drain_runtime_rule_matches_from_processes(
     })
 }
 
-fn runtime_backtest_limit(limit: Option<usize>) -> usize {
-    limit.unwrap_or(seceng::DEFAULT_BACKTEST_MATCH_LIMIT)
-}
-
-fn inline_backtest_event_ref(input: &RuntimeBacktestEvent) -> seceng::BacktestEventRef {
-    input
-        .event_ref
-        .clone()
-        .unwrap_or_else(|| seceng::BacktestEventRef {
-            corpus: "inline".into(),
-            session_id: input.event.common.session_id.clone(),
-            event_id: input.event.common.event_id.clone(),
-            sequence_no: input.event.common.sequence_no,
-            timestamp_unix_ms: input.event.common.timestamp_unix_ms,
-        })
-}
-
-fn backtest_evidence_signature(event: &seceng::SecurityEvent) -> Result<String, AppError> {
-    let evidence = serde_json::json!({
-        "event_type": &event.common.event_type,
-        "subject": &event.subject,
-    });
-    let evidence = serde_json::to_vec(&evidence).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("serialize backtest evidence: {error}"),
-        )
-    })?;
-    Ok(blake3::hash(&evidence).to_hex().to_string())
-}
-
-fn backtest_matched_fields(
-    event: &seceng::SecurityEvent,
-) -> Result<Vec<seceng::MatchedField>, AppError> {
-    let mut fields = Vec::new();
-    push_common_matched_fields(&mut fields, event)?;
-    match &event.subject {
-        seceng::SecurityEventSubject::Http(subject) => {
-            push_matched_field(&mut fields, "http.request.method", &subject.method)?;
-            push_matched_field(&mut fields, "http.request.host", &subject.host)?;
-            push_matched_field(&mut fields, "http.request.path_class", &subject.path_class)?;
-            push_matched_field(&mut fields, "http.request.bytes", subject.request_bytes)?;
-            for (name, values) in &subject.request_headers {
-                push_matched_field(&mut fields, &format!("http.request.headers.{name}"), values)?;
-            }
-            if let Some(body) = &subject.request_body {
-                push_http_body_matched_fields(&mut fields, "http.request.body", body)?;
-            }
-            if let Some(value) = &subject.scheme {
-                push_matched_field(&mut fields, "http.request.scheme", value)?;
-            }
-            if let Some(value) = subject.port {
-                push_matched_field(&mut fields, "http.request.port", value)?;
-            }
-            if let Some(value) = &subject.path {
-                push_matched_field(&mut fields, "http.request.path", value)?;
-            }
-            if let Some(value) = &subject.query {
-                push_matched_field(&mut fields, "http.request.query", value)?;
-            }
-            if let Some(value) = &subject.url {
-                push_matched_field(&mut fields, "http.request.url", value)?;
-            }
-            if let Some(value) = subject.response_status {
-                push_matched_field(&mut fields, "http.response.status", value)?;
-            }
-            if let Some(value) = subject.response_bytes {
-                push_matched_field(&mut fields, "http.response.bytes", value)?;
-            }
-            for (name, values) in &subject.response_headers {
-                push_matched_field(
-                    &mut fields,
-                    &format!("http.response.headers.{name}"),
-                    values,
-                )?;
-            }
-            if let Some(body) = &subject.response_body {
-                push_http_body_matched_fields(&mut fields, "http.response.body", body)?;
-            }
-        }
-        seceng::SecurityEventSubject::Dns(subject) => {
-            push_matched_field(&mut fields, "dns.request.qname", &subject.qname)?;
-            push_matched_field(
-                &mut fields,
-                "dns.request.domain_class",
-                &subject.domain_class,
-            )?;
-        }
-        seceng::SecurityEventSubject::Mcp(subject) => {
-            push_matched_field(&mut fields, "mcp.request.server_id", &subject.server_id)?;
-            push_matched_field(&mut fields, "mcp.request.tool_name", &subject.tool_name)?;
-            if let Some(evidence) = &subject.evidence {
-                push_matched_field(
-                    &mut fields,
-                    "mcp.request.arguments_status",
-                    mcp_arguments_status(evidence),
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "mcp.request.namespaced_tool_name",
-                    &evidence.namespaced_tool_name,
-                )?;
-                push_matched_field(&mut fields, "mcp.request.transport", &evidence.transport)?;
-                if let Some(value) = &evidence.request_arguments_raw {
-                    push_matched_field(&mut fields, "mcp.request.arguments_raw", value)?;
-                }
-                if let Some(value) = &evidence.request_arguments_json {
-                    push_matched_field(&mut fields, "mcp.request.arguments_json", value)?;
-                }
-                push_matched_field(&mut fields, "mcp.response.is_error", evidence.is_error)?;
-                push_matched_field(
-                    &mut fields,
-                    "mcp.response.result_status",
-                    if evidence.is_error { "error" } else { "ok" },
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "mcp.response.result_kind",
-                    evidence.result_kind,
-                )?;
-                if let Some(value) = &evidence.result_preview {
-                    push_matched_field(&mut fields, "mcp.response.result_preview", value)?;
-                }
-                if let Some(value) = &evidence.result_json {
-                    push_matched_field(&mut fields, "mcp.response.result_json", value)?;
-                }
-                push_matched_field(&mut fields, "mcp.response.latency_ms", evidence.latency_ms)?;
-                push_matched_field(&mut fields, "mcp.link.status", evidence.link_status)?;
-                if let Some(value) = &evidence.linked_model_interaction_id {
-                    push_matched_field(&mut fields, "mcp.link.model_interaction_id", value)?;
-                }
-                if let Some(value) = &evidence.linked_model_tool_call_id {
-                    push_matched_field(&mut fields, "mcp.link.model_tool_call_id", value)?;
-                }
-            }
-        }
-        seceng::SecurityEventSubject::Model(subject) => {
-            push_matched_field(&mut fields, "model.request.provider", &subject.provider)?;
-            push_matched_field(&mut fields, "model.request.model", &subject.model)?;
-            if let Some(value) = subject.estimated_input_tokens {
-                push_matched_field(&mut fields, "model.usage.input_tokens", value)?;
-            }
-            if let Some(value) = subject.estimated_output_tokens {
-                push_matched_field(&mut fields, "model.usage.output_tokens", value)?;
-            }
-            if let Some(value) = subject.estimated_cost_micros {
-                push_matched_field(&mut fields, "model.usage.estimated_cost_micros", value)?;
-            }
-            if let Some(evidence) = &subject.evidence {
-                push_matched_field(&mut fields, "model.request.api_family", evidence.api_family)?;
-                push_matched_field(&mut fields, "model.request.stream", evidence.request.stream)?;
-                push_matched_field(
-                    &mut fields,
-                    "model.request.message_count",
-                    evidence.request.message_count,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.request.tools_declared_count",
-                    evidence.request.tools_declared_count,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.request.unknown_fields_present",
-                    evidence.request.unknown_fields_present,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.evidence.parse_status",
-                    evidence.parse_status,
-                )?;
-                push_matched_field(
-                    &mut fields,
-                    "model.evidence.status",
-                    evidence.evidence_status,
-                )?;
-                for (index, tool_call) in evidence.tool_calls.iter().enumerate() {
-                    let prefix = format!("model.request.tool_calls[{index}]");
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.tool_call_id"),
-                        &tool_call.tool_call_id,
-                    )?;
-                    if let Some(value) = &tool_call.provider_call_id {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.provider_call_id"),
-                            value,
-                        )?;
-                    }
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.raw_name"),
-                        &tool_call.raw_name,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.name"),
-                        &tool_call.normalized_name,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.arguments_status"),
-                        tool_call.arguments_status,
-                    )?;
-                    push_matched_field(&mut fields, &format!("{prefix}.origin"), tool_call.origin)?;
-                    push_matched_field(&mut fields, &format!("{prefix}.status"), tool_call.status)?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.parse_confidence"),
-                        tool_call.parse_confidence,
-                    )?;
-                    if let Some(value) = &tool_call.linked_mcp_call_id {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.linked_mcp_call_id"),
-                            value,
-                        )?;
-                    }
-                    if let Some(value) = &tool_call.arguments_raw {
-                        push_matched_field(&mut fields, &format!("{prefix}.arguments_raw"), value)?;
-                    }
-                    if let Some(value) = &tool_call.arguments_json {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.arguments_json"),
-                            value,
-                        )?;
-                    }
-                }
-                if let Some(response) = &evidence.response {
-                    if let Some(value) = &response.stop_reason {
-                        push_matched_field(&mut fields, "model.response.stop_reason", value)?;
-                    }
-                    if let Some(value) = &response.provider_response_id {
-                        push_matched_field(
-                            &mut fields,
-                            "model.response.provider_response_id",
-                            value,
-                        )?;
-                    }
-                }
-                for (index, tool_result) in evidence.tool_results.iter().enumerate() {
-                    let prefix = format!("model.response.tool_results[{index}]");
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.tool_call_id"),
-                        &tool_result.tool_call_id,
-                    )?;
-                    if let Some(value) = &tool_result.linked_mcp_call_id {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.linked_mcp_call_id"),
-                            value,
-                        )?;
-                    }
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.content_kind"),
-                        tool_result.content_kind,
-                    )?;
-                    if let Some(value) = &tool_result.content_preview {
-                        push_matched_field(
-                            &mut fields,
-                            &format!("{prefix}.content_preview"),
-                            value,
-                        )?;
-                    }
-                    if let Some(value) = &tool_result.content_json {
-                        push_matched_field(&mut fields, &format!("{prefix}.content_json"), value)?;
-                    }
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.is_error"),
-                        tool_result.is_error,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.result_status"),
-                        tool_result.result_status,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.returned_to_model"),
-                        tool_result.returned_to_model,
-                    )?;
-                    push_matched_field(
-                        &mut fields,
-                        &format!("{prefix}.parse_confidence"),
-                        tool_result.parse_confidence,
-                    )?;
-                }
-            }
-        }
-        seceng::SecurityEventSubject::File(subject) => {
-            push_matched_field(&mut fields, "file.activity.operation", &subject.operation)?;
-            push_matched_field(&mut fields, "file.activity.path_class", &subject.path_class)?;
-            if let Some(value) = &subject.path {
-                push_matched_field(&mut fields, "file.activity.path", value)?;
-            }
-            if let Some(value) = subject.byte_count {
-                push_matched_field(&mut fields, "file.activity.byte_count", value)?;
-            }
-        }
-        seceng::SecurityEventSubject::Process(subject) => {
-            push_matched_field(
-                &mut fields,
-                "process.activity.operation",
-                &subject.operation,
-            )?;
-            if let Some(value) = &subject.command_class {
-                push_matched_field(&mut fields, "process.activity.command_class", value)?;
-            }
-        }
-        seceng::SecurityEventSubject::Credential(subject) => {
-            push_matched_field(
-                &mut fields,
-                "credential.activity.operation",
-                &subject.operation,
-            )?;
-            push_matched_field(
-                &mut fields,
-                "credential.activity.credential_id",
-                &subject.credential_id,
-            )?;
-        }
-        seceng::SecurityEventSubject::VmLifecycle(subject) => {
-            push_matched_field(&mut fields, "vm.activity.operation", &subject.operation)?;
-        }
-        seceng::SecurityEventSubject::Profile(subject) => {
-            push_matched_field(
-                &mut fields,
-                "profile.activity.operation",
-                &subject.operation,
-            )?;
-            push_matched_field(
-                &mut fields,
-                "profile.activity.profile_id",
-                &subject.profile_id,
-            )?;
-            push_matched_field(
-                &mut fields,
-                "profile.activity.profile_revision",
-                &subject.profile_revision,
-            )?;
-            push_matched_field(&mut fields, "profile.id", &subject.profile_id)?;
-            push_matched_field(&mut fields, "profile.revision", &subject.profile_revision)?;
-        }
-        seceng::SecurityEventSubject::Conversation(subject) => {
-            push_matched_field(
-                &mut fields,
-                "conversation.activity.operation",
-                &subject.operation,
-            )?;
-            if let Some(value) = &subject.conversation_id {
-                push_matched_field(&mut fields, "conversation.id", value)?;
-            }
-        }
-        seceng::SecurityEventSubject::Snapshot(subject) => {
-            push_matched_field(
-                &mut fields,
-                "snapshot.activity.operation",
-                &subject.operation,
-            )?;
-            push_matched_field(&mut fields, "snapshot.id", &subject.snapshot_id)?;
-        }
-    }
-    Ok(fields)
-}
-
-fn push_common_matched_fields(
-    fields: &mut Vec<seceng::MatchedField>,
-    event: &seceng::SecurityEvent,
-) -> Result<(), AppError> {
-    push_matched_field(fields, "common.event_id", &event.common.event_id)?;
-    push_matched_field(fields, "common.event_type", &event.common.event_type)?;
-    push_matched_field(fields, "common.source_engine", event.common.source_engine)?;
-    push_matched_field(fields, "common.enforceability", event.common.enforceability)?;
-    push_matched_field(
-        fields,
-        "common.attribution_scope",
-        event.common.attribution_scope,
-    )?;
-    push_matched_field(fields, "common.origin_kind", event.common.origin_kind)?;
-    push_matched_field(
-        fields,
-        "common.timestamp_unix_ms",
-        event.common.timestamp_unix_ms,
-    )?;
-    if let Some(value) = &event.common.vm_id {
-        push_matched_field(fields, "common.vm_id", value)?;
-    }
-    if let Some(value) = &event.common.session_id {
-        push_matched_field(fields, "common.session_id", value)?;
-    }
-    if let Some(value) = &event.common.profile_id {
-        push_matched_field(fields, "common.profile_id", value)?;
-    }
-    if let Some(value) = &event.common.user_id {
-        push_matched_field(fields, "common.user_id", value)?;
-    }
-    if let Some(value) = &event.common.process_id {
-        push_matched_field(fields, "common.process_id", value)?;
-    }
-    if let Some(value) = &event.common.exec_id {
-        push_matched_field(fields, "common.exec_id", value)?;
-    }
-    if let Some(value) = &event.common.turn_id {
-        push_matched_field(fields, "common.turn_id", value)?;
-    }
-    if let Some(value) = &event.common.message_id {
-        push_matched_field(fields, "common.message_id", value)?;
-    }
-    if let Some(value) = &event.common.tool_call_id {
-        push_matched_field(fields, "common.tool_call_id", value)?;
-    }
-    if let Some(value) = &event.common.mcp_call_id {
-        push_matched_field(fields, "common.mcp_call_id", value)?;
-    }
-    if let Some(value) = &event.common.accounting_owner {
-        push_matched_field(fields, "common.accounting_owner", value)?;
-    }
-    Ok(())
-}
-
-fn push_http_body_matched_fields(
-    fields: &mut Vec<seceng::MatchedField>,
-    prefix: &str,
-    body: &seceng::HttpBodySecuritySubject,
-) -> Result<(), AppError> {
-    push_matched_field(fields, &format!("{prefix}.state"), body.state)?;
-    if let Some(value) = &body.text {
-        push_matched_field(fields, &format!("{prefix}.text"), value)?;
-    }
-    if let Some(value) = &body.content_type {
-        push_matched_field(fields, &format!("{prefix}.content_type"), value)?;
-    }
-    if let Some(value) = body.size {
-        push_matched_field(fields, &format!("{prefix}.size"), value)?;
-    }
-    push_matched_field(fields, &format!("{prefix}.truncated"), body.truncated)?;
-    if let Some(value) = &body.redaction_reason {
-        push_matched_field(fields, &format!("{prefix}.redaction_reason"), value)?;
-    }
-    Ok(())
-}
-
-fn mcp_arguments_status(evidence: &seceng::McpToolExecutionEvidence) -> &'static str {
-    if evidence.request_arguments_json.is_some() {
-        "valid_json"
-    } else if evidence.request_arguments_raw.is_some() {
-        "not_json"
-    } else {
-        "absent"
-    }
-}
-
-fn push_matched_field(
-    fields: &mut Vec<seceng::MatchedField>,
-    path: &str,
-    value: impl Serialize,
-) -> Result<(), AppError> {
-    fields.push(seceng::MatchedField {
-        path: path.to_owned(),
-        value: serde_json::to_value(value).map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("serialize backtest matched field {path}: {error}"),
-            )
-        })?,
-    });
-    Ok(())
-}
-
-fn backtest_outcome(expected: Option<&str>, actual: &str) -> seceng::BacktestOutcome {
-    match expected {
-        Some(expected) if expected != actual => seceng::BacktestOutcome::Mismatch {
-            expected: expected.to_owned(),
-            actual: actual.to_owned(),
-        },
-        _ => seceng::BacktestOutcome::Matched,
-    }
-}
-
 fn security_events_query_rows(
     reader: &capsem_logger::DbReader,
 ) -> Result<Vec<serde_json::Value>, AppError> {
@@ -8677,6 +8132,13 @@ fn session_mcp_evidence_from_row(
 fn session_security_event_common_from_row(
     row: &serde_json::Value,
 ) -> Result<seceng::SecurityEventCommon, AppError> {
+    let event_type_raw = session_required_string(row, SESSION_COL_EVENT_TYPE)?;
+    let event_type = seceng::SecurityEventType::parse(&event_type_raw).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("session security event has invalid event type: {error}"),
+        )
+    })?;
     Ok(seceng::SecurityEventCommon {
         event_id: session_required_string(row, SESSION_COL_EVENT_ID)?,
         parent_event_id: session_optional_string(row, SESSION_COL_PARENT_EVENT_ID)?,
@@ -8718,7 +8180,7 @@ fn session_security_event_common_from_row(
         message_id: session_optional_string(row, SESSION_COL_MESSAGE_ID)?,
         tool_call_id: session_optional_string(row, SESSION_COL_TOOL_CALL_ID)?,
         mcp_call_id: session_optional_string(row, SESSION_COL_MCP_CALL_ID)?,
-        event_type: session_required_string(row, SESSION_COL_EVENT_TYPE)?,
+        event_type,
         redaction_state: parse_session_redaction_state(&session_required_string(
             row,
             SESSION_COL_REDACTION_STATE,
@@ -8726,8 +8188,9 @@ fn session_security_event_common_from_row(
     })
 }
 
-fn session_event_operation(event_type: &str, fallback: &str) -> String {
+fn session_event_operation(event_type: seceng::SecurityEventType, fallback: &str) -> String {
     event_type
+        .as_str()
         .split_once('.')
         .map(|(_, operation)| operation)
         .filter(|operation| !operation.is_empty())
@@ -8846,6 +8309,7 @@ fn session_security_event_from_row(
             Ok(Some(seceng::SecurityEvent::mcp(
                 common,
                 seceng::McpSecuritySubject {
+                    method: Some("tools/call".into()),
                     server_id,
                     tool_name,
                     evidence: evidence.map(Box::new),
@@ -8890,7 +8354,7 @@ fn session_security_event_from_row(
         }
         "file" => {
             let operation = session_optional_string(row, SESSION_COL_FILE_OPERATION)?
-                .unwrap_or_else(|| session_event_operation(&common.event_type, "activity"));
+                .unwrap_or_else(|| session_event_operation(common.event_type, "activity"));
             let path = session_optional_string(row, SESSION_COL_FILE_PATH)?;
             let path_class = path
                 .as_deref()
@@ -8903,12 +8367,13 @@ fn session_security_event_from_row(
                     path,
                     path_class,
                     byte_count: session_optional_u64(row, SESSION_COL_FILE_BYTE_COUNT)?,
+                    content: None,
                 },
             )))
         }
         "process" => {
             let operation = session_optional_string(row, SESSION_COL_SECURITY_PROCESS_OPERATION)?
-                .unwrap_or_else(|| session_event_operation(&common.event_type, "activity"));
+                .unwrap_or_else(|| session_event_operation(common.event_type, "activity"));
             let command = session_optional_string(row, SESSION_COL_PROCESS_COMMAND)?;
             let process_name = session_optional_string(row, SESSION_COL_PROCESS_NAME)?;
             let command_class =
@@ -8934,7 +8399,7 @@ fn session_security_event_from_row(
             )))
         }
         "snapshot" => {
-            let operation = session_event_operation(&common.event_type, "activity");
+            let operation = session_event_operation(common.event_type, "activity");
             let snapshot_id = session_optional_string(row, SESSION_COL_SNAPSHOT_NAME)?
                 .or_else(|| {
                     session_optional_u64(row, SESSION_COL_SNAPSHOT_SLOT)
@@ -8952,14 +8417,14 @@ fn session_security_event_from_row(
             )))
         }
         "vm" => {
-            let operation = session_event_operation(&common.event_type, "activity");
+            let operation = session_event_operation(common.event_type, "activity");
             Ok(Some(seceng::SecurityEvent::vm_lifecycle(
                 common,
                 seceng::VmLifecycleSecuritySubject { operation },
             )))
         }
         "profile" => {
-            let operation = session_event_operation(&common.event_type, "activity");
+            let operation = session_event_operation(common.event_type, "activity");
             let profile_id = common.profile_id.clone().unwrap_or_default();
             let profile_revision = common.profile_revision.clone().unwrap_or_default();
             Ok(Some(seceng::SecurityEvent::profile(
@@ -8972,7 +8437,7 @@ fn session_security_event_from_row(
             )))
         }
         "conversation" => {
-            let operation = session_event_operation(&common.event_type, "activity");
+            let operation = session_event_operation(common.event_type, "activity");
             let conversation_id = common
                 .activity_id
                 .clone()
@@ -9020,7 +8485,7 @@ fn policy_context_fixture_json(
     session_id: &str,
     event: &RuntimeBacktestEvent,
 ) -> Result<serde_json::Value, AppError> {
-    let fallback_ref = inline_backtest_event_ref(event);
+    let fallback_ref = seceng::inline_backtest_event_ref(&event.engine_input());
     let event_ref = event.event_ref.as_ref().unwrap_or(&fallback_ref);
     let context = seceng::policy_context_from_event(&event.event);
     let context_json = serde_json::to_value(context).map_err(|error| {
@@ -9069,26 +8534,6 @@ fn session_policy_context_export_json(
         "fixture_count": fixtures.len(),
         "fixtures": fixtures,
     }))
-}
-
-fn security_decision_action_text(
-    action: seceng::SecurityDecisionAction,
-) -> Result<String, AppError> {
-    serde_json::to_value(action)
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("serialize security decision action: {error}"),
-            )
-        })?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "security decision action did not serialize as a string".into(),
-            )
-        })
 }
 
 async fn handle_compile_enforcement_rule(
@@ -9230,51 +8675,21 @@ async fn handle_enforcement_backtest(
             format!("backtest enforcement rule: {message}"),
         )
     })?;
-    let mut evaluator =
-        seceng::CelEnforcementEvaluator::compile(vec![seceng::CelEnforcementRule {
-            id: request.rule.id.clone(),
-            pack_id: request.rule.pack_id.clone(),
-            condition: request.rule.condition.clone(),
-            decision: request.rule.decision,
-            reason: request.rule.reason.clone(),
-            mutations: Vec::new(),
-        }])
-        .map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("compile enforcement rule: {error}"),
-            )
-        })?;
-
-    let mut rows = Vec::new();
-    for input in &request.events {
-        if let Some(decision) = seceng::EnforcementEvaluator::evaluate(&mut evaluator, &input.event)
-            .map_err(|error| {
+    let events = request
+        .events
+        .iter()
+        .map(RuntimeBacktestEvent::engine_input)
+        .collect::<Vec<_>>();
+    Ok(Json(
+        seceng::run_enforcement_backtest(request.rule.cel_rule(), &events, request.limit).map_err(
+            |error| {
                 AppError(
                     StatusCode::BAD_REQUEST,
                     format!("backtest enforcement rule: {error}"),
                 )
-            })?
-        {
-            let actual = security_decision_action_text(decision.action)?;
-            rows.push(seceng::BacktestMatchRow {
-                event_ref: inline_backtest_event_ref(input),
-                rule_id: decision.rule.unwrap_or_else(|| request.rule.id.clone()),
-                pack_id: decision
-                    .pack_id
-                    .or_else(|| request.rule.pack_id.clone())
-                    .unwrap_or_else(|| "runtime".into()),
-                evidence_signature: backtest_evidence_signature(&input.event)?,
-                matched_fields: backtest_matched_fields(&input.event)?,
-                outcome: backtest_outcome(input.expected.as_deref(), &actual),
-            });
-        }
-    }
-
-    Ok(Json(seceng::dedupe_backtest_matches(
-        rows,
-        runtime_backtest_limit(request.limit),
-    )))
+            },
+        )?,
+    ))
 }
 
 async fn handle_compile_detection_rule(
@@ -9407,49 +8822,21 @@ async fn handle_detection_backtest(
     Json(request): Json<RuntimeDetectionBacktestRequest>,
 ) -> Result<Json<seceng::BacktestResult>, AppError> {
     validate_runtime_rule_id(&request.rule.id)?;
-    let mut evaluator = seceng::CelDetectionEvaluator::compile(vec![seceng::CelDetectionRule {
-        id: request.rule.id.clone(),
-        pack_id: request.rule.pack_id.clone(),
-        sigma_id: request.rule.sigma_id.clone(),
-        title: request.rule.title.clone(),
-        condition: request.rule.condition.clone(),
-        severity: request.rule.severity,
-        confidence: request.rule.confidence,
-        tags: request.rule.tags.clone(),
-    }])
-    .map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("compile detection rule: {error}"),
-        )
-    })?;
-
-    let mut rows = Vec::new();
-    for input in &request.events {
-        let findings = seceng::DetectionEvaluator::evaluate(&mut evaluator, &input.event).map_err(
+    let events = request
+        .events
+        .iter()
+        .map(RuntimeBacktestEvent::engine_input)
+        .collect::<Vec<_>>();
+    Ok(Json(
+        seceng::run_detection_backtest(request.rule.cel_rule(), &events, request.limit).map_err(
             |error| {
                 AppError(
                     StatusCode::BAD_REQUEST,
                     format!("backtest detection rule: {error}"),
                 )
             },
-        )?;
-        for finding in findings {
-            rows.push(seceng::BacktestMatchRow {
-                event_ref: inline_backtest_event_ref(input),
-                rule_id: finding.rule_id,
-                pack_id: finding.pack_id,
-                evidence_signature: backtest_evidence_signature(&input.event)?,
-                matched_fields: backtest_matched_fields(&input.event)?,
-                outcome: backtest_outcome(input.expected.as_deref(), "finding"),
-            });
-        }
-    }
-
-    Ok(Json(seceng::dedupe_backtest_matches(
-        rows,
-        runtime_backtest_limit(request.limit),
-    )))
+        )?,
+    ))
 }
 
 fn run_detection_hunt(
@@ -9467,52 +8854,18 @@ fn run_detection_hunt(
     let mut compiled_rules = Vec::with_capacity(rules.len());
     for rule in rules {
         validate_runtime_rule_id(&rule.id)?;
-        compiled_rules.push(seceng::CelDetectionRule {
-            id: rule.id.clone(),
-            pack_id: rule.pack_id.clone(),
-            sigma_id: rule.sigma_id.clone(),
-            title: rule.title.clone(),
-            condition: rule.condition.clone(),
-            severity: rule.severity,
-            confidence: rule.confidence,
-            tags: rule.tags.clone(),
-        });
+        compiled_rules.push(rule.cel_rule());
     }
-
-    let mut evaluator =
-        seceng::CelDetectionEvaluator::compile(compiled_rules).map_err(|error| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                format!("compile detection hunt rules: {error}"),
-            )
-        })?;
-
-    let mut rows = Vec::new();
-    for input in events {
-        let findings = seceng::DetectionEvaluator::evaluate(&mut evaluator, &input.event).map_err(
-            |error| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("hunt detection rules: {error}"),
-                )
-            },
-        )?;
-        for finding in findings {
-            rows.push(seceng::BacktestMatchRow {
-                event_ref: inline_backtest_event_ref(input),
-                rule_id: finding.rule_id,
-                pack_id: finding.pack_id,
-                evidence_signature: backtest_evidence_signature(&input.event)?,
-                matched_fields: backtest_matched_fields(&input.event)?,
-                outcome: backtest_outcome(input.expected.as_deref(), "finding"),
-            });
-        }
-    }
-
-    Ok(seceng::dedupe_backtest_matches(
-        rows,
-        runtime_backtest_limit(limit),
-    ))
+    let events = events
+        .iter()
+        .map(RuntimeBacktestEvent::engine_input)
+        .collect::<Vec<_>>();
+    seceng::run_detection_hunt(compiled_rules, &events, limit).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("hunt detection rules: {error}"),
+        )
+    })
 }
 
 async fn handle_detection_hunt(

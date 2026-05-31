@@ -530,27 +530,27 @@ pub(crate) async fn handle_ipc_connection(
             }
             ServiceToProcess::ReloadConfig { runtime_rules } => {
                 info!("Reloading policies from disk");
-                let runtime_state =
-                    crate::mcp_runtime::load_runtime_policy_state_with_runtime_rules_and_recorder(
+                let security_state =
+                    crate::security_engine::load_security_runtime_state_with_runtime_rules_and_recorder(
                         &mcp_runtime.session_dir,
                         runtime_rules.as_ref(),
                         Some(mcp_runtime.rule_matches.clone()),
                     );
                 let servers = crate::mcp_runtime::build_servers_with_builtin(
-                    &runtime_state.mcp_user,
-                    &runtime_state.mcp_corp,
+                    &security_state.mcp_user,
+                    &security_state.mcp_corp,
                     mcp_runtime.builtin_binary.as_deref(),
                     &mcp_runtime.session_dir,
-                    &runtime_state.domain_policy,
+                    &security_state.domain_policy,
                 );
 
-                let new_domain = Arc::new(runtime_state.domain_policy);
-                let new_mcp = Arc::new(runtime_state.mcp_policy);
+                let new_domain = Arc::new(security_state.domain_policy);
+                let new_mcp = Arc::new(security_state.mcp_policy);
                 *mcp_runtime.domain_policy.write().unwrap() = Arc::clone(&new_domain);
                 *mcp_runtime.policy.write().await = new_mcp;
                 mcp_runtime
                     .security_engine
-                    .set(runtime_state.security_engine);
+                    .set(security_state.security_engine);
 
                 let reload_result = mcp_runtime.aggregator.refresh(servers).await;
                 let (success, error) = match reload_result {

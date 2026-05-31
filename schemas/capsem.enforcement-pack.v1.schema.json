@@ -130,7 +130,8 @@
         "credential",
         "vm",
         "profile",
-        "conversation"
+        "conversation",
+        "snapshot"
       ],
       "title": "EventFamily",
       "type": "string"

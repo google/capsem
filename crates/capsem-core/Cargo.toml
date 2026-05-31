@@ -110,7 +110,3 @@ harness = false
 [[bench]]
 name = "interp_anthropic"
 harness = false
-
-[[bench]]
-name = "security_packs"
-harness = false

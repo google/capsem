@@ -7,8 +7,8 @@ use capsem_security_engine::{
     AskPlan, BlockResponse, DetectionFinding, DnsSecuritySubject, FileSecuritySubject,
     HttpBodySecuritySubject, HttpSecuritySubject, McpSecuritySubject, ModelInteractionEvidence,
     ModelRequestEvidence, ModelSecuritySubject, ProcessSecuritySubject, ResolvedEventStep,
-    RewritePatch, SecurityError, SecurityEvent, SecurityEventCommon, ThrottlePlan,
-    TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
+    RewritePatch, SecurityError, SecurityEvent, SecurityEventCommon, SecurityEventType,
+    ThrottlePlan, TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 use serde::Serialize;
 
@@ -242,7 +242,7 @@ fn security_common(event_id: &str) -> SecurityEventCommon {
         message_id: Some("message-1".to_string()),
         tool_call_id: Some("tool-call-1".to_string()),
         mcp_call_id: Some("mcp-call-1".to_string()),
-        event_type: "http.request".to_string(),
+        event_type: SecurityEventType::HttpRequest,
         redaction_state: RedactionState::Raw,
     }
 }
@@ -255,7 +255,7 @@ fn family_common(
     vm_id: Option<&str>,
 ) -> SecurityEventCommon {
     let mut common = security_common(event_id);
-    common.event_type = event_type.to_string();
+    common.event_type = SecurityEventType::parse(event_type).unwrap();
     common.source_engine = source_engine;
     common.attribution_scope = attribution_scope;
     common.vm_id = vm_id.map(str::to_string);
@@ -404,6 +404,7 @@ fn resolved_mcp_event(event_id: &str, final_action: SecurityAction) -> ResolvedS
                 Some("vm-1"),
             ),
             McpSecuritySubject {
+                method: Some("tools/call".into()),
                 server_id: "filesystem".into(),
                 tool_name: "read_file".into(),
                 evidence: None,
@@ -433,6 +434,7 @@ fn resolved_file_event(
                 path: Some("/workspace/data.txt".into()),
                 path_class: "workspace".into(),
                 byte_count,
+                content: None,
             },
         ),
         final_action,

@@ -310,7 +310,7 @@ pub const CREATE_SCHEMA: &str = "
         timestamp TEXT NOT NULL,
         timestamp_unix_ms INTEGER NOT NULL,
         event_family TEXT NOT NULL CHECK (event_family IN ('dns', 'http', 'mcp', 'model', 'file', 'process', 'credential', 'vm', 'profile', 'conversation', 'snapshot')),
-        event_type TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN ('dns.request', 'http.request', 'http.response', 'mcp.request', 'mcp.response', 'model.request', 'model.response', 'model.tool_call', 'model.tool_response', 'file.activity', 'file.read', 'file.write', 'process.exec', 'credential.request', 'credential.activity', 'vm.create', 'vm.start', 'profile.update', 'conversation.message', 'snapshot.create')),
         source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
         final_action TEXT NOT NULL CHECK (final_action IN ('continue', 'ask', 'rewrite', 'block', 'throttle', 'quarantine', 'restore', 'drop_connection', 'observe_only', 'error')),
         enforceability TEXT NOT NULL CHECK (enforceability IN ('inline_blockable', 'observe_only', 'remediation_only')),
@@ -340,7 +340,20 @@ pub const CREATE_SCHEMA: &str = "
         process_command_class TEXT,
         label_count INTEGER NOT NULL DEFAULT 0,
         mutation_count INTEGER NOT NULL DEFAULT 0,
-        finding_count INTEGER NOT NULL DEFAULT 0
+        finding_count INTEGER NOT NULL DEFAULT 0,
+        CHECK (
+            (event_family = 'dns' AND event_type IN ('dns.request')) OR
+            (event_family = 'http' AND event_type IN ('http.request', 'http.response')) OR
+            (event_family = 'mcp' AND event_type IN ('mcp.request', 'mcp.response')) OR
+            (event_family = 'model' AND event_type IN ('model.request', 'model.response', 'model.tool_call', 'model.tool_response')) OR
+            (event_family = 'file' AND event_type IN ('file.activity', 'file.read', 'file.write')) OR
+            (event_family = 'process' AND event_type IN ('process.exec')) OR
+            (event_family = 'credential' AND event_type IN ('credential.request', 'credential.activity')) OR
+            (event_family = 'vm' AND event_type IN ('vm.create', 'vm.start')) OR
+            (event_family = 'profile' AND event_type IN ('profile.update')) OR
+            (event_family = 'conversation' AND event_type IN ('conversation.message')) OR
+            (event_family = 'snapshot' AND event_type IN ('snapshot.create'))
+        )
     );
     CREATE INDEX IF NOT EXISTS idx_security_events_timestamp
         ON security_events(timestamp);
@@ -793,7 +806,7 @@ pub fn migrate(conn: &Connection) {
             timestamp TEXT NOT NULL,
             timestamp_unix_ms INTEGER NOT NULL,
             event_family TEXT NOT NULL CHECK (event_family IN ('dns', 'http', 'mcp', 'model', 'file', 'process', 'credential', 'vm', 'profile', 'conversation', 'snapshot')),
-            event_type TEXT NOT NULL,
+            event_type TEXT NOT NULL CHECK (event_type IN ('dns.request', 'http.request', 'http.response', 'mcp.request', 'mcp.response', 'model.request', 'model.response', 'model.tool_call', 'model.tool_response', 'file.activity', 'file.read', 'file.write', 'process.exec', 'credential.request', 'credential.activity', 'vm.create', 'vm.start', 'profile.update', 'conversation.message', 'snapshot.create')),
             source_engine TEXT NOT NULL CHECK (source_engine IN ('network', 'file', 'process', 'conversation', 'security', 'vm', 'profile', 'host_ai')),
             final_action TEXT NOT NULL CHECK (final_action IN ('continue', 'ask', 'rewrite', 'block', 'throttle', 'quarantine', 'restore', 'drop_connection', 'observe_only', 'error')),
             enforceability TEXT NOT NULL CHECK (enforceability IN ('inline_blockable', 'observe_only', 'remediation_only')),
@@ -823,7 +836,20 @@ pub fn migrate(conn: &Connection) {
             process_command_class TEXT,
             label_count INTEGER NOT NULL DEFAULT 0,
             mutation_count INTEGER NOT NULL DEFAULT 0,
-            finding_count INTEGER NOT NULL DEFAULT 0
+            finding_count INTEGER NOT NULL DEFAULT 0,
+            CHECK (
+                (event_family = 'dns' AND event_type IN ('dns.request')) OR
+                (event_family = 'http' AND event_type IN ('http.request', 'http.response')) OR
+                (event_family = 'mcp' AND event_type IN ('mcp.request', 'mcp.response')) OR
+                (event_family = 'model' AND event_type IN ('model.request', 'model.response', 'model.tool_call', 'model.tool_response')) OR
+                (event_family = 'file' AND event_type IN ('file.activity', 'file.read', 'file.write')) OR
+                (event_family = 'process' AND event_type IN ('process.exec')) OR
+                (event_family = 'credential' AND event_type IN ('credential.request', 'credential.activity')) OR
+                (event_family = 'vm' AND event_type IN ('vm.create', 'vm.start')) OR
+                (event_family = 'profile' AND event_type IN ('profile.update')) OR
+                (event_family = 'conversation' AND event_type IN ('conversation.message')) OR
+                (event_family = 'snapshot' AND event_type IN ('snapshot.create'))
+            )
         );
         CREATE INDEX IF NOT EXISTS idx_security_events_timestamp ON security_events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_security_events_trace_id ON security_events(trace_id);
@@ -999,6 +1025,70 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
         create_tables(&conn).unwrap();
+    }
+
+    #[test]
+    fn security_events_reject_unknown_event_type() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let result =
+            insert_security_event_contract_probe(&conn, "evt-unknown-type", "dns", "dns.response");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn security_events_reject_family_type_mismatch() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let result =
+            insert_security_event_contract_probe(&conn, "evt-mismatch", "model", "dns.request");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn security_events_accept_known_matching_event_type() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        insert_security_event_contract_probe(&conn, "evt-known", "dns", "dns.request").unwrap();
+    }
+
+    #[test]
+    fn security_events_schema_accepts_every_typed_contract_event() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        for (index, event_type) in capsem_security_engine::SecurityEventType::ALL
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            insert_security_event_contract_probe(
+                &conn,
+                &format!("evt-contract-{index}"),
+                event_type.family().as_str(),
+                event_type.as_str(),
+            )
+            .unwrap();
+        }
+    }
+
+    fn insert_security_event_contract_probe(
+        conn: &Connection,
+        event_id: &str,
+        event_family: &str,
+        event_type: &str,
+    ) -> rusqlite::Result<usize> {
+        conn.execute(
+            "INSERT INTO security_events (
+                event_id, timestamp, timestamp_unix_ms, event_family, event_type,
+                source_engine, final_action, enforceability, attribution_scope,
+                origin_kind, redaction_state
+             )
+             VALUES (?1, '2026-01-01T00:00:00Z', 1767225600000, ?2, ?3,
+                'network', 'continue', 'inline_blockable', 'vm',
+                'guest_network', 'raw'
+             )",
+            rusqlite::params![event_id, event_family, event_type],
+        )
     }
 
     #[test]

@@ -1336,7 +1336,7 @@ fn insert_resolved_security_event(
             timestamp,
             common.timestamp_unix_ms as i64,
             event.event.subject.event_family().sql_text(),
-            &common.event_type,
+            common.event_type.as_str(),
             common.source_engine.sql_text(),
             security_action_sql_text(&event.final_action),
             common.enforceability.sql_text(),
@@ -1429,7 +1429,7 @@ fn insert_resolved_security_event(
         conn.execute(
             "INSERT INTO security_event_links (event_id, linked_event_id, link_type, evidence)
              VALUES (?1, ?2, 'parent', ?3)",
-            params![event_id, parent, &common.event_type],
+            params![event_id, parent, common.event_type.as_str()],
         )?;
     }
     for history in &event.event.trace.history {

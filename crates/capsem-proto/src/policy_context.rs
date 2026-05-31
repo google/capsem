@@ -28,7 +28,15 @@ pub struct PolicyContext {
     #[serde(default)]
     pub process: ProcessPolicyContext,
     #[serde(default)]
+    pub credential: CredentialPolicyContext,
+    #[serde(default)]
+    pub vm: VmPolicyContext,
+    #[serde(default)]
     pub profile: ProfilePolicyContext,
+    #[serde(default)]
+    pub conversation: ConversationPolicyContext,
+    #[serde(default)]
+    pub snapshot: SnapshotPolicyContext,
 }
 
 impl Default for PolicyContext {
@@ -48,7 +56,11 @@ impl PolicyContext {
             model: ModelPolicyContext::default(),
             file: FilePolicyContext::default(),
             process: ProcessPolicyContext::default(),
+            credential: CredentialPolicyContext::default(),
+            vm: VmPolicyContext::default(),
             profile: ProfilePolicyContext::default(),
+            conversation: ConversationPolicyContext::default(),
+            snapshot: SnapshotPolicyContext::default(),
         }
     }
 }
@@ -296,6 +308,8 @@ pub struct McpRequestPolicyContext {
     pub server_name: Option<String>,
     #[serde(default)]
     pub arguments_status: Option<String>,
+    #[serde(default)]
+    pub arguments: BodyPolicyContext,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,6 +325,8 @@ pub struct McpResponsePolicyContext {
     pub is_error: Option<bool>,
     #[serde(default)]
     pub result_status: Option<String>,
+    #[serde(default)]
+    pub result: BodyPolicyContext,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -368,6 +384,8 @@ pub struct ModelToolCallPolicyContext {
     pub linked_mcp_call_id: Option<String>,
     #[serde(default)]
     pub parse_confidence: Option<String>,
+    #[serde(default)]
+    pub arguments: BodyPolicyContext,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +450,8 @@ pub struct FileActivityPolicyContext {
     pub path_class: Option<String>,
     #[serde(default)]
     pub byte_count: Option<u64>,
+    #[serde(default)]
+    pub content: BodyPolicyContext,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -460,6 +480,36 @@ pub struct ProcessActivityPolicyContext {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CredentialPolicyContext {
+    #[serde(default)]
+    pub activity: Option<CredentialActivityPolicyContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialActivityPolicyContext {
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmPolicyContext {
+    #[serde(default)]
+    pub activity: Option<VmActivityPolicyContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmActivityPolicyContext {
+    #[serde(default)]
+    pub operation: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfilePolicyContext {
     #[serde(default)]
     pub activity: Option<ProfileActivityPolicyContext>,
@@ -476,6 +526,38 @@ pub struct ProfileActivityPolicyContext {
     pub profile_revision: Option<String>,
     #[serde(default)]
     pub profile_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationPolicyContext {
+    #[serde(default)]
+    pub activity: Option<ConversationActivityPolicyContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationActivityPolicyContext {
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotPolicyContext {
+    #[serde(default)]
+    pub activity: Option<SnapshotActivityPolicyContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotActivityPolicyContext {
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub snapshot_id: Option<String>,
 }
 
 #[cfg(test)]

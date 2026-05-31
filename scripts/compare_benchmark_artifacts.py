@@ -178,7 +178,7 @@ def missing_lanes(root: Path, linux_arch: str, mac_arch: str) -> list[str]:
     checks = [
         ("host-native", None),
         ("security-engine", "cel_microbench"),
-        ("security-engine", "security_packs_microbench"),
+        ("security-engine", "detection_ir_microbench"),
     ]
     for category, suffix in checks:
         linux = latest_artifact(root, category, linux_arch, suffix)

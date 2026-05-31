@@ -9,8 +9,8 @@ use std::path::Path;
 use capsem_logger::FileEvent;
 use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, Enforceability, FileSecuritySubject, RedactionState,
-    ResolvedSecurityEvent, SecurityAction, SecurityEvent, SecurityEventCommon, SourceEngine,
-    RESOLVED_EVENT_SCHEMA_VERSION,
+    ResolvedSecurityEvent, SecurityAction, SecurityEvent, SecurityEventCommon, SecurityEventType,
+    SourceEngine, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
 /// Ambient identity values captured by the host/runtime around file activity.
@@ -69,7 +69,7 @@ pub fn build_file_resolved_security_event(
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "file.activity".into(),
+            event_type: SecurityEventType::FileActivity,
             redaction_state: RedactionState::Raw,
         },
         FileSecuritySubject {
@@ -77,6 +77,7 @@ pub fn build_file_resolved_security_event(
             path: Some(event.path.clone()),
             path_class: file_path_class(&event.path).into(),
             byte_count: event.size,
+            content: None,
         },
     );
 

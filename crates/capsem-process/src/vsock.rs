@@ -1213,7 +1213,7 @@ fn process_exec_security_log_record(
     ProcessExecSecurityLogRecord {
         event_id: &common.event_id,
         event_family,
-        event_type: &common.event_type,
+        event_type: common.event_type.as_str(),
         source_engine: source_engine_log_label(common.source_engine),
         final_action: security_action_log_label(&resolved.final_action),
         enforceability: enforceability_log_label(common.enforceability),

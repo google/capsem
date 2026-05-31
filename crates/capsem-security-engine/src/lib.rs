@@ -1,17 +1,24 @@
 use capsem_proto::{
-    BodyPolicyContext, BodyState, CommonPolicyContext, DnsPolicyContext, DnsRequestPolicyContext,
-    FileActivityPolicyContext, FilePolicyContext, HttpPolicyContext, HttpRequestPolicyContext,
-    HttpResponsePolicyContext, McpPolicyContext, McpRequestPolicyContext, ModelPolicyContext,
-    ModelRequestPolicyContext, ModelToolCallPolicyContext, ModelToolResultPolicyContext,
-    PolicyContext, ProcessActivityPolicyContext, ProcessIdentityPolicyContext,
-    ProcessPolicyContext, ProfileActivityPolicyContext, ProfilePolicyContext,
+    BodyPolicyContext, BodyState, CommonPolicyContext, ConversationActivityPolicyContext,
+    ConversationPolicyContext, CredentialActivityPolicyContext, CredentialPolicyContext,
+    DnsPolicyContext, DnsRequestPolicyContext, FileActivityPolicyContext, FilePolicyContext,
+    HttpPolicyContext, HttpRequestPolicyContext, HttpResponsePolicyContext, McpPolicyContext,
+    McpRequestPolicyContext, ModelPolicyContext, ModelRequestPolicyContext,
+    ModelToolCallPolicyContext, ModelToolResultPolicyContext, PolicyContext,
+    ProcessActivityPolicyContext, ProcessIdentityPolicyContext, ProcessPolicyContext,
+    ProfileActivityPolicyContext, ProfilePolicyContext, SnapshotActivityPolicyContext,
+    SnapshotPolicyContext, VmActivityPolicyContext, VmPolicyContext,
 };
 use cel::extractors::This;
-use cel::objects::OptionalValue;
+use cel::objects::{Key, OptionalValue};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
+use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::Error;
+
+pub mod detection_ir;
 
 pub const SECURITY_EVENT_SCHEMA_VERSION: u32 = 1;
 pub const RESOLVED_EVENT_SCHEMA_VERSION: u32 = 1;
@@ -30,6 +37,231 @@ pub enum EventFamily {
     Profile,
     Conversation,
     Snapshot,
+}
+
+impl EventFamily {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dns => "dns",
+            Self::Http => "http",
+            Self::Mcp => "mcp",
+            Self::Model => "model",
+            Self::File => "file",
+            Self::Process => "process",
+            Self::Credential => "credential",
+            Self::Vm => "vm",
+            Self::Profile => "profile",
+            Self::Conversation => "conversation",
+            Self::Snapshot => "snapshot",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecurityEventTypeParseError {
+    value: String,
+}
+
+impl fmt::Display for SecurityEventTypeParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown security event type '{}'", self.value)
+    }
+}
+
+impl std::error::Error for SecurityEventTypeParseError {}
+
+/// Closed security-event identity contract.
+///
+/// Variants with `Future` in their Rust name are intentionally reserved
+/// contract points. They may be used by rule authoring and schema validation,
+/// but producers must not emit them until a producing engine lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SecurityEventType {
+    DnsRequest,
+    HttpRequest,
+    HttpResponse,
+    McpRequest,
+    McpResponse,
+    ModelRequest,
+    ModelResponse,
+    ModelToolCallFuture,
+    ModelToolResponseFuture,
+    FileActivity,
+    FileRead,
+    FileWrite,
+    ProcessExec,
+    CredentialRequest,
+    CredentialActivity,
+    VmCreate,
+    VmStart,
+    ProfileUpdate,
+    ConversationMessage,
+    SnapshotCreate,
+}
+
+impl SecurityEventType {
+    pub const ALL: &'static [Self] = &[
+        Self::DnsRequest,
+        Self::HttpRequest,
+        Self::HttpResponse,
+        Self::McpRequest,
+        Self::McpResponse,
+        Self::ModelRequest,
+        Self::ModelResponse,
+        Self::ModelToolCallFuture,
+        Self::ModelToolResponseFuture,
+        Self::FileActivity,
+        Self::FileRead,
+        Self::FileWrite,
+        Self::ProcessExec,
+        Self::CredentialRequest,
+        Self::CredentialActivity,
+        Self::VmCreate,
+        Self::VmStart,
+        Self::ProfileUpdate,
+        Self::ConversationMessage,
+        Self::SnapshotCreate,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DnsRequest => "dns.request",
+            Self::HttpRequest => "http.request",
+            Self::HttpResponse => "http.response",
+            Self::McpRequest => "mcp.request",
+            Self::McpResponse => "mcp.response",
+            Self::ModelRequest => "model.request",
+            Self::ModelResponse => "model.response",
+            Self::ModelToolCallFuture => "model.tool_call",
+            Self::ModelToolResponseFuture => "model.tool_response",
+            Self::FileActivity => "file.activity",
+            Self::FileRead => "file.read",
+            Self::FileWrite => "file.write",
+            Self::ProcessExec => "process.exec",
+            Self::CredentialRequest => "credential.request",
+            Self::CredentialActivity => "credential.activity",
+            Self::VmCreate => "vm.create",
+            Self::VmStart => "vm.start",
+            Self::ProfileUpdate => "profile.update",
+            Self::ConversationMessage => "conversation.message",
+            Self::SnapshotCreate => "snapshot.create",
+        }
+    }
+
+    pub const fn family(self) -> EventFamily {
+        match self {
+            Self::DnsRequest => EventFamily::Dns,
+            Self::HttpRequest | Self::HttpResponse => EventFamily::Http,
+            Self::McpRequest | Self::McpResponse => EventFamily::Mcp,
+            Self::ModelRequest
+            | Self::ModelResponse
+            | Self::ModelToolCallFuture
+            | Self::ModelToolResponseFuture => EventFamily::Model,
+            Self::FileActivity | Self::FileRead | Self::FileWrite => EventFamily::File,
+            Self::ProcessExec => EventFamily::Process,
+            Self::CredentialRequest | Self::CredentialActivity => EventFamily::Credential,
+            Self::VmCreate | Self::VmStart => EventFamily::Vm,
+            Self::ProfileUpdate => EventFamily::Profile,
+            Self::ConversationMessage => EventFamily::Conversation,
+            Self::SnapshotCreate => EventFamily::Snapshot,
+        }
+    }
+
+    pub const fn is_future_marker(self) -> bool {
+        matches!(
+            self,
+            Self::ModelToolCallFuture | Self::ModelToolResponseFuture
+        )
+    }
+
+    pub fn parse(value: &str) -> Result<Self, SecurityEventTypeParseError> {
+        Self::try_from(value)
+    }
+
+    pub fn callback_guard(callback: &str) -> Result<String, SecurityEventTypeParseError> {
+        let event_type = Self::parse(callback)?;
+        Ok(format!("common.event_type == '{}'", event_type.as_str()))
+    }
+}
+
+impl fmt::Display for SecurityEventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<&str> for SecurityEventType {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<SecurityEventType> for &str {
+    fn eq(&self, other: &SecurityEventType) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl TryFrom<&str> for SecurityEventType {
+    type Error = SecurityEventTypeParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let event_type = match value {
+            "dns.request" => Self::DnsRequest,
+            "http.request" => Self::HttpRequest,
+            "http.response" => Self::HttpResponse,
+            "mcp.request" => Self::McpRequest,
+            "mcp.response" => Self::McpResponse,
+            "model.request" => Self::ModelRequest,
+            "model.response" => Self::ModelResponse,
+            "model.tool_call" => Self::ModelToolCallFuture,
+            "model.tool_response" => Self::ModelToolResponseFuture,
+            "file.activity" => Self::FileActivity,
+            "file.read" => Self::FileRead,
+            "file.write" => Self::FileWrite,
+            "process.exec" => Self::ProcessExec,
+            "credential.request" => Self::CredentialRequest,
+            "credential.activity" => Self::CredentialActivity,
+            "vm.create" => Self::VmCreate,
+            "vm.start" => Self::VmStart,
+            "profile.update" => Self::ProfileUpdate,
+            "conversation.message" => Self::ConversationMessage,
+            "snapshot.create" => Self::SnapshotCreate,
+            _ => {
+                return Err(SecurityEventTypeParseError {
+                    value: value.to_owned(),
+                })
+            }
+        };
+        Ok(event_type)
+    }
+}
+
+impl FromStr for SecurityEventType {
+    type Err = SecurityEventTypeParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_from(value)
+    }
+}
+
+impl Serialize for SecurityEventType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SecurityEventType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value.as_str()).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,9 +390,22 @@ pub struct SecurityEventCommon {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub mcp_call_id: Option<String>,
-    pub event_type: String,
+    pub event_type: SecurityEventType,
     #[serde(default)]
     pub redaction_state: RedactionState,
+}
+
+impl SecurityEventCommon {
+    pub fn assert_family(&self, expected: EventFamily) {
+        assert_eq!(
+            self.event_type.family(),
+            expected,
+            "security event type '{}' belongs to family '{}', not '{}'",
+            self.event_type.as_str(),
+            self.event_type.family().as_str(),
+            expected.as_str()
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +430,7 @@ pub struct SecurityEvent {
 
 impl SecurityEvent {
     pub fn dns(common: SecurityEventCommon, subject: DnsSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Dns);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -199,6 +445,7 @@ impl SecurityEvent {
     }
 
     pub fn http(common: SecurityEventCommon, subject: HttpSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Http);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -213,6 +460,7 @@ impl SecurityEvent {
     }
 
     pub fn mcp(common: SecurityEventCommon, subject: McpSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Mcp);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -227,6 +475,7 @@ impl SecurityEvent {
     }
 
     pub fn model(common: SecurityEventCommon, subject: ModelSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Model);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -241,6 +490,7 @@ impl SecurityEvent {
     }
 
     pub fn file(common: SecurityEventCommon, subject: FileSecuritySubject) -> Self {
+        common.assert_family(EventFamily::File);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -255,6 +505,7 @@ impl SecurityEvent {
     }
 
     pub fn process(common: SecurityEventCommon, subject: ProcessSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Process);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -268,7 +519,23 @@ impl SecurityEvent {
         }
     }
 
+    pub fn credential(common: SecurityEventCommon, subject: CredentialSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Credential);
+        Self {
+            schema_version: SECURITY_EVENT_SCHEMA_VERSION,
+            common,
+            subject: SecurityEventSubject::Credential(subject),
+            context: EventContext::default(),
+            trace: TraceSnapshot::default(),
+            labels: Vec::new(),
+            findings: Vec::new(),
+            decision: None,
+            mutations: Vec::new(),
+        }
+    }
+
     pub fn conversation(common: SecurityEventCommon, subject: ConversationSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Conversation);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -283,6 +550,7 @@ impl SecurityEvent {
     }
 
     pub fn snapshot(common: SecurityEventCommon, subject: SnapshotSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Snapshot);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -297,6 +565,7 @@ impl SecurityEvent {
     }
 
     pub fn vm_lifecycle(common: SecurityEventCommon, subject: VmLifecycleSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Vm);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -311,6 +580,7 @@ impl SecurityEvent {
     }
 
     pub fn profile(common: SecurityEventCommon, subject: ProfileSecuritySubject) -> Self {
+        common.assert_family(EventFamily::Profile);
         Self {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common,
@@ -340,7 +610,7 @@ impl SecurityEvent {
             origin_kind: self.common.origin_kind,
             accounting_owner: self.common.accounting_owner.clone(),
             event_family: self.event_family(),
-            event_type: self.common.event_type.clone(),
+            event_type: self.common.event_type.as_str().to_owned(),
             correlation_ids: CorrelationIds {
                 trace_id: self.common.trace_id.clone(),
                 span_id: self.common.span_id.clone(),
@@ -355,7 +625,10 @@ impl SecurityEvent {
                 tool_call_id: self.common.tool_call_id.clone(),
                 mcp_call_id: self.common.mcp_call_id.clone(),
             },
-            ..QuotaDimensions::default_for(self.event_family(), self.common.event_type.clone())
+            ..QuotaDimensions::default_for(
+                self.event_family(),
+                self.common.event_type.as_str().to_owned(),
+            )
         };
         self.subject.apply_quota_dimensions(&mut dimensions);
         dimensions
@@ -619,6 +892,8 @@ pub enum HttpBodySecurityState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpSecuritySubject {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
     pub server_id: String,
     pub tool_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -656,6 +931,7 @@ impl ModelSecuritySubject {
 impl McpSecuritySubject {
     pub fn from_execution_evidence(evidence: McpToolExecutionEvidence) -> Self {
         Self {
+            method: Some("tools/call".into()),
             server_id: evidence.server_id.clone(),
             tool_name: evidence.tool_name.clone(),
             evidence: Some(Box::new(evidence)),
@@ -672,6 +948,8 @@ pub struct FileSecuritySubject {
     pub path_class: String,
     #[serde(default)]
     pub byte_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<HttpBodySecuritySubject>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1674,6 +1952,9 @@ fn evaluate_policy_cel_bool(
 ) -> Result<bool, SecurityEngineError> {
     let mut context = cel::Context::default();
     add_policy_context_roots(&mut context, rule_id, policy_context)?;
+    context.add_function("contains", policy_contains);
+    context.add_function("match", policy_match);
+    context.add_function("matches", policy_match);
     context.add_function("header", policy_header);
     context.add_function("exists", policy_exists);
 
@@ -1707,7 +1988,18 @@ fn validate_policy_cel_references(
     program: &cel::Program,
 ) -> Result<(), SecurityEngineError> {
     let allowed_roots = [
-        "common", "http", "dns", "mcp", "model", "file", "process", "profile",
+        "common",
+        "http",
+        "dns",
+        "mcp",
+        "model",
+        "file",
+        "process",
+        "credential",
+        "vm",
+        "profile",
+        "conversation",
+        "snapshot",
     ];
     let references = program.references();
     for variable in references.variables() {
@@ -1739,7 +2031,16 @@ fn add_policy_context_roots(
     add_policy_context_root(context, rule_id, "model", &policy_context.model)?;
     add_policy_context_root(context, rule_id, "file", &policy_context.file)?;
     add_policy_context_root(context, rule_id, "process", &policy_context.process)?;
+    add_policy_context_root(context, rule_id, "credential", &policy_context.credential)?;
+    add_policy_context_root(context, rule_id, "vm", &policy_context.vm)?;
     add_policy_context_root(context, rule_id, "profile", &policy_context.profile)?;
+    add_policy_context_root(
+        context,
+        rule_id,
+        "conversation",
+        &policy_context.conversation,
+    )?;
+    add_policy_context_root(context, rule_id, "snapshot", &policy_context.snapshot)?;
     Ok(())
 }
 
@@ -1762,6 +2063,131 @@ where
             rule_id: rule_id.to_owned(),
             message: error.to_string(),
         })
+}
+
+fn policy_contains(
+    This(this): This<cel::Value>,
+    needle: cel::Value,
+) -> Result<cel::Value, cel::ExecutionError> {
+    Ok(value_contains(&this, &needle).into())
+}
+
+fn policy_match(
+    ftx: &cel::FunctionContext,
+    This(this): This<cel::Value>,
+    pattern: Arc<String>,
+) -> Result<bool, cel::ExecutionError> {
+    let regex = regex::Regex::new(&pattern)
+        .map_err(|error| ftx.error(format!("invalid regex pattern: {error}")))?;
+    Ok(value_matches(&this, &regex))
+}
+
+fn value_contains(value: &cel::Value, needle: &cel::Value) -> bool {
+    match value {
+        cel::Value::String(text) => value_search_needle(needle)
+            .as_deref()
+            .is_some_and(|needle| text.contains(needle)),
+        cel::Value::Bytes(bytes) => match needle {
+            cel::Value::Bytes(needle) => {
+                needle.is_empty()
+                    || bytes
+                        .windows(needle.len())
+                        .any(|window| window == needle.as_slice())
+            }
+            _ => value_search_needle(needle)
+                .and_then(|needle| {
+                    String::from_utf8(bytes.to_vec())
+                        .ok()
+                        .map(|text| (text, needle))
+                })
+                .is_some_and(|(text, needle)| text.contains(&needle)),
+        },
+        cel::Value::List(values) => values
+            .iter()
+            .any(|value| value == needle || value_contains(value, needle)),
+        cel::Value::Map(map) => {
+            map.map.keys().any(|key| key_equals_value(key, needle))
+                || map.map.iter().any(|(key, value)| {
+                    key_contains(key, needle) || value == needle || value_contains(value, needle)
+                })
+        }
+        cel::Value::Int(_)
+        | cel::Value::UInt(_)
+        | cel::Value::Float(_)
+        | cel::Value::Bool(_)
+        | cel::Value::Null => value_search_needle(needle)
+            .is_some_and(|needle| scalar_text(value).is_some_and(|text| text.contains(&needle))),
+        cel::Value::Duration(_) | cel::Value::Timestamp(_) => false,
+        cel::Value::Function(_, _) | cel::Value::Opaque(_) => false,
+    }
+}
+
+fn value_matches(value: &cel::Value, regex: &regex::Regex) -> bool {
+    match value {
+        cel::Value::String(text) => regex.is_match(text),
+        cel::Value::Bytes(bytes) => String::from_utf8(bytes.to_vec())
+            .ok()
+            .is_some_and(|text| regex.is_match(&text)),
+        cel::Value::List(values) => values.iter().any(|value| value_matches(value, regex)),
+        cel::Value::Map(map) => map
+            .map
+            .iter()
+            .any(|(key, value)| regex.is_match(&key_text(key)) || value_matches(value, regex)),
+        cel::Value::Int(_)
+        | cel::Value::UInt(_)
+        | cel::Value::Float(_)
+        | cel::Value::Bool(_)
+        | cel::Value::Null => scalar_text(value).is_some_and(|text| regex.is_match(&text)),
+        cel::Value::Duration(_) | cel::Value::Timestamp(_) => false,
+        cel::Value::Function(_, _) | cel::Value::Opaque(_) => false,
+    }
+}
+
+fn key_equals_value(key: &Key, value: &cel::Value) -> bool {
+    match (key, value) {
+        (Key::Int(left), cel::Value::Int(right)) => left == right,
+        (Key::Uint(left), cel::Value::UInt(right)) => left == right,
+        (Key::Bool(left), cel::Value::Bool(right)) => left == right,
+        (Key::String(left), cel::Value::String(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn key_contains(key: &Key, needle: &cel::Value) -> bool {
+    value_search_needle(needle).is_some_and(|needle| key_text(key).contains(&needle))
+}
+
+fn key_text(key: &Key) -> String {
+    match key {
+        Key::Int(value) => value.to_string(),
+        Key::Uint(value) => value.to_string(),
+        Key::Bool(value) => value.to_string(),
+        Key::String(value) => value.to_string(),
+    }
+}
+
+fn value_search_needle(value: &cel::Value) -> Option<String> {
+    match value {
+        cel::Value::String(text) => Some(text.to_string()),
+        cel::Value::Bytes(bytes) => String::from_utf8(bytes.to_vec()).ok(),
+        cel::Value::Int(_)
+        | cel::Value::UInt(_)
+        | cel::Value::Float(_)
+        | cel::Value::Bool(_)
+        | cel::Value::Null => scalar_text(value),
+        _ => None,
+    }
+}
+
+fn scalar_text(value: &cel::Value) -> Option<String> {
+    match value {
+        cel::Value::Int(value) => Some(value.to_string()),
+        cel::Value::UInt(value) => Some(value.to_string()),
+        cel::Value::Float(value) => Some(value.to_string()),
+        cel::Value::Bool(value) => Some(value.to_string()),
+        cel::Value::Null => Some("null".into()),
+        _ => None,
+    }
 }
 
 fn policy_header(
@@ -1821,7 +2247,7 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
             profile_id: event.common.profile_id.clone(),
             profile_revision: event.common.profile_revision.clone(),
             user_id: event.common.user_id.clone(),
-            event_type: Some(event.common.event_type.clone()),
+            event_type: Some(event.common.event_type.as_str().to_owned()),
             enforceability: Some(
                 match event.common.enforceability {
                     Enforceability::InlineBlockable => "inline_blockable",
@@ -1887,7 +2313,7 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
         SecurityEventSubject::Mcp(subject) => {
             context.mcp = McpPolicyContext {
                 request: Some(McpRequestPolicyContext {
-                    method: None,
+                    method: subject.method.clone(),
                     server_id: Some(subject.server_id.clone()),
                     tool_name: Some(subject.tool_name.clone()),
                     server_name: None,
@@ -1900,14 +2326,20 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                             "absent".to_owned()
                         }
                     }),
+                    arguments: subject
+                        .evidence
+                        .as_deref()
+                        .map(mcp_arguments_policy_context)
+                        .unwrap_or_else(BodyPolicyContext::missing),
                 }),
                 response: subject.evidence.as_deref().map(|evidence| {
                     capsem_proto::McpResponsePolicyContext {
-                        method: None,
+                        method: subject.method.clone(),
                         server_id: Some(evidence.server_id.clone()),
                         tool_name: Some(evidence.tool_name.clone()),
                         is_error: Some(evidence.is_error),
                         result_status: Some(if evidence.is_error { "error" } else { "ok" }.into()),
+                        result: mcp_result_policy_context(evidence),
                     }
                 }),
             };
@@ -1950,7 +2382,13 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                         .and_then(|evidence| evidence.response.as_ref())
                         .and_then(|response| response.stop_reason.clone()),
                     estimated_output_tokens: subject.estimated_output_tokens,
-                    body: BodyPolicyContext::missing(),
+                    body: subject
+                        .evidence
+                        .as_deref()
+                        .and_then(|evidence| evidence.response.as_ref())
+                        .and_then(|response| response.text_preview.clone())
+                        .map(BodyPolicyContext::text)
+                        .unwrap_or_else(BodyPolicyContext::missing),
                     tool_results: subject
                         .evidence
                         .as_deref()
@@ -1966,6 +2404,11 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                     path: subject.path.clone(),
                     path_class: Some(subject.path_class.clone()),
                     byte_count: subject.byte_count,
+                    content: subject
+                        .content
+                        .as_ref()
+                        .map(http_body_policy_context)
+                        .unwrap_or_else(BodyPolicyContext::missing),
                 }),
             };
         }
@@ -1981,6 +2424,21 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                 }),
             };
         }
+        SecurityEventSubject::Credential(subject) => {
+            context.credential = CredentialPolicyContext {
+                activity: Some(CredentialActivityPolicyContext {
+                    operation: Some(subject.operation.clone()),
+                    credential_id: Some(subject.credential_id.clone()),
+                }),
+            };
+        }
+        SecurityEventSubject::VmLifecycle(subject) => {
+            context.vm = VmPolicyContext {
+                activity: Some(VmActivityPolicyContext {
+                    operation: Some(subject.operation.clone()),
+                }),
+            };
+        }
         SecurityEventSubject::Profile(subject) => {
             context.profile = ProfilePolicyContext {
                 activity: Some(ProfileActivityPolicyContext {
@@ -1991,10 +2449,22 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                 }),
             };
         }
-        SecurityEventSubject::Credential(_)
-        | SecurityEventSubject::VmLifecycle(_)
-        | SecurityEventSubject::Conversation(_)
-        | SecurityEventSubject::Snapshot(_) => {}
+        SecurityEventSubject::Conversation(subject) => {
+            context.conversation = ConversationPolicyContext {
+                activity: Some(ConversationActivityPolicyContext {
+                    operation: Some(subject.operation.clone()),
+                    conversation_id: subject.conversation_id.clone(),
+                }),
+            };
+        }
+        SecurityEventSubject::Snapshot(subject) => {
+            context.snapshot = SnapshotPolicyContext {
+                activity: Some(SnapshotActivityPolicyContext {
+                    operation: Some(subject.operation.clone()),
+                    snapshot_id: Some(subject.snapshot_id.clone()),
+                }),
+            };
+        }
     }
     context
 }
@@ -2021,8 +2491,64 @@ fn model_tool_call_policy_contexts(
             status: serialized_enum_string(tool_call.status),
             linked_mcp_call_id: tool_call.linked_mcp_call_id.clone(),
             parse_confidence: serialized_enum_string(tool_call.parse_confidence),
+            arguments: model_tool_call_arguments_policy_context(tool_call),
         })
         .collect()
+}
+
+fn mcp_arguments_policy_context(evidence: &McpToolExecutionEvidence) -> BodyPolicyContext {
+    evidence
+        .request_arguments_json
+        .as_deref()
+        .map(|arguments| text_body_policy_context(arguments, Some("application/json")))
+        .or_else(|| {
+            evidence
+                .request_arguments_raw
+                .as_deref()
+                .map(|arguments| text_body_policy_context(arguments, None))
+        })
+        .unwrap_or_else(BodyPolicyContext::missing)
+}
+
+fn mcp_result_policy_context(evidence: &McpToolExecutionEvidence) -> BodyPolicyContext {
+    evidence
+        .result_json
+        .as_deref()
+        .map(|result| text_body_policy_context(result, Some("application/json")))
+        .or_else(|| {
+            evidence
+                .result_preview
+                .as_deref()
+                .map(|result| text_body_policy_context(result, None))
+        })
+        .unwrap_or_else(BodyPolicyContext::missing)
+}
+
+fn model_tool_call_arguments_policy_context(
+    tool_call: &ModelToolCallEvidence,
+) -> BodyPolicyContext {
+    tool_call
+        .arguments_json
+        .as_deref()
+        .map(|arguments| text_body_policy_context(arguments, Some("application/json")))
+        .or_else(|| {
+            tool_call
+                .arguments_raw
+                .as_deref()
+                .map(|arguments| text_body_policy_context(arguments, None))
+        })
+        .unwrap_or_else(BodyPolicyContext::missing)
+}
+
+fn text_body_policy_context(text: &str, content_type: Option<&str>) -> BodyPolicyContext {
+    BodyPolicyContext {
+        state: BodyState::Text,
+        text: Some(text.to_owned()),
+        content_type: content_type.map(str::to_owned),
+        size: Some(text.len() as u64),
+        truncated: false,
+        redaction_reason: None,
+    }
 }
 
 fn model_tool_result_policy_contexts(
@@ -2482,9 +3008,9 @@ pub fn canonical_event_hash(event: &SecurityEvent) -> String {
 pub fn validate_plugin_output(event: &SecurityEvent) -> Result<(), PluginValidationError> {
     for mutation in &event.mutations {
         let path = mutation.path();
-        if !mutation_target_allowed(&event.common.event_type, path) {
+        if !mutation_target_allowed(event.common.event_type, path) {
             return Err(PluginValidationError::MutationTargetNotAllowed {
-                event_type: event.common.event_type.clone(),
+                event_type: event.common.event_type.as_str().to_owned(),
                 path: path.to_owned(),
             });
         }
@@ -2567,22 +3093,24 @@ fn contains_all<T: PartialEq>(haystack: &[T], needles: &[T]) -> bool {
     needles.iter().all(|needle| haystack.contains(needle))
 }
 
-fn mutation_target_allowed(event_type: &str, path: &str) -> bool {
+fn mutation_target_allowed(event_type: SecurityEventType, path: &str) -> bool {
     match event_type {
-        "http.request" => {
+        SecurityEventType::HttpRequest => {
             path.starts_with("subject.headers.")
                 || path == "subject.url"
                 || path == "subject.body.text"
         }
-        "http.response" => path.starts_with("subject.headers.") || path == "subject.body.text",
-        "model.request" => {
+        SecurityEventType::HttpResponse => {
+            path.starts_with("subject.headers.") || path == "subject.body.text"
+        }
+        SecurityEventType::ModelRequest => {
             path == "subject.messages[*].content" || path == "subject.tool_results[*].content"
         }
-        "model.response" => {
+        SecurityEventType::ModelResponse => {
             path == "subject.output_text" || path == "subject.tool_calls[*].arguments"
         }
-        "mcp.request" => path == "subject.params.arguments",
-        "mcp.response" => path == "subject.result.content",
+        SecurityEventType::McpRequest => path == "subject.params.arguments",
+        SecurityEventType::McpResponse => path == "subject.result.content",
         _ => false,
     }
 }
@@ -2659,6 +3187,647 @@ pub fn dedupe_backtest_matches(rows: Vec<BacktestMatchRow>, limit: usize) -> Bac
         truncated: unique_evidence_matches > deduped.len(),
         rows: deduped,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BacktestEventInput {
+    pub event_ref: Option<BacktestEventRef>,
+    pub event: SecurityEvent,
+    pub expected: Option<String>,
+}
+
+pub fn runtime_rule_plan_id(condition: &str) -> String {
+    format!("cel:{}", blake3::hash(condition.as_bytes()).to_hex())
+}
+
+pub fn validate_runtime_enforcement_decision_supported(
+    decision: SecurityDecisionAction,
+) -> Result<(), String> {
+    if decision == SecurityDecisionAction::Ask {
+        return Err(
+            "ask decisions require S15-confirm-ux; runtime ask overlays are disabled until the confirm resolver is wired"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub fn compile_runtime_enforcement_rule(
+    rule: CelEnforcementRule,
+) -> Result<String, SecurityEngineError> {
+    validate_runtime_enforcement_decision_supported(rule.decision).map_err(|message| {
+        SecurityEngineError::CelCompileFailed {
+            rule_id: rule.id.clone(),
+            message,
+        }
+    })?;
+    let plan_id = runtime_rule_plan_id(&rule.condition);
+    CelEnforcementEvaluator::compile(vec![rule])?;
+    Ok(plan_id)
+}
+
+pub fn compile_runtime_detection_rule(
+    rule: CelDetectionRule,
+) -> Result<String, SecurityEngineError> {
+    let plan_id = runtime_rule_plan_id(&rule.condition);
+    CelDetectionEvaluator::compile(vec![rule])?;
+    Ok(plan_id)
+}
+
+pub fn compile_runtime_rule_record(
+    record: &RuntimeRuleRecord,
+) -> Result<String, SecurityEngineError> {
+    match &record.definition {
+        RuntimeRuleDefinition::Enforcement { decision, reason } => {
+            compile_runtime_enforcement_rule(CelEnforcementRule {
+                id: record.metadata.id.clone(),
+                pack_id: record.metadata.pack_id.clone(),
+                condition: record.source.clone(),
+                decision: *decision,
+                reason: reason.clone(),
+                mutations: Vec::new(),
+            })
+        }
+        RuntimeRuleDefinition::Detection {
+            sigma_id,
+            title,
+            severity,
+            confidence,
+            tags,
+        } => compile_runtime_detection_rule(CelDetectionRule {
+            id: record.metadata.id.clone(),
+            pack_id: record
+                .metadata
+                .pack_id
+                .clone()
+                .unwrap_or_else(|| "runtime".into()),
+            sigma_id: sigma_id.clone(),
+            title: title.clone(),
+            condition: record.source.clone(),
+            severity: *severity,
+            confidence: *confidence,
+            tags: tags.clone(),
+        }),
+    }
+}
+
+pub fn runtime_backtest_limit(limit: Option<usize>) -> usize {
+    limit.unwrap_or(DEFAULT_BACKTEST_MATCH_LIMIT)
+}
+
+pub fn inline_backtest_event_ref(input: &BacktestEventInput) -> BacktestEventRef {
+    input.event_ref.clone().unwrap_or_else(|| BacktestEventRef {
+        corpus: "inline".into(),
+        session_id: input.event.common.session_id.clone(),
+        event_id: input.event.common.event_id.clone(),
+        sequence_no: input.event.common.sequence_no,
+        timestamp_unix_ms: input.event.common.timestamp_unix_ms,
+    })
+}
+
+pub fn backtest_evidence_signature(event: &SecurityEvent) -> Result<String, SecurityEngineError> {
+    let evidence = serde_json::json!({
+        "event_type": &event.common.event_type,
+        "subject": &event.subject,
+    });
+    let evidence =
+        serde_json::to_vec(&evidence).map_err(|error| SecurityEngineError::PhaseFailed {
+            phase: SecurityEnginePhase::Detection,
+            message: format!("serialize backtest evidence: {error}"),
+        })?;
+    Ok(blake3::hash(&evidence).to_hex().to_string())
+}
+
+pub fn backtest_outcome(expected: Option<&str>, actual: &str) -> BacktestOutcome {
+    match expected {
+        Some(expected) if expected != actual => BacktestOutcome::Mismatch {
+            expected: expected.to_owned(),
+            actual: actual.to_owned(),
+        },
+        _ => BacktestOutcome::Matched,
+    }
+}
+
+pub fn security_decision_action_text(
+    action: SecurityDecisionAction,
+) -> Result<String, SecurityEngineError> {
+    serde_json::to_value(action)
+        .map_err(|error| SecurityEngineError::PhaseFailed {
+            phase: SecurityEnginePhase::Enforcement,
+            message: format!("serialize security decision action: {error}"),
+        })?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| SecurityEngineError::PhaseFailed {
+            phase: SecurityEnginePhase::Enforcement,
+            message: "security decision action did not serialize as a string".into(),
+        })
+}
+
+pub fn run_enforcement_backtest(
+    rule: CelEnforcementRule,
+    events: &[BacktestEventInput],
+    limit: Option<usize>,
+) -> Result<BacktestResult, SecurityEngineError> {
+    let fallback_rule_id = rule.id.clone();
+    let fallback_pack_id = rule.pack_id.clone();
+    let mut evaluator = CelEnforcementEvaluator::compile(vec![rule])?;
+    let mut rows = Vec::new();
+    for input in events {
+        if let Some(decision) = EnforcementEvaluator::evaluate(&mut evaluator, &input.event)? {
+            let actual = security_decision_action_text(decision.action)?;
+            rows.push(BacktestMatchRow {
+                event_ref: inline_backtest_event_ref(input),
+                rule_id: decision.rule.unwrap_or_else(|| fallback_rule_id.clone()),
+                pack_id: decision
+                    .pack_id
+                    .or_else(|| fallback_pack_id.clone())
+                    .unwrap_or_else(|| "runtime".into()),
+                evidence_signature: backtest_evidence_signature(&input.event)?,
+                matched_fields: backtest_matched_fields(&input.event)?,
+                outcome: backtest_outcome(input.expected.as_deref(), &actual),
+            });
+        }
+    }
+    Ok(dedupe_backtest_matches(rows, runtime_backtest_limit(limit)))
+}
+
+pub fn run_detection_backtest(
+    rule: CelDetectionRule,
+    events: &[BacktestEventInput],
+    limit: Option<usize>,
+) -> Result<BacktestResult, SecurityEngineError> {
+    run_detection_hunt(vec![rule], events, limit)
+}
+
+pub fn run_detection_hunt(
+    rules: Vec<CelDetectionRule>,
+    events: &[BacktestEventInput],
+    limit: Option<usize>,
+) -> Result<BacktestResult, SecurityEngineError> {
+    if rules.is_empty() {
+        return Err(SecurityEngineError::PhaseFailed {
+            phase: SecurityEnginePhase::Detection,
+            message: "detection hunt requires at least one rule".into(),
+        });
+    }
+    let mut evaluator = CelDetectionEvaluator::compile(rules)?;
+    let mut rows = Vec::new();
+    for input in events {
+        let findings = DetectionEvaluator::evaluate(&mut evaluator, &input.event)?;
+        for finding in findings {
+            rows.push(BacktestMatchRow {
+                event_ref: inline_backtest_event_ref(input),
+                rule_id: finding.rule_id,
+                pack_id: finding.pack_id,
+                evidence_signature: backtest_evidence_signature(&input.event)?,
+                matched_fields: backtest_matched_fields(&input.event)?,
+                outcome: backtest_outcome(input.expected.as_deref(), "finding"),
+            });
+        }
+    }
+    Ok(dedupe_backtest_matches(rows, runtime_backtest_limit(limit)))
+}
+
+pub fn backtest_matched_fields(
+    event: &SecurityEvent,
+) -> Result<Vec<MatchedField>, SecurityEngineError> {
+    let mut fields = Vec::new();
+    push_common_matched_fields(&mut fields, event)?;
+    match &event.subject {
+        SecurityEventSubject::Http(subject) => {
+            push_matched_field(&mut fields, "http.request.method", &subject.method)?;
+            push_matched_field(&mut fields, "http.request.host", &subject.host)?;
+            push_matched_field(&mut fields, "http.request.path_class", &subject.path_class)?;
+            push_matched_field(&mut fields, "http.request.bytes", subject.request_bytes)?;
+            for (name, values) in &subject.request_headers {
+                push_matched_field(&mut fields, &format!("http.request.headers.{name}"), values)?;
+            }
+            if let Some(body) = &subject.request_body {
+                push_http_body_matched_fields(&mut fields, "http.request.body", body)?;
+            }
+            if let Some(value) = &subject.scheme {
+                push_matched_field(&mut fields, "http.request.scheme", value)?;
+            }
+            if let Some(value) = subject.port {
+                push_matched_field(&mut fields, "http.request.port", value)?;
+            }
+            if let Some(value) = &subject.path {
+                push_matched_field(&mut fields, "http.request.path", value)?;
+            }
+            if let Some(value) = &subject.query {
+                push_matched_field(&mut fields, "http.request.query", value)?;
+            }
+            if let Some(value) = &subject.url {
+                push_matched_field(&mut fields, "http.request.url", value)?;
+            }
+            if let Some(value) = subject.response_status {
+                push_matched_field(&mut fields, "http.response.status", value)?;
+            }
+            if let Some(value) = subject.response_bytes {
+                push_matched_field(&mut fields, "http.response.bytes", value)?;
+            }
+            for (name, values) in &subject.response_headers {
+                push_matched_field(
+                    &mut fields,
+                    &format!("http.response.headers.{name}"),
+                    values,
+                )?;
+            }
+            if let Some(body) = &subject.response_body {
+                push_http_body_matched_fields(&mut fields, "http.response.body", body)?;
+            }
+        }
+        SecurityEventSubject::Dns(subject) => {
+            push_matched_field(&mut fields, "dns.request.qname", &subject.qname)?;
+            push_matched_field(
+                &mut fields,
+                "dns.request.domain_class",
+                &subject.domain_class,
+            )?;
+        }
+        SecurityEventSubject::Mcp(subject) => {
+            push_matched_field(&mut fields, "mcp.request.server_id", &subject.server_id)?;
+            push_matched_field(&mut fields, "mcp.request.tool_name", &subject.tool_name)?;
+            if let Some(evidence) = &subject.evidence {
+                push_matched_field(
+                    &mut fields,
+                    "mcp.request.arguments_status",
+                    mcp_arguments_status(evidence),
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "mcp.request.namespaced_tool_name",
+                    &evidence.namespaced_tool_name,
+                )?;
+                push_matched_field(&mut fields, "mcp.request.transport", &evidence.transport)?;
+                if let Some(value) = &evidence.request_arguments_raw {
+                    push_matched_field(&mut fields, "mcp.request.arguments_raw", value)?;
+                }
+                if let Some(value) = &evidence.request_arguments_json {
+                    push_matched_field(&mut fields, "mcp.request.arguments_json", value)?;
+                }
+                push_matched_field(&mut fields, "mcp.response.is_error", evidence.is_error)?;
+                push_matched_field(
+                    &mut fields,
+                    "mcp.response.result_status",
+                    if evidence.is_error { "error" } else { "ok" },
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "mcp.response.result_kind",
+                    evidence.result_kind,
+                )?;
+                if let Some(value) = &evidence.result_preview {
+                    push_matched_field(&mut fields, "mcp.response.result_preview", value)?;
+                }
+                if let Some(value) = &evidence.result_json {
+                    push_matched_field(&mut fields, "mcp.response.result_json", value)?;
+                }
+                push_matched_field(&mut fields, "mcp.response.latency_ms", evidence.latency_ms)?;
+                push_matched_field(&mut fields, "mcp.link.status", evidence.link_status)?;
+                if let Some(value) = &evidence.linked_model_interaction_id {
+                    push_matched_field(&mut fields, "mcp.link.model_interaction_id", value)?;
+                }
+                if let Some(value) = &evidence.linked_model_tool_call_id {
+                    push_matched_field(&mut fields, "mcp.link.model_tool_call_id", value)?;
+                }
+            }
+        }
+        SecurityEventSubject::Model(subject) => {
+            push_matched_field(&mut fields, "model.request.provider", &subject.provider)?;
+            push_matched_field(&mut fields, "model.request.model", &subject.model)?;
+            if let Some(value) = subject.estimated_input_tokens {
+                push_matched_field(&mut fields, "model.usage.input_tokens", value)?;
+            }
+            if let Some(value) = subject.estimated_output_tokens {
+                push_matched_field(&mut fields, "model.usage.output_tokens", value)?;
+            }
+            if let Some(value) = subject.estimated_cost_micros {
+                push_matched_field(&mut fields, "model.usage.estimated_cost_micros", value)?;
+            }
+            if let Some(evidence) = &subject.evidence {
+                push_matched_field(&mut fields, "model.request.api_family", evidence.api_family)?;
+                push_matched_field(&mut fields, "model.request.stream", evidence.request.stream)?;
+                push_matched_field(
+                    &mut fields,
+                    "model.request.message_count",
+                    evidence.request.message_count,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.request.tools_declared_count",
+                    evidence.request.tools_declared_count,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.request.unknown_fields_present",
+                    evidence.request.unknown_fields_present,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.evidence.parse_status",
+                    evidence.parse_status,
+                )?;
+                push_matched_field(
+                    &mut fields,
+                    "model.evidence.status",
+                    evidence.evidence_status,
+                )?;
+                for (index, tool_call) in evidence.tool_calls.iter().enumerate() {
+                    let prefix = format!("model.request.tool_calls[{index}]");
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.tool_call_id"),
+                        &tool_call.tool_call_id,
+                    )?;
+                    if let Some(value) = &tool_call.provider_call_id {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.provider_call_id"),
+                            value,
+                        )?;
+                    }
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.raw_name"),
+                        &tool_call.raw_name,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.name"),
+                        &tool_call.normalized_name,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.arguments_status"),
+                        tool_call.arguments_status,
+                    )?;
+                    push_matched_field(&mut fields, &format!("{prefix}.origin"), tool_call.origin)?;
+                    push_matched_field(&mut fields, &format!("{prefix}.status"), tool_call.status)?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.parse_confidence"),
+                        tool_call.parse_confidence,
+                    )?;
+                    if let Some(value) = &tool_call.linked_mcp_call_id {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.linked_mcp_call_id"),
+                            value,
+                        )?;
+                    }
+                    if let Some(value) = &tool_call.arguments_raw {
+                        push_matched_field(&mut fields, &format!("{prefix}.arguments_raw"), value)?;
+                    }
+                    if let Some(value) = &tool_call.arguments_json {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.arguments_json"),
+                            value,
+                        )?;
+                    }
+                }
+                if let Some(response) = &evidence.response {
+                    if let Some(value) = &response.stop_reason {
+                        push_matched_field(&mut fields, "model.response.stop_reason", value)?;
+                    }
+                    if let Some(value) = &response.provider_response_id {
+                        push_matched_field(
+                            &mut fields,
+                            "model.response.provider_response_id",
+                            value,
+                        )?;
+                    }
+                }
+                for (index, tool_result) in evidence.tool_results.iter().enumerate() {
+                    let prefix = format!("model.response.tool_results[{index}]");
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.tool_call_id"),
+                        &tool_result.tool_call_id,
+                    )?;
+                    if let Some(value) = &tool_result.linked_mcp_call_id {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.linked_mcp_call_id"),
+                            value,
+                        )?;
+                    }
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.content_kind"),
+                        tool_result.content_kind,
+                    )?;
+                    if let Some(value) = &tool_result.content_preview {
+                        push_matched_field(
+                            &mut fields,
+                            &format!("{prefix}.content_preview"),
+                            value,
+                        )?;
+                    }
+                    if let Some(value) = &tool_result.content_json {
+                        push_matched_field(&mut fields, &format!("{prefix}.content_json"), value)?;
+                    }
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.is_error"),
+                        tool_result.is_error,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.result_status"),
+                        tool_result.result_status,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.returned_to_model"),
+                        tool_result.returned_to_model,
+                    )?;
+                    push_matched_field(
+                        &mut fields,
+                        &format!("{prefix}.parse_confidence"),
+                        tool_result.parse_confidence,
+                    )?;
+                }
+            }
+        }
+        SecurityEventSubject::File(subject) => {
+            push_matched_field(&mut fields, "file.activity.operation", &subject.operation)?;
+            push_matched_field(&mut fields, "file.activity.path_class", &subject.path_class)?;
+            if let Some(value) = &subject.path {
+                push_matched_field(&mut fields, "file.activity.path", value)?;
+            }
+            if let Some(value) = subject.byte_count {
+                push_matched_field(&mut fields, "file.activity.byte_count", value)?;
+            }
+        }
+        SecurityEventSubject::Process(subject) => {
+            push_matched_field(
+                &mut fields,
+                "process.activity.operation",
+                &subject.operation,
+            )?;
+            if let Some(value) = &subject.command_class {
+                push_matched_field(&mut fields, "process.activity.command_class", value)?;
+            }
+        }
+        SecurityEventSubject::Credential(subject) => {
+            push_matched_field(
+                &mut fields,
+                "credential.activity.operation",
+                &subject.operation,
+            )?;
+            push_matched_field(
+                &mut fields,
+                "credential.activity.credential_id",
+                &subject.credential_id,
+            )?;
+        }
+        SecurityEventSubject::VmLifecycle(subject) => {
+            push_matched_field(&mut fields, "vm.activity.operation", &subject.operation)?;
+        }
+        SecurityEventSubject::Profile(subject) => {
+            push_matched_field(
+                &mut fields,
+                "profile.activity.operation",
+                &subject.operation,
+            )?;
+            push_matched_field(
+                &mut fields,
+                "profile.activity.profile_id",
+                &subject.profile_id,
+            )?;
+            push_matched_field(
+                &mut fields,
+                "profile.activity.profile_revision",
+                &subject.profile_revision,
+            )?;
+            push_matched_field(&mut fields, "profile.id", &subject.profile_id)?;
+            push_matched_field(&mut fields, "profile.revision", &subject.profile_revision)?;
+        }
+        SecurityEventSubject::Conversation(subject) => {
+            push_matched_field(
+                &mut fields,
+                "conversation.activity.operation",
+                &subject.operation,
+            )?;
+            if let Some(value) = &subject.conversation_id {
+                push_matched_field(&mut fields, "conversation.id", value)?;
+            }
+        }
+        SecurityEventSubject::Snapshot(subject) => {
+            push_matched_field(
+                &mut fields,
+                "snapshot.activity.operation",
+                &subject.operation,
+            )?;
+            push_matched_field(&mut fields, "snapshot.id", &subject.snapshot_id)?;
+        }
+    }
+    Ok(fields)
+}
+
+fn push_common_matched_fields(
+    fields: &mut Vec<MatchedField>,
+    event: &SecurityEvent,
+) -> Result<(), SecurityEngineError> {
+    push_matched_field(fields, "common.event_id", &event.common.event_id)?;
+    push_matched_field(fields, "common.event_type", &event.common.event_type)?;
+    push_matched_field(fields, "common.source_engine", event.common.source_engine)?;
+    push_matched_field(fields, "common.enforceability", event.common.enforceability)?;
+    push_matched_field(
+        fields,
+        "common.attribution_scope",
+        event.common.attribution_scope,
+    )?;
+    push_matched_field(fields, "common.origin_kind", event.common.origin_kind)?;
+    push_matched_field(
+        fields,
+        "common.timestamp_unix_ms",
+        event.common.timestamp_unix_ms,
+    )?;
+    if let Some(value) = &event.common.vm_id {
+        push_matched_field(fields, "common.vm_id", value)?;
+    }
+    if let Some(value) = &event.common.session_id {
+        push_matched_field(fields, "common.session_id", value)?;
+    }
+    if let Some(value) = &event.common.profile_id {
+        push_matched_field(fields, "common.profile_id", value)?;
+    }
+    if let Some(value) = &event.common.user_id {
+        push_matched_field(fields, "common.user_id", value)?;
+    }
+    if let Some(value) = &event.common.process_id {
+        push_matched_field(fields, "common.process_id", value)?;
+    }
+    if let Some(value) = &event.common.exec_id {
+        push_matched_field(fields, "common.exec_id", value)?;
+    }
+    if let Some(value) = &event.common.turn_id {
+        push_matched_field(fields, "common.turn_id", value)?;
+    }
+    if let Some(value) = &event.common.message_id {
+        push_matched_field(fields, "common.message_id", value)?;
+    }
+    if let Some(value) = &event.common.tool_call_id {
+        push_matched_field(fields, "common.tool_call_id", value)?;
+    }
+    if let Some(value) = &event.common.mcp_call_id {
+        push_matched_field(fields, "common.mcp_call_id", value)?;
+    }
+    if let Some(value) = &event.common.accounting_owner {
+        push_matched_field(fields, "common.accounting_owner", value)?;
+    }
+    Ok(())
+}
+
+fn push_http_body_matched_fields(
+    fields: &mut Vec<MatchedField>,
+    prefix: &str,
+    body: &HttpBodySecuritySubject,
+) -> Result<(), SecurityEngineError> {
+    push_matched_field(fields, &format!("{prefix}.state"), body.state)?;
+    if let Some(value) = &body.text {
+        push_matched_field(fields, &format!("{prefix}.text"), value)?;
+    }
+    if let Some(value) = &body.content_type {
+        push_matched_field(fields, &format!("{prefix}.content_type"), value)?;
+    }
+    if let Some(value) = body.size {
+        push_matched_field(fields, &format!("{prefix}.size"), value)?;
+    }
+    push_matched_field(fields, &format!("{prefix}.truncated"), body.truncated)?;
+    if let Some(value) = &body.redaction_reason {
+        push_matched_field(fields, &format!("{prefix}.redaction_reason"), value)?;
+    }
+    Ok(())
+}
+
+fn mcp_arguments_status(evidence: &McpToolExecutionEvidence) -> &'static str {
+    if evidence.request_arguments_json.is_some() {
+        "valid_json"
+    } else if evidence.request_arguments_raw.is_some() {
+        "not_json"
+    } else {
+        "absent"
+    }
+}
+
+fn push_matched_field(
+    fields: &mut Vec<MatchedField>,
+    path: &str,
+    value: impl Serialize,
+) -> Result<(), SecurityEngineError> {
+    fields.push(MatchedField {
+        path: path.to_owned(),
+        value: serde_json::to_value(value).map_err(|error| SecurityEngineError::PhaseFailed {
+            phase: SecurityEnginePhase::Detection,
+            message: format!("serialize backtest matched field {path}: {error}"),
+        })?,
+    });
+    Ok(())
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

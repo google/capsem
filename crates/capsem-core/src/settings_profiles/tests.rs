@@ -826,7 +826,30 @@ decision = "block"
 }
 
 #[test]
-fn profile_accepts_mcp_arguments_dotted_paths() {
+fn profile_rule_callback_validation_rejects_unbacked_event_strings() {
+    let error = Profile::from_toml_str(
+        r#"
+id = "coding"
+name = "Coding"
+best_for = "Coding"
+
+[security.rules.dns.stale-response]
+on = "dns.response"
+if = "true"
+decision = "block"
+"#,
+    )
+    .unwrap_err();
+
+    let message = error.to_string();
+    assert!(
+        message.contains("not a supported security event type"),
+        "expected typed callback rejection, got: {message}"
+    );
+}
+
+#[test]
+fn profile_accepts_canonical_mcp_argument_object_search() {
     let profile = Profile::from_toml_str(
         r#"
 id = "coding"
@@ -835,9 +858,9 @@ best_for = "Coding"
 
 [security.rules.mcp.redact-issue-title]
 on = "mcp.request"
-if = 'method == "tools/call" && arguments.issue.title.contains("prod-token-")'
+if = 'mcp.request.method == "tools/call" && mcp.request.arguments.contains("prod-token-")'
 decision = "rewrite"
-rewrite_target = 'arguments.issue.title =~ "(?P<prefix>prod-token-)[A-Za-z0-9]+"'
+rewrite_target = 'mcp.request.arguments =~ "(?P<prefix>prod-token-)[A-Za-z0-9]+"'
 rewrite_value = "${prefix}[redacted]"
 "#,
     )
@@ -845,10 +868,10 @@ rewrite_value = "${prefix}[redacted]"
 
     let rule = &profile.security.rules.mcp["redact-issue-title"];
     assert_eq!(rule.callback, "mcp.request");
-    assert!(rule.condition.contains("arguments.issue.title"));
+    assert!(rule.condition.contains("mcp.request.arguments.contains"));
     assert_eq!(
         rule.rewrite_target.as_deref(),
-        Some(r#"arguments.issue.title =~ "(?P<prefix>prod-token-)[A-Za-z0-9]+""#)
+        Some(r#"mcp.request.arguments =~ "(?P<prefix>prod-token-)[A-Za-z0-9]+""#)
     );
     assert_eq!(rule.rewrite_value.as_deref(), Some("${prefix}[redacted]"));
 }
@@ -2172,7 +2195,7 @@ fn resolve_effective_vm_settings_includes_profile_and_derived_rules() {
         "ask-shell-tool".to_string(),
         ProfileRule {
             callback: "mcp.request".to_string(),
-            condition: "tool.name == 'shell'".to_string(),
+            condition: "mcp.request.tool_name == 'shell'".to_string(),
             decision: RuleDecision::Ask,
             priority: 500,
             rewrite_target: None,
@@ -3458,8 +3481,8 @@ fn catch_all_rules_land_at_priority_1000_per_runtime_callback() {
 
     let expected = [
         ("dns.default", "dns.request"),
-        ("http.default_read", "http.read"),
-        ("http.default_write", "http.write"),
+        ("http.default_read", "http.request"),
+        ("http.default_write", "http.request"),
         ("model.default", "model.request"),
         ("mcp.default", "mcp.request"),
     ];
@@ -3655,9 +3678,8 @@ base_url = "https://llm.internal.corp:8443/v1"
 #[test]
 fn mcp_allowed_tools_emits_allow_rule_per_tool_at_priority_zero() {
     // Slice 6b.7: mcpServers.<name>.capsem.allowed_tools emits
-    // one allow rule per tool at priority 0, condition
-    // `tool.name == '<tool>'`, owner pointing at the
-    // allowed_tools list.
+    // one allow rule per tool at priority 0 using canonical MCP CEL roots,
+    // with ownership pointing at the allowed_tools list.
     let temp = tempfile::tempdir().unwrap();
     let base_dir = temp.path().join("base");
     let corp_dir = temp.path().join("corp");
@@ -3698,6 +3720,8 @@ allowed_tools = ["repo.read", "issue.write"]
         assert_eq!(rule.priority, 0);
         assert_eq!(rule.decision, RuleDecision::Allow);
         assert!(rule.condition.contains(expected_tool));
+        assert!(rule.condition.contains("mcp.request.server_id"));
+        assert!(rule.condition.contains("mcp.request.tool_name"));
         assert_eq!(
             rule.owner_setting_path.as_deref(),
             Some("mcpServers.github.capsem.allowed_tools")

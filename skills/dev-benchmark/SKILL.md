@@ -265,19 +265,20 @@ enforcement through real service, process, and network transport paths.
 
 ```bash
 cargo bench -p capsem-security-engine --bench security_engine_cel
-cargo bench -p capsem-core --bench security_packs
+cargo bench -p capsem-security-engine --bench detection_ir
 ```
 
 The `capsem-security-engine` harness measures canonical CEL compile/evaluate,
 detection evaluation, backtest evidence dedupe, runtime registry projection,
 compiled-plan rebuilds, policy-context projection/materialization, 100-rule
-last-match paths, and native lookup comparators. The `capsem-core` security-pack
-harness measures Detection IR V1 JSON parse/validate, Detection IR to CEL
-detection-rule lowering, and lower-plus-compile costs.
+last-match paths, and native lookup comparators. The Detection IR harness in
+`capsem-security-engine` measures Detection IR V1 JSON parse/validate,
+Detection IR to CEL detection-rule lowering, lower-plus-compile costs, direct
+matching, canonical SecurityEvent matching, and lowered-CEL matching.
 `just benchmark` archives both Criterion harnesses from
 `target/criterion/**/new/{benchmark,estimates}.json` into
 `benchmarks/security-engine/data_{version}_{arch}_cel_microbench.json` and
-`benchmarks/security-engine/data_{version}_{arch}_security_packs_microbench.json`;
+`benchmarks/security-engine/data_{version}_{arch}_detection_ir_microbench.json`;
 do not rely on terminal output as the durable record.
 
 Profiles VM-originated Security Engine enforcement through real service,
@@ -328,7 +329,7 @@ projection.
 ### When to run
 
 - After changes to `capsem-security-engine`
-- After changes to Detection IR parsing/lowering in `capsem-core`
+- After changes to Detection IR parsing/lowering/matching in `capsem-security-engine`
 - After changes to process security event projection or exec dispatch
 - After changes to DNS proxy runtime enforcement or `dns_events` logging
 - After changes to runtime enforcement rule propagation/counters

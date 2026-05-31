@@ -6,7 +6,6 @@ use capsem_security_engine::{
     SecurityEventSubject,
 };
 
-use crate::mcp::policy::{McpPolicy, ToolDecision};
 use crate::net::mitm_proxy::McpTimeouts;
 
 use super::*;
@@ -89,49 +88,43 @@ fn mcp_endpoint_timeouts_read_env_overrides() {
 }
 
 #[test]
-fn local_decision_provider_marks_blocked_tool_as_audit_deny() {
-    let req = parse_json_rpc_payload(
-        br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"github__delete_repo","arguments":{}}}"#,
-    )
-    .unwrap();
-    let summary = interpret_mcp_method(&req);
-    let mut policy = McpPolicy::new();
-    policy
-        .tool_decisions
-        .insert("github__delete_repo".to_string(), ToolDecision::Block);
-    let provider = LocalMcpDecisionProvider::audit_only(policy);
-
-    let decision = provider.decide(&McpDecisionRequest::from_summary("codex", &summary));
-
-    assert_eq!(decision.mode, McpPolicyMode::AuditOnly);
-    assert_eq!(decision.action, McpEnforcementAction::Block);
-    assert_eq!(decision.rule, "mcp.tool.github__delete_repo");
-    assert!(decision.reason.contains("block"));
-}
-
-#[test]
-fn mcp_decision_request_captures_tool_call_shape_without_arguments() {
+fn mcp_request_security_event_exposes_tool_call_arguments_to_cel() {
     let req = parse_json_rpc_payload(
         br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"github__create_issue","arguments":{"owner":"capsem","token":"secret"}}}"#,
     )
     .unwrap();
     let summary = interpret_mcp_method(&req);
-    let decision_request = McpDecisionRequest::from_request("codex", &req, &summary);
+    let event = build_mcp_security_event_from_request(
+        "codex",
+        &req,
+        &summary,
+        Some("trace_mcp_runtime".into()),
+        std::time::UNIX_EPOCH + Duration::from_nanos(41),
+    );
+    let evaluator = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "runtime.block-mcp-secret-argument".into(),
+        pack_id: Some("runtime-mcp".into()),
+        condition: "mcp.request.method == 'tools/call' && mcp.request.arguments.contains('secret')"
+            .into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("blocked MCP argument content".into()),
+        mutations: Vec::new(),
+    }])
+    .unwrap();
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(evaluator));
 
-    assert_eq!(decision_request.method, "tools/call");
+    let result = engine.evaluate(event).unwrap();
+    assert!(!mcp_security_result_allows_dispatch(&result));
     assert_eq!(
-        decision_request.tool_name.as_deref(),
-        Some("github__create_issue")
+        result
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("runtime.block-mcp-secret-argument")
     );
-    assert_eq!(
-        decision_request.arguments.as_ref().unwrap()["owner"],
-        "capsem"
-    );
-    assert_eq!(
-        decision_request.request_preview.as_deref(),
-        summary.request_preview.as_deref()
-    );
-    assert_eq!(decision_request.request_hash, summary.request_hash);
 }
 
 #[test]
@@ -154,11 +147,57 @@ fn build_mcp_security_event_from_request_uses_canonical_mcp_subject() {
     assert_eq!(event.common.tool_call_id.as_deref(), Some("8"));
     match event.subject {
         SecurityEventSubject::Mcp(subject) => {
+            assert_eq!(subject.method.as_deref(), Some("tools/call"));
             assert_eq!(subject.server_id, "local");
             assert_eq!(subject.tool_name, "echo");
         }
         other => panic!("expected MCP subject, got {other:?}"),
     }
+}
+
+#[test]
+fn mcp_response_security_event_exposes_result_body_to_cel() {
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#,
+    )
+    .unwrap();
+    let summary = interpret_mcp_method(&req);
+    let resp = JsonRpcResponse::ok(
+        req.id.clone(),
+        serde_json::json!({"content":[{"type":"text","text":"leaked-secret"}]}),
+    );
+    let event = build_mcp_security_event_from_response(
+        "codex",
+        &req,
+        &resp,
+        &summary,
+        12,
+        Some("trace_mcp_runtime".into()),
+        std::time::UNIX_EPOCH + Duration::from_nanos(42),
+    );
+    let evaluator = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "runtime.block-mcp-secret-result".into(),
+        pack_id: Some("runtime-mcp".into()),
+        condition: "mcp.response.result.contains('leaked-secret')".into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("blocked MCP result content".into()),
+        mutations: Vec::new(),
+    }])
+    .unwrap();
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(evaluator));
+
+    let result = engine.evaluate(event).unwrap();
+    assert!(!mcp_security_result_allows_dispatch(&result));
+    assert_eq!(
+        result
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("runtime.block-mcp-secret-result")
+    );
 }
 
 #[test]

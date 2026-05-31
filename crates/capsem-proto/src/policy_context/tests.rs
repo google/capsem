@@ -71,6 +71,7 @@ fn sample_policy_context() -> PolicyContext {
                 tool_name: Some("shell".to_string()),
                 server_name: Some("local".to_string()),
                 arguments_status: Some("valid_json".to_string()),
+                arguments: BodyPolicyContext::text(r#"{"path":"/workspace/a.txt"}"#),
             }),
             response: Some(McpResponsePolicyContext {
                 method: Some("tools/call".to_string()),
@@ -78,6 +79,7 @@ fn sample_policy_context() -> PolicyContext {
                 tool_name: Some("shell".to_string()),
                 is_error: Some(false),
                 result_status: Some("ok".to_string()),
+                result: BodyPolicyContext::text(r#"{"ok":true}"#),
             }),
         },
         model: ModelPolicyContext {
@@ -98,6 +100,7 @@ fn sample_policy_context() -> PolicyContext {
                     name: Some("filesystem.read_file".to_string()),
                     origin: Some("mcp_tool".to_string()),
                     arguments_status: Some("valid_json".to_string()),
+                    arguments: BodyPolicyContext::text(r#"{"path":"/workspace/a.txt"}"#),
                     status: Some("executed".to_string()),
                     linked_mcp_call_id: Some("mcp-call-1".to_string()),
                     parse_confidence: Some("high".to_string()),
@@ -130,6 +133,7 @@ fn sample_policy_context() -> PolicyContext {
                 path: Some("/workspace/README.md".to_string()),
                 path_class: Some("workspace".to_string()),
                 byte_count: Some(512),
+                content: BodyPolicyContext::text("hello workspace"),
             }),
         },
         process: ProcessPolicyContext {
@@ -142,12 +146,35 @@ fn sample_policy_context() -> PolicyContext {
                 cwd: Some("/workspace".to_string()),
             }),
         },
+        credential: CredentialPolicyContext {
+            activity: Some(CredentialActivityPolicyContext {
+                operation: Some("read".to_string()),
+                credential_id: Some("api-token".to_string()),
+            }),
+        },
+        vm: VmPolicyContext {
+            activity: Some(VmActivityPolicyContext {
+                operation: Some("start".to_string()),
+            }),
+        },
         profile: ProfilePolicyContext {
             activity: Some(ProfileActivityPolicyContext {
                 operation: Some("select".to_string()),
                 profile_id: Some("profile-1".to_string()),
                 profile_revision: Some("rev-1".to_string()),
                 profile_name: Some("Default".to_string()),
+            }),
+        },
+        conversation: ConversationPolicyContext {
+            activity: Some(ConversationActivityPolicyContext {
+                operation: Some("append".to_string()),
+                conversation_id: Some("conv-1".to_string()),
+            }),
+        },
+        snapshot: SnapshotPolicyContext {
+            activity: Some(SnapshotActivityPolicyContext {
+                operation: Some("create".to_string()),
+                snapshot_id: Some("snap-1".to_string()),
             }),
         },
         ..PolicyContext::new()

@@ -26,8 +26,8 @@ use capsem_network_engine::http_security::{
     HttpSecurityEventInput,
 };
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, ResolvedSecurityEvent, SecurityEvent, SecurityResult,
-    SourceEngine,
+    AiAttributionScope, AiOriginKind, Enforceability, RedactionState, ResolvedSecurityEvent,
+    SecurityEvent, SecurityEventCommon, SecurityEventType, SecurityResult, SourceEngine,
 };
 use tracing::{info, warn};
 
@@ -38,9 +38,15 @@ use super::util::is_llm_api_path;
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
 use crate::net::ai_traffic::TraceState;
+use crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState;
+use crate::net::interpreters::google_interpreter::GoogleStreamParser;
+use crate::net::interpreters::openai_interpreter::OpenAiStreamParser;
 use capsem_network_engine::model_evidence::{build_model_interaction_evidence, ModelEvidenceInput};
 use capsem_network_engine::model_request as request_parser;
-use capsem_network_engine::model_stream::{collect_summary, parse_non_streaming_usage, StopReason};
+use capsem_network_engine::model_stream::{
+    collect_summary, parse_non_streaming_usage, LlmEvent, ProviderStreamParser, StopReason,
+};
+use capsem_network_engine::sse_parser::SseParser;
 
 /// Per-request snapshot of the request-side fields that the response
 /// completion handler needs in order to build a `NetEvent` /
@@ -400,6 +406,247 @@ pub fn build_http_response_security_event(
 ) -> SecurityEvent {
     let input = http_security_input(req_ctx, response_bytes, response_body_preview);
     build_network_http_response_security_event(&input, timestamp_unix_ms, trace_id)
+}
+
+pub fn build_model_request_security_event(
+    req_ctx: &TelemetryRequestContext,
+    request_body: &[u8],
+    timestamp_unix_ms: u64,
+    trace_id: Option<String>,
+) -> Option<SecurityEvent> {
+    let provider = req_ctx.ai_provider?;
+    if req_ctx.method == "HEAD" || !is_llm_api_path(provider, &req_ctx.path) {
+        return None;
+    }
+
+    let trace_id = trace_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let request = request_parser::parse_request(provider, request_body);
+    let interaction_id = format!("model-request:{trace_id}:{}", uuid::Uuid::new_v4());
+    let request_id = format!("request:{trace_id}:{}", uuid::Uuid::new_v4());
+    let accounting_owner = req_ctx
+        .identity
+        .vm_id
+        .as_ref()
+        .map(|vm_id| format!("vm:{vm_id}"));
+    let evidence = build_model_interaction_evidence(ModelEvidenceInput {
+        interaction_id: &interaction_id,
+        trace_id: &trace_id,
+        request_id: &request_id,
+        response_id: None,
+        provider,
+        path: &req_ctx.path,
+        request: &request,
+        response: None,
+        estimated_cost_micros: None,
+        attribution_scope: AiAttributionScope::Vm,
+        source_engine: SourceEngine::Network,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: accounting_owner.as_deref(),
+        profile_id: req_ctx.identity.profile_id.as_deref(),
+        vm_id: req_ctx.identity.vm_id.as_deref(),
+        session_id: req_ctx.identity.session_id.as_deref(),
+        user_id: req_ctx.identity.user_id.as_deref(),
+    });
+
+    Some(
+        capsem_network_engine::model_security::build_model_security_event_from_evidence(
+            SecurityEventCommon {
+                event_id: format!("model-request-{}", req_ctx.event_id_seed),
+                parent_event_id: None,
+                stream_id: None,
+                activity_id: None,
+                sequence_no: None,
+                source_engine: SourceEngine::Network,
+                attribution_scope: AiAttributionScope::Vm,
+                origin_kind: AiOriginKind::GuestNetwork,
+                accounting_owner,
+                enforceability: Enforceability::InlineBlockable,
+                trace_id: Some(trace_id),
+                span_id: None,
+                timestamp_unix_ms,
+                vm_id: req_ctx.identity.vm_id.clone(),
+                session_id: req_ctx.identity.session_id.clone(),
+                profile_id: req_ctx.identity.profile_id.clone(),
+                profile_revision: req_ctx.identity.profile_revision.clone(),
+                profile_pack_ids: Vec::new(),
+                enforcement_packs: Vec::new(),
+                detection_packs: Vec::new(),
+                user_id: req_ctx.identity.user_id.clone(),
+                process_id: None,
+                parent_process_id: None,
+                exec_id: None,
+                turn_id: None,
+                message_id: None,
+                tool_call_id: None,
+                mcp_call_id: None,
+                event_type: SecurityEventType::ModelRequest,
+                redaction_state: RedactionState::Raw,
+            },
+            evidence,
+        ),
+    )
+}
+
+pub fn build_model_response_security_event(
+    deps: &TelemetryDeps,
+    req_ctx: &TelemetryRequestContext,
+    resp_stats: &TelemetryResponseStats,
+    llm_events: &[LlmEvent],
+    timestamp_unix_ms: u64,
+    trace_id: Option<String>,
+) -> Option<SecurityEvent> {
+    let provider = req_ctx.ai_provider?;
+    if req_ctx.method == "HEAD" || !is_llm_api_path(provider, &req_ctx.path) {
+        return None;
+    }
+
+    let trace_id = trace_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let req_body_bytes = req_ctx
+        .request_body_stats
+        .lock()
+        .expect("req body stats lock")
+        .preview
+        .clone();
+    let request = request_parser::parse_request(provider, &req_body_bytes);
+    let summary = (!llm_events.is_empty()).then(|| collect_summary(llm_events));
+    let (resp_model, resp_input, resp_output, resp_details) =
+        if summary.as_ref().and_then(|s| s.input_tokens).is_none()
+            && !resp_stats.preview.is_empty()
+            && req_ctx.status_code == Some(200)
+        {
+            parse_non_streaming_usage(provider, &resp_stats.preview)
+        } else {
+            (None, None, None, BTreeMap::new())
+        };
+    let effective_model = request
+        .model
+        .clone()
+        .or_else(|| summary.as_ref().and_then(|s| s.model.clone()))
+        .or(resp_model)
+        .or_else(|| extract_model_from_path(&req_ctx.path));
+    let input_tokens = summary.as_ref().and_then(|s| s.input_tokens).or(resp_input);
+    let output_tokens = summary
+        .as_ref()
+        .and_then(|s| s.output_tokens)
+        .or(resp_output);
+    let mut usage_details = summary
+        .as_ref()
+        .map(|s| s.usage_details.clone())
+        .unwrap_or_default();
+    if usage_details.is_empty() {
+        usage_details = resp_details;
+    }
+    let estimated_cost_micros = cost_micros(deps.pricing.estimate_cost(
+        provider.as_str(),
+        effective_model.as_deref(),
+        input_tokens,
+        output_tokens,
+        &usage_details,
+    ));
+    let accounting_owner = req_ctx
+        .identity
+        .vm_id
+        .as_ref()
+        .map(|vm_id| format!("vm:{vm_id}"));
+    let interaction_id = format!("model-response:{trace_id}:{}", uuid::Uuid::new_v4());
+    let request_id = format!("request:{trace_id}:{}", uuid::Uuid::new_v4());
+    let response_id = summary
+        .as_ref()
+        .and_then(|summary| summary.message_id.as_deref());
+    let evidence = build_model_interaction_evidence(ModelEvidenceInput {
+        interaction_id: &interaction_id,
+        trace_id: &trace_id,
+        request_id: &request_id,
+        response_id,
+        provider,
+        path: &req_ctx.path,
+        request: &request,
+        response: summary.as_ref(),
+        estimated_cost_micros,
+        attribution_scope: AiAttributionScope::Vm,
+        source_engine: SourceEngine::Network,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: accounting_owner.as_deref(),
+        profile_id: req_ctx.identity.profile_id.as_deref(),
+        vm_id: req_ctx.identity.vm_id.as_deref(),
+        session_id: req_ctx.identity.session_id.as_deref(),
+        user_id: req_ctx.identity.user_id.as_deref(),
+    });
+
+    Some(
+        capsem_network_engine::model_security::build_model_security_event_from_evidence(
+            SecurityEventCommon {
+                event_id: format!("model-response-{}", req_ctx.event_id_seed),
+                parent_event_id: None,
+                stream_id: None,
+                activity_id: None,
+                sequence_no: None,
+                source_engine: SourceEngine::Network,
+                attribution_scope: AiAttributionScope::Vm,
+                origin_kind: AiOriginKind::GuestNetwork,
+                accounting_owner,
+                enforceability: Enforceability::InlineBlockable,
+                trace_id: Some(trace_id),
+                span_id: None,
+                timestamp_unix_ms,
+                vm_id: req_ctx.identity.vm_id.clone(),
+                session_id: req_ctx.identity.session_id.clone(),
+                profile_id: req_ctx.identity.profile_id.clone(),
+                profile_revision: req_ctx.identity.profile_revision.clone(),
+                profile_pack_ids: Vec::new(),
+                enforcement_packs: Vec::new(),
+                detection_packs: Vec::new(),
+                user_id: req_ctx.identity.user_id.clone(),
+                process_id: None,
+                parent_process_id: None,
+                exec_id: None,
+                turn_id: None,
+                message_id: response_id.map(str::to_string),
+                tool_call_id: None,
+                mcp_call_id: None,
+                event_type: SecurityEventType::ModelResponse,
+                redaction_state: RedactionState::Raw,
+            },
+            evidence,
+        ),
+    )
+}
+
+pub fn parse_llm_events_from_response_body(
+    provider: ProviderKind,
+    response_body: &[u8],
+) -> Vec<LlmEvent> {
+    let mut sse = SseParser::new();
+    let mut sse_events = sse.feed(response_body);
+    if let Some(event) = sse.flush() {
+        sse_events.push(event);
+    }
+    if sse_events.is_empty() {
+        return Vec::new();
+    }
+
+    let mut llm_events = Vec::new();
+    match provider {
+        ProviderKind::Anthropic => {
+            let mut parser = AnthropicStreamParserWithState::default();
+            for event in &sse_events {
+                llm_events.extend(parser.parse_event(event));
+            }
+        }
+        ProviderKind::OpenAi => {
+            let mut parser = OpenAiStreamParser::default();
+            for event in &sse_events {
+                llm_events.extend(parser.parse_event(event));
+            }
+        }
+        ProviderKind::Google => {
+            let mut parser = GoogleStreamParser::default();
+            for event in &sse_events {
+                llm_events.extend(parser.parse_event(event));
+            }
+        }
+    }
+    llm_events
 }
 
 fn http_security_input(

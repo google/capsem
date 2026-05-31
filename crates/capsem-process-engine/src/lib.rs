@@ -11,8 +11,8 @@ use capsem_logger::ExecEvent;
 use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, Enforceability, ProcessSecuritySubject, RedactionState,
     ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent, SecurityAction,
-    SecurityEngineError, SecurityError, SecurityEvent, SecurityEventCommon, SourceEngine,
-    StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    SecurityEngineError, SecurityError, SecurityEvent, SecurityEventCommon, SecurityEventType,
+    SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
 pub trait RuntimeSecurityEngine: Send + Sync {
@@ -126,7 +126,7 @@ fn build_exec_security_event(event: &ExecEvent) -> SecurityEvent {
             message_id: None,
             tool_call_id: None,
             mcp_call_id: event.mcp_call_id.map(|id| id.to_string()),
-            event_type: "process.exec".into(),
+            event_type: SecurityEventType::ProcessExec,
             redaction_state: RedactionState::Raw,
         },
         ProcessSecuritySubject {

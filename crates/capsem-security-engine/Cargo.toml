@@ -13,6 +13,8 @@ authors.workspace = true
 blake3 = "1"
 capsem-proto = { path = "../capsem-proto" }
 cel = { version = "0.13", features = ["json"] }
+jsonschema = { version = "0.46.5", default-features = false }
+regex = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -22,6 +24,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "security_engine_cel"
+harness = false
+
+[[bench]]
+name = "detection_ir"
 harness = false
 
 [lints]

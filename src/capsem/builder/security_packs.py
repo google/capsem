@@ -54,6 +54,7 @@ class EventFamily(str, Enum):
     VM = "vm"
     PROFILE = "profile"
     CONVERSATION = "conversation"
+    SNAPSHOT = "snapshot"
 
 
 class EnforcementDecision(str, Enum):
@@ -546,6 +547,23 @@ class ProcessPolicyContextV1(StrictModel):
     activity: ProcessActivityPolicyContextV1 | None = None
 
 
+class CredentialActivityPolicyContextV1(StrictModel):
+    operation: NonEmptyStr | None = None
+    credential_id: NonEmptyStr | None = None
+
+
+class CredentialPolicyContextV1(StrictModel):
+    activity: CredentialActivityPolicyContextV1 | None = None
+
+
+class VmActivityPolicyContextV1(StrictModel):
+    operation: NonEmptyStr | None = None
+
+
+class VmPolicyContextV1(StrictModel):
+    activity: VmActivityPolicyContextV1 | None = None
+
+
 class ProfileActivityPolicyContextV1(StrictModel):
     operation: NonEmptyStr | None = None
     profile_id: NonEmptyStr | None = None
@@ -557,6 +575,24 @@ class ProfilePolicyContextV1(StrictModel):
     activity: ProfileActivityPolicyContextV1 | None = None
 
 
+class ConversationActivityPolicyContextV1(StrictModel):
+    operation: NonEmptyStr | None = None
+    conversation_id: NonEmptyStr | None = None
+
+
+class ConversationPolicyContextV1(StrictModel):
+    activity: ConversationActivityPolicyContextV1 | None = None
+
+
+class SnapshotActivityPolicyContextV1(StrictModel):
+    operation: NonEmptyStr | None = None
+    snapshot_id: NonEmptyStr | None = None
+
+
+class SnapshotPolicyContextV1(StrictModel):
+    activity: SnapshotActivityPolicyContextV1 | None = None
+
+
 class PolicyContextV1(StrictModel):
     schema_version: Literal[1] = 1
     common: CommonPolicyContextV1 = Field(default_factory=CommonPolicyContextV1)
@@ -566,7 +602,11 @@ class PolicyContextV1(StrictModel):
     model: ModelPolicyContextV1 = Field(default_factory=ModelPolicyContextV1)
     file: FilePolicyContextV1 = Field(default_factory=FilePolicyContextV1)
     process: ProcessPolicyContextV1 = Field(default_factory=ProcessPolicyContextV1)
+    credential: CredentialPolicyContextV1 = Field(default_factory=CredentialPolicyContextV1)
+    vm: VmPolicyContextV1 = Field(default_factory=VmPolicyContextV1)
     profile: ProfilePolicyContextV1 = Field(default_factory=ProfilePolicyContextV1)
+    conversation: ConversationPolicyContextV1 = Field(default_factory=ConversationPolicyContextV1)
+    snapshot: SnapshotPolicyContextV1 = Field(default_factory=SnapshotPolicyContextV1)
 
 
 class PolicyContextFixtureV1(StrictModel):
@@ -590,6 +630,7 @@ _LOGSOURCE_TO_EVENT_FAMILY = {
     "vm": EventFamily.VM,
     "profile": EventFamily.PROFILE,
     "conversation": EventFamily.CONVERSATION,
+    "snapshot": EventFamily.SNAPSHOT,
 }
 
 
@@ -904,12 +945,35 @@ _SUPPORTED_ENFORCEMENT_PATHS: dict[EventFamily, frozenset[str]] = {
             "process.activity.cwd",
         }
     ),
+    EventFamily.CREDENTIAL: frozenset(
+        {
+            "credential.activity.operation",
+            "credential.activity.credential_id",
+        }
+    ),
+    EventFamily.VM: frozenset(
+        {
+            "vm.activity.operation",
+        }
+    ),
     EventFamily.PROFILE: frozenset(
         {
             "profile.activity.operation",
             "profile.activity.profile_id",
             "profile.activity.profile_revision",
             "profile.activity.profile_name",
+        }
+    ),
+    EventFamily.CONVERSATION: frozenset(
+        {
+            "conversation.activity.operation",
+            "conversation.activity.conversation_id",
+        }
+    ),
+    EventFamily.SNAPSHOT: frozenset(
+        {
+            "snapshot.activity.operation",
+            "snapshot.activity.snapshot_id",
         }
     ),
 }

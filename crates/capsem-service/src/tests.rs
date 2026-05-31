@@ -652,7 +652,7 @@ async fn timeline_handler_returns_policy_layers_and_null_trace_rows() {
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: capsem_security_engine::SecurityEventType::HttpRequest,
             redaction_state: capsem_security_engine::RedactionState::Raw,
         },
         capsem_security_engine::HttpSecuritySubject {
@@ -3237,7 +3237,7 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
                         message_id: None,
                         tool_call_id: None,
                         mcp_call_id: Some("mcp-12".into()),
-                        event_type: "process.exec".into(),
+                        event_type: capsem_security_engine::SecurityEventType::ProcessExec,
                         redaction_state: capsem_security_engine::RedactionState::Raw,
                     },
                     capsem_security_engine::ProcessSecuritySubject {
@@ -3380,10 +3380,11 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
                         message_id: None,
                         tool_call_id: Some("2".into()),
                         mcp_call_id: Some("2".into()),
-                        event_type: "mcp.request".into(),
+                        event_type: capsem_security_engine::SecurityEventType::McpRequest,
                         redaction_state: capsem_security_engine::RedactionState::Raw,
                     },
                     capsem_security_engine::McpSecuritySubject {
+                        method: Some("tools/call".into()),
                         server_id: "local".into(),
                         tool_name: "echo".into(),
                         evidence: None,
@@ -3442,7 +3443,7 @@ async fn handle_logs_returns_canonical_security_events_from_session_db() {
                         message_id: None,
                         tool_call_id: None,
                         mcp_call_id: None,
-                        event_type: "dns.request".into(),
+                        event_type: capsem_security_engine::SecurityEventType::DnsRequest,
                         redaction_state: capsem_security_engine::RedactionState::Raw,
                     },
                     capsem_security_engine::DnsSecuritySubject {
@@ -7456,7 +7457,7 @@ fn runtime_http_event(
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: capsem_security_engine::SecurityEventType::HttpRequest,
             redaction_state: capsem_security_engine::RedactionState::Raw,
         },
         capsem_security_engine::HttpSecuritySubject {
@@ -7732,7 +7733,7 @@ async fn runtime_security_rule_overlays_persist_and_restore_compiled_plans() {
     assert_eq!(enforcement["rules"][0]["origin"], "runtime");
     assert_eq!(
         enforcement["rules"][0]["compiled_plan"],
-        runtime_rule_plan_id("http.request.host == 'persisted.test'")
+        capsem_security_engine::runtime_rule_plan_id("http.request.host == 'persisted.test'")
     );
 
     let mut engine = runtime_security_engine_from_registries(&restored).unwrap();

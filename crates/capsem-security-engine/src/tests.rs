@@ -2,6 +2,182 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
+fn security_event_type_serde_roundtrips_every_contract_type() {
+    for event_type in SecurityEventType::ALL {
+        let json = serde_json::to_string(event_type).unwrap();
+        assert_eq!(json, format!("\"{}\"", event_type.as_str()));
+        let parsed: SecurityEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(*event_type, parsed);
+    }
+}
+
+#[test]
+fn security_event_type_maps_to_canonical_family() {
+    for event_type in SecurityEventType::ALL {
+        let prefix = event_type
+            .as_str()
+            .split_once('.')
+            .map(|(prefix, _)| prefix)
+            .unwrap();
+        assert_eq!(
+            event_type.family().as_str(),
+            prefix,
+            "{}",
+            event_type.as_str()
+        );
+    }
+}
+
+#[test]
+fn security_event_type_strict_parse_rejects_stale_callbacks() {
+    assert_eq!(
+        SecurityEventType::parse("dns.request").unwrap(),
+        SecurityEventType::DnsRequest
+    );
+    assert!(SecurityEventType::parse("dns.response").is_err());
+    assert!(SecurityEventType::parse("http.read").is_err());
+    assert!(SecurityEventType::parse("http.write").is_err());
+    assert!(SecurityEventType::parse("hook.decision").is_err());
+}
+
+#[test]
+fn security_event_callback_guard_uses_typed_contract() {
+    assert_eq!(
+        SecurityEventType::callback_guard("model.tool_call").unwrap(),
+        "common.event_type == 'model.tool_call'"
+    );
+    assert!(SecurityEventType::ModelToolCallFuture.is_future_marker());
+    assert!(SecurityEventType::callback_guard("dns.response").is_err());
+}
+
+#[test]
+fn security_event_constructors_emit_known_event_types() {
+    let events = [
+        SecurityEvent::dns(
+            common("evt-dns", "dns.request", SourceEngine::Network),
+            DnsSecuritySubject {
+                qname: "example.test".into(),
+                domain_class: "external".into(),
+            },
+        ),
+        SecurityEvent::http(
+            common("evt-http", "http.request", SourceEngine::Network),
+            HttpSecuritySubject {
+                method: "GET".into(),
+                host: "example.test".into(),
+                path_class: "/".into(),
+                ..Default::default()
+            },
+        ),
+        SecurityEvent::mcp(
+            common("evt-mcp", "mcp.request", SourceEngine::Network),
+            McpSecuritySubject {
+                method: Some("tools/call".into()),
+                server_id: "filesystem".into(),
+                tool_name: "read_file".into(),
+                evidence: None,
+            },
+        ),
+        SecurityEvent::model(
+            common("evt-model", "model.request", SourceEngine::Network),
+            ModelSecuritySubject {
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+                estimated_input_tokens: None,
+                estimated_output_tokens: None,
+                estimated_cost_micros: None,
+                evidence: None,
+            },
+        ),
+        SecurityEvent::file(
+            common("evt-file", "file.activity", SourceEngine::File),
+            FileSecuritySubject {
+                operation: "write".into(),
+                path: Some("/workspace/app.rs".into()),
+                path_class: "workspace".into(),
+                byte_count: None,
+                content: None,
+            },
+        ),
+        SecurityEvent::process(
+            common("evt-process", "process.exec", SourceEngine::Process),
+            ProcessSecuritySubject {
+                operation: "exec".into(),
+                command_class: Some("shell".into()),
+            },
+        ),
+        SecurityEvent::credential(
+            common(
+                "evt-credential",
+                "credential.activity",
+                SourceEngine::Security,
+            ),
+            CredentialSecuritySubject {
+                operation: "read".into(),
+                credential_id: "api-token".into(),
+            },
+        ),
+        SecurityEvent::vm_lifecycle(
+            common("evt-vm", "vm.start", SourceEngine::Vm),
+            VmLifecycleSecuritySubject {
+                operation: "start".into(),
+            },
+        ),
+        SecurityEvent::profile(
+            common("evt-profile", "profile.update", SourceEngine::Profile),
+            ProfileSecuritySubject {
+                operation: "update".into(),
+                profile_id: "coding".into(),
+                profile_revision: "rev-1".into(),
+            },
+        ),
+        SecurityEvent::conversation(
+            common(
+                "evt-conversation",
+                "conversation.message",
+                SourceEngine::Conversation,
+            ),
+            ConversationSecuritySubject {
+                operation: "message".into(),
+                conversation_id: Some("thread-1".into()),
+            },
+        ),
+        SecurityEvent::snapshot(
+            common("evt-snapshot", "snapshot.create", SourceEngine::File),
+            SnapshotSecuritySubject {
+                operation: "create".into(),
+                snapshot_id: "snap-1".into(),
+            },
+        ),
+    ];
+
+    for event in events {
+        let event_type = event.common.event_type;
+        assert_eq!(
+            SecurityEventType::parse(event_type.as_str()).unwrap(),
+            event_type
+        );
+        assert_eq!(event_type.family(), event.event_family());
+    }
+}
+
+#[test]
+#[should_panic(expected = "security event type 'dns.request' belongs to family 'dns', not 'model'")]
+fn security_event_constructor_rejects_family_type_mismatch() {
+    let _ = SecurityEvent::model(
+        common("evt-mismatch", "dns.request", SourceEngine::Network),
+        ModelSecuritySubject {
+            provider: "openai".into(),
+            model: "gpt-5.5".into(),
+            estimated_input_tokens: None,
+            estimated_output_tokens: None,
+            estimated_cost_micros: None,
+            evidence: None,
+        },
+    );
+}
+
+#[test]
 fn http_event_exposes_identity_and_quota_dimensions() {
     let event = SecurityEvent::http(
         SecurityEventCommon {
@@ -33,7 +209,7 @@ fn http_event_exposes_identity_and_quota_dimensions() {
             message_id: Some("msg-1".into()),
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: SecurityEventType::HttpRequest,
             redaction_state: RedactionState::Raw,
         },
         HttpSecuritySubject {
@@ -627,7 +803,7 @@ fn resolved_event_roundtrips_throttle_and_rate_limit_step() {
             message_id: Some("msg-1".into()),
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "model.request".into(),
+            event_type: SecurityEventType::ModelRequest,
             redaction_state: RedactionState::SummaryOnly,
         },
         ModelSecuritySubject {
@@ -1138,6 +1314,7 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
         SecurityEvent::mcp(
             common("evt-cel-mcp", "mcp.request", SourceEngine::Network),
             McpSecuritySubject {
+                method: Some("tools/call".into()),
                 server_id: "filesystem".into(),
                 tool_name: "read_file".into(),
                 evidence: None,
@@ -1201,6 +1378,7 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
                 path: Some("/workspace/secret.txt".into()),
                 path_class: "workspace".into(),
                 byte_count: Some(64),
+                content: None,
             },
         ),
         "file.activity.operation == 'write' \
@@ -1239,7 +1417,7 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
             schema_version: SECURITY_EVENT_SCHEMA_VERSION,
             common: common(
                 "evt-cel-credential",
-                "credential.read",
+                "credential.activity",
                 SourceEngine::Security,
             ),
             subject: SecurityEventSubject::Credential(CredentialSecuritySubject {
@@ -1253,8 +1431,9 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
             decision: None,
             mutations: Vec::new(),
         },
-        "common.event_type == 'credential.read' && common.profile_id == 'coding'",
-        "common.event_type == 'credential.write'",
+        "credential.activity.operation == 'read' \
+            && credential.activity.credential_id == 'api-token'",
+        "credential.activity.operation == 'write'",
     );
 
     assert_match_and_pass(
@@ -1264,8 +1443,8 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
                 operation: "start".into(),
             },
         ),
-        "common.event_type == 'vm.start' && common.vm_id == 'vm-1'",
-        "common.event_type == 'vm.stop'",
+        "vm.activity.operation == 'start'",
+        "vm.activity.operation == 'stop'",
     );
 
     assert_match_and_pass(
@@ -1280,8 +1459,9 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
                 conversation_id: Some("conv-1".into()),
             },
         ),
-        "common.event_type == 'conversation.message' && common.session_id == 'session-1'",
-        "common.event_type == 'conversation.delete'",
+        "conversation.activity.operation == 'append' \
+            && conversation.activity.conversation_id == 'conv-1'",
+        "conversation.activity.operation == 'delete'",
     );
 
     assert_match_and_pass(
@@ -1292,9 +1472,357 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
                 snapshot_id: "snap-1".into(),
             },
         ),
-        "common.event_type == 'snapshot.create' && common.actor == 'vm:vm-1'",
-        "common.event_type == 'snapshot.restore'",
+        "snapshot.activity.operation == 'create' \
+            && snapshot.activity.snapshot_id == 'snap-1'",
+        "snapshot.activity.operation == 'restore'",
     );
+}
+
+#[test]
+fn policy_context_cel_contains_and_match_are_semantic_object_search() {
+    fn assert_policy(event: SecurityEvent, conditions: &[&str], misses: &[&str]) {
+        let context = policy_context_from_event(&event);
+        for condition in conditions {
+            let program = cel::Program::compile(condition).unwrap();
+            assert!(
+                evaluate_policy_cel_bool(condition, &program, &context).unwrap(),
+                "expected CEL to match for {}: {condition}",
+                event.common.event_id
+            );
+        }
+        for condition in misses {
+            let program = cel::Program::compile(condition).unwrap();
+            assert!(
+                !evaluate_policy_cel_bool(condition, &program, &context).unwrap(),
+                "expected CEL to pass/no-match for {}: {condition}",
+                event.common.event_id
+            );
+        }
+    }
+
+    assert_policy(
+        SecurityEvent::http(
+            common("evt-cel-search-http", "http.request", SourceEngine::Network),
+            HttpSecuritySubject {
+                method: "POST".into(),
+                scheme: Some("https".into()),
+                host: "mail.example.test".into(),
+                port: Some(443),
+                path: Some("/v1/send".into()),
+                query: Some("debug=true".into()),
+                url: Some("https://mail.example.test/v1/send?debug=true".into()),
+                path_class: "api".into(),
+                request_bytes: 128,
+                request_body: Some(HttpBodySecuritySubject::text(
+                    r#"{"to":"email@example.test"}"#,
+                )),
+                ..Default::default()
+            },
+        ),
+        &[
+            r#"http.request.contains("email@example.test")"#,
+            r#"http.request.body.contains("email")"#,
+            r#"http.request.match("mail[.]example[.]test")"#,
+        ],
+        &[r#"http.request.contains("slack@example.test")"#],
+    );
+
+    assert_policy(
+        SecurityEvent::dns(
+            common("evt-cel-search-dns", "dns.request", SourceEngine::Network),
+            DnsSecuritySubject {
+                qname: "mail.example.test".into(),
+                domain_class: "external".into(),
+            },
+        ),
+        &[
+            r#"dns.request.contains("mail")"#,
+            r#"dns.request.match("mail[.].*[.]test")"#,
+            r#"dns.request.matches("example[.]test")"#,
+        ],
+        &[r#"dns.request.contains("metadata")"#],
+    );
+
+    assert_policy(
+        SecurityEvent::file(
+            common("evt-cel-search-file", "file.write", SourceEngine::File),
+            FileSecuritySubject {
+                operation: "write".into(),
+                path: Some("/workspace/email-draft.txt".into()),
+                path_class: "workspace".into(),
+                byte_count: Some(64),
+                content: Some(HttpBodySecuritySubject::text(
+                    "please send the launch email",
+                )),
+            },
+        ),
+        &[
+            r#"file.activity.contains("email-draft")"#,
+            r#"file.activity.content.contains("launch email")"#,
+            r#"file.activity.match("email-draft[.]txt")"#,
+        ],
+        &[r#"file.activity.contains("/etc/passwd")"#],
+    );
+
+    let mcp_evidence = McpToolExecutionEvidence {
+        mcp_call_id: "mcp-call-email".into(),
+        server_id: "mail".into(),
+        tool_name: "send_email".into(),
+        namespaced_tool_name: "mcp.mail.send_email".into(),
+        transport: "stdio".into(),
+        request_arguments_raw: Some(r#"{"to":"email@example.test","body":"hello"}"#.into()),
+        request_arguments_json: Some(r#"{"to":"email@example.test","body":"hello"}"#.into()),
+        result_kind: AiContentKind::Json,
+        result_preview: Some(r#"{"ok":true}"#.into()),
+        result_json: Some(r#"{"ok":true}"#.into()),
+        is_error: false,
+        latency_ms: 12,
+        linked_model_interaction_id: None,
+        linked_model_tool_call_id: None,
+        link_status: LinkStatus::Linked,
+    };
+    assert_policy(
+        SecurityEvent::mcp(
+            common("evt-cel-search-mcp", "mcp.request", SourceEngine::Network),
+            McpSecuritySubject::from_execution_evidence(mcp_evidence),
+        ),
+        &[
+            r#"mcp.request.arguments.contains("email@example.test")"#,
+            r#"mcp.request.arguments.match("email@.*[.]test")"#,
+            r#"mcp.request.contains("send_email")"#,
+        ],
+        &[r#"mcp.request.arguments.contains("admin@example.test")"#],
+    );
+
+    let mut model_evidence = model_interaction_evidence(
+        "cel-search-model",
+        AiAttributionScope::Vm,
+        SourceEngine::Network,
+        AiOriginKind::GuestNetwork,
+        "vm:vm-1",
+    );
+    model_evidence.tool_calls = vec![ModelToolCallEvidence {
+        tool_call_id: "tool-call-email".into(),
+        index: 0,
+        provider_call_id: Some("provider-tool-call-email".into()),
+        raw_name: "mcp__mail__send_email".into(),
+        normalized_name: "mcp.mail.send_email".into(),
+        arguments_raw: Some(r#"{"to":"email@example.test"}"#.into()),
+        arguments_json: Some(r#"{"to":"email@example.test"}"#.into()),
+        arguments_status: ArgumentsStatus::ValidJson,
+        origin: ToolOrigin::McpTool,
+        linked_mcp_call_id: Some("mcp-call-email".into()),
+        status: ToolCallStatus::Proposed,
+        parse_confidence: Confidence::High,
+    }];
+    assert_policy(
+        SecurityEvent::model(
+            common(
+                "evt-cel-search-model",
+                "model.response",
+                SourceEngine::Network,
+            ),
+            ModelSecuritySubject::from_interaction_evidence(model_evidence),
+        ),
+        &[
+            r#"model.request.tool_calls.contains("email@example.test")"#,
+            r#"model.request.tool_calls.contains("mcp.mail.send_email")"#,
+            r#"model.request.tool_calls.match("send_email")"#,
+            r#"model.response.contains("Winter Build")"#,
+        ],
+        &[r#"model.request.tool_calls.contains("admin@example.test")"#],
+    );
+}
+
+#[test]
+fn detection_and_enforcement_cel_cover_every_security_event_family_root() {
+    let events = vec![
+        (
+            "dns",
+            SecurityEvent::dns(
+                common("evt-root-dns", "dns.request", SourceEngine::Network),
+                DnsSecuritySubject {
+                    qname: "google.example.test".into(),
+                    domain_class: "external".into(),
+                },
+            ),
+            "dns.request.qname == 'google.example.test'",
+        ),
+        (
+            "http",
+            SecurityEvent::http(
+                common("evt-root-http", "http.request", SourceEngine::Network),
+                HttpSecuritySubject {
+                    method: "POST".into(),
+                    host: "api.example.test".into(),
+                    path_class: "api".into(),
+                    request_bytes: 128,
+                    ..Default::default()
+                },
+            ),
+            "http.request.host == 'api.example.test'",
+        ),
+        (
+            "mcp",
+            SecurityEvent::mcp(
+                common("evt-root-mcp", "mcp.request", SourceEngine::Network),
+                McpSecuritySubject {
+                    method: Some("tools/call".into()),
+                    server_id: "filesystem".into(),
+                    tool_name: "read_file".into(),
+                    evidence: None,
+                },
+            ),
+            "mcp.request.tool_name == 'read_file'",
+        ),
+        (
+            "model",
+            SecurityEvent::model(
+                common("evt-root-model", "model.request", SourceEngine::Network),
+                ModelSecuritySubject {
+                    provider: "google_gemini".into(),
+                    model: "gemini-2.5-pro".into(),
+                    estimated_input_tokens: Some(32),
+                    estimated_output_tokens: Some(16),
+                    estimated_cost_micros: Some(7),
+                    evidence: None,
+                },
+            ),
+            "model.request.provider == 'google_gemini' \
+                && model.request.model.startsWith('gemini')",
+        ),
+        (
+            "file",
+            SecurityEvent::file(
+                common("evt-root-file", "file.write", SourceEngine::File),
+                FileSecuritySubject {
+                    operation: "write".into(),
+                    path: Some("/workspace/secret.txt".into()),
+                    path_class: "workspace".into(),
+                    byte_count: Some(64),
+                    content: None,
+                },
+            ),
+            "file.activity.path_class == 'workspace'",
+        ),
+        (
+            "process",
+            SecurityEvent::process(
+                common("evt-root-process", "process.exec", SourceEngine::Process),
+                ProcessSecuritySubject {
+                    operation: "exec".into(),
+                    command_class: Some("shell".into()),
+                },
+            ),
+            "process.activity.command_class == 'shell'",
+        ),
+        (
+            "credential",
+            SecurityEvent {
+                schema_version: SECURITY_EVENT_SCHEMA_VERSION,
+                common: common(
+                    "evt-root-credential",
+                    "credential.activity",
+                    SourceEngine::Security,
+                ),
+                subject: SecurityEventSubject::Credential(CredentialSecuritySubject {
+                    operation: "read".into(),
+                    credential_id: "api-token".into(),
+                }),
+                context: EventContext::default(),
+                trace: TraceSnapshot::default(),
+                labels: Vec::new(),
+                findings: Vec::new(),
+                decision: None,
+                mutations: Vec::new(),
+            },
+            "credential.activity.credential_id == 'api-token'",
+        ),
+        (
+            "vm",
+            SecurityEvent::vm_lifecycle(
+                common("evt-root-vm", "vm.start", SourceEngine::Vm),
+                VmLifecycleSecuritySubject {
+                    operation: "start".into(),
+                },
+            ),
+            "vm.activity.operation == 'start'",
+        ),
+        (
+            "profile",
+            SecurityEvent::profile(
+                common("evt-root-profile", "profile.update", SourceEngine::Profile),
+                ProfileSecuritySubject {
+                    operation: "update".into(),
+                    profile_id: "coding".into(),
+                    profile_revision: "rev-a".into(),
+                },
+            ),
+            "profile.activity.profile_id == 'coding'",
+        ),
+        (
+            "conversation",
+            SecurityEvent::conversation(
+                common(
+                    "evt-root-conversation",
+                    "conversation.message",
+                    SourceEngine::Conversation,
+                ),
+                ConversationSecuritySubject {
+                    operation: "append".into(),
+                    conversation_id: Some("conv-1".into()),
+                },
+            ),
+            "conversation.activity.conversation_id == 'conv-1'",
+        ),
+        (
+            "snapshot",
+            SecurityEvent::snapshot(
+                common("evt-root-snapshot", "snapshot.create", SourceEngine::File),
+                SnapshotSecuritySubject {
+                    operation: "create".into(),
+                    snapshot_id: "snap-1".into(),
+                },
+            ),
+            "snapshot.activity.snapshot_id == 'snap-1'",
+        ),
+    ];
+
+    for (family, event, condition) in events {
+        let mut enforcement = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: format!("block-{family}"),
+            pack_id: Some("security-root-pack".into()),
+            condition: condition.into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some(format!("{family} root matched")),
+            mutations: Vec::new(),
+        }])
+        .unwrap();
+        let decision = enforcement.evaluate(&event).unwrap();
+        assert!(
+            decision.is_some_and(|decision| decision.action == SecurityDecisionAction::Block),
+            "expected enforcement rule to match {family}"
+        );
+
+        let mut detection = CelDetectionEvaluator::compile(vec![CelDetectionRule {
+            id: format!("detect-{family}"),
+            pack_id: "security-root-pack".into(),
+            sigma_id: None,
+            title: format!("Detect {family}"),
+            condition: condition.into(),
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            tags: vec![family.into()],
+        }])
+        .unwrap();
+        let findings = detection.evaluate(&event).unwrap();
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected detection rule to match {family}"
+        );
+        assert_eq!(findings[0].event_id, event.common.event_id);
+    }
 }
 
 #[test]
@@ -1524,7 +2052,7 @@ fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> Secu
         message_id: None,
         tool_call_id: None,
         mcp_call_id: None,
-        event_type: event_type.into(),
+        event_type: SecurityEventType::parse(event_type).unwrap(),
         redaction_state: RedactionState::Raw,
     }
 }
@@ -2086,7 +2614,7 @@ fn resolved_event_with_finding(event_id: &str, finding_id: &str) -> ResolvedSecu
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: SecurityEventType::HttpRequest,
             redaction_state: RedactionState::Raw,
         },
         HttpSecuritySubject {
@@ -2189,6 +2717,92 @@ fn http_request_event(event_id: &str) -> SecurityEvent {
             ..Default::default()
         },
     )
+}
+
+#[test]
+fn runtime_backtest_enforcement_runs_inside_security_engine() {
+    let event = http_request_event("evt-backtest-enforce");
+    let input = BacktestEventInput {
+        event_ref: None,
+        event: event.clone(),
+        expected: Some("block".into()),
+    };
+
+    let result = run_enforcement_backtest(
+        CelEnforcementRule {
+            id: "runtime.block-metadata".into(),
+            pack_id: Some("runtime-enforcement".into()),
+            condition: "http.request.host.contains('metadata')".into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("metadata access".into()),
+            mutations: Vec::new(),
+        },
+        &[input],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(result.total_matches, 1);
+    assert_eq!(result.rows[0].rule_id, "runtime.block-metadata");
+    assert_eq!(result.rows[0].outcome, BacktestOutcome::Matched);
+    assert!(result.rows[0]
+        .matched_fields
+        .iter()
+        .any(|field| field.path == "http.request.host"
+            && field.value == serde_json::json!("metadata.google.internal")));
+}
+
+#[test]
+fn runtime_detection_hunt_runs_inside_security_engine() {
+    let input = BacktestEventInput {
+        event_ref: Some(BacktestEventRef {
+            corpus: "unit".into(),
+            session_id: Some("session-1".into()),
+            event_id: "evt-backtest-detect".into(),
+            sequence_no: Some(7),
+            timestamp_unix_ms: 42,
+        }),
+        event: http_request_event("evt-backtest-detect"),
+        expected: Some("finding".into()),
+    };
+
+    let result = run_detection_hunt(
+        vec![
+            CelDetectionRule {
+                id: "detect.metadata".into(),
+                pack_id: "runtime-detection".into(),
+                sigma_id: Some("sigma-metadata".into()),
+                title: "Metadata access".into(),
+                condition: "http.request.host.contains('metadata')".into(),
+                severity: Severity::High,
+                confidence: Confidence::High,
+                tags: vec!["network".into()],
+            },
+            CelDetectionRule {
+                id: "detect.nonmatch".into(),
+                pack_id: "runtime-detection".into(),
+                sigma_id: None,
+                title: "Non-match".into(),
+                condition: "http.request.host == 'example.test'".into(),
+                severity: Severity::Low,
+                confidence: Confidence::Low,
+                tags: Vec::new(),
+            },
+        ],
+        &[input],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(result.total_matches, 1);
+    assert_eq!(result.unique_evidence_matches, 1);
+    assert_eq!(result.rows[0].rule_id, "detect.metadata");
+    assert_eq!(result.rows[0].event_ref.corpus, "unit");
+    assert!(result.rows[0]
+        .matched_fields
+        .iter()
+        .any(|field| field.path == "common.event_type"
+            && field.value == serde_json::json!("http.request")));
 }
 
 struct LabelProcessor {

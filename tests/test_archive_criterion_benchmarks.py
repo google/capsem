@@ -106,14 +106,14 @@ def test_split_full_id_uses_last_slash_for_criterion_flat_dirs():
 def test_criterion_measurements_falls_back_to_mean_when_slope_is_null(tmp_path):
     _write_criterion_case(
         tmp_path,
-        "security_packs_detection_ir_lowering/lower_and_compile_100_http_rules",
-        "security_packs_detection_ir_lowering/lower_and_compile_100_http_rules",
+        "security_engine_detection_ir_lowering/lower_and_compile_100_http_rules",
+        "security_engine_detection_ir_lowering/lower_and_compile_100_http_rules",
         None,
     )
 
     measurements = criterion_measurements(
         tmp_path,
-        ("security_packs_detection_ir_lowering/",),
+        ("security_engine_detection_ir_lowering/",),
     )
 
     assert measurements[0]["estimate_kind"] == "mean"

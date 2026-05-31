@@ -5,7 +5,8 @@ use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, BlockResponse, Enforceability, HttpBodySecuritySubject,
     HttpSecuritySubject, RedactionState, ResolvedEventStep, ResolvedEventStepKind,
     ResolvedSecurityEvent, SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError,
-    SecurityEvent, SecurityEventCommon, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    SecurityEvent, SecurityEventCommon, SecurityEventType, SourceEngine, StepStatus,
+    RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -162,7 +163,7 @@ pub fn build_http_security_event(
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: SecurityEventType::HttpRequest,
             redaction_state: RedactionState::Raw,
         },
         HttpSecuritySubject {
@@ -197,7 +198,7 @@ pub fn build_http_response_security_event(
     trace_id: Option<String>,
 ) -> SecurityEvent {
     let mut event = build_http_security_event(input, timestamp_unix_ms, trace_id);
-    event.common.event_type = "http.response".into();
+    event.common.event_type = SecurityEventType::HttpResponse;
     event
 }
 

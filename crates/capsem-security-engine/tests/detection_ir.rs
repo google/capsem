@@ -1,14 +1,18 @@
 use std::path::{Path, PathBuf};
 
-use capsem_core::security_packs::{
+use capsem_security_engine::detection_ir::{
     compile_detection_ir_to_cel_detection_rules, evaluate_detection_ir,
     evaluate_detection_ir_security_event, parse_detection_ir_v1_json,
     validate_detection_ir_v1_json, DetectionIRMatcherV1, DetectionOperator, EventFamily,
     SecurityEventV1, SecurityPackSchemaError,
 };
 use capsem_security_engine::{
-    CelDetectionEvaluator, DetectionEvaluator, FileSecuritySubject, HttpBodySecuritySubject,
-    HttpSecuritySubject, RedactionState, SecurityEvent, SecurityEventCommon,
+    AiAttributionScope, AiOriginKind, CelDetectionEvaluator, ConversationSecuritySubject,
+    CredentialSecuritySubject, DetectionEvaluator, DnsSecuritySubject, Enforceability,
+    FileSecuritySubject, HttpBodySecuritySubject, HttpSecuritySubject, McpSecuritySubject,
+    ModelSecuritySubject, ProcessSecuritySubject, ProfileSecuritySubject, RedactionState,
+    SecurityEvent, SecurityEventCommon, SecurityEventSubject, SecurityEventType,
+    SnapshotSecuritySubject, SourceEngine, VmLifecycleSecuritySubject,
 };
 use serde_json::Value;
 
@@ -16,7 +20,9 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("capsem-core crate should live under <repo>/crates/capsem-core")
+        .expect(
+            "capsem-security-engine crate should live under <repo>/crates/capsem-security-engine",
+        )
         .to_path_buf()
 }
 
@@ -24,6 +30,41 @@ fn fixture(name: &str) -> String {
     let path = repo_root().join("schemas/fixtures").join(name);
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+fn common(event_id: &str, event_type: &str, source_engine: SourceEngine) -> SecurityEventCommon {
+    SecurityEventCommon {
+        event_id: event_id.into(),
+        parent_event_id: None,
+        stream_id: None,
+        activity_id: Some(format!("{event_id}-activity")),
+        sequence_no: Some(1),
+        source_engine,
+        attribution_scope: AiAttributionScope::Vm,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: Some("vm:vm-1".into()),
+        enforceability: Enforceability::InlineBlockable,
+        trace_id: Some(format!("{event_id}-trace")),
+        span_id: None,
+        timestamp_unix_ms: 1_789,
+        vm_id: Some("vm-1".into()),
+        session_id: Some("session-1".into()),
+        profile_id: Some("coding".into()),
+        profile_revision: Some("rev-a".into()),
+        profile_pack_ids: vec!["corp-default-detections".into()],
+        enforcement_packs: Vec::new(),
+        detection_packs: Vec::new(),
+        user_id: Some("user-1".into()),
+        process_id: None,
+        parent_process_id: None,
+        exec_id: None,
+        turn_id: None,
+        message_id: None,
+        tool_call_id: None,
+        mcp_call_id: None,
+        event_type: SecurityEventType::parse(event_type).unwrap(),
+        redaction_state: RedactionState::Raw,
+    }
 }
 
 #[test]
@@ -115,7 +156,7 @@ fn detection_ir_evaluator_matches_security_engine_http_event() {
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: SecurityEventType::HttpRequest,
             redaction_state: RedactionState::Raw,
         },
         HttpSecuritySubject {
@@ -186,7 +227,7 @@ fn detection_ir_lowers_to_real_cel_detection_rules() {
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: SecurityEventType::HttpRequest,
             redaction_state: RedactionState::Raw,
         },
         HttpSecuritySubject {
@@ -336,7 +377,7 @@ fn detection_ir_lowers_http_url_path_and_body_to_policy_context_roots() {
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "http.request".into(),
+            event_type: SecurityEventType::HttpRequest,
             redaction_state: RedactionState::Raw,
         },
         HttpSecuritySubject {
@@ -418,7 +459,7 @@ fn detection_ir_lowers_file_path_to_policy_context_roots() {
             message_id: None,
             tool_call_id: None,
             mcp_call_id: None,
-            event_type: "file.write".into(),
+            event_type: SecurityEventType::FileWrite,
             redaction_state: RedactionState::Raw,
         },
         FileSecuritySubject {
@@ -426,11 +467,229 @@ fn detection_ir_lowers_file_path_to_policy_context_roots() {
             path: Some("/workspace/secret.txt".into()),
             path_class: "workspace".into(),
             byte_count: Some(64),
+            content: None,
         },
     );
     let mut evaluator = CelDetectionEvaluator::compile(rules).unwrap();
     let findings = evaluator.evaluate(&event).unwrap();
     assert_eq!(findings.len(), 1);
+}
+
+#[test]
+fn detection_ir_lowers_every_security_event_family_to_cel_roots() {
+    let cases = vec![
+        (
+            EventFamily::Dns,
+            "dns.request.qname",
+            serde_json::json!("google.example.test"),
+            SecurityEvent::dns(
+                common("evt-ir-dns", "dns.request", SourceEngine::Network),
+                DnsSecuritySubject {
+                    qname: "google.example.test".into(),
+                    domain_class: "external".into(),
+                },
+            ),
+        ),
+        (
+            EventFamily::Http,
+            "http.request.host",
+            serde_json::json!("api.example.test"),
+            SecurityEvent::http(
+                common("evt-ir-http", "http.request", SourceEngine::Network),
+                HttpSecuritySubject {
+                    method: "GET".into(),
+                    host: "api.example.test".into(),
+                    path_class: "api".into(),
+                    request_bytes: 64,
+                    ..Default::default()
+                },
+            ),
+        ),
+        (
+            EventFamily::Mcp,
+            "mcp.request.tool_name",
+            serde_json::json!("read_file"),
+            SecurityEvent::mcp(
+                common("evt-ir-mcp", "mcp.request", SourceEngine::Network),
+                McpSecuritySubject {
+                    method: Some("tools/call".into()),
+                    server_id: "filesystem".into(),
+                    tool_name: "read_file".into(),
+                    evidence: None,
+                },
+            ),
+        ),
+        (
+            EventFamily::Model,
+            "model.request.provider",
+            serde_json::json!("google_gemini"),
+            SecurityEvent::model(
+                common("evt-ir-model", "model.request", SourceEngine::Network),
+                ModelSecuritySubject {
+                    provider: "google_gemini".into(),
+                    model: "gemini-2.5-pro".into(),
+                    estimated_input_tokens: None,
+                    estimated_output_tokens: None,
+                    estimated_cost_micros: None,
+                    evidence: None,
+                },
+            ),
+        ),
+        (
+            EventFamily::File,
+            "file.activity.path_class",
+            serde_json::json!("workspace"),
+            SecurityEvent::file(
+                common("evt-ir-file", "file.write", SourceEngine::File),
+                FileSecuritySubject {
+                    operation: "write".into(),
+                    path: Some("/workspace/secret.txt".into()),
+                    path_class: "workspace".into(),
+                    byte_count: Some(64),
+                    content: None,
+                },
+            ),
+        ),
+        (
+            EventFamily::Process,
+            "process.activity.command_class",
+            serde_json::json!("shell"),
+            SecurityEvent::process(
+                common("evt-ir-process", "process.exec", SourceEngine::Process),
+                ProcessSecuritySubject {
+                    operation: "exec".into(),
+                    command_class: Some("shell".into()),
+                },
+            ),
+        ),
+        (
+            EventFamily::Credential,
+            "credential.activity.credential_id",
+            serde_json::json!("api-token"),
+            SecurityEvent {
+                schema_version: capsem_security_engine::SECURITY_EVENT_SCHEMA_VERSION,
+                common: common(
+                    "evt-ir-credential",
+                    "credential.activity",
+                    SourceEngine::Security,
+                ),
+                subject: SecurityEventSubject::Credential(CredentialSecuritySubject {
+                    operation: "read".into(),
+                    credential_id: "api-token".into(),
+                }),
+                context: Default::default(),
+                trace: Default::default(),
+                labels: Vec::new(),
+                findings: Vec::new(),
+                decision: None,
+                mutations: Vec::new(),
+            },
+        ),
+        (
+            EventFamily::Vm,
+            "vm.activity.operation",
+            serde_json::json!("start"),
+            SecurityEvent::vm_lifecycle(
+                common("evt-ir-vm", "vm.start", SourceEngine::Vm),
+                VmLifecycleSecuritySubject {
+                    operation: "start".into(),
+                },
+            ),
+        ),
+        (
+            EventFamily::Profile,
+            "profile.activity.profile_id",
+            serde_json::json!("coding"),
+            SecurityEvent::profile(
+                common("evt-ir-profile", "profile.update", SourceEngine::Profile),
+                ProfileSecuritySubject {
+                    operation: "update".into(),
+                    profile_id: "coding".into(),
+                    profile_revision: "rev-a".into(),
+                },
+            ),
+        ),
+        (
+            EventFamily::Conversation,
+            "conversation.activity.conversation_id",
+            serde_json::json!("conv-1"),
+            SecurityEvent::conversation(
+                common(
+                    "evt-ir-conversation",
+                    "conversation.message",
+                    SourceEngine::Conversation,
+                ),
+                ConversationSecuritySubject {
+                    operation: "append".into(),
+                    conversation_id: Some("conv-1".into()),
+                },
+            ),
+        ),
+        (
+            EventFamily::Snapshot,
+            "snapshot.activity.snapshot_id",
+            serde_json::json!("snap-1"),
+            SecurityEvent::snapshot(
+                common("evt-ir-snapshot", "snapshot.create", SourceEngine::File),
+                SnapshotSecuritySubject {
+                    operation: "create".into(),
+                    snapshot_id: "snap-1".into(),
+                },
+            ),
+        ),
+    ];
+
+    for (family, field_path, value, event) in cases {
+        let mut ir = parse_detection_ir_v1_json(&fixture("detection-ir-v1-valid.json")).unwrap();
+        let rule = &mut ir.rules[0];
+        rule.id = format!("detect-{family:?}").to_lowercase();
+        rule.event_family = family;
+        rule.matchers = vec![DetectionIRMatcherV1 {
+            field_path: field_path.into(),
+            operator: DetectionOperator::EqualsAny,
+            values: vec![value],
+            sigma_field: field_path.into(),
+        }];
+
+        let rules = compile_detection_ir_to_cel_detection_rules(&ir).unwrap();
+        assert!(
+            rules[0].condition.contains(field_path),
+            "lowered CEL should reference {field_path}"
+        );
+        let mut evaluator = CelDetectionEvaluator::compile(rules).unwrap();
+        let findings = evaluator.evaluate(&event).unwrap();
+        assert_eq!(findings.len(), 1, "expected {family:?} IR rule to match");
+    }
+}
+
+#[test]
+fn detection_ir_lowers_indexed_model_tool_paths_to_cel_roots() {
+    let mut ir = parse_detection_ir_v1_json(&fixture("detection-ir-v1-valid.json")).unwrap();
+    let rule = &mut ir.rules[0];
+    rule.id = "model-tool-call".into();
+    rule.event_family = EventFamily::Model;
+    rule.matchers = vec![
+        DetectionIRMatcherV1 {
+            field_path: "model.request.tool_calls[0].name".into(),
+            operator: DetectionOperator::EqualsAny,
+            values: vec![serde_json::json!("filesystem.read_file")],
+            sigma_field: "tool_name".into(),
+        },
+        DetectionIRMatcherV1 {
+            field_path: "model.response.tool_results[0].returned_to_model".into(),
+            operator: DetectionOperator::EqualsAny,
+            values: vec![serde_json::json!(true)],
+            sigma_field: "returned_to_model".into(),
+        },
+    ];
+
+    let rules = compile_detection_ir_to_cel_detection_rules(&ir).unwrap();
+    assert!(rules[0]
+        .condition
+        .contains("model.request.tool_calls[0].name"));
+    assert!(rules[0]
+        .condition
+        .contains("model.response.tool_results[0].returned_to_model"));
 }
 
 #[test]

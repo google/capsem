@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added a typed `SecurityEventType` contract for `SecurityEventCommon`, with
+  serde-as-string roundtrips, strict parsing, family mapping, callback guards,
+  constructor family checks, and SQLite `security_events` constraints that
+  reject unknown event types and family/type mismatches for new DBs.
+- Added canonical CEL policy-context roots for credential, VM, conversation,
+  and snapshot security events so detection and enforcement rules can address
+  those event families directly.
+- Added semantic CEL object-search verbs for canonical security events:
+  `contains()`, `match()`, and `matches()` now deep-search HTTP, DNS, file,
+  MCP, model, and other policy-context objects, including MCP arguments and
+  model tool-call arguments. File policy context also now has an optional
+  searchable content body alongside path/name metadata.
+- Added settings default-rule priority proof for HTTP, DNS, and MCP: specific
+  priority-0 allow rules compile into the runtime SecurityEngine, win over
+  catch-all default blocks, and leave non-matching events covered by defaults.
+- Added canonical framed-MCP enforcement proof: `mcp.request` arguments and
+  `mcp.response` results are exposed to CEL.
+- Added fast Criterion benchmark coverage for security-event projection,
+  mixed-family CEL detection/enforcement evaluation, Detection IR lowering
+  across every event family, and indexed model tool-call/result paths.
+- Added `capsem-security-engine::detection_ir` as the Rust owner for
+  Sigma/Detection IR parsing, matching, and CEL lowering, with security-engine
+  tests and benchmarks for direct and lowered-CEL matching.
+- Changed the canonical `just benchmark` Criterion gate and artifact archiver
+  to run the security-engine-owned Detection IR benchmark instead of the old
+  `capsem-core` security-pack harness.
+- Moved runtime enforcement backtest, detection backtest, detection hunt,
+  evidence-signature, and matched-field semantics into `capsem-security-engine`
+  so service endpoints are transport shells over the shared SecurityEngine API.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.
@@ -147,6 +176,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `capsem-process` live metrics snapshots to stay on in-memory
   counters instead of recursively scanning VM session directories on the
   service `/list` hot path.
+- Replaced the live MCP side-policy path with canonical SecurityEngine/CEL
+  evaluation over `SecurityEvent`, removing the local MCP decision provider,
+  MCP condition mini-parser, and builtin domain allow/block environment
+  authority from enforcement decisions.
+- Moved process-side SecurityEngine installation/reload code out of
+  `mcp_runtime.rs` into `capsem-process/src/security_engine/`, split across
+  rule compilation, match recording, guest config, and MCP settings extraction
+  modules.
 - Changed service read hot paths so `/list` no longer calls per-VM live metrics,
   `/stats` uses an empty/read-only fast path, raw session DB queries use
   SQLite progress handlers instead of a 100ms watchdog-thread floor, and
@@ -179,6 +216,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inventoried sprint planning docs and moved retired Profile V2, release, and
   legacy boards under `sprints/retired/` so active release planning starts from
   `sprints/policy-settings-profiles/`.
+
+### Security
+- Expanded Detection IR lowering so snapshot, credential, VM, profile, and
+  conversation rules lower to their canonical CEL roots instead of being
+  unsupported or aliased to another event family.
+- Proved detection and enforcement CEL evaluation over the same canonical
+  `SecurityEvent -> PolicyContext` projection for every current security event
+  family, including model provider tool-call and tool-result metadata.
+- Removed the legacy process-runtime bridge that lowered model request,
+  response, and tool rules into HTTP request/response body predicates.
+- Removed the MITM HTTP-response rewrite compatibility path for model
+  `tool.arguments.*` mutations.
+- Wired MITM model-request enforcement to evaluate canonical `model.request`
+  security events before upstream dispatch, so CEL rules over
+  `model.request.provider` and `model.request.model` can block inline without
+  HTTP-body compatibility predicates.
+- Wired MITM model-response enforcement to evaluate canonical `model.response`
+  security events before guest delivery, exposing parsed provider response text
+  through `model.response.body.text` instead of requiring HTTP response-body
+  predicates.
+- Proved provider-emitted tool-call enforcement on canonical model response
+  events, blocking on parsed `model.request.tool_calls[...]` metadata before
+  guest delivery.
 
 ### Added
 - Added rootfs benchmark sub-metrics for large binary sequential reads, small

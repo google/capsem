@@ -14,7 +14,7 @@ VM-originated latency numbers as proof of CEL expression speed.
 | Lane | Command | Proves |
 |---|---|---|
 | CEL microbench | `cargo bench -p capsem-security-engine --bench security_engine_cel` | compile/evaluate cost, rule-count scaling, policy context projection, dedupe cost. |
-| Detection pack microbench | `cargo bench -p capsem-core --bench security_packs` | Detection IR parse/lowering and pack compile cost. |
+| Detection IR microbench | `cargo bench -p capsem-security-engine --bench detection_ir` | Detection IR parse/lowering, direct matching, canonical SecurityEvent matching, lowered-CEL matching, and pack compile cost. |
 | VM-originated serial path | `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs` | real service + VM + transport + telemetry/log/status path. |
 | Full benchmark gate | `just benchmark` | standard artifact-recording suite across host-native, in-VM, lifecycle/fork/parallel, Criterion, and VM-originated Security Engine lanes. |
 
@@ -65,7 +65,7 @@ The benchmark must assert correctness before recording speed:
 The S08d artifact set currently covers:
 
 - CEL compile/evaluate microbenchmarks;
-- Detection IR parse/lowering microbenchmarks;
+- Detection IR parse/lowering/matching microbenchmarks;
 - process exec enforcement from a live VM;
 - HTTP request enforcement from a live VM;
 - DNS request enforcement from a live VM;
@@ -82,7 +82,7 @@ claims name the lane:
 
 - "CEL condition evaluation measured in the host microbench harness";
 - "blocked process exec measured through a live VM";
-- "Detection IR lowering measured by the security-packs benchmark".
+- "Detection IR matching measured by the security-engine Detection IR benchmark".
 
 Do not write "Security Engine blocks in X ms" unless X comes from a
 VM-originated artifact for that event family and includes the host/arch/profile

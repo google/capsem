@@ -119,7 +119,7 @@
       "source_engine": "network",
       "enforceability": "inline_blockable",
       "timestamp_unix_ms": 1789003,
-      "event_type": "mcp.tool_call"
+      "event_type": "mcp.request"
     },
     "subject": {
       "family": "mcp",

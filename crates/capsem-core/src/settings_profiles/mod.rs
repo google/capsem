@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
+use capsem_security_engine::SecurityEventType;
+
 pub mod corp;
 pub mod resolver_trace;
 
@@ -3610,7 +3612,9 @@ fn derived_mcp_allowed_tools_rules(
             out.push(EffectiveRule {
                 id: format!("mcp.connector_{connector_id}_allow_{safe_tool}"),
                 callback: "mcp.request".to_string(),
-                condition: format!("tool.name == '{tool}'"),
+                condition: format!(
+                    "mcp.request.server_id == '{connector_id}' && mcp.request.tool_name == '{tool}'"
+                ),
                 decision: RuleDecision::Allow,
                 priority: 0,
                 rewrite_target: None,
@@ -3809,36 +3813,44 @@ fn derived_catch_all_rules(record: &ProfileRecord) -> Vec<EffectiveRule> {
     let capabilities = &record.profile.security.capabilities;
     let net = capabilities.network_egress;
     let mcp = capabilities.mcp_tools;
+    const HTTP_READ_METHOD_CONDITION: &str = "http.request.method == 'GET' \
+        || http.request.method == 'HEAD' \
+        || http.request.method == 'OPTIONS'";
 
     let mut out = Vec::new();
-    for (id, callback, capability_path, mode) in [
+    for (id, callback, condition, capability_path, mode) in [
         (
             "dns.default",
             "dns.request",
+            "true",
             "security.capabilities.network_egress",
             net,
         ),
         (
             "http.default_read",
-            "http.read",
+            "http.request",
+            HTTP_READ_METHOD_CONDITION,
             "security.capabilities.network_egress",
             net,
         ),
         (
             "http.default_write",
-            "http.write",
+            "http.request",
+            "!(http.request.method == 'GET' || http.request.method == 'HEAD' || http.request.method == 'OPTIONS')",
             "security.capabilities.network_egress",
             net,
         ),
         (
             "model.default",
             "model.request",
+            "true",
             "security.capabilities.network_egress",
             net,
         ),
         (
             "mcp.default",
             "mcp.request",
+            "true",
             "security.capabilities.mcp_tools",
             mcp,
         ),
@@ -3846,7 +3858,7 @@ fn derived_catch_all_rules(record: &ProfileRecord) -> Vec<EffectiveRule> {
         out.push(EffectiveRule {
             id: id.to_string(),
             callback: callback.to_string(),
-            condition: "true".to_string(),
+            condition: condition.to_string(),
             decision: mode.into(),
             priority: RULE_CATCH_ALL_PRIORITY,
             rewrite_target: None,
@@ -4314,30 +4326,28 @@ fn validate_rule_map(
 }
 
 fn validate_rule_callback_for_type(path: &str, rule_type: &str, callback: &str) -> Result<()> {
-    let allowed: &[&str] = match rule_type {
-        "mcp" => &["mcp.request", "mcp.response"],
-        "http" => &["http.request", "http.read", "http.write", "http.response"],
-        "dns" => &["dns.request", "dns.response"],
-        "model" => &[
-            "model.request",
-            "model.response",
-            "model.tool_call",
-            "model.tool_response",
-        ],
-        "hook" => &["hook.decision"],
-        _ => {
-            validation_error(path, &format!("unsupported rule type '{rule_type}'"))?;
+    let event_type = match SecurityEventType::parse(callback) {
+        Ok(event_type) => event_type,
+        Err(_) => {
+            if let Some(replacement) = renamed_callback(callback) {
+                validation_error(
+                    &format!("{path}.on"),
+                    &format!(
+                        "callback '{callback}' was renamed to '{replacement}'; use '{replacement}'"
+                    ),
+                )
+            } else {
+                validation_error(
+                    &format!("{path}.on"),
+                    &format!("callback '{callback}' is not a supported security event type"),
+                )
+            }?;
             return Ok(());
         }
     };
 
-    if allowed.contains(&callback) {
+    if event_type.family().as_str() == rule_type {
         Ok(())
-    } else if let Some(replacement) = renamed_callback(callback) {
-        validation_error(
-            &format!("{path}.on"),
-            &format!("callback '{callback}' was renamed to '{replacement}'; use '{replacement}'"),
-        )
     } else {
         validation_error(
             &format!("{path}.on"),
@@ -4349,6 +4359,7 @@ fn validate_rule_callback_for_type(path: &str, rule_type: &str, callback: &str) 
 fn renamed_callback(callback: &str) -> Option<&'static str> {
     match callback {
         "dns.query" => Some("dns.request"),
+        "http.read" | "http.write" => Some("http.request"),
         _ => None,
     }
 }

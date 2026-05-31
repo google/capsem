@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use capsem_security_engine::{
     AiApiFamily, AiAttributionScope, AiOriginKind, AiProvider, AiUsageEvidence, Enforceability,
     EvidenceStatus, ModelInteractionEvidence, ModelRequestEvidence, ParseStatus, RedactionState,
-    SecurityEventCommon, SecurityEventSubject, SourceEngine,
+    SecurityEventCommon, SecurityEventSubject, SecurityEventType, SourceEngine,
 };
 
 use super::*;
@@ -84,7 +84,7 @@ fn common() -> SecurityEventCommon {
         message_id: None,
         tool_call_id: None,
         mcp_call_id: None,
-        event_type: "model.request".into(),
+        event_type: SecurityEventType::ModelRequest,
         redaction_state: RedactionState::Raw,
     }
 }

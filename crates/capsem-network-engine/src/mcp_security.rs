@@ -4,7 +4,8 @@ use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, BlockResponse, Enforceability, McpSecuritySubject,
     RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
     SecurityAction, SecurityDecision, SecurityDecisionAction, SecurityError, SecurityEvent,
-    SecurityEventCommon, SecurityResult, SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    SecurityEventCommon, SecurityEventType, SecurityResult, SourceEngine, StepStatus,
+    RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
 const CAPSEM_VM_ID_ENV: &str = "CAPSEM_VM_ID";
@@ -78,10 +79,11 @@ pub fn build_mcp_security_event(
             message_id: None,
             tool_call_id: input.request_id.clone(),
             mcp_call_id: input.request_id.clone(),
-            event_type: "mcp.request".into(),
+            event_type: SecurityEventType::McpRequest,
             redaction_state: RedactionState::Raw,
         },
         McpSecuritySubject {
+            method: Some("tools/call".into()),
             server_id: input.server_name.clone(),
             tool_name: input.tool_name.clone(),
             evidence: None,
