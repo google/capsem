@@ -40,6 +40,9 @@
   methods for generation, sheet, table, chart, diagram, slide, and slideDeck
   assembly so decks are built by orchestrating typed artifacts instead of a
   hidden deck engine.
+- Added a live native artifact workspace with reset/list/render behavior so
+  step-by-step tool calls can build an interactive slide deck visible on
+  `/deck` without changing code.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

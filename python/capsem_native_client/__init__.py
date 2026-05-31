@@ -49,6 +49,9 @@ class CapsemNativeClient:
 class NativeApi:
     client: CapsemNativeClient
 
+    def reset_workspace(self) -> dict[str, Any]:
+        return self.client._request("POST", "/native/workspace/reset", {})
+
     def deck_proof(self) -> dict[str, Any]:
         return self.client._request("GET", "/native/deck-proof")
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import {
     loadNativeDeckProof,
     tagNameForArtifact,
@@ -10,6 +10,7 @@
   let proof = $state<NativeDeckProof | null>(null);
   let selectedId = $state("");
   let error = $state("");
+  let refreshTimer: number | undefined;
 
   let selected = $derived(
     proof?.artifacts.find((artifact) => artifact.id === selectedId) ?? proof?.artifacts[0] ?? null,
@@ -21,13 +22,34 @@
   onMount(() => {
     loadNativeDeckProof()
       .then((body) => {
-        proof = body;
-        selectedId = body.artifacts[0]?.id ?? "";
+        applyProof(body);
       })
       .catch((cause: Error) => {
         error = cause.message;
       });
+    refreshTimer = window.setInterval(refreshProof, 1500);
   });
+
+  onDestroy(() => {
+    if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+  });
+
+  function refreshProof(): void {
+    loadNativeDeckProof()
+      .then(applyProof)
+      .catch((cause: Error) => {
+        error = cause.message;
+      });
+  }
+
+  function applyProof(body: NativeDeckProof): void {
+    const previousSelectedId = selectedId;
+    proof = body;
+    selectedId = body.artifacts.some((artifact) => artifact.id === previousSelectedId)
+      ? previousSelectedId
+      : body.artifacts[0]?.id ?? "";
+    error = "";
+  }
 
   function setSpec(node: HTMLElement & { spec?: NativeArtifact }, artifact: NativeArtifact | null) {
     node.spec = artifact ?? undefined;

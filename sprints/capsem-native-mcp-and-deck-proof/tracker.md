@@ -8,6 +8,8 @@
 - [x] Add tiny Python client library that calls the Rust routes.
 - [x] Expose contract calls for `generate.image`, sheet, table, chart,
   diagram, slide, and slideDeck artifact assembly.
+- [x] Persist native artifact tool calls in a live workspace for step-by-step
+  `/deck` preview.
 - [x] Add SQLite data workspace proof.
 - [ ] Add Plotly chart spec/render/export proof.
 - [ ] Add Mermaid diagram spec/render/export proof.
@@ -63,6 +65,10 @@
   constructor cannot be registered for multiple custom element tag names. The
   fix registers per-tag subclasses on the shared `CapsemArtifactElement`
   foundation.
+- The live workspace is intentionally in-memory for the spike. `POST
+  /native/workspace/reset` clears it, construction routes insert artifacts, and
+  `/native/deck-proof` falls back to the Realms demo only when the workspace is
+  empty.
 
 ## Coverage Ledger
 
@@ -78,10 +84,15 @@
   slides, 5 house images, 2 charts, and 5 SQLite rows. A second smoke drove
   the route sequence SQLite query -> sheet -> generate image spec -> chart ->
   slide -> slideDeck and got typed `<capsem-*>` artifacts at each step.
+- Stepwise UI acceptance: after `reset_workspace()` and only Python client/tool
+  calls, `/native/deck-proof` returned `Live Tool Deck` with 5 artifacts and 1
+  slide; Chrome `/deck?v=workspace` rendered that same live deck with one
+  `<capsem-slide-deck>`.
 - Adversarial: Rust test rejects non-SELECT SQL in the demo workspace.
 - E2E/UI: Chrome `/deck?v=fix` rendered "The Realms Of Code", registered
   `<capsem-slide-deck>`, showed 22 artifact controls, and mounted the custom
-  deck component.
+  deck component. Chrome `/deck?v=workspace` rendered the tool-built live
+  workspace deck without code changes.
 - Telemetry: pending.
 - Performance: pending.
 - Missing/deferred: real Plotly rendering/export, Mermaid rendering/export,

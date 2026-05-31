@@ -1,7 +1,7 @@
 mod ui_preview;
 mod ui_tools;
 
-use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, env, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use axum::{
@@ -17,8 +17,9 @@ use capsem_plugin_engine::{
 use capsem_ui_catalog::native_deck::{
     artifact_by_id, create_chart, create_diagram, create_sheet, create_slide, create_slide_deck,
     create_table, demo_deck_proof, generate_image, query_demo_sql, ChartRequest, DiagramRequest,
-    GenerateImageRequest, NativeArtifact, NativeDeckProof, SheetRequest, SlideDeckRequest,
-    SlideRequest, SqliteQueryRequest, SqliteQueryResponse, TableRequest,
+    GenerateImageRequest, NativeArtifact, NativeArtifactKind, NativeDeckProof, SheetRequest,
+    SlideDeckRequest, SlideDeckSpec, SlideRef, SlideRequest, SqliteQueryRequest,
+    SqliteQueryResponse, TableRequest,
 };
 use capsem_ui_catalog::ui_tools::UiToolProgramResult;
 use serde_json::json;
@@ -30,6 +31,113 @@ use tower_http::trace::TraceLayer;
 struct AppState {
     registry: Arc<PluginRegistry>,
     authored_ui: Arc<RwLock<Option<UiToolProgramResult>>>,
+    native_workspace: Arc<RwLock<NativeWorkspace>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct NativeWorkspace {
+    artifacts: BTreeMap<String, NativeArtifact>,
+    deck_id: Option<String>,
+}
+
+impl NativeWorkspace {
+    fn is_empty(&self) -> bool {
+        self.artifacts.is_empty()
+    }
+
+    fn insert(&mut self, artifact: NativeArtifact) {
+        if artifact.kind == NativeArtifactKind::SlideDeck {
+            self.deck_id = Some(artifact.id.clone());
+        }
+        self.artifacts.insert(artifact.id.clone(), artifact);
+    }
+
+    fn artifact(&self, id: &str) -> Option<&NativeArtifact> {
+        self.artifacts.get(id)
+    }
+
+    fn artifacts(&self) -> Vec<NativeArtifact> {
+        self.artifacts.values().cloned().collect()
+    }
+
+    fn to_proof(&self) -> NativeDeckProof {
+        let artifacts = self.artifacts();
+        let deck_artifact = self
+            .deck_id
+            .as_deref()
+            .and_then(|id| self.artifacts.get(id))
+            .or_else(|| {
+                self.artifacts
+                    .values()
+                    .find(|artifact| artifact.kind == NativeArtifactKind::SlideDeck)
+            });
+        let deck = deck_artifact
+            .and_then(deck_from_artifact)
+            .unwrap_or_else(|| self.draft_deck());
+        let chart_count = artifacts
+            .iter()
+            .filter(|artifact| artifact.kind == NativeArtifactKind::Chart)
+            .count();
+        let sqlite_rows = artifacts
+            .iter()
+            .filter(|artifact| {
+                matches!(
+                    artifact.kind,
+                    NativeArtifactKind::Sheet | NativeArtifactKind::Table
+                )
+            })
+            .filter_map(|artifact| artifact.spec["rows"].as_array().map(Vec::len))
+            .max()
+            .unwrap_or(0);
+        let required_artifacts_present = [
+            NativeArtifactKind::GeneratedImage,
+            NativeArtifactKind::Sheet,
+            NativeArtifactKind::Table,
+            NativeArtifactKind::Chart,
+            NativeArtifactKind::Diagram,
+            NativeArtifactKind::Slide,
+            NativeArtifactKind::SlideDeck,
+        ]
+        .iter()
+        .all(|kind| artifacts.iter().any(|artifact| artifact.kind == *kind));
+        NativeDeckProof {
+            ok: !artifacts.is_empty(),
+            title: deck.title.clone(),
+            summary: capsem_ui_catalog::native_deck::NativeDeckSummary {
+                sqlite_rows,
+                chart_count,
+                individual_artifact_count: artifacts.len(),
+                required_artifacts_present,
+            },
+            artifacts,
+            deck,
+        }
+    }
+
+    fn draft_deck(&self) -> SlideDeckSpec {
+        SlideDeckSpec {
+            id: "workspace-draft".to_owned(),
+            title: "Native Artifact Workspace".to_owned(),
+            slides: self
+                .artifacts
+                .values()
+                .filter(|artifact| artifact.kind == NativeArtifactKind::Slide)
+                .map(|artifact| SlideRef {
+                    artifact_id: artifact.id.clone(),
+                    title: artifact.title.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+fn deck_from_artifact(artifact: &NativeArtifact) -> Option<SlideDeckSpec> {
+    let slides = serde_json::from_value(artifact.spec["slides"].clone()).ok()?;
+    Some(SlideDeckSpec {
+        id: artifact.id.clone(),
+        title: artifact.title.clone(),
+        slides,
+    })
 }
 
 #[tokio::main]
@@ -45,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
             _ => PluginRegistry::new(artifact_dir),
         }),
         authored_ui: Arc::new(RwLock::new(None)),
+        native_workspace: Arc::new(RwLock::new(NativeWorkspace::default())),
     };
 
     let app = app(state);
@@ -70,6 +179,7 @@ fn app(state: AppState) -> Router {
         .route("/ui/tools/latest", get(ui_tools::latest))
         .route("/ui/tools/acceptance", get(ui_tools::acceptance))
         .route("/native/deck-proof", get(native_deck_proof))
+        .route("/native/workspace/reset", post(native_workspace_reset))
         .route("/native/artifacts", get(native_artifacts))
         .route("/native/artifacts/:id", get(native_artifact))
         .route("/native/data/sqlite/query", post(native_sqlite_query))
@@ -98,22 +208,54 @@ async fn health() -> Json<serde_json::Value> {
     }))
 }
 
-async fn native_deck_proof() -> Result<Json<NativeDeckProof>, NativeApiError> {
-    Ok(Json(
-        demo_deck_proof().map_err(NativeApiError::bad_request)?,
-    ))
+async fn native_deck_proof(
+    State(state): State<AppState>,
+) -> Result<Json<NativeDeckProof>, NativeApiError> {
+    let workspace = state.native_workspace.read().await;
+    if workspace.is_empty() {
+        Ok(Json(
+            demo_deck_proof().map_err(NativeApiError::bad_request)?,
+        ))
+    } else {
+        Ok(Json(workspace.to_proof()))
+    }
 }
 
-async fn native_artifacts() -> Result<Json<Vec<NativeArtifact>>, NativeApiError> {
-    Ok(Json(
-        demo_deck_proof()
-            .map_err(NativeApiError::bad_request)?
-            .artifacts,
-    ))
+async fn native_workspace_reset(State(state): State<AppState>) -> Json<serde_json::Value> {
+    *state.native_workspace.write().await = NativeWorkspace::default();
+    Json(json!({
+        "ok": true,
+        "workspace": "native-artifacts",
+        "artifacts": 0
+    }))
 }
 
-async fn native_artifact(Path(id): Path<String>) -> Result<Json<NativeArtifact>, NativeApiError> {
-    match artifact_by_id(&id).map_err(NativeApiError::bad_request)? {
+async fn native_artifacts(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<NativeArtifact>>, NativeApiError> {
+    let workspace = state.native_workspace.read().await;
+    if workspace.is_empty() {
+        Ok(Json(
+            demo_deck_proof()
+                .map_err(NativeApiError::bad_request)?
+                .artifacts,
+        ))
+    } else {
+        Ok(Json(workspace.artifacts()))
+    }
+}
+
+async fn native_artifact(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let workspace = state.native_workspace.read().await;
+    let found = workspace
+        .artifact(&id)
+        .cloned()
+        .map(Some)
+        .unwrap_or_else(|| artifact_by_id(&id).ok().flatten());
+    match found {
         Some(artifact) => Ok(Json(artifact)),
         None => Err(NativeApiError::not_found(format!(
             "artifact not found: {id}"
@@ -130,65 +272,89 @@ async fn native_sqlite_query(
 }
 
 async fn native_create_sheet(
+    State(state): State<AppState>,
     Json(request): Json<SheetRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
-    Ok(Json(
+    store_artifact(
+        &state,
         create_sheet(request).map_err(NativeApiError::bad_request)?,
-    ))
+    )
+    .await
 }
 
 async fn native_generate_image(
+    State(state): State<AppState>,
     Json(request): Json<GenerateImageRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
-    Ok(Json(
+    store_artifact(
+        &state,
         generate_image(request).map_err(NativeApiError::bad_request)?,
-    ))
+    )
+    .await
 }
 
 async fn native_create_table(
+    State(state): State<AppState>,
     Json(request): Json<TableRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
-    Ok(Json(
+    store_artifact(
+        &state,
         create_table(request).map_err(NativeApiError::bad_request)?,
-    ))
+    )
+    .await
 }
 
 async fn native_create_chart(
+    State(state): State<AppState>,
     Json(request): Json<ChartRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
-    Ok(Json(
+    store_artifact(
+        &state,
         create_chart(request).map_err(NativeApiError::bad_request)?,
-    ))
+    )
+    .await
 }
 
 async fn native_create_diagram(
+    State(state): State<AppState>,
     Json(request): Json<DiagramRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
-    Ok(Json(
+    store_artifact(
+        &state,
         create_diagram(request).map_err(NativeApiError::bad_request)?,
-    ))
+    )
+    .await
 }
 
 async fn native_create_slide(
+    State(state): State<AppState>,
     Json(request): Json<SlideRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
-    Ok(Json(
+    store_artifact(
+        &state,
         create_slide(request).map_err(NativeApiError::bad_request)?,
-    ))
+    )
+    .await
 }
 
 async fn native_create_slide_deck(
+    State(state): State<AppState>,
     Json(request): Json<SlideDeckRequest>,
 ) -> Result<Json<NativeArtifact>, NativeApiError> {
     let (_, artifact) = create_slide_deck(request).map_err(NativeApiError::bad_request)?;
-    Ok(Json(artifact))
+    store_artifact(&state, artifact).await
 }
 
 async fn native_render_artifact(
+    State(state): State<AppState>,
     Json(request): Json<RenderArtifactRequest>,
 ) -> Result<Json<RenderArtifactResponse>, NativeApiError> {
-    let artifact = artifact_by_id(&request.artifact_id)
-        .map_err(NativeApiError::bad_request)?
+    let workspace = state.native_workspace.read().await;
+    let artifact = workspace
+        .artifact(&request.artifact_id)
+        .cloned()
+        .map(Some)
+        .unwrap_or_else(|| artifact_by_id(&request.artifact_id).ok().flatten())
         .ok_or_else(|| {
             NativeApiError::not_found(format!("artifact not found: {}", request.artifact_id))
         })?;
@@ -200,6 +366,18 @@ async fn native_render_artifact(
             .to_owned(),
         artifact,
     }))
+}
+
+async fn store_artifact(
+    state: &AppState,
+    artifact: NativeArtifact,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    state
+        .native_workspace
+        .write()
+        .await
+        .insert(artifact.clone());
+    Ok(Json(artifact))
 }
 
 #[derive(Debug, serde::Deserialize)]

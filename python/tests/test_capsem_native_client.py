@@ -9,6 +9,8 @@ class CapsemNativeClientTest(unittest.TestCase):
 
         def transport(method, path, body):
             calls.append((method, path, body))
+            if path == "/native/workspace/reset":
+                return {"ok": True}
             if path == "/native/deck-proof":
                 return {"ok": True, "summary": {"chartCount": 2}}
             if path == "/native/artifacts":
@@ -37,6 +39,7 @@ class CapsemNativeClientTest(unittest.TestCase):
 
         client = CapsemNativeClient(transport=transport)
 
+        self.assertTrue(client.native.reset_workspace()["ok"])
         self.assertEqual(client.native.deck_proof()["summary"]["chartCount"], 2)
         self.assertEqual(client.native.artifacts()[0]["id"], "chart-revenue-by-quarter")
         self.assertEqual(client.native.artifact("chart-revenue-by-quarter")["id"], "chart-revenue-by-quarter")
@@ -110,12 +113,13 @@ class CapsemNativeClientTest(unittest.TestCase):
         self.assertEqual(
             calls[:4],
             [
+                ("POST", "/native/workspace/reset", {}),
                 ("GET", "/native/deck-proof", None),
                 ("GET", "/native/artifacts", None),
                 ("GET", "/native/artifacts/chart-revenue-by-quarter", None),
-                ("POST", "/native/data/sqlite/query", {"sql": "select 1"}),
             ],
         )
+        self.assertIn(("POST", "/native/data/sqlite/query", {"sql": "select 1"}), calls)
         self.assertIn(
             (
                 "POST",
