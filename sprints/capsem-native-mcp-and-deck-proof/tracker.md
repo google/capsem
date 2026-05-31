@@ -6,6 +6,8 @@
 - [ ] Decide MCP naming after testing real client behavior.
 - [x] Define Rust webserver routes for native Capsem APIs.
 - [x] Add tiny Python client library that calls the Rust routes.
+- [x] Expose contract calls for `generate.image`, sheet, table, chart,
+  diagram, slide, and slideDeck artifact assembly.
 - [x] Add SQLite data workspace proof.
 - [ ] Add Plotly chart spec/render/export proof.
 - [ ] Add Mermaid diagram spec/render/export proof.
@@ -17,7 +19,7 @@
 - [x] Add `<capsem-slide-deck>` proof surface.
 - [x] Add acceptance test that builds a nice deck end to end.
 - [x] Changelog.
-- [ ] Commit.
+- [x] Commit.
 
 ## Notes
 
@@ -51,6 +53,9 @@
 - Deck and artifact previews use Capsem-owned `<capsem-*>` components.
 - The sprint must prove gradual output: each useful artifact can be produced and
   inspected independently before deck composition.
+- Deck is orchestration, not a deck engine: generation, sheets/tables, charts,
+  diagrams, slides, and slideDeck are separate typed calls. `slideDeck` only
+  assembles slide refs and export intent.
 - The nice demo deck is now "The Realms Of Code": five code houses from
   SQLite, an overview table with mottos and armory, two charts, two Mermaid
   diagram specs, one planned Gemini image per house, and one slide per house.
@@ -63,13 +68,16 @@
 
 - Unit/contract: `cargo test -p capsem-ui-catalog --test native_deck` passes;
   it now asserts the Realms deck has five house slides, five house image
-  artifacts, two charts from the same data sheet, and read-only SQLite. `cargo
-  test` passed across the workspace before this UI slice; focused server
-  compile checks pass for this slice.
+  artifacts, two charts from the same data sheet, a primitive-call slideDeck
+  composition path, and read-only SQLite. `cargo test` passed across the
+  workspace before this UI slice; focused server compile checks pass for this
+  slice.
 - Functional: `PYTHONPATH=python python3 -m unittest discover -s python/tests`
   passes; live server smoke passed for deck proof, SQLite query, and render
   artifact routes. Latest live smoke returned 22 artifacts, 9 slides, 5 house
-  slides, 5 house images, 2 charts, and 5 SQLite rows.
+  slides, 5 house images, 2 charts, and 5 SQLite rows. A second smoke drove
+  the route sequence SQLite query -> sheet -> generate image spec -> chart ->
+  slide -> slideDeck and got typed `<capsem-*>` artifacts at each step.
 - Adversarial: Rust test rejects non-SELECT SQL in the demo workspace.
 - E2E/UI: Chrome `/deck?v=fix` rendered "The Realms Of Code", registered
   `<capsem-slide-deck>`, showed 22 artifact controls, and mounted the custom

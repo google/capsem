@@ -15,8 +15,10 @@ use capsem_plugin_engine::{
     InstallPluginRequest, InstallRunRequest, PluginError, PluginRegistry, RunPluginRequest,
 };
 use capsem_ui_catalog::native_deck::{
-    artifact_by_id, demo_deck_proof, query_demo_sql, NativeArtifact, NativeDeckProof,
-    SqliteQueryRequest, SqliteQueryResponse,
+    artifact_by_id, create_chart, create_diagram, create_sheet, create_slide, create_slide_deck,
+    create_table, demo_deck_proof, generate_image, query_demo_sql, ChartRequest, DiagramRequest,
+    GenerateImageRequest, NativeArtifact, NativeDeckProof, SheetRequest, SlideDeckRequest,
+    SlideRequest, SqliteQueryRequest, SqliteQueryResponse, TableRequest,
 };
 use capsem_ui_catalog::ui_tools::UiToolProgramResult;
 use serde_json::json;
@@ -71,6 +73,13 @@ fn app(state: AppState) -> Router {
         .route("/native/artifacts", get(native_artifacts))
         .route("/native/artifacts/:id", get(native_artifact))
         .route("/native/data/sqlite/query", post(native_sqlite_query))
+        .route("/native/data/sheet", post(native_create_sheet))
+        .route("/native/generate/image", post(native_generate_image))
+        .route("/native/ui/table", post(native_create_table))
+        .route("/native/ui/chart", post(native_create_chart))
+        .route("/native/ui/diagram", post(native_create_diagram))
+        .route("/native/ui/slide", post(native_create_slide))
+        .route("/native/ui/slide-deck", post(native_create_slide_deck))
         .route("/native/ui/render-artifact", post(native_render_artifact))
         .route("/health", get(health))
         .route("/plugins/install", post(install_plugin))
@@ -118,6 +127,61 @@ async fn native_sqlite_query(
     Ok(Json(
         query_demo_sql(request).map_err(NativeApiError::bad_request)?,
     ))
+}
+
+async fn native_create_sheet(
+    Json(request): Json<SheetRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    Ok(Json(
+        create_sheet(request).map_err(NativeApiError::bad_request)?,
+    ))
+}
+
+async fn native_generate_image(
+    Json(request): Json<GenerateImageRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    Ok(Json(
+        generate_image(request).map_err(NativeApiError::bad_request)?,
+    ))
+}
+
+async fn native_create_table(
+    Json(request): Json<TableRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    Ok(Json(
+        create_table(request).map_err(NativeApiError::bad_request)?,
+    ))
+}
+
+async fn native_create_chart(
+    Json(request): Json<ChartRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    Ok(Json(
+        create_chart(request).map_err(NativeApiError::bad_request)?,
+    ))
+}
+
+async fn native_create_diagram(
+    Json(request): Json<DiagramRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    Ok(Json(
+        create_diagram(request).map_err(NativeApiError::bad_request)?,
+    ))
+}
+
+async fn native_create_slide(
+    Json(request): Json<SlideRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    Ok(Json(
+        create_slide(request).map_err(NativeApiError::bad_request)?,
+    ))
+}
+
+async fn native_create_slide_deck(
+    Json(request): Json<SlideDeckRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let (_, artifact) = create_slide_deck(request).map_err(NativeApiError::bad_request)?;
+    Ok(Json(artifact))
 }
 
 async fn native_render_artifact(

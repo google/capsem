@@ -24,6 +24,12 @@ overview table of code houses and mottos, charts from the same SQLite data,
 realm/workflow diagrams, one planned generated image per house, and one slide
 per house.
 
+Deck is not a primitive engine in this sprint. The contract is orchestration:
+`generate.image`, `ui.sheet`, `ui.table`, `ui.chart`, `ui.diagram`, `ui.slide`,
+and `ui.slideDeck` each return typed, independently inspectable artifacts. The
+deck artifact is the final assembly call over slide refs, not a hidden layout
+system.
+
 ## Direction
 
 Keep the authoring API elegant and object-shaped, while aligning the MCP layer
@@ -189,6 +195,8 @@ Required constraints:
 - Sprint notes agree on the tool hierarchy and MCP naming question.
 - Rust webserver routes exist for the first proof path.
 - Python client can drive the proof path end to end.
+- Rust/Python expose individual contract calls for generation, sheet/table,
+  chart, diagram, slide, and slideDeck assembly.
 - Gemini-backed `generate.image` works when configured and fails clearly when
   not configured.
 - SQLite data can feed table/sheet/chart specs.

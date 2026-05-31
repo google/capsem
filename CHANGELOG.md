@@ -36,6 +36,10 @@
 - Added browser-backed coverage for native artifact components, including a fix
   for custom-element registration so each tag uses its own subclass on the
   shared Capsem artifact foundation.
+- Added first-class native artifact construction routes and Python client
+  methods for generation, sheet, table, chart, diagram, slide, and slideDeck
+  assembly so decks are built by orchestrating typed artifacts instead of a
+  hidden deck engine.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

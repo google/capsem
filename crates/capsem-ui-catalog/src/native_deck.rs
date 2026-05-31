@@ -74,187 +74,518 @@ pub struct SqliteQueryResponse {
     pub rows: Vec<BTreeMap<String, Value>>,
 }
 
-pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
-    let rows = query_house_rows()?;
-    let sheet = artifact(
-        "sheet-realms-of-code",
-        NativeArtifactKind::Sheet,
-        "Realms Of Code Sheet",
-        json!({
-            "component": "capsem-sheet",
-            "columns": ["house", "motto", "armory", "domain", "velocity", "reliability", "risk"],
-            "rows": rows.clone(),
-            "source": {
-                "kind": "sqlite",
-                "query": "select house, motto, armory, domain, velocity, reliability, risk from code_houses order by house"
-            }
-        }),
-    );
-    let table = artifact(
-        "table-house-overview",
-        NativeArtifactKind::Table,
-        "House Overview Table",
-        json!({
-            "component": "capsem-table",
-            "sourceArtifact": sheet.id,
-            "columns": ["house", "motto", "armory", "domain"],
-            "rows": rows.clone(),
-            "searchable": true,
-            "filterable": true,
-            "pageSize": 5
-        }),
-    );
-    let velocity_chart = artifact(
-        "chart-house-velocity",
-        NativeArtifactKind::Chart,
-        "House Delivery Velocity",
-        json!({
-            "component": "capsem-chart",
-            "chart": "barChart",
-            "sourceArtifact": "sheet-realms-of-code",
-            "data": rows.clone(),
-            "x": "house",
-            "series": [{"name": "velocity", "field": "velocity"}],
-            "xLabel": "House",
-            "yLabel": "Velocity",
-            "yUnit": "score",
-            "stack": false,
-            "direction": "vertical",
-            "export": ["png", "svg"]
-        }),
-    );
-    let balance_chart = artifact(
-        "chart-house-balance",
-        NativeArtifactKind::Chart,
-        "Reliability And Risk Balance",
-        json!({
-            "component": "capsem-chart",
-            "chart": "lineChart",
-            "sourceArtifact": "sheet-realms-of-code",
-            "data": rows.clone(),
-            "x": "house",
-            "series": [
-                {"name": "reliability", "field": "reliability", "axis": "left"},
-                {"name": "risk", "field": "risk", "axis": "right"}
-            ],
-            "xLabel": "House",
-            "yLabel": "Reliability",
-            "yUnit": "score",
-            "secondAxis": {"label": "Risk", "unit": "score"},
-            "legend": "bottom",
-            "export": ["png", "svg"]
-        }),
-    );
-    let house_map = artifact(
-        "diagram-realm-map",
-        NativeArtifactKind::Diagram,
-        "Realm Map Diagram",
-        json!({
-            "component": "capsem-diagram",
-            "kind": "mermaid",
-            "source": "flowchart TB\n  Crown[The Realms of Code] --> Compiler[House Compiler]\n  Crown --> Runtime[House Runtime]\n  Crown --> Sandbox[House Sandbox]\n  Crown --> Telemetry[House Telemetry]\n  Crown --> Interface[House Interface]",
-            "export": ["svg", "png"]
-        }),
-    );
-    let workflow = artifact(
-        "diagram-deck-workflow",
-        NativeArtifactKind::Diagram,
-        "Deck Build Workflow",
-        json!({
-            "component": "capsem-diagram",
-            "kind": "mermaid",
-            "source": "flowchart LR\n  Data[SQLite house data] --> Table[Overview table]\n  Data --> Charts[Charts]\n  Data --> Images[Generated house images]\n  Table --> Slides[One slide per house]\n  Charts --> Slides\n  Images --> Slides\n  Slides --> Deck[Capsem slide deck]",
-            "export": ["svg", "png"]
-        }),
-    );
-    let hero = artifact(
-        "generated-image-hero",
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateImageRequest {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    #[serde(default = "default_gemini_provider")]
+    pub provider: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetRequest {
+    pub id: String,
+    pub title: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<BTreeMap<String, Value>>,
+    #[serde(default)]
+    pub source: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableRequest {
+    pub id: String,
+    pub title: String,
+    pub source_artifact: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<BTreeMap<String, Value>>,
+    #[serde(default = "default_true")]
+    pub searchable: bool,
+    #[serde(default = "default_true")]
+    pub filterable: bool,
+    #[serde(default = "default_page_size")]
+    pub page_size: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartRequest {
+    pub id: String,
+    pub title: String,
+    pub chart: ChartKind,
+    pub source_artifact: String,
+    pub data: Vec<BTreeMap<String, Value>>,
+    pub x: String,
+    pub series: Vec<ChartSeries>,
+    pub x_label: String,
+    pub y_label: String,
+    pub y_unit: String,
+    #[serde(default)]
+    pub stack: bool,
+    #[serde(default = "default_chart_direction")]
+    pub direction: ChartDirection,
+    #[serde(default)]
+    pub legend: Option<LegendPosition>,
+    #[serde(default)]
+    pub second_axis: Option<ChartAxis>,
+    #[serde(default = "default_chart_exports")]
+    pub export: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartKind {
+    BarChart,
+    LineChart,
+    HeatmapChart,
+    BoxPlot,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartDirection {
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LegendPosition {
+    Top,
+    Right,
+    Bottom,
+    Left,
+    None,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartSeries {
+    pub name: String,
+    pub field: String,
+    #[serde(default)]
+    pub axis: Option<ChartSeriesAxis>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartSeriesAxis {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartAxis {
+    pub label: String,
+    pub unit: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagramRequest {
+    pub id: String,
+    pub title: String,
+    #[serde(default = "default_mermaid_diagram")]
+    pub kind: DiagramKind,
+    pub source: String,
+    #[serde(default = "default_diagram_exports")]
+    pub export: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DiagramKind {
+    Mermaid,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlideRequest {
+    pub id: String,
+    pub title: String,
+    pub blocks: Vec<SlideBlock>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SlideBlock {
+    Text {
+        title: String,
+        body: String,
+    },
+    Image {
+        #[serde(rename = "artifactId")]
+        artifact_id: String,
+    },
+    Diagram {
+        #[serde(rename = "artifactId")]
+        artifact_id: String,
+    },
+    Table {
+        #[serde(rename = "artifactId")]
+        artifact_id: String,
+    },
+    Sheet {
+        #[serde(rename = "artifactId")]
+        artifact_id: String,
+    },
+    Chart {
+        #[serde(rename = "artifactId")]
+        artifact_id: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlideDeckRequest {
+    pub id: String,
+    pub title: String,
+    pub slides: Vec<SlideRef>,
+    #[serde(default = "default_deck_exports")]
+    pub export: Vec<String>,
+}
+
+pub fn generate_image(request: GenerateImageRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    require_non_empty("prompt", &request.prompt)?;
+    require_non_empty("provider", &request.provider)?;
+    Ok(artifact(
+        request.id,
         NativeArtifactKind::GeneratedImage,
-        "The Realms Of Code Hero Image",
+        request.title,
         json!({
             "component": "capsem-media",
             "media": "image",
-            "provider": "gemini",
-            "prompt": "editorial fantasy cartography of five software houses in a luminous secure code kingdom, premium slide deck style, no text",
-            "status": "planned",
-            "note": "Gemini call is wired in the generate spike; this artifact proves the typed handle path."
+            "provider": request.provider,
+            "prompt": request.prompt,
+            "status": "planned"
         }),
-    );
-    let house_images = house_image_artifacts();
+    ))
+}
 
-    let intro_slide = artifact(
-        "slide-intro",
-        NativeArtifactKind::Slide,
-        "The Realms Of Code",
+pub fn create_sheet(request: SheetRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    require_columns(&request.columns)?;
+    Ok(artifact(
+        request.id,
+        NativeArtifactKind::Sheet,
+        request.title,
         json!({
-            "component": "capsem-slide",
-            "blocks": [
-                {"kind": "text", "title": "The Realms Of Code", "body": "A composed deck proving SQLite data, generated media, diagrams, charts, and typed slide blocks can travel through the same Capsem artifact lane."},
-                {"kind": "image", "artifactId": hero.id},
-                {"kind": "diagram", "artifactId": house_map.id}
-            ]
+            "component": "capsem-sheet",
+            "columns": request.columns,
+            "rows": request.rows,
+            "source": request.source
         }),
-    );
-    let overview_slide = artifact(
-        "slide-overview",
-        NativeArtifactKind::Slide,
-        "House Overview",
-        json!({
-            "component": "capsem-slide",
-            "blocks": [
-                {"kind": "table", "artifactId": table.id},
-                {"kind": "sheet", "artifactId": sheet.id}
-            ]
-        }),
-    );
-    let charts_slide = artifact(
-        "slide-metrics",
-        NativeArtifactKind::Slide,
-        "Realm Metrics",
-        json!({
-            "component": "capsem-slide",
-            "blocks": [
-                {"kind": "chart", "artifactId": velocity_chart.id},
-                {"kind": "chart", "artifactId": balance_chart.id}
-            ]
-        }),
-    );
-    let workflow_slide = artifact(
-        "slide-workflow",
-        NativeArtifactKind::Slide,
-        "Artifact Workflow",
-        json!({
-            "component": "capsem-slide",
-            "blocks": [
-                {"kind": "diagram", "artifactId": workflow.id}
-            ]
-        }),
-    );
-    let house_slides = house_slide_artifacts();
+    ))
+}
 
+pub fn create_table(request: TableRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    require_non_empty("sourceArtifact", &request.source_artifact)?;
+    require_columns(&request.columns)?;
+    if request.page_size == 0 {
+        return Err("pageSize must be greater than zero".to_owned());
+    }
+    Ok(artifact(
+        request.id,
+        NativeArtifactKind::Table,
+        request.title,
+        json!({
+            "component": "capsem-table",
+            "sourceArtifact": request.source_artifact,
+            "columns": request.columns,
+            "rows": request.rows,
+            "searchable": request.searchable,
+            "filterable": request.filterable,
+            "pageSize": request.page_size
+        }),
+    ))
+}
+
+pub fn create_chart(request: ChartRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    require_non_empty("sourceArtifact", &request.source_artifact)?;
+    require_non_empty("x", &request.x)?;
+    require_non_empty("xLabel", &request.x_label)?;
+    require_non_empty("yLabel", &request.y_label)?;
+    require_non_empty("yUnit", &request.y_unit)?;
+    if request.series.is_empty() {
+        return Err("chart series must not be empty".to_owned());
+    }
+    for series in &request.series {
+        require_non_empty("series.name", &series.name)?;
+        require_non_empty("series.field", &series.field)?;
+    }
+    Ok(artifact(
+        request.id,
+        NativeArtifactKind::Chart,
+        request.title,
+        json!({
+            "component": "capsem-chart",
+            "chart": request.chart,
+            "sourceArtifact": request.source_artifact,
+            "data": request.data,
+            "x": request.x,
+            "series": request.series,
+            "xLabel": request.x_label,
+            "yLabel": request.y_label,
+            "yUnit": request.y_unit,
+            "stack": request.stack,
+            "direction": request.direction,
+            "legend": request.legend,
+            "secondAxis": request.second_axis,
+            "export": request.export
+        }),
+    ))
+}
+
+pub fn create_diagram(request: DiagramRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    require_non_empty("source", &request.source)?;
+    Ok(artifact(
+        request.id,
+        NativeArtifactKind::Diagram,
+        request.title,
+        json!({
+            "component": "capsem-diagram",
+            "kind": request.kind,
+            "source": request.source,
+            "export": request.export
+        }),
+    ))
+}
+
+pub fn create_slide(request: SlideRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    if request.blocks.is_empty() {
+        return Err("slide blocks must not be empty".to_owned());
+    }
+    Ok(artifact(
+        request.id,
+        NativeArtifactKind::Slide,
+        request.title,
+        json!({
+            "component": "capsem-slide",
+            "blocks": request.blocks
+        }),
+    ))
+}
+
+pub fn create_slide_deck(
+    request: SlideDeckRequest,
+) -> Result<(SlideDeckSpec, NativeArtifact), String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    if request.slides.is_empty() {
+        return Err("slideDeck slides must not be empty".to_owned());
+    }
+    for slide in &request.slides {
+        require_non_empty("slides.artifactId", &slide.artifact_id)?;
+        require_non_empty("slides.title", &slide.title)?;
+    }
     let deck = SlideDeckSpec {
-        id: "deck-realms-of-code".to_owned(),
-        title: "The Realms Of Code".to_owned(),
-        slides: [
-            slide_ref(&intro_slide),
-            slide_ref(&overview_slide),
-            slide_ref(&charts_slide),
-            slide_ref(&workflow_slide),
-        ]
-        .into_iter()
-        .chain(house_slides.iter().map(slide_ref))
-        .collect(),
+        id: request.id,
+        title: request.title,
+        slides: request.slides,
     };
-    let deck_artifact = artifact(
+    let artifact = artifact(
         &deck.id,
         NativeArtifactKind::SlideDeck,
         &deck.title,
         json!({
             "component": "capsem-slide-deck",
             "slides": deck.slides,
-            "export": ["html", "pdf"]
+            "export": request.export
         }),
     );
+    Ok((deck, artifact))
+}
+
+pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
+    let rows = query_house_rows()?;
+    let columns = vec![
+        "house".to_owned(),
+        "motto".to_owned(),
+        "armory".to_owned(),
+        "domain".to_owned(),
+        "velocity".to_owned(),
+        "reliability".to_owned(),
+        "risk".to_owned(),
+    ];
+    let sheet = create_sheet(SheetRequest {
+        id: "sheet-realms-of-code".to_owned(),
+        title: "Realms Of Code Sheet".to_owned(),
+        columns: columns.clone(),
+        rows: rows.clone(),
+        source: Some(json!({
+            "kind": "sqlite",
+            "query": "select house, motto, armory, domain, velocity, reliability, risk from code_houses order by house"
+        })),
+    })?;
+    let table = create_table(TableRequest {
+        id: "table-house-overview".to_owned(),
+        title: "House Overview Table".to_owned(),
+        source_artifact: sheet.id.clone(),
+        columns: vec![
+            "house".to_owned(),
+            "motto".to_owned(),
+            "armory".to_owned(),
+            "domain".to_owned(),
+        ],
+        rows: rows.clone(),
+        searchable: true,
+        filterable: true,
+        page_size: 5,
+    })?;
+    let velocity_chart = create_chart(ChartRequest {
+        id: "chart-house-velocity".to_owned(),
+        title: "House Delivery Velocity".to_owned(),
+        chart: ChartKind::BarChart,
+        source_artifact: sheet.id.clone(),
+        data: rows.clone(),
+        x: "house".to_owned(),
+        series: vec![ChartSeries {
+            name: "velocity".to_owned(),
+            field: "velocity".to_owned(),
+            axis: None,
+        }],
+        x_label: "House".to_owned(),
+        y_label: "Velocity".to_owned(),
+        y_unit: "score".to_owned(),
+        stack: false,
+        direction: ChartDirection::Vertical,
+        legend: None,
+        second_axis: None,
+        export: default_chart_exports(),
+    })?;
+    let balance_chart = create_chart(ChartRequest {
+        id: "chart-house-balance".to_owned(),
+        title: "Reliability And Risk Balance".to_owned(),
+        chart: ChartKind::LineChart,
+        source_artifact: sheet.id.clone(),
+        data: rows.clone(),
+        x: "house".to_owned(),
+        series: vec![
+            ChartSeries {
+                name: "reliability".to_owned(),
+                field: "reliability".to_owned(),
+                axis: Some(ChartSeriesAxis::Left),
+            },
+            ChartSeries {
+                name: "risk".to_owned(),
+                field: "risk".to_owned(),
+                axis: Some(ChartSeriesAxis::Right),
+            },
+        ],
+        x_label: "House".to_owned(),
+        y_label: "Reliability".to_owned(),
+        y_unit: "score".to_owned(),
+        stack: false,
+        direction: ChartDirection::Vertical,
+        legend: Some(LegendPosition::Bottom),
+        second_axis: Some(ChartAxis {
+            label: "Risk".to_owned(),
+            unit: "score".to_owned(),
+        }),
+        export: default_chart_exports(),
+    })?;
+    let house_map = create_diagram(DiagramRequest {
+        id: "diagram-realm-map".to_owned(),
+        title: "Realm Map Diagram".to_owned(),
+        kind: DiagramKind::Mermaid,
+        source: "flowchart TB\n  Crown[The Realms of Code] --> Compiler[House Compiler]\n  Crown --> Runtime[House Runtime]\n  Crown --> Sandbox[House Sandbox]\n  Crown --> Telemetry[House Telemetry]\n  Crown --> Interface[House Interface]".to_owned(),
+        export: default_diagram_exports(),
+    })?;
+    let workflow = create_diagram(DiagramRequest {
+        id: "diagram-deck-workflow".to_owned(),
+        title: "Deck Build Workflow".to_owned(),
+        kind: DiagramKind::Mermaid,
+        source: "flowchart LR\n  Data[SQLite house data] --> Table[Overview table]\n  Data --> Charts[Charts]\n  Data --> Images[Generated house images]\n  Table --> Slides[One slide per house]\n  Charts --> Slides\n  Images --> Slides\n  Slides --> Deck[Capsem slide deck]".to_owned(),
+        export: default_diagram_exports(),
+    })?;
+    let hero = generate_image(GenerateImageRequest {
+        id: "generated-image-hero".to_owned(),
+        title: "The Realms Of Code Hero Image".to_owned(),
+        provider: default_gemini_provider(),
+        prompt: "editorial fantasy cartography of five software houses in a luminous secure code kingdom, premium slide deck style, no text".to_owned(),
+    })?;
+    let house_images = house_image_artifacts()?;
+
+    let intro_slide = create_slide(SlideRequest {
+        id: "slide-intro".to_owned(),
+        title: "The Realms Of Code".to_owned(),
+        blocks: vec![
+            SlideBlock::Text {
+                title: "The Realms Of Code".to_owned(),
+                body: "A composed deck proving SQLite data, generated media, diagrams, charts, and typed slide blocks can travel through the same Capsem artifact lane.".to_owned(),
+            },
+            SlideBlock::Image {
+                artifact_id: hero.id.clone(),
+            },
+            SlideBlock::Diagram {
+                artifact_id: house_map.id.clone(),
+            },
+        ],
+    })?;
+    let overview_slide = create_slide(SlideRequest {
+        id: "slide-overview".to_owned(),
+        title: "House Overview".to_owned(),
+        blocks: vec![
+            SlideBlock::Table {
+                artifact_id: table.id.clone(),
+            },
+            SlideBlock::Sheet {
+                artifact_id: sheet.id.clone(),
+            },
+        ],
+    })?;
+    let charts_slide = create_slide(SlideRequest {
+        id: "slide-metrics".to_owned(),
+        title: "Realm Metrics".to_owned(),
+        blocks: vec![
+            SlideBlock::Chart {
+                artifact_id: velocity_chart.id.clone(),
+            },
+            SlideBlock::Chart {
+                artifact_id: balance_chart.id.clone(),
+            },
+        ],
+    })?;
+    let workflow_slide = create_slide(SlideRequest {
+        id: "slide-workflow".to_owned(),
+        title: "Artifact Workflow".to_owned(),
+        blocks: vec![SlideBlock::Diagram {
+            artifact_id: workflow.id.clone(),
+        }],
+    })?;
+    let house_slides = house_slide_artifacts()?;
+
+    let deck_slides: Vec<SlideRef> = [
+        slide_ref(&intro_slide),
+        slide_ref(&overview_slide),
+        slide_ref(&charts_slide),
+        slide_ref(&workflow_slide),
+    ]
+    .into_iter()
+    .chain(house_slides.iter().map(slide_ref))
+    .collect();
+    let (deck, deck_artifact) = create_slide_deck(SlideDeckRequest {
+        id: "deck-realms-of-code".to_owned(),
+        title: "The Realms Of Code".to_owned(),
+        slides: deck_slides,
+        export: default_deck_exports(),
+    })?;
 
     let mut artifacts = vec![
         hero,
@@ -410,7 +741,7 @@ fn demo_connection() -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn house_image_artifacts() -> Vec<NativeArtifact> {
+fn house_image_artifacts() -> Result<Vec<NativeArtifact>, String> {
     [
         (
             "generated-image-house-compiler",
@@ -440,23 +771,17 @@ fn house_image_artifacts() -> Vec<NativeArtifact> {
     ]
     .into_iter()
     .map(|(id, title, prompt)| {
-        artifact(
-            id,
-            NativeArtifactKind::GeneratedImage,
-            title,
-            json!({
-                "component": "capsem-media",
-                "media": "image",
-                "provider": "gemini",
-                "prompt": prompt,
-                "status": "planned"
-            }),
-        )
+        generate_image(GenerateImageRequest {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            provider: default_gemini_provider(),
+            prompt: prompt.to_owned(),
+        })
     })
     .collect()
 }
 
-fn house_slide_artifacts() -> Vec<NativeArtifact> {
+fn house_slide_artifacts() -> Result<Vec<NativeArtifact>, String> {
     [
         (
             "slide-house-compiler",
@@ -496,18 +821,19 @@ fn house_slide_artifacts() -> Vec<NativeArtifact> {
     ]
     .into_iter()
     .map(|(id, title, image_id, motto, body)| {
-        artifact(
-            id,
-            NativeArtifactKind::Slide,
-            title,
-            json!({
-                "component": "capsem-slide",
-                "blocks": [
-                    {"kind": "image", "artifactId": image_id},
-                    {"kind": "text", "title": motto, "body": body}
-                ]
-            }),
-        )
+        create_slide(SlideRequest {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            blocks: vec![
+                SlideBlock::Image {
+                    artifact_id: image_id.to_owned(),
+                },
+                SlideBlock::Text {
+                    title: motto.to_owned(),
+                    body: body.to_owned(),
+                },
+            ],
+        })
     })
     .collect()
 }
@@ -563,6 +889,55 @@ fn slide_ref(artifact: &NativeArtifact) -> SlideRef {
         artifact_id: artifact.id.clone(),
         title: artifact.title.clone(),
     }
+}
+
+fn require_non_empty(name: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{name} must not be empty"));
+    }
+    Ok(())
+}
+
+fn require_columns(columns: &[String]) -> Result<(), String> {
+    if columns.is_empty() {
+        return Err("columns must not be empty".to_owned());
+    }
+    for column in columns {
+        require_non_empty("column", column)?;
+    }
+    Ok(())
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_page_size() -> usize {
+    10
+}
+
+fn default_gemini_provider() -> String {
+    "gemini".to_owned()
+}
+
+fn default_chart_direction() -> ChartDirection {
+    ChartDirection::Vertical
+}
+
+fn default_mermaid_diagram() -> DiagramKind {
+    DiagramKind::Mermaid
+}
+
+fn default_chart_exports() -> Vec<String> {
+    vec!["png".to_owned(), "svg".to_owned()]
+}
+
+fn default_diagram_exports() -> Vec<String> {
+    vec!["svg".to_owned(), "png".to_owned()]
+}
+
+fn default_deck_exports() -> Vec<String> {
+    vec!["html".to_owned(), "pdf".to_owned()]
 }
 
 fn required_kinds() -> &'static [NativeArtifactKind] {

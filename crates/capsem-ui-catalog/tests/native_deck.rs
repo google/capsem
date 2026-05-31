@@ -1,6 +1,10 @@
 use capsem_ui_catalog::native_deck::{
-    demo_deck_proof, query_demo_sql, NativeArtifactKind, SqliteQueryRequest,
+    create_chart, create_slide, create_slide_deck, create_table, demo_deck_proof, generate_image,
+    query_demo_sql, ChartDirection, ChartKind, ChartRequest, ChartSeries, GenerateImageRequest,
+    NativeArtifactKind, SlideBlock, SlideDeckRequest, SlideRef, SlideRequest, SqliteQueryRequest,
+    TableRequest,
 };
+use serde_json::json;
 use std::collections::BTreeSet;
 
 #[test]
@@ -124,4 +128,82 @@ fn sqlite_query_lane_is_read_only() {
     })
     .expect_err("non-select SQL should be rejected");
     assert!(error.contains("SELECT"));
+}
+
+#[test]
+fn primitive_calls_compose_slide_deck_artifact() {
+    let rows = vec![std::collections::BTreeMap::from([
+        ("house".to_owned(), json!("House Compiler")),
+        ("score".to_owned(), json!(74.0)),
+    ])];
+    let image = generate_image(GenerateImageRequest {
+        id: "image-test".to_owned(),
+        title: "Image Test".to_owned(),
+        prompt: "test image".to_owned(),
+        provider: "gemini".to_owned(),
+    })
+    .expect("image artifact");
+    let table = create_table(TableRequest {
+        id: "table-test".to_owned(),
+        title: "Table Test".to_owned(),
+        source_artifact: "sheet-test".to_owned(),
+        columns: vec!["house".to_owned(), "score".to_owned()],
+        rows: rows.clone(),
+        searchable: true,
+        filterable: true,
+        page_size: 10,
+    })
+    .expect("table artifact");
+    let chart = create_chart(ChartRequest {
+        id: "chart-test".to_owned(),
+        title: "Chart Test".to_owned(),
+        chart: ChartKind::BarChart,
+        source_artifact: "sheet-test".to_owned(),
+        data: rows,
+        x: "house".to_owned(),
+        series: vec![ChartSeries {
+            name: "score".to_owned(),
+            field: "score".to_owned(),
+            axis: None,
+        }],
+        x_label: "House".to_owned(),
+        y_label: "Score".to_owned(),
+        y_unit: "score".to_owned(),
+        stack: false,
+        direction: ChartDirection::Vertical,
+        legend: None,
+        second_axis: None,
+        export: vec!["png".to_owned(), "svg".to_owned()],
+    })
+    .expect("chart artifact");
+    let slide = create_slide(SlideRequest {
+        id: "slide-test".to_owned(),
+        title: "Slide Test".to_owned(),
+        blocks: vec![
+            SlideBlock::Image {
+                artifact_id: image.id,
+            },
+            SlideBlock::Table {
+                artifact_id: table.id,
+            },
+            SlideBlock::Chart {
+                artifact_id: chart.id,
+            },
+        ],
+    })
+    .expect("slide artifact");
+    let (_, deck) = create_slide_deck(SlideDeckRequest {
+        id: "deck-test".to_owned(),
+        title: "Deck Test".to_owned(),
+        slides: vec![SlideRef {
+            artifact_id: slide.id,
+            title: slide.title,
+        }],
+        export: vec!["html".to_owned(), "pdf".to_owned()],
+    })
+    .expect("deck artifact");
+
+    assert_eq!(deck.kind, NativeArtifactKind::SlideDeck);
+    assert_eq!(deck.spec["component"], "capsem-slide-deck");
+    assert_eq!(deck.spec["slides"].as_array().expect("slides").len(), 1);
 }
