@@ -262,6 +262,9 @@ impl App {
             self.open_create();
             return AppAction::Consumed;
         }
+        if self.is_inline_create_active() {
+            return self.handle_create_key(key);
+        }
         if is_fork_key(key) {
             if self.open_fork() {
                 return AppAction::Consumed;
@@ -284,8 +287,7 @@ impl App {
                 return AppAction::Consumed;
             }
             if self.state.active_session().is_none() {
-                self.open_create();
-                return AppAction::Consumed;
+                return self.handle_create_key(key);
             }
             if let Some(action) = self.active_resume_action() {
                 return AppAction::Invoke(action);
@@ -411,7 +413,14 @@ impl App {
             self.overlay = AppOverlay::None;
         }
         if self.state.sessions.is_empty() && self.overlay == AppOverlay::None {
-            self.open_create();
+            if self.create_draft.is_none() {
+                self.create_draft = Some(CreateDraft {
+                    name: next_tmp_name(&self.state),
+                    selected_profile: default_profile_index(&self.state),
+                });
+            }
+        } else if self.overlay != AppOverlay::Create {
+            self.create_draft = None;
         }
     }
 
@@ -530,6 +539,13 @@ impl App {
         self.overlay = AppOverlay::Create;
     }
 
+    fn is_inline_create_active(&self) -> bool {
+        self.overlay == AppOverlay::None
+            && self.state.sessions.is_empty()
+            && self.create_draft.is_some()
+            && !service_needs_start(self.state.service.status)
+    }
+
     fn open_fork(&mut self) -> bool {
         let Some(source_id) = self.active_id() else {
             return false;
@@ -549,6 +565,7 @@ impl App {
             KeyCode::Esc => {
                 self.create_draft = None;
                 self.overlay = AppOverlay::None;
+                self.sync_empty_state_prompt();
                 AppAction::Consumed
             }
             KeyCode::Enter => {

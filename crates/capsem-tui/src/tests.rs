@@ -135,18 +135,27 @@ fn degraded_empty_state_asks_to_start_service_instead_of_create() {
 }
 
 #[test]
-fn empty_state_opens_new_session_modal_with_gradient_logo() {
+fn empty_state_renders_first_launch_panel_with_shortcuts() {
     let mut state = fixture_state();
     state.active_session_id.clear();
     state.sessions.clear();
 
-    let app = App::new(state);
+    let mut app = App::new(state);
 
-    assert_eq!(app.overlay(), AppOverlay::Create);
+    assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(app.create_draft().expect("create draft").name, "tmp-1");
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty panel");
     assert!(snapshot.contains("CAPSEM"));
-    assert!(snapshot.contains("new session"));
+    assert!(snapshot.contains("____    _    ____"));
+    assert!(snapshot.contains("Create a session"));
+    assert!(snapshot.contains("active input"));
+    assert!(snapshot.contains("tmp-1"));
+    assert!(snapshot.contains("corp-default"));
+    assert!(snapshot.contains("linux-builder"));
+    assert!(snapshot.contains("shortcuts"));
+    assert!(snapshot.contains("Up/Down"));
+    assert!(snapshot.contains("Alt+l"));
+    assert!(snapshot.contains("Alt+?"));
 
     let buffer = render_app_test_buffer(&app, 100, 24).expect("render logo buffer");
     let (logo_x, logo_y) = find_cell(&buffer, "CAPSEM");
@@ -158,6 +167,19 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
     );
     assert!(first.modifier.contains(Modifier::BOLD));
     assert!(last.modifier.contains(Modifier::BOLD));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Down, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::CreateSession {
+            name: "tmp-1".to_string(),
+            profile_id: "linux-builder".to_string(),
+        })
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
 }
 
 #[tokio::test]
@@ -183,7 +205,9 @@ fn empty_create_modal_blocks_enter_when_profiles_are_unavailable() {
     state.profiles.clear();
     let mut app = App::new(state);
 
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
+    assert_eq!(app.overlay(), AppOverlay::None);
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create panel");
     assert!(snapshot.contains("profiles unavailable"));
     assert!(
         !snapshot.contains("▶  default"),
@@ -193,9 +217,9 @@ fn empty_create_modal_blocks_enter_when_profiles_are_unavailable() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Consumed,
-        "create should be disabled until a real profile list is available"
+        "inline create should be disabled until a real profile list is available"
     );
-    assert_eq!(app.overlay(), AppOverlay::Create);
+    assert_eq!(app.overlay(), AppOverlay::None);
 }
 
 #[test]
@@ -445,6 +469,10 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     );
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render create dialog");
     assert!(snapshot.contains("new session"));
+    assert!(
+        !snapshot.contains("____    _    ____"),
+        "CAPSEM ASCII art belongs to the empty screen, not the create modal"
+    );
     assert!(snapshot.contains("name"));
     assert!(snapshot.contains("tmp-1"));
     assert!(snapshot.contains("corp-default"));
@@ -1309,7 +1337,7 @@ async fn gateway_provider_surfaces_action_error_body() {
                 write_response(
                     &mut stream,
                     "500 Internal Server Error",
-                    r#"{"error":"boom"}"#,
+                    r#"{"error":"service unavailable; start Capsem and try again"}"#,
                 )
                 .await;
             }
@@ -1323,7 +1351,10 @@ async fn gateway_provider_surfaces_action_error_body() {
         .await
         .expect_err("delete should fail");
 
-    assert_eq!(error.to_string(), "boom");
+    assert_eq!(
+        error.to_string(),
+        "service unavailable; start Capsem and try again"
+    );
     server.await.expect("server task");
 }
 
