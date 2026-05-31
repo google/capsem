@@ -9,6 +9,8 @@
 - Documented the future spreadsheet-to-slide-deck UI track so chart, diagram,
   and export work preserves sheet ranges, export handles, slide blocks, and
   deck composition.
+- Documented the future SQLite scratch data workbench requirement for
+  model-assisted data manipulation before rendering sheets, charts, and decks.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

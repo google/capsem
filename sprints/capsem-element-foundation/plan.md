@@ -21,6 +21,10 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
   spreadsheets, charts, diagrams, images, text blocks, slides, and slide decks
   should share the same Rust-owned catalog path instead of becoming a separate
   presentation renderer later.
+- Little Codex needs a SQLite-backed scratch data workbench for manipulation:
+  joins, grouping, filtering, pivots, and repeatable chart/deck inputs. SQLite
+  should feed typed sheets/tables/charts; it should not become a UI escape
+  hatch.
 
 ## Files
 
@@ -43,6 +47,8 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
 
 Capsem needs a typed spreadsheet-to-slide-deck lane:
 
+- `context.data.sqlite` creates a constrained scratch database for report data
+  manipulation before rendering.
 - `ui.sheet` creates spreadsheet-like data with named ranges.
 - `ui.barChart`, `ui.lineChart`, `ui.heatmapChart`, and `ui.boxPlot` can bind to
   sheet ranges and produce stable export handles.

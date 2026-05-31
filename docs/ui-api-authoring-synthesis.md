@@ -230,6 +230,9 @@ catalog design now:
 
 - spreadsheet objects need typed sheets, named ranges, and addressable cell
   references so chart inputs can point at data instead of copying blobs
+- little Codex needs a SQLite-backed scratch data workbench for joins,
+  grouping, filtering, pivot-style summaries, and repeatable chart inputs;
+  arrays in model context are not enough for finance/science/report workflows
 - chart objects need stable export handles for PNG/SVG first, with PDF or deck
   export considered later
 - slide objects need typed blocks for chart, image, text, table, and generated
@@ -243,13 +246,36 @@ catalog design now:
 - the same Rust catalog types should feed chat, side panels, slides, and deck
   export so model-authored UI does not fork from plugin-authored UI
 
+SQLite is not the public UI API. It is a constrained data capability behind the
+tools/plugins/model lane:
+
+```ts
+const db = context.data.sqlite("board_packet");
+
+await db.table("quarterly_metrics").replace({
+  columns: [
+    { name: "quarter", type: "text" },
+    { name: "revenue", type: "number" },
+    { name: "margin", type: "number" },
+  ],
+  rows,
+});
+
+const summary = await db.query(`
+  select quarter, revenue, margin
+  from quarterly_metrics
+  order by quarter
+`);
+```
+
+The query result can then lower into `ui.sheet`, `ui.table`, charts, and slide
+blocks. This gives little Codex a disciplined place to manipulate data while
+keeping the render/export contract typed and auditable.
+
 Candidate authoring shape:
 
 ```ts
-const sheet = ui.sheet("quarterly_metrics", {
-  columns: ["quarter", "revenue", "margin"],
-  rows,
-});
+const sheet = ui.sheet("quarterly_metrics", summary);
 
 const chart = ui.barChart("revenue_by_quarter", {
   source: sheet.range("A1:C5"),

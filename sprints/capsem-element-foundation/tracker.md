@@ -26,6 +26,9 @@
   text, and table slide blocks -> ordered slide deck. Chart and diagram work
   now needs export handles and sheet-range bindings, not just live preview
   rendering.
+- Data manipulation note captured: add a constrained SQLite scratch workbench
+  for little Codex so report/chart/deck data can be joined, filtered, grouped,
+  and reused without stuffing raw arrays into prompts.
 
 ## Coverage Ledger
 
@@ -41,3 +44,6 @@
 - Missing/deferred: spreadsheet, diagram, slide, and slide-deck catalog types
   are a future export/product track, but the current chart design must preserve
   that path.
+- Missing/deferred: SQLite scratch database API, query limits, type mapping,
+  import/export boundaries, and audit logging need their own data sprint before
+  finance/science report workflows become real.
