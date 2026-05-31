@@ -247,7 +247,21 @@ catalog design now:
   export so model-authored UI does not fork from plugin-authored UI
 
 SQLite is not the public UI API. It is a constrained data capability behind the
-tools/plugins/model lane:
+tools/plugins/model lane. Because Capsem already exposes its own local MCP, the
+first implementation should present this as MCP tools for little Codex rather
+than as a bespoke UI feature:
+
+```text
+capsem.data.sqlite.create
+capsem.data.sqlite.replaceTable
+capsem.data.sqlite.query
+capsem.data.sqlite.toSheet
+capsem.ui.render
+```
+
+The same Rust service can later expose equivalent plugin context methods, but
+the MCP lane lets agents manipulate data and prove the chart/slide contract
+without waiting for the full WASM plugin runtime.
 
 ```ts
 const db = context.data.sqlite("board_packet");

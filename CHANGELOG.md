@@ -11,6 +11,8 @@
   deck composition.
 - Documented the future SQLite scratch data workbench requirement for
   model-assisted data manipulation before rendering sheets, charts, and decks.
+- Clarified that the SQLite data workbench should first surface through
+  Capsem's local MCP tools so agents can use it before the WASM plugin runtime.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

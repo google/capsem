@@ -29,6 +29,8 @@
 - Data manipulation note captured: add a constrained SQLite scratch workbench
   for little Codex so report/chart/deck data can be joined, filtered, grouped,
   and reused without stuffing raw arrays into prompts.
+- Local MCP note captured: expose the SQLite workbench first through Capsem MCP
+  tools, then wrap the same Rust service in plugin context APIs later.
 
 ## Coverage Ledger
 

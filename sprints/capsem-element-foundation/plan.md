@@ -25,6 +25,9 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
   joins, grouping, filtering, pivots, and repeatable chart/deck inputs. SQLite
   should feed typed sheets/tables/charts; it should not become a UI escape
   hatch.
+- Since Capsem exposes its own local MCP, the first SQLite workbench surface
+  should be MCP tools for agents. Plugin context methods can wrap the same Rust
+  service later.
 
 ## Files
 
@@ -49,6 +52,9 @@ Capsem needs a typed spreadsheet-to-slide-deck lane:
 
 - `context.data.sqlite` creates a constrained scratch database for report data
   manipulation before rendering.
+- `capsem.data.sqlite.*` MCP tools are the first authoring lane for little
+  Codex; they can feed `capsem.ui.*` render tools and prove the contract before
+  WASM plugins are wired.
 - `ui.sheet` creates spreadsheet-like data with named ranges.
 - `ui.barChart`, `ui.lineChart`, `ui.heatmapChart`, and `ui.boxPlot` can bind to
   sheet ranges and produce stable export handles.
