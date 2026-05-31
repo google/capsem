@@ -88,6 +88,29 @@ class SqliteApi:
 class GenerateApi:
     client: CapsemNativeClient
 
+    def text(
+        self,
+        *,
+        artifact_id: str,
+        title: str,
+        prompt: str,
+        system: Optional[str] = None,
+        provider: str = "gemini",
+        model: Optional[str] = None,
+    ) -> dict[str, Any]:
+        return self.client._request(
+            "POST",
+            "/native/generate/text",
+            {
+                "id": artifact_id,
+                "title": title,
+                "prompt": prompt,
+                "system": system,
+                "provider": provider,
+                "model": model,
+            },
+        )
+
     def image(
         self,
         *,
@@ -95,6 +118,7 @@ class GenerateApi:
         title: str,
         prompt: str,
         provider: str = "gemini",
+        model: Optional[str] = None,
     ) -> dict[str, Any]:
         return self.client._request(
             "POST",
@@ -104,6 +128,7 @@ class GenerateApi:
                 "title": title,
                 "prompt": prompt,
                 "provider": provider,
+                "model": model,
             },
         )
 

@@ -141,6 +141,7 @@ fn primitive_calls_compose_slide_deck_artifact() {
         title: "Image Test".to_owned(),
         prompt: "test image".to_owned(),
         provider: "gemini".to_owned(),
+        model: None,
     })
     .expect("image artifact");
     let table = create_table(TableRequest {

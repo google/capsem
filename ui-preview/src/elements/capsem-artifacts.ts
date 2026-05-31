@@ -28,6 +28,9 @@ export class CapsemArtifactElement extends CapsemElement<NativeArtifact> {
           hydrate = () => renderMermaidDiagram(preview, spec, emit);
         }
         break;
+      case "generatedText":
+        shell.append(textPreview(spec));
+        break;
       case "generatedImage":
         shell.append(mediaPreview(spec));
         break;
@@ -139,6 +142,18 @@ function diagramPreview(spec: NativeArtifact): HTMLElement {
   pre.textContent = source;
   preview.append(pre);
   box.append(preview);
+  return box;
+}
+
+function textPreview(spec: NativeArtifact): HTMLElement {
+  const box = el("div", "textArtifact");
+  const text = valueText(spec.spec.text);
+  const prompt = valueText(spec.spec.prompt);
+  const status = valueText(spec.spec.status);
+  if (status) box.append(el("p", "meta", status));
+  box.append(el("p", "body", text || prompt));
+  const error = valueText(spec.spec.error);
+  if (error) box.append(el("p", "errorText", error));
   return box;
 }
 

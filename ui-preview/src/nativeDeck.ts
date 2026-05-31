@@ -27,6 +27,7 @@ export type NativeArtifact = {
 };
 
 export type NativeArtifactKind =
+  | "generatedText"
   | "generatedImage"
   | "sheet"
   | "table"
@@ -88,6 +89,8 @@ export function tagNameForArtifact(artifact: NativeArtifact): string {
       return "capsem-chart";
     case "diagram":
       return "capsem-diagram";
+    case "generatedText":
+      return "capsem-text";
     case "generatedImage":
       return "capsem-media";
     case "slide":
@@ -113,6 +116,7 @@ function parseNativeArtifact(value: unknown): NativeArtifact {
 function requireKind(value: unknown): NativeArtifactKind {
   const allowed = new Set([
     "generatedImage",
+    "generatedText",
     "sheet",
     "table",
     "chart",

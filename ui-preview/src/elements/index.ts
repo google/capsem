@@ -17,6 +17,7 @@ export function defineCapsemElements(): void {
   defineCapsemElement("capsem-sheet", class CapsemSheetElement extends CapsemArtifactElement {});
   defineCapsemElement("capsem-chart", class CapsemChartElement extends CapsemArtifactElement {});
   defineCapsemElement("capsem-diagram", class CapsemDiagramElement extends CapsemArtifactElement {});
+  defineCapsemElement("capsem-text", class CapsemTextElement extends CapsemArtifactElement {});
   defineCapsemElement("capsem-media", class CapsemMediaElement extends CapsemArtifactElement {});
   defineCapsemElement("capsem-slide", class CapsemSlideElement extends CapsemArtifactElement {});
   defineCapsemElement(

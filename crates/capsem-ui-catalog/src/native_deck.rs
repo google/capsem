@@ -36,6 +36,7 @@ pub struct NativeArtifact {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NativeArtifactKind {
+    GeneratedText,
     GeneratedImage,
     Sheet,
     Table,
@@ -82,6 +83,22 @@ pub struct GenerateImageRequest {
     pub prompt: String,
     #[serde(default = "default_gemini_provider")]
     pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateTextRequest {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub system: Option<String>,
+    #[serde(default = "default_gemini_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -263,6 +280,28 @@ pub fn generate_image(request: GenerateImageRequest) -> Result<NativeArtifact, S
             "component": "capsem-media",
             "media": "image",
             "provider": request.provider,
+            "model": request.model,
+            "prompt": request.prompt,
+            "status": "planned"
+        }),
+    ))
+}
+
+pub fn generate_text(request: GenerateTextRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    require_non_empty("prompt", &request.prompt)?;
+    require_non_empty("provider", &request.provider)?;
+    Ok(artifact(
+        request.id,
+        NativeArtifactKind::GeneratedText,
+        request.title,
+        json!({
+            "component": "capsem-text",
+            "media": "text",
+            "provider": request.provider,
+            "model": request.model,
+            "system": request.system,
             "prompt": request.prompt,
             "status": "planned"
         }),
@@ -518,6 +557,7 @@ pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
         id: "generated-image-hero".to_owned(),
         title: "The Realms Of Code Hero Image".to_owned(),
         provider: default_gemini_provider(),
+        model: None,
         prompt: "editorial fantasy cartography of five software houses in a luminous secure code kingdom, premium slide deck style, no text".to_owned(),
     })?;
     let house_images = house_image_artifacts()?;
@@ -775,6 +815,7 @@ fn house_image_artifacts() -> Result<Vec<NativeArtifact>, String> {
             id: id.to_owned(),
             title: title.to_owned(),
             provider: default_gemini_provider(),
+            model: None,
             prompt: prompt.to_owned(),
         })
     })

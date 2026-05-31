@@ -8,9 +8,9 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+capsem-ai.workspace = true
 capsem-plugin-engine = { path = "../capsem-plugin-engine" }
 capsem-ui-catalog.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

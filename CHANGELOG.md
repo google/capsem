@@ -49,6 +49,9 @@
 - Added Plotly and Mermaid preview/export adapters for native chart and diagram
   artifacts, and an MCP-shaped native tool descriptor endpoint for the eventual
   local tool wrapper.
+- Added a reusable Rust `capsem-ai` lane backed by Siumai for provider-owned
+  model calls, Capsem-compatible service credential resolution, text generation,
+  and image generation artifact routing without custom Gemini HTTP glue.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

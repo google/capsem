@@ -25,6 +25,8 @@ class CapsemNativeClientTest(unittest.TestCase):
                 return {"ok": True, "rows": [{"quarter": "Q1"}]}
             if path == "/native/data/sheet":
                 return {"id": body["id"], "kind": "sheet"}
+            if path == "/native/generate/text":
+                return {"id": body["id"], "kind": "generatedText"}
             if path == "/native/generate/image":
                 return {"id": body["id"], "kind": "generatedImage"}
             if path == "/native/ui/table":
@@ -58,6 +60,15 @@ class CapsemNativeClientTest(unittest.TestCase):
                 rows=[{"house": "Compiler"}],
             )["kind"],
             "sheet",
+        )
+        self.assertEqual(
+            client.generate.text(
+                artifact_id="text-1",
+                title="Text",
+                prompt="generate text",
+                system="be terse",
+            )["kind"],
+            "generatedText",
         )
         self.assertEqual(
             client.generate.image(
@@ -137,6 +148,22 @@ class CapsemNativeClientTest(unittest.TestCase):
                     "title": "Image",
                     "prompt": "generate image",
                     "provider": "gemini",
+                    "model": None,
+                },
+            ),
+            calls,
+        )
+        self.assertIn(
+            (
+                "POST",
+                "/native/generate/text",
+                {
+                    "id": "text-1",
+                    "title": "Text",
+                    "prompt": "generate text",
+                    "system": "be terse",
+                    "provider": "gemini",
+                    "model": None,
                 },
             ),
             calls,

@@ -11,15 +11,16 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use capsem_ai::{GenerationEngine, GenerationError, ModelProvider};
 use capsem_plugin_engine::{
     InstallPluginRequest, InstallRunRequest, PluginError, PluginRegistry, RunPluginRequest,
 };
 use capsem_ui_catalog::native_deck::{
     artifact_by_id, create_chart, create_diagram, create_sheet, create_slide, create_slide_deck,
-    create_table, demo_deck_proof, generate_image, query_demo_sql, ChartRequest, DiagramRequest,
-    GenerateImageRequest, NativeArtifact, NativeArtifactKind, NativeDeckProof, SheetRequest,
-    SlideDeckRequest, SlideDeckSpec, SlideRef, SlideRequest, SqliteQueryRequest,
-    SqliteQueryResponse, TableRequest,
+    create_table, demo_deck_proof, generate_image, generate_text, query_demo_sql, ChartRequest,
+    DiagramRequest, GenerateImageRequest, GenerateTextRequest, NativeArtifact, NativeArtifactKind,
+    NativeDeckProof, SheetRequest, SlideDeckRequest, SlideDeckSpec, SlideRef, SlideRequest,
+    SqliteQueryRequest, SqliteQueryResponse, TableRequest,
 };
 use capsem_ui_catalog::ui_tools::UiToolProgramResult;
 use serde_json::json;
@@ -33,6 +34,7 @@ struct AppState {
     authored_ui: Arc<RwLock<Option<UiToolProgramResult>>>,
     native_workspace: Arc<RwLock<NativeWorkspace>>,
     telemetry: Arc<RwLock<Vec<NativeTelemetryEvent>>>,
+    generation: Arc<GenerationEngine>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -166,6 +168,10 @@ async fn main() -> anyhow::Result<()> {
         authored_ui: Arc::new(RwLock::new(None)),
         native_workspace: Arc::new(RwLock::new(NativeWorkspace::default())),
         telemetry: Arc::new(RwLock::new(Vec::new())),
+        generation: Arc::new(
+            GenerationEngine::from_capsem_environment()
+                .context("failed to load Capsem AI settings")?,
+        ),
     };
 
     let app = app(state);
@@ -198,6 +204,7 @@ fn app(state: AppState) -> Router {
         .route("/native/artifacts/:id", get(native_artifact))
         .route("/native/data/sqlite/query", post(native_sqlite_query))
         .route("/native/data/sheet", post(native_create_sheet))
+        .route("/native/generate/text", post(native_generate_text))
         .route("/native/generate/image", post(native_generate_image))
         .route("/native/ui/table", post(native_create_table))
         .route("/native/ui/chart", post(native_create_chart))
@@ -257,6 +264,7 @@ async fn native_mcp_tools() -> Json<serde_json::Value> {
             {"name": "local__native_workspace_reset", "route": "POST /native/workspace/reset"},
             {"name": "local__data_sqlite_query", "route": "POST /native/data/sqlite/query"},
             {"name": "local__data_sheet", "route": "POST /native/data/sheet"},
+            {"name": "local__generate_text", "route": "POST /native/generate/text"},
             {"name": "local__generate_image", "route": "POST /native/generate/image"},
             {"name": "local__ui_table", "route": "POST /native/ui/table"},
             {"name": "local__ui_chart", "route": "POST /native/ui/chart"},
@@ -324,6 +332,22 @@ async fn native_create_sheet(
     .await
 }
 
+async fn native_generate_text(
+    State(state): State<AppState>,
+    Json(request): Json<GenerateTextRequest>,
+) -> Result<Json<NativeArtifact>, NativeApiError> {
+    let started = Instant::now();
+    store_artifact(
+        &state,
+        generate_text_provider(request, &state.generation)
+            .await
+            .map_err(NativeApiError::bad_request)?,
+        "generate.text",
+        started,
+    )
+    .await
+}
+
 async fn native_generate_image(
     State(state): State<AppState>,
     Json(request): Json<GenerateImageRequest>,
@@ -331,7 +355,7 @@ async fn native_generate_image(
     let started = Instant::now();
     store_artifact(
         &state,
-        generate_image_provider(request)
+        generate_image_provider(request, &state.generation)
             .await
             .map_err(NativeApiError::bad_request)?,
         "generate.image",
@@ -449,85 +473,78 @@ async fn store_artifact(
     Ok(Json(artifact))
 }
 
-async fn generate_image_provider(request: GenerateImageRequest) -> Result<NativeArtifact, String> {
-    let mut artifact = generate_image(request.clone())?;
-    if request.provider != "gemini" {
-        artifact.spec["status"] = json!("planned");
-        artifact.spec["note"] = json!("only the Gemini provider path is wired in this spike");
-        return Ok(artifact);
-    }
-
-    let Some(api_key) = gemini_api_key() else {
-        artifact.spec["status"] = json!("configMissing");
-        artifact.spec["error"] =
-            json!("missing CAPSEM_GEMINI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY");
-        return Ok(artifact);
-    };
-    let model = env::var("CAPSEM_GEMINI_IMAGE_MODEL")
-        .unwrap_or_else(|_| "gemini-2.5-flash-image".to_owned());
-    let url =
-        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
-    let body = json!({
-        "contents": [{
-            "parts": [{"text": request.prompt}]
-        }],
-        "generationConfig": {
-            "responseModalities": ["TEXT", "IMAGE"]
-        }
-    });
-    let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .header("x-goog-api-key", api_key)
-        .json(&body)
-        .send()
+async fn generate_text_provider(
+    request: GenerateTextRequest,
+    engine: &GenerationEngine<impl ModelProvider>,
+) -> Result<NativeArtifact, String> {
+    let mut artifact = generate_text(request.clone())?;
+    match engine
+        .generate_text(capsem_ai::GenerateTextRequest {
+            provider: request.provider,
+            model: request.model,
+            system: request.system,
+            prompt: request.prompt,
+        })
         .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    let payload: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
-    if !status.is_success() {
-        artifact.spec["status"] = json!("providerError");
-        artifact.spec["error"] = json!(payload);
-        return Ok(artifact);
-    }
-
-    let parts = payload["candidates"][0]["content"]["parts"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let inline = parts
-        .iter()
-        .find_map(|part| part.get("inlineData").or_else(|| part.get("inline_data")));
-    let text = parts
-        .iter()
-        .filter_map(|part| part["text"].as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if let Some(inline) = inline {
-        let mime = inline["mimeType"]
-            .as_str()
-            .or_else(|| inline["mime_type"].as_str())
-            .unwrap_or("image/png");
-        let data = inline["data"].as_str().unwrap_or_default();
-        artifact.spec["status"] = json!("generated");
-        artifact.spec["providerModel"] = json!(model);
-        artifact.spec["mimeType"] = json!(mime);
-        artifact.spec["dataUrl"] = json!(format!("data:{mime};base64,{data}"));
-        if !text.is_empty() {
-            artifact.spec["generatedText"] = json!(text);
+    {
+        Ok(output) => {
+            artifact.spec["status"] = json!("generated");
+            artifact.spec["provider"] = json!(output.provider);
+            artifact.spec["providerModel"] = json!(output.model);
+            artifact.spec["text"] = json!(output.text);
         }
-    } else {
-        artifact.spec["status"] = json!("providerError");
-        artifact.spec["error"] = json!("Gemini response did not contain inline image data");
-        artifact.spec["providerResponse"] = payload;
+        Err(error) => generation_error_to_artifact(&mut artifact, error),
     }
     Ok(artifact)
 }
 
-fn gemini_api_key() -> Option<String> {
-    ["CAPSEM_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
-        .into_iter()
-        .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
+async fn generate_image_provider(
+    request: GenerateImageRequest,
+    engine: &GenerationEngine<impl ModelProvider>,
+) -> Result<NativeArtifact, String> {
+    let mut artifact = generate_image(request.clone())?;
+    match engine
+        .generate_image(capsem_ai::GenerateImageRequest {
+            provider: request.provider,
+            model: request.model,
+            prompt: request.prompt,
+        })
+        .await
+    {
+        Ok(output) => {
+            artifact.spec["status"] = json!("generated");
+            artifact.spec["provider"] = json!(output.provider);
+            artifact.spec["providerModel"] = json!(output.model);
+            if let Some(mime_type) = output.mime_type {
+                artifact.spec["mimeType"] = json!(mime_type);
+            }
+            if let Some(data_url) = output.data_url {
+                artifact.spec["dataUrl"] = json!(data_url);
+            }
+            if let Some(url) = output.url {
+                artifact.spec["url"] = json!(url);
+            }
+            if let Some(revised_prompt) = output.revised_prompt {
+                artifact.spec["revisedPrompt"] = json!(revised_prompt);
+            }
+        }
+        Err(error) => generation_error_to_artifact(&mut artifact, error),
+    }
+    Ok(artifact)
+}
+
+fn generation_error_to_artifact(artifact: &mut NativeArtifact, error: GenerationError) {
+    match error {
+        GenerationError::MissingCredential { checked, .. } => {
+            artifact.spec["status"] = json!("configMissing");
+            artifact.spec["error"] = json!("missing provider credential");
+            artifact.spec["checkedCredentials"] = json!(checked);
+        }
+        other => {
+            artifact.spec["status"] = json!("providerError");
+            artifact.spec["error"] = json!(other.to_string());
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -616,5 +633,59 @@ impl IntoResponse for ApiError {
             "error": self.0.to_string(),
         }));
         (status, body).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use capsem_ai::{FakeModelProvider, GenerationSettings};
+
+    #[tokio::test]
+    async fn text_generation_artifact_uses_capsem_ai_engine() {
+        let engine = GenerationEngine::new(
+            GenerationSettings::empty().with_credential("google-api-key", "AIza-test"),
+            FakeModelProvider,
+        );
+        let artifact = generate_text_provider(
+            GenerateTextRequest {
+                id: "text-test".to_owned(),
+                title: "Text Test".to_owned(),
+                prompt: "review this".to_owned(),
+                system: Some("be strict".to_owned()),
+                provider: "gemini".to_owned(),
+                model: None,
+            },
+            &engine,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(artifact.kind, NativeArtifactKind::GeneratedText);
+        assert_eq!(artifact.spec["status"], "generated");
+        assert_eq!(artifact.spec["provider"], "google");
+        assert_eq!(artifact.spec["text"], "fake: review this");
+    }
+
+    #[tokio::test]
+    async fn missing_capsem_ai_credential_stays_typed_artifact_state() {
+        let engine = GenerationEngine::new(GenerationSettings::empty(), FakeModelProvider);
+        let artifact = generate_text_provider(
+            GenerateTextRequest {
+                id: "text-test".to_owned(),
+                title: "Text Test".to_owned(),
+                prompt: "review this".to_owned(),
+                system: None,
+                provider: "gemini".to_owned(),
+                model: None,
+            },
+            &engine,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(artifact.spec["status"], "configMissing");
+        assert_eq!(artifact.spec["error"], "missing provider credential");
+        assert!(artifact.spec["checkedCredentials"].is_array());
     }
 }
