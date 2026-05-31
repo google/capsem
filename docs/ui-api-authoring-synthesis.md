@@ -243,6 +243,13 @@ catalog design now:
   specs can be added later
 - slide decks need ordered slide composition, metadata, and deterministic export
   separate from the live Svelte renderer
+- `web.preview` needs its own later sprint as the browser-backed surface for
+  showing user-visible pages, previews, and acceptance states; it is related to
+  browser automation, but the product object is a preview surface, not raw
+  browser control
+- generated media should be first-class typed Capsem assets via
+  `generate.image`, `generate.video`, and `generate.audio`, so models can create
+  media for cards, slides, decks, and chat without stuffing blobs into UI specs
 - the same Rust catalog types should feed chat, side panels, slides, and deck
   export so model-authored UI does not fork from plugin-authored UI
 
@@ -295,6 +302,38 @@ const summary = await db.query(`
 The query result can then lower into `ui.sheet`, `ui.table`, charts, and slide
 blocks. This gives little Codex a disciplined place to manipulate data while
 keeping the render/export contract typed and auditable.
+
+Generated media should lower into the asset store before it enters UI:
+
+```ts
+const hero = await generate.image("capsem_architecture_hero", {
+  prompt: "clean technical illustration of an isolated security workspace",
+  aspectRatio: "16:9",
+});
+
+const narration = await generate.audio("deck_intro_voiceover", {
+  text: "This deck summarizes the Q4 security posture.",
+  voice: "neutral",
+});
+```
+
+Those handles can then be used by `ui.imageBlock`, future `ui.videoBlock`, and
+future `ui.audioBlock`, or exported into slides and decks. The generation APIs
+produce typed assets; they do not bypass the renderer, asset store, or export
+validation.
+
+`web.preview` should be planned as a separate surface:
+
+```ts
+await web.preview("board_packet_preview").show({
+  artifact: "capsem://deck/board_packet",
+  mode: "interactive",
+});
+```
+
+This is the lane for user-visible browser previews and acceptance checks. It
+should reuse Capsem's browser capability underneath, but the authoring object
+is preview/show/inspect, not a grab bag of browser verbs.
 
 Candidate authoring shape:
 

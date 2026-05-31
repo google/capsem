@@ -14,6 +14,8 @@
   other data-backed artifacts.
 - Clarified that the SQLite data workbench should first surface through
   Capsem's local MCP tools so agents can use it before the WASM plugin runtime.
+- Documented future `web.preview` and `generate.image/video/audio` tracks for
+  user-visible previews and typed generated media assets.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

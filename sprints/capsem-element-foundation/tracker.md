@@ -32,6 +32,10 @@
   report/chart/deck workflows.
 - Local MCP note captured: expose the SQLite workbench first through Capsem MCP
   tools, then wrap the same Rust service in plugin context APIs later.
+- Web preview note captured: add a later `web.preview` sprint for user-visible
+  browser-backed previews and acceptance surfaces.
+- Media generation note captured: add `generate.image`, `generate.video`, and
+  `generate.audio` as typed asset-producing APIs, not raw blob escapes.
 
 ## Coverage Ledger
 
@@ -50,3 +54,9 @@
 - Missing/deferred: per-instance SQLite API, query limits, type mapping,
   import/export boundaries, lifetime policy, and audit logging need their own
   data sprint before finance/science/report workflows become real.
+- Missing/deferred: `web.preview` surface contract, preview lifecycle,
+  screenshot/inspection semantics, and acceptance-check routing need a browser
+  surface sprint.
+- Missing/deferred: generated image/video/audio asset schemas, provider
+  routing, storage, permissions, and export behavior need a media generation
+  sprint.

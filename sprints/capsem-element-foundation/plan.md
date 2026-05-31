@@ -28,6 +28,11 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
 - Since Capsem exposes its own local MCP, the first SQLite workbench surface
   should be MCP tools for agents. Plugin context methods can wrap the same Rust
   service later.
+- `web.preview` needs its own later sprint as the browser-backed surface for
+  showing user-visible pages, generated artifacts, and acceptance states.
+- `generate.image`, `generate.video`, and `generate.audio` should be native
+  media-generation APIs that create typed assets for UI, chat, slides, and deck
+  export.
 
 ## Files
 
@@ -64,6 +69,10 @@ Capsem needs a typed spreadsheet-to-slide-deck lane:
 - `ui.slide` composes chart, diagram, image, text, table, and generated UI
   blocks.
 - `ui.slideDeck` combines slides into an ordered deck artifact.
+- `generate.image`, `generate.video`, and `generate.audio` create asset handles
+  that can be embedded by UI blocks and exported into decks.
+- `web.preview` shows rendered pages/artifacts to the user and supports later
+  acceptance checks.
 - Live preview can use Svelte/Preline/Web Components, but export must be
   deterministic from the Rust catalog spec.
 
