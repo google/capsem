@@ -19,6 +19,11 @@ built: generated image, spreadsheet/sheet, table, chart, diagram, slide, and
 final deck. The proof should be gradual, not one giant final object that only
 works at the end.
 
+The demo content target is **The Realms Of Code**: an editorial deck with an
+overview table of code houses and mottos, charts from the same SQLite data,
+realm/workflow diagrams, one planned generated image per house, and one slide
+per house.
+
 ## Direction
 
 Keep the authoring API elegant and object-shaped, while aligning the MCP layer

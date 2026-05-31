@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync("ui-preview/src/elements/capsem-elt.ts", "utf8");
+const artifactSource = readFileSync("ui-preview/src/elements/capsem-artifacts.ts", "utf8");
 const entrypoint = readFileSync("ui-preview/src/main.ts", "utf8");
+const elementIndex = readFileSync("ui-preview/src/elements/index.ts", "utf8");
 
 describe("capsem element foundation", () => {
   it("uses Shadow DOM as the default UI island boundary", () => {
@@ -23,5 +25,14 @@ describe("capsem element foundation", () => {
     expect(source).toContain("disconnectedCallback()");
     expect(source).toContain("this.runCleanup()");
     expect(source).toContain('this.emit("error"');
+  });
+
+  it("registers native artifact components on the same element foundation", () => {
+    expect(artifactSource).toContain("extends CapsemElement<NativeArtifact>");
+    expect(elementIndex).toContain('defineCapsemElement("capsem-sheet"');
+    expect(elementIndex).toContain('defineCapsemElement("capsem-chart"');
+    expect(elementIndex).toContain('defineCapsemElement("capsem-diagram"');
+    expect(elementIndex).toContain('"capsem-slide-deck"');
+    expect(elementIndex).toContain("class CapsemSlideDeckElement extends CapsemArtifactElement");
   });
 });

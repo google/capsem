@@ -14,8 +14,8 @@
 - [x] Add individual artifact materialization for generated image, sheet,
   table, chart, diagram, slide, and deck.
 - [x] Add slide and slideDeck composition proof.
-- [ ] Add `<capsem-slide-deck>` proof surface.
-- [ ] Add acceptance test that builds a nice deck end to end.
+- [x] Add `<capsem-slide-deck>` proof surface.
+- [x] Add acceptance test that builds a nice deck end to end.
 - [x] Changelog.
 - [ ] Commit.
 
@@ -51,16 +51,29 @@
 - Deck and artifact previews use Capsem-owned `<capsem-*>` components.
 - The sprint must prove gradual output: each useful artifact can be produced and
   inspected independently before deck composition.
+- The nice demo deck is now "The Realms Of Code": five code houses from
+  SQLite, an overview table with mottos and armory, two charts, two Mermaid
+  diagram specs, one planned Gemini image per house, and one slide per house.
+- Browser verification caught a real Web Component registration bug: one class
+  constructor cannot be registered for multiple custom element tag names. The
+  fix registers per-tag subclasses on the shared `CapsemArtifactElement`
+  foundation.
 
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-ui-catalog --test native_deck` passes;
-  `cargo test` passes across the workspace.
+  it now asserts the Realms deck has five house slides, five house image
+  artifacts, two charts from the same data sheet, and read-only SQLite. `cargo
+  test` passed across the workspace before this UI slice; focused server
+  compile checks pass for this slice.
 - Functional: `PYTHONPATH=python python3 -m unittest discover -s python/tests`
   passes; live server smoke passed for deck proof, SQLite query, and render
-  artifact routes.
+  artifact routes. Latest live smoke returned 22 artifacts, 9 slides, 5 house
+  slides, 5 house images, 2 charts, and 5 SQLite rows.
 - Adversarial: Rust test rejects non-SELECT SQL in the demo workspace.
-- E2E/UI: pending.
+- E2E/UI: Chrome `/deck?v=fix` rendered "The Realms Of Code", registered
+  `<capsem-slide-deck>`, showed 22 artifact controls, and mounted the custom
+  deck component.
 - Telemetry: pending.
 - Performance: pending.
 - Missing/deferred: real Plotly rendering/export, Mermaid rendering/export,

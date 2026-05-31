@@ -1,6 +1,7 @@
 <script lang="ts">
   import A2Node from "./A2Node.svelte";
   import ChatPage from "./ChatPage.svelte";
+  import NativeDeckPage from "./NativeDeckPage.svelte";
   import {
     buildSurface,
     type A2uiMessage,
@@ -29,6 +30,7 @@
   let actions = $state<RenderAction[]>([]);
   let refreshTimer: number | undefined;
   const cleanChatPage = window.location.pathname === "/chat";
+  const nativeDeckPage = window.location.pathname === "/deck";
 
   let items = $derived.by<WorkbenchItem[]>(() => {
     if (!payload) return [];
@@ -125,6 +127,8 @@
 
 {#if cleanChatPage}
   <ChatPage />
+{:else if nativeDeckPage}
+  <NativeDeckPage />
 {:else}
 <main class="min-h-screen bg-surface text-foreground">
   <div class="flex min-h-screen">

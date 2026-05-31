@@ -8,9 +8,15 @@ fn demo_deck_materializes_artifacts_individually() {
     let proof = demo_deck_proof().expect("demo proof should build from SQLite data");
 
     assert!(proof.ok);
-    assert_eq!(proof.summary.sqlite_rows, 4);
+    assert_eq!(proof.title, "The Realms Of Code");
+    assert_eq!(proof.summary.sqlite_rows, 5);
     assert!(proof.summary.required_artifacts_present);
-    assert!(proof.summary.individual_artifact_count >= 8);
+    assert!(proof.summary.individual_artifact_count >= 18);
+    assert!(proof
+        .deck
+        .slides
+        .iter()
+        .any(|slide| slide.title == "House Compiler"));
 
     let kinds: BTreeSet<NativeArtifactKind> = proof
         .artifacts
@@ -45,6 +51,47 @@ fn demo_deck_requires_multiple_charts() {
     assert!(charts
         .iter()
         .any(|artifact| artifact.spec["chart"] == "lineChart"));
+    assert!(charts
+        .iter()
+        .all(|artifact| artifact.spec["sourceArtifact"] == "sheet-realms-of-code"));
+}
+
+#[test]
+fn demo_deck_has_one_slide_and_image_per_house() {
+    let proof = demo_deck_proof().expect("demo proof should build");
+    let expected_house_slide_ids: BTreeSet<_> = [
+        "slide-house-compiler",
+        "slide-house-runtime",
+        "slide-house-sandbox",
+        "slide-house-telemetry",
+        "slide-house-interface",
+    ]
+    .into_iter()
+    .collect();
+    let house_slides: Vec<_> = proof
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.kind == NativeArtifactKind::Slide
+                && expected_house_slide_ids.contains(artifact.id.as_str())
+        })
+        .collect();
+    let house_images: Vec<_> = proof
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.kind == NativeArtifactKind::GeneratedImage
+                && artifact.id.starts_with("generated-image-house-")
+        })
+        .collect();
+
+    assert_eq!(house_slides.len(), 5);
+    assert_eq!(house_images.len(), 5);
+    for slide in house_slides {
+        let blocks = slide.spec["blocks"].as_array().expect("slide blocks");
+        assert!(blocks.iter().any(|block| block["kind"] == "image"));
+        assert!(blocks.iter().any(|block| block["kind"] == "text"));
+    }
 }
 
 #[test]
@@ -65,12 +112,12 @@ fn artifact_handles_are_stable_and_unique() {
 #[test]
 fn sqlite_query_lane_is_read_only() {
     let response = query_demo_sql(SqliteQueryRequest {
-        sql: "select quarter, revenue from quarterly_metrics order by quarter".to_owned(),
+        sql: "select house, motto from code_houses order by house".to_owned(),
     })
     .expect("select should be accepted");
 
-    assert_eq!(response.columns, vec!["quarter", "revenue"]);
-    assert_eq!(response.rows.len(), 4);
+    assert_eq!(response.columns, vec!["house", "motto"]);
+    assert_eq!(response.rows.len(), 5);
 
     let error = query_demo_sql(SqliteQueryRequest {
         sql: "delete from quarterly_metrics".to_owned(),

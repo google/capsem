@@ -75,154 +75,175 @@ pub struct SqliteQueryResponse {
 }
 
 pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
-    let rows = query_demo_rows()?;
+    let rows = query_house_rows()?;
     let sheet = artifact(
-        "sheet-quarterly-metrics",
+        "sheet-realms-of-code",
         NativeArtifactKind::Sheet,
-        "Quarterly Metrics Sheet",
+        "Realms Of Code Sheet",
         json!({
             "component": "capsem-sheet",
-            "columns": ["quarter", "revenue", "margin", "riskScore"],
-            "rows": rows,
+            "columns": ["house", "motto", "armory", "domain", "velocity", "reliability", "risk"],
+            "rows": rows.clone(),
             "source": {
                 "kind": "sqlite",
-                "query": "select quarter, revenue, margin, risk_score from quarterly_metrics order by quarter"
+                "query": "select house, motto, armory, domain, velocity, reliability, risk from code_houses order by house"
             }
         }),
     );
     let table = artifact(
-        "table-quarterly-metrics",
+        "table-house-overview",
         NativeArtifactKind::Table,
-        "Quarterly Metrics Table",
+        "House Overview Table",
         json!({
             "component": "capsem-table",
             "sourceArtifact": sheet.id,
+            "columns": ["house", "motto", "armory", "domain"],
+            "rows": rows.clone(),
             "searchable": true,
             "filterable": true,
-            "pageSize": 4
+            "pageSize": 5
         }),
     );
-    let revenue_chart = artifact(
-        "chart-revenue-by-quarter",
+    let velocity_chart = artifact(
+        "chart-house-velocity",
         NativeArtifactKind::Chart,
-        "Revenue By Quarter",
+        "House Delivery Velocity",
         json!({
             "component": "capsem-chart",
             "chart": "barChart",
-            "sourceArtifact": "sheet-quarterly-metrics",
-            "x": "quarter",
-            "series": [{"name": "revenue", "field": "revenue"}],
-            "xLabel": "Quarter",
-            "yLabel": "Revenue",
-            "yUnit": "USDm",
+            "sourceArtifact": "sheet-realms-of-code",
+            "data": rows.clone(),
+            "x": "house",
+            "series": [{"name": "velocity", "field": "velocity"}],
+            "xLabel": "House",
+            "yLabel": "Velocity",
+            "yUnit": "score",
             "stack": false,
             "direction": "vertical",
             "export": ["png", "svg"]
         }),
     );
-    let margin_chart = artifact(
-        "chart-margin-risk-trend",
+    let balance_chart = artifact(
+        "chart-house-balance",
         NativeArtifactKind::Chart,
-        "Margin And Risk Trend",
+        "Reliability And Risk Balance",
         json!({
             "component": "capsem-chart",
             "chart": "lineChart",
-            "sourceArtifact": "sheet-quarterly-metrics",
-            "x": "quarter",
+            "sourceArtifact": "sheet-realms-of-code",
+            "data": rows.clone(),
+            "x": "house",
             "series": [
-                {"name": "margin", "field": "margin", "axis": "left"},
-                {"name": "riskScore", "field": "riskScore", "axis": "right"}
+                {"name": "reliability", "field": "reliability", "axis": "left"},
+                {"name": "risk", "field": "risk", "axis": "right"}
             ],
-            "xLabel": "Quarter",
-            "yLabel": "Margin",
-            "yUnit": "%",
-            "secondAxis": {"label": "Risk score", "unit": "score"},
+            "xLabel": "House",
+            "yLabel": "Reliability",
+            "yUnit": "score",
+            "secondAxis": {"label": "Risk", "unit": "score"},
             "legend": "bottom",
             "export": ["png", "svg"]
         }),
     );
-    let diagram = artifact(
-        "diagram-review-flow",
+    let house_map = artifact(
+        "diagram-realm-map",
         NativeArtifactKind::Diagram,
-        "Review Flow Diagram",
+        "Realm Map Diagram",
         json!({
             "component": "capsem-diagram",
             "kind": "mermaid",
-            "source": "flowchart LR\n  A[SQLite data] --> B[Charts]\n  B --> C[Slides]\n  C --> D[Deck export]\n  D --> E[Capsem preview]",
+            "source": "flowchart TB\n  Crown[The Realms of Code] --> Compiler[House Compiler]\n  Crown --> Runtime[House Runtime]\n  Crown --> Sandbox[House Sandbox]\n  Crown --> Telemetry[House Telemetry]\n  Crown --> Interface[House Interface]",
+            "export": ["svg", "png"]
+        }),
+    );
+    let workflow = artifact(
+        "diagram-deck-workflow",
+        NativeArtifactKind::Diagram,
+        "Deck Build Workflow",
+        json!({
+            "component": "capsem-diagram",
+            "kind": "mermaid",
+            "source": "flowchart LR\n  Data[SQLite house data] --> Table[Overview table]\n  Data --> Charts[Charts]\n  Data --> Images[Generated house images]\n  Table --> Slides[One slide per house]\n  Charts --> Slides\n  Images --> Slides\n  Slides --> Deck[Capsem slide deck]",
             "export": ["svg", "png"]
         }),
     );
     let hero = artifact(
         "generated-image-hero",
         NativeArtifactKind::GeneratedImage,
-        "Generated Hero Image",
+        "The Realms Of Code Hero Image",
         json!({
             "component": "capsem-media",
             "media": "image",
             "provider": "gemini",
-            "prompt": "clean technical board-deck hero for a secure AI workspace",
+            "prompt": "editorial fantasy cartography of five software houses in a luminous secure code kingdom, premium slide deck style, no text",
             "status": "planned",
             "note": "Gemini call is wired in the generate spike; this artifact proves the typed handle path."
         }),
     );
+    let house_images = house_image_artifacts();
 
     let intro_slide = artifact(
         "slide-intro",
         NativeArtifactKind::Slide,
-        "Executive Intro",
+        "The Realms Of Code",
         json!({
             "component": "capsem-slide",
             "blocks": [
-                {"kind": "text", "title": "Capsem Native Artifact Proof", "body": "A staged deck built from typed data, media, charts, and diagrams."},
-                {"kind": "image", "artifactId": hero.id}
+                {"kind": "text", "title": "The Realms Of Code", "body": "A composed deck proving SQLite data, generated media, diagrams, charts, and typed slide blocks can travel through the same Capsem artifact lane."},
+                {"kind": "image", "artifactId": hero.id},
+                {"kind": "diagram", "artifactId": house_map.id}
             ]
         }),
     );
-    let data_slide = artifact(
-        "slide-data",
+    let overview_slide = artifact(
+        "slide-overview",
         NativeArtifactKind::Slide,
-        "Data Foundation",
+        "House Overview",
         json!({
             "component": "capsem-slide",
             "blocks": [
-                {"kind": "sheet", "artifactId": sheet.id},
-                {"kind": "table", "artifactId": table.id}
+                {"kind": "table", "artifactId": table.id},
+                {"kind": "sheet", "artifactId": sheet.id}
             ]
         }),
     );
     let charts_slide = artifact(
-        "slide-charts",
+        "slide-metrics",
         NativeArtifactKind::Slide,
-        "Charts",
+        "Realm Metrics",
         json!({
             "component": "capsem-slide",
             "blocks": [
-                {"kind": "chart", "artifactId": revenue_chart.id},
-                {"kind": "chart", "artifactId": margin_chart.id}
+                {"kind": "chart", "artifactId": velocity_chart.id},
+                {"kind": "chart", "artifactId": balance_chart.id}
             ]
         }),
     );
-    let diagram_slide = artifact(
-        "slide-diagram",
+    let workflow_slide = artifact(
+        "slide-workflow",
         NativeArtifactKind::Slide,
-        "Flow",
+        "Artifact Workflow",
         json!({
             "component": "capsem-slide",
             "blocks": [
-                {"kind": "diagram", "artifactId": diagram.id}
+                {"kind": "diagram", "artifactId": workflow.id}
             ]
         }),
     );
+    let house_slides = house_slide_artifacts();
 
     let deck = SlideDeckSpec {
-        id: "deck-native-artifact-proof".to_owned(),
-        title: "Native Artifact Proof Deck".to_owned(),
-        slides: vec![
+        id: "deck-realms-of-code".to_owned(),
+        title: "The Realms Of Code".to_owned(),
+        slides: [
             slide_ref(&intro_slide),
-            slide_ref(&data_slide),
+            slide_ref(&overview_slide),
             slide_ref(&charts_slide),
-            slide_ref(&diagram_slide),
-        ],
+            slide_ref(&workflow_slide),
+        ]
+        .into_iter()
+        .chain(house_slides.iter().map(slide_ref))
+        .collect(),
     };
     let deck_artifact = artifact(
         &deck.id,
@@ -239,15 +260,18 @@ pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
         hero,
         sheet,
         table,
-        revenue_chart,
-        margin_chart,
-        diagram,
+        velocity_chart,
+        balance_chart,
+        house_map,
+        workflow,
         intro_slide,
-        data_slide,
+        overview_slide,
         charts_slide,
-        diagram_slide,
+        workflow_slide,
         deck_artifact,
     ];
+    artifacts.extend(house_images);
+    artifacts.extend(house_slides);
     artifacts.sort_by(|a, b| a.id.cmp(&b.id));
 
     let chart_count = artifacts
@@ -308,9 +332,9 @@ pub fn query_demo_sql(request: SqliteQueryRequest) -> Result<SqliteQueryResponse
     })
 }
 
-fn query_demo_rows() -> Result<Vec<BTreeMap<String, Value>>, String> {
+fn query_house_rows() -> Result<Vec<BTreeMap<String, Value>>, String> {
     query_demo_sql(SqliteQueryRequest {
-        sql: "select quarter, revenue, margin, risk_score as riskScore from quarterly_metrics order by quarter".to_owned(),
+        sql: "select house, motto, armory, domain, velocity, reliability, risk from code_houses order by house".to_owned(),
     })
     .map(|response| response.rows)
 }
@@ -318,28 +342,174 @@ fn query_demo_rows() -> Result<Vec<BTreeMap<String, Value>>, String> {
 fn demo_connection() -> Result<Connection, String> {
     let conn = Connection::open_in_memory().map_err(|error| error.to_string())?;
     conn.execute(
-        "create table quarterly_metrics (
-            quarter text primary key,
-            revenue real not null,
-            margin real not null,
-            risk_score real not null
+        "create table code_houses (
+            house text primary key,
+            motto text not null,
+            armory text not null,
+            domain text not null,
+            velocity real not null,
+            reliability real not null,
+            risk real not null
         )",
         [],
     )
     .map_err(|error| error.to_string())?;
-    for (quarter, revenue, margin, risk_score) in [
-        ("Q1", 12.4, 38.0, 42.0),
-        ("Q2", 14.8, 41.5, 37.0),
-        ("Q3", 16.2, 39.0, 31.0),
-        ("Q4", 19.6, 44.2, 24.0),
+    for (house, motto, armory, domain, velocity, reliability, risk) in [
+        (
+            "House Compiler",
+            "Types before triumph",
+            "Silver parser helm over a crimson AST",
+            "Language and contracts",
+            74.0,
+            92.0,
+            18.0,
+        ),
+        (
+            "House Runtime",
+            "Fast paths pay their debts",
+            "Black flame over a bronze event loop",
+            "Execution and scheduling",
+            88.0,
+            83.0,
+            29.0,
+        ),
+        (
+            "House Sandbox",
+            "No trust crosses the wall",
+            "Iron gate around a white capability key",
+            "Isolation and policy",
+            62.0,
+            96.0,
+            12.0,
+        ),
+        (
+            "House Telemetry",
+            "What is measured is remembered",
+            "Golden signal tower over a blue ledger",
+            "Tracing and evidence",
+            70.0,
+            89.0,
+            21.0,
+        ),
+        (
+            "House Interface",
+            "The user sees the realm",
+            "Glass window over a green command ribbon",
+            "UI and workflow",
+            81.0,
+            78.0,
+            34.0,
+        ),
     ] {
         conn.execute(
-            "insert into quarterly_metrics (quarter, revenue, margin, risk_score) values (?1, ?2, ?3, ?4)",
-            params![quarter, revenue, margin, risk_score],
+            "insert into code_houses (house, motto, armory, domain, velocity, reliability, risk) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![house, motto, armory, domain, velocity, reliability, risk],
         )
         .map_err(|error| error.to_string())?;
     }
     Ok(conn)
+}
+
+fn house_image_artifacts() -> Vec<NativeArtifact> {
+    [
+        (
+            "generated-image-house-compiler",
+            "House Compiler Image",
+            "noble software house crest, silver parser helm over crimson abstract syntax tree, premium editorial fantasy portrait, no text",
+        ),
+        (
+            "generated-image-house-runtime",
+            "House Runtime Image",
+            "noble software house crest, black flame over bronze event loop, fast execution energy, premium editorial fantasy portrait, no text",
+        ),
+        (
+            "generated-image-house-sandbox",
+            "House Sandbox Image",
+            "noble software house crest, iron gate around white capability key, secure isolation fortress, premium editorial fantasy portrait, no text",
+        ),
+        (
+            "generated-image-house-telemetry",
+            "House Telemetry Image",
+            "noble software house crest, golden signal tower over blue ledger, observability realm, premium editorial fantasy portrait, no text",
+        ),
+        (
+            "generated-image-house-interface",
+            "House Interface Image",
+            "noble software house crest, glass window over green command ribbon, elegant user interface realm, premium editorial fantasy portrait, no text",
+        ),
+    ]
+    .into_iter()
+    .map(|(id, title, prompt)| {
+        artifact(
+            id,
+            NativeArtifactKind::GeneratedImage,
+            title,
+            json!({
+                "component": "capsem-media",
+                "media": "image",
+                "provider": "gemini",
+                "prompt": prompt,
+                "status": "planned"
+            }),
+        )
+    })
+    .collect()
+}
+
+fn house_slide_artifacts() -> Vec<NativeArtifact> {
+    [
+        (
+            "slide-house-compiler",
+            "House Compiler",
+            "generated-image-house-compiler",
+            "Types before triumph",
+            "Owns the contract language, schema checks, and compiler discipline before anything reaches runtime.",
+        ),
+        (
+            "slide-house-runtime",
+            "House Runtime",
+            "generated-image-house-runtime",
+            "Fast paths pay their debts",
+            "Owns callback execution, scheduling, and the hot path where plugin and UI artifacts must stay quick.",
+        ),
+        (
+            "slide-house-sandbox",
+            "House Sandbox",
+            "generated-image-house-sandbox",
+            "No trust crosses the wall",
+            "Owns capability boundaries, process isolation, and the rule that only typed objects cross trust edges.",
+        ),
+        (
+            "slide-house-telemetry",
+            "House Telemetry",
+            "generated-image-house-telemetry",
+            "What is measured is remembered",
+            "Owns traces, audit records, artifact handles, and performance evidence for every generated surface.",
+        ),
+        (
+            "slide-house-interface",
+            "House Interface",
+            "generated-image-house-interface",
+            "The user sees the realm",
+            "Owns chat, side panels, decks, and the Capsem component renderer that makes model output visible.",
+        ),
+    ]
+    .into_iter()
+    .map(|(id, title, image_id, motto, body)| {
+        artifact(
+            id,
+            NativeArtifactKind::Slide,
+            title,
+            json!({
+                "component": "capsem-slide",
+                "blocks": [
+                    {"kind": "image", "artifactId": image_id},
+                    {"kind": "text", "title": motto, "body": body}
+                ]
+            }),
+        )
+    })
+    .collect()
 }
 
 fn row_to_map(

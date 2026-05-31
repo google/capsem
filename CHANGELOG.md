@@ -29,6 +29,13 @@
 - Added the first native deck-proof Rust/Python path with read-only SQLite
   query support, individual artifact materialization, multiple chart specs, and
   deterministic artifact handles.
+- Added the "Realms Of Code" native deck preview: SQLite-backed house data,
+  overview table, two chart specs, diagram specs, planned generated house
+  images, one slide per house, and a `/deck` page rendered through
+  `<capsem-*>` custom elements.
+- Added browser-backed coverage for native artifact components, including a fix
+  for custom-element registration so each tag uses its own subclass on the
+  shared Capsem artifact foundation.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance
