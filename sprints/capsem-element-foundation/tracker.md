@@ -42,8 +42,10 @@
 - Multimodal generation note captured: image/video/audio generation should
   accept typed asset inputs such as reference images, masks, clips, voice
   samples, and timing/storyboard hints.
-- MCP grouping note captured: group tools by product noun as the surface grows:
-  data, ui, generate, asset, export, and web preview.
+- MCP grouping note captured: group tools by product noun while matching real
+  Capsem guest MCP naming: the local built-in server exposes
+  `local__snake_case_tool` names through the aggregator. Keep dotted names for
+  authoring APIs, not MCP wire names.
 
 ## Coverage Ledger
 

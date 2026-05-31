@@ -18,6 +18,8 @@
   user-visible previews and typed generated media assets.
 - Documented the Gemini-first `generate.*` spike, multimodal media inputs, and
   Capsem MCP tool grouping requirements.
+- Aligned future Capsem MCP tool naming notes with the real guest MCP
+  `local__snake_case_tool` convention instead of dotted pseudo-tool names.
 - Added the isolated UI tool workbench lane: pinned A2UI schemas, Capsem UI
   catalog/template schemas, checked Preline templates, Rust UI tool runner
   endpoints, and a Svelte workbench that renders the tool-built acceptance

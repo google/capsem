@@ -39,9 +39,12 @@ of each feature inventing its own Shadow DOM, lifecycle, and event bridge.
 - Generation APIs must accept multimodal inputs through typed asset handles or
   Capsem MCP payloads: reference images, masks, screenshots, clips, voice
   references, existing audio, and timing/storyboard hints.
-- Capsem MCP tools need grouping by product noun as the surface expands:
-  `capsem.data.sqlite.*`, `capsem.ui.*`, `capsem.generate.*`,
-  `capsem.asset.*`, `capsem.export.*`, and `capsem.web.preview`.
+- Capsem MCP tools need grouping by product noun while following the real guest
+  MCP convention: local built-in tools are exposed as `local__snake_case_tool`
+  through the aggregator. Product APIs can stay dotted (`generate.image`), but
+  MCP wire names should look like `local__generate_image`,
+  `local__data_sqlite_query`, `local__ui_render`, and
+  `local__web_preview_show`.
 
 ## Files
 
@@ -67,8 +70,8 @@ Capsem needs a typed spreadsheet-to-slide-deck lane:
 - `context.data.sqlite` creates a constrained per-instance SQL workspace for
   data manipulation before rendering, reporting, telemetry inspection, or
   export.
-- `capsem.data.sqlite.*` MCP tools are the first authoring lane for little
-  Codex; they can feed `capsem.ui.*` render tools and prove the contract before
+- `local__data_sqlite_*` MCP tools are the first authoring lane for little
+  Codex; they can feed `local__ui_*` render tools and prove the contract before
   WASM plugins are wired.
 - `ui.sheet` creates spreadsheet-like data with named ranges.
 - `ui.barChart`, `ui.lineChart`, `ui.heatmapChart`, and `ui.boxPlot` can bind to

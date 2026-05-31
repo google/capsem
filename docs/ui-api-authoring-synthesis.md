@@ -264,11 +264,11 @@ should present this as MCP tools for little Codex rather than as a bespoke UI
 feature:
 
 ```text
-capsem.data.sqlite.create
-capsem.data.sqlite.replaceTable
-capsem.data.sqlite.query
-capsem.data.sqlite.toSheet
-capsem.ui.render
+local__data_sqlite_create
+local__data_sqlite_replace_table
+local__data_sqlite_query
+local__data_sqlite_to_sheet
+local__ui_render
 ```
 
 The same Rust service can later expose equivalent plugin context methods, but
@@ -350,18 +350,26 @@ paths or raw blobs.
 As the local MCP grows, tools should be grouped by product nouns:
 
 ```text
-capsem.data.sqlite.*
-capsem.ui.*
-capsem.generate.image
-capsem.generate.video
-capsem.generate.audio
-capsem.asset.*
-capsem.export.*
-capsem.web.preview
+local__data_sqlite_*
+local__ui_*
+local__generate_image
+local__generate_video
+local__generate_audio
+local__asset_*
+local__export_*
+local__web_preview_*
 ```
 
-The grouping keeps little Codex close to the Capsem API while still letting
-generic capabilities come from the sandbox or third-party MCPs.
+This follows the real Capsem guest MCP convention: tools are provided by the
+local built-in MCP server and exposed through the aggregator as
+`server__tool_name`; the current built-in server is named `local`
+(`local__fetch_http`, `local__snapshots_list`, etc.). Host-control tools in
+`capsem-mcp` use `capsem_*` names for VM/session operations and should not
+become the shape of the in-guest product tools.
+
+The pretty product API remains `generate.image`, `ui.barChart`, and
+`web.preview`. MCP wire names are snake_case and namespaced; authoring APIs are
+typed nouns.
 
 `web.preview` should be planned as a separate surface:
 
