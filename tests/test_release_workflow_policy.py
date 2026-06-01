@@ -547,6 +547,16 @@ def test_local_install_uses_same_native_install_commands_as_install_sh():
     assert "sudo dpkg -i" not in body
 
 
+def test_capsem_build_hash_tracks_branch_ref():
+    """The embedded build hash must change for new commits on the same branch."""
+    build_rs = (REPO_ROOT / "crates" / "capsem" / "build.rs").read_text()
+
+    assert "../../.git/HEAD" in build_rs
+    assert "strip_prefix(\"ref: \")" in build_rs
+    assert "cargo:rerun-if-changed=../../.git/{reference}" in build_rs
+    assert "../../.git/packed-refs" in build_rs
+
+
 def test_local_install_removes_stale_tauri_bundle_before_rebuild():
     """Root-owned or stale app bundles must not break the repeatable install loop."""
     body = _just_install_body()

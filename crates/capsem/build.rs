@@ -1,4 +1,6 @@
 fn main() {
+    let git_head = std::path::Path::new("../../.git/HEAD");
+
     // Embed a unique build hash: git short SHA + build timestamp.
     // Changes on every recompile, even from the same commit.
     let git_hash = std::process::Command::new("git")
@@ -14,6 +16,14 @@ fn main() {
     if let Ok(ts) = std::env::var("CAPSEM_BUILD_TS") {
         println!("cargo:rustc-env=CAPSEM_BUILD_TS={ts}");
     }
-    // Rebuild when git HEAD changes or any source changes
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
+
+    // Rebuild when HEAD moves. On a normal branch, .git/HEAD contains a
+    // symbolic ref and does not change for each commit; the branch ref does.
+    println!("cargo:rerun-if-changed={}", git_head.display());
+    println!("cargo:rerun-if-changed=../../.git/packed-refs");
+    if let Ok(head) = std::fs::read_to_string(git_head) {
+        if let Some(reference) = head.strip_prefix("ref: ").map(str::trim) {
+            println!("cargo:rerun-if-changed=../../.git/{reference}");
+        }
+    }
 }

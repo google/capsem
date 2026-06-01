@@ -257,6 +257,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed asset rebuilds to remove stale generated manifest/signature metadata
   before regenerating checksums, recovering dev trees previously poisoned by
   privileged package hooks.
+- Fixed the `capsem version` embedded build hash so Cargo reruns the build
+  script when the current branch ref advances, not only when `.git/HEAD`
+  changes.
 - Fixed Linux local `just install` so the rebuilt `.deb` is passed to `apt`
   through an absolute file path instead of being interpreted as a package name.
 - Fixed release/install version stamping on Linux by replacing BSD-specific
