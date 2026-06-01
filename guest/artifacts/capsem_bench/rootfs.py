@@ -13,7 +13,7 @@ from .helpers import (
 )
 
 ROOTFS_SCAN_DIRS = ["/usr/bin", "/usr/lib", "/opt/ai-clis"]
-ROOTFS_LOWER_MOUNT = "/mnt/a"
+ROOTFS_LOWER_MOUNT = "/run/capsem-lower"
 ROOTFS_RAND_READ_COUNT = 5000
 ROOTFS_SMALL_READ_COUNT = 5000
 ROOTFS_METADATA_STAT_COUNT = 10000

@@ -93,9 +93,11 @@ ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 # `capsem.rootfs=auto` on the kernel cmdline to compare read-only formats.
 mkdir -p /mnt/a
 ROOTFS_TYPE="squashfs"
+BENCH_LOWER_ROOTFS=0
 for arg in $(cat /proc/cmdline); do
     case "$arg" in
         capsem.rootfs=*) ROOTFS_TYPE="${arg#capsem.rootfs=}" ;;
+        capsem.bench_lower=1|capsem.bench_lower=true) BENCH_LOWER_ROOTFS=1 ;;
     esac
 done
 echo "[capsem-init] mounting /dev/vda ($ROOTFS_TYPE)..."
@@ -235,6 +237,16 @@ else
         exit 1
     }
     boot_mark "overlayfs"
+fi
+
+if [ "$BENCH_LOWER_ROOTFS" = "1" ]; then
+    mkdir -p /newroot/run/capsem-lower
+    if mount --bind /mnt/a /newroot/run/capsem-lower; then
+        mount -o remount,bind,ro /newroot/run/capsem-lower 2>/dev/null || true
+        echo "[capsem-init] benchmark lower rootfs exposed at /run/capsem-lower"
+    else
+        echo "[capsem-init] warning: failed to expose benchmark lower rootfs"
+    fi
 fi
 
 # Mount virtual filesystems fresh in the new root.

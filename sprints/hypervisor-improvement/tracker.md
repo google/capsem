@@ -452,10 +452,12 @@
   before EROFS can be a default rootfs format.
 - H05 metadata diagnostic landed locally: `capsem-bench rootfs` now records
   `metadata_stat_lower` when the guest exposes the read-only lower rootfs at
-  `/mnt/a`, mapping `/usr/bin`, `/usr/lib`, and `/opt/ai-clis` directly to
-  `/mnt/a/...`. The existing `metadata_stat` lane remains the product path
-  through overlay. The next EROFS/SquashFS rerun should distinguish lower
-  filesystem metadata cost from overlay amplification.
+  `/run/capsem-lower`, mapping `/usr/bin`, `/usr/lib`, and `/opt/ai-clis`
+  directly to `/run/capsem-lower/...`. The rootfs-format grid requests this
+  with `capsem.bench_lower=1`; normal boots do not expose the lower rootfs.
+  The existing `metadata_stat` lane remains the product path through overlay.
+  The next EROFS/SquashFS rerun should distinguish lower filesystem metadata
+  cost from overlay amplification.
 
 ## Coverage Ledger
 

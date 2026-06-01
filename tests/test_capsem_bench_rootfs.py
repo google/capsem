@@ -49,7 +49,7 @@ def test_metadata_stat_walk_counts_entries_and_reports_rate(tmp_path, monkeypatc
 
 
 def test_lower_rootfs_scan_dirs_maps_existing_absolute_paths(tmp_path):
-    lower = tmp_path / "mnt" / "a"
+    lower = tmp_path / "run" / "capsem-lower"
     (lower / "usr" / "bin").mkdir(parents=True)
     (lower / "opt" / "ai-clis").mkdir(parents=True)
 

@@ -379,7 +379,7 @@ def run_cell(
         **os.environ,
         "CAPSEM_HOME": str(home),
         "CAPSEM_RUN_DIR": str(home / "run"),
-        "CAPSEM_DEV_KERNEL_CMDLINE_APPEND": rootfs_image["cmdline_append"],
+        "CAPSEM_DEV_KERNEL_CMDLINE_APPEND": f"{rootfs_image['cmdline_append']} capsem.bench_lower=1",
         **shape_env(shape, scope=scope),
     }
     started = time.time()
