@@ -512,6 +512,28 @@
   overlay metadata -75.6%, and direct-lower metadata -76.3%. Conclusion:
   host page cache is a major positive part of the current rootfs workload, so
   `O_DIRECT` should remain an ablation/debug lane rather than a default.
+- H05 tuned EROFS startup proof:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780351471.json`
+  reran uncompressed SquashFS against `erofs-lz4hc-c65536` with startup enabled
+  and buffered host I/O. Tuned EROFS won read/startup lanes: seq read 315.4 vs
+  227.7 MB/s (+38.5%), random read 8,626 vs 4,160 IOPS (+107.4%), cold
+  large-binary 578.0 vs 349.3 MB/s (+65.5%), small-JS 237,963 vs 161,578
+  ops/s (+47.3%), python startup 10.8 vs 19.3 ms (+44.0% faster), node 51.2
+  vs 140.9 ms (+63.7%), claude 502.5 vs 662.7 ms (+24.2%), gemini 2,070.1 vs
+  2,278.4 ms (+9.1%), and codex 191.7 vs 344.0 ms (+44.3%). Metadata remains
+  the tradeoff: overlay metadata 35,562 vs 66,636 stats/s (-46.6%) and
+  direct-lower metadata 37,066 vs 78,762 stats/s (-52.9%).
+- H05 DAX feasibility probe on current Linux/KVM path: running the tuned EROFS
+  rootfs on virtio-blk reported `/sys/block/vda/queue/dax=0` and no
+  `/sys/block/vda/dax`; the guest exposes EROFS but the current defconfigs do
+  not declare DAX/FS_DAX/PMEM support and the KVM rootfs transport is
+  virtio-blk, not a DAX-capable pmem or virtiofs-DAX mapping. Conclusion:
+  `-o dax` is not an immediate mount-option flip for the current rootfs path.
+  A real DAX experiment should be a new transport slice: enable the needed
+  guest kernel DAX symbols, expose a page-size-compatible DAX-capable backing
+  device or virtiofs-DAX-style mapping, and test primarily EROFS because
+  SquashFS is not a DAX candidate. Compressed EROFS may only partially benefit;
+  uncompressed/direct-mappable EROFS is the cleaner DAX proof.
 
 ## Coverage Ledger
 

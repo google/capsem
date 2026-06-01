@@ -64,6 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recorded the rootfs direct-I/O ablation artifact. Direct I/O worked but
   regressed random, small-file, and metadata-heavy rootfs lanes, so it remains
   a diagnostic lane rather than a default candidate.
+- Recorded a startup-inclusive tuned EROFS artifact. `erofs-lz4hc-c65536`
+  improved read and AI CLI startup lanes against uncompressed SquashFS while
+  continuing to trail on metadata throughput.
+- Documented the current Linux/KVM DAX feasibility result: the virtio-blk
+  rootfs path does not expose a DAX-capable block device, so DAX requires a
+  separate transport/kernel-capability experiment rather than a mount-option
+  flip.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.
