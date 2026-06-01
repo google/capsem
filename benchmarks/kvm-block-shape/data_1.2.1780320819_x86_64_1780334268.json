@@ -1,0 +1,146 @@
+{
+  "schema": "capsem.kvm-block-shape-grid.v1",
+  "timestamp": 1780334240.1351097,
+  "version": "1.2.1780320819",
+  "arch": "x86_64",
+  "git_commit": "ab99943d836cb2d99102737dd731e658bb859eed",
+  "host": {
+    "machine": "x86_64",
+    "system": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "processor": ""
+  },
+  "startup": false,
+  "shapes": [
+    {
+      "queue_count": 4,
+      "queue_size": 128,
+      "seg_max": 64,
+      "logical_block_size": 4096
+    }
+  ],
+  "results": [
+    {
+      "shape": {
+        "queue_count": 4,
+        "queue_size": 128,
+        "seg_max": 64,
+        "logical_block_size": 4096
+      },
+      "returncode": 0,
+      "duration_s": 28.851,
+      "sysfs": {
+        "mq_dirs": "4",
+        "max_segments": "64",
+        "logical_block_size": "4096",
+        "nr_requests": "64"
+      },
+      "rootfs": {
+        "scan_dirs": [
+          "/usr/bin",
+          "/usr/lib",
+          "/opt/ai-clis"
+        ],
+        "largest_file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+        "largest_file_size": 239650512,
+        "seq_read": {
+          "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+          "size_bytes": 239650512,
+          "block_size": 1048576,
+          "duration_ms": 1740.7,
+          "throughput_mbps": 131.3
+        },
+        "files_found": 5554,
+        "rand_read_4k": {
+          "count": 5000,
+          "files_sampled": 2558,
+          "block_size": 4096,
+          "duration_ms": 1733.3,
+          "iops": 2884.6,
+          "throughput_mbps": 11.3
+        },
+        "large_binary_seq_read": {
+          "count": 3,
+          "files": [
+            {
+              "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+              "size_bytes": 239650512,
+              "cold": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 1476.8,
+                "throughput_mbps": 154.8
+              },
+              "warm": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 46.9,
+                "throughput_mbps": 4870.7
+              }
+            },
+            {
+              "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+              "size_bytes": 239650512,
+              "cold": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 1138.2,
+                "throughput_mbps": 200.8
+              },
+              "warm": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 41.8,
+                "throughput_mbps": 5461.7
+              }
+            },
+            {
+              "path": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+              "size_bytes": 222019904,
+              "cold": {
+                "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+                "size_bytes": 222019904,
+                "block_size": 1048576,
+                "duration_ms": 1045.3,
+                "throughput_mbps": 202.5
+              },
+              "warm": {
+                "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+                "size_bytes": 222019904,
+                "block_size": 1048576,
+                "duration_ms": 39.1,
+                "throughput_mbps": 5418.3
+              }
+            }
+          ],
+          "bytes_read": 701320928,
+          "cold_duration_ms": 3660.3,
+          "warm_duration_ms": 127.8,
+          "cold_throughput_mbps": 182.7,
+          "warm_throughput_mbps": 5233.4
+        },
+        "small_js_read": {
+          "count": 5000,
+          "files_sampled": 113,
+          "bytes_read": 44041649,
+          "duration_ms": 45.5,
+          "ops_per_sec": 109911.0,
+          "throughput_mbps": 923.3
+        },
+        "metadata_stat": {
+          "entries": 6573,
+          "files": 5554,
+          "dirs": 670,
+          "symlinks": 349,
+          "errors": 0,
+          "duration_ms": 106.2,
+          "stats_per_sec": 61877.2
+        }
+      }
+    }
+  ]
+}

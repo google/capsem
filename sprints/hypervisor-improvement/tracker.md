@@ -42,7 +42,7 @@
 - [ ] H05: storage, rootfs, and filesystem experiments.
   - [x] Add a KVM block-shape profile covering queue count, queue size,
         segment limit, and logical block size.
-  - [ ] Add a focused gridsearch harness that records block-shape metadata and
+  - [x] Add a focused gridsearch harness that records block-shape metadata and
         rootfs/startup results before choosing defaults.
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
@@ -262,6 +262,16 @@
   5,354.9 MB/s (-3.7%), and sequential read 134.0 MB/s (-20.8%). This is a
   focused experiment and will feed the gridsearch rather than being accepted as
   the default.
+- H05 gridsearch harness landed locally as `scripts/kvm_block_shape_grid.py`.
+  It expands queue count, queue size, segment limit, and logical block size as
+  a coupled matrix, runs the selected shapes through `just exec`, captures
+  Linux sysfs queue state, and writes structured artifacts under
+  `benchmarks/kvm-block-shape/`. A one-cell harness proof for
+  `queue_count=4`, `queue_size=128`, `seg_max=64`, `logical_block_size=4096`
+  wrote `benchmarks/kvm-block-shape/data_1.2.1780320819_x86_64_1780334268.json`
+  with sysfs `mq_dirs=4`, `max_segments=64`, `logical_block_size=4096`,
+  `nr_requests=64`, and rootfs random read 2,885 IOPS, small JS 109,911 ops/s,
+  metadata 61,877 stats/s.
 
 ## Coverage Ledger
 
@@ -295,6 +305,7 @@
   `cargo test -p capsem-core block_io_uring_completion_retries_backpressured_descriptor --lib`,
   `cargo test -p capsem-core block_io_uring --lib`,
   `cargo test -p capsem-service process_env_allowlist_forwards_child_runtime_knobs --bin capsem-service`,
+  `python3 scripts/kvm_block_shape_grid.py --dry-run --queue-counts 1,4 --queue-sizes 128 --seg-maxes auto,64 --logical-block-sizes 512,4096`,
   `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
