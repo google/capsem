@@ -785,6 +785,9 @@ async fn step_summary(
     if crate::service_install::test_isolation_env_active() {
         println!("  Test-isolation mode: skipping persistent service unit install.");
         state.service_installed = false;
+    } else if crate::service_install::is_service_installed() {
+        println!("  Service installed.");
+        state.service_installed = true;
     } else {
         crate::service_install::install_service()
             .await

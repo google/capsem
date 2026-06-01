@@ -116,6 +116,7 @@ pub fn is_service_installed() -> bool {
     }
     plist_path().map(|p| p.exists()).unwrap_or(false)
         || systemd_unit_path().map(|p| p.exists()).unwrap_or(false)
+        || systemd_system_unit_installed()
 }
 
 /// Refuse service installation when test-isolation env vars are set.
@@ -231,12 +232,22 @@ pub async fn service_status() -> Result<ServiceStatus> {
 
     let plist_installed = plist_path().map(|p| p.exists()).unwrap_or(false);
     let unit_installed = systemd_unit_path().map(|p| p.exists()).unwrap_or(false);
-    let installed = plist_installed || unit_installed;
+    let system_unit_installed = systemd_system_unit_installed();
+    let installed = plist_installed || unit_installed || system_unit_installed;
 
     let unit_path = if plist_installed {
         plist_path()
     } else if unit_installed {
         systemd_unit_path()
+    } else if system_unit_installed {
+        #[cfg(target_os = "linux")]
+        {
+            Some(systemd_system_unit_path())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
     } else {
         None
     };
@@ -277,10 +288,16 @@ pub async fn start_service() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         let mut command = tokio::process::Command::new("systemctl");
-        command.args(["--user", "start", "capsem"]);
+        if systemd_unit_path().map(|p| p.exists()).unwrap_or(false) {
+            command.args(["--user", "start", "capsem"]);
+        } else if systemd_system_unit_installed() {
+            command.args(["start", "capsem"]);
+        } else {
+            anyhow::bail!("Service not installed. Run `capsem install` first.");
+        }
         let status = command_status_quiet(command).await?;
         if !status.success() {
-            anyhow::bail!("systemctl --user start capsem failed");
+            anyhow::bail!("systemctl start capsem failed");
         }
     }
 
@@ -506,6 +523,21 @@ pub fn systemd_unit_path() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join(".config/systemd/user/capsem.service"))
+}
+
+#[cfg(target_os = "linux")]
+pub fn systemd_system_unit_path() -> PathBuf {
+    PathBuf::from("/etc/systemd/system/capsem.service")
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_system_unit_installed() -> bool {
+    systemd_system_unit_path().exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn systemd_system_unit_installed() -> bool {
+    false
 }
 
 #[cfg(target_os = "linux")]

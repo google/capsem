@@ -29,6 +29,41 @@ USER_HOME=$(eval echo "~$TARGET_USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
 PKG_SHARE="/usr/share/capsem"
 
+systemd_escape_path() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/ /\\x20/g'
+}
+
+install_systemd_system_service() {
+    unit="/etc/systemd/system/capsem.service"
+    group=$(id -gn "$TARGET_USER")
+    service_bin=$(systemd_escape_path "$CAPSEM_DIR/bin/capsem-service")
+    process_bin=$(systemd_escape_path "$CAPSEM_DIR/bin/capsem-process")
+    gateway_bin=$(systemd_escape_path "$CAPSEM_DIR/bin/capsem-gateway")
+    tray_bin=$(systemd_escape_path "$CAPSEM_DIR/bin/capsem-tray")
+    assets_dir=$(systemd_escape_path "$CAPSEM_DIR/assets")
+
+    cat > "$unit" <<EOF
+[Unit]
+Description=Capsem sandbox service
+After=network.target
+
+[Service]
+User=$TARGET_USER
+Group=$group
+Environment=HOME=$USER_HOME
+Environment=XDG_RUNTIME_DIR=$XDG_DIR
+ExecStart=$service_bin --foreground --assets-dir $assets_dir --process-binary $process_bin --gateway-binary $gateway_bin --tray-binary $tray_bin
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now capsem.service
+}
+
 seed_assets() {
     for asset in manifest.json manifest.json.minisig; do
         if [ -f "$PKG_SHARE/assets/$asset" ]; then
@@ -79,7 +114,12 @@ chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
-    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install"
+    if su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR systemctl --user show-environment >/dev/null 2>&1"; then
+        su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install"
+    else
+        echo "capsem: systemd user bus unavailable; installing system service" >&2
+        install_systemd_system_service
+    fi
 fi
 seed_assets
 seed_base_profiles

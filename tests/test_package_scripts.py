@@ -268,6 +268,9 @@ def test_repack_deb_copies_signed_manifest_and_all_helpers(tmp_path):
     (tool_dir / "dpkg-deb").write_text(
         """#!/bin/sh
 set -eu
+if [ "$1" = "--root-owner-group" ]; then
+  shift
+fi
 case "$1" in
   -R)
     dest="$3"
@@ -325,6 +328,9 @@ def test_repack_deb_rejects_missing_assets_dir_with_explicit_output(tmp_path):
     (tool_dir / "dpkg-deb").write_text(
         """#!/bin/sh
 set -eu
+if [ "$1" = "--root-owner-group" ]; then
+  shift
+fi
 case "$1" in
   -R)
     dest="$3"
@@ -460,6 +466,17 @@ def test_postinstall_requires_target_user_for_setup():
         assert "cannot complete per-user setup" in text
         assert "skipping per-user setup" not in text
         assert "run 'capsem setup' manually" not in text
+
+
+def test_deb_postinst_falls_back_to_system_service_without_user_bus():
+    """Linux packages should use a system unit when systemd --user is unavailable."""
+    text = DEB_POSTINST.read_text()
+
+    assert "systemctl --user show-environment" in text
+    assert "systemd user bus unavailable" in text
+    assert "/etc/systemd/system/capsem.service" in text
+    assert "systemctl daemon-reload" in text
+    assert "systemctl enable --now capsem.service" in text
 
 
 def test_postinstall_seeds_signed_manifest_and_dev_pubkey_loudly():

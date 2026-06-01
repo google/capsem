@@ -95,6 +95,14 @@ pub async fn try_start_via_service_manager() -> Result<bool> {
                 return Ok(true);
             }
         }
+        if service_install::systemd_system_unit_path().exists() {
+            let mut command = tokio::process::Command::new("systemctl");
+            command.args(["start", "--no-block", "capsem"]);
+            let status = command_status_quiet(command).await?;
+            if status.success() {
+                return Ok(true);
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
