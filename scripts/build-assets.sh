@@ -86,6 +86,20 @@ ensure_assets_dir() {
 
 ensure_assets_dir
 
+remove_generated_metadata() {
+    for path in \
+        "$ASSETS_DIR/manifest.json" \
+        "$ASSETS_DIR/manifest.json.minisig" \
+        "$ASSETS_DIR/manifest-sign.dev.pub" \
+        "$ASSETS_DIR/B3SUMS"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            rm -f "$path" 2>/dev/null || sudo rm -f "$path"
+        fi
+    done
+}
+
+remove_generated_metadata
+
 if [[ -n "$ARCH" ]]; then
     ARCH="$(normalize_arch "$ARCH")"
     arches=("$ARCH")

@@ -253,6 +253,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Linux `.deb` installs to force reinstall from the downloaded/local
   artifact so same-version half-configured packages unpack the new maintainer
   scripts instead of rerunning stale dpkg control data.
+- Fixed asset rebuilds to remove stale generated manifest/signature metadata
+  before regenerating checksums, recovering dev trees previously poisoned by
+  privileged package hooks.
 - Fixed Linux local `just install` so the rebuilt `.deb` is passed to `apt`
   through an absolute file path instead of being interpreted as a package name.
 - Fixed release/install version stamping on Linux by replacing BSD-specific

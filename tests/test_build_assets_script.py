@@ -112,6 +112,46 @@ def test_build_assets_script_repairs_dangling_assets_symlink(
     assert (real_assets / "manifest.json").exists()
 
 
+def test_build_assets_script_removes_stale_generated_metadata(tmp_path: Path) -> None:
+    bin_dir, log = _fake_uv(tmp_path)
+    profile = tmp_path / "profile.toml"
+    profile.write_text('schema = "capsem.profile.v2"\n', encoding="utf-8")
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    stale_manifest = assets / "manifest.json"
+    stale_manifest.write_text("stale\n", encoding="utf-8")
+    stale_manifest.chmod(0o444)
+    (assets / "manifest.json.minisig").write_text("stale sig\n", encoding="utf-8")
+    (assets / "manifest-sign.dev.pub").write_text("stale pub\n", encoding="utf-8")
+    env = os.environ | {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "UV_LOG": str(log),
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            "scripts/build-assets.sh",
+            "--assets-dir",
+            str(assets),
+            "--arch",
+            "x86_64",
+            "--profile",
+            str(profile),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (assets / "manifest.json").read_text(encoding="utf-8").startswith('{"version"')
+    assert not (assets / "manifest.json.minisig").exists()
+    assert not (assets / "manifest-sign.dev.pub").exists()
+
+
 def test_build_assets_script_rejects_unprofiled_builds(
     tmp_path: Path,
 ) -> None:
@@ -181,8 +221,7 @@ def test_justfile_exposes_profile_aware_asset_recipes() -> None:
 def test_ensure_service_refreshes_local_profile_after_asset_repack() -> None:
     justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
 
-    assert 'SETUP_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}"' in justfile
     assert (
-        'CAPSEM_ASSETS_DIR="$SETUP_ASSETS_DIR" {{cli_binary}} setup '
+        'CAPSEM_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}" {{cli_binary}} setup '
         "--non-interactive --accept-detected"
     ) in justfile
