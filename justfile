@@ -1062,6 +1062,7 @@ install: _pnpm-install _stamp-version _check-assets
 
     echo "=== Building frontend ==="
     cd frontend
+    rm -rf dist 2>/dev/null || sudo rm -rf dist
     pnpm build
     cd ..
     # Load Tauri signing key if available (needed for updater artifacts).
@@ -1665,7 +1666,7 @@ _pnpm-install:
 _frontend-dist: _pnpm-install
     # Tauri's generate_context! macro reads frontend/dist at Rust compile time.
     # Keep this before any workspace clippy/test/build that includes capsem-app.
-    cd frontend && pnpm build
+    cd frontend && (rm -rf dist 2>/dev/null || sudo rm -rf dist) && pnpm build
 
 _frontend: _frontend-dist
 
