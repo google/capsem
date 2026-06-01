@@ -527,6 +527,9 @@ def test_local_install_reruns_setup_after_restoring_settings():
     assert 'echo "=== Syncing locally built assets into ~/.capsem/assets ==="' in body
     assert 'echo "=== Finalizing installed setup ==="' in body
     assert '"$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected' in body
+    assert "has_linux_system_service()" in body
+    assert "sudo systemctl restart capsem.service" in body
+    assert 'echo "Check: journalctl -u capsem"' in body
 
     restore_pos = body.index('echo "=== Restoring preserved settings ==="')
     sync_pos = body.index('echo "=== Syncing locally built assets into ~/.capsem/assets ==="')

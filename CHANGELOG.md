@@ -258,6 +258,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   system unit: `capsem stop`, `capsem service uninstall`, and `just install`
   now try system `systemctl` without `--user` and remove the system unit before
   proving the old runtime is gone.
+- Fixed Linux local `just install` service restart for hosts using the systemd
+  system-unit fallback by restarting `capsem.service` through system
+  `systemctl` with sudo and pointing failures at the system journal.
 - Fixed asset rebuilds to remove stale generated manifest/signature metadata
   before regenerating checksums, recovering dev trees previously poisoned by
   privileged package hooks.

@@ -1018,6 +1018,10 @@ install: _pnpm-install _stamp-version _check-assets
         fi
     }
 
+    has_linux_system_service() {
+        [ "$(uname -s)" = "Linux" ] && [ -e "/etc/systemd/system/capsem.service" ]
+    }
+
     assert_executable() {
         local path="$1"
         if [ ! -x "$path" ]; then
@@ -1165,8 +1169,12 @@ install: _pnpm-install _stamp-version _check-assets
     "$HOME/.capsem/bin/capsem" setup --non-interactive --accept-detected
 
     echo "=== Restarting installed service ==="
-    "$HOME/.capsem/bin/capsem" stop >/dev/null 2>&1 || true
-    "$HOME/.capsem/bin/capsem" start
+    if has_linux_system_service; then
+        sudo systemctl restart capsem.service
+    else
+        "$HOME/.capsem/bin/capsem" stop >/dev/null 2>&1 || true
+        "$HOME/.capsem/bin/capsem" start
+    fi
 
     echo "=== Verifying service health ==="
     HEALTHY=false
@@ -1183,6 +1191,8 @@ install: _pnpm-install _stamp-version _check-assets
         echo "ERROR: Service not responding after 30s." >&2
         if [ "$OS" = "Darwin" ]; then
             echo "Check: ~/Library/Logs/capsem/service.log" >&2
+        elif has_linux_system_service; then
+            echo "Check: journalctl -u capsem" >&2
         else
             echo "Check: journalctl --user -u capsem" >&2
         fi
