@@ -283,6 +283,8 @@ def rootfs_image_metadata(format_name: str) -> dict:
         metadata["compression"] = profile["compression"]
     if "compression_level" in profile:
         metadata["compression_level"] = profile["compression_level"]
+    if "physical_cluster_size" in profile:
+        metadata["physical_cluster_size"] = profile["physical_cluster_size"]
     return metadata
 
 
