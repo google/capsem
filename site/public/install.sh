@@ -232,7 +232,11 @@ install_linux() {
     verify_asset_hash "$TMPDIR_INSTALL/manifest.json" "$DEB_PATH" "$DEB_NAME"
 
     echo "Installing .deb package (may prompt for sudo password)..."
-    sudo apt install --reinstall -y "$DEB_PATH"
+    if dpkg-query -W -f='${Status}' capsem >/dev/null 2>&1; then
+        echo "Removing existing capsem package before reinstall..."
+        sudo dpkg --remove --force-remove-reinstreq capsem || sudo dpkg --purge --force-remove-reinstreq capsem
+    fi
+    sudo apt install -y "$DEB_PATH"
 
     echo ""
     echo "Capsem $_version installed."

@@ -507,7 +507,7 @@ def test_local_install_removes_old_runtime_before_installing_package():
     repack_pos = body.index("=== Repacking VM assets ===")
     repair_pos = body.index("=== Keeping existing local profile metadata coherent ===")
     mac_install_pos = body.index('sudo installer -pkg "$PKG" -target /')
-    linux_install_pos = body.index('sudo apt install --reinstall -y "$DEB_PATH"')
+    linux_install_pos = body.index('sudo apt install -y "$DEB_PATH"')
     assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < assert_pos < mac_install_pos
     assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < assert_pos < linux_install_pos
 
@@ -539,9 +539,11 @@ def test_local_install_uses_same_native_install_commands_as_install_sh():
     assert 'sudo installer -pkg "$PKG" -target /' in body
     assert 'open -W "$PKG"' not in body
 
-    assert 'sudo apt install --reinstall -y "$DEB_PATH"' in install_sh
+    assert "sudo dpkg --remove --force-remove-reinstreq capsem" in install_sh
+    assert 'sudo apt install -y "$DEB_PATH"' in install_sh
     assert 'DEB_PATH=$(realpath "$DEB")' in body
-    assert 'sudo apt install --reinstall -y "$DEB_PATH"' in body
+    assert "sudo dpkg --remove --force-remove-reinstreq capsem" in body
+    assert 'sudo apt install -y "$DEB_PATH"' in body
     assert "sudo dpkg -i" not in body
 
 

@@ -1104,7 +1104,11 @@ install: _pnpm-install _stamp-version _check-assets
         bash scripts/repack-deb.sh "$DEB" "target/release" "$INSTALL_ASSETS_DIR"
         DEB_PATH=$(realpath "$DEB")
         echo "=== Installing .deb ==="
-        sudo apt install --reinstall -y "$DEB_PATH"
+        if dpkg-query -W -f='${Status}' capsem >/dev/null 2>&1; then
+            echo "=== Removing existing capsem package before local reinstall ==="
+            sudo dpkg --remove --force-remove-reinstreq capsem || sudo dpkg --purge --force-remove-reinstreq capsem
+        fi
+        sudo apt install -y "$DEB_PATH"
     fi
 
     echo "=== Restoring preserved settings ==="
