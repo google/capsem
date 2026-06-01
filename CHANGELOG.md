@@ -251,6 +251,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed frontend release builds after privileged installs by cleaning stale
   `frontend/dist` output before `pnpm build`, with a sudo fallback for old
   root-owned artifacts.
+- Fixed Linux `.deb` repacking on hosts with large numeric UID/GID values by
+  normalizing Tauri's ar members before extraction when the generated archive
+  header overflows classic ar owner/group fields.
 - Hardened Linux KVM virtio-blk guest-memory handling so zero-copy block I/O,
   discard reads, request header parsing, get-id writes, and status writes
   validate the full `gpa + len` range before exposing guest pointers to host

@@ -51,7 +51,32 @@ WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 echo "=== Extracting .deb ==="
-dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
+if ! dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb" 2>"$WORK_DIR/extract.err"; then
+    # Tauri's Linux bundler can create a malformed ar archive on hosts with
+    # large numeric UID/GID values because classic ar header owner/group fields
+    # are only six bytes wide. It also leaves the ar members in a sibling
+    # directory; rebuild a normalized archive from those members before
+    # extraction.
+    SIBLING_DIR="${INPUT_DEB%.deb}"
+    if [ ! -f "$SIBLING_DIR/debian-binary" ] || [ ! -f "$SIBLING_DIR/control.tar.gz" ]; then
+        cat "$WORK_DIR/extract.err" >&2
+        echo "ERROR: failed to extract .deb and no Tauri ar member directory was found" >&2
+        exit 1
+    fi
+    DATA_ARCHIVE=$(find "$SIBLING_DIR" -maxdepth 1 -type f -name 'data.tar*' | head -1)
+    if [ -z "$DATA_ARCHIVE" ]; then
+        cat "$WORK_DIR/extract.err" >&2
+        echo "ERROR: failed to extract .deb and no data.tar* member was found" >&2
+        exit 1
+    fi
+    echo "  Tauri .deb archive needed ar header normalization before extraction"
+    NORMALIZED_DEB="$WORK_DIR/normalized.deb"
+    (
+        cd "$SIBLING_DIR"
+        ar cr "$NORMALIZED_DEB" debian-binary control.tar.gz "$(basename "$DATA_ARCHIVE")"
+    )
+    dpkg-deb -R "$NORMALIZED_DEB" "$WORK_DIR/deb"
+fi
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
@@ -129,7 +154,7 @@ chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 # a fresh version before packaging when they need upgrade ordering.
 
 echo "=== Repacking .deb ==="
-dpkg-deb -b "$WORK_DIR/deb" "$OUTPUT_DEB"
+dpkg-deb --root-owner-group -b "$WORK_DIR/deb" "$OUTPUT_DEB"
 
 echo "=== Validating ==="
 dpkg-deb --info "$OUTPUT_DEB"
