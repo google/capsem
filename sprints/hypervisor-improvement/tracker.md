@@ -432,6 +432,24 @@
   variants against both shipped SquashFS zstd and uncompressed SquashFS so EROFS
   is judged against the right no-compression baseline as well as the product
   baseline.
+- H05 EROFS compression artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780346718.json`
+  recorded shipped SquashFS zstd, uncompressed SquashFS, EROFS uncompressed,
+  EROFS lz4, and EROFS lz4hc at the same tuned rootfs block shape. Against
+  uncompressed SquashFS (1,603.5 MiB), EROFS lz4hc (916.1 MiB) improved seq
+  read 255.4 vs 201.3 MB/s (+26.9%), random read 7,599 vs 3,555 IOPS
+  (+113.7%), cold large-binary 411.7 vs 299.3 MB/s (+37.6%), small-JS 145,813
+  vs 127,280 ops/s (+14.6%), node startup 90.9 vs 143.1 ms (+36.5% faster),
+  claude 660.4 vs 871.2 ms (+24.2%), gemini 2,486.8 vs 2,691.8 ms (+7.6%),
+  and codex 298.2 vs 456.8 ms (+34.7%). Python was roughly flat at 18.9 vs
+  19.1 ms (+1.0%). Metadata still regressed sharply: 27,069 vs 54,410 stats/s
+  (-50.3%). EROFS uncompressed was fastest on seq read (305.2 MB/s),
+  large-binary read (545.7 MB/s), small-JS (164,529 ops/s), and startup, but it
+  was larger than uncompressed SquashFS (1,852.8 MiB vs 1,603.5 MiB) and had
+  the worst metadata result (14,720 stats/s). EROFS lz4 had the best random
+  read at 7,205 IOPS before lz4hc beat it at 7,599 IOPS in this run; both are
+  strong read/startup candidates, but metadata needs a separate investigation
+  before EROFS can be a default rootfs format.
 
 ## Coverage Ledger
 

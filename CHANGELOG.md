@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended the KVM rootfs-format grid harness with explicit EROFS compression
   variants for uncompressed, lz4, and lz4hc images so EROFS can be compared
   against uncompressed SquashFS as well as the shipped SquashFS zstd baseline.
+- Recorded the EROFS compression comparison artifact. EROFS lz4hc was smaller
+  and faster than uncompressed SquashFS on read and AI CLI startup lanes, while
+  metadata-stat throughput remained substantially slower and needs follow-up
+  before EROFS can be considered as a default rootfs format.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.
