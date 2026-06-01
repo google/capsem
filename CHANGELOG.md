@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended the KVM rootfs-format grid harness with generated SquashFS zstd
   compression-level variants so compression level and block shape can be swept
   fairly together.
+- Recorded KVM rootfs-format grid artifacts for EROFS and SquashFS zstd
+  compression levels after rebuilding the x86_64 guest kernel with EROFS
+  support. EROFS improved rootfs sequential read, random read, large-binary
+  read, small-JS read, and AI CLI startup against the same-run SquashFS zstd
+  baseline, while metadata stats regressed; zstd level 22 produced the
+  smallest image with broadly similar runtime to the shipped zstd baseline.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

@@ -396,6 +396,34 @@
   rootfs and run through the same block-shape cells as production zstd,
   uncompressed SquashFS, and EROFS, so compression level is measured fairly
   rather than compared against a differently tuned block path.
+- H05 EROFS proof after rebuilding the x86_64 guest kernel asset:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780345066.json`
+  booted the generated EROFS image with `queue_count=8`, `queue_size=128`,
+  `seg_max=64`, and `logical_block_size=4096`. Against the same-run production
+  SquashFS zstd baseline recorded in
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780345823.json`,
+  EROFS improved rootfs seq read 238.4 vs 143.7 MB/s (+65.9%), random read
+  7,168 vs 3,019 IOPS (+137.5%), cold large-binary 416.7 vs 177.5 MB/s
+  (+134.8%), small-JS 165,556 vs 91,645 ops/s (+80.6%), python startup 15.0
+  vs 31.0 ms (+51.6% faster), node 91.0 vs 303.6 ms (+70.0%), claude 669.0
+  vs 1,287.1 ms (+48.0%), gemini 2,585.9 vs 2,847.9 ms (+9.2%), and codex
+  298.2 vs 820.0 ms (+63.6%). Metadata regressed hard: 23,956 vs 59,924
+  stats/s (-60.0%), so EROFS is a strong read/startup candidate but not a
+  clean universal replacement without metadata-path work.
+- H05 zstd compression-level artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780345823.json`
+  compared shipped SquashFS zstd (496.4 MiB) with generated zstd levels 1
+  (594.0 MiB), 3 (564.9 MiB), 9 (526.9 MiB), 15 (496.4 MiB), and 22
+  (490.4 MiB) at the same tuned rootfs block shape. Runtime was not monotonic
+  with compression level: level 1 had the best seq read (167.7 MB/s, +16.7%)
+  and small-JS read (116,325 ops/s, +26.9%) versus shipped zstd, level 9 had
+  the best random read (3,535 IOPS, +17.1%) and cold large-binary read
+  (210.9 MB/s, +18.8%), and level 22 produced the smallest image while staying
+  near baseline seq read (148.9 MB/s, +3.6%) with better random read
+  (3,307 IOPS, +9.6%) and small-JS read (103,931 ops/s, +13.4%). Metadata was
+  basically flat across zstd levels. This supports using high compression when
+  distribution size matters, but the bigger performance lever remains rootfs
+  format/layout rather than zstd level alone.
 
 ## Coverage Ledger
 
