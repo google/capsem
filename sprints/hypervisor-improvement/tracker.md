@@ -44,6 +44,8 @@
         segment limit, and logical block size.
   - [x] Add a focused gridsearch harness that records block-shape metadata and
         rootfs/startup results before choosing defaults.
+  - [x] Add a rootfs-format grid harness so uncompressed rootfs and EROFS run
+        through the same block-shape matrix as the current SquashFS baseline.
   - [ ] Test rootfs format/compression alternatives through the canonical
         benchmark path: uncompressed rootfs, EROFS, and a DAX-capability path
         if the current Linux/KVM transport can expose one cleanly.
@@ -350,11 +352,21 @@
   plus host-native/raw-system comparison and Linux/macOS artifact comparison.
   DAX is explicitly a capability audit first, because virtiofs DAX, pmem DAX,
   and block-backed read-only rootfs have different kernel/device requirements.
+- H05 rootfs-format grid harness landed locally: `scripts/kvm_rootfs_format_grid.py`
+  materializes benchmark-only asset roots under `target/kvm-rootfs-format-grid`,
+  currently covering current SquashFS zstd, SquashFS with compression disabled,
+  and EROFS image generation. Each format runs through the same
+  queue-count/queue-size/segment/logical-block-size shape matrix via `just exec`
+  and records guest sysfs queue state plus `capsem-bench storage`, `rootfs`, and
+  optional `startup` JSON. The harness records DAX as `not_implemented` rather
+  than pretending the current virtio-blk rootfs path can exercise DAX; real DAX
+  needs a separate virtiofs-DAX or pmem-style mapping path.
 
 ## Coverage Ledger
 
 - Unit/contract: `tests/test_archive_superseded_benchmark_artifacts.py`,
   `tests/test_benchmark_contract.py`, `tests/test_benchmark_artifacts.py`,
+  `tests/test_kvm_rootfs_format_grid.py`,
   `cargo test -p capsem-core guest_memory_ref --lib`,
   `cargo test -p capsem-core block_guest_iovecs_reject_range_that_crosses_ram_end --lib`,
   `cargo test -p capsem-core virtio_blk --lib`,

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Capsem sandbox init script.
 # Replaces /init in the initramfs.
-# Mounts squashfs rootfs from /dev/vda, stacks overlayfs (immutable lower
+# Mounts read-only rootfs from /dev/vda, stacks overlayfs (immutable lower
 # + ephemeral tmpfs upper), then chroot into the real root.
 
 # Mount essential filesystems
@@ -88,15 +88,40 @@ init_stage() {
 echo "[capsem-init] listing block devices..."
 ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 
-# Mount squashfs (immutable lower layer)
+# Mount immutable lower rootfs. SquashFS remains the production default; the
+# hypervisor benchmark harness can append `capsem.rootfs=erofs` or
+# `capsem.rootfs=auto` on the kernel cmdline to compare read-only formats.
 mkdir -p /mnt/a
-echo "[capsem-init] mounting /dev/vda (squashfs)..."
-mount -t squashfs /dev/vda /mnt/a
-echo "[capsem-init] mount exit: $?"
+ROOTFS_TYPE="squashfs"
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        capsem.rootfs=*) ROOTFS_TYPE="${arg#capsem.rootfs=}" ;;
+    esac
+done
+echo "[capsem-init] mounting /dev/vda ($ROOTFS_TYPE)..."
+if [ "$ROOTFS_TYPE" = "auto" ]; then
+    if mount -t squashfs /dev/vda /mnt/a; then
+        ROOTFS_TYPE="squashfs"
+    elif mount -t erofs /dev/vda /mnt/a; then
+        ROOTFS_TYPE="erofs"
+    else
+        echo "[capsem-init] FATAL: cannot mount /dev/vda as squashfs or erofs"
+        exit 1
+    fi
+elif [ "$ROOTFS_TYPE" = "squashfs" ] || [ "$ROOTFS_TYPE" = "erofs" ]; then
+    mount -t "$ROOTFS_TYPE" /dev/vda /mnt/a || {
+        echo "[capsem-init] FATAL: cannot mount /dev/vda as $ROOTFS_TYPE"
+        exit 1
+    }
+else
+    echo "[capsem-init] FATAL: unsupported capsem.rootfs=$ROOTFS_TYPE"
+    exit 1
+fi
+echo "[capsem-init] mounted /dev/vda as $ROOTFS_TYPE"
 
 echo "[capsem-init] checking /mnt/a/bin/bash..."
 ls /mnt/a/bin/bash 2>&1
-boot_mark "squashfs"
+boot_mark "$ROOTFS_TYPE"
 
 # Detect storage mode from kernel cmdline.
 # VirtioFS mode: overlay upper + /root backed by host-side shared directory.
