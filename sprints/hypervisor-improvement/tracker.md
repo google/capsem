@@ -458,6 +458,18 @@
   The existing `metadata_stat` lane remains the product path through overlay.
   The next EROFS/SquashFS rerun should distinguish lower filesystem metadata
   cost from overlay amplification.
+- H05 metadata diagnostic artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780348995.json`
+  reran uncompressed SquashFS, EROFS uncompressed, and EROFS lz4hc with
+  `metadata_stat_lower` enabled. Uncompressed SquashFS measured 50,618 stats/s
+  through overlay and 63,478 stats/s directly on the lower rootfs. EROFS
+  uncompressed measured 15,138 stats/s through overlay and 12,864 stats/s
+  directly on the lower rootfs. EROFS lz4hc measured 23,970 stats/s through
+  overlay and 32,202 stats/s directly on the lower rootfs. Conclusion: overlay
+  adds measurable cost, but the main regression is lower EROFS metadata
+  traversal itself; EROFS lz4hc improves metadata locality compared with
+  uncompressed EROFS but still lands at roughly half the direct lower metadata
+  throughput of uncompressed SquashFS.
 
 ## Coverage Ledger
 

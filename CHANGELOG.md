@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/run/capsem-lower`, so EROFS metadata regressions can be separated into
   lower filesystem cost versus overlay amplification without exposing the lower
   mount during normal boots.
+- Recorded the rootfs lower-metadata diagnostic artifact, showing EROFS lz4hc
+  improves lower metadata traversal over uncompressed EROFS but still trails
+  uncompressed SquashFS direct-lower metadata throughput by roughly half.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.
