@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a KVM rootfs-format grid harness that materializes rootfs variants
   under `target/`, runs each format through the same virtio-blk shape matrix,
   and records storage, rootfs, startup, sysfs, and DAX capability metadata.
+- Recorded the first KVM rootfs-format grid artifacts, showing uncompressed
+  SquashFS improves large-binary reads and AI CLI startup against the current
+  SquashFS zstd image while EROFS requires a guest-kernel capability slice.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

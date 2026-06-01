@@ -361,6 +361,30 @@
   optional `startup` JSON. The harness records DAX as `not_implemented` rather
   than pretending the current virtio-blk rootfs path can exercise DAX; real DAX
   needs a separate virtiofs-DAX or pmem-style mapping path.
+- H05 first rootfs-format grid artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780339109.json`
+  compared current SquashFS zstd (496.4 MiB) against uncompressed SquashFS
+  (1,603.5 MiB) across the same two rootfs-only block shapes:
+  `queue_count=1/8`, `queue_size=128`, `seg_max=64`,
+  `logical_block_size=4096`, with `storage`, `rootfs`, and `startup` enabled.
+  Uncompressed SquashFS won most read/startup lanes despite the 3.2x larger
+  image. Best uncompressed vs best zstd: rootfs seq 195.4 vs 147.7 MB/s
+  (+32.3%), random read 3,419 vs 3,184 IOPS (+7.4%), cold large-binary 313.3
+  vs 191.6 MB/s (+63.5%), small-JS 127,580 vs 99,656 ops/s (+28.0%), python
+  startup 20.5 vs 29.5 ms (+30.5% faster), node 143.5 vs 266.1 ms
+  (+46.1%), claude 1,044.4 vs 1,321.6 ms (+21.0%), gemini 2,728.9 vs
+  2,970.1 ms (+8.1%), and codex 492.4 vs 872.7 ms (+43.6%). Metadata went the
+  other way in this small grid: best zstd 62,234 stats/s vs best uncompressed
+  53,527 stats/s (-14.0%). This is strong evidence that rootfs compression is
+  a first-order startup/read bottleneck and deserves a larger grid before
+  baking block-shape defaults.
+- H05 EROFS capability artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780339221.json`
+  generated a 916.1 MiB EROFS image and tried the tuned rootfs block shape, but
+  the VM did not become ready. Current `guest/config/kernel/defconfig.x86_64`
+  does not enable `CONFIG_EROFS_FS`, so EROFS needs a kernel-capability slice
+  before it can be compared fairly. DAX remains a capability/design audit, not
+  a block-image benchmark, because the current rootfs transport is virtio-blk.
 
 ## Coverage Ledger
 
