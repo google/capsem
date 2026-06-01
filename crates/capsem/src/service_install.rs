@@ -348,12 +348,46 @@ pub async fn stop_service() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let status = tokio::process::Command::new("systemctl")
-            .args(["--user", "stop", "capsem"])
-            .status()
-            .await?;
-        if !status.success() {
-            anyhow::bail!("systemctl --user stop capsem failed");
+        let user_unit_installed = systemd_unit_path().map(|p| p.exists()).unwrap_or(false);
+        let system_unit_installed = systemd_system_unit_installed();
+        let mut user_stopped = false;
+        let mut system_stopped = false;
+        let mut errors = Vec::new();
+
+        if user_unit_installed {
+            match tokio::process::Command::new("systemctl")
+                .args(["--user", "stop", "capsem"])
+                .status()
+                .await
+            {
+                Ok(status) if status.success() => user_stopped = true,
+                Ok(_) => errors.push("systemctl --user stop capsem failed".to_string()),
+                Err(e) => errors.push(format!("systemctl --user stop capsem failed: {e}")),
+            }
+        }
+
+        if system_unit_installed || !user_stopped {
+            match tokio::process::Command::new("systemctl")
+                .args(["stop", "capsem.service"])
+                .status()
+                .await
+            {
+                Ok(status) if status.success() => system_stopped = true,
+                Ok(_) => errors.push("systemctl stop capsem.service failed".to_string()),
+                Err(e) => errors.push(format!("systemctl stop capsem.service failed: {e}")),
+            }
+        }
+
+        let stop_ok = (!user_unit_installed || user_stopped || system_stopped)
+            && (!system_unit_installed || system_stopped)
+            && (user_stopped || system_stopped);
+
+        if !stop_ok {
+            if errors.is_empty() {
+                anyhow::bail!("systemctl stop capsem failed");
+            } else {
+                anyhow::bail!("{}", errors.join("; "));
+            }
         }
     }
 
@@ -578,25 +612,95 @@ async fn install_systemd_unit(capsem_paths: &paths::CapsemPaths, home: &str) -> 
 
 #[cfg(target_os = "linux")]
 async fn uninstall_systemd_unit() -> Result<()> {
-    let unit_file = systemd_unit_path().context("HOME not set")?;
+    let user_unit_file = systemd_unit_path().context("HOME not set")?;
+    let system_unit_file = systemd_system_unit_path();
+    let user_unit_installed = user_unit_file.exists();
+    let system_unit_installed = system_unit_file.exists();
+    let mut removed_any = false;
+    let mut errors = Vec::new();
 
-    if !unit_file.exists() {
+    if !user_unit_installed && !system_unit_installed {
         println!("Service not installed.");
         return Ok(());
     }
 
-    let _ = tokio::process::Command::new("systemctl")
-        .args(["--user", "disable", "--now", "capsem"])
-        .status()
-        .await;
+    if user_unit_installed {
+        match tokio::process::Command::new("systemctl")
+            .args(["--user", "disable", "--now", "capsem"])
+            .status()
+            .await
+        {
+            Ok(status) if status.success() => {}
+            Ok(_) => errors.push("systemctl --user disable --now capsem failed".to_string()),
+            Err(e) => errors.push(format!("systemctl --user disable --now capsem failed: {e}")),
+        }
 
-    let _ = tokio::process::Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .status()
-        .await;
+        match std::fs::remove_file(&user_unit_file) {
+            Ok(()) => removed_any = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => errors.push(format!(
+                "failed to remove systemd user unit {}: {e}",
+                user_unit_file.display()
+            )),
+        }
 
-    std::fs::remove_file(&unit_file).ok();
-    Ok(())
+        match tokio::process::Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .status()
+            .await
+        {
+            Ok(status) if status.success() => {}
+            Ok(_) => errors.push("systemctl --user daemon-reload failed".to_string()),
+            Err(e) => errors.push(format!("systemctl --user daemon-reload failed: {e}")),
+        }
+    }
+
+    if system_unit_installed {
+        match tokio::process::Command::new("systemctl")
+            .args(["disable", "--now", "capsem.service"])
+            .status()
+            .await
+        {
+            Ok(status) if status.success() => {}
+            Ok(_) => errors
+                .push("systemctl disable --now capsem.service failed; retry with sudo".to_string()),
+            Err(e) => errors.push(format!(
+                "systemctl disable --now capsem.service failed; retry with sudo: {e}"
+            )),
+        }
+
+        match std::fs::remove_file(&system_unit_file) {
+            Ok(()) => removed_any = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => errors.push(format!(
+                "failed to remove systemd system unit {}; retry with sudo: {e}",
+                system_unit_file.display()
+            )),
+        }
+
+        match tokio::process::Command::new("systemctl")
+            .args(["daemon-reload"])
+            .status()
+            .await
+        {
+            Ok(status) if status.success() => {}
+            Ok(_) => errors.push("systemctl daemon-reload failed; retry with sudo".to_string()),
+            Err(e) => errors.push(format!(
+                "systemctl daemon-reload failed; retry with sudo: {e}"
+            )),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else if removed_any {
+        anyhow::bail!(
+            "service uninstall partially completed: {}",
+            errors.join("; ")
+        )
+    } else {
+        anyhow::bail!("service uninstall failed: {}", errors.join("; "))
+    }
 }
 
 // --- Common helpers ---

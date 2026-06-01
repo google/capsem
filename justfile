@@ -981,6 +981,10 @@ install: _pnpm-install _stamp-version _check-assets
             echo "ERROR: systemd user unit still exists after uninstall" >&2
             failed=1
         fi
+        if [ -e "/etc/systemd/system/capsem.service" ]; then
+            echo "ERROR: systemd system unit still exists after uninstall" >&2
+            failed=1
+        fi
         for name in capsem-service capsem-process capsem-gateway capsem-tray; do
             if pgrep -f "$HOME/.capsem/bin/$name" >/dev/null 2>&1; then
                 echo "ERROR: $name from ~/.capsem/bin is still running after uninstall" >&2
@@ -1000,6 +1004,18 @@ install: _pnpm-install _stamp-version _check-assets
             fi
         fi
         return "$failed"
+    }
+
+    cleanup_linux_system_service() {
+        if [ "$(uname -s)" != "Linux" ]; then
+            return 0
+        fi
+        if [ -e "/etc/systemd/system/capsem.service" ] || systemctl list-unit-files capsem.service >/dev/null 2>&1; then
+            sudo systemctl disable --now capsem.service >/dev/null 2>&1 || true
+            sudo rm -f "/etc/systemd/system/capsem.service"
+            sudo systemctl daemon-reload >/dev/null 2>&1 || true
+            sudo systemctl reset-failed capsem.service >/dev/null 2>&1 || true
+        fi
     }
 
     assert_executable() {
@@ -1058,6 +1074,7 @@ install: _pnpm-install _stamp-version _check-assets
         echo "Installed capsem exists but is not executable; retrying with freshly built CLI." >&2
     fi
     "$ROOT/target/release/capsem" uninstall --yes || true
+    cleanup_linux_system_service
     assert_clean_uninstall
 
     echo "=== Building frontend ==="

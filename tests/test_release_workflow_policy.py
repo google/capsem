@@ -496,20 +496,25 @@ def test_local_install_removes_old_runtime_before_installing_package():
     assert "assert_clean_uninstall" in body
     assert 'LaunchAgent still exists after uninstall' in body
     assert 'runtime bin dir still exists after uninstall' in body
+    assert 'systemd system unit still exists after uninstall' in body
     assert 'runtime run-state still exists after uninstall' in body
     assert '! -name persistent' in body
     assert '! -name persistent_registry.json' in body
+    assert 'cleanup_linux_system_service()' in body
+    assert 'sudo systemctl disable --now capsem.service' in body
+    assert 'sudo systemctl daemon-reload' in body
 
     clean_pos = body.index("=== Clean uninstalling existing local Capsem ===")
     snapshot_pos = body.index("=== Snapshotting package asset payload ===")
+    cleanup_system_pos = body.index("\n    cleanup_linux_system_service", clean_pos)
     assert_pos = body.index("\n    assert_clean_uninstall", clean_pos)
     rebuild_pos = body.index("=== Rebuilding profile-derived VM assets ===")
     repack_pos = body.index("=== Repacking VM assets ===")
     repair_pos = body.index("=== Keeping existing local profile metadata coherent ===")
     mac_install_pos = body.index('sudo installer -pkg "$PKG" -target /')
     linux_install_pos = body.index('sudo apt install -y "$DEB_PATH"')
-    assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < assert_pos < mac_install_pos
-    assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < assert_pos < linux_install_pos
+    assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < cleanup_system_pos < assert_pos < mac_install_pos
+    assert rebuild_pos < repack_pos < repair_pos < snapshot_pos < clean_pos < cleanup_system_pos < assert_pos < linux_install_pos
 
 
 def test_local_install_reruns_setup_after_restoring_settings():

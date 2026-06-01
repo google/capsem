@@ -254,6 +254,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installing from the downloaded/local artifact, so same-version
   half-configured packages unpack the new maintainer scripts instead of
   rerunning stale dpkg control data.
+- Fixed Linux service cleanup after `.deb` installs fall back to a systemd
+  system unit: `capsem stop`, `capsem service uninstall`, and `just install`
+  now try system `systemctl` without `--user` and remove the system unit before
+  proving the old runtime is gone.
 - Fixed asset rebuilds to remove stale generated manifest/signature metadata
   before regenerating checksums, recovering dev trees previously poisoned by
   privileged package hooks.
