@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read, small-JS read, and AI CLI startup against the same-run SquashFS zstd
   baseline, while metadata stats regressed; zstd level 22 produced the
   smallest image with broadly similar runtime to the shipped zstd baseline.
+- Extended the KVM rootfs-format grid harness with explicit EROFS compression
+  variants for uncompressed, lz4, and lz4hc images so EROFS can be compared
+  against uncompressed SquashFS as well as the shipped SquashFS zstd baseline.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

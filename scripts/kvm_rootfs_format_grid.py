@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,11 +36,13 @@ FORMAT_PROFILES = {
     },
     "erofs": {
         "mount_type": "erofs",
-        "description": "EROFS read-only rootfs image, if guest kernel supports it",
+        "description": "EROFS read-only rootfs image with lz4hc compression",
+        "compression": "lz4hc",
     },
 }
 
 ZSTD_FORMAT_RE = re.compile(r"^squashfs-zstd-l([1-9]|1[0-9]|2[0-2])$")
+EROFS_FORMAT_RE = re.compile(r"^erofs-(uncompressed|lz4|lz4hc)$")
 
 
 def run(
@@ -189,17 +192,38 @@ def materialize_squashfs_uncompressed(*, rebuild: bool) -> dict:
     return rootfs_image_metadata("squashfs-uncompressed")
 
 
-def materialize_erofs(*, rebuild: bool) -> dict:
-    dst = copy_common_assets("erofs")
+def erofs_compression(format_name: str) -> str | None:
+    if format_name == "erofs":
+        return "lz4hc"
+    match = EROFS_FORMAT_RE.match(format_name)
+    if not match:
+        raise ValueError(f"invalid EROFS format name: {format_name}")
+    compression = match.group(1)
+    if compression == "uncompressed":
+        return None
+    return compression
+
+
+def materialize_erofs(format_name: str, *, rebuild: bool) -> dict:
+    compression = erofs_compression(format_name)
+    dst = copy_common_assets(format_name)
     out = dst / "rootfs.squashfs"
     if not out.exists() or rebuild:
         root = ensure_extracted_rootfs(rebuild=rebuild)
         tmp = out.with_suffix(".tmp")
         tmp.unlink(missing_ok=True)
+        erofs_args = ["mkfs.erofs"]
+        if compression is not None:
+            erofs_args.append(f"-z{compression}")
+        erofs_args.extend([str(tmp), str(root)])
         mkfs = shutil.which("mkfs.erofs")
         if mkfs:
-            run([mkfs, "-zlz4hc", str(tmp), str(root)], timeout=1800)
+            run([mkfs, *erofs_args[1:]], timeout=1800)
         else:
+            docker_erofs_args = ["mkfs.erofs"]
+            if compression is not None:
+                docker_erofs_args.append(f"-z{compression}")
+            docker_erofs_args.extend(["/assets/rootfs.tmp", "/rootfs"])
             run(
                 [
                     "docker",
@@ -215,12 +239,12 @@ def materialize_erofs(*, rebuild: bool) -> dict:
                     "apt-get -o Acquire::Check-Valid-Until=false "
                     "-o Acquire::Check-Date=false update && "
                     "apt-get install -y erofs-utils && "
-                    "mkfs.erofs -zlz4hc /assets/rootfs.tmp /rootfs",
+                    f"{shlex.join(docker_erofs_args)}",
                 ],
                 timeout=1800,
             )
         tmp.replace(out)
-    return rootfs_image_metadata("erofs")
+    return rootfs_image_metadata(format_name)
 
 
 def rootfs_image_metadata(format_name: str) -> dict:
@@ -253,6 +277,20 @@ def format_profile(format_name: str) -> dict:
             "compression": "zstd",
             "compression_level": level,
         }
+    match = EROFS_FORMAT_RE.match(format_name)
+    if match:
+        compression = match.group(1)
+        if compression == "uncompressed":
+            return {
+                "mount_type": "erofs",
+                "description": "generated uncompressed EROFS rootfs",
+                "compression": "none",
+            }
+        return {
+            "mount_type": "erofs",
+            "description": f"generated EROFS {compression} rootfs",
+            "compression": compression,
+        }
     raise ValueError(f"unknown format: {format_name}")
 
 
@@ -263,8 +301,8 @@ def materialize_format(format_name: str, *, rebuild: bool) -> dict:
         return materialize_squashfs_zstd_level(format_name, rebuild=rebuild)
     if format_name == "squashfs-uncompressed":
         return materialize_squashfs_uncompressed(rebuild=rebuild)
-    if format_name == "erofs":
-        return materialize_erofs(rebuild=rebuild)
+    if format_name == "erofs" or EROFS_FORMAT_RE.match(format_name):
+        return materialize_erofs(format_name, rebuild=rebuild)
     raise ValueError(f"unknown format: {format_name}")
 
 
@@ -429,6 +467,24 @@ def parse_zstd_levels(raw: str) -> list[int]:
     return levels
 
 
+def parse_erofs_compressions(raw: str) -> list[str]:
+    compressions: list[str] = []
+    allowed = {"none", "uncompressed", "lz4", "lz4hc"}
+    for part in raw.split(","):
+        compression = part.strip()
+        if not compression:
+            continue
+        if compression not in allowed:
+            raise argparse.ArgumentTypeError(
+                f"EROFS compression must be one of none,lz4,lz4hc: {compression}"
+            )
+        if compression == "none":
+            compression = "uncompressed"
+        if compression not in compressions:
+            compressions.append(compression)
+    return compressions
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -440,6 +496,11 @@ def main() -> int:
         "--zstd-levels",
         default="",
         help="append generated SquashFS zstd level variants, e.g. 1,3,9,15,22",
+    )
+    parser.add_argument(
+        "--erofs-compressions",
+        default="",
+        help="append generated EROFS variants: none,lz4,lz4hc",
     )
     parser.add_argument("--queue-counts", default="1,4,8")
     parser.add_argument("--queue-sizes", default="128,256")
@@ -461,6 +522,10 @@ def main() -> int:
     formats = parse_formats(args.formats)
     for level in parse_zstd_levels(args.zstd_levels):
         name = f"squashfs-zstd-l{level}"
+        if name not in formats:
+            formats.append(name)
+    for compression in parse_erofs_compressions(args.erofs_compressions):
+        name = f"erofs-{compression}"
         if name not in formats:
             formats.append(name)
     shapes = build_shapes(args)

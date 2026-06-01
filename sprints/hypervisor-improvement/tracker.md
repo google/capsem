@@ -424,6 +424,14 @@
   basically flat across zstd levels. This supports using high compression when
   distribution size matters, but the bigger performance lever remains rootfs
   format/layout rather than zstd level alone.
+- H05 EROFS compression matrix support landed locally: the rootfs-format grid
+  now accepts `--erofs-compressions none,lz4,lz4hc`, appending explicit
+  `erofs-uncompressed`, `erofs-lz4`, and `erofs-lz4hc` variants. The existing
+  `erofs` format remains a compatibility alias for lz4hc, which is what the
+  first successful EROFS artifact used. The next benchmark compares those
+  variants against both shipped SquashFS zstd and uncompressed SquashFS so EROFS
+  is judged against the right no-compression baseline as well as the product
+  baseline.
 
 ## Coverage Ledger
 
