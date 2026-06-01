@@ -49,6 +49,12 @@
         rootfs/startup workload used by the Firecracker comparison.
   - [x] Record crosvm epoll, corrected-uring, direct-I/O, and multi-worker
         lanes as structured benchmark artifacts.
+  - [ ] Run a structured crosvm trace audit against Capsem instead of another
+        keyword/source skim: follow the full path for block I/O, virtqueue
+        descriptor handling, event-loop wakeups/batching, queue worker
+        ownership, and rootfs/virtiofs-facing reads, then compare each path to
+        the matching Capsem implementation and turn transferable differences
+        into measured implementation slices.
 - [ ] H07: docs, changelog, release gate.
 
 ## Notes
@@ -231,6 +237,13 @@
   867.4 ms (-6.4%), gemini 2332.6 ms (-2.3%), and codex 713.2 ms (-0.1%).
   The corrected lesson is that crosvm's cache-friendly epoll block path is the
   better reference here, not uring by itself.
+- Next crosvm work must be a systematic trace comparison, not isolated knobs:
+  trace request lifecycle from guest notification through descriptor parsing,
+  backend scheduling, host I/O submission/completion, interrupt delivery, and
+  rootfs-visible read behavior in crosvm, then map each step to Capsem's KVM
+  path. The output should be a concrete delta table with expected benefit,
+  complexity/maintenance cost, macOS/shared applicability, and the benchmark
+  lane that would prove or reject it.
 - crosvm/Firecracker source audit, first accepted Capsem slice: crosvm
   advertises `VIRTIO_BLK_F_SEG_MAX` and `VIRTIO_BLK_F_BLK_SIZE`, with
   `seg_max` bounded by the queue size, while Firecracker keeps a simple
