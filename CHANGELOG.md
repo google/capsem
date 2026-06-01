@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recorded the rootfs lower-metadata diagnostic artifact, showing EROFS lz4hc
   improves lower metadata traversal over uncompressed EROFS but still trails
   uncompressed SquashFS direct-lower metadata throughput by roughly half.
+- Extended the KVM rootfs-format grid harness with EROFS lz4hc physical
+  cluster-size variants so `mkfs.erofs -C` can be swept before testing broader
+  EROFS inode, tail-packing, xattr, or chunked-file options.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

@@ -470,6 +470,13 @@
   traversal itself; EROFS lz4hc improves metadata locality compared with
   uncompressed EROFS but still lands at roughly half the direct lower metadata
   throughput of uncompressed SquashFS.
+- H05 EROFS lz4hc tuning support landed locally: the rootfs-format grid now
+  accepts `--erofs-lz4hc-clusters`, appending generated variants such as
+  `erofs-lz4hc-c4096`, `erofs-lz4hc-c16384`, `erofs-lz4hc-c65536`, and
+  `erofs-lz4hc-c131072`. This isolates `mkfs.erofs -C` compressed physical
+  cluster size before layering riskier knobs like `-E ztailpacking`,
+  force-inode modes, xattr tolerance, max extents, or experimental chunked
+  files.
 
 ## Coverage Ledger
 

@@ -43,6 +43,7 @@ FORMAT_PROFILES = {
 
 ZSTD_FORMAT_RE = re.compile(r"^squashfs-zstd-l([1-9]|1[0-9]|2[0-2])$")
 EROFS_FORMAT_RE = re.compile(r"^erofs-(uncompressed|lz4|lz4hc)$")
+EROFS_CLUSTER_FORMAT_RE = re.compile(r"^erofs-(lz4|lz4hc)-c([1-9][0-9]*)$")
 
 
 def run(
@@ -192,20 +193,36 @@ def materialize_squashfs_uncompressed(*, rebuild: bool) -> dict:
     return rootfs_image_metadata("squashfs-uncompressed")
 
 
-def erofs_compression(format_name: str) -> str | None:
-    if format_name == "erofs":
-        return "lz4hc"
-    match = EROFS_FORMAT_RE.match(format_name)
+def parse_size_bytes(raw: str, *, name: str) -> int:
+    match = re.fullmatch(r"([1-9][0-9]*)([kKmM]?)", raw.strip())
     if not match:
-        raise ValueError(f"invalid EROFS format name: {format_name}")
-    compression = match.group(1)
-    if compression == "uncompressed":
-        return None
-    return compression
+        raise argparse.ArgumentTypeError(f"{name} must be a positive byte size: {raw}")
+    value = int(match.group(1), 10)
+    suffix = match.group(2).lower()
+    if suffix == "k":
+        value *= 1024
+    elif suffix == "m":
+        value *= 1024 * 1024
+    return value
+
+
+def erofs_compression_and_cluster(format_name: str) -> tuple[str | None, int | None]:
+    if format_name == "erofs":
+        return "lz4hc", None
+    match = EROFS_FORMAT_RE.match(format_name)
+    if match:
+        compression = match.group(1)
+        if compression == "uncompressed":
+            return None, None
+        return compression, None
+    match = EROFS_CLUSTER_FORMAT_RE.match(format_name)
+    if match:
+        return match.group(1), int(match.group(2), 10)
+    raise ValueError(f"invalid EROFS format name: {format_name}")
 
 
 def materialize_erofs(format_name: str, *, rebuild: bool) -> dict:
-    compression = erofs_compression(format_name)
+    compression, cluster_size = erofs_compression_and_cluster(format_name)
     dst = copy_common_assets(format_name)
     out = dst / "rootfs.squashfs"
     if not out.exists() or rebuild:
@@ -215,6 +232,8 @@ def materialize_erofs(format_name: str, *, rebuild: bool) -> dict:
         erofs_args = ["mkfs.erofs"]
         if compression is not None:
             erofs_args.append(f"-z{compression}")
+        if cluster_size is not None:
+            erofs_args.append(f"-C{cluster_size}")
         erofs_args.extend([str(tmp), str(root)])
         mkfs = shutil.which("mkfs.erofs")
         if mkfs:
@@ -223,6 +242,8 @@ def materialize_erofs(format_name: str, *, rebuild: bool) -> dict:
             docker_erofs_args = ["mkfs.erofs"]
             if compression is not None:
                 docker_erofs_args.append(f"-z{compression}")
+            if cluster_size is not None:
+                docker_erofs_args.append(f"-C{cluster_size}")
             docker_erofs_args.extend(["/assets/rootfs.tmp", "/rootfs"])
             run(
                 [
@@ -291,6 +312,16 @@ def format_profile(format_name: str) -> dict:
             "description": f"generated EROFS {compression} rootfs",
             "compression": compression,
         }
+    match = EROFS_CLUSTER_FORMAT_RE.match(format_name)
+    if match:
+        compression = match.group(1)
+        cluster_size = int(match.group(2), 10)
+        return {
+            "mount_type": "erofs",
+            "description": f"generated EROFS {compression} rootfs with {cluster_size}B clusters",
+            "compression": compression,
+            "physical_cluster_size": cluster_size,
+        }
     raise ValueError(f"unknown format: {format_name}")
 
 
@@ -301,7 +332,7 @@ def materialize_format(format_name: str, *, rebuild: bool) -> dict:
         return materialize_squashfs_zstd_level(format_name, rebuild=rebuild)
     if format_name == "squashfs-uncompressed":
         return materialize_squashfs_uncompressed(rebuild=rebuild)
-    if format_name == "erofs" or EROFS_FORMAT_RE.match(format_name):
+    if format_name == "erofs" or EROFS_FORMAT_RE.match(format_name) or EROFS_CLUSTER_FORMAT_RE.match(format_name):
         return materialize_erofs(format_name, rebuild=rebuild)
     raise ValueError(f"unknown format: {format_name}")
 
@@ -485,6 +516,22 @@ def parse_erofs_compressions(raw: str) -> list[str]:
     return compressions
 
 
+def parse_erofs_lz4hc_clusters(raw: str) -> list[int]:
+    clusters: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        size = parse_size_bytes(part, name="erofs-lz4hc-clusters")
+        if size < 4096 or size % 4096 != 0:
+            raise argparse.ArgumentTypeError(
+                f"EROFS lz4hc cluster size must be a 4096-byte multiple >= 4096: {size}"
+            )
+        if size not in clusters:
+            clusters.append(size)
+    return clusters
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -501,6 +548,11 @@ def main() -> int:
         "--erofs-compressions",
         default="",
         help="append generated EROFS variants: none,lz4,lz4hc",
+    )
+    parser.add_argument(
+        "--erofs-lz4hc-clusters",
+        default="",
+        help="append generated EROFS lz4hc variants with -C cluster sizes, e.g. 4K,16K,64K,128K",
     )
     parser.add_argument("--queue-counts", default="1,4,8")
     parser.add_argument("--queue-sizes", default="128,256")
@@ -526,6 +578,10 @@ def main() -> int:
             formats.append(name)
     for compression in parse_erofs_compressions(args.erofs_compressions):
         name = f"erofs-{compression}"
+        if name not in formats:
+            formats.append(name)
+    for cluster_size in parse_erofs_lz4hc_clusters(args.erofs_lz4hc_clusters):
+        name = f"erofs-lz4hc-c{cluster_size}"
         if name not in formats:
             formats.append(name)
     shapes = build_shapes(args)

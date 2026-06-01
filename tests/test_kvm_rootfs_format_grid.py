@@ -124,6 +124,44 @@ def test_rootfs_format_grid_dry_run_appends_erofs_compression_formats():
     assert payload["count"] == 5
 
 
+def test_rootfs_format_grid_dry_run_appends_erofs_lz4hc_cluster_formats():
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--dry-run",
+            "--formats",
+            "squashfs-uncompressed,erofs-lz4hc",
+            "--erofs-lz4hc-clusters",
+            "4K,16K,64K,128K",
+            "--queue-counts",
+            "1",
+            "--queue-sizes",
+            "128",
+            "--seg-maxes",
+            "64",
+            "--logical-block-sizes",
+            "4096",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert payload["formats"] == [
+        "squashfs-uncompressed",
+        "erofs-lz4hc",
+        "erofs-lz4hc-c4096",
+        "erofs-lz4hc-c16384",
+        "erofs-lz4hc-c65536",
+        "erofs-lz4hc-c131072",
+    ]
+    assert payload["count"] == 6
+
+
 def test_rootfs_format_grid_rejects_unknown_format():
     proc = subprocess.run(
         [
