@@ -1102,8 +1102,9 @@ install: _pnpm-install _stamp-version _check-assets
         bash scripts/prepare-admin-cli.sh "target/release"
         DEB=$(ls -t target/release/bundle/deb/*.deb | head -1)
         bash scripts/repack-deb.sh "$DEB" "target/release" "$INSTALL_ASSETS_DIR"
+        DEB_PATH=$(realpath "$DEB")
         echo "=== Installing .deb ==="
-        sudo apt install -y "$DEB"
+        sudo apt install -y "$DEB_PATH"
     fi
 
     echo "=== Restoring preserved settings ==="

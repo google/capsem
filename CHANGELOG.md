@@ -245,6 +245,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed Linux local `just install` so the rebuilt `.deb` is passed to `apt`
+  through an absolute file path instead of being interpreted as a package name.
 - Fixed release/install version stamping on Linux by replacing BSD-specific
   `sed -i ''` invocations in `just install` and `just cut-release` with a
   portable Perl in-place edit.
