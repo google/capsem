@@ -44,6 +44,9 @@
         segment limit, and logical block size.
   - [x] Add a focused gridsearch harness that records block-shape metadata and
         rootfs/startup results before choosing defaults.
+  - [ ] Test rootfs format/compression alternatives through the canonical
+        benchmark path: uncompressed rootfs, EROFS, and a DAX-capability path
+        if the current Linux/KVM transport can expose one cleanly.
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
         rootfs/startup workload used by the Firecracker comparison.
@@ -68,6 +71,11 @@
 - User priority: tune queue count, queue size, segment limit, and logical
   block size together; these are coupled, so isolated one-off constants are not
   enough.
+- User hypothesis: rootfs format may be a first-order bottleneck. Test
+  uncompressed rootfs to separate decompression CPU from host I/O, test EROFS
+  as a read-only Linux-native alternative, and investigate DAX-style aggressive
+  guest mapping for rootfs data before assuming more virtio-blk tuning is the
+  main lever.
 - Firecracker source audit found the strongest transferable patterns in vCPU
   control, event scheduling, virtqueue contracts, block engine configuration,
   io_uring restrictions/probes/backpressure, and hot-path metrics.
@@ -333,6 +341,15 @@
   endpoint-latency gate: service global endpoints were roughly 3.3-6.1 ms p95
   against the 3 ms gate, and `/logs/{id}` was roughly 25.3-26.3 ms p95 against
   the 12 ms gate.
+- H05 next experiment candidates from user review: rootfs format/compression
+  matrix should include current SquashFS zstd baseline, uncompressed SquashFS
+  or equivalent uncompressed read-only image, EROFS if the guest kernel has or
+  can reasonably gain support, and DAX-style guest mapping if the KVM/rootfs
+  transport can expose it without replacing the product architecture. The
+  benchmark proof must stay canonical: `capsem-bench storage/rootfs/startup`
+  plus host-native/raw-system comparison and Linux/macOS artifact comparison.
+  DAX is explicitly a capability audit first, because virtiofs DAX, pmem DAX,
+  and block-backed read-only rootfs have different kernel/device requirements.
 
 ## Coverage Ledger
 
