@@ -582,12 +582,15 @@ def main() -> int:
                 print(f"  failed: returncode={result['returncode']}", file=sys.stderr, flush=True)
                 continue
             rootfs = result["rootfs"]
+            lower_meta = rootfs.get("metadata_stat_lower", {}).get("stats_per_sec")
+            lower_meta_text = f" lower_meta={lower_meta:.0f}/s" if lower_meta is not None else ""
             print(
                 "  rootfs: "
                 f"seq={rootfs['seq_read']['throughput_mbps']:.1f} MB/s "
                 f"rand={rootfs['rand_read_4k']['iops']:.0f} iops "
                 f"small_js={rootfs['small_js_read']['ops_per_sec']:.0f}/s "
-                f"meta={rootfs['metadata_stat']['stats_per_sec']:.0f}/s",
+                f"meta={rootfs['metadata_stat']['stats_per_sec']:.0f}/s"
+                f"{lower_meta_text}",
                 flush=True,
             )
 

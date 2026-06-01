@@ -48,6 +48,22 @@ def test_metadata_stat_walk_counts_entries_and_reports_rate(tmp_path, monkeypatc
     assert stats["stats_per_sec"] > 0
 
 
+def test_lower_rootfs_scan_dirs_maps_existing_absolute_paths(tmp_path):
+    lower = tmp_path / "mnt" / "a"
+    (lower / "usr" / "bin").mkdir(parents=True)
+    (lower / "opt" / "ai-clis").mkdir(parents=True)
+
+    dirs = rootfs.lower_rootfs_scan_dirs(
+        ["/usr/bin", "/usr/lib", "/opt/ai-clis", "relative"],
+        lower_mount=str(lower),
+    )
+
+    assert dirs == [
+        str(lower / "usr" / "bin"),
+        str(lower / "opt" / "ai-clis"),
+    ]
+
+
 def test_small_file_reads_reports_ops_and_bytes(tmp_path, monkeypatch):
     monkeypatch.setattr(rootfs, "drop_caches", lambda: None)
     files = []

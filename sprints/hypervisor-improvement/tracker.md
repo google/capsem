@@ -450,6 +450,12 @@
   read at 7,205 IOPS before lz4hc beat it at 7,599 IOPS in this run; both are
   strong read/startup candidates, but metadata needs a separate investigation
   before EROFS can be a default rootfs format.
+- H05 metadata diagnostic landed locally: `capsem-bench rootfs` now records
+  `metadata_stat_lower` when the guest exposes the read-only lower rootfs at
+  `/mnt/a`, mapping `/usr/bin`, `/usr/lib`, and `/opt/ai-clis` directly to
+  `/mnt/a/...`. The existing `metadata_stat` lane remains the product path
+  through overlay. The next EROFS/SquashFS rerun should distinguish lower
+  filesystem metadata cost from overlay amplification.
 
 ## Coverage Ledger
 

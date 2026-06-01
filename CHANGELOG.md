@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and faster than uncompressed SquashFS on read and AI CLI startup lanes, while
   metadata-stat throughput remained substantially slower and needs follow-up
   before EROFS can be considered as a default rootfs format.
+- Added a `capsem-bench rootfs` metadata diagnostic that measures both the
+  normal overlay path and the direct lower rootfs mount at `/mnt/a` when
+  available, so EROFS metadata regressions can be separated into lower
+  filesystem cost versus overlay amplification.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

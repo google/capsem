@@ -13,6 +13,7 @@ from .helpers import (
 )
 
 ROOTFS_SCAN_DIRS = ["/usr/bin", "/usr/lib", "/opt/ai-clis"]
+ROOTFS_LOWER_MOUNT = "/mnt/a"
 ROOTFS_RAND_READ_COUNT = 5000
 ROOTFS_SMALL_READ_COUNT = 5000
 ROOTFS_METADATA_STAT_COUNT = 10000
@@ -284,6 +285,24 @@ def bench_metadata_stat_walk(directories, max_entries=ROOTFS_METADATA_STAT_COUNT
     return _metadata_summary(entries, files, dirs, symlinks, errors, elapsed)
 
 
+def lower_rootfs_scan_dirs(
+    directories=ROOTFS_SCAN_DIRS,
+    lower_mount=ROOTFS_LOWER_MOUNT,
+):
+    """Map rootfs scan directories to the mounted lower read-only filesystem."""
+    if not os.path.isdir(lower_mount):
+        return []
+
+    lower_dirs = []
+    for directory in directories:
+        if not directory.startswith("/"):
+            continue
+        lower_dir = os.path.join(lower_mount, directory.lstrip("/"))
+        if os.path.isdir(lower_dir):
+            lower_dirs.append(lower_dir)
+    return lower_dirs
+
+
 def _metadata_summary(entries, files, dirs, symlinks, errors, elapsed):
     return {
         "entries": entries,
@@ -377,6 +396,19 @@ def rootfs_bench():
         f"{metadata_stats['stats_per_sec']:.0f}",
         f"{metadata_stats['duration_ms']} ms",
     )
+
+    lower_scan_dirs = lower_rootfs_scan_dirs()
+    results["lower_scan_dirs"] = lower_scan_dirs
+    if lower_scan_dirs:
+        lower_metadata_stats = bench_metadata_stat_walk(lower_scan_dirs)
+        results["metadata_stat_lower"] = lower_metadata_stats
+        table.add_row(
+            "Metadata lower",
+            f"{lower_metadata_stats['entries']} entries",
+            "-",
+            f"{lower_metadata_stats['stats_per_sec']:.0f}",
+            f"{lower_metadata_stats['duration_ms']} ms",
+        )
 
     console.print(table)
     return results
