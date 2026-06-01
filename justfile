@@ -68,9 +68,9 @@ _stamp-version:
     CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
     NEW="${CAPSEM_RELEASE_VERSION:-1.2.$(date +%s)}"
     echo "Stamping version: ${CURRENT} -> ${NEW}"
-    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
-    sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
-    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
+    perl -0pi -e "s/^version = \"\Q${CURRENT}\E\"/version = \"${NEW}\"/m" Cargo.toml
+    perl -0pi -e "s/\"version\": \"\Q${CURRENT}\E\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
+    perl -0pi -e "s/^version = \"\Q${CURRENT}\E\"/version = \"${NEW}\"/m" pyproject.toml
 
 # Compile all host binaries
 _build-host:
@@ -1381,7 +1381,7 @@ cut-release: test _stamp-version
     TODAY=$(date +%Y-%m-%d)
     echo "=== Cutting release $TAG ==="
     # Stamp changelog: [Unreleased] -> [NEW] - TODAY
-    sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
+    perl -0pi -e "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/m" CHANGELOG.md
     # Extract latest release notes for the frontend boot screen
     uv run python3 scripts/extract-release-notes.py
     # Commit and tag locally. The actual push is deliberate/manual so the
