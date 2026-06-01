@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended the KVM rootfs-format grid harness with EROFS lz4hc physical
   cluster-size variants so `mkfs.erofs -C` can be swept before testing broader
   EROFS inode, tail-packing, xattr, or chunked-file options.
+- Recorded the EROFS lz4hc cluster-size sweep, showing 64K clusters improved
+  read and overlay metadata lanes while shrinking the image versus the current
+  lz4hc build, though tuned EROFS still trailed uncompressed SquashFS on
+  metadata throughput.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

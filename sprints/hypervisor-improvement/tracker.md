@@ -477,6 +477,22 @@
   cluster size before layering riskier knobs like `-E ztailpacking`,
   force-inode modes, xattr tolerance, max extents, or experimental chunked
   files.
+- H05 EROFS lz4hc cluster-size artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780350703.json`
+  compared uncompressed SquashFS, current EROFS lz4hc, and explicit lz4hc
+  `-C` clusters of 4K, 16K, 64K, and 128K. Against current EROFS lz4hc
+  (916.1 MiB), 64K clusters shrank the image to 768.1 MiB and improved seq
+  read 286.5 vs 237.3 MB/s (+20.7%), random read 7,884 vs 7,190 IOPS (+9.7%),
+  cold large-binary 488.0 vs 368.7 MB/s (+32.4%), small-JS 167,155 vs 155,122
+  ops/s (+7.8%), and overlay metadata 27,930 vs 20,745 stats/s (+34.6%).
+  Direct-lower metadata stayed roughly flat/slightly down at 28,992 vs 30,134
+  stats/s (-3.8%). The 16K variant was best for small-JS reads in this run
+  (177,020 ops/s) but lower on random IOPS; the 128K variant was smallest
+  (759.0 MiB) and highest seq read (296.6 MB/s) but did not dominate random or
+  lower metadata. Against uncompressed SquashFS, tuned EROFS still wins read
+  lanes and size but remains about 44-53% behind on metadata throughput, so
+  cluster tuning improves the compressed candidate without closing the metadata
+  gap.
 
 ## Coverage Ledger
 
