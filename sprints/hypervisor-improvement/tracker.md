@@ -272,6 +272,18 @@
   with sysfs `mq_dirs=4`, `max_segments=64`, `logical_block_size=4096`,
   `nr_requests=64`, and rootfs random read 2,885 IOPS, small JS 109,911 ops/s,
   metadata 61,877 stats/s.
+- H05 first real grid recorded
+  `benchmarks/kvm-block-shape/data_1.2.1780320819_x86_64_1780334747.json`
+  for 24 queue/geometry cells: queue counts 1/4/8, queue sizes 128/256,
+  segment max auto/64, logical block sizes 512/4096. The best balanced cell by
+  equal rootfs lane ratio was `queue_count=8`, `queue_size=128`, `seg_max=64`,
+  `logical_block_size=4096`: random read 3,349 IOPS (+160.7% vs committed
+  Linux baseline), small JS 116,278 ops/s (+55.4%), metadata 63,880 stats/s
+  (+79.1%), cold large-binary 203.2 MB/s (+25.8%), sequential read 138.1 MB/s
+  (-18.4%). Linux exposed 4 `/sys/block/vda/mq` queues for both 4-queue and
+  8-queue device configs on this 2-vCPU VM, so the next grid should include
+  vCPU count and avoid assuming requested queue count equals active Linux
+  hardware queues.
 
 ## Coverage Ledger
 
