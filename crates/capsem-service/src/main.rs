@@ -81,6 +81,13 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     // Debug-build-only: allows targeted kernel boot diagnostics without
     // making release boots noisy.
     "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
+    // KVM block-shape tuning knobs used by the hypervisor-improvement
+    // benchmark gridsearch. These are bounded numeric values, not secrets.
+    "CAPSEM_KVM_BLK_QUEUE_COUNT",
+    "CAPSEM_KVM_BLK_QUEUE_SIZE",
+    "CAPSEM_KVM_BLK_SEG_MAX",
+    "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE",
+    "CAPSEM_KVM_BLK_IO_URING",
 ];
 
 const SUSPEND_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);

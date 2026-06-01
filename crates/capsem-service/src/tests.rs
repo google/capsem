@@ -197,7 +197,7 @@ fn startup_asset_requirement_rejects_profiles_without_vm_assets_when_dev_fallbac
 }
 
 #[test]
-fn process_env_allowlist_forwards_mcp_timeout_knobs() {
+fn process_env_allowlist_forwards_child_runtime_knobs() {
     assert!(
         PROCESS_ENV_ALLOWLIST.contains(&"CAPSEM_HOME"),
         "CAPSEM_HOME must reach capsem-process so tests and custom installs use the same config root as capsem-service"
@@ -209,10 +209,15 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
         "CAPSEM_TEST_UPSTREAM_OVERRIDES",
         "CAPSEM_DEV_KERNEL_CMDLINE_APPEND",
+        "CAPSEM_KVM_BLK_QUEUE_COUNT",
+        "CAPSEM_KVM_BLK_QUEUE_SIZE",
+        "CAPSEM_KVM_BLK_SEG_MAX",
+        "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE",
+        "CAPSEM_KVM_BLK_IO_URING",
     ] {
         assert!(
             PROCESS_ENV_ALLOWLIST.contains(&key),
-            "{key} must reach capsem-process because McpTimeouts::from_env() is read there"
+            "{key} must reach capsem-process because runtime tuning is read there"
         );
     }
 }

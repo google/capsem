@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added bounded Linux KVM virtio-blk shape knobs for queue count, queue size,
+  segment limit, logical block size, and io_uring mode so rootfs/startup
+  tuning can sweep coupled block-device settings instead of one-off constants.
 - Surfaced live VM resource metrics through `capsem info` and the service
   `/info` response, including metrics schema/capture time, configured RAM and
   vCPUs, host process PID/RSS/CPU time/CPU percent, and session/workspace/rootfs

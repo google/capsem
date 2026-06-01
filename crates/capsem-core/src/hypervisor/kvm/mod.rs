@@ -465,28 +465,34 @@ impl Hypervisor for KvmHypervisor {
             #[cfg(target_arch = "x86_64")]
             let blk_irq_fd = create_irq_eventfd()?;
             #[cfg(target_arch = "x86_64")]
-            let blk_notify_fd = create_notify_eventfd()?;
-            #[cfg(target_arch = "x86_64")]
             let blk_interrupt_status = Arc::new(AtomicU32::new(0));
             #[cfg(target_arch = "x86_64")]
             vm.irqfd(
                 blk_irq_fd.as_raw_fd(),
                 irq_to_gsi(memory::virtio_mmio_irq(1)),
             )?;
-            #[cfg(target_arch = "x86_64")]
-            vm.ioeventfd(
-                blk_notify_fd.as_raw_fd(),
-                memory::virtio_mmio_addr(1) + virtio_mmio::QUEUE_NOTIFY_OFFSET,
-                4,
-                Some(0),
-            )?;
             let blk_device = virtio_blk::VirtioBlockDevice::new(disk_path, true)?;
             block_metrics.push(blk_device.metrics());
+            #[cfg(target_arch = "x86_64")]
+            let blk_notify_fds = {
+                let mut notify_fds = Vec::with_capacity(blk_device.queue_count());
+                for queue_index in 0..blk_device.queue_count() {
+                    let notify_fd = create_notify_eventfd()?;
+                    vm.ioeventfd(
+                        notify_fd.as_raw_fd(),
+                        memory::virtio_mmio_addr(1) + virtio_mmio::QUEUE_NOTIFY_OFFSET,
+                        4,
+                        Some(queue_index as u64),
+                    )?;
+                    notify_fds.push(notify_fd);
+                }
+                notify_fds
+            };
             #[cfg(target_arch = "x86_64")]
             let blk_device = blk_device.with_async_notify(
                 blk_irq_fd.as_raw_fd(),
                 Arc::clone(&blk_interrupt_status),
-                blk_notify_fd,
+                blk_notify_fds,
             );
             #[cfg(target_arch = "x86_64")]
             let blk_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(
@@ -519,28 +525,34 @@ impl Hypervisor for KvmHypervisor {
             #[cfg(target_arch = "x86_64")]
             let scratch_irq_fd = create_irq_eventfd()?;
             #[cfg(target_arch = "x86_64")]
-            let scratch_notify_fd = create_notify_eventfd()?;
-            #[cfg(target_arch = "x86_64")]
             let scratch_interrupt_status = Arc::new(AtomicU32::new(0));
             #[cfg(target_arch = "x86_64")]
             vm.irqfd(
                 scratch_irq_fd.as_raw_fd(),
                 irq_to_gsi(memory::virtio_mmio_irq(2)),
             )?;
-            #[cfg(target_arch = "x86_64")]
-            vm.ioeventfd(
-                scratch_notify_fd.as_raw_fd(),
-                memory::virtio_mmio_addr(2) + virtio_mmio::QUEUE_NOTIFY_OFFSET,
-                4,
-                Some(0),
-            )?;
             let scratch_device = virtio_blk::VirtioBlockDevice::new(scratch_path, false)?;
             block_metrics.push(scratch_device.metrics());
+            #[cfg(target_arch = "x86_64")]
+            let scratch_notify_fds = {
+                let mut notify_fds = Vec::with_capacity(scratch_device.queue_count());
+                for queue_index in 0..scratch_device.queue_count() {
+                    let notify_fd = create_notify_eventfd()?;
+                    vm.ioeventfd(
+                        notify_fd.as_raw_fd(),
+                        memory::virtio_mmio_addr(2) + virtio_mmio::QUEUE_NOTIFY_OFFSET,
+                        4,
+                        Some(queue_index as u64),
+                    )?;
+                    notify_fds.push(notify_fd);
+                }
+                notify_fds
+            };
             #[cfg(target_arch = "x86_64")]
             let scratch_device = scratch_device.with_async_notify(
                 scratch_irq_fd.as_raw_fd(),
                 Arc::clone(&scratch_interrupt_status),
-                scratch_notify_fd,
+                scratch_notify_fds,
             );
             #[cfg(target_arch = "x86_64")]
             let scratch_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(

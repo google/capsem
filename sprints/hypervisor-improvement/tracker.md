@@ -40,6 +40,10 @@
         completion paths after block is measured as a whole.
 - [ ] H04: CPU, SMP, and lifecycle.
 - [ ] H05: storage, rootfs, and filesystem experiments.
+  - [x] Add a KVM block-shape profile covering queue count, queue size,
+        segment limit, and logical block size.
+  - [ ] Add a focused gridsearch harness that records block-shape metadata and
+        rootfs/startup results before choosing defaults.
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
         rootfs/startup workload used by the Firecracker comparison.
@@ -55,6 +59,9 @@
   OpenTelemetry.
 - User priority: expose CPU usage, I/O, and memory usage so users get a clear
   system view.
+- User priority: tune queue count, queue size, segment limit, and logical
+  block size together; these are coupled, so isolated one-off constants are not
+  enough.
 - Firecracker source audit found the strongest transferable patterns in vCPU
   control, event scheduling, virtqueue contracts, block engine configuration,
   io_uring restrictions/probes/backpressure, and hot-path metrics.
@@ -238,6 +245,23 @@
   (+10.4%), warm large-binary 5,468.8 MB/s (-1.6%), and sequential read
   129.2 MB/s (-23.6%). This is a focused experiment, not a replacement for a
   canonical `just benchmark` artifact.
+- H05 first block-shape slice landed locally: KVM virtio-blk now accepts
+  bounded `CAPSEM_KVM_BLK_QUEUE_COUNT`, `CAPSEM_KVM_BLK_QUEUE_SIZE`,
+  `CAPSEM_KVM_BLK_SEG_MAX`, and `CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE` knobs,
+  advertises `VIRTIO_BLK_F_MQ` plus config `num_queues` when queue count is
+  greater than one, and registers one x86_64 `KVM_IOEVENTFD` datamatch per
+  queue so MQ benchmarks do not fall back to vCPU MMIO exits. `capsem-service`
+  now forwards those numeric tuning knobs to `capsem-process`.
+- Focused live KVM MQ probe with `queue_count=4`, `queue_size=128`,
+  `seg_max=64`, and `logical_block_size=4096` confirmed Linux sees
+  `/sys/block/vda/mq` with 4 queues, `max_segments=64`,
+  `logical_block_size=4096`, and `nr_requests=64`. Against the committed Linux
+  baseline artifact, the same live `capsem-bench rootfs` probe measured random
+  read 3,022 IOPS (+135.2%), cold large-binary 179.2 MB/s (+11.0%), small JS
+  106,595 ops/s (+42.5%), metadata 64,006 stats/s (+79.4%), warm large-binary
+  5,354.9 MB/s (-3.7%), and sequential read 134.0 MB/s (-20.8%). This is a
+  focused experiment and will feed the gridsearch rather than being accepted as
+  the default.
 
 ## Coverage Ledger
 
@@ -270,6 +294,7 @@
   `cargo test -p capsem-core block_io_uring_queue_full_backpressures_without_sync_fallback --lib`,
   `cargo test -p capsem-core block_io_uring_completion_retries_backpressured_descriptor --lib`,
   `cargo test -p capsem-core block_io_uring --lib`,
+  `cargo test -p capsem-service process_env_allowlist_forwards_child_runtime_knobs --bin capsem-service`,
   `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`.
 - Functional: `just exec "echo ok"` passed after H01 queue activation changes.
@@ -308,7 +333,9 @@
   feed for a real booted VM. H02 default async block selection was smoke-tested
   through the same KVM one-shot VM path. The latest isolated live KVM check
   used the repo assets path and confirmed the guest-visible virtio-blk geometry
-  before running `capsem-bench rootfs`.
+  before running `capsem-bench rootfs`. The latest MQ live KVM check confirmed
+  four virtio-blk queues, tuned queue size, tuned segment limit, and tuned
+  logical block size in Linux sysfs before running `capsem-bench rootfs`.
 - Telemetry: H03 first slice exposes existing `VmMetricsSnapshot.resources`
   fields through the service API and CLI. H03 second slice adds
   `VmMetricsSnapshot.hypervisor.block` and feeds it from the KVM virtio-blk

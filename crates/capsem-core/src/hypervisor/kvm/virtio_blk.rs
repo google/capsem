@@ -25,7 +25,11 @@ use super::virtio_queue::{VirtQueue, VIRTIO_RING_F_EVENT_IDX};
 const VIRTIO_ID_BLOCK: u32 = 2;
 
 /// Maximum queue size for the requestq.
-const QUEUE_SIZE: u16 = 256;
+const DEFAULT_QUEUE_SIZE: u16 = 256;
+const DEFAULT_QUEUE_COUNT: u16 = 1;
+const MAX_QUEUE_COUNT: u16 = 16;
+const MIN_QUEUE_SIZE: u16 = 16;
+const MAX_QUEUE_SIZE: u16 = 1024;
 /// Keep the host async ring bounded below the guest-visible queue so descriptors
 /// can backpressure cleanly instead of letting host work grow without a cap.
 const IO_URING_QUEUE_SIZE: u32 = 128;
@@ -36,9 +40,7 @@ const SECTOR_SIZE: u64 = 512;
 
 /// Maximum device ID length (virtio spec).
 const VIRTIO_BLK_ID_LEN: usize = 20;
-/// Maximum payload segments per request. Two descriptors are reserved for the
-/// request header and status byte in the guest-visible queue.
-const VIRTIO_BLK_SEG_MAX: u32 = QUEUE_SIZE as u32 - 2;
+const DEFAULT_LOGICAL_BLOCK_SIZE: u32 = SECTOR_SIZE as u32;
 
 /// Size of one virtio discard segment.
 const DISCARD_SEGMENT_SIZE: usize = 16;
@@ -47,6 +49,7 @@ const DISCARD_SEGMENT_SIZE: usize = 16;
 const VIRTIO_BLK_F_SEG_MAX: u64 = 1 << 2;
 const VIRTIO_BLK_F_RO: u64 = 1 << 5;
 const VIRTIO_BLK_F_BLK_SIZE: u64 = 1 << 6;
+const VIRTIO_BLK_F_MQ: u64 = 1 << 12;
 const VIRTIO_BLK_F_DISCARD: u64 = 1 << 13;
 const VIRTIO_F_VERSION_1: u64 = 1 << 32;
 
@@ -181,19 +184,111 @@ impl BlockDeviceMetrics {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BlockShape {
+    queue_count: u16,
+    queue_size: u16,
+    seg_max: u32,
+    logical_block_size: u32,
+}
+
+impl BlockShape {
+    fn from_env() -> Result<Self> {
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    fn from_lookup<F>(lookup: F) -> Result<Self>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let queue_count =
+            parse_u16_env(&lookup, "CAPSEM_KVM_BLK_QUEUE_COUNT", DEFAULT_QUEUE_COUNT)?;
+        if !(1..=MAX_QUEUE_COUNT).contains(&queue_count) {
+            anyhow::bail!(
+                "CAPSEM_KVM_BLK_QUEUE_COUNT must be between 1 and {MAX_QUEUE_COUNT}, got {queue_count}"
+            );
+        }
+
+        let queue_size = parse_u16_env(&lookup, "CAPSEM_KVM_BLK_QUEUE_SIZE", DEFAULT_QUEUE_SIZE)?;
+        if !(MIN_QUEUE_SIZE..=MAX_QUEUE_SIZE).contains(&queue_size) || !queue_size.is_power_of_two()
+        {
+            anyhow::bail!(
+                "CAPSEM_KVM_BLK_QUEUE_SIZE must be a power of two between {MIN_QUEUE_SIZE} and {MAX_QUEUE_SIZE}, got {queue_size}"
+            );
+        }
+
+        let max_seg = u32::from(queue_size) - 2;
+        let seg_max = parse_u32_env(&lookup, "CAPSEM_KVM_BLK_SEG_MAX", max_seg)?;
+        if seg_max == 0 || seg_max > max_seg {
+            anyhow::bail!(
+                "CAPSEM_KVM_BLK_SEG_MAX must be between 1 and queue_size - 2 ({max_seg}), got {seg_max}"
+            );
+        }
+
+        let logical_block_size = parse_u32_env(
+            &lookup,
+            "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE",
+            DEFAULT_LOGICAL_BLOCK_SIZE,
+        )?;
+        if !(SECTOR_SIZE as u32..=4096).contains(&logical_block_size)
+            || !logical_block_size.is_power_of_two()
+            || logical_block_size % (SECTOR_SIZE as u32) != 0
+        {
+            anyhow::bail!(
+                "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE must be a power-of-two multiple of 512 between 512 and 4096, got {logical_block_size}"
+            );
+        }
+
+        Ok(Self {
+            queue_count,
+            queue_size,
+            seg_max,
+            logical_block_size,
+        })
+    }
+
+    fn queue_sizes(&self) -> Vec<u16> {
+        vec![self.queue_size; self.queue_count as usize]
+    }
+}
+
+fn parse_u16_env<F>(lookup: &F, name: &str, default: u16) -> Result<u16>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let Some(raw) = lookup(name) else {
+        return Ok(default);
+    };
+    raw.parse::<u16>()
+        .with_context(|| format!("parse {name}={raw:?} as u16"))
+}
+
+fn parse_u32_env<F>(lookup: &F, name: &str, default: u32) -> Result<u32>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let Some(raw) = lookup(name) else {
+        return Ok(default);
+    };
+    raw.parse::<u32>()
+        .with_context(|| format!("parse {name}={raw:?} as u32"))
+}
+
 /// Virtio block device backed by a file.
 pub(super) struct VirtioBlockDevice {
     file: std::fs::File,
     read_only: bool,
     capacity_sectors: u64,
     device_id: [u8; VIRTIO_BLK_ID_LEN],
-    queue: Option<VirtQueue>,
+    shape: BlockShape,
+    queue_sizes: Vec<u16>,
+    queues: Vec<Option<VirtQueue>>,
     mem: Option<GuestMemoryRef>,
     irq_fd: Option<RawFd>,
     interrupt_status: Option<Arc<AtomicU32>>,
-    notify_fd: Option<OwnedFd>,
-    control_tx: Option<mpsc::Sender<BlockWorkerCommand>>,
-    worker_handle: Option<std::thread::JoinHandle<()>>,
+    notify_fds: Vec<OwnedFd>,
+    control_txs: Vec<mpsc::Sender<BlockWorkerCommand>>,
+    worker_handles: Vec<std::thread::JoinHandle<()>>,
     metrics: Arc<BlockDeviceMetrics>,
 }
 
@@ -208,6 +303,10 @@ impl VirtioBlockDevice {
     /// If `read_only` is true, the file is opened read-only and
     /// VIRTIO_BLK_F_RO is advertised. Writes are rejected.
     pub fn new(path: &Path, read_only: bool) -> Result<Self> {
+        Self::new_with_shape(path, read_only, BlockShape::from_env()?)
+    }
+
+    fn new_with_shape(path: &Path, read_only: bool, shape: BlockShape) -> Result<Self> {
         describe_metrics_once();
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -228,18 +327,31 @@ impl VirtioBlockDevice {
             device_id[..len].copy_from_slice(&bytes[..len]);
         }
 
+        let queue_sizes = shape.queue_sizes();
+        tracing::debug!(
+            event_name = "virtio.blk.shape",
+            read_only,
+            queue_count = shape.queue_count,
+            queue_size = shape.queue_size,
+            seg_max = shape.seg_max,
+            logical_block_size = shape.logical_block_size,
+            "virtio-blk shape selected"
+        );
+
         Ok(Self {
             file,
             read_only,
             capacity_sectors,
             device_id,
-            queue: None,
+            shape,
+            queue_sizes,
+            queues: Vec::new(),
             mem: None,
             irq_fd: None,
             interrupt_status: None,
-            notify_fd: None,
-            control_tx: None,
-            worker_handle: None,
+            notify_fds: Vec::new(),
+            control_txs: Vec::new(),
+            worker_handles: Vec::new(),
             metrics: Arc::new(BlockDeviceMetrics::default()),
         })
     }
@@ -248,15 +360,34 @@ impl VirtioBlockDevice {
         Arc::clone(&self.metrics)
     }
 
+    pub(super) fn queue_count(&self) -> usize {
+        self.queue_sizes.len()
+    }
+
+    fn stop_workers(&mut self) {
+        let had_workers = !self.control_txs.is_empty();
+        for tx in self.control_txs.drain(..) {
+            let _ = tx.send(BlockWorkerCommand::Stop);
+        }
+        if had_workers {
+            for notify_fd in &self.notify_fds {
+                let _ = write_eventfd(notify_fd.as_raw_fd());
+            }
+        }
+        for handle in self.worker_handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+
     pub fn with_async_notify(
         mut self,
         irq_fd: RawFd,
         interrupt_status: Arc<AtomicU32>,
-        notify_fd: OwnedFd,
+        notify_fds: Vec<OwnedFd>,
     ) -> Self {
         self.irq_fd = Some(irq_fd);
         self.interrupt_status = Some(interrupt_status);
-        self.notify_fd = Some(notify_fd);
+        self.notify_fds = notify_fds;
         self
     }
 
@@ -1469,6 +1600,9 @@ impl VirtioDevice for VirtioBlockDevice {
             | VIRTIO_RING_F_EVENT_IDX
             | VIRTIO_BLK_F_SEG_MAX
             | VIRTIO_BLK_F_BLK_SIZE;
+        if self.queue_sizes.len() > 1 {
+            f |= VIRTIO_BLK_F_MQ;
+        }
         if self.read_only {
             f |= VIRTIO_BLK_F_RO;
         } else {
@@ -1478,14 +1612,15 @@ impl VirtioDevice for VirtioBlockDevice {
     }
 
     fn queue_max_sizes(&self) -> &[u16] {
-        &[QUEUE_SIZE]
+        &self.queue_sizes
     }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {
         let mut config = [0_u8; 48];
         config[0..8].copy_from_slice(&self.capacity_sectors.to_le_bytes());
-        config[12..16].copy_from_slice(&VIRTIO_BLK_SEG_MAX.to_le_bytes());
-        config[20..24].copy_from_slice(&(SECTOR_SIZE as u32).to_le_bytes());
+        config[12..16].copy_from_slice(&self.shape.seg_max.to_le_bytes());
+        config[20..24].copy_from_slice(&self.shape.logical_block_size.to_le_bytes());
+        config[34..36].copy_from_slice(&self.shape.queue_count.to_le_bytes());
         if !self.read_only {
             let max_discard_sectors = self.capacity_sectors.min(u32::MAX as u64) as u32;
             config[36..40].copy_from_slice(&max_discard_sectors.to_le_bytes());
@@ -1503,7 +1638,13 @@ impl VirtioDevice for VirtioBlockDevice {
     }
 
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
-        if let Some(q) = queues.first() {
+        self.stop_workers();
+        self.queues.clear();
+
+        let use_async_notify = self.notify_fds.len() == self.queue_sizes.len()
+            && self.irq_fd.is_some()
+            && self.interrupt_status.is_some();
+        for (queue_index, q) in queues.iter().enumerate().take(self.queue_sizes.len()) {
             if q.size > 0 {
                 let queue = if q.warm_restore {
                     VirtQueue::new_restored_with_event_idx(
@@ -1525,11 +1666,14 @@ impl VirtioDevice for VirtioBlockDevice {
                     )
                 };
 
-                if let (Some(irq_fd), Some(interrupt_status), Some(notify_fd)) = (
-                    self.irq_fd,
-                    self.interrupt_status.as_ref().cloned(),
-                    self.notify_fd.as_ref(),
-                ) {
+                if use_async_notify {
+                    let irq_fd = self.irq_fd.expect("checked above");
+                    let interrupt_status = self
+                        .interrupt_status
+                        .as_ref()
+                        .cloned()
+                        .expect("checked above");
+                    let notify_fd = &self.notify_fds[queue_index];
                     match (self.file.try_clone(), dup_owned_fd(notify_fd.as_raw_fd())) {
                         (Ok(file), Ok(worker_notify_fd)) => {
                             let (tx, rx) = mpsc::channel();
@@ -1539,7 +1683,7 @@ impl VirtioDevice for VirtioBlockDevice {
                             let worker_mem = mem.clone();
                             let metrics = Arc::clone(&self.metrics);
                             let handle = std::thread::Builder::new()
-                                .name("virtio-blk-ioeventfd".into())
+                                .name(format!("virtio-blk-q{queue_index}"))
                                 .spawn(move || {
                                     block_worker_loop(
                                         file,
@@ -1556,39 +1700,42 @@ impl VirtioDevice for VirtioBlockDevice {
                                     )
                                 })
                                 .expect("failed to spawn virtio-blk ioeventfd worker");
-                            self.control_tx = Some(tx);
-                            self.worker_handle = Some(handle);
-                            self.queue = None;
+                            self.control_txs.push(tx);
+                            self.worker_handles.push(handle);
+                            self.queues.push(None);
                         }
                         (file_result, notify_result) => {
                             tracing::warn!(
                                 event_name = "virtio.blk.worker_disabled",
+                                queue_index,
                                 file_error = ?file_result.err(),
                                 notify_error = ?notify_result.err(),
                                 "virtio-blk ioeventfd worker disabled"
                             );
-                            self.queue = Some(queue);
+                            self.queues.push(Some(queue));
                         }
                     }
                 } else {
-                    self.queue = Some(queue);
+                    self.queues.push(Some(queue));
                 }
+            } else {
+                self.queues.push(None);
             }
         }
         self.mem = Some(mem);
     }
 
     fn queue_notify(&mut self, queue_index: u32) -> bool {
-        if queue_index != 0 {
+        let Some(queue_slot) = self.queues.get_mut(queue_index as usize) else {
             tracing::warn!(
                 event_name = "virtio.blk.queue_notify_ignored",
                 queue_index,
                 "virtio-blk ignored notification for unknown queue"
             );
             return false;
-        }
+        };
 
-        let mut queue = match self.queue.take() {
+        let mut queue = match queue_slot.take() {
             Some(q) => q,
             None => {
                 tracing::warn!(
@@ -1616,10 +1763,11 @@ impl VirtioDevice for VirtioBlockDevice {
         emit_queue_drain_metrics("mmio", &result);
         self.metrics.record_queue_drain(&result);
 
-        self.queue = Some(queue);
+        *queue_slot = Some(queue);
         tracing::trace!(
             event_name = "virtio.blk.queue_drain",
             backend = "mmio",
+            queue_index,
             processed = result.processed,
             used_entries = result.used_entries,
             should_interrupt = result.should_interrupt,
@@ -1634,39 +1782,43 @@ impl VirtioDevice for VirtioBlockDevice {
     }
 
     fn quiesce(&mut self) -> Result<()> {
-        let Some(tx) = self.control_tx.as_ref() else {
+        if self.control_txs.is_empty() {
             return Ok(());
-        };
-        let Some(notify_fd) = self.notify_fd.as_ref() else {
-            return Ok(());
-        };
-        let (done_tx, done_rx) = mpsc::channel();
+        }
         let started = Instant::now();
-        tx.send(BlockWorkerCommand::Drain(done_tx))
-            .context("send virtio-blk drain command")?;
-        write_eventfd(notify_fd.as_raw_fd()).context("wake virtio-blk worker for drain")?;
-        let result = done_rx
-            .recv_timeout(Duration::from_secs(2))
-            .context("wait for virtio-blk drain");
+        let mut done_rxs = Vec::with_capacity(self.control_txs.len());
+        for tx in &self.control_txs {
+            let (done_tx, done_rx) = mpsc::channel();
+            tx.send(BlockWorkerCommand::Drain(done_tx))
+                .context("send virtio-blk drain command")?;
+            done_rxs.push(done_rx);
+        }
+        for notify_fd in &self.notify_fds {
+            write_eventfd(notify_fd.as_raw_fd()).context("wake virtio-blk worker for drain")?;
+        }
+        let mut result = Ok(());
+        for done_rx in done_rxs {
+            if let Err(error) = done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .context("wait for virtio-blk drain")
+            {
+                result = Err(error);
+                break;
+            }
+        }
         ::metrics::histogram!(METRIC_QUIESCE_DRAIN_DURATION_MS, "backend" => "ioeventfd")
             .record(duration_ms(started.elapsed()));
-        result.map(|_| ())
+        result
     }
 
     fn uses_mmio_interrupt(&self) -> bool {
-        self.control_tx.is_none()
+        self.notify_fds.is_empty()
     }
 }
 
 impl Drop for VirtioBlockDevice {
     fn drop(&mut self) {
-        if let (Some(tx), Some(notify_fd)) = (self.control_tx.take(), self.notify_fd.as_ref()) {
-            let _ = tx.send(BlockWorkerCommand::Stop);
-            let _ = write_eventfd(notify_fd.as_raw_fd());
-        }
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.join();
-        }
+        self.stop_workers();
     }
 }
 
@@ -2256,7 +2408,7 @@ mod tests {
             let interrupt_status = Arc::new(AtomicU32::new(0));
             let mut dev = VirtioBlockDevice::new(path, read_only)
                 .unwrap()
-                .with_async_notify(irq_raw_fd, Arc::clone(&interrupt_status), notify_fd);
+                .with_async_notify(irq_raw_fd, Arc::clone(&interrupt_status), vec![notify_fd]);
 
             let queue_config = QueueConfig {
                 desc_addr: RAM_BASE + DESC_TABLE_OFFSET,
@@ -2396,6 +2548,7 @@ mod tests {
         assert_ne!(f & VIRTIO_BLK_F_SEG_MAX, 0, "must report SEG_MAX");
         assert_ne!(f & VIRTIO_BLK_F_BLK_SIZE, 0, "must report BLK_SIZE");
         assert_ne!(f & VIRTIO_BLK_F_RO, 0, "must have RO bit");
+        assert_eq!(f & VIRTIO_BLK_F_MQ, 0, "single queue must not report MQ");
         assert_eq!(f & VIRTIO_BLK_F_DISCARD, 0, "RO disks must not discard");
     }
 
@@ -2409,6 +2562,7 @@ mod tests {
         assert_ne!(f & VIRTIO_BLK_F_SEG_MAX, 0, "must report SEG_MAX");
         assert_ne!(f & VIRTIO_BLK_F_BLK_SIZE, 0, "must report BLK_SIZE");
         assert_eq!(f & VIRTIO_BLK_F_RO, 0, "must NOT have RO bit");
+        assert_eq!(f & VIRTIO_BLK_F_MQ, 0, "single queue must not report MQ");
         assert_ne!(f & VIRTIO_BLK_F_DISCARD, 0, "RW disks must support discard");
     }
 
@@ -2416,7 +2570,23 @@ mod tests {
     fn block_has_one_queue() {
         let path = temp_disk("one-q.img", 512);
         let dev = VirtioBlockDevice::new(&path, false).unwrap();
-        assert_eq!(dev.queue_max_sizes(), &[QUEUE_SIZE]);
+        assert_eq!(dev.queue_max_sizes(), &[DEFAULT_QUEUE_SIZE]);
+    }
+
+    #[test]
+    fn block_shape_supports_multi_queue_and_queue_size() {
+        let path = temp_disk("mq-shape.img", 8192);
+        let shape = BlockShape {
+            queue_count: 4,
+            queue_size: 128,
+            seg_max: 64,
+            logical_block_size: 4096,
+        };
+        let dev = VirtioBlockDevice::new_with_shape(&path, false, shape).unwrap();
+        let f = dev.features();
+
+        assert_ne!(f & VIRTIO_BLK_F_MQ, 0, "multi-queue must report MQ");
+        assert_eq!(dev.queue_max_sizes(), &[128, 128, 128, 128]);
     }
 
     #[test]
@@ -2440,8 +2610,53 @@ mod tests {
         dev.read_config(12, &mut seg_max);
         dev.read_config(20, &mut block_size);
 
-        assert_eq!(u32::from_le_bytes(seg_max), VIRTIO_BLK_SEG_MAX);
+        assert_eq!(u32::from_le_bytes(seg_max), DEFAULT_QUEUE_SIZE as u32 - 2);
         assert_eq!(u32::from_le_bytes(block_size), SECTOR_SIZE as u32);
+    }
+
+    #[test]
+    fn block_config_reports_multi_queue_count() {
+        let path = temp_disk("mq-cfg.img", 8192);
+        let shape = BlockShape {
+            queue_count: 8,
+            queue_size: 256,
+            seg_max: 128,
+            logical_block_size: 512,
+        };
+        let dev = VirtioBlockDevice::new_with_shape(&path, false, shape).unwrap();
+        let mut queues = [0u8; 2];
+
+        dev.read_config(34, &mut queues);
+
+        assert_eq!(u16::from_le_bytes(queues), 8);
+    }
+
+    #[test]
+    fn block_shape_env_parser_validates_coupled_queue_settings() {
+        let valid = |name: &str| match name {
+            "CAPSEM_KVM_BLK_QUEUE_COUNT" => Some("4".to_string()),
+            "CAPSEM_KVM_BLK_QUEUE_SIZE" => Some("128".to_string()),
+            "CAPSEM_KVM_BLK_SEG_MAX" => Some("32".to_string()),
+            "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE" => Some("4096".to_string()),
+            _ => None,
+        };
+        let shape = BlockShape::from_lookup(valid).unwrap();
+        assert_eq!(
+            shape,
+            BlockShape {
+                queue_count: 4,
+                queue_size: 128,
+                seg_max: 32,
+                logical_block_size: 4096,
+            }
+        );
+
+        let invalid_seg = |name: &str| match name {
+            "CAPSEM_KVM_BLK_QUEUE_SIZE" => Some("64".to_string()),
+            "CAPSEM_KVM_BLK_SEG_MAX" => Some("128".to_string()),
+            _ => None,
+        };
+        assert!(BlockShape::from_lookup(invalid_seg).is_err());
     }
 
     #[test]
@@ -2645,7 +2860,7 @@ mod tests {
         let Ok(mut uring) = BlockIoUring::new(file.as_raw_fd()) else {
             return;
         };
-        let mut queue = h.dev.queue.take().unwrap();
+        let mut queue = h.dev.queues[0].take().unwrap();
         let mem = h.dev.mem.as_ref().unwrap().clone();
 
         h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
@@ -2712,7 +2927,7 @@ mod tests {
         let Ok(mut uring) = BlockIoUring::new(file.as_raw_fd()) else {
             return;
         };
-        let mut queue = h.dev.queue.take().unwrap();
+        let mut queue = h.dev.queues[0].take().unwrap();
         let mem = h.dev.mem.as_ref().unwrap().clone();
 
         h.setup_request(VIRTIO_BLK_T_IN, 0, 512, true);
@@ -2786,7 +3001,7 @@ mod tests {
         let Ok(mut uring) = BlockIoUring::new(file.as_raw_fd()) else {
             return;
         };
-        let mut queue = h.dev.queue.take().unwrap();
+        let mut queue = h.dev.queues[0].take().unwrap();
         let mem = h.dev.mem.as_ref().unwrap().clone();
 
         let pending_data_offset = DATA_AREA_OFFSET + 2048;
