@@ -3,8 +3,8 @@
 //! Four parallel `capsem-service --uds-path X` invocations must converge on
 //! exactly one running service. This module provides the primitives:
 //!
-//!   - `probe_running_version` -- ask whoever is listening at a UDS path for
-//!     its `/version`, so the caller can decide to reuse it or refuse.
+//!   - `probe_running_build_info` -- ask whoever is listening at a UDS path
+//!     for its `/version`, so the caller can decide to reuse it or refuse.
 //!   - `StartupLock` -- a filesystem lock next to the socket that serialises
 //!     startup races. Released when dropped (including on crash).
 
@@ -24,7 +24,10 @@ use tokio::net::UnixStream;
 ///   - `Err(e)` only for unexpected IO errors (not ECONNREFUSED / ENOENT)
 ///
 /// Keeps the HTTP exchange deliberately small so we don't pull hyper here.
-pub async fn probe_running_version(sock: &Path, timeout: Duration) -> io::Result<Option<String>> {
+pub async fn probe_running_build_info(
+    sock: &Path,
+    timeout: Duration,
+) -> io::Result<Option<capsem_core::build_info::BuildInfo>> {
     let connect = async {
         match UnixStream::connect(sock).await {
             Ok(s) => Ok(Some(s)),
@@ -63,18 +66,44 @@ pub async fn probe_running_version(sock: &Path, timeout: Duration) -> io::Result
         Err(_) => return Ok(None),
     };
 
-    Ok(parse_version_body(&buf))
+    Ok(parse_build_info_body(&buf))
 }
 
 /// Split HTTP response headers from body and extract the `"version"` field.
+#[cfg(test)]
 fn parse_version_body(response: &[u8]) -> Option<String> {
+    parse_build_info_body(response).map(|info| info.version)
+}
+
+fn parse_build_info_body(response: &[u8]) -> Option<capsem_core::build_info::BuildInfo> {
     let sep = b"\r\n\r\n";
     let idx = response.windows(sep.len()).position(|w| w == sep)?;
     let body = &response[idx + sep.len()..];
     let json: serde_json::Value = serde_json::from_slice(body).ok()?;
-    json.get("version")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+    let version = json.get("version")?.as_str()?.to_string();
+    Some(capsem_core::build_info::BuildInfo {
+        binary: json
+            .get("binary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("capsem-service")
+            .to_string(),
+        version,
+        protocol_version: json
+            .get("protocol_version")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u16::try_from(v).ok())
+            .unwrap_or(0),
+        schema_hash: json
+            .get("schema_hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        build_ts: json
+            .get("build_ts")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    })
 }
 
 /// Host-wide flock guarding Apple VZ save_state / restore_state so the
@@ -193,7 +222,7 @@ mod tests {
     #[test]
     fn parse_version_body_extracts_version() {
         let resp =
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"1.2.3\"}";
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"1.2.3\",\"protocol_version\":2,\"schema_hash\":\"abc\"}";
         assert_eq!(parse_version_body(resp).as_deref(), Some("1.2.3"));
     }
 

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use capsem_tui::app::{App, AppAction, ControlAction};
 use capsem_tui::fixture::{offline_state, FixtureProvider};
 use capsem_tui::gateway_provider::{ActionOutcome, GatewayProvider};
-use capsem_tui::model::{AppState, ServiceStatus, SessionLifecycle};
+use capsem_tui::model::{AppState, SessionLifecycle};
 use capsem_tui::provider::StateProvider;
 use capsem_tui::terminal::{key_to_terminal_bytes, TerminalBridge, TerminalEvent, TerminalSurface};
 use capsem_tui::ui::{render_app, render_app_snapshot, render_app_svg_snapshot};
@@ -187,7 +187,8 @@ fn run_loop(
                     }
                     ControlEvent::Finished(Err(error)) => {
                         app.clear_control_progress();
-                        app.set_control_message(error);
+                        app.set_control_message(error.title.clone());
+                        app.show_control_error(error.title, error.message);
                         should_refresh = true;
                     }
                 }
@@ -307,9 +308,11 @@ impl ControlBridge {
             while let Ok(action) = command_rx.recv() {
                 let label = action.progress_label().to_string();
                 let _ = event_tx.send(ControlEvent::Started(label));
-                let result = provider
-                    .invoke(&action)
-                    .map_err(|error| format!("{} failed: {error}", action.label()));
+                let title = format!("{} failed", action.label());
+                let result = provider.invoke(&action).map_err(|error| ControlFailure {
+                    title,
+                    message: error.to_string(),
+                });
                 let _ = event_tx.send(ControlEvent::Finished(result));
             }
         });
@@ -334,7 +337,13 @@ impl ControlBridge {
 
 enum ControlEvent {
     Started(String),
-    Finished(std::result::Result<ActionOutcome, String>),
+    Finished(std::result::Result<ActionOutcome, ControlFailure>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ControlFailure {
+    title: String,
+    message: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -428,17 +437,7 @@ fn refresh_state(app: &mut App, provider: Option<&GatewayProvider>) -> bool {
             true
         }
         Err(_) => {
-            let mut state = app.state().clone();
-            state.service.status = ServiceStatus::Offline;
-            state.service.latency = Duration::ZERO;
-            state.service.reconnect_attempt = Some(
-                state
-                    .service
-                    .reconnect_attempt
-                    .unwrap_or_default()
-                    .saturating_add(1),
-            );
-            app.replace_state(state);
+            app.mark_gateway_unavailable();
             true
         }
     }

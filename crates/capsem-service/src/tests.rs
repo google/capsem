@@ -4,6 +4,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[cfg(unix)]
+fn write_executable_script(path: &std::path::Path, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, script).unwrap();
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
 #[test]
 fn pre_fork_guest_flush_command_freezes_and_syncs() {
     let command = pre_fork_guest_flush_command();
@@ -11,6 +21,35 @@ fn pre_fork_guest_flush_command_freezes_and_syncs() {
     assert!(!command.contains("fstrim"));
     assert!(command.contains("fsfreeze -f /"));
     assert!(command.contains("fsfreeze -u /"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn process_binary_compatibility_rejects_same_version_schema_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let process_bin = dir.path().join("capsem-process");
+    write_executable_script(
+        &process_bin,
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--build-info-json" ]; then
+  printf '%s\n' '{{"binary":"capsem-process","version":"{}","protocol_version":{},"schema_hash":"deadbeefdeadbeef","build_ts":"test"}}'
+else
+  printf 'capsem-process {}\n'
+fi
+"#,
+            env!("CARGO_PKG_VERSION"),
+            capsem_core::capsem_proto::PROTOCOL_VERSION,
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+
+    let err = verify_process_binary_compatible(&process_bin)
+        .await
+        .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("incompatible capsem-process"));
+    assert!(msg.contains("deadbeefdeadbeef"));
 }
 
 #[test]
@@ -3052,6 +3091,89 @@ fn provision_from_source_requires_profile_revision_pin() {
     );
 }
 
+#[tokio::test]
+async fn purge_default_removes_broken_persistent_vms_but_keeps_healthy_persistent() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let defunct_dir = dir.path().join("defunct-vm");
+    let corrupted_dir = dir.path().join("corrupted-vm");
+    let healthy_dir = dir.path().join("healthy-vm");
+    std::fs::create_dir_all(&defunct_dir).unwrap();
+    std::fs::create_dir_all(&corrupted_dir).unwrap();
+    std::fs::create_dir_all(&healthy_dir).unwrap();
+    {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        registry
+            .register(PersistentVmEntry {
+                name: "defunct-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: None,
+                created_at: "0".into(),
+                session_dir: defunct_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: true,
+                last_error: Some("profile pin is corrupted".into()),
+                checkpoint_path: None,
+                env: None,
+            })
+            .unwrap();
+        registry
+            .register(PersistentVmEntry {
+                name: "corrupted-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: None,
+                created_at: "0".into(),
+                session_dir: corrupted_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            })
+            .unwrap();
+        registry
+            .register(PersistentVmEntry {
+                name: "healthy-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: None,
+                profile_pin: Some(test_saved_vm_profile_pin(test_saved_vm_base_assets())),
+                created_at: "0".into(),
+                session_dir: healthy_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            })
+            .unwrap();
+    }
+
+    let Json(response) = handle_purge(State(state.clone()), Json(PurgeRequest { all: false }))
+        .await
+        .unwrap();
+
+    assert_eq!(response.purged, 2);
+    assert_eq!(response.persistent_purged, 2);
+    assert_eq!(response.ephemeral_purged, 0);
+    let registry = state.persistent_registry.lock().unwrap();
+    assert!(registry.get("defunct-vm").is_none());
+    assert!(registry.get("corrupted-vm").is_none());
+    assert!(registry.get("healthy-vm").is_some());
+}
+
 // -----------------------------------------------------------------------
 // Image handler tests (service-level unit tests)
 // -----------------------------------------------------------------------
@@ -5131,28 +5253,25 @@ async fn handle_get_presets_returns_list() {
 }
 
 #[tokio::test]
-async fn handle_list_profiles_returns_catalog_with_default_profile() {
+async fn handle_list_profiles_omits_unlaunchable_default_profile() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, _, _) = install_settings_profiles_env(&dir);
 
     let Json(val) = handle_list_profiles().await.unwrap();
-    assert_eq!(
-        val["default_profile"],
-        serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
-    );
+    assert_eq!(val["default_profile"], serde_json::Value::Null);
     let profiles = val["profiles"].as_array().expect("profiles array");
     assert!(
-        profiles.iter().any(|profile| {
+        profiles.iter().all(|profile| {
             profile["profile"]["id"]
-                == serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
+                != serde_json::json!(capsem_core::settings_profiles::EVERYDAY_WORK_PROFILE_ID)
         }),
-        "catalog should include the selected everyday-work profile"
+        "launch list must not include the selected profile until its assets are verified"
     );
 }
 
 #[tokio::test]
-async fn handle_list_profiles_reports_asset_status_per_profile_without_poisoning_catalog() {
+async fn handle_list_profiles_reports_only_launchable_profiles_with_surface_flags() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, _, user_profile_path) = install_settings_profiles_env(&dir);
@@ -5215,15 +5334,22 @@ async fn handle_list_profiles_reports_asset_status_per_profile_without_poisoning
         .iter()
         .find(|profile| profile["profile"]["id"] == serde_json::json!("good-assets"))
         .expect("good profile should be listed");
-    let bad = profiles
-        .iter()
-        .find(|profile| profile["profile"]["id"] == serde_json::json!("bad-assets"))
-        .expect("bad profile should still be listed");
-    let unsigned = profiles
-        .iter()
-        .find(|profile| profile["profile"]["id"] == serde_json::json!("unsigned-assets"))
-        .expect("unsigned profile should still be listed");
+    assert!(
+        profiles
+            .iter()
+            .all(|profile| profile["profile"]["id"] != serde_json::json!("bad-assets")),
+        "profiles launch list must not expose profiles with missing assets"
+    );
+    assert!(
+        profiles
+            .iter()
+            .all(|profile| profile["profile"]["id"] != serde_json::json!("unsigned-assets")),
+        "profiles launch list must not expose unsigned profiles"
+    );
 
+    assert_eq!(good["ui"], serde_json::json!(true));
+    assert_eq!(good["tui"], serde_json::json!(true));
+    assert_eq!(good["web"], serde_json::json!(true));
     assert_eq!(good["asset_status"]["state"], serde_json::json!("ready"));
     assert_eq!(
         good["asset_status"]["usable_for_vm"],
@@ -5237,34 +5363,7 @@ async fn handle_list_profiles_reports_asset_status_per_profile_without_poisoning
         .as_str()
         .unwrap()
         .ends_with(good_kernel_path.file_name().unwrap().to_str().unwrap()));
-    assert_eq!(bad["asset_status"]["state"], serde_json::json!("missing"));
-    assert_eq!(
-        bad["asset_status"]["usable_for_vm"],
-        serde_json::json!(false)
-    );
-    assert_eq!(bad["asset_status"]["missing"].as_array().unwrap().len(), 3);
-    assert!(
-        bad["asset_status"]["missing_assets"][0]["path"]
-            .as_str()
-            .unwrap()
-            .contains("bad-assets")
-            || bad["asset_status"]["missing_assets"][0]["path"]
-                .as_str()
-                .unwrap()
-                .contains("vmlinuz-")
-    );
-    assert_eq!(
-        unsigned["asset_status"]["state"],
-        serde_json::json!("error")
-    );
-    assert_eq!(
-        unsigned["asset_status"]["usable_for_vm"],
-        serde_json::json!(false)
-    );
-    assert!(unsigned["asset_status"]["error"]
-        .as_str()
-        .unwrap()
-        .contains("no installed signed catalog revision"));
+    assert_eq!(profiles.len(), 1, "only the verified profile is launchable");
 }
 
 #[tokio::test]
@@ -6356,12 +6455,11 @@ async fn handle_create_profile_persists_user_profile() {
     assert_eq!(val["source"], serde_json::json!("user"));
     assert_eq!(val["locked"], serde_json::json!(false));
 
-    let Json(list) = handle_list_profiles().await.unwrap();
-    assert!(list["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|profile| profile["profile"]["id"] == serde_json::json!("custom")));
+    let Json(read_back) = handle_get_profile(Path("custom".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(read_back["profile"]["id"], serde_json::json!("custom"));
+    assert_eq!(read_back["source"], serde_json::json!("user"));
 }
 
 #[tokio::test]
@@ -7197,12 +7295,8 @@ async fn rules_api_functional_chain_reloads_profile_changes_across_calls() {
     let Json(created) = handle_create_profile(Json(profile)).await.unwrap();
     assert_eq!(created["profile"]["id"], serde_json::json!("chain"));
 
-    let Json(profiles) = handle_list_profiles().await.unwrap();
-    assert!(profiles["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|profile| profile["profile"]["id"] == serde_json::json!("chain")));
+    let Json(read_back) = handle_get_profile(Path("chain".to_string())).await.unwrap();
+    assert_eq!(read_back["profile"]["id"], serde_json::json!("chain"));
 
     let Json(listed) = handle_list_rules(Query(RulesQuery {
         profile: Some("chain".to_string()),

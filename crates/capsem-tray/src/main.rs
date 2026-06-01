@@ -44,6 +44,9 @@ enum PollResult {
 }
 
 fn main() -> Result<()> {
+    if capsem_core::build_info::maybe_print_json_and_exit("capsem-tray")? {
+        return Ok(());
+    }
     let args = Args::parse();
     let run_dir = capsem_core::paths::capsem_run_dir();
     let _ = std::fs::create_dir_all(&run_dir);

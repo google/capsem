@@ -20,6 +20,7 @@ pub enum AppOverlay {
     Create,
     Fork,
     Confirm,
+    Error,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,6 +33,7 @@ pub enum ControlAction {
     Suspend { id: String },
     Stop { id: String },
     Delete { id: String },
+    Purge { all: bool },
 }
 
 impl ControlAction {
@@ -45,6 +47,7 @@ impl ControlAction {
             Self::Suspend { .. } => "suspend",
             Self::Stop { .. } => "stop",
             Self::Delete { .. } => "delete",
+            Self::Purge { .. } => "purge",
         }
     }
 
@@ -58,6 +61,7 @@ impl ControlAction {
             Self::Suspend { .. } => "suspending",
             Self::Stop { .. } => "stopping",
             Self::Delete { .. } => "deleting",
+            Self::Purge { .. } => "purging",
         }
     }
 
@@ -71,6 +75,8 @@ impl ControlAction {
             | Self::Suspend { id: name }
             | Self::Stop { id: name }
             | Self::Delete { id: name } => name,
+            Self::Purge { all: true } => "all sessions",
+            Self::Purge { all: false } => "temporary and broken VMs",
         }
     }
 }
@@ -83,8 +89,15 @@ pub struct App {
     pending_action: Option<ControlAction>,
     pending_focus_session: Option<String>,
     control_progress: Option<String>,
+    control_error: Option<ControlError>,
     create_draft: Option<CreateDraft>,
     fork_draft: Option<ForkDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlError {
+    pub title: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -113,6 +126,7 @@ impl App {
             pending_action: None,
             pending_focus_session: None,
             control_progress: None,
+            control_error: None,
             create_draft: None,
             fork_draft: None,
         };
@@ -135,6 +149,10 @@ impl App {
 
     pub fn control_progress(&self) -> Option<&str> {
         self.control_progress.as_deref()
+    }
+
+    pub fn control_error(&self) -> Option<&ControlError> {
+        self.control_error.as_ref()
     }
 
     pub fn create_draft(&self) -> Option<&CreateDraft> {
@@ -180,6 +198,35 @@ impl App {
         self.control_progress = None;
     }
 
+    pub fn show_control_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        self.pending_action = None;
+        self.create_draft = None;
+        self.fork_draft = None;
+        self.control_error = Some(ControlError {
+            title: title.into(),
+            message: message.into(),
+        });
+        self.overlay = AppOverlay::Error;
+    }
+
+    pub fn mark_gateway_unavailable(&mut self) {
+        let reconnect_attempt = self
+            .state
+            .service
+            .reconnect_attempt
+            .unwrap_or_default()
+            .saturating_add(1);
+        self.state.service.status = ServiceStatus::Offline;
+        self.state.service.latency = std::time::Duration::ZERO;
+        self.state.service.reconnect_attempt = Some(reconnect_attempt);
+        self.state.sessions.clear();
+        self.state.profiles.clear();
+        self.state.active_session_id.clear();
+        self.active_index = 0;
+        self.pending_focus_session = None;
+        self.sync_empty_state_prompt();
+    }
+
     pub fn focus_session_when_available(&mut self, id: impl Into<String>) {
         let id = id.into();
         if self.select_session_by_id(&id) {
@@ -207,12 +254,16 @@ impl App {
         if self.overlay != AppOverlay::None {
             if key.code == KeyCode::Esc {
                 self.overlay = AppOverlay::None;
+                self.sync_empty_state_prompt();
             }
             return AppAction::Consumed;
         }
         if is_new_key(key) {
             self.open_create();
             return AppAction::Consumed;
+        }
+        if self.is_inline_create_active() {
+            return self.handle_create_key(key);
         }
         if is_fork_key(key) {
             if self.open_fork() {
@@ -231,9 +282,12 @@ impl App {
             return AppAction::Consumed;
         }
         if key.code == KeyCode::Enter && key.modifiers.is_empty() {
-            if let Some(reason) = self.active_resume_blocked_reason() {
-                self.set_control_message(reason);
+            if self.active_resume_blocked_reason().is_some() {
+                self.open_create();
                 return AppAction::Consumed;
+            }
+            if self.state.active_session().is_none() {
+                return self.handle_create_key(key);
             }
             if let Some(action) = self.active_resume_action() {
                 return AppAction::Invoke(action);
@@ -341,6 +395,12 @@ impl App {
     }
 
     fn sync_empty_state_prompt(&mut self) {
+        if self.overlay == AppOverlay::Error {
+            self.pending_action = None;
+            self.create_draft = None;
+            self.fork_draft = None;
+            return;
+        }
         if service_needs_start(self.state.service.status) {
             self.create_draft = None;
             self.fork_draft = None;
@@ -353,7 +413,14 @@ impl App {
             self.overlay = AppOverlay::None;
         }
         if self.state.sessions.is_empty() && self.overlay == AppOverlay::None {
-            self.open_create();
+            if self.create_draft.is_none() {
+                self.create_draft = Some(CreateDraft {
+                    name: next_tmp_name(&self.state),
+                    selected_profile: default_profile_index(&self.state),
+                });
+            }
+        } else if self.overlay != AppOverlay::Create {
+            self.create_draft = None;
         }
     }
 
@@ -405,6 +472,7 @@ impl App {
             KeyCode::Char('s' | 'S') => self.active_suspend_action(),
             KeyCode::Char('t' | 'T') => self.active_id().map(|id| ControlAction::Stop { id }),
             KeyCode::Char('d' | 'D') => self.active_id().map(|id| ControlAction::Delete { id }),
+            KeyCode::Char('p' | 'P') => Some(ControlAction::Purge { all: false }),
             _ => None,
         }
     }
@@ -471,6 +539,13 @@ impl App {
         self.overlay = AppOverlay::Create;
     }
 
+    fn is_inline_create_active(&self) -> bool {
+        self.overlay == AppOverlay::None
+            && self.state.sessions.is_empty()
+            && self.create_draft.is_some()
+            && !service_needs_start(self.state.service.status)
+    }
+
     fn open_fork(&mut self) -> bool {
         let Some(source_id) = self.active_id() else {
             return false;
@@ -490,6 +565,7 @@ impl App {
             KeyCode::Esc => {
                 self.create_draft = None;
                 self.overlay = AppOverlay::None;
+                self.sync_empty_state_prompt();
                 AppAction::Consumed
             }
             KeyCode::Enter => {

@@ -176,6 +176,17 @@ attention markers.
   `suspending...` in the main surface while the suspend action is running,
   keeping long VM lifecycle operations visible without relying on the tab strip
   or bottom bar alone.
+- Tightened corrupt-profile recovery: stopped VMs with broken signed profile
+  pins now render `Press Enter to create a replacement`, Enter opens the
+  existing profile-aware new-session modal, and `Alt+d` remains the explicit
+  cleanup path for that bad persistent VM.
+- Wired `Alt+p` to the installed gateway `/purge` endpoint for confirmed
+  temporary and broken VM cleanup without exposing destructive `purge --all`
+  semantics in the normal TUI key map.
+- Fixed the backend purge contract so `all=false` removes defunct and
+  profile-corrupted persistent registry entries while still preserving healthy
+  persistent VMs; the TUI refresh path now has real backend state to converge
+  on after cleanup.
 
 ## Testing Gate
 
@@ -194,10 +205,15 @@ attention markers.
   `/status` p95 0.223ms. Concurrent boot pressure remains a separate follow-up
   because endpoint speed should not depend on parallel provisioning setup.
 - Regression: `cargo test -p capsem-tui` covers stopped-session prompt,
-  greyed inactive tab tone, Enter-to-resume behavior, and the named fork
+  greyed inactive tab tone, Enter-to-resume behavior, corrupt-profile
+  Enter-to-create recovery, confirmed `Alt+p` purge wiring, and the named fork
   modal/action path, plus `Alt+l` sessions, `Alt+i` session info, and `Alt+c`
   checkpoint. Live snapshot against the installed stopped `tui-proof-*`
   sessions shows the prompt instead of a blank pane.
+- Service purge regression: `cargo test -p capsem-service
+  purge_default_removes_broken_persistent_vms_but_keeps_healthy_persistent`
+  proves safe purge removes defunct/profile-corrupted persistent VMs but leaves
+  healthy persistent VMs alone.
 - UI polish: `cargo test -p capsem-tui` and snapshot output cover the
   right-side `help: alt+?` status-bar hint after session stats and
   focused-field highlighting, including the no-active-session status-bar path

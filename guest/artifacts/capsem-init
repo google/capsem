@@ -444,17 +444,15 @@ elif [ -x /newroot/usr/local/bin/capsem-mcp-server ]; then
     echo "[capsem-init] mcp-server deployed (from rootfs)"
 fi
 
-# Deploy capsem-sysutil binary and create lifecycle symlinks.
+# Deploy capsem-sysutil binary and create the suspend lifecycle symlink.
 if [ -x /capsem-sysutil ]; then
     cp /capsem-sysutil /newroot/run/capsem-sysutil
     chmod 555 /newroot/run/capsem-sysutil
-    ln -sf /run/capsem-sysutil /newroot/sbin/shutdown
-    ln -sf /run/capsem-sysutil /newroot/sbin/halt
-    ln -sf /run/capsem-sysutil /newroot/sbin/poweroff
-    ln -sf /run/capsem-sysutil /newroot/sbin/reboot
+    rm -f /newroot/sbin/shutdown /newroot/sbin/halt \
+        /newroot/sbin/poweroff /newroot/sbin/reboot
     mkdir -p /newroot/usr/local/bin
     ln -sf /run/capsem-sysutil /newroot/usr/local/bin/suspend
-    echo "[capsem-init] capsem-sysutil deployed (shutdown/halt/poweroff/reboot/suspend)"
+    echo "[capsem-init] capsem-sysutil deployed (suspend)"
 fi
 
 # Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).

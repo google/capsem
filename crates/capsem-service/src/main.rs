@@ -1092,19 +1092,9 @@ impl ServiceState {
             // is Some, the child exited without an explicit
             // capsem-service-side shutdown removing it first.
             //
-            // BUT: a guest-initiated shutdown via `capsem-sysutil
-            // shutdown` (vsock:5004 -> ProcessToService::Shutdown
-            // Requested) also leaves the instance in the map -- the
-            // service has no listener for ShutdownRequested, the
-            // process just sends Shutdown to itself and exits cleanly
-            // with code 0. Treating that as "unexpected" flips the
-            // persistent registry to `defunct` so `capsem list` shows
-            // the VM as Defunct instead of Stopped, and the next
-            // `capsem resume` is misleadingly blocked.
-            //
             // Distinguish: a clean exit (code 0) from the process is a
-            // graceful shutdown regardless of who initiated it. Any
-            // non-zero exit code or signal-kill is a crash.
+            // graceful shutdown. Any non-zero exit code or signal-kill
+            // is a crash.
             let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
             let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
             let unexpected_exit = removed.is_some() && !clean_exit;
@@ -1158,7 +1148,7 @@ impl ServiceState {
                         state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
                     }
                 } else {
-                    tracing::info!(id_clone, "child exited cleanly (guest-initiated shutdown)");
+                    tracing::info!(id_clone, "child exited cleanly");
                     if !info.persistent {
                         let session_dir = info.session_dir.clone();
                         let cleanup_path = session_dir.clone();
@@ -4032,6 +4022,31 @@ async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<S
     Ok(text)
 }
 
+async fn verify_process_binary_compatible(path: &FsPath) -> Result<()> {
+    let info = capsem_core::build_info::query_binary(path, std::time::Duration::from_secs(2))
+        .await
+        .ok_or_else(|| {
+            anyhow!(
+                "{} does not report Capsem build info; rebuild or reinstall capsem-process",
+                path.display()
+            )
+        })?;
+    let expected = capsem_core::build_info::BuildInfo::current("capsem-service");
+    if info.version != expected.version || !info.protocol_compatible_with_current() {
+        return Err(anyhow!(
+            "incompatible capsem-process at {}: version {} protocol {} schema {}, expected version {} protocol {} schema {}",
+            path.display(),
+            info.version,
+            info.protocol_version,
+            info.schema_hash,
+            expected.version,
+            expected.protocol_version,
+            expected.schema_hash
+        ));
+    }
+    Ok(())
+}
+
 #[tracing::instrument(skip_all, fields(cmd = ?std::mem::discriminant(&cmd), timeout_secs = ?timeout_secs))]
 async fn send_ipc_command(
     uds_path: &std::path::Path,
@@ -4629,6 +4644,9 @@ fn profile_record_json(
         "source": record.source.as_str(),
         "path": record.path.as_ref().map(|path| path.display().to_string()),
         "locked": record.locked,
+        "ui": true,
+        "tui": true,
+        "web": true,
     })
 }
 
@@ -5019,8 +5037,16 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
 
     let mut profiles = catalog
         .list()
-        .map(|record| {
-            profile_record_json_with_asset_status(record, &settings, &asset_locations.assets_dir)
+        .filter_map(|record| {
+            let value = profile_record_json_with_asset_status(
+                record,
+                &settings,
+                &asset_locations.assets_dir,
+            );
+            value["asset_status"]["usable_for_vm"]
+                .as_bool()
+                .unwrap_or(false)
+                .then_some(value)
         })
         .collect::<Vec<_>>();
     profiles.sort_by(|left, right| {
@@ -5030,9 +5056,16 @@ async fn handle_list_profiles() -> Result<Json<serde_json::Value>, AppError> {
             .cmp(right["profile"]["id"].as_str().unwrap_or_default())
     });
 
+    let default_profile = profiles
+        .iter()
+        .any(|profile| {
+            profile["profile"]["id"].as_str() == Some(settings.profiles.default_profile.as_str())
+        })
+        .then_some(settings.profiles.default_profile);
+
     Ok(Json(json!({
         "mode": "settings_profiles_v2",
-        "default_profile": settings.profiles.default_profile,
+        "default_profile": default_profile,
         "asset_locations": asset_locations_status_json(&asset_locations),
         "profiles": profiles,
     })))
@@ -11969,14 +12002,23 @@ async fn handle_purge(
         }
     }
 
-    // If --all, also purge stopped persistent VMs
-    if payload.all {
+    // `purge` must clear failed boot records even without `--all`; a
+    // defunct persistent VM cannot be resumed safely and otherwise stays
+    // visible forever after the user asks for cleanup.
+    {
+        let profile_catalog = load_vm_profile_catalog_snapshot(&state.service_settings);
         let stopped_names: Vec<String> = {
             let registry = state.persistent_registry.lock().unwrap();
             let instances = state.instances.lock().unwrap();
             registry
                 .list()
-                .filter(|e| !instances.contains_key(&e.name))
+                .filter(|entry| {
+                    !instances.contains_key(&entry.name)
+                        && (payload.all
+                            || entry.defunct
+                            || vm_profile_status(entry.profile_pin.as_ref(), &profile_catalog)
+                                == VmProfileStatus::Corrupted)
+                })
                 .map(|e| e.name.clone())
                 .collect()
         };
@@ -12205,6 +12247,9 @@ async fn handle_run(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if capsem_core::build_info::maybe_print_json_and_exit("capsem-service")? {
+        return Ok(());
+    }
     let args = Args::parse();
 
     let mut run_dir = capsem_core::paths::capsem_run_dir();
@@ -12267,27 +12312,32 @@ async fn main() -> Result<()> {
     // Fast path: someone else already serves a compatible version.
     if service_sock.exists() {
         if let Ok(Some(running)) =
-            startup::probe_running_version(&service_sock, probe_timeout).await
+            startup::probe_running_build_info(&service_sock, probe_timeout).await
         {
-            if running == current_version {
+            if running.version == current_version && running.protocol_compatible_with_current() {
                 info!(
                     socket = %service_sock.display(),
-                    version = %running,
+                    version = %running.version,
+                    schema_hash = %running.schema_hash,
                     "compatible capsem-service already running; exiting 0"
                 );
                 return Ok(());
             }
             eprintln!(
-                "capsem-service {} is already running at {}, but this binary is {}.\n\
+                "capsem-service {} schema {} is already running at {}, but this binary is {} schema {}.\n\
                  Stop the running service before starting a new one.",
-                running,
+                running.version,
+                running.schema_hash,
                 service_sock.display(),
-                current_version
+                current_version,
+                capsem_core::build_info::schema_hash_hex()
             );
             return Err(anyhow::anyhow!(
-                "version mismatch with running service (running: {}, this: {})",
-                running,
-                current_version
+                "build mismatch with running service (running: {} schema {}, this: {} schema {})",
+                running.version,
+                running.schema_hash,
+                current_version,
+                capsem_core::build_info::schema_hash_hex()
             ));
         }
     }
@@ -12306,20 +12356,26 @@ async fn main() -> Result<()> {
 
     // Under lock: double-check a peer didn't finish starting while we waited.
     if service_sock.exists() {
-        match startup::probe_running_version(&service_sock, probe_timeout).await {
-            Ok(Some(running)) if running == current_version => {
+        match startup::probe_running_build_info(&service_sock, probe_timeout).await {
+            Ok(Some(running))
+                if running.version == current_version
+                    && running.protocol_compatible_with_current() =>
+            {
                 info!(
                     socket = %service_sock.display(),
-                    version = %running,
+                    version = %running.version,
+                    schema_hash = %running.schema_hash,
                     "peer starter won the race; exiting 0"
                 );
                 return Ok(());
             }
             Ok(Some(running)) => {
                 return Err(anyhow::anyhow!(
-                    "version mismatch with running service (running: {}, this: {})",
-                    running,
-                    current_version
+                    "build mismatch with running service (running: {} schema {}, this: {} schema {})",
+                    running.version,
+                    running.schema_hash,
+                    current_version,
+                    capsem_core::build_info::schema_hash_hex()
                 ));
             }
             Ok(None) => {
@@ -12340,6 +12396,7 @@ async fn main() -> Result<()> {
     let process_binary = args
         .process_binary
         .unwrap_or_else(|| PathBuf::from("target/debug/capsem-process"));
+    verify_process_binary_compatible(&process_binary).await?;
     let service_settings_path = service_settings_path();
     let service_settings =
         capsem_core::settings_profiles::load_service_settings_or_default(&service_settings_path)
@@ -12477,7 +12534,15 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route(
             "/version",
-            get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
+            get(|| async {
+                let build = capsem_core::build_info::BuildInfo::current("capsem-service");
+                Json(serde_json::json!({
+                    "version": build.version,
+                    "protocol_version": build.protocol_version,
+                    "schema_hash": build.schema_hash,
+                    "build_ts": build.build_ts,
+                }))
+            }),
         )
         .route(
             "/companions/tray/ensure",

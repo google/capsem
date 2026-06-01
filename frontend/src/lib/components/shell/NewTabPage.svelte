@@ -220,7 +220,7 @@
   }
 
   function profileUsable(profile: ProfileListRecord): boolean {
-    return profile.asset_status?.usable_for_vm !== false;
+    return profile.ui !== false && profile.web !== false && profile.asset_status?.usable_for_vm !== false;
   }
 
   function profileStateLabel(profile: ProfileListRecord): string {

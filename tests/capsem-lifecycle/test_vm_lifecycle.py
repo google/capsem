@@ -1,14 +1,11 @@
-"""VM lifecycle integration tests: shutdown, suspend/resume, identity.
+"""VM lifecycle integration tests: suspend/resume and identity.
 
-Tests the full guest-initiated lifecycle:
-- Guest shutdown via /sbin/shutdown stops ephemeral and persistent VMs
-- Persistent VM survives guest shutdown + resume with file persistence
+Tests VM lifecycle paths:
 - CAPSEM_VM_ID and CAPSEM_VM_NAME env vars are injected
 - Hostname reflects the VM name
 - Suspend + warm resume round-trip (Apple VZ)
 """
 
-import time
 import uuid
 
 import pytest
@@ -19,88 +16,27 @@ from helpers.service import wait_exec_ready, vm_name
 pytestmark = pytest.mark.integration
 
 
-class TestGuestShutdownEphemeral:
+class TestGuestShutdownDisabled:
 
-    def test_guest_shutdown_stops_ephemeral(self, client):
-        """Typing 'shutdown' inside an ephemeral VM should stop it."""
+    def test_capsem_sysutil_shutdown_does_not_stop_vm(self, client):
+        """Guest shutdown is disabled; direct sysutil calls must leave the VM alive."""
         resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
-        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT), \
-            f"VM {vm_id} never became exec-ready"
+        try:
+            assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT), \
+                f"VM {vm_id} never became exec-ready"
 
-        # Trigger guest-initiated shutdown (capsem-sysutil sends ShutdownRequest).
-        # Use nohup so the exec doesn't block waiting for shutdown to complete.
-        # The countdown is ~4s (SHUTDOWN_GRACE_SECS + 1), so we fire-and-forget.
-        client.post(f"/exec/{vm_id}", {
-            "command": "nohup /run/capsem-sysutil shutdown </dev/null >/dev/null 2>&1 &",
-        })
+            shutdown_resp = client.post(f"/exec/{vm_id}", {
+                "command": "/run/capsem-sysutil shutdown 2>&1",
+            })
+            assert shutdown_resp.get("exit_code") != 0, shutdown_resp
+            assert "disabled" in shutdown_resp.get("stdout", "").lower(), shutdown_resp
 
-        # Wait for VM to disappear from list (service reaps ephemeral on exit)
-        gone = False
-        for _ in range(20):
-            time.sleep(1)
-            listing = client.get("/list")
-            ids = [s["id"] for s in listing["sandboxes"]]
-            if vm_id not in ids:
-                gone = True
-                break
-        assert gone, f"Ephemeral VM {vm_id} still in list after guest shutdown"
-
-
-class TestGuestShutdownPersistent:
-
-    def test_guest_shutdown_preserves_persistent_and_resume(self, client):
-        """Guest shutdown on a persistent VM preserves state; resume restores it."""
-        name = vm_name("gshut")
-        client.post("/provision", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
-        })
-        assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), \
-            f"VM {name} never became exec-ready"
-
-        # Write a marker file
-        marker = f"shutdown-test-{uuid.uuid4().hex[:8]}"
-        client.write_file(name, f"/root/{marker}", f"hello from {marker}")
-
-        # Guest-initiated shutdown
-        client.post(f"/exec/{name}", {
-            "command": "nohup /run/capsem-sysutil shutdown </dev/null >/dev/null 2>&1 &",
-        })
-
-        # Wait for VM to stop
-        stopped = False
-        for _ in range(20):
-            time.sleep(1)
-            listing = client.get("/list")
-            vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
-            if vm and vm["status"] == "Stopped":
-                stopped = True
-                break
-            if vm is None:
-                # Might have been removed from running list but still in registry
-                try:
-                    info = client.get(f"/info/{name}")
-                    if info and info.get("status") == "Stopped":
-                        stopped = True
-                        break
-                except Exception:
-                    pass
-        assert stopped, f"Persistent VM {name} did not reach Stopped after guest shutdown"
-
-        # Resume and verify file survived
-        resume_resp = client.post(f"/resume/{name}", {})
-        assert resume_resp is not None
-        resumed_id = resume_resp.get("id", name)
-        assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
-            f"VM {resumed_id} never became exec-ready after resume"
-
-        read_resp = client.read_file(resumed_id, f"/root/{marker}")
-        assert isinstance(read_resp, dict) and "content" in read_resp, \
-            f"read_file returned an error instead of content: {read_resp}"
-        assert marker in read_resp["content"], \
-            f"File did not survive guest shutdown + resume: {read_resp}"
-
-        client.delete(f"/delete/{resumed_id}")
+            alive_resp = client.post(f"/exec/{vm_id}", {"command": "echo alive"})
+            assert alive_resp.get("exit_code") == 0, alive_resp
+            assert alive_resp.get("stdout", "").strip() == "alive", alive_resp
+        finally:
+            client.delete(f"/delete/{vm_id}")
 
 
 class TestVmIdentity:

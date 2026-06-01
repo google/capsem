@@ -69,7 +69,7 @@ The guest agent crate (`crates/capsem-agent/`) produces four binaries that run i
 | `capsem-pty-agent` | Bridges terminal I/O over vsock | `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl` |
 | `capsem-net-proxy` | Relays HTTPS to host MITM proxy over vsock | same |
 | `capsem-mcp-server` | MCP tool relay over vsock | same |
-| `capsem-sysutil` | Lifecycle multi-call (shutdown/halt/poweroff/reboot/suspend) | same |
+| `capsem-sysutil` | Guest suspend helper; in-VM shutdown commands disabled | same |
 
 On **macOS**, `cross_compile_agent()` delegates to `container_compile_agent()` which builds natively inside a Linux container (docker). Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts. No host cross-compile toolchain needed.
 

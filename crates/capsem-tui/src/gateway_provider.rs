@@ -439,6 +439,30 @@ async fn invoke_action(
                 focus_session: None,
             })
         }
+        ControlAction::Purge { all } => {
+            let response = client
+                .post(join_url(base_url, &["purge"])?)
+                .bearer_auth(token)
+                .json(&serde_json::json!({ "all": all }))
+                .send()
+                .await
+                .context("purge capsem sessions")?;
+            let body = response_json(response).await?;
+            let purged = json_u64(&body, "purged");
+            let persistent = json_u64(&body, "persistent_purged");
+            let ephemeral = json_u64(&body, "ephemeral_purged");
+            let message = if *all {
+                format!("purged {purged} sessions ({persistent} persistent, {ephemeral} temporary)")
+            } else if persistent > 0 {
+                format!("purged {purged} sessions ({persistent} broken persistent, {ephemeral} temporary)")
+            } else {
+                format!("purged {ephemeral} temporary sessions")
+            };
+            Ok(ActionOutcome {
+                message,
+                focus_session: None,
+            })
+        }
     }
 }
 
@@ -503,12 +527,34 @@ async fn response_json(response: reqwest::Response) -> Result<serde_json::Value>
         .await
         .context("read gateway action response body")?;
     if !status.is_success() {
-        return Err(anyhow::anyhow!("gateway action failed ({status}): {text}"));
+        return Err(anyhow::anyhow!(gateway_action_error_detail(status, &text)));
     }
     if text.trim().is_empty() {
         return Ok(serde_json::json!({}));
     }
     serde_json::from_str(&text).context("parse gateway action response")
+}
+
+fn gateway_action_error_detail(status: reqwest::StatusCode, text: &str) -> String {
+    if let Ok(body) = serde_json::from_str::<serde_json::Value>(text) {
+        if let Some(error) = body.get("error").and_then(serde_json::Value::as_str) {
+            return error.to_string();
+        }
+        if let Some(message) = body.get("message").and_then(serde_json::Value::as_str) {
+            return message.to_string();
+        }
+    }
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return status.to_string();
+    }
+    format!("{status}: {trimmed}")
+}
+
+fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
+    body.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default()
 }
 
 fn join_url(base_url: &str, path_segments: &[&str]) -> Result<reqwest::Url> {
@@ -596,6 +642,7 @@ impl ProfilesResponse {
         let default = self.default_profile.unwrap_or_default();
         self.profiles
             .into_iter()
+            .filter(ProfileRecordResponse::is_tui_launchable)
             .filter_map(|record| {
                 let id = record.profile.id?;
                 let name = record.profile.name.unwrap_or_else(|| id.clone());
@@ -613,6 +660,26 @@ impl ProfilesResponse {
 #[derive(Debug, Deserialize)]
 struct ProfileRecordResponse {
     profile: ProfileResponse,
+    #[serde(default = "default_true")]
+    ui: bool,
+    #[serde(default = "default_true")]
+    tui: bool,
+    #[serde(default = "default_true", rename = "web")]
+    _web: bool,
+    #[serde(default)]
+    asset_status: Option<ProfileAssetStatusResponse>,
+}
+
+impl ProfileRecordResponse {
+    fn is_tui_launchable(&self) -> bool {
+        self.ui
+            && self.tui
+            && self
+                .asset_status
+                .as_ref()
+                .and_then(|status| status.usable_for_vm)
+                .unwrap_or(true)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -623,6 +690,16 @@ struct ProfileResponse {
     name: Option<String>,
     #[serde(default)]
     best_for: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileAssetStatusResponse {
+    #[serde(default)]
+    usable_for_vm: Option<bool>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]

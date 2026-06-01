@@ -4,12 +4,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::app::{
-    resume_blocked_reason, session_visible_in_tabs, App, AppOverlay, ControlAction, CreateDraft,
-    ForkDraft,
+    resume_blocked_reason, session_visible_in_tabs, App, AppOverlay, ControlAction, ControlError,
+    CreateDraft, ForkDraft,
 };
 use crate::model::{AppState, ServiceStatus, SessionLifecycle, SessionSummary};
 use crate::terminal::{TerminalColor, TerminalLine, TerminalStyle, TerminalSurface};
@@ -32,6 +32,13 @@ const LOGO_GRADIENT: [Color; 6] = [
     Color::Rgb(245, 194, 231),
     Color::Rgb(249, 226, 175),
 ];
+const CAPSEM_ASCII: [&str; 5] = [
+    "  ____    _    ____  ____  _____ __  __",
+    " / ___|  / \\  |  _ \\|  _ \\| ____|  \\/  |",
+    "| |     / _ \\ | |_) | |_) |  _| | |\\/| |",
+    "| |___ / ___ \\|  __/|  __/| |___| |  | |",
+    " \\____/_/   \\_\\_|   |_|   |_____|_|  |_|",
+];
 
 pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     render_with_terminal(frame, state, None);
@@ -51,6 +58,7 @@ pub fn render_with_terminal(
         None,
         None,
         None,
+        None,
     );
 }
 
@@ -62,6 +70,7 @@ pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSu
         app.overlay(),
         app.pending_action(),
         app.control_progress(),
+        app.control_error(),
         app.create_draft(),
         app.fork_draft(),
     );
@@ -74,6 +83,7 @@ fn render_layout(
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
     control_progress: Option<&str>,
+    control_error: Option<&ControlError>,
     create_draft: Option<&CreateDraft>,
     fork_draft: Option<&ForkDraft>,
 ) {
@@ -86,7 +96,7 @@ fn render_layout(
     if let Some(label) = control_progress {
         render_control_progress_surface(frame, chunks[0], label);
     } else {
-        render_terminal_surface(frame, chunks[0], state, terminal);
+        render_terminal_surface(frame, chunks[0], state, terminal, create_draft);
     }
     render_status_bar(frame, state, chunks[1]);
     render_overlay(
@@ -95,6 +105,7 @@ fn render_layout(
         state,
         overlay,
         pending_action,
+        control_error,
         create_draft,
         fork_draft,
     );
@@ -221,17 +232,14 @@ fn render_terminal_surface(
     area: Rect,
     state: &AppState,
     terminal: Option<&TerminalSurface>,
+    create_draft: Option<&CreateDraft>,
 ) {
     if service_needs_start(state.service.status) {
         render_service_offline_surface(frame, area, state.service.status);
         return;
     }
     let Some(session) = state.active_session() else {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(" no sessions", muted_style())))
-                .alignment(Alignment::Center),
-            area,
-        );
+        render_empty_session_surface(frame, area, state, create_draft);
         return;
     };
     if !session_accepts_terminal(session.lifecycle) {
@@ -261,6 +269,34 @@ fn render_terminal_surface(
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+fn render_empty_session_surface(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &AppState,
+    create_draft: Option<&CreateDraft>,
+) {
+    let mut lines = logo_lines();
+    lines.push(Line::from(""));
+    lines.extend(create_session_lines(
+        state,
+        create_draft,
+        "Create a session",
+    ));
+    lines.push(Line::from(""));
+    lines.push(overlay_title("shortcuts"));
+    lines.push(shortcut_line("Enter", "create selected profile"));
+    lines.push(shortcut_line("Up/Down", "select profile"));
+    lines.push(shortcut_line("Type", "edit session name"));
+    lines.push(shortcut_line("Alt+l", "list sessions"));
+    lines.push(shortcut_line("Alt+?", "help"));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
     let lines = vec![Line::from(vec![
         Span::styled("connecting terminal ", muted_style()),
@@ -287,6 +323,14 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
         lines.push(Line::from(Span::styled(
             reason,
             bad_style().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "Press Enter to create a replacement",
+            status_base_style().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "Alt+d deletes this VM; Alt+p purges temporary/broken VMs",
+            muted_style(),
         )));
     } else {
         lines.push(Line::from(Span::styled(
@@ -396,6 +440,7 @@ fn render_overlay(
     state: &AppState,
     overlay: AppOverlay,
     pending_action: Option<&ControlAction>,
+    control_error: Option<&ControlError>,
     create_draft: Option<&CreateDraft>,
     fork_draft: Option<&ForkDraft>,
 ) {
@@ -411,6 +456,7 @@ fn render_overlay(
         AppOverlay::Create => " new session ",
         AppOverlay::Fork => " fork session ",
         AppOverlay::Confirm => " confirm ",
+        AppOverlay::Error => " action failed ",
         AppOverlay::None => "",
     };
     let block = Block::new()
@@ -427,6 +473,7 @@ fn render_overlay(
         AppOverlay::Create => create_lines(state, create_draft),
         AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
+        AppOverlay::Error => error_lines(control_error),
         AppOverlay::None => Vec::new(),
     };
     let inner = Rect::new(
@@ -435,7 +482,7 @@ fn render_overlay(
         popup.width.saturating_sub(4),
         popup.height.saturating_sub(2),
     );
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
@@ -452,7 +499,7 @@ fn centered_rect(area: Rect, width_percent: u16, height: u16) -> Rect {
 
 fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
     match overlay {
-        AppOverlay::Help => 17,
+        AppOverlay::Help => 19,
         AppOverlay::Stats => 19,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
         AppOverlay::Create => (state.profiles.len() as u16)
@@ -460,6 +507,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
             .clamp(12, 18),
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
+        AppOverlay::Error => 8,
         AppOverlay::None => 0,
     }
 }
@@ -481,6 +529,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+r", "resume", "session", "resume inactive VM"),
         help_row("Alt+t", "stop", "session", "stop active VM"),
         help_row("Alt+d", "delete", "session", "delete active VM"),
+        help_row("Alt+p", "purge", "global", "purge temporary/broken VMs"),
         help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }
@@ -497,8 +546,30 @@ fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
     ]
 }
 
+fn error_lines(error: Option<&ControlError>) -> Vec<Line<'static>> {
+    let Some(error) = error else {
+        return vec![
+            overlay_title("action failed"),
+            overlay_line("unknown error"),
+        ];
+    };
+    vec![
+        overlay_title(error.title.clone()),
+        overlay_line(error.message.clone()),
+        overlay_line("Esc closes this message"),
+    ]
+}
+
 fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
-    let mut lines = vec![logo_line(), overlay_title("new session")];
+    create_session_lines(state, draft, "new session")
+}
+
+fn create_session_lines(
+    state: &AppState,
+    draft: Option<&CreateDraft>,
+    title: impl Into<String>,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![overlay_title(title)];
     let name = draft
         .map(|draft| draft.name.as_str())
         .filter(|name| !name.is_empty())
@@ -704,9 +775,9 @@ fn profile_inventory_label(session: &SessionSummary) -> String {
     session.profile.clone()
 }
 
-fn overlay_title(title: &'static str) -> Line<'static> {
+fn overlay_title(title: impl Into<String>) -> Line<'static> {
     Line::from(Span::styled(
-        format!(" {title}"),
+        format!(" {}", title.into()),
         Style::default()
             .fg(ACTIVE)
             .bg(BAR_BG)
@@ -714,8 +785,12 @@ fn overlay_title(title: &'static str) -> Line<'static> {
     ))
 }
 
-fn logo_line() -> Line<'static> {
-    let mut spans = vec![Span::styled("        ", status_base_style())];
+fn logo_lines() -> Vec<Line<'static>> {
+    let mut lines = CAPSEM_ASCII
+        .iter()
+        .map(|line| Line::from(Span::styled((*line).to_string(), muted_style())))
+        .collect::<Vec<_>>();
+    let mut spans = Vec::new();
     for (index, ch) in "CAPSEM".chars().enumerate() {
         spans.push(Span::styled(
             ch.to_string(),
@@ -725,11 +800,12 @@ fn logo_line() -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    Line::from(spans)
+    lines.push(Line::from(spans));
+    lines
 }
 
-fn overlay_line(text: &str) -> Line<'static> {
-    Line::from(Span::styled(text.to_string(), status_base_style()))
+fn overlay_line(text: impl Into<String>) -> Line<'static> {
+    Line::from(Span::styled(text.into(), status_base_style()))
 }
 
 fn focus_line(text: &str) -> Line<'static> {
@@ -740,6 +816,13 @@ fn overlay_pair(label: &'static str, value: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label:>8}  "), muted_style()),
         Span::styled(value.to_string(), status_base_style()),
+    ])
+}
+
+fn shortcut_line(key: &'static str, action: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{key:>8}  "), muted_style()),
+        Span::styled(action, status_base_style()),
     ])
 }
 

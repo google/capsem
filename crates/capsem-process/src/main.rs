@@ -174,6 +174,9 @@ fn aggregator_child_env(vm_id: &str, trace_id: &str) -> std::collections::HashMa
 }
 
 fn main() -> Result<()> {
+    if capsem_core::build_info::maybe_print_json_and_exit("capsem-process")? {
+        return Ok(());
+    }
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-process",
         sink: capsem_core::telemetry::LogSink::Stderr,

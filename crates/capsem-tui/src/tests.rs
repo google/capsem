@@ -83,6 +83,45 @@ fn offline_empty_state_asks_to_start_service_instead_of_create() {
 }
 
 #[test]
+fn gateway_unavailable_clears_stale_sessions_instead_of_reusing_tabs() {
+    let mut app = App::new(fixture_state());
+
+    app.mark_gateway_unavailable();
+
+    assert!(app.state().sessions.is_empty());
+    assert!(app.state().profiles.is_empty());
+    assert_eq!(app.state().active_session_id, "");
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(app.pending_action(), Some(&ControlAction::StartService));
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render unavailable app");
+    assert!(snapshot.contains("service offline"));
+    assert!(snapshot.contains("start service"));
+    assert!(
+        !snapshot.contains("profile-v2"),
+        "stale VM tabs must disappear when the gateway list is unavailable"
+    );
+}
+
+#[test]
+fn control_error_renders_full_popup_detail() {
+    let mut app = App::new(fixture_state());
+
+    app.show_control_error("suspend failed", "service unavailable");
+
+    assert_eq!(app.overlay(), AppOverlay::Error);
+    assert_eq!(
+        app.control_error().expect("control error").message,
+        "service unavailable"
+    );
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render control error");
+    assert!(snapshot.contains("action failed"));
+    assert!(snapshot.contains("suspend failed"));
+    assert!(snapshot.contains("service unavailable"));
+    assert!(snapshot.contains("Esc closes this message"));
+}
+
+#[test]
 fn degraded_empty_state_asks_to_start_service_instead_of_create() {
     let mut state = offline_state();
     state.service.status = ServiceStatus::Degraded;
@@ -96,18 +135,27 @@ fn degraded_empty_state_asks_to_start_service_instead_of_create() {
 }
 
 #[test]
-fn empty_state_opens_new_session_modal_with_gradient_logo() {
+fn empty_state_renders_first_launch_panel_with_shortcuts() {
     let mut state = fixture_state();
     state.active_session_id.clear();
     state.sessions.clear();
 
-    let app = App::new(state);
+    let mut app = App::new(state);
 
-    assert_eq!(app.overlay(), AppOverlay::Create);
+    assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(app.create_draft().expect("create draft").name, "tmp-1");
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty panel");
     assert!(snapshot.contains("CAPSEM"));
-    assert!(snapshot.contains("new session"));
+    assert!(snapshot.contains("____    _    ____"));
+    assert!(snapshot.contains("Create a session"));
+    assert!(snapshot.contains("active input"));
+    assert!(snapshot.contains("tmp-1"));
+    assert!(snapshot.contains("corp-default"));
+    assert!(snapshot.contains("linux-builder"));
+    assert!(snapshot.contains("shortcuts"));
+    assert!(snapshot.contains("Up/Down"));
+    assert!(snapshot.contains("Alt+l"));
+    assert!(snapshot.contains("Alt+?"));
 
     let buffer = render_app_test_buffer(&app, 100, 24).expect("render logo buffer");
     let (logo_x, logo_y) = find_cell(&buffer, "CAPSEM");
@@ -119,6 +167,19 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
     );
     assert!(first.modifier.contains(Modifier::BOLD));
     assert!(last.modifier.contains(Modifier::BOLD));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Down, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::CreateSession {
+            name: "tmp-1".to_string(),
+            profile_id: "linux-builder".to_string(),
+        })
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
 }
 
 #[tokio::test]
@@ -144,7 +205,9 @@ fn empty_create_modal_blocks_enter_when_profiles_are_unavailable() {
     state.profiles.clear();
     let mut app = App::new(state);
 
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
+    assert_eq!(app.overlay(), AppOverlay::None);
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create panel");
     assert!(snapshot.contains("profiles unavailable"));
     assert!(
         !snapshot.contains("▶  default"),
@@ -154,9 +217,9 @@ fn empty_create_modal_blocks_enter_when_profiles_are_unavailable() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Consumed,
-        "create should be disabled until a real profile list is available"
+        "inline create should be disabled until a real profile list is available"
     );
-    assert_eq!(app.overlay(), AppOverlay::Create);
+    assert_eq!(app.overlay(), AppOverlay::None);
 }
 
 #[test]
@@ -237,21 +300,30 @@ fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render corrupted profile session");
     assert!(snapshot.contains("cannot resume: profile pin is corrupted"));
     assert!(!snapshot.contains("Press Enter to resume"));
+    assert!(snapshot.contains("Press Enter to create a replacement"));
+    assert!(snapshot.contains("Alt+d deletes this VM"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Consumed
     );
+    assert_eq!(app.overlay(), AppOverlay::Create);
     assert_eq!(
-        app.state().service.control_message.as_deref(),
-        Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+        app.create_draft().expect("create draft").name,
+        "tmp-1".to_string()
     );
+
+    app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
     assert_eq!(app.pending_action(), None);
+    assert_eq!(
+        app.state().service.control_message.as_deref(),
+        Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+    );
 }
 
 #[test]
@@ -397,6 +469,10 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     );
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render create dialog");
     assert!(snapshot.contains("new session"));
+    assert!(
+        !snapshot.contains("____    _    ____"),
+        "CAPSEM ASCII art belongs to the empty screen, not the create modal"
+    );
     assert!(snapshot.contains("name"));
     assert!(snapshot.contains("tmp-1"));
     assert!(snapshot.contains("corp-default"));
@@ -457,6 +533,8 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
     assert!(snapshot.contains("Alt+i"));
     assert!(snapshot.contains("session info"));
     assert!(snapshot.contains("Alt+f fork"));
+    assert!(snapshot.contains("Alt+p"));
+    assert!(snapshot.contains("purge"));
 }
 
 #[test]
@@ -661,6 +739,30 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
     );
     assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(app.pending_action(), None);
+}
+
+#[test]
+fn purge_action_is_alt_p_and_requires_confirmation() {
+    let mut app = App::new(fixture_state());
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('p'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    assert_eq!(
+        app.pending_action(),
+        Some(&ControlAction::Purge { all: false })
+    );
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render purge confirmation");
+    assert!(snapshot.contains("purge"));
+    assert!(snapshot.contains("temporary and broken VMs"));
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Purge { all: false })
+    );
 }
 
 #[test]
@@ -959,6 +1061,42 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
 }
 
 #[tokio::test]
+async fn gateway_provider_only_offers_tui_launchable_profiles() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let body = gateway_status_body().to_string();
+    let server = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else if request.contains("GET /profiles ") {
+                write_json_response(&mut stream, gateway_profiles_with_unlaunchable_body()).await;
+            } else {
+                assert!(
+                    request.contains("GET /status "),
+                    "unexpected request: {request:?}"
+                );
+                write_json_response(&mut stream, &body).await;
+            }
+        }
+    });
+
+    let state = GatewayProvider::new(format!("http://{addr}"))
+        .load_async()
+        .await
+        .expect("load state over gateway");
+
+    assert_eq!(state.profiles.len(), 1);
+    assert_eq!(state.profiles[0].id, "corp-default");
+
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -1111,6 +1249,87 @@ async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
 }
 
 #[tokio::test]
+async fn gateway_provider_invokes_purge_over_authenticated_gateway() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /purge "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(
+                    request.contains("authorization: Bearer test-token")
+                        || request.contains("Authorization: Bearer test-token"),
+                    "missing bearer auth: {request:?}"
+                );
+                assert!(request.contains(r#""all":false"#));
+                write_json_response(
+                    &mut stream,
+                    r#"{"purged":3,"persistent_purged":0,"ephemeral_purged":3}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Purge { all: false })
+        .await
+        .expect("invoke purge");
+
+    assert_eq!(outcome.message, "purged 3 temporary sessions");
+    assert_eq!(outcome.focus_session, None);
+    server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn gateway_provider_reports_defunct_persistent_purge() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test gateway");
+    let addr = listener.local_addr().expect("local addr");
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let request = read_http_request(&mut stream).await;
+            if request.contains("GET /token ") {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(
+                    request.contains("POST /purge "),
+                    "unexpected request: {request:?}"
+                );
+                assert!(request.contains(r#""all":false"#));
+                write_json_response(
+                    &mut stream,
+                    r#"{"purged":2,"persistent_purged":1,"ephemeral_purged":1}"#,
+                )
+                .await;
+            }
+        }
+    });
+
+    let outcome = GatewayProvider::new(format!("http://{addr}"))
+        .invoke_async(&ControlAction::Purge { all: false })
+        .await
+        .expect("invoke purge");
+
+    assert_eq!(
+        outcome.message,
+        "purged 2 sessions (1 broken persistent, 1 temporary)"
+    );
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn gateway_provider_surfaces_action_error_body() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -1130,7 +1349,7 @@ async fn gateway_provider_surfaces_action_error_body() {
                 write_response(
                     &mut stream,
                     "500 Internal Server Error",
-                    r#"{"error":"boom"}"#,
+                    r#"{"error":"service unavailable; start Capsem and try again"}"#,
                 )
                 .await;
             }
@@ -1144,8 +1363,10 @@ async fn gateway_provider_surfaces_action_error_body() {
         .await
         .expect_err("delete should fail");
 
-    assert!(error.to_string().contains("500"));
-    assert!(error.to_string().contains("boom"));
+    assert_eq!(
+        error.to_string(),
+        "service unavailable; start Capsem and try again"
+    );
     server.await.expect("server task");
 }
 
@@ -1334,6 +1555,75 @@ fn gateway_profiles_body() -> &'static str {
                     "best_for": "kernel and distro work"
                 },
                 "source": "user"
+            }
+        ]
+    }"#
+}
+
+fn gateway_profiles_with_unlaunchable_body() -> &'static str {
+    r#"{
+        "mode": "settings_profiles_v2",
+        "default_profile": "corp-default",
+        "profiles": [
+            {
+                "profile": {
+                    "id": "corp-default",
+                    "name": "Corp Default",
+                    "best_for": "default profile"
+                },
+                "source": "corp",
+                "ui": true,
+                "tui": true,
+                "web": true,
+                "asset_status": {
+                    "state": "ready",
+                    "ready": true,
+                    "usable_for_vm": true,
+                    "profile_id": "corp-default",
+                    "assets": [],
+                    "missing": [],
+                    "missing_assets": []
+                }
+            },
+            {
+                "profile": {
+                    "id": "web-only",
+                    "name": "Web Only",
+                    "best_for": "browser-only workflow"
+                },
+                "source": "corp",
+                "ui": true,
+                "tui": false,
+                "web": true,
+                "asset_status": {
+                    "state": "ready",
+                    "ready": true,
+                    "usable_for_vm": true,
+                    "profile_id": "web-only",
+                    "assets": [],
+                    "missing": [],
+                    "missing_assets": []
+                }
+            },
+            {
+                "profile": {
+                    "id": "missing-assets",
+                    "name": "Missing Assets",
+                    "best_for": "broken fixture"
+                },
+                "source": "corp",
+                "ui": true,
+                "tui": true,
+                "web": true,
+                "asset_status": {
+                    "state": "missing",
+                    "ready": false,
+                    "usable_for_vm": false,
+                    "profile_id": "missing-assets",
+                    "assets": [],
+                    "missing": ["rootfs.squashfs"],
+                    "missing_assets": []
+                }
             }
         ]
     }"#

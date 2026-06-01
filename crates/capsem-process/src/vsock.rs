@@ -907,14 +907,9 @@ fn dispatch_aux_connection(
                 };
                 match read_control_msg(&mut f) {
                     Ok(GuestToHost::ShutdownRequest) => {
-                        info!("guest requested shutdown via lifecycle port");
-                        capsem_core::try_send!(
-                            "ipc_lifecycle_shutdown",
-                            itx.send(ProcessToService::ShutdownRequested { id })
-                        );
-                        capsem_core::try_send!(
-                            "ctrl_lifecycle_shutdown",
-                            ctx.blocking_send(ServiceToProcess::Shutdown)
+                        warn!(
+                            target: "ipc",
+                            "guest shutdown requests are disabled; ignoring lifecycle shutdown frame"
                         );
                     }
                     Ok(GuestToHost::SuspendRequest) => {

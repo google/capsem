@@ -96,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added confirmed `capsem-tui` service actions for resuming, suspending,
   stopping, and deleting sessions through the installed HTTP gateway without
   blocking the terminal UI.
+- Added `Alt+p` purge in `capsem-tui`, routed through the installed gateway's
+  authenticated `/purge` endpoint for temporary and broken VM cleanup.
 - Added a profile-aware `capsem-tui` new-session dialog with an editable
   prefilled `tmp-*` session name and live profile selection before
   provisioning.
@@ -122,6 +124,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   full async profile for both rootfs and writable block devices, while keeping
   `CAPSEM_KVM_BLK_IO_URING=sync` as the explicit benchmark ablation and
   fallback path.
+- Disabled in-VM shutdown commands. `capsem-sysutil` now only supports guest
+  suspend, `capsem-init` removes `/sbin/shutdown`, `/sbin/halt`,
+  `/sbin/poweroff`, and `/sbin/reboot` from the VM overlay, and the host
+  ignores deprecated shutdown lifecycle frames for compatibility.
+- Gated the Linux KVM virtio-blk io_uring backend to writable block devices
+  after the first benchmark showed scratch sequential-read gains but rootfs and
+  AI CLI startup regressions when io_uring was used unconditionally.
+- Made the Linux KVM virtio-blk io_uring backend opt-in while measured default
+  gates continue to show disk or rootfs regressions.
 - Added KVM virtio-blk event-index negotiation and shared virtqueue
   notification-suppression helpers, with canonical Linux benchmark artifacts
   recording the mixed performance result for the Firecracker-path sprint.
@@ -191,8 +202,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Alt+l` sessions overlay, and clearer `Alt+i` session info.
 - Added focused-field highlighting to `capsem-tui` create and fork dialogs so
   the active input and selected profile are visible.
-- Added an empty-state `capsem-tui` startup path that opens the new-session
-  modal directly and brands it with a compact gradient CAPSEM wordmark.
+- Added an empty-state `capsem-tui` startup panel with CAPSEM ASCII art,
+  first-launch shortcuts, and the inline create-session form so users can
+  create their first VM directly from the empty screen.
 - Changed the `capsem-tui` status hint to `help: alt+?` and moved it to the
   far right after active-session statistics, including the empty-session state.
 - Changed `capsem shell` to launch `capsem-tui` as the single interactive VM
@@ -253,6 +265,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened Linux KVM virtio-blk request accounting so aggregate descriptor data
   lengths that overflow `u32` return `IOERR` instead of panicking in the queue
   drain path.
+- Fixed same-version host binary drift so `capsem status` and service startup
+  compare IPC protocol/schema hashes, preventing suspend from failing against
+  an incompatible `capsem-process` that reports the same package version.
+- Fixed `capsem-tui` gateway refresh failure handling so unavailable live
+  status clears stale VM tabs instead of preserving old sessions as actionable
+  suspend/stop/delete targets, and now shows failed control actions in a popup
+  with the full gateway error detail.
+- Fixed `/profiles` so create surfaces only receive profiles with verified VM
+  assets, and added `ui`/`tui`/`web` capability flags so terminal and web
+  launchers can hide profiles that do not belong on that surface.
+- Fixed service purge so `all=false` still removes defunct or profile-corrupted
+  persistent VMs while preserving healthy persistent VMs, making TUI cleanup
+  actually clear broken profile-pin sessions from refreshed VM lists.
+- Fixed `capsem-tui` recovery for stopped VMs with corrupted profile pins:
+  the inactive pane now explains that Enter creates a replacement VM, while
+  `Alt+d` remains available to delete the bad VM entry.
 - Fixed `capsem-tui` suspend feedback so `Alt+s` shows a full-pane
   `suspending...` state while the suspend action runs instead of only updating
   the bottom status bar.

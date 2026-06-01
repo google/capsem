@@ -81,7 +81,7 @@
   }
 
   function profileSelectionBlocked(record: ProfileListRecord): boolean {
-    return record.asset_status?.usable_for_vm === false;
+    return record.ui === false || record.web === false || record.asset_status?.usable_for_vm === false;
   }
 
   function assetStateLabel(record: ProfileListRecord): string {
