@@ -371,11 +371,15 @@ def guest_command(*, startup: bool) -> str:
     parts = [
         "set -eu",
         "echo CAPSEM_KVM_ROOTFS_SYSFS_BEGIN",
-        "printf 'rootfs_mount='; findmnt -n -o FSTYPE /mnt/a 2>/dev/null || true",
+        "printf 'rootfs_mount='; findmnt -n -o FSTYPE /run/capsem-lower 2>/dev/null || echo unavailable",
+        "printf 'rootfs_options='; findmnt -n -o OPTIONS /run/capsem-lower 2>/dev/null || echo unavailable",
         "printf 'mq_dirs='; ls /sys/block/vda/mq 2>/dev/null | wc -l",
         "printf 'max_segments='; cat /sys/block/vda/queue/max_segments",
         "printf 'logical_block_size='; cat /sys/block/vda/queue/logical_block_size",
         "printf 'nr_requests='; cat /sys/block/vda/queue/nr_requests",
+        "printf 'pmem_present='; test -b /dev/pmem0 && echo yes || echo no",
+        "printf 'pmem_dax='; cat /sys/block/pmem0/queue/dax 2>/dev/null || echo unavailable",
+        "printf 'pmem_logical_block_size='; cat /sys/block/pmem0/queue/logical_block_size 2>/dev/null || echo unavailable",
         "echo CAPSEM_KVM_ROOTFS_SYSFS_END",
         "capsem-bench storage >/dev/null",
         "echo CAPSEM_KVM_ROOTFS_STORAGE_JSON_BEGIN",
@@ -407,17 +411,25 @@ def run_cell(
     timeout: int,
     scope: str,
     direct_io: bool,
+    pmem_dax: bool,
 ) -> dict:
     home = TARGET / "homes" / format_name
+    cmdline_append = f"{rootfs_image['cmdline_append']} capsem.bench_lower=1"
+    if pmem_dax:
+        cmdline_append = (
+            f"{rootfs_image['cmdline_append']} capsem.rootfs=erofs-dax capsem.bench_lower=1"
+        )
     env = {
         **os.environ,
         "CAPSEM_HOME": str(home),
         "CAPSEM_RUN_DIR": str(home / "run"),
-        "CAPSEM_DEV_KERNEL_CMDLINE_APPEND": f"{rootfs_image['cmdline_append']} capsem.bench_lower=1",
+        "CAPSEM_DEV_KERNEL_CMDLINE_APPEND": cmdline_append,
         **shape_env(shape, scope=scope),
     }
     if direct_io:
         env["CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO"] = "1"
+    if pmem_dax:
+        env["CAPSEM_KVM_ROOTFS_PMEM_DAX"] = "1"
     started = time.time()
     proc = run(
         [
@@ -439,6 +451,7 @@ def run_cell(
         "format": format_name,
         "shape": shape,
         "direct_io": direct_io,
+        "pmem_dax": pmem_dax,
         "returncode": proc.returncode,
         "duration_s": round(duration, 3),
         "sysfs": extract_sysfs(combined),
@@ -571,6 +584,11 @@ def main() -> int:
         help="open the read-only KVM rootfs block backing file with O_DIRECT",
     )
     parser.add_argument(
+        "--pmem-dax",
+        action="store_true",
+        help="attach generated EROFS rootfs images as virtio-pmem and mount with -o dax",
+    )
+    parser.add_argument(
         "--scope",
         choices=["rootfs", "all"],
         default="rootfs",
@@ -595,9 +613,26 @@ def main() -> int:
         name = f"erofs-lz4hc-c{cluster_size}"
         if name not in formats:
             formats.append(name)
+    if args.pmem_dax:
+        non_erofs = [format_name for format_name in formats if not format_name.startswith("erofs")]
+        if non_erofs:
+            raise SystemExit(
+                "--pmem-dax requires EROFS formats; non-EROFS formats requested: "
+                + ", ".join(non_erofs)
+            )
     shapes = build_shapes(args)
     if args.dry_run:
-        print(json.dumps({"formats": formats, "count": len(formats) * len(shapes), "shapes": shapes}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "formats": formats,
+                    "count": len(formats) * len(shapes),
+                    "shapes": shapes,
+                    "pmem_dax": args.pmem_dax,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     rootfs_images = []
@@ -614,18 +649,15 @@ def main() -> int:
         "host": host_metadata(),
         "startup": args.startup,
         "direct_io": args.direct_io,
+        "pmem_dax": args.pmem_dax,
         "scope": args.scope,
         "formats": rootfs_images,
         "shapes": shapes,
         "capabilities": {
             "dax": {
-                "status": "not_implemented",
-                "reason": (
-                    "Capsem KVM rootfs is currently virtio-blk backed. "
-                    "DAX requires a separate virtiofs-DAX or pmem-style mapping "
-                    "path, so this harness records it as a capability audit item "
-                    "rather than pretending a block image can exercise DAX."
-                ),
+                "status": "enabled" if args.pmem_dax else "available_opt_in",
+                "transport": "virtio-pmem" if args.pmem_dax else None,
+                "mount": "erofs -o dax /dev/pmem0" if args.pmem_dax else None,
             }
         },
         "results": [],
@@ -645,6 +677,7 @@ def main() -> int:
                 timeout=args.timeout,
                 scope=args.scope,
                 direct_io=args.direct_io,
+                pmem_dax=args.pmem_dax,
             )
             artifact["results"].append(result)
             if result["returncode"] != 0:

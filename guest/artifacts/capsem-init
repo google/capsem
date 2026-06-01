@@ -87,6 +87,7 @@ init_stage() {
 
 echo "[capsem-init] listing block devices..."
 ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
+ls /dev/pmem* 2>&1 || echo "[capsem-init] no /dev/pmem found"
 
 # Mount immutable lower rootfs. SquashFS remains the production default; the
 # hypervisor benchmark harness can append `capsem.rootfs=erofs` or
@@ -100,7 +101,18 @@ for arg in $(cat /proc/cmdline); do
         capsem.bench_lower=1|capsem.bench_lower=true) BENCH_LOWER_ROOTFS=1 ;;
     esac
 done
-echo "[capsem-init] mounting /dev/vda ($ROOTFS_TYPE)..."
+ROOTFS_DEV=/dev/vda
+ROOTFS_MOUNT_OPTS=""
+if [ "$ROOTFS_TYPE" = "erofs-dax" ]; then
+    ROOTFS_TYPE="erofs"
+    ROOTFS_DEV=/dev/pmem0
+    ROOTFS_MOUNT_OPTS="-o dax"
+    _i=0
+    while [ ! -b "$ROOTFS_DEV" ] && [ "$_i" -lt 200 ]; do
+        _i=$((_i + 1))
+    done
+fi
+echo "[capsem-init] mounting $ROOTFS_DEV ($ROOTFS_TYPE $ROOTFS_MOUNT_OPTS)..."
 if [ "$ROOTFS_TYPE" = "auto" ]; then
     if mount -t squashfs /dev/vda /mnt/a; then
         ROOTFS_TYPE="squashfs"
@@ -111,15 +123,15 @@ if [ "$ROOTFS_TYPE" = "auto" ]; then
         exit 1
     fi
 elif [ "$ROOTFS_TYPE" = "squashfs" ] || [ "$ROOTFS_TYPE" = "erofs" ]; then
-    mount -t "$ROOTFS_TYPE" /dev/vda /mnt/a || {
-        echo "[capsem-init] FATAL: cannot mount /dev/vda as $ROOTFS_TYPE"
+    mount -t "$ROOTFS_TYPE" $ROOTFS_MOUNT_OPTS "$ROOTFS_DEV" /mnt/a || {
+        echo "[capsem-init] FATAL: cannot mount $ROOTFS_DEV as $ROOTFS_TYPE $ROOTFS_MOUNT_OPTS"
         exit 1
     }
 else
     echo "[capsem-init] FATAL: unsupported capsem.rootfs=$ROOTFS_TYPE"
     exit 1
 fi
-echo "[capsem-init] mounted /dev/vda as $ROOTFS_TYPE"
+echo "[capsem-init] mounted $ROOTFS_DEV as $ROOTFS_TYPE"
 
 echo "[capsem-init] checking /mnt/a/bin/bash..."
 ls /mnt/a/bin/bash 2>&1

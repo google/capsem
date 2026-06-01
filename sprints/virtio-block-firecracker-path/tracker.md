@@ -15,6 +15,8 @@
 - [x] Make io_uring opt-in by default and benchmark the safe default.
 - [ ] Recover or explain scratch sequential read regression.
 - [x] Add async-path telemetry counters for io_uring submissions/completions.
+- [x] Implement and benchmark EROFS over virtio-pmem DAX as the final rootfs
+      transport experiment before macOS reruns the shared rootfs candidates.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
 - [x] Commit accepted benchmark artifacts after each accepted milestone.
 - [x] Update `CHANGELOG.md` with each functional milestone.
@@ -38,8 +40,61 @@
 - Current io_uring decision: keep the implementation and metrics, but default
   it off behind `CAPSEM_KVM_BLK_IO_URING` until a future tuning slice proves a
   clean default win.
+- DAX direction: virtio-blk exposes `queue/dax=0`, so the meaningful EROFS DAX
+  test is virtio-pmem. The first implementation maps a read-only copy of the
+  rootfs image into guest physical memory, advertises it as virtio-pmem, and
+  mounts `/dev/pmem0` with `-o dax` through a benchmark-only `erofs-dax` boot
+  mode. This tests guest DAX and removes block I/O from rootfs reads; persistent
+  host-file DAX can be evaluated later if the guest DAX signal is worth keeping.
+- First DAX boot proof reached the guest and activated virtio device type 27,
+  but mount failed with `erofs: dax options not supported`. Diagnosis: generic
+  `CONFIG_FS_DAX` depends on `CONFIG_ZONE_DEVICE`, which in turn requires
+  memory hotplug/hotremove plus sparse vmemmap. The defconfig now requests
+  those dependencies explicitly before the rerun.
+- Second DAX boot reached virtio-pmem but Linux rejected the namespace as
+  misaligned. The KVM pmem mapping now aligns both guest physical start and
+  advertised region size to 128 MiB so `ZONE_DEVICE` can map it.
+- Enabling FS_DAX also pulled the virtio-fs guest driver into a DAX-sensitive
+  path. Capsem's embedded virtio-fs does not expose a shared-memory DAX cache
+  window, and we do not need virtio-fs DAX for rootfs-on-pmem, so the kernel
+  defconfigs explicitly keep `CONFIG_FUSE_DAX` disabled.
 
 ## Experiment Ledger
+
+### Accepted: EROFS over virtio-pmem DAX experiment
+- Code: this milestone commit.
+- Bench: `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780357484.json`
+- Archived superseded artifacts:
+  `benchmarks/archive/benchmark-history-20260601T234525Z.zip`
+- Proof:
+  - `python3 -m py_compile scripts/kvm_rootfs_format_grid.py`
+  - `uv run pytest tests/test_kvm_rootfs_format_grid.py -q`
+  - `cargo test -p capsem-core pmem --lib`
+  - `cargo test -p capsem-service process_env_allowlist_forwards_child_runtime_knobs`
+  - `just build-kernel x86_64`
+  - `just _pack-initrd`
+  - `python3 scripts/kvm_rootfs_format_grid.py --formats erofs-lz4hc-c65536 --queue-counts 8 --queue-sizes 128 --seg-maxes 64 --logical-block-sizes 4096 --startup --pmem-dax --timeout 900`
+- Mount proof:
+  - `/run/capsem-lower`: `erofs` from `/dev/pmem0`
+  - options: `ro,relatime,user_xattr,acl,cache_strategy=readaround,dax=always`
+  - `/sys/block/pmem0/queue/dax`: `1`
+- Result versus tuned EROFS virtio-blk baseline
+  `data_1.2.1780320819_x86_64_1780351471.json`:
+  - rootfs sequential read: 315.4 -> 276.8 MB/s (-12.2%)
+  - rootfs random 4K read: 8626 -> 20875 IOPS (+142.0%)
+  - large binary cold read: 578.0 -> 344.4 MB/s (-40.4%)
+  - small JS reads: 237963 -> 546202 ops/s (+129.5%)
+  - metadata stats: 35562 -> 123776 stats/s (+248.1%)
+  - direct lower metadata stats: 37066 -> 172953 stats/s (+366.6%)
+  - python startup min: 10.8 -> 6.4 ms (+40.7% faster)
+  - node startup min: 51.2 -> 29.8 ms (+41.8% faster)
+  - claude startup min: 502.5 -> 553.7 ms (-10.2% slower)
+  - gemini startup min: 2070.1 -> 1958.0 ms (+5.4% faster)
+  - codex startup min: 191.7 -> 137.9 ms (+28.1% faster)
+- Decision: keep DAX as an opt-in experiment. It is clearly valuable for
+  metadata/random/small-file lanes, but the large sequential regression means
+  it is not a default rootfs transport candidate without more rootfs layout or
+  read-ahead work.
 
 ### Accepted: combined KVM ioeventfd block batching
 - Code: `ba8f260e perf: combine kvm ioeventfd block batching`

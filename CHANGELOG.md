@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added an opt-in Linux KVM EROFS DAX experiment: `CAPSEM_KVM_ROOTFS_PMEM_DAX=1`
+  maps the read-only rootfs image through virtio-pmem, `capsem.rootfs=erofs-dax`
+  mounts `/dev/pmem0` with `-o dax`, and the rootfs-format grid records it with
+  `--pmem-dax` for direct comparison against the tuned virtio-blk EROFS lane.
+- Recorded the Linux x86_64 EROFS DAX benchmark artifact. The DAX lane mounts
+  `/run/capsem-lower` from `/dev/pmem0` with `dax=always`, improves random
+  rootfs reads and metadata-heavy lanes over the tuned virtio-blk EROFS lane,
+  and keeps the experiment opt-in because large sequential reads regressed.
 - Added bounded Linux KVM virtio-blk shape knobs for queue count, queue size,
   segment limit, logical block size, and io_uring mode so rootfs/startup
   tuning can sweep coupled block-device settings instead of one-off constants.
@@ -71,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rootfs path does not expose a DAX-capable block device, so DAX requires a
   separate transport/kernel-capability experiment rather than a mount-option
   flip.
+- Disabled guest `CONFIG_FUSE_DAX` while keeping `CONFIG_FS_DAX` enabled so
+  the EROFS pmem DAX experiment does not force the existing virtio-fs overlay
+  device into an unsupported DAX cache-window negotiation path.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

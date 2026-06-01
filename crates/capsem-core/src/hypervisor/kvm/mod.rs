@@ -23,10 +23,14 @@ mod virtio_blk;
 mod virtio_console;
 mod virtio_fs;
 mod virtio_mmio;
+mod virtio_pmem;
 mod virtio_queue;
 mod virtio_vsock;
 
+use std::fs::File;
+use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,6 +44,10 @@ use crate::vm::config::VmConfig;
 use crate::vm::VmState;
 
 const KVM_PAUSE_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(target_arch = "x86_64")]
+const KVM_PMEM_MEMORY_SLOT: u32 = 10;
+#[cfg(target_arch = "x86_64")]
+const KVM_PMEM_ALIGNMENT: u64 = 128 * 1024 * 1024;
 
 fn kvm_vsock_seed(config: &VmConfig) -> u32 {
     let mut hasher = blake3::Hasher::new();
@@ -110,6 +118,33 @@ fn irq_to_gsi(irq: u32) -> u32 {
 }
 
 #[cfg(target_arch = "x86_64")]
+fn should_attach_pmem_rootfs(config: &VmConfig) -> bool {
+    config.disk_path.is_some()
+        && std::env::var("CAPSEM_KVM_ROOTFS_PMEM_DAX").is_ok_and(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+#[cfg(target_arch = "x86_64")]
+fn align_up_to(value: u64, alignment: u64) -> u64 {
+    debug_assert!(alignment.is_power_of_two());
+    (value + alignment - 1) & !(alignment - 1)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn pmem_guest_phys_addr(ram_bytes: u64) -> u64 {
+    align_up_to(memory::guest_phys_end(ram_bytes), KVM_PMEM_ALIGNMENT)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn pmem_region_size(image_size: u64) -> u64 {
+    align_up_to(image_size, KVM_PMEM_ALIGNMENT)
+}
+
+#[cfg(target_arch = "x86_64")]
 fn virtio_mmio_device_count(config: &VmConfig, vsock_ports: &[u32]) -> u32 {
     let mut device_count = 1; // console at slot 0
     if config.disk_path.is_some() {
@@ -121,7 +156,80 @@ fn virtio_mmio_device_count(config: &VmConfig, vsock_ports: &[u32]) -> u32 {
     if !vsock_ports.is_empty() {
         device_count += 1;
     }
-    device_count + config.virtio_fs_shares.len() as u32
+    device_count += config.virtio_fs_shares.len() as u32;
+    if should_attach_pmem_rootfs(config) {
+        device_count += 1;
+    }
+    device_count
+}
+
+#[cfg(target_arch = "x86_64")]
+struct PmemMapping {
+    ptr: *mut u8,
+    size: u64,
+    image_size: u64,
+    guest_phys_addr: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl PmemMapping {
+    fn from_file(path: &Path, guest_phys_addr: u64) -> Result<Self> {
+        let mut file = File::open(path)
+            .with_context(|| format!("failed to open pmem rootfs image {}", path.display()))?;
+        let image_size = file
+            .metadata()
+            .with_context(|| format!("failed to stat pmem rootfs image {}", path.display()))?
+            .len();
+        anyhow::ensure!(
+            image_size > 0,
+            "pmem rootfs image is empty: {}",
+            path.display()
+        );
+        let size = pmem_region_size(image_size);
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            anyhow::bail!(
+                "failed to allocate pmem rootfs region: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+
+        let mapping = Self {
+            ptr: ptr as *mut u8,
+            size,
+            image_size,
+            guest_phys_addr,
+        };
+        let dst = unsafe { std::slice::from_raw_parts_mut(mapping.ptr, image_size as usize) };
+        if let Err(err) = file.read_exact(dst) {
+            unsafe {
+                libc::munmap(mapping.ptr as *mut libc::c_void, mapping.size as usize);
+            }
+            anyhow::bail!(
+                "failed to populate pmem rootfs image {}: {err}",
+                path.display()
+            );
+        }
+        Ok(mapping)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for PmemMapping {
+    fn drop(&mut self) {
+        unsafe {
+            libc::munmap(self.ptr as *mut libc::c_void, self.size as usize);
+        }
+    }
 }
 
 impl Hypervisor for KvmHypervisor {
@@ -169,6 +277,32 @@ impl Hypervisor for KvmHypervisor {
             &config.kernel_cmdline,
             vsock_bindings.as_ref().map_or(0, |b| b.offset()),
         );
+        #[cfg(target_arch = "x86_64")]
+        let pmem_mapping = if should_attach_pmem_rootfs(config) {
+            let disk_path = config
+                .disk_path
+                .as_ref()
+                .expect("should_attach_pmem_rootfs requires disk_path");
+            let guest_phys_addr = pmem_guest_phys_addr(config.ram_bytes);
+            let mapping = PmemMapping::from_file(disk_path, guest_phys_addr)?;
+            vm.set_user_memory_region(
+                KVM_PMEM_MEMORY_SLOT,
+                mapping.guest_phys_addr,
+                mapping.size,
+                mapping.ptr,
+            )?;
+            tracing::info!(
+                event_name = "kvm.pmem_rootfs.attach",
+                path = %disk_path.display(),
+                guest_phys_addr = format_args!("{:#x}", mapping.guest_phys_addr),
+                size = mapping.size,
+                image_size = mapping.image_size,
+                "attached read-only rootfs image as virtio-pmem backing memory"
+            );
+            Some(mapping)
+        } else {
+            None
+        };
 
         // -- Arch-specific: interrupt controller --------------------------
         #[cfg(target_arch = "x86_64")]
@@ -615,6 +749,31 @@ impl Hypervisor for KvmHypervisor {
             )?;
         }
 
+        #[cfg(target_arch = "x86_64")]
+        if let Some(pmem) = pmem_mapping.as_ref() {
+            let slot = 4 + config.virtio_fs_shares.len() as u32;
+            let pmem_irq_fd = create_irq_eventfd()?;
+            let pmem_interrupt_status = Arc::new(AtomicU32::new(0));
+            vm.irqfd(
+                pmem_irq_fd.as_raw_fd(),
+                irq_to_gsi(memory::virtio_mmio_irq(slot)),
+            )?;
+            let pmem_device = virtio_pmem::VirtioPmemDevice::new(pmem.guest_phys_addr, pmem.size);
+            let pmem_mmio = virtio_mmio::VirtioMmioTransport::new_with_interrupt_status(
+                Box::new(pmem_device),
+                guest_mem.clone_ref(memory::RAM_BASE),
+                pmem_irq_fd,
+                pmem_interrupt_status,
+            );
+            let pmem_mmio = Arc::new(pmem_mmio);
+            mmio_transports.push((slot, Arc::clone(&pmem_mmio)));
+            mmio_bus.register(
+                memory::virtio_mmio_addr(slot),
+                memory::VIRTIO_MMIO_SIZE,
+                pmem_mmio,
+            )?;
+        }
+
         // -- Shared: vsock ------------------------------------------------
         let (vsock_tx, vsock_rx) = mpsc::unbounded_channel();
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -705,6 +864,8 @@ impl Hypervisor for KvmHypervisor {
             block_metrics,
             #[cfg(target_arch = "x86_64")]
             _mmio_transports: mmio_transports,
+            #[cfg(target_arch = "x86_64")]
+            _pmem_mapping: pmem_mapping,
             _vsock_listener_handles: vsock_listener_handles,
             _vsock_irq_handles: vsock_irq_handles,
         };
@@ -726,6 +887,8 @@ struct KvmHandle {
     block_metrics: Vec<Arc<virtio_blk::BlockDeviceMetrics>>,
     #[cfg(target_arch = "x86_64")]
     _mmio_transports: Vec<(u32, Arc<virtio_mmio::VirtioMmioTransport>)>,
+    #[cfg(target_arch = "x86_64")]
+    _pmem_mapping: Option<PmemMapping>,
     _vsock_listener_handles: Vec<std::thread::JoinHandle<()>>,
     _vsock_irq_handles: Vec<std::thread::JoinHandle<()>>,
 }
@@ -985,6 +1148,8 @@ mod tests {
             block_metrics: Vec::new(),
             #[cfg(target_arch = "x86_64")]
             _mmio_transports: Vec::new(),
+            #[cfg(target_arch = "x86_64")]
+            _pmem_mapping: None,
             _vsock_listener_handles: Vec::new(),
             _vsock_irq_handles: Vec::new(),
         }
@@ -1127,6 +1292,52 @@ mod tests {
         assert_eq!(state_from_u8(VmState::Resuming as u8), VmState::Resuming);
         assert_eq!(state_from_u8(VmState::Saving as u8), VmState::Saving);
         assert_eq!(state_from_u8(255), VmState::Unknown);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn pmem_rootfs_gate_requires_disk_and_opt_in() {
+        let mut config = VmConfig {
+            cpu_count: 1,
+            ram_bytes: 4096,
+            kernel_path: "/nonexistent/vmlinuz".into(),
+            initrd_path: None,
+            disk_path: None,
+            scratch_disk_path: None,
+            virtio_fs_shares: Vec::new(),
+            kernel_cmdline: String::new(),
+            expected_kernel_hash: None,
+            expected_initrd_hash: None,
+            checkpoint_path: None,
+            expected_disk_hash: None,
+            machine_identifier_path: None,
+            serial_log_path: None,
+        };
+
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_DAX");
+        assert!(!should_attach_pmem_rootfs(&config));
+        assert_eq!(virtio_mmio_device_count(&config, &[]), 1);
+
+        std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_DAX", "1");
+        assert!(!should_attach_pmem_rootfs(&config));
+
+        config.disk_path = Some("/tmp/rootfs.erofs".into());
+        assert!(should_attach_pmem_rootfs(&config));
+        assert_eq!(virtio_mmio_device_count(&config, &[]), 3);
+
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_DAX");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn pmem_region_is_section_aligned_for_zone_device() {
+        assert_eq!(pmem_guest_phys_addr(8 * 1024 * 1024 * 1024), 0x2400_00000);
+
+        let image_size = 805_425_152;
+        let size = pmem_region_size(image_size);
+        assert!(size >= image_size);
+        assert_eq!(size % KVM_PMEM_ALIGNMENT, 0);
+        assert_eq!(size, 896 * 1024 * 1024);
     }
 
     #[cfg(not(target_arch = "x86_64"))]

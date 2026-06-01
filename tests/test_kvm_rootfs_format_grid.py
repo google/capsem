@@ -162,6 +162,37 @@ def test_rootfs_format_grid_dry_run_appends_erofs_lz4hc_cluster_formats():
     assert payload["count"] == 6
 
 
+def test_rootfs_format_grid_dry_run_records_pmem_dax_lane():
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--dry-run",
+            "--formats",
+            "erofs-lz4hc-c65536",
+            "--pmem-dax",
+            "--queue-counts",
+            "1",
+            "--queue-sizes",
+            "128",
+            "--seg-maxes",
+            "64",
+            "--logical-block-sizes",
+            "4096",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert payload["formats"] == ["erofs-lz4hc-c65536"]
+    assert payload["count"] == 1
+    assert payload["pmem_dax"] is True
+
+
 def test_rootfs_format_grid_rejects_unknown_format():
     proc = subprocess.run(
         [
