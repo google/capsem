@@ -296,6 +296,17 @@
   codex 820.5 ms (+36.0%). This candidate is strong enough for a default
   experiment, but still needs canonical `just benchmark` and macOS/shared
   impact review before acceptance.
+- H05 scope split landed locally after writable disk checks showed the rootfs
+  candidate must not be applied globally. `CAPSEM_KVM_BLK_ROOTFS_*` overrides
+  now target read-only rootfs devices, `CAPSEM_KVM_BLK_WRITABLE_*` can target
+  writable block devices, and generic `CAPSEM_KVM_BLK_*` remains a fallback.
+  Live sysfs proof with only rootfs-specific knobs showed `vda` at 4 active MQ
+  queues, `max_segments=64`, `logical_block_size=4096`, `nr_requests=64`, while
+  `vdb` stayed at the default 1 queue, `max_segments=254`,
+  `logical_block_size=512`, `nr_requests=128`. Focused disk probes still showed
+  low current write IOPS even with default writable geometry, so accepting the
+  rootfs candidate requires canonical `just benchmark` rather than isolated
+  disk interpretation.
 
 ## Coverage Ledger
 

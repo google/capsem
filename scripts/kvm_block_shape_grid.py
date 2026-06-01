@@ -107,16 +107,23 @@ def guest_command(*, startup: bool) -> str:
     return "; ".join(parts)
 
 
-def run_shape(shape: dict[str, int], *, startup: bool, timeout: int) -> dict:
+def shape_env(shape: dict[str, int], *, scope: str) -> dict[str, str]:
+    prefix = "CAPSEM_KVM_BLK_ROOTFS" if scope == "rootfs" else "CAPSEM_KVM_BLK"
+    return {
+        f"{prefix}_QUEUE_COUNT": str(shape["queue_count"]),
+        f"{prefix}_QUEUE_SIZE": str(shape["queue_size"]),
+        f"{prefix}_SEG_MAX": str(shape["seg_max"]),
+        f"{prefix}_LOGICAL_BLOCK_SIZE": str(shape["logical_block_size"]),
+    }
+
+
+def run_shape(shape: dict[str, int], *, startup: bool, timeout: int, scope: str) -> dict:
     env = {
         **os.environ,
         "CAPSEM_HOME": str(TARGET_HOME),
         "CAPSEM_RUN_DIR": str(TARGET_HOME / "run"),
         "CAPSEM_ASSETS_DIR": str(ROOT / "assets"),
-        "CAPSEM_KVM_BLK_QUEUE_COUNT": str(shape["queue_count"]),
-        "CAPSEM_KVM_BLK_QUEUE_SIZE": str(shape["queue_size"]),
-        "CAPSEM_KVM_BLK_SEG_MAX": str(shape["seg_max"]),
-        "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE": str(shape["logical_block_size"]),
+        **shape_env(shape, scope=scope),
     }
     started = time.time()
     proc = subprocess.run(
@@ -174,6 +181,12 @@ def main() -> int:
     parser.add_argument("--seg-maxes", default="auto,64")
     parser.add_argument("--logical-block-sizes", default="512,4096")
     parser.add_argument("--startup", action="store_true", help="also run capsem-bench startup")
+    parser.add_argument(
+        "--scope",
+        choices=["rootfs", "all"],
+        default="rootfs",
+        help="apply shape to read-only rootfs only, or to all KVM block devices",
+    )
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--dry-run", action="store_true")
@@ -192,12 +205,13 @@ def main() -> int:
         "git_commit": git_commit(),
         "host": host_metadata(),
         "startup": args.startup,
+        "scope": args.scope,
         "shapes": shapes,
         "results": [],
     }
     for index, shape in enumerate(shapes, start=1):
         print(f"[{index}/{len(shapes)}] {shape}", flush=True)
-        result = run_shape(shape, startup=args.startup, timeout=args.timeout)
+        result = run_shape(shape, startup=args.startup, timeout=args.timeout, scope=args.scope)
         artifact["results"].append(result)
         if result["returncode"] != 0:
             print(f"  failed: returncode={result['returncode']}", file=sys.stderr, flush=True)

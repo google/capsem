@@ -193,23 +193,36 @@ struct BlockShape {
 }
 
 impl BlockShape {
-    fn from_env() -> Result<Self> {
-        Self::from_lookup(|name| std::env::var(name).ok())
+    fn from_env(read_only: bool) -> Result<Self> {
+        let device_prefix = if read_only {
+            "CAPSEM_KVM_BLK_ROOTFS"
+        } else {
+            "CAPSEM_KVM_BLK_WRITABLE"
+        };
+        Self::from_lookup_for_device(|name| std::env::var(name).ok(), Some(device_prefix))
     }
 
     fn from_lookup<F>(lookup: F) -> Result<Self>
     where
         F: Fn(&str) -> Option<String>,
     {
+        Self::from_lookup_for_device(lookup, None)
+    }
+
+    fn from_lookup_for_device<F>(lookup: F, device_prefix: Option<&str>) -> Result<Self>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
         let queue_count =
-            parse_u16_env(&lookup, "CAPSEM_KVM_BLK_QUEUE_COUNT", DEFAULT_QUEUE_COUNT)?;
+            parse_u16_shape_env(&lookup, device_prefix, "QUEUE_COUNT", DEFAULT_QUEUE_COUNT)?;
         if !(1..=MAX_QUEUE_COUNT).contains(&queue_count) {
             anyhow::bail!(
                 "CAPSEM_KVM_BLK_QUEUE_COUNT must be between 1 and {MAX_QUEUE_COUNT}, got {queue_count}"
             );
         }
 
-        let queue_size = parse_u16_env(&lookup, "CAPSEM_KVM_BLK_QUEUE_SIZE", DEFAULT_QUEUE_SIZE)?;
+        let queue_size =
+            parse_u16_shape_env(&lookup, device_prefix, "QUEUE_SIZE", DEFAULT_QUEUE_SIZE)?;
         if !(MIN_QUEUE_SIZE..=MAX_QUEUE_SIZE).contains(&queue_size) || !queue_size.is_power_of_two()
         {
             anyhow::bail!(
@@ -218,16 +231,17 @@ impl BlockShape {
         }
 
         let max_seg = u32::from(queue_size) - 2;
-        let seg_max = parse_u32_env(&lookup, "CAPSEM_KVM_BLK_SEG_MAX", max_seg)?;
+        let seg_max = parse_u32_shape_env(&lookup, device_prefix, "SEG_MAX", max_seg)?;
         if seg_max == 0 || seg_max > max_seg {
             anyhow::bail!(
                 "CAPSEM_KVM_BLK_SEG_MAX must be between 1 and queue_size - 2 ({max_seg}), got {seg_max}"
             );
         }
 
-        let logical_block_size = parse_u32_env(
+        let logical_block_size = parse_u32_shape_env(
             &lookup,
-            "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE",
+            device_prefix,
+            "LOGICAL_BLOCK_SIZE",
             DEFAULT_LOGICAL_BLOCK_SIZE,
         )?;
         if !(SECTOR_SIZE as u32..=4096).contains(&logical_block_size)
@@ -252,26 +266,64 @@ impl BlockShape {
     }
 }
 
-fn parse_u16_env<F>(lookup: &F, name: &str, default: u16) -> Result<u16>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    let Some(raw) = lookup(name) else {
-        return Ok(default);
-    };
-    raw.parse::<u16>()
-        .with_context(|| format!("parse {name}={raw:?} as u16"))
+fn shape_env_name(device_prefix: Option<&str>, suffix: &str) -> String {
+    match device_prefix {
+        Some(prefix) => format!("{prefix}_{suffix}"),
+        None => format!("CAPSEM_KVM_BLK_{suffix}"),
+    }
 }
 
-fn parse_u32_env<F>(lookup: &F, name: &str, default: u32) -> Result<u32>
+fn lookup_shape_env<F>(lookup: &F, device_prefix: Option<&str>, suffix: &str) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
 {
-    let Some(raw) = lookup(name) else {
+    if let Some(prefix) = device_prefix {
+        let specific = format!("{prefix}_{suffix}");
+        if let Some(value) = lookup(&specific) {
+            return Some(value);
+        }
+    }
+    lookup(&format!("CAPSEM_KVM_BLK_{suffix}"))
+}
+
+fn parse_u16_shape_env<F>(
+    lookup: &F,
+    device_prefix: Option<&str>,
+    suffix: &str,
+    default: u16,
+) -> Result<u16>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let Some(raw) = lookup_shape_env(lookup, device_prefix, suffix) else {
         return Ok(default);
     };
-    raw.parse::<u32>()
-        .with_context(|| format!("parse {name}={raw:?} as u32"))
+    raw.parse::<u16>().with_context(|| {
+        format!(
+            "parse {}={raw:?} as u16",
+            shape_env_name(device_prefix, suffix)
+        )
+    })
+}
+
+fn parse_u32_shape_env<F>(
+    lookup: &F,
+    device_prefix: Option<&str>,
+    suffix: &str,
+    default: u32,
+) -> Result<u32>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let Some(raw) = lookup_shape_env(lookup, device_prefix, suffix) else {
+        return Ok(default);
+    };
+    raw.parse::<u32>().with_context(|| {
+        format!(
+            "parse {}={raw:?} as u32",
+            shape_env_name(device_prefix, suffix)
+        )
+    })
 }
 
 /// Virtio block device backed by a file.
@@ -303,7 +355,7 @@ impl VirtioBlockDevice {
     /// If `read_only` is true, the file is opened read-only and
     /// VIRTIO_BLK_F_RO is advertised. Writes are rejected.
     pub fn new(path: &Path, read_only: bool) -> Result<Self> {
-        Self::new_with_shape(path, read_only, BlockShape::from_env()?)
+        Self::new_with_shape(path, read_only, BlockShape::from_env(read_only)?)
     }
 
     fn new_with_shape(path: &Path, read_only: bool, shape: BlockShape) -> Result<Self> {
@@ -2657,6 +2709,33 @@ mod tests {
             _ => None,
         };
         assert!(BlockShape::from_lookup(invalid_seg).is_err());
+    }
+
+    #[test]
+    fn block_shape_env_parser_prefers_device_specific_overrides() {
+        let lookup = |name: &str| match name {
+            "CAPSEM_KVM_BLK_QUEUE_COUNT" => Some("1".to_string()),
+            "CAPSEM_KVM_BLK_QUEUE_SIZE" => Some("256".to_string()),
+            "CAPSEM_KVM_BLK_SEG_MAX" => Some("254".to_string()),
+            "CAPSEM_KVM_BLK_LOGICAL_BLOCK_SIZE" => Some("512".to_string()),
+            "CAPSEM_KVM_BLK_ROOTFS_QUEUE_COUNT" => Some("8".to_string()),
+            "CAPSEM_KVM_BLK_ROOTFS_QUEUE_SIZE" => Some("128".to_string()),
+            "CAPSEM_KVM_BLK_ROOTFS_SEG_MAX" => Some("64".to_string()),
+            "CAPSEM_KVM_BLK_ROOTFS_LOGICAL_BLOCK_SIZE" => Some("4096".to_string()),
+            _ => None,
+        };
+
+        let rootfs =
+            BlockShape::from_lookup_for_device(lookup, Some("CAPSEM_KVM_BLK_ROOTFS")).unwrap();
+        assert_eq!(
+            rootfs,
+            BlockShape {
+                queue_count: 8,
+                queue_size: 128,
+                seg_max: 64,
+                logical_block_size: 4096,
+            }
+        );
     }
 
     #[test]
