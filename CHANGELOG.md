@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO=1` opens the read-only virtio-blk backing
   file with `O_DIRECT`, and the rootfs-format grid can run it with
   `--direct-io`.
+- Recorded the rootfs direct-I/O ablation artifact. Direct I/O worked but
+  regressed random, small-file, and metadata-heavy rootfs lanes, so it remains
+  a diagnostic lane rather than a default candidate.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

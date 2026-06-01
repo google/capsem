@@ -500,6 +500,18 @@
   alignment constraints and should be measured before it becomes a product
   default. The rootfs-format grid exposes this with `--direct-io` and records
   the direct-I/O flag in each artifact.
+- H05 direct-I/O artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780351156.json`
+  compared direct-I/O rootfs backing against the buffered cluster-sweep artifact
+  on the same block shape. Direct I/O was valid but not helpful for this
+  workload. Uncompressed SquashFS regressed vs buffered by seq read -60.6%,
+  random read -80.5%, cold large-binary -69.2%, small-JS -69.7%, overlay
+  metadata -54.9%, and direct-lower metadata -60.4%. Tuned
+  `erofs-lz4hc-c65536` kept sequential read closer (-3.1%) and cold
+  large-binary closer (-8.5%), but random read fell -80.6%, small-JS -65.2%,
+  overlay metadata -75.6%, and direct-lower metadata -76.3%. Conclusion:
+  host page cache is a major positive part of the current rootfs workload, so
+  `O_DIRECT` should remain an ablation/debug lane rather than a default.
 
 ## Coverage Ledger
 
