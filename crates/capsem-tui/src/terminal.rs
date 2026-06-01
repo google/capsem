@@ -369,6 +369,12 @@ impl TerminalSurface {
             .unwrap_or_default()
     }
 
+    pub fn cursor_position_for(&self, session_id: &str, height: usize) -> Option<(u16, u16)> {
+        self.buffers
+            .get(session_id)
+            .and_then(|buffer| buffer.visible_cursor_position(height))
+    }
+
     pub fn resize(&mut self, session_id: &str, cols: u16, rows: u16) {
         self.buffer_mut(session_id).resize(cols, rows);
     }
@@ -407,6 +413,24 @@ impl TerminalBuffer {
         (start_row..usize::from(rows))
             .map(|row| line_from_screen_row(screen, row as u16, cols))
             .collect()
+    }
+
+    fn visible_cursor_position(&self, height: usize) -> Option<(u16, u16)> {
+        let screen = self.parser.screen();
+        if screen.hide_cursor() {
+            return None;
+        }
+        let (rows, cols) = screen.size();
+        let (row, col) = screen.cursor_position();
+        if row >= rows || col >= cols {
+            return None;
+        }
+        let start_row = usize::from(rows).saturating_sub(height);
+        let row = usize::from(row);
+        if row < start_row {
+            return None;
+        }
+        Some(((row - start_row) as u16, col))
     }
 
     fn resize(&mut self, cols: u16, rows: u16) {

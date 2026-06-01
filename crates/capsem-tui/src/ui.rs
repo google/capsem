@@ -24,14 +24,6 @@ const ACTIVE: Color = Color::Rgb(137, 180, 250);
 const ATTENTION: Color = Color::Rgb(249, 226, 175);
 const BAD: Color = Color::Rgb(243, 139, 168);
 const SELECTED_BG: Color = Color::Rgb(49, 50, 68);
-const LOGO_GRADIENT: [Color; 6] = [
-    Color::Rgb(137, 220, 235),
-    Color::Rgb(116, 199, 236),
-    Color::Rgb(137, 180, 250),
-    Color::Rgb(203, 166, 247),
-    Color::Rgb(245, 194, 231),
-    Color::Rgb(249, 226, 175),
-];
 const CAPSEM_ASCII: [&str; 5] = [
     "  ____    _    ____  ____  _____ __  __",
     " / ___|  / \\  |  _ \\|  _ \\| ____|  \\/  |",
@@ -96,7 +88,14 @@ fn render_layout(
     if let Some(label) = control_progress {
         render_control_progress_surface(frame, chunks[0], label);
     } else {
-        render_terminal_surface(frame, chunks[0], state, terminal, create_draft);
+        render_terminal_surface(
+            frame,
+            chunks[0],
+            state,
+            terminal,
+            create_draft,
+            overlay == AppOverlay::None && pending_action.is_none() && control_error.is_none(),
+        );
     }
     render_status_bar(frame, state, chunks[1]);
     render_overlay(
@@ -233,6 +232,7 @@ fn render_terminal_surface(
     state: &AppState,
     terminal: Option<&TerminalSurface>,
     create_draft: Option<&CreateDraft>,
+    show_cursor: bool,
 ) {
     if service_needs_start(state.service.status) {
         render_service_offline_surface(frame, area, state.service.status);
@@ -267,6 +267,13 @@ fn render_terminal_surface(
         )));
     }
     frame.render_widget(Paragraph::new(lines), area);
+    if show_cursor {
+        if let Some((row, col)) = terminal.cursor_position_for(active_id, area.height as usize) {
+            if row < area.height && col < area.width {
+                frame.set_cursor_position((area.x + col, area.y + row));
+            }
+        }
+    }
 }
 
 fn render_empty_session_surface(
@@ -786,22 +793,10 @@ fn overlay_title(title: impl Into<String>) -> Line<'static> {
 }
 
 fn logo_lines() -> Vec<Line<'static>> {
-    let mut lines = CAPSEM_ASCII
+    CAPSEM_ASCII
         .iter()
         .map(|line| Line::from(Span::styled((*line).to_string(), muted_style())))
-        .collect::<Vec<_>>();
-    let mut spans = Vec::new();
-    for (index, ch) in "CAPSEM".chars().enumerate() {
-        spans.push(Span::styled(
-            ch.to_string(),
-            Style::default()
-                .fg(LOGO_GRADIENT[index])
-                .bg(BAR_BG)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    lines.push(Line::from(spans));
-    lines
+        .collect::<Vec<_>>()
 }
 
 fn overlay_line(text: impl Into<String>) -> Line<'static> {

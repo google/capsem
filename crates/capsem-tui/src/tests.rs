@@ -1,5 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::backend::{Backend, TestBackend};
 use ratatui::style::{Color, Modifier};
+use ratatui::Terminal;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::app::{App, AppAction, AppOverlay, ControlAction};
@@ -8,6 +10,8 @@ use crate::gateway_provider::{
     start_service_with_binary, state_from_status_json_for_test, GatewayProvider,
 };
 use crate::model::{Attention, ServiceStatus, SessionLifecycle};
+use crate::terminal::{TerminalEvent, TerminalSurface};
+use crate::ui::render_app;
 use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
 
 #[test]
@@ -145,8 +149,11 @@ fn empty_state_renders_first_launch_panel_with_shortcuts() {
     assert_eq!(app.overlay(), AppOverlay::None);
     assert_eq!(app.create_draft().expect("create draft").name, "tmp-1");
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty panel");
-    assert!(snapshot.contains("CAPSEM"));
     assert!(snapshot.contains("____    _    ____"));
+    assert!(
+        !snapshot.contains("CAPSEM"),
+        "empty state should not render the old duplicate gradient CAPSEM word"
+    );
     assert!(snapshot.contains("Create a session"));
     assert!(snapshot.contains("active input"));
     assert!(snapshot.contains("tmp-1"));
@@ -156,17 +163,6 @@ fn empty_state_renders_first_launch_panel_with_shortcuts() {
     assert!(snapshot.contains("Up/Down"));
     assert!(snapshot.contains("Alt+l"));
     assert!(snapshot.contains("Alt+?"));
-
-    let buffer = render_app_test_buffer(&app, 100, 24).expect("render logo buffer");
-    let (logo_x, logo_y) = find_cell(&buffer, "CAPSEM");
-    let first = buffer_cell(&buffer, logo_x, logo_y);
-    let last = buffer_cell(&buffer, logo_x + 5, logo_y);
-    assert_ne!(
-        first.fg, last.fg,
-        "logo letters should use a visible gradient, not one flat color"
-    );
-    assert!(first.modifier.contains(Modifier::BOLD));
-    assert!(last.modifier.contains(Modifier::BOLD));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Down, KeyModifiers::NONE)),
@@ -271,6 +267,32 @@ fn stopped_session_renders_resume_prompt_and_grey_tab() {
             .modifier
             .contains(Modifier::DIM),
         "stopped tab labels should read as inactive"
+    );
+}
+
+#[test]
+fn active_terminal_sets_real_cursor_position() {
+    let app = App::new(fixture_state());
+    let mut surface = TerminalSurface::new();
+    surface.resize("profile-v2", 40, 7);
+    surface.apply(TerminalEvent::Output {
+        session_id: "profile-v2".to_string(),
+        bytes: b"abc".to_vec(),
+    });
+
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| render_app(frame, &app, Some(&surface)))
+        .expect("draw TUI");
+
+    assert_eq!(
+        terminal
+            .backend_mut()
+            .get_cursor_position()
+            .expect("cursor position"),
+        ratatui::layout::Position { x: 3, y: 0 },
+        "active VM terminal cursor should be visible at the vt100 cursor position"
     );
 }
 

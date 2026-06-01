@@ -245,6 +245,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem-tui` terminal rendering so the guest cursor remains visible at
+  the active VM PTY cursor position, and removed the duplicate gradient
+  `CAPSEM` word from the empty-state panel.
 - Fixed Linux `.deb` post-install service registration in non-login shells by
   falling back from unavailable `systemctl --user` sessions to a real systemd
   system unit that runs Capsem as the installing user.
